@@ -203,6 +203,14 @@ async function assertUsableWorkingDirectory(cwd: string): Promise<void> {
   }
 }
 
+interface PluginToolCall {
+  pluginId: string;
+  toolName: string;
+  agentId: string;
+  input: unknown;
+  signal?: AbortSignal;
+}
+
 interface StopAgentBackgroundWorkOptions {
   agentId: string;
   itemId: string;
@@ -1096,18 +1104,24 @@ export class AgentManager {
     });
   }
 
-  /** Resolves the tool by name at call time, so a launch-time catalog reaches a restarted plugin. */
-  async executePluginTool(
-    toolName: string,
-    agentId: string,
-    input: unknown,
-    signal?: AbortSignal,
-  ): Promise<AgentToolResult> {
+  /**
+   * Resolves the plugin's current instance of the tool at call time, so a launch-time catalog reaches a restarted
+   * plugin and never a different plugin that took the name.
+   */
+  async executePluginTool({
+    pluginId,
+    toolName,
+    agentId,
+    input,
+    signal,
+  }: PluginToolCall): Promise<AgentToolResult> {
     const agent = this.getAgent(agentId);
     if (!agent || agent.lifecycle === "closed") throw new Error(`Agent is not live: ${agentId}`);
     if (!this.pluginSessions) throw new Error("Plugin tools are unavailable");
     await this.refreshPluginTools(agentId);
-    const tool = this.getPluginTools(agentId).find((entry) => entry.name === toolName);
+    const tool = this.getPluginTools(agentId).find(
+      (entry) => entry.pluginId === pluginId && entry.name === toolName,
+    );
     if (!tool) return { isError: true, text: `Plugin tool is not available: ${toolName}` };
     const record = await this.registry?.get(agentId);
     return this.pluginSessions.callTool(

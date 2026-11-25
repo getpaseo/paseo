@@ -510,9 +510,10 @@ Callbacks of other plugins do not run.
 
 - The tools the callback returns replace its old tools at once, also during a running turn. The new
   plugin instance answers the calls.
-- If the env, instructions, MCP servers, or tool definitions it returns differ from the last open,
-  the session reopens before its next idle prompt. A running turn continues without interruption.
-  A callback whose result depends on `reason` always differs from a `create` open.
+- If the env, instructions, MCP servers, or tool definitions it returns differ from what the
+  session launched with, the session reopens before its next idle prompt. A running turn continues without interruption.
+  A callback whose result depends on `reason` always differs from a `create` open. Reverting the
+  change before that prompt cancels the reopen.
 - If nothing differs, the session keeps running with its background work and subagents. A plugin
   that does not target the agent leaves it as it is.
 - If the callback throws or times out, its tools stay off, and the session reopens before its next
@@ -521,9 +522,11 @@ Callbacks of other plugins do not run.
   off, and the session reopens before its next idle prompt.
 
 Agents that receive Paseo tools natively (OpenCode with the bridge, OMP) keep the tool list they
-launched with until the reopen. Their calls to a listed tool reach the new plugin instance.
+launched with until the reopen. Their calls to a listed tool reach the new instance of the plugin
+that attached it, and fail if that plugin no longer attaches it.
 
-If an automatic reopen fails, the triggering prompt fails with that error. See the
+If an automatic reopen fails, the triggering prompt fails with that error. The session keeps
+running with the tools it had, and each later idle prompt tries the reopen again. See the
 [complete agent-tools example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools).
 
 ## agent.close.after

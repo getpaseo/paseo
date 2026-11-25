@@ -31,10 +31,17 @@ interface Contribution {
   input: SessionOpenWireRequest;
   output: SessionOpenWireRequest;
   tools: AttachedAgentTool[];
+  /** The plugin process holds this contribution's tool definitions for the session. */
+  synced: boolean;
+  /** Its rerun failed or its tools collided, so its tools stay off until the reopen reports why. */
+  failed: boolean;
 }
 
 interface Attachment {
   base: SessionOpenWireRequest;
+  /** What each plugin contributed to the provider launch the session is running. */
+  launched: readonly Contribution[];
+  /** What each plugin contributes now, after the refreshes since that launch. */
   contributions: Contribution[];
   /** A reopen now would launch the provider differently from the running session. */
   stale: boolean;
@@ -45,8 +52,9 @@ interface Attachment {
  * record of each plugin's contribution that decides whether a plugin change needs the session to reopen.
  *
  * A plugin restart gives it a new instance id. `refresh` reruns the open of only the plugins that changed for the
- * session, swaps in their tools at once, and marks the session stale only when the provider launch would differ.
- * Opens and refreshes of one session run one at a time.
+ * session, swaps in their tools at once, and marks the session stale only when the provider launch would differ from
+ * the one it runs. A failed open leaves the running launch as the baseline. Opens and refreshes of one session run one
+ * at a time.
  */
 export class SessionAttachments {
   private readonly attachments = new Map<string, Attachment>();
@@ -59,7 +67,12 @@ export class SessionAttachments {
 
   async open(request: SessionOpenWireRequest): Promise<PluginSessionOpenResult> {
     return this.serialize(request.agentId, async () => {
-      this.close(request.agentId);
+      // Each plugin attaches its tools again below, and a plugin that left the chain keeps none. A failed open leaves
+      // the running session's record, whose plugins then attach again on its next refresh.
+      this.plugins.detachEverywhere(request.agentId);
+      for (const contribution of this.attachments.get(request.agentId)?.contributions ?? []) {
+        contribution.synced = false;
+      }
       const base: SessionOpenWireRequest = { ...request, tools: [], mcpServers: {} };
       const contributions: Contribution[] = [];
       const mcpServers: SessionOpenWireRequest["mcpServers"] = {};
@@ -78,6 +91,8 @@ export class SessionAttachments {
             input,
             output,
             tools,
+            synced: true,
+            failed: false,
           });
           current = output;
         } catch (error) {
@@ -88,7 +103,12 @@ export class SessionAttachments {
         }
       }
       if (request.purpose === "interactive") {
-        this.attachments.set(request.agentId, { base, contributions, stale: false });
+        this.attachments.set(request.agentId, {
+          base,
+          launched: contributions,
+          contributions: [...contributions],
+          stale: false,
+        });
       }
       return {
         ...current,
@@ -120,7 +140,9 @@ export class SessionAttachments {
     );
     return (this.attachments.get(agentId)?.contributions ?? [])
       .filter(
-        (contribution) => running.get(contribution.pluginId) === contribution.pluginInstanceId,
+        (contribution) =>
+          contribution.synced &&
+          running.get(contribution.pluginId) === contribution.pluginInstanceId,
       )
       .flatMap((contribution) => contribution.tools);
   }
@@ -137,7 +159,9 @@ export class SessionAttachments {
       running.every((plugin, index) => {
         const contribution = attachment.contributions[index];
         return (
-          contribution.pluginId === plugin.id && contribution.pluginInstanceId === plugin.instanceId
+          contribution.synced &&
+          contribution.pluginId === plugin.id &&
+          contribution.pluginInstanceId === plugin.instanceId
         );
       })
     );
@@ -157,63 +181,54 @@ export class SessionAttachments {
     const pluginIds = [...new Set([...recorded.keys(), ...running.keys()])].sort((left, right) =>
       left.localeCompare(right),
     );
-    let stale = attachment.stale;
     let previous = attachment.base;
     const contributions: Contribution[] = [];
     const replayed: { contribution: Contribution; plugin: SessionOpenPlugin }[] = [];
     for (const pluginId of pluginIds) {
       const plugin = running.get(pluginId);
       const before = recorded.get(pluginId);
-      if (plugin && before?.pluginInstanceId === plugin.instanceId) {
+      if (plugin && before?.synced && before.pluginInstanceId === plugin.instanceId) {
         contributions.push(before);
         previous = before.output;
         continue;
       }
-      const input: SessionOpenWireRequest = before?.input ?? {
-        ...previous,
-        tools: [],
-        mcpServers: {},
-      };
-      if (!plugin) {
-        // Stopped, or no longer declares the callback: the session loses what it contributed.
-        stale ||= !sameLaunch(before!.output, input);
-        continue;
-      }
-      const { contribution, failed } = await this.replay(plugin, input);
-      stale ||= failed || !sameLaunch(before?.output ?? input, contribution.output);
+      // Stopped, or no longer declares the callback: the session loses what it contributed.
+      if (!plugin) continue;
+      const contribution = await this.replay(
+        plugin,
+        before?.input ?? { ...previous, tools: [], mcpServers: {} },
+      );
       contributions.push(contribution);
       replayed.push({ contribution, plugin });
       previous = contribution.output;
     }
-    const collided = await this.dropCollidingTools(agentId, contributions, replayed, options);
-    stale ||= collided;
+    await this.dropCollidingTools(agentId, contributions, replayed, options);
     if (this.attachments.get(agentId) !== attachment) {
       // The session closed during the replay. Its close detached every plugin before the replay attached again.
       for (const { plugin } of replayed) plugin.detach(agentId);
       return { stale: false };
     }
     attachment.contributions = contributions;
-    attachment.stale = stale;
-    return { stale };
+    attachment.stale = launchDiffers(attachment.launched, contributions);
+    return { stale: attachment.stale };
   }
 
   /** Reruns one plugin's open for a live session, as the reopen the same change would cause. */
   private async replay(
     plugin: SessionOpenPlugin,
     input: SessionOpenWireRequest,
-  ): Promise<{ contribution: Contribution; failed: boolean }> {
-    const contribution = (output: SessionOpenWireRequest): Contribution => ({
+  ): Promise<Contribution> {
+    const contribution = (output: SessionOpenWireRequest, failed: boolean): Contribution => ({
       pluginId: plugin.id,
       pluginInstanceId: plugin.instanceId,
       input,
       output,
       tools: stampTools(plugin, output.tools),
+      synced: true,
+      failed,
     });
     try {
-      return {
-        contribution: contribution(await plugin.open({ ...input, reason: "refresh" })),
-        failed: false,
-      };
+      return contribution(await plugin.open({ ...input, reason: "refresh" }), false);
     } catch (error) {
       // Recorded under the new instance with no tools, so later requests do not wait on it again. The reopen
       // reruns the callback and reports its error.
@@ -221,7 +236,7 @@ export class SessionAttachments {
         { err: error, pluginId: plugin.id, agentId: input.agentId },
         "Plugin session refresh failed",
       );
-      return { contribution: contribution(input), failed: true };
+      return contribution(input, true);
     }
   }
 
@@ -231,14 +246,13 @@ export class SessionAttachments {
     contributions: Contribution[],
     replayed: { contribution: Contribution }[],
     options: PluginSessionRefreshOptions,
-  ): Promise<boolean> {
-    if (replayed.every(({ contribution }) => contribution.tools.length === 0)) return false;
+  ): Promise<void> {
+    if (replayed.every(({ contribution }) => contribution.tools.length === 0)) return;
     const changed = new Set(replayed.map(({ contribution }) => contribution));
     const taken = new Set(await options.reservedToolNames());
     for (const contribution of contributions) {
       if (!changed.has(contribution)) for (const tool of contribution.tools) taken.add(tool.name);
     }
-    let collided = false;
     for (const contribution of changed) {
       const conflict = contribution.tools.find((tool) => taken.has(tool.name));
       if (conflict) {
@@ -247,12 +261,11 @@ export class SessionAttachments {
           "Refreshed plugin tool collides with another agent tool",
         );
         contribution.tools = [];
-        collided = true;
+        contribution.failed = true;
         continue;
       }
       for (const tool of contribution.tools) taken.add(tool.name);
     }
-    return collided;
   }
 
   private serialize<T>(agentId: string, run: () => Promise<T>): Promise<T> {
@@ -268,6 +281,28 @@ export class SessionAttachments {
     });
     return next;
   }
+}
+
+/** Whether a reopen with the current contributions would launch the provider differently from the running session. */
+function launchDiffers(
+  launched: readonly Contribution[],
+  current: readonly Contribution[],
+): boolean {
+  if (current.some((contribution) => contribution.failed)) return true;
+  const before = new Map(launched.map((contribution) => [contribution.pluginId, contribution]));
+  const after = new Map(current.map((contribution) => [contribution.pluginId, contribution]));
+  for (const pluginId of new Set([...before.keys(), ...after.keys()])) {
+    const left = before.get(pluginId);
+    const right = after.get(pluginId);
+    if (left && right) {
+      if (!sameLaunch(left.output, right.output)) return true;
+      continue;
+    }
+    // A plugin on one side only changes the launch when its callback changed its input.
+    const only = left ?? right;
+    if (only && !sameLaunch(only.input, only.output)) return true;
+  }
+  return false;
 }
 
 /** The parts of a plugin's open result that reach the provider launch. */
