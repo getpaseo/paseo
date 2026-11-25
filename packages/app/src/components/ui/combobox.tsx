@@ -25,7 +25,6 @@ import {
 } from "react-native";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -1140,31 +1139,22 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
 }
 
 /**
- * Rendered on the far side of the sheet's portal so it clears the screen's bottom inset, not the
- * one left where the combobox was opened: inside a sheet tab, none is.
+ * Rendered on the far side of the sheet's portal so `SheetVisibleFrame` clears the screen's
+ * bottom inset in lockstep with the keyboard, not the inset left where the combobox was opened.
  */
 function ComboboxSheetFrame({ footer, children }: { footer?: ReactNode; children: ReactNode }) {
-  const { bottom: safeAreaBottom } = useSafeAreaInsets();
-  const frameStyle = useMemo(
-    () => [styles.mobileSheetFrame, { paddingBottom: footer ? 0 : safeAreaBottom }],
-    [footer, safeAreaBottom],
-  );
-  const footerStyle = useMemo(
-    () => [styles.footer, { paddingBottom: safeAreaBottom }],
-    [safeAreaBottom],
-  );
   const footerView = useMemo(
     () =>
       footer ? (
-        <View style={footerStyle} dataSet={FOOTER_DATASET}>
+        <View style={styles.footer} dataSet={FOOTER_DATASET}>
           {footer}
         </View>
       ) : undefined,
-    [footer, footerStyle],
+    [footer],
   );
   return (
-    <SheetVisibleFrame footer={footerView}>
-      <View style={frameStyle}>{children}</View>
+    <SheetVisibleFrame footer={footerView} safeAreaInset="frame">
+      <View style={styles.mobileSheetFrame}>{children}</View>
     </SheetVisibleFrame>
   );
 }

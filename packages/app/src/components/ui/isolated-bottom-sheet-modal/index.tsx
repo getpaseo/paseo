@@ -212,6 +212,6 @@ export function useIsolatedBottomSheetVisibility({
   };
 }
 
-export { SheetVisibleFrame } from "./visible-frame";
+export { SheetVisibleFrame, useBottomSheetSafeAreaPaddingStyle } from "./visible-frame";
 export { systemBackPress } from "./back-press";
 export { SheetHostScope } from "./host-scope";
