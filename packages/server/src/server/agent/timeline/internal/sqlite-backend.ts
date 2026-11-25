@@ -41,7 +41,9 @@ import { buildSourceRow } from "./source-row.js";
 /**
  * Tables of the timeline store. `timeline_rows` holds projected rows: `row` is the row's JSON,
  * with the text of streamed assistant and reasoning rows kept in `timeline_text` instead, one
- * chunk per source row, so a streamed chunk never rewrites the message. `retired_by` is the seq of
+ * chunk per source row, so a streamed chunk never rewrites the message. A chunk is stored as a JSON
+ * string: node:sqlite reads a TEXT value only up to its first NUL, and a chunk can end inside a
+ * surrogate pair, which UTF-8 cannot hold. `retired_by` is the seq of
  * the retirement that took the row out of the conversation. `span_start` marks rows that start a
  * source-coverage span (no earlier active row's `seq_end` reaches them). `identity_live` marks the
  * row an item identity's next update merges into. `timeline_source_ranges` maps every source seq
@@ -99,7 +101,7 @@ CREATE TABLE timeline_text (
   scope_id INTEGER NOT NULL REFERENCES timeline_scopes (id) ON DELETE CASCADE,
   seq_start INTEGER NOT NULL,
   seq INTEGER NOT NULL,
-  text TEXT NOT NULL,
+  text_json TEXT NOT NULL,
   PRIMARY KEY (scope_id, seq_start, seq)
 );
 
@@ -768,11 +770,11 @@ function insertText(
   row: ProjectedTimelineRow,
 ): void {
   sql.run(
-    "INSERT INTO timeline_text (scope_id, seq_start, seq, text) VALUES (?, ?, ?, ?)",
+    "INSERT INTO timeline_text (scope_id, seq_start, seq, text_json) VALUES (?, ?, ?, ?)",
     scopeId,
     seqStart,
     seq,
-    itemText(row.item),
+    JSON.stringify(itemText(row.item)),
   );
 }
 
@@ -784,12 +786,12 @@ function parseRow(record: Pick<RowRecord, "row">): ProjectedTimelineRow {
 function withText(sql: ReadSql, scopeId: number, row: ProjectedTimelineRow): ProjectedTimelineRow {
   if (row.item.type !== "assistant_message" && row.item.type !== "reasoning") return row;
   const text = sql
-    .all<{ text: string }>(
-      "SELECT text FROM timeline_text WHERE scope_id = ? AND seq_start = ? ORDER BY seq",
+    .all<{ text_json: string }>(
+      "SELECT text_json FROM timeline_text WHERE scope_id = ? AND seq_start = ? ORDER BY seq",
       scopeId,
       row.seqStart,
     )
-    .map((chunk) => chunk.text)
+    .map((chunk) => JSON.parse(chunk.text_json) as string)
     .join("");
   return { ...row, item: { ...row.item, text } };
 }

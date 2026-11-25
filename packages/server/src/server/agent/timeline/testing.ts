@@ -66,14 +66,15 @@ export function openTestTimelineDatabase(file?: string): DaemonDatabase {
 
 /**
  * Wraps a backend: defers every call by a turn of the event loop, the shape of an I/O-backed
- * store, records the committed appends and whole-history reads, and fails the next append or
- * retirement on request.
+ * store, records the committed appends and whole-history reads, and fails the next append,
+ * retirement, or metrics stamp on request.
  */
 export class DeferredTimelineBackend implements AgentTimelineBackend {
   readonly appends: TimelineEntry[][] = [];
   readRowsCalls = 0;
   failNextAppend = false;
   failNextRetire = false;
+  failNextStampTurnMetrics = false;
 
   constructor(private readonly inner: InspectableTimelineBackend = new MemoryTimelineBackend()) {}
 
@@ -153,7 +154,13 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
     metrics: AgentMetric[],
     options?: { turnId?: string },
   ): Promise<ProjectedTimelineRow | null> {
-    return this.defer(() => this.inner.stampTurnMetrics(scope, metrics, options));
+    return this.defer(() => {
+      if (this.failNextStampTurnMetrics) {
+        this.failNextStampTurnMetrics = false;
+        throw new Error("disk full");
+      }
+      return this.inner.stampTurnMetrics(scope, metrics, options);
+    });
   }
   findSubmittedPrompt(
     scope: TimelineScope,

@@ -4923,6 +4923,8 @@ export class AgentManager {
         agentId: resolvedAgentId,
         session,
         now,
+        // Nothing about an internal agent is on disk, its history included.
+        inMemory: config.internal === true,
         options,
       });
 
@@ -5048,6 +5050,7 @@ export class AgentManager {
     agentId: string;
     session: AgentSession;
     now: Date;
+    inMemory: boolean;
     options:
       | {
           providerHistory?: readonly TimelineEntry[];
@@ -5062,22 +5065,24 @@ export class AgentManager {
     | { kind: "kept" }
     | { kind: "imported"; subagents: ProviderSubagentStreamEvent[]; sessionMetrics?: AgentMetric[] }
   > {
-    const { agentId, session, now, options } = params;
+    const { agentId, session, now, inMemory, options } = params;
     const scope: TimelineScope = { agentId };
     if (options?.providerHistory) {
       const result = await this.timeline.importHistory(scope, options.providerHistory, {
         timestamp: (options.updatedAt ?? options.createdAt ?? now).toISOString(),
+        inMemory,
       });
       return result.kind === "imported" ? { kind: "imported", subagents: [] } : { kind: "kept" };
     }
     if (await this.timeline.describe(scope)) return { kind: "kept" };
     if (!options?.importMissingHistory) {
-      await this.timeline.create(scope, { timestamp: now.toISOString() });
+      await this.timeline.create(scope, { timestamp: now.toISOString() }, { inMemory });
       return { kind: "created" };
     }
     const history = await this.readProviderHistory(session.streamHistory());
     const result = await this.timeline.importHistory(scope, history.entries, {
       timestamp: now.toISOString(),
+      inMemory,
     });
     return result.kind === "imported"
       ? {
@@ -5707,16 +5712,22 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  /** Stamps the turn's metrics and applies the event by type, returning the event as stamped. */
+  /**
+   * Applies the event by type, then stamps a completed turn's metrics, returning the event as
+   * stamped. Handlers change the agent's state before they write, so a terminal event whose
+   * record fails to write still ends the turn; the failure is logged.
+   */
   private async recordStreamEvent(params: StreamEventDispatch): Promise<AgentStreamEvent> {
-    const { agent, options, eventTurnId } = params;
-    let { event } = params;
+    const { agent, options, eventTurnId, terminalDisposition } = params;
+    const event = withTurnMetrics(params);
     try {
-      event = await this.settleTurnMetrics({ ...params, event });
       await this.dispatchStreamEventByType({ ...params, event });
+      if (event.type === "turn_completed" && event.metrics && terminalDisposition !== "stale") {
+        await this.timeline.stampTurnMetrics({ agentId: agent.id }, event.metrics, {
+          turnId: event.turnId,
+        });
+      }
     } catch (error) {
-      // A turn that ended must stop holding the agent and its waiters, even when its record
-      // failed to write; otherwise the agent stays running until the daemon restarts.
       if (options?.fromHistory || !isTurnTerminalEvent(event)) throw error;
       this.logger.error(
         { err: error, agentId: agent.id, turnId: eventTurnId, eventType: event.type },
@@ -5866,29 +5877,6 @@ export class AgentManager {
    * Decides what a completed turn shows and records it on the turn's footer row, so
    * the live event and a later timeline fetch agree.
    */
-  private async settleTurnMetrics(params: {
-    agent: ActiveManagedAgent;
-    event: AgentStreamEvent;
-    options: HandleStreamEventOptions | undefined;
-    terminalDisposition: ActiveTurnTerminalDisposition;
-  }): Promise<AgentStreamEvent> {
-    if (params.event.type !== "turn_completed") return params.event;
-    const { agent } = params;
-    const { metrics: reported, ...event } = params.event;
-    // A replayed turn may have run on another model than the agent has now.
-    const model = params.options?.fromHistory
-      ? null
-      : (agent.runtimeInfo?.model ?? agent.config.model);
-    const metrics = withModelMetric(sanitizeAgentMetrics(reported), model);
-    if (metrics.length === 0) return event;
-    if (params.terminalDisposition !== "stale") {
-      await this.timeline.stampTurnMetrics({ agentId: agent.id }, metrics, {
-        turnId: event.turnId,
-      });
-    }
-    return { ...event, metrics };
-  }
-
   private onStreamTurnCompleted(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "turn_completed" }>;
@@ -5956,13 +5944,13 @@ export class AgentManager {
       agent.lifecycle = "error";
     }
     agent.lastError = event.error;
+    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
     await this.appendSystemErrorTimelineMessage(
       agent,
       event.provider,
       this.formatTurnFailedMessage(event),
       options,
     );
-    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
   }
 
   private onStreamTurnCanceled(params: {
@@ -6991,4 +6979,23 @@ function pluginPromptContext(
 async function requireLaunchWrap(client: AgentClient): Promise<void> {
   if (client.supportsLaunchWrap !== true) throw new LaunchWrapUnsupportedError(client.provider);
   await client.requireLaunchWrap?.();
+}
+
+/**
+ * A completed turn with its metrics sanitized and the model added; a replayed turn may have run
+ * on another model than the agent has now, so it gets none.
+ */
+function withTurnMetrics(params: {
+  agent: ActiveManagedAgent;
+  event: AgentStreamEvent;
+  options: HandleStreamEventOptions | undefined;
+}): AgentStreamEvent {
+  if (params.event.type !== "turn_completed") return params.event;
+  const { agent } = params;
+  const { metrics: reported, ...event } = params.event;
+  const model = params.options?.fromHistory
+    ? null
+    : (agent.runtimeInfo?.model ?? agent.config.model);
+  const metrics = withModelMetric(sanitizeAgentMetrics(reported), model);
+  return metrics.length === 0 ? event : { ...event, metrics };
 }

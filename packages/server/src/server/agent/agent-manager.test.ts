@@ -22,8 +22,8 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
-import { AgentTimeline } from "./timeline/index.js";
-import { DeferredTimelineBackend } from "./timeline/testing.js";
+import { AgentTimeline, createStoredAgentTimeline } from "./timeline/index.js";
+import { DeferredTimelineBackend, openTestTimelineDatabase } from "./timeline/testing.js";
 import { AgentTurnStartCanceledError } from "./agent-sdk-types.js";
 import { ForegroundPromptStart } from "./agent-run-state.js";
 import {
@@ -6986,6 +6986,76 @@ test("a run's caller hears how its turn ended even when the timeline fails to re
   });
   await expect(run).rejects.toThrow("Selected model is at capacity.");
   await failed;
+});
+
+test("a turn the provider started ends even when the timeline fails to record its metrics", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-metrics-record-failure-"));
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const backend = new DeferredTimelineBackend();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    timeline: new AgentTimeline(backend),
+    logger,
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "gpt-5.2-codex" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  session.pushEvent({ type: "turn_started", provider: "codex", turnId: "provider-turn" });
+  await running;
+  const idle = waitForAgentLifecycle(manager, agent.id, "idle");
+  backend.failNextStampTurnMetrics = true;
+  session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "provider-turn" });
+  await idle;
+  expect(backend.failNextStampTurnMetrics).toBe(false);
+});
+
+test("an internal agent's history stays out of the daemon database", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-timeline-"));
+  const database = openTestTimelineDatabase();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    timeline: createStoredAgentTimeline(database),
+    logger,
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(internal.id);
+    await manager.closeAgent(visible.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const internal = await manager.createAgent(
+    { provider: "codex", cwd: workdir, internal: true },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const visible = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const reply: AgentTimelineItem = { type: "assistant_message", text: "a commit message" };
+  await manager.appendTimelineItem(internal.id, reply);
+  await manager.appendTimelineItem(visible.id, reply);
+  await manager.flush();
+
+  expect(await manager.getTimeline(internal.id)).toEqual([reply]);
+  const storedAgents = database.read((sql) =>
+    sql
+      .all<{ agent_id: string }>("SELECT agent_id FROM timeline_scopes")
+      .map((row) => row.agent_id),
+  );
+  expect(storedAgents).toEqual([visible.id]);
 });
 
 test("markAgentUnread restores error attention on a read errored agent", async () => {

@@ -451,4 +451,21 @@ describe("SQLite timeline reads", () => {
     expect(backend.lastAssistantMessage(scope)).toHaveLength(100_000);
     database.close();
   });
+
+  it("reads back streamed text exactly, including a NUL and a pair split across chunks", () => {
+    const file = nextTestDatabasePath();
+    const chunks = ["before\0after ", "\ud83d", "\ude00 end"];
+    const writer = openTestTimelineDatabase(file);
+    const written = new SqliteTimelineBackend(writer);
+    written.create(scope, { epoch: "e" });
+    for (const text of chunks) {
+      written.append(scope, [entry({ type: "assistant_message", text })]);
+    }
+    writer.close();
+
+    const reopened = new SqliteTimelineBackend(openTestTimelineDatabase(file));
+    expect(reopened.readRows(scope).map((row) => row.item)).toEqual([
+      { type: "assistant_message", text: chunks.join("") },
+    ]);
+  });
 });

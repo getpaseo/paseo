@@ -58,7 +58,9 @@ open rewind, and the children. The backend contract suite is `agent-timeline.tes
 [daemon database](data-model.md#daemon-database). History, retirements, the open rewind, and
 provider children survive a daemon restart in the same epoch, so clients keep their cursors. A
 closed or archived agent holds no history in memory. Each fetch reads the page from the database
-and starts no provider. The memory backend serves tests.
+and starts no provider. An internal agent, such as the one that writes a commit message, keeps its
+history in a memory backend instead, so it leaves nothing on disk. The memory backend also serves
+tests.
 
 An open rewind is stored with the history. Resuming an agent whose history holds one settles it
 before the agent takes prompts: a recorded provider cut is committed, and an unknown outcome is

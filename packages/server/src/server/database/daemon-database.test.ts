@@ -219,6 +219,23 @@ function texts(database: DaemonDatabase): string[] {
   );
 }
 
+it.skipIf(process.platform === "win32")(
+  "keeps the database and its WAL files private to the user, including a file created readable",
+  () => {
+    const umask = process.umask(0o022);
+    try {
+      writeFileSync(databasePath, "", { mode: 0o644 });
+      const database = open([notes]);
+      database.write((sql) => insert(sql, "secret"));
+      for (const file of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
+        expect({ file, mode: statSync(file).mode & 0o777 }).toEqual({ file, mode: 0o600 });
+      }
+    } finally {
+      process.umask(umask);
+    }
+  },
+);
+
 it("rolls a write back when its callback throws", () => {
   const database = open([notes]);
   expect(() => database.write((sql) => insertThenThrow(sql, "lost"))).toThrow("failed after lost");

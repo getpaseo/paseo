@@ -1,5 +1,6 @@
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import type { Logger } from "pino";
+import { ensurePrivateFile } from "../../private-files.js";
 import { WalCheckpointer } from "./wal-checkpointer.js";
 
 export type SqlValue = SQLInputValue;
@@ -100,6 +101,14 @@ export function openDaemonDatabase(input: {
   try {
     const sqlite = loadSqlite();
     connection = new sqlite.DatabaseSync(input.path, { timeout: BUSY_TIMEOUT_MS });
+    assertSupported(connection);
+    // The file holds every prompt and reply. SQLite gives the WAL and shared-memory files it
+    // creates the database file's mode; files left by an earlier open are fixed here.
+    if (input.path !== ":memory:") {
+      for (const file of [input.path, `${input.path}-wal`, `${input.path}-shm`]) {
+        ensurePrivateFile(file);
+      }
+    }
     connection.exec(
       [
         "PRAGMA journal_mode = WAL",
@@ -131,6 +140,13 @@ function loadSqlite(): typeof import("node:sqlite") {
     throw new Error(`node:sqlite is unavailable in Node ${process.versions.node}; use >= 22.16`);
   }
   return sqlite;
+}
+
+/** Node 22.13 has node:sqlite without `isTransaction`, which rollback needs. */
+function assertSupported(connection: DatabaseSync): void {
+  if (typeof connection.isTransaction !== "boolean") {
+    throw new Error(`node:sqlite in Node ${process.versions.node} is too old; use >= 22.16`);
+  }
 }
 
 function migrate(database: DaemonDatabase, file: string, modules: readonly SchemaModule[]): void {
@@ -359,14 +375,20 @@ class SqliteDaemonDatabase implements DaemonDatabase {
     return { [Symbol.iterator]: () => iterator };
   }
 
+  /** Runs after a write commits, so it never throws: the write has already happened. */
   private startPendingCheckpointer(): void {
     if (this.checkpointer.kind !== "pending") return;
-    const worker = new WalCheckpointer({
-      path: this.checkpointer.path,
-      logger: this.logger,
-      onExit: () => this.checkpointOnThread(),
-    });
-    this.checkpointer = { kind: "worker", worker };
+    try {
+      const worker = new WalCheckpointer({
+        path: this.checkpointer.path,
+        logger: this.logger,
+        onExit: () => this.checkpointOnThread(),
+      });
+      this.checkpointer = { kind: "worker", worker };
+    } catch (error) {
+      this.logger.warn({ err: error }, "Database WAL checkpointer did not start");
+      this.checkpointOnThread();
+    }
   }
 
   /** The worker ended on its own: let SQLite checkpoint again, so the WAL stays bounded. */

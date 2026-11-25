@@ -197,6 +197,9 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
   user can run an older daemon on the same `$PASEO_HOME`.
 - **Failure.** A file that SQLite cannot open stops the daemon with `DatabaseOpenError`, which
   names the path. The daemon does not delete or recreate the file.
+- **Access.** The file holds every prompt and reply, so the daemon sets it and its `-wal` and `-shm`
+  files to mode `0600` on every open. SQLite gives the WAL files it creates the mode of the database
+  file.
 - **Durability.** The database uses WAL with `synchronous = NORMAL`. A power loss can drop the
   last commits but does not corrupt the file.
 - **Checkpoints.** A checkpoint syncs the file to disk and takes up to 100 ms. SQLite's
