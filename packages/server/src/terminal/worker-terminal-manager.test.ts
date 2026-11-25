@@ -2340,7 +2340,7 @@ it.each(["replacement", "socket-overflow"] as const)(
     const paseoHome = createTemporaryHome();
     const drained = join(paseoHome, "burst-drained");
     // The worker closes its controller socket above 4 MiB of queued writes.
-    // Leave room for pipe buffering without making the PTY print 12 MiB.
+    // Leave room for bytes already in the pipe.
     const burstMiB = 8;
     manager = await startRealWorkerManager({ paseoHome });
     const session = trackTerminal(
@@ -2348,15 +2348,21 @@ it.each(["replacement", "socket-overflow"] as const)(
         cwd: paseoHome,
         workspaceId: "attached-reconnect",
         ...nodeTerminalCommand(
-          `process.stdout.write("RETAINED\\r\\n"); process.stdin.on("data", data => {
-            if (data.toString().includes("BURST")) process.stdout.write("x".repeat(${burstMiB} * 1024 * 1024) + "\\r\\nRETAINED-AFTER-LOSS\\r\\n", () => require("node:fs").writeFileSync(${JSON.stringify(drained)}, "done"));
-            else process.stdout.write("ECHO:" + data);
+          `process.stdout.write("BEFORE-LOSS\\r\\n"); process.stdin.on("data", data => {
+            if (data.toString().includes("BURST")) {
+              // Keep the startup line in the main screen while filling the socket.
+              const burst = "\\x1b[?1049h" + "x".repeat(${burstMiB} * 1024 * 1024);
+              process.stdout.write(burst + "\\x1b[?1049lAFTER-LOSS\\r\\n", () => {
+                require("node:fs").writeFileSync(${JSON.stringify(drained)}, "done");
+              });
+            } else process.stdout.write("ECHO:" + data);
           }); setInterval(() => {}, 1000);`,
         ),
       }),
     );
     await waitForCondition(
-      async () => (await manager!.captureTerminal(session.id)).lines.join("").includes("RETAINED"),
+      async () =>
+        (await manager!.captureTerminal(session.id)).lines.join("").includes("BEFORE-LOSS"),
       10000,
     );
     const viewers = terminalViewers(manager, session.id);
@@ -2386,8 +2392,8 @@ it.each(["replacement", "socket-overflow"] as const)(
         .filter((row) => row.frame.opcode === TerminalStreamOpcode.ReplayData)
         .map((row) => Buffer.from(row.frame.payload).toString("utf8"))
         .join("");
-      expect(replay).toContain("RETAINED");
-      if (loss === "socket-overflow") expect(replay).toContain("RETAINED-AFTER-LOSS");
+      expect(replay).toContain("BEFORE-LOSS");
+      if (loss === "socket-overflow") expect(replay).toContain("AFTER-LOSS");
       expect((await workerRecords(paseoHome)).map((worker) => worker.pid)).toEqual([record!.pid]);
       session.send({ type: "input", data: "RECOVERED\r" });
       await waitForCondition(() => viewers.text(desktop).includes("ECHO:RECOVERED"), 3000);
