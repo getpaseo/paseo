@@ -99,6 +99,48 @@ test("a tool's image output is shown as an image, not as base64 in the tool outp
   expect(await collectTimelineSnapshot(timeline, [screenshot])).toEqual([]);
 });
 
+test("a completed websearch lists its hits as web results", async () => {
+  // OpenCode 2.x websearch (packages/core/src/tool/plugin/websearch.ts) sends clients only the
+  // formatted text; its structured hits never reach the session message.
+  const text =
+    "## [Effect](https://effect.website)\nPublished: 2026-07-25T00:00:00.000Z\n\nparallel results\n\n## [Effect Docs](https://effect.website/docs/introduction)";
+  const search = assistant([
+    {
+      type: "tool",
+      id: "call-websearch",
+      name: "websearch",
+      executed: false,
+      state: {
+        status: "completed",
+        input: { query: "effect layers" },
+        content: [{ type: "text", text }],
+        metadata: { provider: "parallel" },
+      },
+      time: { created: 2, ran: 2, completed: 2 },
+    },
+  ]);
+
+  expect(await collectTimelineSnapshot(new V2Timeline(), [search])).toMatchObject([
+    {
+      item: {
+        type: "tool_call",
+        name: "websearch",
+        status: "completed",
+        detail: {
+          type: "search",
+          query: "effect layers",
+          toolName: "web_search",
+          content: text,
+          webResults: [
+            { title: "Effect", url: "https://effect.website" },
+            { title: "Effect Docs", url: "https://effect.website/docs/introduction" },
+          ],
+        },
+      },
+    },
+  ]);
+});
+
 test("a surrogate pair split across deltas streams back intact", () => {
   const timeline = new V2Timeline();
   const part = { assistantMessageID: "answer", type: "text" as const, ordinal: 0 };
