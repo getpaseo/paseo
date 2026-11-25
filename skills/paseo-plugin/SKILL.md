@@ -343,7 +343,7 @@ Paseo places each control inline when the composer has room, and in the overflow
 
 ## Add daemon-side behavior
 
-Define one Zod contract in `shared/`, handle it in `index.server.ts`, and call it from client code with `useRpc()`. `paseo plugin init` generates this RPC with the same file and export names:
+Define one Zod contract in `shared/`, handle it in `index.server.ts`, and call it from client code with `useRpc()`. `paseo plugin init` generates this RPC with the same files and export names:
 
 ```ts
 // shared/greeting.ts
@@ -403,16 +403,7 @@ export function GreetingScreen({ theme, layout }: PluginScreenProps) {
 }
 ```
 
-```tsx
-// index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { GreetingScreen } from "./client/greeting";
-
-export default function contribute(client: PluginClientContext) {
-  client.addScreen({ id: "greeting", title: "Greeting", Component: GreetingScreen });
-  return () => {};
-}
-```
+The generated `index.client.tsx` registers `GreetingScreen` as a screen and adds a Greeting sidebar item that opens it. Keep it to try the RPC from the app.
 
 - Paseo validates the input and the output on both sides. A top-level `Uint8Array`, declared as `z.instanceof(Uint8Array)`, crosses as binary. A nested one fails validation.
 - For a stream of events, use `defineSubscription`, `server.handle`, and `useSubscription`.
