@@ -49,8 +49,8 @@ deleting the agent, or a provider removing one of its own children, deletes hist
   without its provider. Opening a stored agent that has no provider session to resume starts its
   first session on the same history.
 - **Delete** removes the agent's history and every child's, retired ones included, before the
-  agent record. If the history cannot be removed, the request fails and the agent stays listed, so
-  the user can delete it again.
+  agent record. If the history cannot be removed, the request fails and the agent stays listed. The
+  user can keep using it and delete it again.
 
 `epoch` is the stored history's identity, minted once when the history is created.
 

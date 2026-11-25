@@ -380,11 +380,18 @@ function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
 
 type DeleteFencedAgentStorage = AgentStorage & {
   beginDelete(agentId: string): void;
+  abandonDelete(agentId: string): void;
 };
 
 function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string): void {
   if ("beginDelete" in agentStorage && typeof agentStorage.beginDelete === "function") {
     (agentStorage as DeleteFencedAgentStorage).beginDelete(agentId);
+  }
+}
+
+function abandonAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string): void {
+  if ("abandonDelete" in agentStorage && typeof agentStorage.abandonDelete === "function") {
+    (agentStorage as DeleteFencedAgentStorage).abandonDelete(agentId);
   }
 }
 
@@ -3885,8 +3892,13 @@ export class Session {
     await this.agentManager.flush();
 
     // History goes before the record: if it cannot be removed, the request fails and the record
-    // stays, so the user still sees the agent and can delete it again.
-    await this.agentManager.deleteAgentState(agentId);
+    // stays, so the user still sees the agent, can keep using it, and can delete it again.
+    try {
+      await this.agentManager.deleteAgentState(agentId);
+    } catch (error) {
+      abandonAgentDeleteIfSupported(this.agentStorage, agentId);
+      throw error;
+    }
     await this.agentStorage.remove(agentId);
     // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
     if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
