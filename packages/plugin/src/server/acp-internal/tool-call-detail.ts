@@ -24,13 +24,7 @@ const KIND_DETAILS = new Map<string, KindDetail>(
     }),
     edit: editDetail,
     delete: editDetail,
-    search: ({ call, input, output, text }) => ({
-      type: "search",
-      query: string(input, "query", "pattern") ?? call.title,
-      toolName: "search",
-      content: text ?? string(output, "content", "text"),
-      filePaths: call.locations.length > 0 ? [...call.locations] : undefined,
-    }),
+    search: searchDetail,
     execute: ({ call, input, output, text }) => ({
       type: "shell",
       command: shellCommand(input) ?? call.title,
@@ -96,6 +90,61 @@ function editDetail({ call, input, text }: ToolCallParts): ProviderToolCallDetai
     newString: diff?.newText ?? fileText(input, "newString", "newText"),
     unifiedDiff: string(input, "unifiedDiff") ?? text,
   };
+}
+
+function searchDetail({ call, input, output, text }: ToolCallParts): ProviderToolCallDetail {
+  const webAction = webSearchAction(output);
+  const webResults = webSearchResults(output, webAction, call.content);
+  return {
+    type: "search",
+    query:
+      string(input, "query", "pattern") ??
+      (webAction ? (string(webAction, "query") ?? string(webAction, "url")) : undefined) ??
+      call.title,
+    toolName: webAction || webResults.length > 0 ? "web_search" : "search",
+    content: text ?? string(output, "content", "text"),
+    filePaths: call.locations.length > 0 ? [...call.locations] : undefined,
+    ...(webResults.length > 0 ? { webResults } : {}),
+  };
+}
+
+const WEB_SEARCH_ACTION_TYPES = new Set(["search", "open_page", "find_in_page"]);
+
+/** The OpenAI Responses `web_search_call.action` some ACP agents (Grok) report as `rawOutput.action`. */
+function webSearchAction(output: JsonRecord): JsonRecord | undefined {
+  const action = record(output.action ?? null);
+  const type = string(action, "type");
+  return type && WEB_SEARCH_ACTION_TYPES.has(type) ? action : undefined;
+}
+
+function webSearchResults(
+  output: JsonRecord,
+  webAction: JsonRecord | undefined,
+  content: JsonValue | undefined,
+): Array<{ title: string; url: string }> {
+  const results: Array<{ title: string; url: string }> = [];
+  const seen = new Set<string>();
+  const add = (url: string | undefined, title: string | undefined) => {
+    if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) return;
+    seen.add(url);
+    results.push({ title: title ?? url, url });
+  };
+  for (const list of [webAction?.sources, output.sources, output.results]) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      const source = record(entry);
+      add(string(source, "url"), string(source, "title"));
+    }
+  }
+  for (const block of contentBlocks(content)) {
+    if (block.type !== "content") continue;
+    const link = record(block.content ?? null);
+    if (link.type === "resource_link") add(string(link, "uri"), string(link, "title", "name"));
+  }
+  if (webAction && string(webAction, "type") === "open_page") {
+    add(string(webAction, "url"), undefined);
+  }
+  return results;
 }
 
 function shellCommand(input: JsonRecord): string | undefined {
