@@ -1,12 +1,6 @@
-export interface RouteLeaveHistoryEntry {
-  state: unknown;
-  path: string;
-}
-
 export interface RouteLeaveGuard {
   isDirty: () => boolean;
   confirmDiscard: () => Promise<boolean>;
-  getCurrentEntry: () => RouteLeaveHistoryEntry | null;
 }
 
 /**

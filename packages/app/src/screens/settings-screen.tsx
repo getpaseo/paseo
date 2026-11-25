@@ -6,7 +6,7 @@ import { useAddHost } from "@/hosts/add-host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
-import { useNavigation, usePathname, useRouter } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -1123,36 +1123,16 @@ interface SettingsBeforeLeaveGuard {
  */
 function useSettingsBeforeLeaveGuard() {
   const navigation = useNavigation();
-  const pathname = usePathname();
   const beforeLeaveRef = useRef<SettingsBeforeLeaveGuard | null>(null);
-  const historyEntryRef = useRef<{ state: unknown; path: string } | null>(null);
 
   const registerBeforeLeave = useCallback((guard: SettingsBeforeLeaveGuard | null) => {
     beforeLeaveRef.current = guard;
   }, []);
 
   useEffect(() => {
-    if (!isWeb || typeof window === "undefined") {
-      return;
-    }
-    const capture = () => {
-      if (window.location.pathname === pathname) {
-        historyEntryRef.current = {
-          state: window.history.state,
-          path: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-        };
-      }
-    };
-    capture();
-    const frame = window.requestAnimationFrame(capture);
-    return () => window.cancelAnimationFrame(frame);
-  }, [pathname]);
-
-  useEffect(() => {
     return registerRouteLeaveGuard({
       isDirty: () => Boolean(beforeLeaveRef.current?.isDirty()),
       confirmDiscard: async () => (await beforeLeaveRef.current?.confirmDiscard()) ?? true,
-      getCurrentEntry: () => historyEntryRef.current,
     });
   }, []);
 

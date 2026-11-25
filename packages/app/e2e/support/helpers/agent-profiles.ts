@@ -147,6 +147,20 @@ export async function openAgentProfileSettings(page: Page): Promise<void> {
   await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
 }
 
+/** Reach agent profiles on a compact viewport so Open project -> Settings -> Agent profiles are pushed. */
+export async function openCompactAgentProfileSettings(page: Page): Promise<void> {
+  const serverId = getServerId();
+  await gotoAppShell(page);
+  await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  const settingsButton = page.locator('[data-testid="sidebar-settings"]:visible').first();
+  await expect(settingsButton).toBeVisible({ timeout: 30_000 });
+  await settingsButton.click();
+  await expect(page).toHaveURL(/\/settings(?:\?|$)/, { timeout: 30_000 });
+  await page.getByRole("button", { name: "Agent profiles", exact: true }).click();
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "agent-profiles"));
+  await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
+}
+
 export async function expectNoAgentProfiles(page: Page): Promise<void> {
   const card = page.getByTestId("agent-profiles-card");
   await expect(card.getByTestId("agent-profiles-empty")).toBeVisible();
@@ -479,6 +493,24 @@ export async function browserBackWithConfirm(
     return message;
   });
   await page.goBack();
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
+}
+
+export async function browserHistoryJumpWithConfirm(
+  page: Page,
+  delta: number,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.evaluate((step) => window.history.go(step), delta);
   expect(await dialogMessage).toMatch(/discard|unsaved/i);
 }
 

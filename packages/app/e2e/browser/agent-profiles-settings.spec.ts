@@ -1,6 +1,7 @@
 import { expect, test } from "../support/fixtures";
 import {
   browserBackWithConfirm,
+  browserHistoryJumpWithConfirm,
   createAgentProfile,
   createAgentProfileFromEmptyState,
   duplicateOpenAgentProfileWithConfirm,
@@ -18,6 +19,7 @@ import {
   moveAgentProfileUp,
   openAgentProfileEditor,
   openAgentProfileSettings,
+  openCompactAgentProfileSettings,
   openCreateAgentProfileEditor,
   removeAgentProfile,
   saveOpenAgentProfile,
@@ -262,7 +264,7 @@ test.describe("Agent profiles settings", () => {
         const profilesUrl = page.url();
 
         await browserBackWithConfirm(page, "dismiss");
-        expect(page.url()).toBe(profilesUrl);
+        await expect(page).toHaveURL(profilesUrl, { timeout: 15_000 });
         await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
         await expectAgentProfileNameDraft(page, "Unsaved browser back edit");
       });
@@ -289,6 +291,51 @@ test.describe("Agent profiles settings", () => {
         await browserBackWithConfirm(page, "accept");
         await expect(page).not.toHaveURL(profilesUrl, { timeout: 15_000 });
         await expect(page.getByTestId("agent-profile-drawer")).toHaveCount(0, { timeout: 30_000 });
+      });
+    } finally {
+      await seed.restore();
+    }
+  });
+
+  test("canceling a multi-step Back jump keeps intervening browser history and confirming reaches the destination", async ({
+    page,
+  }) => {
+    const seed = await seedAgentProfiles([
+      {
+        id: "agent_profile_e2e_multistep",
+        name: "UI work",
+        provider: "mock",
+        model: "one-minute-stream",
+      },
+    ]);
+
+    try {
+      // Narrow viewport pushes Open project -> Settings -> Agent profiles onto history.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openCompactAgentProfileSettings(page);
+      const profilesUrl = page.url();
+
+      await openAgentProfileEditor(page, "UI work");
+      await fillAgentProfileName(page, "Unsaved multi-step edit");
+
+      await test.step("canceling a two-step Back jump keeps Agent profiles, draft, and Settings in history", async () => {
+        await browserHistoryJumpWithConfirm(page, -2, "dismiss");
+        await expect(page).toHaveURL(profilesUrl, { timeout: 15_000 });
+        await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible();
+        await expectAgentProfileNameDraft(page, "Unsaved multi-step edit");
+      });
+
+      await test.step("confirming a two-step Back jump lands directly on the selected destination", async () => {
+        await browserHistoryJumpWithConfirm(page, -2, "accept");
+        await expect(page).toHaveURL(/\/open-project/, { timeout: 15_000 });
+        await expect(page.getByTestId("agent-profile-edit-modal")).toHaveCount(0, {
+          timeout: 30_000,
+        });
+      });
+
+      await test.step("forward navigation confirms the intervening Settings entry survived", async () => {
+        await page.goForward();
+        await expect(page).toHaveURL(/\/settings(?:\?|$)/, { timeout: 15_000 });
       });
     } finally {
       await seed.restore();
