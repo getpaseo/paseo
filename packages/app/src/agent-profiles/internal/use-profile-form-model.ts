@@ -37,8 +37,6 @@ export function useAgentProfileFormState(model: AgentProfileFormModel): AgentPro
 export interface AgentProfileFormSession {
   model: AgentProfileFormModel;
   state: AgentProfileFormState;
-  initialName: string;
-  initialNotes: string;
   isDirty: boolean;
   save: () => Promise<boolean>;
 }
@@ -157,8 +155,6 @@ export function useAgentProfileFormSession({
   useAgentProfileFormCatalog({ serverId, model });
   useAgentProfileFormControls({ serverId, model, state });
 
-  const initialName = seed?.name ?? profile?.name ?? "";
-  const initialNotes = profile?.notes ?? "";
   const isDirty = useMemo(
     () => computeIsDirty(mode, state, profile, seed),
     [mode, profile, seed, state],
@@ -183,8 +179,5 @@ export function useAgentProfileFormSession({
     }
   }, [model, onSave, onSaved]);
 
-  return useMemo(
-    () => ({ model, state, initialName, initialNotes, isDirty, save }),
-    [initialName, initialNotes, isDirty, model, save, state],
-  );
+  return useMemo(() => ({ model, state, isDirty, save }), [isDirty, model, save, state]);
 }

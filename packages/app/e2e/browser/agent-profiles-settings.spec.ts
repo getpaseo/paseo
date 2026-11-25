@@ -1,19 +1,28 @@
-import { test } from "../support/fixtures";
+import { expect, test } from "../support/fixtures";
 import {
   createAgentProfile,
   createAgentProfileFromEmptyState,
+  duplicateOpenAgentProfileWithConfirm,
   editAgentProfile,
   expectAgentProfile,
   expectAgentProfileForm,
+  expectAgentProfileNameDraft,
+  expectAgentProfileNotesDraft,
   expectAgentProfileOrder,
   expectAgentProfileTagsGone,
   expectHostAgentProfiles,
   expectNoAgentProfiles,
+  fillAgentProfileName,
+  fillAgentProfileNotes,
   moveAgentProfileUp,
+  openAgentProfileEditor,
   openAgentProfileSettings,
+  openCreateAgentProfileEditor,
   removeAgentProfile,
+  saveOpenAgentProfile,
   seedAgentProfiles,
   stageLegacyFavoritesForHostMigration,
+  toggleAgentProfileCustomize,
 } from "../support/helpers/agent-profiles";
 
 const MOCK_PROVIDER_LABEL = "Mock Load Test";
@@ -120,6 +129,87 @@ test.describe("Agent profiles settings", () => {
       await test.step("removing the last profile returns the empty state", async () => {
         await removeAgentProfile(page, "Deep review");
         await expectNoAgentProfiles(page);
+      });
+    } finally {
+      await seed.restore();
+    }
+  });
+
+  test("remounting the profile form keeps draft text across resize and collapsible toggles", async ({
+    page,
+  }) => {
+    const seed = await seedAgentProfiles([
+      {
+        id: "agent_profile_e2e_remount",
+        name: "Original profile",
+        provider: "mock",
+        model: "one-minute-stream",
+        notes: "Original note",
+      },
+    ]);
+
+    try {
+      await page.setViewportSize({ width: 1680, height: 900 });
+      await openAgentProfileSettings(page);
+
+      await test.step("drawer-to-modal resize keeps the edited name and saves it", async () => {
+        await openAgentProfileEditor(page, "Original profile");
+        await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
+        await fillAgentProfileName(page, "Draft rename");
+
+        await page.setViewportSize({ width: 1000, height: 900 });
+        await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible({ timeout: 30_000 });
+        await expectAgentProfileNameDraft(page, "Draft rename");
+
+        await saveOpenAgentProfile(page);
+        await expectAgentProfile(page, {
+          name: "Draft rename",
+          tags: [MOCK_PROVIDER_LABEL, "One minute stream"],
+          notes: "Original note",
+        });
+      });
+
+      await test.step("collapsing and reopening advanced settings keeps the draft note", async () => {
+        await openCreateAgentProfileEditor(page);
+        await expect(page.getByTestId("agent-profile-edit-modal")).toBeVisible({ timeout: 30_000 });
+        await toggleAgentProfileCustomize(page);
+        await fillAgentProfileNotes(page, "Draft routing note");
+        await toggleAgentProfileCustomize(page);
+        await toggleAgentProfileCustomize(page);
+        await expectAgentProfileNotesDraft(page, "Draft routing note");
+      });
+    } finally {
+      await seed.restore();
+    }
+  });
+
+  test("duplicating while editing asks before discarding unsaved changes", async ({ page }) => {
+    const seed = await seedAgentProfiles([
+      {
+        id: "agent_profile_e2e_duplicate",
+        name: "UI work",
+        provider: "mock",
+        model: "one-minute-stream",
+      },
+    ]);
+
+    try {
+      await page.setViewportSize({ width: 1680, height: 900 });
+      await openAgentProfileSettings(page);
+      await openAgentProfileEditor(page, "UI work");
+      await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
+      await fillAgentProfileName(page, "Draft name");
+
+      await test.step("dismissing the prompt keeps the draft and does not create a copy", async () => {
+        await duplicateOpenAgentProfileWithConfirm(page, "dismiss");
+        await expectAgentProfileNameDraft(page, "Draft name");
+        await expectAgentProfileOrder(page, ["UI work"]);
+      });
+
+      await test.step("accepting the prompt creates and opens the copy", async () => {
+        await duplicateOpenAgentProfileWithConfirm(page, "accept");
+        await expectAgentProfileOrder(page, ["UI work", "UI work (copy)"]);
+        await expectAgentProfileNameDraft(page, "UI work (copy)");
       });
     } finally {
       await seed.restore();

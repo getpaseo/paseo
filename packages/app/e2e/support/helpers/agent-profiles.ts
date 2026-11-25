@@ -156,7 +156,9 @@ export async function expectNoAgentProfiles(page: Page): Promise<void> {
 // ─── Settings: the profile list ────────────────────────────────────────────
 
 export function agentProfileRow(page: Page, name: string): Locator {
-  return page.locator('[data-testid^="agent-profile-row-"]').filter({ hasText: name });
+  return page
+    .locator('[data-testid^="agent-profile-row-"]')
+    .filter({ has: page.getByText(name, { exact: true }) });
 }
 
 export async function expectAgentProfile(
@@ -360,6 +362,62 @@ export async function editAgentProfile(
   await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
   await fillAgentProfileForm(page, changes);
   await saveAgentProfile(page);
+}
+
+export async function openAgentProfileEditor(page: Page, name: string): Promise<void> {
+  await agentProfileRow(page, name).click();
+  await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
+}
+
+export async function openCreateAgentProfileEditor(page: Page): Promise<void> {
+  await page.getByTestId("agent-profiles-add-button").click();
+  await expect(editSurface(page)).toBeVisible({ timeout: 30_000 });
+}
+
+export async function fillAgentProfileName(page: Page, name: string): Promise<void> {
+  await editSurface(page).getByRole("textbox", { name: "Name", exact: true }).fill(name);
+}
+
+export async function expectAgentProfileNameDraft(page: Page, name: string): Promise<void> {
+  await expect(editSurface(page).getByRole("textbox", { name: "Name", exact: true })).toHaveValue(
+    name,
+  );
+}
+
+export async function toggleAgentProfileCustomize(page: Page): Promise<void> {
+  await editSurface(page).getByTestId("agent-profile-customize-toggle").click();
+}
+
+export async function fillAgentProfileNotes(page: Page, notes: string): Promise<void> {
+  await editSurface(page).getByRole("textbox", { name: "When to use", exact: true }).fill(notes);
+}
+
+export async function expectAgentProfileNotesDraft(page: Page, notes: string): Promise<void> {
+  await expect(
+    editSurface(page).getByRole("textbox", { name: "When to use", exact: true }),
+  ).toHaveValue(notes);
+}
+
+export async function saveOpenAgentProfile(page: Page): Promise<void> {
+  await saveAgentProfile(page);
+}
+
+export async function duplicateOpenAgentProfileWithConfirm(
+  page: Page,
+  decision: "accept" | "dismiss",
+): Promise<void> {
+  const dialogMessage = page.waitForEvent("dialog").then(async (dialog) => {
+    const message = dialog.message();
+    if (decision === "accept") {
+      await dialog.accept();
+    } else {
+      await dialog.dismiss();
+    }
+    return message;
+  });
+  await page.getByTestId("agent-profile-drawer-more").click();
+  await page.getByTestId("agent-profile-drawer-duplicate").click();
+  expect(await dialogMessage).toMatch(/discard|unsaved/i);
 }
 
 /** Opens the inspector for a profile purely to read back what it stored. */

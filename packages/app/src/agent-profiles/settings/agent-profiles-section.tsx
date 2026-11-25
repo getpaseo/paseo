@@ -32,7 +32,11 @@ import { WindowChromeRegion } from "@/utils/desktop-window";
 import { generateAgentProfileId } from "../internal/profile-id";
 import type { AgentProfileValue } from "../internal/profile-form-model";
 import { buildAgentProfileTags } from "../internal/profile-summary";
-import { useAgentProfiles } from "../internal/use-agent-profiles";
+import {
+  removeAgentProfileById,
+  useAgentProfiles,
+  type AgentProfileListUpdater,
+} from "../internal/use-agent-profiles";
 import { useAgentProfileFormSession } from "../internal/use-profile-form-model";
 import { AGENT_PROFILE_DRAWER_WIDTH, AgentProfileDrawer } from "./agent-profile-drawer";
 import { AgentProfileEditModal } from "./agent-profile-edit-modal";
@@ -221,41 +225,59 @@ function RosterCardContent({
   );
 }
 
+function duplicateAgentProfileById(
+  current: readonly AgentProfile[],
+  id: string,
+  formatCopyName: (name: string) => string,
+): { next: AgentProfile[]; copyId: string } | null {
+  const index = current.findIndex((entry) => entry.id === id);
+  if (index < 0) {
+    return null;
+  }
+  const source = current[index];
+  const copy: AgentProfile = {
+    ...source,
+    id: generateAgentProfileId(),
+    name: formatCopyName(source.name),
+  };
+  const next = [...current];
+  next.splice(index + 1, 0, copy);
+  return { next, copyId: copy.id };
+}
+
 function useAgentProfileRosterActions({
   profiles,
-  saveProfiles,
+  mutateProfiles,
+  confirmDiscardIfDirty,
   editTarget,
   setEditTarget,
 }: {
   profiles: AgentProfile[] | null | undefined;
-  saveProfiles: (next: AgentProfile[]) => Promise<void>;
+  mutateProfiles: (updater: AgentProfileListUpdater) => Promise<AgentProfile[] | null>;
+  confirmDiscardIfDirty: () => Promise<boolean>;
   editTarget: EditTarget | null;
   setEditTarget: Dispatch<SetStateAction<EditTarget | null>>;
 }) {
   const { t } = useTranslation();
-  const profilesRef = useRef(profiles);
-  useEffect(() => {
-    profilesRef.current = profiles;
-  }, [profiles]);
 
   const handleSave = useCallback(
     async (value: AgentProfileValue) => {
-      const current = profilesRef.current ?? [];
       const editingId = editTarget?.mode === "edit" ? editTarget.profileId : null;
       // The edited profile is replaced, not merged: `value` omits cleared fields.
-      const next: AgentProfile[] = editingId
-        ? current.map((entry) => (entry.id === editingId ? { id: entry.id, ...value } : entry))
-        : [...current, { id: generateAgentProfileId(), ...value }];
-      await saveProfiles(next);
+      await mutateProfiles((current) =>
+        editingId
+          ? current.map((entry) => (entry.id === editingId ? { id: entry.id, ...value } : entry))
+          : [...current, { id: generateAgentProfileId(), ...value }],
+      );
     },
-    [editTarget, saveProfiles],
+    [editTarget, mutateProfiles],
   );
 
-  const persistOrder = useCallback(
-    async (next: AgentProfile[]): Promise<boolean> => {
+  const persistMutation = useCallback(
+    async (updater: AgentProfileListUpdater): Promise<boolean> => {
       try {
-        await saveProfiles(next);
-        return true;
+        const written = await mutateProfiles(updater);
+        return written !== null;
       } catch (error) {
         Alert.alert(
           t("common.errors.unableToSave"),
@@ -264,33 +286,46 @@ function useAgentProfileRosterActions({
         return false;
       }
     },
-    [saveProfiles, t],
+    [mutateProfiles, t],
   );
 
   const handleDragEnd = useCallback(
-    (next: AgentProfile[]) => {
-      void persistOrder(next);
+    (reordered: AgentProfile[]) => {
+      const orderedIds = reordered.map((entry) => entry.id);
+      void persistMutation((current) => {
+        const byId = new Map(current.map((entry) => [entry.id, entry]));
+        const next: AgentProfile[] = [];
+        for (const id of orderedIds) {
+          const entry = byId.get(id);
+          if (entry) {
+            next.push(entry);
+            byId.delete(id);
+          }
+        }
+        for (const remaining of byId.values()) {
+          next.push(remaining);
+        }
+        return next;
+      });
     },
-    [persistOrder],
+    [persistMutation],
   );
 
   const reorderByOffset = useCallback(
     (id: string, offset: -1 | 1) => {
-      const current = profilesRef.current;
-      if (!current) {
-        return;
-      }
-      const index = current.findIndex((entry) => entry.id === id);
-      const target = index + offset;
-      if (index < 0 || target < 0 || target >= current.length) {
-        return;
-      }
-      const next = [...current];
-      const [item] = next.splice(index, 1);
-      next.splice(target, 0, item);
-      void persistOrder(next);
+      void persistMutation((current) => {
+        const index = current.findIndex((entry) => entry.id === id);
+        const target = index + offset;
+        if (index < 0 || target < 0 || target >= current.length) {
+          return null;
+        }
+        const next = [...current];
+        const [item] = next.splice(index, 1);
+        next.splice(target, 0, item);
+        return next;
+      });
     },
-    [persistOrder],
+    [persistMutation],
   );
 
   const handleMoveUp = useCallback((id: string) => reorderByOffset(id, -1), [reorderByOffset]);
@@ -298,82 +333,73 @@ function useAgentProfileRosterActions({
 
   const handleMoveToTop = useCallback(
     (id: string) => {
-      const current = profilesRef.current;
-      if (!current) {
-        return;
-      }
-      const index = current.findIndex((entry) => entry.id === id);
-      if (index <= 0) {
-        return;
-      }
-      const next = [...current];
-      const [item] = next.splice(index, 1);
-      next.unshift(item);
-      void persistOrder(next);
+      void persistMutation((current) => {
+        const index = current.findIndex((entry) => entry.id === id);
+        if (index <= 0) {
+          return null;
+        }
+        const next = [...current];
+        const [item] = next.splice(index, 1);
+        next.unshift(item);
+        return next;
+      });
     },
-    [persistOrder],
+    [persistMutation],
   );
 
   const handleDuplicate = useCallback(
     (id: string) => {
-      const current = profilesRef.current;
-      if (!current) {
-        return;
-      }
-      const index = current.findIndex((entry) => entry.id === id);
-      if (index < 0) {
-        return;
-      }
-      const source = current[index];
-      const copy: AgentProfile = {
-        ...source,
-        id: generateAgentProfileId(),
-        name: t("settings.host.agentProfiles.copyName", { name: source.name }),
-      };
-      const next = [...current];
-      next.splice(index + 1, 0, copy);
-      void persistOrder(next).then((saved) => {
-        if (saved) {
-          setEditTarget({ mode: "edit", profileId: copy.id });
+      const formatCopyName = (name: string) => t("settings.host.agentProfiles.copyName", { name });
+      const duplicate = async () => {
+        const canProceed = await confirmDiscardIfDirty();
+        if (!canProceed) {
+          return;
         }
-        return;
-      });
+        let copyId: string | null = null;
+        const saved = await persistMutation((current) => {
+          const result = duplicateAgentProfileById(current, id, formatCopyName);
+          if (!result) {
+            return null;
+          }
+          copyId = result.copyId;
+          return result.next;
+        });
+        if (saved && copyId) {
+          setEditTarget({ mode: "edit", profileId: copyId });
+        }
+      };
+      void duplicate();
     },
-    [persistOrder, setEditTarget, t],
+    [confirmDiscardIfDirty, persistMutation, setEditTarget, t],
   );
 
   const handleRemove = useCallback(
     (id: string) => {
-      const profile = profilesRef.current?.find((entry) => entry.id === id);
+      const profile = profiles?.find((entry) => entry.id === id);
       if (!profile) {
         return;
       }
-      void confirmDialog({
-        title: t("settings.host.agentProfiles.removeConfirmTitle"),
-        message: t("settings.host.agentProfiles.removeConfirmMessage", { name: profile.name }),
-        confirmLabel: t("settings.host.agentProfiles.remove"),
-        cancelLabel: t("common.actions.cancel"),
-        destructive: true,
-      }).then(async (confirmed) => {
-        const latest = profilesRef.current;
-        if (!confirmed || !latest) {
+      const confirmAndRemove = async () => {
+        const confirmed = await confirmDialog({
+          title: t("settings.host.agentProfiles.removeConfirmTitle"),
+          message: t("settings.host.agentProfiles.removeConfirmMessage", { name: profile.name }),
+          confirmLabel: t("settings.host.agentProfiles.remove"),
+          cancelLabel: t("common.actions.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) {
           return;
         }
-        try {
-          await saveProfiles(latest.filter((entry) => entry.id !== id));
+        const removed = await persistMutation((current) => removeAgentProfileById(current, id));
+        if (removed) {
           setEditTarget((current) =>
             current?.mode === "edit" && current.profileId === id ? null : current,
           );
-        } catch (error) {
-          Alert.alert(
-            t("common.errors.unableToSave"),
-            error instanceof Error ? error.message : String(error),
-          );
         }
-        return;
-      });
+      };
+      void confirmAndRemove();
     },
-    [saveProfiles, setEditTarget, t],
+    [persistMutation, profiles, setEditTarget, t],
   );
 
   return {
@@ -558,7 +584,7 @@ export function AgentProfilesPage({
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const { profiles, isSupported, saveProfiles } = useAgentProfiles(serverId);
+  const { profiles, isSupported, mutateProfiles } = useAgentProfiles(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -589,28 +615,37 @@ export function AgentProfilesPage({
     return profiles.findIndex((entry) => entry.id === activeProfile.id);
   }, [activeProfile, profiles]);
 
+  const confirmDiscardIfDirty = useCallback(async (): Promise<boolean> => {
+    if (!isDirtyRef.current) {
+      return true;
+    }
+    const confirmed = await confirmDialog({
+      title: t("settings.host.agentProfiles.discardTitle"),
+      message: t("settings.host.agentProfiles.discardMessage"),
+      confirmLabel: t("settings.host.agentProfiles.discardConfirm"),
+      cancelLabel: t("common.actions.cancel"),
+      destructive: true,
+    });
+    if (confirmed) {
+      isDirtyRef.current = false;
+    }
+    return confirmed;
+  }, [t]);
+
   const transitionTarget = useCallback(
     (next: EditTarget | null) => {
       if (!isDirtyRef.current) {
         setEditTarget(next);
         return;
       }
-      const confirmDiscard = async () => {
-        const confirmed = await confirmDialog({
-          title: t("settings.host.agentProfiles.discardTitle"),
-          message: t("settings.host.agentProfiles.discardMessage"),
-          confirmLabel: t("settings.host.agentProfiles.discardConfirm"),
-          cancelLabel: t("common.actions.cancel"),
-          destructive: true,
-        });
-        if (confirmed) {
-          isDirtyRef.current = false;
+      const confirmAndTransition = async () => {
+        if (await confirmDiscardIfDirty()) {
           setEditTarget(next);
         }
       };
-      void confirmDiscard();
+      void confirmAndTransition();
     },
-    [t],
+    [confirmDiscardIfDirty],
   );
 
   const handleAddOpen = useCallback(() => transitionTarget({ mode: "create" }), [transitionTarget]);
@@ -660,7 +695,8 @@ export function AgentProfilesPage({
     handleRemove,
   } = useAgentProfileRosterActions({
     profiles,
-    saveProfiles,
+    mutateProfiles,
+    confirmDiscardIfDirty,
     editTarget,
     setEditTarget,
   });

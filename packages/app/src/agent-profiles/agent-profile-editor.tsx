@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Alert, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
@@ -15,7 +15,7 @@ import {
   type AgentProfileSeed,
   type AgentProfileValue,
 } from "./internal/profile-form-model";
-import { useAgentProfiles } from "./internal/use-agent-profiles";
+import { removeAgentProfileById, useAgentProfiles } from "./internal/use-agent-profiles";
 
 const PROFILE_SAVED_TOAST_DURATION_MS = 6000;
 
@@ -90,39 +90,30 @@ type EditorRequest =
 export function useAgentProfileEditor(serverId: string | null): AgentProfileEditorControls {
   const { t } = useTranslation();
   const toast = useToast();
-  const { profiles, saveProfiles } = useAgentProfiles(serverId);
+  const { profiles, mutateProfiles } = useAgentProfiles(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const [request, setRequest] = useState<EditorRequest | null>(null);
-  const profilesRef = useRef(profiles);
-  useEffect(() => {
-    profilesRef.current = profiles;
-  }, [profiles]);
 
   const undoCreate = useCallback(
     async (profileId: string): Promise<void> => {
-      const latest = profilesRef.current;
-      if (!latest) {
-        return;
-      }
       try {
-        await saveProfiles(latest.filter((entry) => entry.id !== profileId));
+        await mutateProfiles((current) => removeAgentProfileById(current, profileId));
       } catch (error) {
         toast.error(toErrorMessage(error));
       }
     },
-    [saveProfiles, toast],
+    [mutateProfiles, toast],
   );
 
   const quickCreateFromModel = useCallback(
     async (seed: AgentProfileSeed): Promise<AgentProfile | null> => {
-      const latest = profilesRef.current;
-      if (!latest) {
-        return null;
-      }
       const value = buildInstantAgentProfile({ seed, entries });
       const created: AgentProfile = { id: generateAgentProfileId(), ...value };
       try {
-        await saveProfiles([...latest, created]);
+        const written = await mutateProfiles((current) => [...current, created]);
+        if (!written) {
+          return null;
+        }
         let dismiss: (() => void) | null = null;
         dismiss = toast.show(
           createProfileSavedToast({
@@ -148,7 +139,7 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
         return null;
       }
     },
-    [entries, saveProfiles, toast, undoCreate],
+    [entries, mutateProfiles, toast, undoCreate],
   );
 
   const openCreateFromModel = useCallback((seed: AgentProfileSeed) => {
@@ -170,15 +161,18 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
 
   const handleSave = useCallback(
     async (value: AgentProfileValue) => {
-      const current = profilesRef.current ?? [];
       const editing = request?.mode === "edit" ? request.profile : undefined;
-      const next: AgentProfile[] = editing
-        ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
-        : [...current, { id: generateAgentProfileId(), ...value }];
-      await saveProfiles(next);
+      const written = await mutateProfiles((current) =>
+        editing
+          ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
+          : [...current, { id: generateAgentProfileId(), ...value }],
+      );
+      if (!written) {
+        return;
+      }
       setRequest(null);
     },
-    [request, saveProfiles],
+    [mutateProfiles, request],
   );
 
   const handleRemove = useCallback(
@@ -187,29 +181,29 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
       if (!profile) {
         return;
       }
-      void confirmDialog({
-        title: t("settings.host.agentProfiles.removeConfirmTitle"),
-        message: t("settings.host.agentProfiles.removeConfirmMessage", { name: profile.name }),
-        confirmLabel: t("settings.host.agentProfiles.remove"),
-        cancelLabel: t("common.actions.cancel"),
-        destructive: true,
-      }).then(async (confirmed) => {
-        const latest = profilesRef.current;
-        if (!confirmed || !latest) {
+      const confirmAndRemove = async () => {
+        const confirmed = await confirmDialog({
+          title: t("settings.host.agentProfiles.removeConfirmTitle"),
+          message: t("settings.host.agentProfiles.removeConfirmMessage", { name: profile.name }),
+          confirmLabel: t("settings.host.agentProfiles.remove"),
+          cancelLabel: t("common.actions.cancel"),
+          destructive: true,
+        });
+        if (!confirmed) {
           return;
         }
         try {
-          await saveProfiles(latest.filter((entry) => entry.id !== profileId));
+          await mutateProfiles((current) => removeAgentProfileById(current, profileId));
         } catch (error) {
           Alert.alert(
             t("common.errors.unableToSave"),
             error instanceof Error ? error.message : String(error),
           );
         }
-        return;
-      });
+      };
+      void confirmAndRemove();
     },
-    [profiles, saveProfiles, t],
+    [mutateProfiles, profiles, t],
   );
 
   const element = useMemo(

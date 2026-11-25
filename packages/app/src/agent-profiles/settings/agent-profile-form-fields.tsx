@@ -64,8 +64,6 @@ export interface AgentProfileFormFieldsProps {
   serverId: string;
   model: AgentProfileFormModel;
   state: AgentProfileFormState;
-  initialName: string;
-  initialNotes: string;
   controlSize?: ControlSize;
   /** Embeds the icon+color picker beside the Name input (used in sheets; drawer places it in its hero). */
   showInlineIcon?: boolean;
@@ -194,7 +192,6 @@ function AgentProfileControlRow({
 function AgentProfileAdvancedFields({
   model,
   state,
-  initialNotes,
   controlSize,
   onModeChange,
   onThinkingSelectChange,
@@ -202,7 +199,6 @@ function AgentProfileAdvancedFields({
 }: {
   model: AgentProfileFormModel;
   state: AgentProfileFormState;
-  initialNotes: string;
   controlSize: ControlSize;
   onModeChange: (value: string, display: SelectFieldDisplay) => void;
   onThinkingSelectChange: (value: string, display: SelectFieldDisplay) => void;
@@ -256,7 +252,7 @@ function AgentProfileAdvancedFields({
         testID="agent-profile-notes-field"
       >
         <FormTextInput
-          initialValue={initialNotes}
+          initialValue={state.notes}
           onChangeText={model.setNotes}
           placeholder={t("settings.host.agentProfiles.notesPlaceholder")}
           multiline
@@ -305,8 +301,6 @@ export function AgentProfileFormFields({
   serverId,
   model,
   state,
-  initialName,
-  initialNotes,
   controlSize = "md",
   showInlineIcon = true,
   collapsibleDefaults = false,
@@ -462,7 +456,6 @@ export function AgentProfileFormFields({
     <AgentProfileAdvancedFields
       model={model}
       state={state}
-      initialNotes={initialNotes}
       controlSize={controlSize}
       onModeChange={handleModeChange}
       onThinkingSelectChange={handleThinkingSelectChange}
@@ -506,7 +499,7 @@ export function AgentProfileFormFields({
           <View style={styles.nameInputWrap}>
             <FormTextInput
               ref={nameInputRef}
-              initialValue={initialName}
+              initialValue={state.name}
               onChangeText={model.setName}
               placeholder={t("settings.host.agentProfiles.namePlaceholder")}
               autoCapitalize="none"

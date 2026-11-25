@@ -294,7 +294,7 @@ function AgentProfileDrawerContent({
   onRemove,
 }: AgentProfileDrawerProps & { session: AgentProfileFormSession }): ReactElement {
   const { t } = useTranslation();
-  const { model, state, initialName, initialNotes, save } = session;
+  const { model, state, save } = session;
   const drawerLayer = useOverlayLayer("floating");
 
   const handleOverlayKeyDown = useCallback(
@@ -379,8 +379,6 @@ function AgentProfileDrawerContent({
                 serverId={serverId}
                 model={model}
                 state={state}
-                initialName={initialName}
-                initialNotes={initialNotes}
                 showInlineIcon={false}
                 collapsibleDefaults={false}
               />

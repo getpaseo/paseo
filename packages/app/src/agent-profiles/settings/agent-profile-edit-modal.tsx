@@ -138,7 +138,7 @@ function AgentProfileEditModalContent({
   onDismiss: () => void;
 }): ReactElement {
   const { t } = useTranslation();
-  const { model, state, initialName, initialNotes, save } = session;
+  const { model, state, save } = session;
 
   const sheetHeader = useMemo<SheetHeader>(
     () => ({
@@ -232,8 +232,6 @@ function AgentProfileEditModalContent({
         serverId={serverId}
         model={model}
         state={state}
-        initialName={initialName}
-        initialNotes={initialNotes}
         collapsibleDefaults={collapsibleDefaults ?? mode === "create"}
       />
     </AdaptiveModalSheet>
