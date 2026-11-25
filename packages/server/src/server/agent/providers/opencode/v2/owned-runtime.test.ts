@@ -96,7 +96,9 @@ test("a wrapped caller gets its own helper behind the wrap, and other callers ke
     launcher,
     `
     const [, , ...argv] = process.argv;
-    require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify(argv));
+    // A launcher that needs its profile from the open hook's environment.
+    if (!process.env.SANDBOX_PROFILE) process.exit(17);
+    require('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv, profile: process.env.SANDBOX_PROFILE }));
     const child = require('node:child_process').spawn(argv[1], argv.slice(2), { stdio: 'inherit' });
     child.on('exit', (code) => process.exit(code ?? 1));
   `,
@@ -108,18 +110,20 @@ test("a wrapped caller gets its own helper behind the wrap, and other callers ke
   });
   try {
     const shared = await runtime.acquire();
-    const wrapped = await runtime.acquire({ wrap: [process.execPath, launcher, "--profile"] });
+    const wrapped = await runtime.acquire({
+      dedicated: {
+        wrap: [process.execPath, launcher, "--profile"],
+        env: { SANDBOX_PROFILE: "agent" },
+      },
+    });
     const sharedAgain = await runtime.acquire();
 
     const sharedPid = (await shared.client.server.info()).pid;
     expect((await wrapped.client.server.info()).pid).not.toBe(sharedPid);
     expect((await sharedAgain.client.server.info()).pid).toBe(sharedPid);
-    expect(JSON.parse(await readFile(record, "utf8")).slice(0, 4)).toEqual([
-      "--profile",
-      process.execPath,
-      script,
-      "serve",
-    ]);
+    const launched = JSON.parse(await readFile(record, "utf8"));
+    expect(launched.profile).toBe("agent");
+    expect(launched.argv.slice(0, 4)).toEqual(["--profile", process.execPath, script, "serve"]);
 
     await wrapped.release();
     await expect(wrapped.exited).resolves.toBeInstanceOf(Error);
@@ -137,9 +141,9 @@ test("refuses to wrap a configured existing server", async () => {
     selection: { kind: "explicit", server: { url: "http://127.0.0.1:1" } },
   });
   try {
-    await expect(runtime.acquire({ wrap: ["/opt/sandbox/bin/run"] })).rejects.toThrow(
-      "cannot start it behind a launch wrap",
-    );
+    await expect(
+      runtime.acquire({ dedicated: { wrap: ["/opt/sandbox/bin/run"], env: {} } }),
+    ).rejects.toThrow("cannot start it behind a launch wrap");
   } finally {
     await runtime.shutdown();
   }

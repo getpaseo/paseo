@@ -60,11 +60,17 @@ export interface V2RuntimeOptions {
   bridge?: OpenCodeBridge;
 }
 
+/** A server started for one caller alone, behind its wrap and with its launch environment. */
+export interface V2DedicatedLaunch {
+  wrap: LaunchWrap;
+  env: Record<string, string> | undefined;
+}
+
 export interface V2RuntimeAcquireOptions {
   fresh?: boolean;
   signal?: AbortSignal;
-  /** Start a server for this caller alone, behind the wrap. Other callers never share it. */
-  wrap?: LaunchWrap;
+  /** Start a server for this caller alone. Other callers never share it. */
+  dedicated?: V2DedicatedLaunch;
 }
 
 // The runtime owns a credential for each subprocess; sessions only receive its authenticated client.
@@ -95,8 +101,8 @@ export class V2Runtime {
     this.assertBridgePort();
     const selection = await raceProviderRefreshAbort(input.signal, this.selection);
     if (selection.kind === "explicit") this.assertExplicitConfiguration();
-    const pending = input.wrap
-      ? this.startTracked(input.wrap)
+    const pending = input.dedicated
+      ? this.startTracked(input.dedicated)
       : (this.current ??= this.startTracked());
     let generation: Generation;
     try {
@@ -183,8 +189,8 @@ export class V2Runtime {
     this.current = null;
   }
 
-  private startTracked(wrap?: LaunchWrap): Promise<Generation> {
-    const pending = this.start(wrap);
+  private startTracked(dedicated?: V2DedicatedLaunch): Promise<Generation> {
+    const pending = this.start(dedicated);
     this.starts.add(pending);
     void pending.then(
       (generation) =>
@@ -201,14 +207,14 @@ export class V2Runtime {
     return pending;
   }
 
-  private async start(wrap: LaunchWrap | undefined): Promise<Generation> {
+  private async start(dedicated: V2DedicatedLaunch | undefined): Promise<Generation> {
     const selection = await this.selection;
-    if (wrap && selection.kind === "explicit")
+    if (dedicated && selection.kind === "explicit")
       throw new Error(
         "OpenCode is configured to use an existing server, so Paseo cannot start it behind a launch wrap",
       );
     // A discovered server is only a preference; a wrapped caller gets a server Paseo starts.
-    if (selection.kind !== "owned" && !wrap) {
+    if (selection.kind !== "owned" && !dedicated) {
       const generation: Generation = {
         ...(await connectSharedService(selection, this.options)),
         users: 0,
@@ -229,6 +235,7 @@ export class V2Runtime {
     const configured = {
       ...(inheritedConfig ? { OPENCODE_CONFIG_CONTENT: inheritedConfig } : {}),
       ...settings?.env,
+      ...dedicated?.env,
     };
     const bridge = this.options.bridge;
     const plugin = bridge
@@ -249,7 +256,7 @@ export class V2Runtime {
       cwd,
       detached: globalThis.process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
-      wrap,
+      wrap: dedicated?.wrap,
       ...createProviderEnvSpec({
         runtimeSettings: settings,
         overlays: [{ ...decorated, OPENCODE_PASSWORD: password }],

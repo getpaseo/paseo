@@ -36,10 +36,17 @@ import { importSessionFromPersistence } from "../../../provider-session-import.j
 
 import type { OpenCodeBridge } from "../bridge.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
-import { V2Runtime, type V2Connection } from "./runtime.js";
+import { V2Runtime, type V2Connection, type V2DedicatedLaunch } from "./runtime.js";
 import type { OpenCodeServiceSelection } from "./service-selection.js";
 import { modelRef, modesFromV2, modelsFromV2 } from "./mapping.js";
 
+/**
+ * A wrapped launch gets a server of its own, started behind the wrap with the launch's environment,
+ * so it never shares a server that runs outside its wrap.
+ */
+function dedicatedLaunch(launch: AgentLaunchContext | undefined): V2DedicatedLaunch | undefined {
+  return launch?.wrap ? { wrap: launch.wrap, env: launch.env } : undefined;
+}
 interface ResumeTarget {
   handle: AgentPersistenceHandle;
   overrides: Partial<AgentSessionConfig> | undefined;
@@ -122,7 +129,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const prepared = await this.prepareLaunch(config, launch, false);
     try {
-      const connection = await this.runtime.acquire({ wrap: launch?.wrap });
+      const connection = await this.runtime.acquire({ dedicated: dedicatedLaunch(launch) });
       try {
         const info = await connection.client.session.create({
           location: { directory: config.cwd },
@@ -159,7 +166,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
         const live = launch?.wrap
           ? undefined
           : this.connections.get(handle.nativeHandle ?? handle.sessionId)?.retain();
-        return live ?? (await this.runtime.acquire({ wrap: launch?.wrap }));
+        return live ?? (await this.runtime.acquire({ dedicated: dedicatedLaunch(launch) }));
       },
       { handle, overrides, launch, historyOnly: options?.purpose === "history" },
     );
@@ -276,7 +283,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       mcp,
       unbind: releaseBindings,
       bindChild,
-      acquire: () => this.runtime.acquire({ wrap: launch?.wrap }),
+      acquire: () => this.runtime.acquire({ dedicated: dedicatedLaunch(launch) }),
       moved,
       historyOnly,
     });
@@ -333,7 +340,9 @@ export class OpenCodeV2AgentClient implements AgentClient {
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
     // The lookup and the resume share one connection, so a wrapped import never starts a server
     // outside its wrap.
-    const connection = await this.runtime.acquire({ wrap: context.launchContext?.wrap });
+    const connection = await this.runtime.acquire({
+      dedicated: dedicatedLaunch(context.launchContext),
+    });
     try {
       const info = await connection.client.session.get({ sessionID: input.providerHandleId });
       return await importSessionFromPersistence({
