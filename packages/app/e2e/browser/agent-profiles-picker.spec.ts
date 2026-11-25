@@ -146,10 +146,10 @@ test.describe("Agent profiles in the model picker", () => {
       await openModelPicker(page);
       await expectModelRowProfileActionBesideRow(page, oneMinute);
       await expectCreateProfileFromModelRow(page, oneMinute);
-      await expectComposerModel(page, "Ten second stream");
-      await openModelPicker(page);
-      await selectModelRow(page, oneMinute);
       await expectComposerModel(page, oneMinute.modelLabel);
+      await openModelPicker(page);
+      await selectModelRow(page, { provider: "mock", modelId: "ten-second-stream" });
+      await expectComposerModel(page, "Ten second stream");
     } finally {
       await workspace.cleanup();
       await seed.restore();

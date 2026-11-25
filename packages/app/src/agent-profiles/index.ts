@@ -27,4 +27,4 @@ export {
   type DraftAgentProfileControls,
 } from "./internal/use-agent-profile-picker";
 export { AgentProfileGlyph } from "./internal/agent-profile-glyph";
-export { AgentProfilesSection } from "./settings/agent-profiles-section";
+export { AgentProfilesPage } from "./settings/agent-profiles-section";

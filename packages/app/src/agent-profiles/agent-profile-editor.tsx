@@ -1,11 +1,76 @@
-import { useCallback, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { Alert, Text, View } from "react-native";
+import { useTranslation } from "react-i18next";
+import { StyleSheet } from "react-native-unistyles";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/contexts/toast-context";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { confirmDialog } from "@/utils/confirm-dialog";
+import { toErrorMessage } from "@/utils/error-messages";
 import { AgentProfileEditModal } from "./settings/agent-profile-edit-modal";
 import { generateAgentProfileId } from "./internal/profile-id";
-import type { AgentProfileSeed, AgentProfileValue } from "./internal/profile-form-model";
+import {
+  buildInstantAgentProfile,
+  type AgentProfileSeed,
+  type AgentProfileValue,
+} from "./internal/profile-form-model";
 import { useAgentProfiles } from "./internal/use-agent-profiles";
 
+const PROFILE_SAVED_TOAST_DURATION_MS = 6000;
+
+function ProfileSavedToastContent({
+  name,
+  onEdit,
+  onUndo,
+}: {
+  name: string;
+  onEdit: () => void;
+  onUndo: () => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.toastRow}>
+      <Text style={styles.toastText} numberOfLines={1}>
+        {t("modelSelector.profileSaved", { name })}
+      </Text>
+      <View style={styles.toastActions}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={onEdit}
+          accessibilityLabel={t("modelSelector.editProfileLabel", { name })}
+          testID="model-profile-created-edit"
+        >
+          {t("modelSelector.editProfiles")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onPress={onUndo}
+          accessibilityLabel={t("modelSelector.undoProfileSave")}
+          testID="model-profile-created-undo"
+        >
+          {t("modelSelector.undo")}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+function createProfileSavedToast(input: {
+  name: string;
+  onEdit: () => void;
+  onUndo: () => void;
+}): ReactElement {
+  return <ProfileSavedToastContent name={input.name} onEdit={input.onEdit} onUndo={input.onUndo} />;
+}
+
 export interface AgentProfileEditorControls {
+  /** Save a profile immediately from a model row with defaults and show an Edit/Undo toast. */
+  quickCreateFromModel: (seed: AgentProfileSeed) => Promise<AgentProfile | null>;
+  /** Undo an instant creation without a confirmation prompt. */
+  undoCreate: (profileId: string) => Promise<void>;
   /** Open the create form pre-filled with provider, model, and suggested name. */
   openCreateFromModel: (seed: AgentProfileSeed) => void;
   /** Open the edit form for one profile. */
@@ -23,8 +88,68 @@ type EditorRequest =
  * never see `saveProfiles` or construct profile records themselves.
  */
 export function useAgentProfileEditor(serverId: string | null): AgentProfileEditorControls {
+  const { t } = useTranslation();
+  const toast = useToast();
   const { profiles, saveProfiles } = useAgentProfiles(serverId);
+  const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const [request, setRequest] = useState<EditorRequest | null>(null);
+  const profilesRef = useRef(profiles);
+  useEffect(() => {
+    profilesRef.current = profiles;
+  }, [profiles]);
+
+  const undoCreate = useCallback(
+    async (profileId: string): Promise<void> => {
+      const latest = profilesRef.current;
+      if (!latest) {
+        return;
+      }
+      try {
+        await saveProfiles(latest.filter((entry) => entry.id !== profileId));
+      } catch (error) {
+        toast.error(toErrorMessage(error));
+      }
+    },
+    [saveProfiles, toast],
+  );
+
+  const quickCreateFromModel = useCallback(
+    async (seed: AgentProfileSeed): Promise<AgentProfile | null> => {
+      const latest = profilesRef.current;
+      if (!latest) {
+        return null;
+      }
+      const value = buildInstantAgentProfile({ seed, entries });
+      const created: AgentProfile = { id: generateAgentProfileId(), ...value };
+      try {
+        await saveProfiles([...latest, created]);
+        let dismiss: (() => void) | null = null;
+        dismiss = toast.show(
+          createProfileSavedToast({
+            name: created.name,
+            onEdit: () => {
+              dismiss?.();
+              setRequest({ mode: "edit", profile: created });
+            },
+            onUndo: () => {
+              dismiss?.();
+              void undoCreate(created.id);
+            },
+          }),
+          {
+            variant: "success",
+            durationMs: PROFILE_SAVED_TOAST_DURATION_MS,
+            testID: "model-profile-created-toast",
+          },
+        );
+        return created;
+      } catch (error) {
+        toast.error(toErrorMessage(error));
+        return null;
+      }
+    },
+    [entries, saveProfiles, toast, undoCreate],
+  );
 
   const openCreateFromModel = useCallback((seed: AgentProfileSeed) => {
     setRequest({ mode: "create", seed });
@@ -45,7 +170,7 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
 
   const handleSave = useCallback(
     async (value: AgentProfileValue) => {
-      const current = profiles ?? [];
+      const current = profilesRef.current ?? [];
       const editing = request?.mode === "edit" ? request.profile : undefined;
       const next: AgentProfile[] = editing
         ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
@@ -53,7 +178,38 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
       await saveProfiles(next);
       setRequest(null);
     },
-    [profiles, request, saveProfiles],
+    [request, saveProfiles],
+  );
+
+  const handleRemove = useCallback(
+    (profileId: string) => {
+      const profile = profiles?.find((entry) => entry.id === profileId);
+      if (!profile) {
+        return;
+      }
+      void confirmDialog({
+        title: t("settings.host.agentProfiles.removeConfirmTitle"),
+        message: t("settings.host.agentProfiles.removeConfirmMessage", { name: profile.name }),
+        confirmLabel: t("settings.host.agentProfiles.remove"),
+        cancelLabel: t("common.actions.cancel"),
+        destructive: true,
+      }).then(async (confirmed) => {
+        const latest = profilesRef.current;
+        if (!confirmed || !latest) {
+          return;
+        }
+        try {
+          await saveProfiles(latest.filter((entry) => entry.id !== profileId));
+        } catch (error) {
+          Alert.alert(
+            t("common.errors.unableToSave"),
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        return;
+      });
+    },
+    [profiles, saveProfiles, t],
   );
 
   const element = useMemo(
@@ -66,13 +222,34 @@ export function useAgentProfileEditor(serverId: string | null): AgentProfileEdit
         {...(request?.mode === "create" && request.seed ? { seed: request.seed } : {})}
         onClose={close}
         onSave={handleSave}
+        onRemove={handleRemove}
       />
     ),
-    [close, handleSave, request, serverId],
+    [close, handleRemove, handleSave, request, serverId],
   );
 
   return useMemo(
-    () => ({ openCreateFromModel, openEdit, element }),
-    [openCreateFromModel, openEdit, element],
+    () => ({ quickCreateFromModel, undoCreate, openCreateFromModel, openEdit, element }),
+    [element, openCreateFromModel, openEdit, quickCreateFromModel, undoCreate],
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  toastRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[3],
+    maxWidth: "100%",
+  },
+  toastText: {
+    flexShrink: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  toastActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    flexShrink: 0,
+  },
+}));

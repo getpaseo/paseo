@@ -40,6 +40,7 @@ import {
   PanelLeft,
   MessageSquare,
   ChevronRight,
+  Layers,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -102,6 +103,7 @@ import {
   HostConnectionsPage,
   HostPairDevicePage,
   HostAgentsPage,
+  HostAgentProfilesPage,
   HostSettingsPage,
   HostProvidersPage,
   HostUsagePage,
@@ -249,6 +251,7 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
   { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
   { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
+  { id: "agent-profiles", labelKey: "settings.hostSections.agentProfiles", icon: Layers },
   { id: "metadata", labelKey: "settings.hostSections.metadata", icon: Sparkles },
   { id: "voice", labelKey: "settings.hostSections.voice", icon: Mic },
   { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
@@ -271,6 +274,9 @@ function renderHostSettingsContent(
       return <HostPairDevicePage serverId={view.serverId} />;
     case "agents":
       return <HostAgentsPage serverId={view.serverId} />;
+    case "agent-profiles":
+      // Rendered directly in SettingsScreen so AgentProfilesPage owns its wide PageLayout + drawer split.
+      return null;
     case "metadata":
       return <MetadataGenerationPage serverId={view.serverId} />;
     case "voice":
@@ -1412,7 +1418,16 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     );
   }
 
+  const isStandaloneAgentProfilesView = view.kind === "host" && view.section === "agent-profiles";
+
   if (isCompactLayout) {
+    if (isStandaloneAgentProfilesView) {
+      return (
+        <View style={styles.container} onLayout={onContentLayout}>
+          <HostAgentProfilesPage serverId={view.serverId} onBack={handleBackFromDetail} />
+        </View>
+      );
+    }
     return (
       <View style={styles.container} onLayout={onContentLayout}>
         <PageLayout
@@ -1447,16 +1462,22 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
         </WindowChromeRegion>
         <WindowChromeRegion corners="top-right">
           <View style={desktopStyles.contentPane} testID="settings-detail-pane">
-            <PageLayout
-              // A project or provider page draws its own title, which names the list it came from.
-              title={view.kind === "project" || view.kind === "provider" ? undefined : detailTitle}
-              actions={detailActions}
-              width={detailWidth}
-              titleTestID="settings-detail-header-title"
-              testID="settings-detail-scroll-body"
-            >
-              {content}
-            </PageLayout>
+            {isStandaloneAgentProfilesView ? (
+              <HostAgentProfilesPage serverId={view.serverId} />
+            ) : (
+              <PageLayout
+                // A project or provider page draws its own title, which names the list it came from.
+                title={
+                  view.kind === "project" || view.kind === "provider" ? undefined : detailTitle
+                }
+                actions={detailActions}
+                width={detailWidth}
+                titleTestID="settings-detail-header-title"
+                testID="settings-detail-scroll-body"
+              >
+                {content}
+              </PageLayout>
+            )}
           </View>
         </WindowChromeRegion>
       </View>
