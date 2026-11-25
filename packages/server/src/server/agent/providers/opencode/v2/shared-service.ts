@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import type { ProviderRuntimeSettings } from "../../../provider-launch-config.js";
 import type { OpenCodeBridge } from "../bridge.js";
-import { OpenCodeHttpError } from "../http-error.js";
+import { validateOpenCodeResponse } from "./http-response.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { openCodeConfigDirectory, provisionLocalBridge } from "./bridge-provisioning.js";
 import { awaitPaseoPlugin } from "./readiness.js";
@@ -61,12 +61,7 @@ export async function connectSharedService(
         if (isConnectionRefused(error)) markExited(error);
         throw error;
       }
-      const html = response.headers.get("content-type")?.includes("text/html") ?? false;
-      if (!response.ok || html) {
-        const requestUrl = request instanceof Request ? request.url : String(request);
-        throw new OpenCodeHttpError(new URL(requestUrl).pathname, response.status, html);
-      }
-      return response;
+      return validateOpenCodeResponse(request, response);
     },
   });
   const markExited = (cause: unknown) => {
