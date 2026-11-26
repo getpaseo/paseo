@@ -128,3 +128,30 @@ describe("draft persistence", () => {
     expect(drafts.text()).toBe("pending checkpoint");
   });
 });
+
+it("flush waits for retirement already started by an automatic asynchronous write", async () => {
+  interface CreationState {
+    creationId: string | null;
+  }
+  let saved: StorageValue<CreationState> = { state: { creationId: "old-creation" } };
+  let commit!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    commit = resolve;
+  });
+  const drafts = createDraftPersistStorage<CreationState>({
+    getItem: () => saved,
+    setItem: async (_name, value) => {
+      await gate;
+      saved = value;
+    },
+    removeItem: () => {},
+  });
+  const automatic = drafts.setItem("drafts", { state: { creationId: null } });
+  const flushed = drafts.flush().then(() => {
+    expect(saved.state.creationId).toBeNull();
+    return null;
+  });
+  commit();
+  await flushed;
+  await automatic;
+});

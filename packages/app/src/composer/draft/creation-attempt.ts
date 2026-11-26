@@ -99,6 +99,10 @@ function requestsAgent(input: Pick<Submission<unknown>, "kind" | "request">): bo
   return input.kind === "agent" || ("agent" in input.request && input.request.agent != null);
 }
 
+function isStandaloneReplay(attempt: Attempt, draftId: string, request: object): boolean {
+  return attempt.kind === "agent" && attempt.key === draftCreationKey(draftId, request);
+}
+
 function canStartFirstAgent(
   previous: Record,
   input: Pick<Submission<unknown>, "kind" | "request">,
@@ -236,6 +240,8 @@ export function createDraftCreations(deps: Dependencies) {
 
   async function worktreeSlug(input: Identity & { proposed: string }): Promise<string> {
     const scope = await scopeFor(input);
+    // A durable slug remains readable while its creation is in flight.
+    if (scope.record.worktreeSlug) return scope.record.worktreeSlug;
     return serialize(scope, async () => {
       if (scope.record.worktreeSlug) return scope.record.worktreeSlug;
       const record = { ...scope.record, worktreeSlug: input.proposed };
@@ -276,7 +282,7 @@ export function createDraftCreations(deps: Dependencies) {
       workspaceId: string;
       request: object;
       observe: (
-        kind: "workspace",
+        kind: CreationSnapshot["kind"],
         key: string,
         onEvent: (snapshot: CreationSnapshot) => void,
       ) => Promise<CreationSnapshot | null>;
@@ -287,15 +293,16 @@ export function createDraftCreations(deps: Dependencies) {
       await scope.writes;
       const prior = scope.record.attempt;
       if (
-        prior?.kind !== "workspace" ||
+        !prior ||
         prior.agentRequested === false ||
-        prior.outcome === "failed"
+        prior.outcome === "failed" ||
+        isStandaloneReplay(prior, input.draftId, input.request)
       )
         return undefined;
       const ready = scope.record.workspace;
-      if (!ready || ready.id !== input.workspaceId)
+      if (prior.kind === "workspace" && (!ready || ready.id !== input.workspaceId))
         throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
-      const snapshot = await input.observe("workspace", prior.key, (update) =>
+      const snapshot = await input.observe(prior.kind, prior.key, (update) =>
         acceptSnapshot(scope, update, true),
       );
       await scope.writes;
@@ -305,6 +312,8 @@ export function createDraftCreations(deps: Dependencies) {
       if (
         snapshot.phase === "completed" &&
         snapshot.agent &&
+        prior.kind === "workspace" &&
+        ready !== undefined &&
         scope.record.agentIntentKey !== undefined &&
         scope.record.agentIntentKey === agentIntent(input.request, ready.workspaceDirectory)
       )

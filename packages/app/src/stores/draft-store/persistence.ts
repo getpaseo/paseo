@@ -90,12 +90,10 @@ export function createDraftPersistStorage<T>(
     cancelTimer();
     const write = pending;
     pending = null;
-    if (!write) {
-      return;
-    }
-    lastWriteAt = scheduler.now();
+    if (write) lastWriteAt = scheduler.now();
     try {
-      await enqueue(() => storage.setItem(write.name, write.value));
+      if (write) await enqueue(() => storage.setItem(write.name, write.value));
+      else await writes;
     } catch (error) {
       console.warn("[DraftStore] Failed to persist draft checkpoint", error);
     }

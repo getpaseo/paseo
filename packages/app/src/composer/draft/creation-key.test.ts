@@ -1252,3 +1252,123 @@ it("replays current progress to a caller joining an in-flight creation", async (
   expect(await Promise.all([first, second])).toEqual(["original", "original"]);
   expect(duplicateSends).toBe(0);
 });
+
+it("reads a retained worktree slug during provisioning so overlapping submissions can coalesce", async () => {
+  const creations = creationsFor(storage());
+  expect(await creations.worktreeSlug({ ...scope, proposed: "retained-slug" })).toBe(
+    "retained-slug",
+  );
+  const started = deferredValue<void>();
+  const network = deferredValue<string>();
+  let sends = 0;
+  const send = async () => {
+    sends += 1;
+    started.resolve();
+    return network.promise;
+  };
+  const first = creations.submit({ ...scope, kind: "workspace", request: worktreeRequest, send });
+  await started.promise;
+  const retained = await creations.worktreeSlug({ ...scope, proposed: "must-not-replace" });
+  expect(retained).toBe("retained-slug");
+  const second = creations.submit({ ...scope, kind: "workspace", request: worktreeRequest, send });
+  network.resolve("one-worktree");
+  expect(await Promise.all([first, second])).toEqual(["one-worktree", "one-worktree"]);
+  expect(sends).toBe(1);
+});
+
+it("observes a pending standalone agent receipt after reload before admitting an edited retry", async () => {
+  const disk = storage();
+  await creationsFor(disk).submit({
+    ...scope,
+    kind: "agent",
+    request,
+    send: async () => undefined,
+  });
+  const restored = creationsFor(disk);
+  const edited = { ...request, initialPrompt: "Corrected standalone task" };
+  const observations: string[] = [];
+  expect(
+    await restored.reconcileWorkspace({
+      ...scope,
+      workspaceId: request.workspaceId,
+      request: edited,
+      observe: async (kind, key, onEvent) => {
+        observations.push(kind, key);
+        const receipt = failure({ kind, idempotencyKey: key, unknown: false });
+        onEvent(receipt);
+        return receipt;
+      },
+    }),
+  ).toBeUndefined();
+  expect(observations).toEqual(["agent", draftCreationKey(scope.draftId, request)]);
+  expect(
+    await restored.submit({
+      ...scope,
+      kind: "agent",
+      request: edited,
+      send: async () => "corrected-agent",
+    }),
+  ).toBe("corrected-agent");
+});
+
+it("replays unchanged standalone intent with its stable key without requiring lifecycle observation", async () => {
+  const disk = storage();
+  await creationsFor(disk).submit({
+    ...scope,
+    kind: "agent",
+    request,
+    send: async () => undefined,
+  });
+  const restored = creationsFor(disk);
+  expect(
+    await restored.reconcileWorkspace({
+      ...scope,
+      workspaceId: request.workspaceId,
+      request,
+      observe: async () => {
+        throw new Error("Unchanged retries use the original creation key");
+      },
+    }),
+  ).toBeUndefined();
+  expect(
+    await restored.submit({
+      ...scope,
+      kind: "agent",
+      request,
+      send: async ({ idempotencyKey }) => {
+        expect(idempotencyKey).toBe(draftCreationKey(scope.draftId, request));
+        return recoveredAgent;
+      },
+    }),
+  ).toEqual(recoveredAgent);
+});
+
+it.each(["unknown", "completed", "missing"] as const)(
+  "keeps an edited standalone agent protected when its saved receipt is %s",
+  async (outcome) => {
+    const disk = storage();
+    await creationsFor(disk).submit({
+      ...scope,
+      kind: "agent",
+      request,
+      send: async () => undefined,
+    });
+    await expect(
+      creationsFor(disk).reconcileWorkspace({
+        ...scope,
+        workspaceId: request.workspaceId,
+        request: { ...request, initialPrompt: "Changed intent" },
+        observe: async (kind, key, onEvent) => {
+          if (outcome === "missing") return null;
+          const receipt = {
+            ...failure({ kind, idempotencyKey: key, unknown: outcome === "unknown" }),
+            phase: outcome === "unknown" ? ("failed" as const) : ("completed" as const),
+            ...(outcome === "completed" ? { agent: recoveredAgent } : {}),
+          };
+          onEvent(receipt);
+          return receipt;
+        },
+      }),
+    ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+  },
+);

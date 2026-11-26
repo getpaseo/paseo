@@ -1,3 +1,4 @@
+import { reselectModel } from "../support/helpers/model-memory";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -753,17 +754,19 @@ for (const target of ["terminal", "empty"] as const) {
   });
 }
 
-test("repeated empty Create clicks provision once on a legacy host without workspace receipts", async ({
-  creation,
-  page,
-}) => {
-  await useCreationProtocol(page, true, { workspaceRequestReceipts: false });
-  await creation.openWorkspaceForm("local");
-  await creation.submitRepeatedly("Create");
-  await creation.expectOneCreatedWorkspace();
-  await page.reload();
-  await creation.expectOneCreatedWorkspace();
-});
+for (const isolation of ["local", "worktree"] as const) {
+  test(`repeated empty ${isolation} Create clicks provision once on a legacy host without workspace receipts`, async ({
+    creation,
+    page,
+  }) => {
+    await useCreationProtocol(page, true, { workspaceRequestReceipts: false });
+    await creation.openWorkspaceForm(isolation);
+    await creation.submitRepeatedly("Create");
+    await creation.expectOneCreatedWorkspace();
+    await page.reload();
+    await creation.expectOneCreatedWorkspace();
+  });
+}
 
 for (const outcome of ["failed", "completed"] as const) {
   test(`an edited source draft reconciles its pending workspace receipt after reload when startup ${outcome}`, async ({
@@ -794,6 +797,7 @@ for (const outcome of ["failed", "completed"] as const) {
       );
       await creation.returnToWorkspaceForm();
       await page.reload();
+      await reselectModel(page, "mock", "Ten second stream");
       if (outcome === "failed") await startup.fail();
       else await startup.release();
       await creation.submitPrompt("Corrected source task after reload", "Create");
@@ -828,3 +832,41 @@ for (const outcome of ["failed", "completed"] as const) {
     }
   });
 }
+
+test("an edited standalone agent draft observes its pending receipt after reload before retrying a failed startup", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  const client = await connectNewWorkspaceDaemonClient();
+  try {
+    const before = new Set((await client.fetchAgents()).entries.map((entry) => entry.agent.id));
+    await creation.openAgentDraft();
+    await creation.submitPrompt("Original standalone task");
+    await page.waitForFunction(() =>
+      Object.keys(localStorage).some((key) => {
+        if (!key.startsWith("draft-creation:")) return false;
+        const record = JSON.parse(localStorage.getItem(key)!);
+        return record.attempt?.kind === "agent" && record.attempt.outcome === "pending";
+      }),
+    );
+    await page.reload();
+    await reselectModel(page, "mock", "Ten second stream");
+    await startup.fail();
+    await creation.submitPrompt("Corrected standalone task");
+    await creation.expectPromptVisible("Corrected standalone task");
+    // Reload destroyed the original request's page; verify committed agents through the daemon.
+    await expect
+      .poll(
+        async () =>
+          (await client.fetchAgents()).entries.filter(
+            (entry) => Boolean(entry.agent.workspaceId) && !before.has(entry.agent.id),
+          ).length,
+      )
+      .toBe(1);
+    await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+  } finally {
+    await startup.release();
+    await client.close();
+  }
+});
