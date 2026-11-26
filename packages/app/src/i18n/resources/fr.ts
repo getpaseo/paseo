@@ -2483,6 +2483,50 @@ export const fr: TranslationResources = {
     },
     notifications: {
       title: "Notifications",
+      enabled: {
+        label: "Activer les notifications",
+        description: "Recevoir les notifications des agents, terminaux et plugins sur cet appareil",
+        pausedDescription:
+          "Toutes les notifications, y compris celles des plugins, sont suspendues sur cet appareil",
+      },
+      events: {
+        title: "Événements",
+        agentPermission: {
+          label: "L’agent demande une autorisation",
+          description: "Approbations, plans et questions",
+        },
+        agentError: {
+          label: "Erreur de l’agent",
+          description: "Quand un agent s’arrête avec une erreur",
+        },
+        agentFinished: {
+          label: "L’agent a terminé",
+          description: "Quand un agent termine un tour",
+        },
+        terminalNeedsInput: {
+          label: "Le terminal attend une saisie",
+          description: "Quand une commande de terminal attend une saisie",
+        },
+        terminalFinished: {
+          label: "Le terminal a terminé",
+          description: "Quand une commande de terminal se termine",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Notifications des plugins",
+          description: "Autoriser les plugins installés à envoyer des notifications",
+        },
+        empty:
+          "Les plugins installés apparaissent ici pour les mettre en sourdine individuellement",
+      },
+      legacyHostTitle: "Mettez à jour l’hôte pour les préférences push",
+      legacyHostHint:
+        "Mettez à jour les hôtes connectés pour synchroniser les préférences de notifications push de cet appareil",
+      desktop: {
+        title: "Système",
+      },
       permission: "Autorisation des notifications",
       refreshAccessibility: "Actualiser l’autorisation des notifications",
       playSound: "Émettre un son",

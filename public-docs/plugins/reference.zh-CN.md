@@ -21,6 +21,7 @@ nav: 参考
 - 工作区标题栏中的[按钮](#header-buttons)，以及新建工作区界面上的[字段](#new-workspace-items)；
 - [设置界面](#settings-screens)，以及 **设置 → 外观** 中的浅色和深色主题；
 - 经过转换的、以及由 daemon 推送的 Agent 时间线行；
+- 面向活跃客户端或移动推送的[通知](#notifications)以及自定义点击处理函数；
 - 在 daemon 旁运行、经过 schema 校验的 RPC 处理函数和事件流；
 - 修改或观察工作区、worktree 和 Agent 操作的[钩子](/docs/plugins/hooks)；
 - [Agent Provider](/docs/plugins/providers)、[用量来源](#usage-sources)和 [worktree 管理器](#worktree-managers)；
@@ -675,6 +676,78 @@ export default function contribute(client: PluginClientContext) {
 ```
 
 清理函数可以是异步的。请释放插件创建的计时器、监听器、套接字和其他资源。重新加载、停用和移除会销毁受影响的插件安装。停止服务端插件还会关闭它的 daemon 会话并停止其子进程。客户端安装遵循[主机与生命周期](#hosts-and-lifecycle)中的规则，包括在暂时断开连接时保留安装。
+
+## 通知 {#notifications}
+
+**需要 Paseo 0.18**。在服务端钩子、RPC 处理函数或后台监听器中调用 `server.notifications.send()`，可在用户当前活跃的桌面/Web 客户端上发送系统通知，或在用户离开时发送移动端推送通知。
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  const unhook = server.addHook("agent.turn.after", async ({ agent, outcome }) => {
+    if (outcome.kind !== "failed" || agent.background) return;
+    await server.notifications.send({
+      title: agent.title ?? "Agent failed",
+      body: outcome.error.message,
+      key: `agent-failed:${agent.id}`,
+      open: { type: "agent", agentId: agent.id },
+      data: { agentId: agent.id },
+    });
+  });
+  return () => unhook();
+}
+```
+
+### 发送输入与限制 {#send-input-and-limits}
+
+| 字段    | 必填 | 限制 / 行为                                                                                     |
+| ------- | ---- | ----------------------------------------------------------------------------------------------- |
+| `title` | 是   | 去除首尾空白后的非空字符串；超过 160 个字符时自动截断。                                         |
+| `body`  | 是   | 去除首尾空白的字符串；超过 500 个字符时自动截断。                                               |
+| `key`   | 否   | 去除首尾空白的字符串，1–128 个字符。同一插件在 60 秒内发送相同 `key` 会返回 `deduplicated`。    |
+| `open`  | 否   | 声明式点击目标（ID 最多 256 个字符，序列化后不超过 1,024 UTF-8 字节），在未由处理函数处理时用。 |
+| `data`  | 否   | 序列化后不超过 1,024 UTF-8 字节的纯 JSON 对象，点击通知时传递给 `client.onNotificationOpen`。   |
+
+声明式 `open` 目标无需客户端入口：
+
+- `{ type: "agent", agentId: string }` 打开并聚焦该 Agent。若当前活跃可见客户端已聚焦在该 Agent 上，Paseo 会抑制该通知。
+- `{ type: "workspace", workspaceId: string }` 打开该工作区。
+- `{ type: "screen", screenId: string, params?: Record<string, string> }` 携带 URL 参数打开插件界面。
+
+`server.notifications.send()` 会解析为以下结果之一：
+
+- `{ status: "sent", notificationId: string }`：daemon 已受理并进入投递流程（即使某台设备静音了该通知）。
+- `{ status: "deduplicated" }`：`key` 与当前插件在过去 60 秒内发送的通知重复。
+- `{ status: "rate_limited" }`：当前插件超出了单插件令牌桶限制（突发容量 10，每 6 秒补充 1 个）。
+
+字段非法、`title` 为空，或 `open`/`data` 超过 1,024 UTF-8 字节会使返回的 Promise 被拒绝。用户可以在 **设置 → 通知** 中关闭全部插件通知或静音单个插件。
+
+### 在客户端处理通知点击 {#handle-notification-taps-on-the-client}
+
+如需根据 `data` 自定义点击跳转逻辑，请在 `index.client.tsx` 中注册 `client.onNotificationOpen(handler)`：
+
+```tsx
+// index.client.tsx
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+
+export default function contribute(client: PluginClientContext) {
+  const unsub = client.onNotificationOpen(({ event, openScreen, navigation }) => {
+    if (typeof event.data?.agentId === "string") {
+      navigation.openAgent({ agentId: event.data.agentId, focusHost: true });
+    } else {
+      openScreen({
+        screenId: "alert",
+        params: { notificationId: event.notificationId },
+      });
+    }
+  });
+  return () => unsub();
+}
+```
+
+处理函数接收 `PluginCommandCapabilities`（`paseo`、`rpc`、`openScreen`、`composers`、`openSettings`）、`navigation.openAgent`、`navigation.openWorkspace` 以及 `event: { type: "opened", notificationId, data }`。注册 `onNotificationOpen` 后，该处理函数会接管此插件的所有通知点击。通过通知点击冷启动应用时，Paseo 会等待目标主机的插件目录加载完成后再调用你的处理函数；若插件未注册处理函数、所有已注册处理函数均抛出错误，或目录未能在时限内加载完成，Paseo 会回退到通知的声明式 `open` 目标。完整示例见 `plugin-examples/notifications`。
 
 ## 生命周期钩子 {#lifecycle-hooks}
 

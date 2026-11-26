@@ -1,5 +1,5 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
-import type { PluginHookAgent } from "@getpaseo/plugin/server";
+import type { PluginHookAgent, PluginNotificationSendResult } from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderConnectRequest,
@@ -120,6 +120,8 @@ export type PluginProcessRequest =
       input: ProviderInput;
     }
   | { type: "provider.close"; connectionId: string }
+  | { type: "notification.result"; requestId: string; result: PluginNotificationSendResult }
+  | { type: "notification.error"; requestId: string; error: string }
   | { type: "shutdown" }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
@@ -162,6 +164,7 @@ export type PluginProcessMessage =
     }
   | { type: "provider.event"; connectionId: string; event: ProviderEvent }
   | { type: "provider.closed"; connectionId: string; error?: string }
+  | { type: "notification.send"; requestId: string; input: unknown }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
 
@@ -379,6 +382,29 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("provider.close"), connectionId: z.string().min(1) }).strict(),
+    z
+      .object({
+        type: z.literal("notification.result"),
+        requestId: z.string().min(1),
+        result: z.discriminatedUnion("status", [
+          z
+            .object({
+              status: z.literal("sent"),
+              notificationId: z.string().min(1),
+            })
+            .strict(),
+          z.object({ status: z.literal("deduplicated") }).strict(),
+          z.object({ status: z.literal("rate_limited") }).strict(),
+        ]),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("notification.error"),
+        requestId: z.string().min(1),
+        error: z.string(),
+      })
+      .strict(),
     z.object({ type: z.literal("shutdown") }).strict(),
     z.object({ type: z.literal("paseo_frame"), ...frameFields }).strict(),
     z.object({ type: z.literal("paseo_close") }).strict(),
@@ -477,6 +503,13 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         type: z.literal("provider.closed"),
         connectionId: z.string().min(1),
         error: z.string().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("notification.send"),
+        requestId: z.string().min(1),
+        input: z.unknown(),
       })
       .strict(),
     z.object({ type: z.literal("paseo_frame"), ...frameFields }).strict(),

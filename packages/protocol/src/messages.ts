@@ -43,6 +43,18 @@ export {
 } from "./plugin-config.js";
 import { TerminalProfileSchema } from "./terminal-profile.js";
 export { TerminalProfileSchema, type TerminalProfile } from "./terminal-profile.js";
+import { NotificationPreferencesSchema } from "./notification-preferences.js";
+export {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  NotificationEventsPreferencesSchema,
+  NotificationPluginsPreferencesSchema,
+  NotificationPreferencesSchema,
+  normalizeNotificationPreferences,
+  shouldDeliverNotification,
+  type NotificationKind,
+  type NotificationPreferences,
+  type NotificationPreferencesInput,
+} from "./notification-preferences.js";
 import { z } from "zod";
 import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
@@ -3292,6 +3304,7 @@ export const ListCommandsRequestSchema = z.object({
 export const RegisterPushTokenMessageSchema = z.object({
   type: z.literal("register_push_token"),
   token: z.string(),
+  preferences: NotificationPreferencesSchema.optional(),
 });
 
 export const PushUnregisterRequestSchema = z.object({
@@ -3535,6 +3548,7 @@ export const SessionEventSubscriptionSchema = z.enum([
   "agent.provider_subagents.update",
   "agent.background_work.update",
   "terminal_attention_required",
+  "plugin.notification",
   "status.server_info",
   "status.daemon_config_changed",
   "status.plugin_catalog_changed",
@@ -4064,6 +4078,8 @@ export const ServerInfoStatusPayloadSchema = z
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
         pushTokenRevocation: z.boolean().optional(),
+        // COMPAT(pushNotificationPreferences): added in v0.18.0, remove gate after 2027-06-01.
+        pushNotificationPreferences: z.boolean().optional(),
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
         plugins: z.boolean().optional(),
         // COMPAT(pluginManagement): added in v0.4.0, remove gate after 2027-08-14.
@@ -4086,6 +4102,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginTimelineItems: z.boolean().optional(),
         // COMPAT(pluginSubscriptions): added in v0.15.0, remove gate after 2027-05-02.
         pluginSubscriptions: z.boolean().optional(),
+        // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+        pluginNotifications: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -7361,6 +7379,41 @@ export const TerminalAttentionRequiredSchema = z.object({
   }),
 });
 
+export const PluginNotificationOpenTargetSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("agent"),
+    agentId: z.string(),
+  }),
+  z.object({
+    type: z.literal("workspace"),
+    workspaceId: z.string(),
+  }),
+  z.object({
+    type: z.literal("screen"),
+    screenId: z.string(),
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+]);
+
+export type PluginNotificationOpenTarget = z.infer<typeof PluginNotificationOpenTargetSchema>;
+
+export const PluginNotificationMessageSchema = z.object({
+  type: z.literal("plugin.notification"),
+  payload: z.object({
+    subscriptionId: z.string().optional(),
+    serverId: z.string().optional(),
+    pluginId: z.string(),
+    notificationId: z.string(),
+    title: z.string(),
+    body: z.string(),
+    open: PluginNotificationOpenTargetSchema.optional(),
+    data: z.record(z.string(), JsonWireValueSchema).optional(),
+    shouldNotify: z.boolean(),
+  }),
+});
+
+export type PluginNotificationMessage = z.infer<typeof PluginNotificationMessageSchema>;
+
 export const DaemonUpdateResponseSchema = z.object({
   type: z.literal("daemon.update.response"),
   payload: z.object({
@@ -7955,6 +8008,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CaptureTerminalResponseSchema,
   TerminalStreamExitSchema,
   TerminalAttentionRequiredSchema,
+  PluginNotificationMessageSchema,
   ChatCreateResponseSchema,
   ChatListResponseSchema,
   ChatInspectResponseSchema,
