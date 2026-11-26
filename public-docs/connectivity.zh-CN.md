@@ -73,10 +73,10 @@ paseo daemon pair
 
 在 daemon 所在的机器和你的手机上安装 [Tailscale](https://tailscale.com/download)，并在两台设备上登录同一个 tailnet。
 
-1. 在已连接到主机的设备上，打开 **Settings → 你的主机 → Devices**。你也可以在初始设置的手机步骤中操作。
+1. 在已连接到主机的设备上，打开 **设置 → 你的主机 → 设备**。你也可以在初始设置的手机步骤中操作。
 2. 打开 **Tailscale** 并复制地址。
-3. 在手机上的 Paseo 中，打开 **Settings → Add host → Direct connection**。
-4. 在 **Host** 中输入 IP，在 **Port** 中输入端口号。保持 **Use SSL** 关闭，然后选择 **Connect**。
+3. 在手机上的 Paseo 中，打开 **设置 → 添加主机 → 直接连接**。
+4. 在 **Host** 中输入 IP，在 **端口** 中输入端口号。保持 **使用 SSL** 关闭，然后选择 **连接**。
 
 如果你已通过中继配对此主机，Paseo 会将直连添加到同一主机。
 
