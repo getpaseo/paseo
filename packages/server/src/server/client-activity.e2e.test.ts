@@ -726,7 +726,7 @@ describe("client activity tracking", () => {
           },
         });
         daemon = await createTestPaseoDaemon({
-          pushNotificationSender: realPushNotifications,
+          pushNotifications: realPushNotifications,
         });
 
         client1 = await createClient(); // Phone A

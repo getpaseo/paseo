@@ -573,27 +573,21 @@ function requireWebSocketServices(params: {
 /**
  * WebSocket server that only accepts sockets + parses/forwards messages to the session layer.
  */
-function resolvePushNotifications(
+function initPushNotifications(
   logger: pino.Logger,
   paseoHome: string,
-  sender?: PushNotificationSender | PushNotifications,
+  pushNotifications?: PushNotifications,
+  pushNotificationSender?: PushNotificationSender,
 ): { pushNotifications: PushNotifications; pushNotificationSender: PushNotificationSender } {
-  if (
-    sender !== undefined &&
-    "renew" in sender &&
-    typeof sender.renew === "function" &&
-    "revoke" in sender &&
-    typeof sender.revoke === "function"
-  ) {
-    return { pushNotifications: sender, pushNotificationSender: sender };
-  }
-  const pushNotifications = createPushNotifications({
-    logger: logger.child({ module: "push" }),
-    filePath: join(paseoHome, "push-tokens.json"),
-  });
+  const notifications =
+    pushNotifications ??
+    createPushNotifications({
+      logger: logger.child({ module: "push" }),
+      filePath: join(paseoHome, "push-tokens.json"),
+    });
   return {
-    pushNotifications,
-    pushNotificationSender: sender ?? pushNotifications,
+    pushNotifications: notifications,
+    pushNotificationSender: pushNotificationSender ?? notifications,
   };
 }
 
@@ -750,6 +744,7 @@ export class VoiceAssistantWebSocketServer {
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
     workspaceArchiveOperations?: WorkspaceArchiveOperations,
+    pushNotifications?: PushNotifications,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -885,9 +880,14 @@ export class VoiceAssistantWebSocketServer {
       unsubscribeChange();
     };
 
-    const resolvedPush = resolvePushNotifications(this.logger, paseoHome, pushNotificationSender);
-    this.pushNotifications = resolvedPush.pushNotifications;
-    this.pushNotificationSender = resolvedPush.pushNotificationSender;
+    const push = initPushNotifications(
+      this.logger,
+      paseoHome,
+      pushNotifications,
+      pushNotificationSender,
+    );
+    this.pushNotifications = push.pushNotifications;
+    this.pushNotificationSender = push.pushNotificationSender;
 
     this.agentManager.setAgentAttentionCallback((params) => {
       void this.broadcastAgentAttention(params).catch((err) => {
@@ -3217,17 +3217,6 @@ export class VoiceAssistantWebSocketServer {
   }
 
   public sendPluginNotification(params: {
-    pluginId: string;
-    notificationId: string;
-    title: string;
-    body: string;
-    open?: import("@getpaseo/protocol/messages").PluginNotificationOpenTarget;
-    data?: Record<string, import("@getpaseo/protocol/agent-types").JsonValue>;
-  }): void {
-    this.broadcastPluginNotification(params);
-  }
-
-  public broadcastPluginNotification(params: {
     pluginId: string;
     notificationId: string;
     title: string;

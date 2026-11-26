@@ -38,6 +38,17 @@ export function useHostFeature(
   return useSessionStore((state) => selectHostFeature(state, normalizedServerId, feature));
 }
 
+export function useHostFeatureAvailability(
+  serverId: string | null | undefined,
+  feature: HostFeatureName,
+): boolean | null {
+  const normalizedServerId = serverId?.trim() ?? "";
+  return useSessionStore((state) => {
+    const serverInfo = state.sessions[normalizedServerId]?.serverInfo;
+    return serverInfo ? hostSupportsFeature(serverInfo, feature) : null;
+  });
+}
+
 export function useHostFeatureMap(
   serverIds: readonly string[],
   feature: HostFeatureName,

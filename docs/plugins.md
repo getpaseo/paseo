@@ -559,7 +559,7 @@ within 4 KiB), drops duplicate `(pluginId, key)` pairs for 60 seconds, and enfor
 token bucket (burst 10, refill 1 per 6 seconds). Stopping a plugin clears its deduplication and
 rate-limit state.
 
-`WebSocketServer.broadcastPluginNotification` stamps the runtime `pluginId`, `serverId`, and
+`WebSocketServer.sendPluginNotification` stamps the runtime `pluginId`, `serverId`, and
 `notificationId`, runs `computeNotificationPlan` (using `open.agentId` as the focus target when
 `open.type === "agent"`), filters Expo pushes per token with `{ kind: "plugin", pluginId }`, and
 publishes `plugin.notification` to sessions subscribed to that event category. Clients gate their

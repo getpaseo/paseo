@@ -69,7 +69,7 @@ describe("plugin notifications E2E", () => {
       },
     });
     const daemon = await createTestPaseoDaemon({
-      pushNotificationSender: pushNotifications,
+      pushNotifications,
     });
     const client = new DaemonClient({
       url: `ws://127.0.0.1:${daemon.port}/ws`,
@@ -210,7 +210,7 @@ describe("plugin notifications E2E", () => {
       },
     });
     const daemon = await createTestPaseoDaemon({
-      pushNotificationSender: pushNotifications,
+      pushNotifications,
     });
     const client = new DaemonClient({
       url: `ws://127.0.0.1:${daemon.port}/ws`,

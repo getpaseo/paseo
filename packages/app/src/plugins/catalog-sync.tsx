@@ -2,7 +2,7 @@ import { useVoiceAudioEngineOptional } from "@/contexts/voice-context";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { useHostFeature } from "@/runtime/host-features";
+import { useHostFeatureAvailability } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { pluginListQueryKey } from "./plugin-list";
 import { pluginRegistry } from "./registry";
@@ -17,7 +17,7 @@ export function PluginCatalogSync({
 }) {
   const audio = useVoiceAudioEngineOptional();
   const connected = useHostRuntimeIsConnected(serverId);
-  const supported = useHostFeature(serverId, "plugins");
+  const supported = useHostFeatureAvailability(serverId, "plugins");
   const queryClient = useQueryClient();
 
   useEffect(

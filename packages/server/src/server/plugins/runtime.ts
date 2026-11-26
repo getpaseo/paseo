@@ -197,7 +197,6 @@ interface RemoteProviderConnection {
 interface PluginRuntimeDependencies {
   settingsDirectory?: string;
   onSettingsChanged?: (pluginId: string, settingsId: string) => void;
-  onNotification?: (notification: ValidatedPluginNotification) => void | Promise<void>;
   spawnChild?: () => PluginChild;
   sessionHost?: PluginPaseoSessionHost;
 }
@@ -390,12 +389,7 @@ export class PluginRuntime {
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
     this.sessionHost = dependencies.sessionHost ?? null;
     this.notifications = new PluginNotificationDispatcher({
-      deliver: (notification) => {
-        if (this.dependencies.onNotification) {
-          return this.dependencies.onNotification(notification);
-        }
-        return this.sessionHost?.sendPluginNotification?.(notification);
-      },
+      deliver: (notification) => this.sessionHost?.sendPluginNotification?.(notification),
     });
     this.sessionAttachments = new SessionAttachments(
       {
