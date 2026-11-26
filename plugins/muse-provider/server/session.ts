@@ -76,7 +76,7 @@ export class Session {
   private readonly buffered: Notification[] = [];
   private opening = true;
   private closing = false;
-  private firstTurn = true;
+  private systemPromptPending = true;
   private interruptCompletion: {
     turnId: string;
     resolve(): void;
@@ -122,7 +122,6 @@ export class Session {
         model: this.config.model ?? saved.model,
         thinkingOption: this.config.thinkingOption ?? saved.thinkingOption,
       };
-      this.firstTurn = false;
     } else {
       response = await this.host.command(
         "session/start",
@@ -242,7 +241,7 @@ export class Session {
     this.messages.set(id, prompt.clientMessageId);
     const input: TurnStartParams["input"] = [];
     const text: string[] = [];
-    if (this.firstTurn && this.config.systemPrompt)
+    if (this.systemPromptPending && this.config.systemPrompt)
       input.push({
         type: "text",
         text: `<system_instructions>\n${this.config.systemPrompt}\n</system_instructions>`,
@@ -272,7 +271,7 @@ export class Session {
         : undefined,
     };
     const response = await this.host.command("turn/start", params, promptResultSchema);
-    this.firstTurn = false;
+    this.systemPromptPending = false;
     if (response.disposition === "started" && this.turns.get(response.turnId) !== "completed")
       this.turns.set(response.turnId, "active");
     this.live().recovery.activity(undefined, this.activeTurnIds().length > 0);
