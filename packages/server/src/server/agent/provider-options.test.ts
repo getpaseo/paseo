@@ -50,6 +50,23 @@ describe("provider-owned option schemas", () => {
     ).toThrow("providerOptions.sandbox_workspace_write.writable_roots[1]");
   });
 
+  test("accepts native Codex context token limits", () => {
+    const options = { tool_output_token_limit: 0, model_auto_compact_token_limit: -1 };
+    expect(CodexProviderOptionsSchema.parse(options)).toEqual(options);
+  });
+
+  test.each([
+    ["tool_output_token_limit", "2048"],
+    ["tool_output_token_limit", 1.5],
+    ["tool_output_token_limit", -1],
+    ["model_auto_compact_token_limit", "100000"],
+    ["model_auto_compact_token_limit", 1.5],
+  ])("rejects invalid Codex context token limit %s = %j", (key, value) => {
+    expect(() =>
+      validateProviderOptions("codex", CodexProviderOptionsSchema, { [key]: value }),
+    ).toThrow(`providerOptions.${key}`);
+  });
+
   test("accepts Claude permission and fail-closed sandbox settings", () => {
     expect(
       ClaudeProviderOptionsSchema.parse({

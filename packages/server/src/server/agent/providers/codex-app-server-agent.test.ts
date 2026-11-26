@@ -2601,6 +2601,35 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
+  test.each(["thread/start", "thread/resume"] as const)(
+    "%s forwards Codex context token limits unchanged",
+    async (method) => {
+      const appServer = createFakeCodexAppServer();
+      const provider = createProviderWithFakeAppServer(appServer);
+      const config = createConfig({
+        providerOptions: {
+          tool_output_token_limit: 2048,
+          model_auto_compact_token_limit: 100_000,
+        },
+      });
+      const session =
+        method === "thread/start"
+          ? await provider.createSession(config)
+          : await provider.resumeSession({ sessionId: "saved-thread" }, config);
+      try {
+        if (method === "thread/start") {
+          await session.startTurn("hello");
+        }
+        expect(
+          appServer.requests().find((request) => request.method === method)?.params,
+        ).toMatchObject({ config: config.providerOptions });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("passes a cwd override when loading a persisted Codex thread", async () => {
     const appServer = createFakeCodexAppServer();
     const provider = createProviderWithFakeAppServer(appServer);
