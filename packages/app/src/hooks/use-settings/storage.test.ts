@@ -227,6 +227,53 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("opens new browser tabs on the default page unless a home URL is stored", async () => {
+    expect((await loadAppSettingsFromStorage(makeDeps())).browserHomeUrl).toBe("");
+
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ browserHomeUrl: "https://paseo.sh" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe("https://paseo.sh");
+  });
+
+  it("falls back to the default page when the stored home URL is invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ browserHomeUrl: 42 }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe("");
+  });
+
+  it("keeps a stored home URL that loads once normalized", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          browserHomeUrl: "https://example.com/search?q=hello world",
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe(
+      "https://example.com/search?q=hello%20world",
+    );
+  });
+
+  it("falls back to the default page when the stored home URL would not load", async () => {
+    for (const browserHomeUrl of ["https://exa mple.com", "file:///tmp/index.html"]) {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ browserHomeUrl }),
+        }),
+      });
+
+      expect((await loadAppSettingsFromStorage(deps)).browserHomeUrl).toBe("");
+    }
+  });
+
   it("uses Enter to send by default", async () => {
     const deps = makeDeps();
 
