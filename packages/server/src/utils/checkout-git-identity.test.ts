@@ -123,9 +123,15 @@ describe("getCheckoutIdentity", () => {
       const mainRepoRoot = await realpath(main);
       expect(checkouts).toMatchObject([
         { currentBranch: "main", isPaseoOwnedWorktree: false, mainRepoRoot: null },
-        { currentBranch: "first", isPaseoOwnedWorktree: true, mainRepoRoot },
-        { currentBranch: "second", isPaseoOwnedWorktree: true, mainRepoRoot },
+        { currentBranch: "first", isPaseoOwnedWorktree: true },
+        { currentBranch: "second", isPaseoOwnedWorktree: true },
       ]);
+      for (const checkout of checkouts.slice(1)) {
+        if (!checkout.isGit || !checkout.mainRepoRoot) {
+          throw new Error("Expected bare worktree checkout to report mainRepoRoot");
+        }
+        expect(realpathSync.native(checkout.mainRepoRoot)).toBe(mainRepoRoot);
+      }
       const worktreeLists = stopGitCommandMetrics().commands.filter(
         (command) => command.args[0] === "worktree" && command.args[1] === "list",
       );

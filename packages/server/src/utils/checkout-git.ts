@@ -40,6 +40,7 @@ import {
   ForgeCommandError,
 } from "../services/forge-cli-command.js";
 import type { CheckoutReadSession } from "./checkout-read-session.js";
+import { areEquivalentPaths, normalizePathForComparison } from "./path.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
 import { readGitFileContents, readGitFileContentAtRef } from "./git-file-contents.js";
@@ -1165,15 +1166,18 @@ async function getMainRepoRootFromCommonDir(
 
   const session = context?.readSession;
   if (session) {
-    return session.readMainCheckout(normalized, async () => {
-      const { entries } = await readWorktreeRegistration(
-        cwd,
-        normalized,
-        session,
-        getRunGitCommand(context),
-      );
-      return selectMainCheckout(entries, normalized, context);
-    });
+    return session.readMainCheckout(
+      normalizePathForComparison(normalized, process.platform === "win32"),
+      async () => {
+        const { entries } = await readWorktreeRegistration(
+          cwd,
+          normalized,
+          session,
+          getRunGitCommand(context),
+        );
+        return selectMainCheckout(entries, normalized, context);
+      },
+    );
   }
 
   const { stdout: worktreeOut } = await getRunGitCommand(context)(
@@ -2617,7 +2621,7 @@ export async function getCheckoutIdentity(
       storedBaseRefFromMetadata(await readPaseoWorktreeMetadata(worktreeRoot)) ??
       (await resolveBaseRef(cwd, context)),
     );
-  const isLinkedCheckout = mainRepoRoot !== null && resolve(mainRepoRoot) !== resolve(worktreeRoot);
+  const isLinkedCheckout = mainRepoRoot !== null && !areEquivalentPaths(mainRepoRoot, worktreeRoot);
   let reportedMainRepoRoot: string | null = null;
   if (isPaseoOwnedWorktree) {
     reportedMainRepoRoot = mainRepoRoot ?? worktreeRoot;

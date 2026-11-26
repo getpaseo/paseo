@@ -1,5 +1,5 @@
 import { realpath, watch as watchPath } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
@@ -754,16 +754,27 @@ async function findAffectedCheckoutDirectories(
   inspect: (path: string, read: () => Promise<CheckoutDirectory>) => Promise<DirectoryInspection>,
 ): Promise<Set<string>> {
   const resolved = new Map<string, Promise<ResolvedPath>>();
-  const resolvePath = (path: string) => {
-    let result = resolved.get(path);
+  const resolvePath = (targetPath: string): Promise<ResolvedPath> => {
+    let result = resolved.get(targetPath);
     if (!result) {
-      result = resolveRealpath(path)
-        .catch(() => resolveNativeRealpath(path))
+      // Prefer the native resolver so Windows 8.3 short paths (e.g. RUNNER~1) canonicalize
+      // to the same long path Git writes into linked worktree `.git` pointers.
+      result = resolveNativeRealpath(targetPath)
+        .catch((error) => {
+          if (isMissingPathError(error)) throw error;
+          return resolveRealpath(targetPath);
+        })
         .then(
           (resolvedPath) => ({ path: resolvedPath, missing: false }),
-          (error) => ({ path, missing: isMissingPathError(error) }),
+          async (error) => {
+            if (!isMissingPathError(error)) return { path: targetPath, missing: false };
+            const parent = dirname(targetPath);
+            if (parent === targetPath) return { path: targetPath, missing: true };
+            const resolvedParent = await resolvePath(parent);
+            return { path: join(resolvedParent.path, basename(targetPath)), missing: true };
+          },
         );
-      resolved.set(path, result);
+      resolved.set(targetPath, result);
     }
     return result;
   };

@@ -45,11 +45,14 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import type { CheckoutReadSession, WorktreeRegistration } from "./checkout-read-session.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import {
+  areEquivalentPaths,
+  createPathContainmentMatcher,
   createRealpathAwarePathMatcher,
   expandTilde,
   getRealpathAwareRelativePath,
   getRelativePathInsideRoot,
   isPathInsideRoot,
+  normalizePathForComparison,
   normalizePathForIdentity,
 } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
@@ -1077,6 +1080,23 @@ async function ownershipPathVariants(input: string): Promise<string[]> {
   return [...variants];
 }
 
+async function canonicalizeOwnershipPath(input: string): Promise<string> {
+  try {
+    return await ownershipIdentityIo(() => resolveNativeOwnershipPath(input));
+  } catch {
+    return normalizePathForOwnership(input);
+  }
+}
+
+async function areEquivalentOwnershipPaths(left: string, right: string): Promise<boolean> {
+  if (areEquivalentPaths(left, right)) return true;
+  const [leftVariants, rightVariants] = await Promise.all([
+    ownershipPathVariants(left),
+    ownershipPathVariants(right),
+  ]);
+  return leftVariants.some((l) => rightVariants.some((r) => areEquivalentPaths(l, r)));
+}
+
 // Keep lexical variants for missing paths: archive must still recognize a removed
 // worktree below a symlinked worktrees root, whose full realpath no longer exists.
 async function getOwnershipRelativePath(root: string, candidate: string): Promise<string | null> {
@@ -1173,7 +1193,7 @@ async function resolveMetadataOwnedWorktree(
     const root = await findPaseoWorktreeRootForCwd(cwd);
     if (!root) return null;
     const candidate = await normalizePathForOwnership(root);
-    if (repoRoot !== undefined && candidate === (await normalizePathForOwnership(repoRoot)))
+    if (repoRoot !== undefined && (await areEquivalentOwnershipPaths(candidate, repoRoot)))
       return null;
     return (await isRegisteredGitWorktree(candidate, options))
       ? { worktreePath: candidate, worktreeRoot: dirname(candidate) }
@@ -1197,8 +1217,14 @@ async function isRegisteredGitWorktree(
     return registration.contains(candidate);
   }
   const { entries } = await readGitWorktreeEntries(candidate);
+  const matcher = createPathContainmentMatcher({
+    roots: await ownershipPathVariants(candidate),
+    compareAsWindows: process.platform === "win32",
+  });
   for (const entry of entries) {
-    if ((await normalizePathForOwnership(entry.path)) === candidate) return true;
+    if (matcher.matchesExact(entry.path)) return true;
+    const entryVariants = await ownershipPathVariants(entry.path);
+    if (entryVariants.some((variant) => matcher.matchesExact(variant))) return true;
   }
   return false;
 }
@@ -1209,22 +1235,31 @@ export async function readWorktreeRegistration(
   session: CheckoutReadSession,
   run: RunGitCommand = runGitCommand,
 ): Promise<WorktreeRegistration> {
-  const repository = await normalizePathForOwnership(gitCommonDir);
+  const repository = normalizePathForComparison(
+    await canonicalizeOwnershipPath(gitCommonDir),
+    process.platform === "win32",
+  );
   return session.readWorktrees(repository, async () => {
     const { entries } = await readGitWorktreeEntries(cwd, run);
     const registeredPaths = new Set(entries.map((entry) => resolve(entry.path)));
-    const resolvedPaths = new Map<string, Promise<string>>();
+    const resolvedPaths = new Map<string, Promise<string[]>>();
     return {
       entries,
       async contains(candidate) {
-        if (registeredPaths.has(candidate)) return true;
-        for (const path of registeredPaths) {
-          let canonical = resolvedPaths.get(path);
-          if (!canonical) {
-            canonical = normalizePathForOwnership(path);
-            resolvedPaths.set(path, canonical);
+        const matcher = createPathContainmentMatcher({
+          roots: await ownershipPathVariants(candidate),
+          compareAsWindows: process.platform === "win32",
+        });
+        for (const registered of registeredPaths) {
+          if (matcher.matchesExact(registered)) return true;
+        }
+        for (const registered of registeredPaths) {
+          let variants = resolvedPaths.get(registered);
+          if (!variants) {
+            variants = ownershipPathVariants(registered);
+            resolvedPaths.set(registered, variants);
           }
-          if ((await canonical) === candidate) return true;
+          if ((await variants).some((variant) => matcher.matchesExact(variant))) return true;
         }
         return false;
       },
