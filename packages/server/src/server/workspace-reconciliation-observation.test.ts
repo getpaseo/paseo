@@ -726,6 +726,56 @@ describe("observed workspace placement", () => {
     }
   });
 
+  test("skips a submodule and its linked checkout when the parent Git directory is intact", async () => {
+    const observed = new ObservedPlacements(
+      [{ id: "outer", root: "outer", workspaces: [{ id: "outer-ws", cwd: "outer" }] }],
+      true,
+    );
+    try {
+      await observed.start();
+      await observed.add({ id: "source", root: "source" });
+      observed.git("source", "init", "-b", "main");
+      observed.git(
+        "source",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      );
+      observed.git("outer", "init", "-b", "main");
+      observed.git(
+        "outer",
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "../source",
+        "sub",
+      );
+      observed.git("outer/sub", "worktree", "add", "-b", "feature", "../../sub-linked");
+      await observed.add({ id: "sub", root: "outer/sub" });
+      await observed.add({ id: "sub-linked", root: "sub-linked" });
+
+      observed.change("outer", ".git");
+      await observed.advanceBy(DEBOUNCE_MS);
+
+      expect(observed.takeCheckoutReads()).toEqual(["outer"]);
+      observed.rename("outer/.git", "outer/.git-backup");
+      observed.change("outer", ".git");
+      await observed.advanceBy(DEBOUNCE_MS);
+
+      expect(observed.takeCheckoutReads()).toEqual(["outer", "outer/sub", "sub-linked"]);
+    } finally {
+      await observed.disposeGit();
+    }
+  });
+
   test("turns Git changes under several roots into one read per changed root", async () => {
     const observed = new ObservedPlacements(threeProjects(1));
     await observed.start();

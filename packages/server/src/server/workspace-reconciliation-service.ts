@@ -789,10 +789,14 @@ async function findAffectedCheckoutDirectories(
   const commonDirs = dirty.flatMap((entry) =>
     typeof entry !== "string" && entry.repository ? [entry.repository.commonDir] : [],
   );
-  // If a main checkout loses .git, surviving linked checkouts still point at
-  // their missing admin directories inside it.
-  const gitEntries = createPathContainmentMatcher({
-    roots: roots.map((root) => join(root, ".git")),
+  // A checkout can still point into a missing .git directory. For intact
+  // repositories, match common directories exactly so submodules stay independent.
+  const missingGitDirectories = createPathContainmentMatcher({
+    roots: dirty.flatMap((entry) =>
+      typeof entry !== "string" && entry.repository?.root !== entry.path
+        ? [join(entry.path, ".git")]
+        : [],
+    ),
     compareAsWindows: process.platform === "win32",
   });
   const repositories = createPathContainmentMatcher({
@@ -806,7 +810,8 @@ async function findAffectedCheckoutDirectories(
     const repository = typeof entry === "string" ? null : entry.repository;
     const sharesMetadata =
       repository &&
-      (repositories.matchesExact(repository.commonDir) || gitEntries.matches(repository.commonDir));
+      (repositories.matchesExact(repository.commonDir) ||
+        missingGitDirectories.matches(repository.commonDir));
     // A surviving nested repository provides its own metadata even if its
     // parent gains or loses a .git entry.
     const hasIndependentNestedRepository =
