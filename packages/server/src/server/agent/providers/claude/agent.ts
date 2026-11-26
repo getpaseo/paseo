@@ -3329,6 +3329,11 @@ class ClaudeAgentSession implements AgentSession {
     return this.persistence;
   }
 
+  hasPendingWakeup(): boolean {
+    // A delivered task notification opens its turn only with the next init.
+    return this.notificationTurnId !== null || this.runtimeSafety.hasPendingWakeup();
+  }
+
   async canStopRuntime(): Promise<boolean> {
     return (
       !this.activeForegroundTurnId &&

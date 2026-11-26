@@ -1618,6 +1618,11 @@ export class AgentManager {
     return this.backgroundWork.summary(agentId);
   }
 
+  /** The live session started work that will start another turn by itself. */
+  hasPendingWakeup(agentId: string): boolean {
+    return this.agents.get(agentId)?.session.hasPendingWakeup?.() ?? false;
+  }
+
   private publishBackgroundWork(agentId: string, items: AgentBackgroundWorkItem[] | null): void {
     if (items) this.dispatch({ type: "background_work", agentId, items });
   }

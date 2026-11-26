@@ -774,6 +774,11 @@ export interface AgentSession {
    * An optional additional veto: missing methods use daemon baseline eligibility;
    * implemented checks that reject or return false keep the runtime resident. */
   canStopRuntime?(): Promise<boolean>;
+  /**
+   * True while work this session started will start another turn by itself, such as a
+   * background task that reports back when it ends. Recurring triggers do not count.
+   */
+  hasPendingWakeup?(): boolean;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
