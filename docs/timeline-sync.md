@@ -202,10 +202,23 @@ owner wraps cached preparation, network catch-up, accepted timeline application,
 behind one interface. React supplies transport and projection operations without selecting a cache
 path or issuing a separate persistence notification.
 
-Active-agent list reconciliation does not own transcript lifetime. An archived agent's fresh
-history response can arrive before the active-list response that omits it. Clearing history there
-would discard accepted rows while the viewed owner still considers them synchronized. Entity
-deletion clears the transcript; list membership changes do not.
+The viewed-timeline owner also owns how long a transcript stays in memory. An active agent's
+transcript stays resident while its chat is hidden, so switching back to it needs no fetch. An
+archived agent's transcript stays resident only while its chat is shown, for example when it is
+opened from History. When an agent is archived, or the active list drops it because its workspace
+was archived, the owner releases the transcript unless the chat is shown. It also releases the
+transcript when the chat stops being shown. A released chat leaves the opened chats. When it is
+shown again, it reads the replica cache and catches up again. A history page, live event, or cache
+read that arrives after the release is dropped.
+
+The active-list reconciliation does not release transcripts itself. An archived agent's fresh
+history response can arrive before the active-list response that omits it, while the chat is
+open in History. Clearing history there would discard rows the user is reading.
+
+An agent counts as archived when the active list omits it, when its row has an archive timestamp,
+or when the workspace list omits its workspace. The workspace check matters because a workspace
+archive can complete while one of its agents keeps a row with no archive timestamp. Until a list
+first hydrates, it marks no agent as archived. Deleting the agent clears the transcript.
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.

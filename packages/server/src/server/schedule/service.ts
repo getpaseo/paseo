@@ -206,6 +206,23 @@ function mergeScheduleCadenceTimezone(
   return next;
 }
 
+// A repeated create that omits Archive on finish keeps the value saved on the
+// schedule, so re-registering it does not undo a choice made in the app.
+function mergeArchiveOnFinish(current: ScheduleTarget, next: ScheduleTarget): ScheduleTarget {
+  if (
+    current.type === "new-agent" &&
+    next.type === "new-agent" &&
+    next.config.archiveOnFinish === undefined &&
+    current.config.archiveOnFinish !== undefined
+  ) {
+    return {
+      ...next,
+      config: { ...next.config, archiveOnFinish: current.config.archiveOnFinish },
+    };
+  }
+  return next;
+}
+
 function buildRunOutput(params: {
   output: string | null;
   timelineText: string;
@@ -406,7 +423,7 @@ export class ScheduleService {
           name,
           prompt,
           cadence,
-          target: inputTarget,
+          target: mergeArchiveOnFinish(current.target, inputTarget),
           status: "active",
           pausedAt: null,
           nextRunAt: nextRunAt.toISOString(),

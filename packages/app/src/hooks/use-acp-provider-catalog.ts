@@ -24,9 +24,10 @@ export function buildAcpProviderConfigPatch(
       return { providers: { [entry.id]: { enabled: true } } };
     }
     // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once host floor includes the bundled adapter.
+    // COMPAT(hermesProvider): added in v0.17.4, remove after 2027-05-23 once host floor includes the bundled adapter.
     // COMPAT(hopliteProvider): added after v0.11.2, remove after 2027-04-15 once host floor includes the bundled adapter.
     // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
-    if (feature !== "gooseProvider") {
+    if (feature !== "gooseProvider" && feature !== "hermesProvider") {
       throw new Error(`Update the host to add ${entry.title}.`);
     }
   }

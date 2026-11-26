@@ -754,13 +754,14 @@ class DaemonClientSession {
   private readonly daemon = new FakeDaemon();
   private readonly client: DaemonClient;
 
-  constructor() {
+  constructor(options: { livenessHeartbeat?: boolean } = {}) {
     this.client = new DaemonClient({
       url: "ws://test",
       clientId: "clsk_heartbeat_test",
       logger: noopLogger,
       reconnect: { enabled: false },
       transportFactory: () => this.daemon.transport,
+      ...options,
     });
     clients.push(this.client);
   }
@@ -3393,6 +3394,18 @@ test("starts pinging one interval after connecting and holds the cadence", async
 
   await session.advance(20_001);
   expect(session.pingTimestamps()).toEqual(["10s", "20s", "30s"]);
+});
+
+test("a client with the liveness heartbeat off never pings on its own", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession({ livenessHeartbeat: false });
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(60_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.pingTimestamps()).toEqual([]);
 });
 
 test("stops pinging once the connection is gone", async () => {
@@ -6558,6 +6571,108 @@ test("fetches scoped recent provider sessions", async () => {
       },
     ],
   });
+});
+
+test.each([
+  {
+    scenario: "successful rows after the default RPC deadline",
+    delayMs: 61_000,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [
+        {
+          providerId: "slow-acp",
+          providerLabel: "Slow ACP",
+          providerHandleId: "slow-session",
+          cwd: "/tmp/import-listing",
+          title: "Slow provider session",
+          firstPromptPreview: null,
+          lastPromptPreview: null,
+          lastActivityAt: "2026-04-30T12:34:56.000Z",
+        },
+      ],
+    },
+  },
+  {
+    scenario: "the server's provider timeout after ninety seconds",
+    delayMs: 90_001,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [],
+      providerErrors: [
+        {
+          provider: "slow-acp",
+          message: "Timed out listing importable sessions for provider 'slow-acp' after 90000ms",
+        },
+      ],
+    },
+  },
+])("recent provider listing receives $scenario", async ({ delayMs, payload }) => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_deadline",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const outcome = client
+    .fetchRecentProviderSessions({
+      requestId: "recent-listing-deadline",
+      providers: ["slow-acp"],
+      limit: 1,
+    })
+    .then(
+      (response) => ({ status: "success", response }),
+      (error: unknown) => ({ status: "error", error }),
+    );
+
+  await vi.advanceTimersByTimeAsync(delayMs);
+  transport.triggerMessage(
+    wrapSessionMessage({ type: "fetch_recent_provider_sessions_response", payload }),
+  );
+
+  expect(await outcome).toEqual({ status: "success", response: payload });
+  expect(client.isConnected).toBe(true);
+});
+
+test("recent provider listing still expires when the daemon never answers", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_no_response",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const errors: unknown[] = [];
+  const listing = client
+    .fetchRecentProviderSessions({ providers: ["slow-acp"] })
+    .catch((error: unknown) => {
+      errors.push(error);
+    });
+
+  await vi.advanceTimersByTimeAsync(90_001);
+  expect(errors).toEqual([]);
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(errors).toEqual([
+    expect.objectContaining({
+      name: "DaemonConnectionError",
+      code: "DAEMON_REQUEST_TIMEOUT",
+    }),
+  ]);
+  await listing;
+  expect(client.isConnected).toBe(true);
 });
 
 test("imports an agent by provider handle id", async () => {

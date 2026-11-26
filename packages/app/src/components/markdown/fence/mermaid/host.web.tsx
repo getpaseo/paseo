@@ -5,6 +5,10 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { ZoomableViewport } from "@/components/zoomable-viewport";
+import {
+  MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE,
+  MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
+} from "@/assistant-selection-copy/markup";
 import type { Theme } from "@/styles/theme";
 import type { MarkdownFenceRendererProps } from "./types";
 import { MermaidFullscreenViewer } from "./fullscreen-viewer.web";
@@ -81,6 +85,16 @@ function MermaidFenceHostImpl({
     [visible],
   );
   const sourceVisible = !diagramVisible;
+  // A visible diagram stands in for its fence, so copying the surrounding block takes
+  // the source from here: the revision on screen, which lags `code` while a streamed
+  // revision renders. The source view copies as its own code block.
+  const diagramCopyAttributes =
+    diagramVisible && visible
+      ? {
+          [MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE]: visible.source,
+          [MARKDOWN_COPY_LANGUAGE_ATTRIBUTE]: "mermaid",
+        }
+      : null;
   const viewportStyle = diagramVisible ? diagramStyle : measuringStyle;
 
   return (
@@ -111,7 +125,7 @@ function MermaidFenceHostImpl({
           ) : null}
         </View>
       ) : null}
-      <div inert={!diagramVisible} style={boundaryStyle}>
+      <div inert={!diagramVisible} style={boundaryStyle} {...diagramCopyAttributes}>
         <ZoomableViewport
           accessibilityLabel={t("message.diagram.diagram")}
           actions={actions}

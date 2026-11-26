@@ -7,6 +7,55 @@ export interface AgentProfileTag {
   label: string;
 }
 
+export interface ShortModelLabel {
+  prefix: string | null;
+  name: string;
+}
+
+/**
+ * Splits slash-qualified routing IDs (e.g. `openrouter/moonshotai/kimi-k3.1-pro`)
+ * into a quiet prefix and the model's short name so dense roster rows stay readable.
+ */
+export function formatShortModelLabel(modelIdOrLabel: string): ShortModelLabel {
+  const trimmed = modelIdOrLabel.trim();
+  const lastSlash = trimmed.lastIndexOf("/");
+  if (lastSlash <= 0 || lastSlash >= trimmed.length - 1) {
+    return { prefix: null, name: trimmed };
+  }
+  return {
+    prefix: trimmed.slice(0, lastSlash + 1),
+    name: trimmed.slice(lastSlash + 1),
+  };
+}
+
+export interface AgentProfileRosterSummary {
+  providerLabel: string;
+  modelLabel: string | null;
+  modelPrefix: string | null;
+  runtimeDetails: string[];
+  allTags: AgentProfileTag[];
+}
+
+export function buildAgentProfileRosterSummary(input: {
+  profile: AgentProfile;
+  entries: readonly ProviderSnapshotEntry[] | undefined;
+  formatFeatureCount: (count: number) => string;
+}): AgentProfileRosterSummary {
+  const allTags = buildAgentProfileTags(input);
+  const providerLabel =
+    allTags.find((tag) => tag.id === "provider")?.label ?? input.profile.provider;
+  const rawModel = allTags.find((tag) => tag.id === "model")?.label ?? null;
+  const shortModel = rawModel ? formatShortModelLabel(rawModel) : null;
+  const runtimeDetails = allTags.filter((tag) => tag.id !== "model").map((tag) => tag.label);
+  return {
+    providerLabel,
+    modelLabel: shortModel?.name ?? null,
+    modelPrefix: shortModel?.prefix ?? null,
+    runtimeDetails,
+    allTags,
+  };
+}
+
 function findEntry(
   entries: readonly ProviderSnapshotEntry[],
   provider: string,

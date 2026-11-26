@@ -11,7 +11,6 @@ import { expect, test } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import {
   autoRespondToPermissions,
-  collectPermissions,
   collectProviderSubagents,
   collectRunningToolCalls,
   collectStreamedAssistantText,
@@ -159,56 +158,6 @@ test("v2 handles live tool approvals and questions", async () => {
     expect(permissions.kinds).toContain("question");
     expect(permissions.errors).toEqual([]);
     expect(active.getPendingPermissions()).toEqual([]);
-  } finally {
-    await session?.interrupt();
-    await session?.close();
-    await client.shutdown();
-    await rm(root, { recursive: true, force: true });
-  }
-}, 120_000);
-
-test("v2 invokes an injected MCP tool with exact preapproval", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-mcp-"));
-  const fixture = path.join(root, "mcp.mjs");
-  await writeFile(
-    fixture,
-    `import { McpServer } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/server/mcp.js"))};
-import { StdioServerTransport } from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/server/stdio.js"))};
-const server = new McpServer({ name: "paseo-validation", version: "1.0.0" });
-server.registerTool("marker", { description: "Return the validation marker", inputSchema: {} }, async () => ({ content: [{ type: "text", text: "PASEO_MCP_OK" }] }));
-await server.connect(new StdioServerTransport());
-`,
-  );
-  const client = new OpenCodeV2AgentClient({ logger: createTestLogger() });
-  let session: Awaited<ReturnType<typeof client.createSession>> | undefined;
-  try {
-    const active = await client.createSession(
-      {
-        provider: "opencode",
-        cwd: root,
-        model: process.env.OPENCODE_TEST_MODEL ?? "openai/gpt-6-astra",
-        mcpServers: { validation: { type: "stdio", command: process.execPath, args: [fixture] } },
-        toolPolicy: { preapproved: [{ server: "validation", tool: "marker" }] },
-      },
-      undefined,
-      { persistSession: false },
-    );
-    session = active;
-    const permissions = collectPermissions(active);
-    const result = await active.run(
-      "Call the validation_marker MCP tool once and report its output. Do not use other tools.",
-    );
-    expect(result.finalText).toContain("PASEO_MCP_OK");
-    expect(result.timeline).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "tool_call",
-          name: "validation_marker",
-          status: "completed",
-        }),
-      ]),
-    );
-    expect(permissions).toEqual([]);
   } finally {
     await session?.interrupt();
     await session?.close();

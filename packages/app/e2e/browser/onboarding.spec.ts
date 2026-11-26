@@ -15,7 +15,7 @@ import {
   closeRelayPairing,
   emptyHome,
   loadingScreen,
-  openTailscaleDocsFromSetup,
+  expectTailscaleSwitchDisabled,
   paseoToolsSwitch,
   pickTheme,
   projectSuggestion,
@@ -403,12 +403,10 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
       await continueSetup(page);
     });
 
-    await test.step("Phone offers Tailscale docs and pairs over relay in its own modal", async () => {
+    await test.step("Phone shows a disabled Tailscale switch and pairs over relay", async () => {
       await expectSetupStep(page, "Take your agents with you");
       await page.screenshot({ path: testInfo.outputPath("5-phone.png") });
-      expect(await openTailscaleDocsFromSetup(page)).toBe(
-        "https://paseo.sh/docs/connectivity#tailscale",
-      );
+      await expectTailscaleSwitchDisabled(page);
       const pairing = await openRelayPairingFromSetup(page);
       await expect(pairing.getByText("Enable relay?", { exact: true })).toBeVisible();
       await enableRelayAndExpectOffer(page);

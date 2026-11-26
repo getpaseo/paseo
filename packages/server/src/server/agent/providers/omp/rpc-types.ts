@@ -482,8 +482,24 @@ const OmpExtensionUiRequestSchema = z
     url: z.string().optional(),
     launchUrl: z.string().optional(),
     instructions: z.string().optional(),
+    /** OMP 19.1+ `form`: the whole HTML form of one `ask` call. */
+    html: z.string().optional(),
+    /** `cancel`: the request OMP settled itself (abort or timeout). */
+    targetId: z.string().optional(),
   })
   .passthrough();
+
+/** Submitted value of one form control: text, or the checked values of a group. */
+export type OmpFormValue = string | string[];
+export type OmpFormData = Record<string, OmpFormValue>;
+
+export interface OmpExtensionUiResponse {
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+  data?: OmpFormData;
+}
+
 const OmpSubagentLifecycleEventSchema = z
   .object({ type: z.literal("subagent_lifecycle"), payload: OmpSubagentLifecyclePayloadSchema })
   .passthrough();

@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
 import { PluginRuntime } from "./runtime.js";
@@ -1982,6 +1982,40 @@ export default function contribute(plugin: any) {
     );
   });
 
+  it("exits a plugin process when its channel to the daemon closes without a shutdown", async () => {
+    const directory = await createPlugin(
+      "orphaned",
+      // A timer keeps the process alive the way a polling plugin does.
+      `export default function contribute(plugin: unknown) {
+  void plugin;
+  const timer = setInterval(() => undefined, 1_000);
+  return () => clearInterval(timer);
+}`,
+    );
+    const spawned: Array<ReturnType<typeof spawnObservedPluginProcess>> = [];
+    const exits: Array<Promise<number | null>> = [];
+    const runtime = createTestRuntime({
+      spawnChild: () => {
+        const child = spawnObservedPluginProcess(() => undefined);
+        exits.push(new Promise((resolve) => child.once("exit", resolve)));
+        spawned.push(child);
+        return child;
+      },
+    });
+    // If the process never exits (the failure this test catches), do not leave it running.
+    onTestFinished(() => {
+      for (const child of spawned) if (child.exitCode === null) child.kill("SIGKILL");
+    });
+    await runtime.startPlugin("orphaned", directory);
+    expect(spawned).toHaveLength(1);
+
+    // What the plugin sees when its daemon worker dies: the IPC channel closes, no shutdown request.
+    spawned[0]!.disconnect();
+
+    // In a real crash the daemon side is gone, so there is no runtime state left to stop here.
+    await expect(exits[0]).resolves.toBe(0);
+  });
+
   it("reports and removes a plugin it terminated for an invalid message", async () => {
     const directory = await createPlugin(
       "invalid-message",
@@ -2234,4 +2268,98 @@ export default function contribute() {
   } finally {
     await runtime.stopAll();
   }
+});
+
+describe("open-hook launch wrap across plugins", () => {
+  type OpenInput = Record<string, unknown> & { wrap?: string[] };
+
+  function createHookChild(name: string, hooks: string[], onHook: (input: OpenInput) => unknown) {
+    const child = createReloadChild(name, []);
+    const send = child.send.bind(child);
+    child.send = (message, callback) => {
+      if (message.type === "initialize") {
+        callback?.(null);
+        queueMicrotask(() =>
+          child.emitMessage({ type: "ready", methods: [], providers: [], hooks }),
+        );
+        return true;
+      }
+      if (message.type === "hook") {
+        callback?.(null);
+        const { requestId, input } = message as unknown as { requestId: string; input: OpenInput };
+        queueMicrotask(() =>
+          child.emitMessage({ type: "result", requestId, output: onHook(input) }),
+        );
+        return true;
+      }
+      return send(message, callback);
+    };
+    return child;
+  }
+
+  const request = {
+    agentId: "agent",
+    workspaceId: null,
+    provider: "codex",
+    cwd: "/project",
+    reason: "resume" as const,
+    purpose: "interactive" as const,
+    env: {},
+    title: null,
+    background: false,
+    labels: {},
+    metadata: {},
+    tools: [],
+    mcpServers: {},
+  };
+
+  // Ids sort like paseo-safehouse before zerosub, so the sandbox plugin runs first.
+  async function openWith(later: (input: OpenInput) => unknown) {
+    const calls: string[] = [];
+    // Started in the opposite order to their ids: the runtime orders hooks by id, not start order.
+    const children = [
+      createHookChild("zerosub", ["agent.open.before"], (input) => {
+        calls.push("zerosub");
+        return later(input);
+      }),
+      createHookChild("paseo-safehouse", ["agent.open.before"], (input) => {
+        calls.push("paseo-safehouse");
+        return { ...input, wrap: ["/opt/safehouse/bin/safehouse", "--profile", "a b"] };
+      }),
+    ];
+    const runtime = createTestRuntime({ spawnChild: () => children.shift()! as never });
+    await runtime.startPlugin("zerosub", await createPlugin("zerosub", "export default {}"));
+    await runtime.startPlugin(
+      "paseo-safehouse",
+      await createPlugin("paseo-safehouse", "export default {}"),
+    );
+    try {
+      return await runtime.before("agent.open.before", request);
+    } finally {
+      expect(calls).toEqual(["paseo-safehouse", "zerosub"]);
+      await runtime.stopAll();
+    }
+  }
+
+  it("keeps the first plugin's wrap when a later plugin omits it", async () => {
+    const result = await openWith(({ wrap: _wrap, ...input }) => ({
+      ...input,
+      env: { LATER: "1" },
+    }));
+    expect(result).toMatchObject({
+      wrap: ["/opt/safehouse/bin/safehouse", "--profile", "a b"],
+      env: { LATER: "1" },
+    });
+  });
+
+  it("passes when a later plugin returns the same wrap", async () => {
+    const result = await openWith((input) => input);
+    expect(result.wrap).toEqual(["/opt/safehouse/bin/safehouse", "--profile", "a b"]);
+  });
+
+  it("fails the open when a later plugin returns a different wrap", async () => {
+    await expect(
+      openWith((input) => ({ ...input, wrap: ["/usr/bin/other-sandbox"] })),
+    ).rejects.toThrow(/Plugin zerosub agent.open.before failed: .*cannot change a wrap/u);
+  });
 });

@@ -76,6 +76,50 @@ describe("resolveUpdateCalloutDescriptor", () => {
     expect(descriptor?.dismissalKey).toBe("desktop-update:installing:1.2.3");
   });
 
+  it("labels the callout as Download when the update has not been downloaded yet", () => {
+    const descriptor = resolveUpdateCalloutDescriptor(
+      input({ availableUpdate: { latestVersion: "1.2.3", readyToInstall: false } }),
+    );
+
+    expect(descriptor?.title).toBe("Update available");
+    expect(descriptor?.body).toEqual({
+      kind: "available",
+      versionLabel: "v1.2.3",
+      readyToInstall: false,
+    });
+    expect(descriptor?.actions).toEqual([
+      { role: "changelog", label: "What's new" },
+      { role: "install", label: "Download", variant: "primary", disabled: false },
+    ]);
+  });
+
+  it("shows download progress while downloading an update", () => {
+    const descriptor = resolveUpdateCalloutDescriptor(
+      input({
+        status: "installing",
+        isInstalling: true,
+        downloadProgress: {
+          version: "1.2.3",
+          percent: 42.2,
+          transferred: 42,
+          total: 100,
+          bytesPerSecond: 10,
+        },
+      }),
+    );
+
+    expect(descriptor?.title).toBe("Downloading update");
+    expect(descriptor?.body).toEqual({
+      kind: "downloading",
+      versionLabel: "v1.2.3",
+      percent: 42,
+    });
+    expect(descriptor?.actions).toEqual([
+      { role: "changelog", label: "What's new" },
+      { role: "install", label: "Downloading...", variant: "primary", disabled: true },
+    ]);
+  });
+
   it("shows a retry action and surfaces the error message on error", () => {
     const descriptor = resolveUpdateCalloutDescriptor(
       input({ status: "error", errorMessage: "Download failed", availableUpdate: null }),

@@ -38,9 +38,9 @@ on:
           - "true"
           - "false"
       rollout_hours:
-        description: "Linear rollout duration in hours. Use 0 for instant rollout."
+        description: "Rollout duration in hours: a 5% canary hold, then a ramp to 100%. Use 0 to admit everyone at once."
         required: false
-        default: "36"
+        default: "18"
         type: string
 
 concurrency:
@@ -51,7 +51,7 @@ env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.checkout_ref || github.ref_name) || github.ref_name }}
   SHOULD_PUBLISH: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false' }}
-  ROLLOUT_HOURS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.rollout_hours || '36' }}
+  ROLLOUT_HOURS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.rollout_hours || '18' }}
   DESKTOP_PACKAGE_PATH: "packages/desktop"
 
 jobs:

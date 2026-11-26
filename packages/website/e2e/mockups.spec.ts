@@ -10,6 +10,37 @@ async function openHomepage(page: Page, window = { width: 1512, height: 930 }) {
   await waitForHydration(page);
 }
 
+/** The scene advances at most 64 ms per frame. Drive its frames independently of CI paint speed. */
+async function openHomepageWithSceneClock(
+  page: Page,
+  viewport?: { width: number; height: number },
+) {
+  await page.clock.install();
+  await openHomepage(page, viewport);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+}
+
+async function centerMockup(mockup: Locator) {
+  await mockup.evaluate((element) =>
+    element.scrollIntoView({ block: "center", behavior: "instant" }),
+  );
+}
+
+async function finishPanelSwap(page: Page, mockup: Locator, outgoingPanel: Locator) {
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(250);
+      // Playwright's clock drives JavaScript frames. Native animations use the document timeline.
+      await mockup.evaluate((element) => {
+        for (const animation of element.getAnimations({ subtree: true })) {
+          if (Number.isFinite(animation.effect?.getComputedTiming().endTime)) animation.finish();
+        }
+      });
+      return outgoingPanel.count();
+    })
+    .toBe(0);
+}
+
 async function viewPhones(page: Page) {
   await page.getByRole("img", { name: "Paseo agent chat", exact: true }).scrollIntoViewIfNeeded();
 }
@@ -110,12 +141,7 @@ test("the hero opens on orchestration across providers and machines", async ({ p
 test("the orchestration scene plays from an empty chat to the open roster of subagents", async ({
   page,
 }) => {
-  // The scene clock moves at most 64ms per animation frame. Headless WebKit on a busy CI runner
-  // paints a few frames a second, so on the real clock the scene plays in slow motion and misses
-  // any wall-clock timeout. The test holds the page clock and plays the scene itself.
-  await page.clock.install();
-  await openHomepage(page);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await openHomepageWithSceneClock(page);
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const composer = mockup.getByText("Message the agent, tag @files, or use /commands and /skills");
   await playScene(page, "Orchestration", composer);
@@ -141,30 +167,34 @@ test("the orchestration scene plays from an empty chat to the open roster of sub
 });
 
 test("the opening scene waits until most of the mockup is on screen", async ({ page }) => {
-  await openHomepage(page);
+  await openHomepageWithSceneClock(page);
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const request = mockup.getByText("Fix the issues labeled ready, one worktree each.");
   await expect(mockup).not.toBeInViewport({ ratio: 0.6 });
 
   // A scene that started at load sends the request within three seconds.
-  await page.waitForTimeout(4500);
+  await page.clock.runFor(4500);
   await expect(request).toHaveCount(0);
 
-  await mockup.scrollIntoViewIfNeeded();
-  await expect(request).toBeVisible({ timeout: 10_000 });
+  await centerMockup(mockup);
+  await expect(mockup).toBeInViewport({ ratio: 0.6 });
+  await page.clock.runFor(4500);
+  await expect(request).toBeVisible();
 });
 
 test("the opening scene starts in a window shorter than most of the mockup", async ({ page }) => {
-  await openHomepage(page, { width: 1400, height: 320 });
+  await openHomepageWithSceneClock(page, { width: 1400, height: 320 });
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const request = mockup.getByText("Fix the issues labeled ready, one worktree each.");
-  await mockup.scrollIntoViewIfNeeded();
+  await centerMockup(mockup);
+  await expect(mockup).toBeInViewport();
   await expect(mockup).not.toBeInViewport({ ratio: 0.6 });
-  await expect(request).toBeVisible({ timeout: 10_000 });
+  await page.clock.runFor(4500);
+  await expect(request).toBeVisible();
 });
 
 test("the plugins scene installs the panel, then changes it on request", async ({ page }) => {
-  await openHomepage(page);
+  await openHomepageWithSceneClock(page);
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const changesPanel = mockup.getByText("Uncommitted", { exact: true });
   const pluginPanel = mockup.getByText("Recently merged", { exact: true });
@@ -174,12 +204,14 @@ test("the plugins scene installs the panel, then changes it on request", async (
   await expect(pluginPanel).toHaveCount(0);
 
   // Installing the plugin swaps the docked panel for the one the agent built.
-  await expect(pluginPanel).toBeVisible({ timeout: 20_000 });
-  await expect(changesPanel).toHaveCount(0);
+  await page.clock.runFor(5500);
+  await expect(pluginPanel).toBeVisible();
+  await finishPanelSwap(page, mockup, changesPanel);
   await expect(failingCheck).toHaveCount(0);
 
   // The second request reloads the plugin and the open panel lists the failing check.
-  await expect(failingCheck).toBeVisible({ timeout: 15_000 });
+  await page.clock.runFor(6000);
+  await expect(failingCheck).toBeVisible();
   await expect(
     mockup.getByText("paseo plugin reload release-radar", { exact: true }),
   ).toBeVisible();
@@ -188,7 +220,7 @@ test("the plugins scene installs the panel, then changes it on request", async (
 test("the code review scene comments on a line and sends the feedback to an agent", async ({
   page,
 }) => {
-  await openHomepage(page);
+  await openHomepageWithSceneClock(page);
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const comment = mockup.getByText("Add “write”. The agent edits files too.", { exact: true });
   const sendFeedback = mockup.getByText("Send feedback (1)", { exact: true });
@@ -200,18 +232,17 @@ test("the code review scene comments on a line and sends the feedback to an agen
   await expect(comment).toHaveCount(0);
 
   // The pointer opens the editor on a line, and the typed comment is saved under that line.
-  await expect(sendFeedback).toBeVisible({ timeout: 10_000 });
+  await page.clock.runFor(3500);
+  await expect(sendFeedback).toBeVisible();
   await expect(comment).toBeVisible();
 
   // Send feedback asks which agent, and the sent comment leaves the diff.
-  await expect(mockup.getByText("Claude Code", { exact: true })).toHaveCount(2, {
-    timeout: 10_000,
-  });
-  await expect(mockup.getByText("Feedback sent to Codex", { exact: true })).toBeVisible({
-    timeout: 10_000,
-  });
-  await expect(sendFeedback).toHaveCount(0);
-  await expect(comment).toHaveCount(0);
+  await page.clock.runFor(1300);
+  await expect(mockup.getByText("Claude Code", { exact: true })).toHaveCount(2);
+  await page.clock.runFor(1500);
+  await expect(mockup.getByText("Feedback sent to Codex", { exact: true })).toBeVisible();
+  await finishPanelSwap(page, mockup, sendFeedback);
+  await finishPanelSwap(page, mockup, comment);
 });
 
 test("picking a scene brings the pills and the whole mockup on screen", async ({ page }) => {

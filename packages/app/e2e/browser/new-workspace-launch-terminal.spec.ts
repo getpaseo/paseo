@@ -2,6 +2,7 @@ import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import {
+  chooseProjectWithKeyboard,
   expectNewWorkspaceDraft,
   fillNewWorkspaceDraft,
   openNewWorkspaceComposer,
@@ -107,6 +108,27 @@ test.describe("New workspace: launching a terminal", () => {
       await expectWorkspaceOpensWithTerminalTab(page);
       await expectTerminalOutputContains(page, "bare-launch-static-line");
     });
+  });
+
+  test("with a profile that takes no prompt, choosing a project keeps focus on the Project field", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openNewWorkspaceComposer(page, {
+      projectKey: workspace.projectKey,
+      projectDisplayName: workspace.projectDisplayName,
+    });
+    await selectLaunchOption(page, BARE_PROFILE.id);
+    await expect(terminalPromptInput(page)).toHaveCount(0);
+
+    // The read-only command preview has nothing to type into, so the picker
+    // hands focus back to the field that opened it.
+    const projectTrigger = page.getByTestId("new-workspace-project-picker-trigger");
+    await projectTrigger.focus();
+    await page.keyboard.press("Enter");
+    await chooseProjectWithKeyboard(page, workspace.projectDisplayName);
+    await expect(projectTrigger).toBeFocused();
   });
 
   test("switching terminal profiles restores the prompt and its fullscreen affordance", async ({

@@ -12,6 +12,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.can_stop_runtime",
   "session.archive",
   "session.configure",
+  "session.launch_wrap",
   "session.list",
   "session.metrics",
   "session.persistence",
@@ -22,6 +23,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.unarchive",
   "permission",
   "permission.tool_policy",
+  "request.cancel",
   "timeline.plugin",
 ] as const;
 
@@ -34,6 +36,12 @@ export interface ProviderRegistration {
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
   /** Default executable and arguments; the daemon resolves overrides before status/connect. */
   command?: readonly [string, ...string[]];
+  /**
+   * Sessions can run behind an `agent.open.before` wrap: the connection offers `session.launch_wrap`
+   * and spawns each session as `[...config.wrap, command, ...args]`. Paseo publishes it on the
+   * provider snapshot before the first connection.
+   */
+  launchWrap?: boolean;
   status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
   id: string;
   label: string;
@@ -212,6 +220,8 @@ export interface ProviderSessionConfig {
   providerOptions?: Readonly<Record<string, unknown>>;
   title?: string;
   persist: boolean;
+  /** Spawn the session as `[...wrap, command, ...args]`. Sent only with `session.launch_wrap`. */
+  wrap?: readonly [string, ...string[]];
 }
 
 export interface ProviderConfigChanges {
@@ -378,7 +388,13 @@ export type ProviderInput =
   | { type: "session.archive"; requestId: string; persistence: ProviderPersistence }
   | { type: "session.unarchive"; requestId: string; persistence: ProviderPersistence }
   | { type: "session.can_stop_runtime"; requestId: string; sessionId: string }
-  | { type: "session.close"; requestId: string; sessionId: string };
+  | { type: "session.close"; requestId: string; sessionId: string }
+  /**
+   * Paseo stopped waiting for the request with this `requestId`, such as a catalogue refresh that
+   * passed its deadline. Stop its work and release what it started; Paseo ignores later events for
+   * it. Sent only when the connection offers `request.cancel`.
+   */
+  | { type: "request.cancel"; requestId: string };
 
 export interface ProviderThinkingOption {
   id: string;
@@ -794,6 +810,8 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
   switch (input.type) {
     case "session.can_stop_runtime":
       return ["session.can_stop_runtime"];
+    case "request.cancel":
+      return ["request.cancel"];
     case "catalog":
     case "session.interrupt":
     case "session.close":
@@ -804,6 +822,7 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
       const capabilities: ProviderCapability[] = [];
       if (input.persistence) capabilities.push("session.persistence");
       if (input.config.toolPolicy) capabilities.push("permission.tool_policy");
+      if (input.config.wrap) capabilities.push("session.launch_wrap");
       return capabilities;
     }
     case "session.prompt":
@@ -907,6 +926,7 @@ const sessionConfigSchema = z
     providerOptions: z.record(z.string(), z.unknown()).optional(),
     title: z.string().optional(),
     persist: z.boolean(),
+    wrap: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
 const externalResourceSchema = z
@@ -1124,6 +1144,7 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
     })
     .strict(),
   z.object({ type: z.literal("session.close"), requestId: idSchema, sessionId: idSchema }).strict(),
+  z.object({ type: z.literal("request.cancel"), requestId: idSchema }).strict(),
 ]);
 
 const modeSchema = z

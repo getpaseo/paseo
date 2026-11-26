@@ -1,3 +1,4 @@
+import type { AttachedAgentTool, PluginSessionsRuntime } from "../plugins/agent-tools.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -6,7 +7,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -22,7 +23,11 @@ import {
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
 import { AgentTurnStartCanceledError } from "./agent-sdk-types.js";
 import { ForegroundPromptStart } from "./agent-run-state.js";
-import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
+import {
+  CodexAppServerAgentClient,
+  CodexAppServerAgentSession,
+} from "./providers/codex-app-server-agent.js";
+import { spawnProcess } from "../../utils/spawn.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
@@ -679,6 +684,24 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
+/** Plugin sessions whose only plugin appends the given instructions to every open. */
+function instructionPluginSessions(instructions: () => string[]): PluginSessionsRuntime {
+  return {
+    openSession: async (request) => ({
+      ...request,
+      appendSystemPrompt: instructions(),
+      tools: [],
+      mcpServerOwners: {},
+    }),
+    sessionLaunched: () => {},
+    sessionLaunchFailed: () => {},
+    refreshSession: async () => ({ stale: false }),
+    sessionTools: () => [],
+    closeSession: () => {},
+    callTool: async () => ({ isError: true, text: "No plugin tools" }),
+  };
+}
+
 test("OpenCode persistence excludes launch-only instructions from storage and clients", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-plugin-persistence-"));
   const harness = new V2Harness();
@@ -690,13 +713,7 @@ test("OpenCode persistence excludes launch-only instructions from storage and cl
     registry: storage,
     logger,
     appendSystemPrompt: "Daemon instruction",
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before"
-          ? { ...request, appendSystemPrompt: ["Plugin instruction"] }
-          : request,
-    },
+    pluginSessions: instructionPluginSessions(() => ["Plugin instruction"]),
   });
   const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
     workspaceId: undefined,
@@ -16144,11 +16161,7 @@ test("plugin instructions are recomputed for each launch without changing saved 
     registry: storage,
     logger,
     appendSystemPrompt: "Daemon",
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before" ? { ...request, appendSystemPrompt: additions } : request,
-    },
+    pluginSessions: instructionPluginSessions(() => additions),
   });
   const snapshot = await manager.createAgent(
     { provider: "codex", cwd: workdir, systemPrompt: "Saved" },
@@ -16258,4 +16271,233 @@ test("importProviderSession keeps the stats the provider reported with its histo
     ["user_message", null],
     ["assistant_message", null],
   ]);
+});
+
+class LaunchWrapRecordingClient extends TestAgentClient {
+  readonly sessions: CloseRecordingTestAgentSession[] = [];
+  readonly launchContexts: Array<AgentLaunchContext | undefined> = [];
+  calls = { create: 0, resume: 0, import: 0 };
+
+  constructor(supportsLaunchWrap: boolean) {
+    super("codex");
+    if (supportsLaunchWrap) this.supportsLaunchWrap = true;
+  }
+
+  supportsLaunchWrap?: boolean;
+
+  override async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.calls.create += 1;
+    this.launchContexts.push(launchContext);
+    const session = new CloseRecordingTestAgentSession(config);
+    this.sessions.push(session);
+    return session;
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.calls.resume += 1;
+    this.launchContexts.push(launchContext);
+    return await super.resumeSession(handle, config, launchContext);
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    this.calls.import += 1;
+    return {
+      session: new TestAgentSession(context.config),
+      config: context.storedConfig,
+      persistence: { provider: this.provider, sessionId: input.providerHandleId },
+      timeline: [],
+    };
+  }
+}
+
+type TestLaunchWrap = [string, ...string[]];
+
+/**
+ * A session-open plugin that selects `wrap()` and attaches one tool while it does. Like the real runtime, an open's
+ * tools take over only once its launch does, and a failed launch leaves the running session's tools.
+ */
+function launchWrapPluginSessions(wrap: () => TestLaunchWrap | undefined) {
+  const pending = new Map<string, AttachedAgentTool[]>();
+  const running = new Map<string, AttachedAgentTool[]>();
+  const failedLaunches: string[] = [];
+  const sessions: PluginSessionsRuntime = {
+    openSession: async (request) => {
+      const selected = wrap();
+      const tools: AttachedAgentTool[] = selected
+        ? [
+            {
+              name: "sandbox_status",
+              description: "Report the sandbox",
+              inputSchema: {},
+              pluginId: "sandbox",
+              pluginInstanceId: "sandbox-1",
+            },
+          ]
+        : [];
+      if (request.purpose === "interactive") pending.set(request.agentId, tools);
+      return { ...request, ...(selected ? { wrap: selected } : {}), tools, mcpServerOwners: {} };
+    },
+    sessionLaunched: (agentId) => {
+      const tools = pending.get(agentId);
+      pending.delete(agentId);
+      if (tools) running.set(agentId, tools);
+    },
+    sessionLaunchFailed: (agentId) => {
+      pending.delete(agentId);
+      failedLaunches.push(agentId);
+    },
+    refreshSession: async () => ({ stale: false }),
+    sessionTools: (agentId) => running.get(agentId) ?? [],
+    closeSession: (agentId) => {
+      pending.delete(agentId);
+      running.delete(agentId);
+    },
+    callTool: async () => ({ isError: true, text: "No plugin tools" }),
+  };
+  return { sessions, failedLaunches };
+}
+
+function createLaunchWrapManager(client: LaunchWrapRecordingClient) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-launch-wrap-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const hook: { wrap: TestLaunchWrap | undefined } = { wrap: undefined };
+  const { sessions, failedLaunches } = launchWrapPluginSessions(() => hook.wrap);
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    pluginSessions: sessions,
+  });
+  return { manager, storage, workdir, failedLaunches, hook };
+}
+
+test("a wrapped open rejects on every path for a provider that does not apply wraps", async () => {
+  const client = new LaunchWrapRecordingClient(false);
+  const { manager, storage, workdir, failedLaunches, hook } = createLaunchWrapManager(client);
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const existing = client.sessions[0]!;
+  hook.wrap = ["/opt/sandbox/bin/run", "--profile", "a b"];
+  const calls = { ...client.calls };
+  const unsupported = { code: "launch_wrap_unsupported", provider: "codex" };
+
+  await expect(
+    manager.createAgent({ provider: "codex", cwd: workdir }, undefined, { workspaceId: undefined }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(
+    manager.resumeAgentFromPersistence({ provider: "codex", sessionId: "saved" }, { cwd: workdir }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(
+    manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "native",
+      cwd: workdir,
+      workspaceId: "import",
+    }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(manager.reloadAgentSession(created.id)).rejects.toMatchObject(unsupported);
+
+  expect(client.calls).toEqual(calls);
+  expect(existing.closed).toBe(false);
+  expect(manager.getAgent(created.id)?.session).toBe(existing);
+  // Each refused open is discarded, so the running session keeps the tools it launched with.
+  expect(failedLaunches).toHaveLength(4);
+  expect(failedLaunches.at(-1)).toBe(created.id);
+  expect(manager.getPluginTools(created.id)).toEqual([]);
+  await manager.flush();
+  expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
+  await manager.closeAgent(created.id);
+});
+
+test("a supporting provider receives the wrap at launch and the record never stores it", async () => {
+  const client = new LaunchWrapRecordingClient(true);
+  const { manager, storage, workdir, hook } = createLaunchWrapManager(client);
+  hook.wrap = ["/opt/sandbox/bin/run", "--profile", "a b"];
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  expect(client.launchContexts[0]?.wrap).toEqual(["/opt/sandbox/bin/run", "--profile", "a b"]);
+  await manager.flush();
+  expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
+  await manager.closeAgent(created.id);
+});
+
+// Records its argv, then answers as the Codex app server, so the provider command is only an
+// argument: a Windows script name there must reach the wrapper as is.
+const RECORDING_CODEX_APP_SERVER = `
+const { appendFileSync } = require("node:fs");
+const [log, ...rest] = process.argv.slice(2);
+appendFileSync(log, JSON.stringify(rest) + "\\n");
+const results = {
+  "collaborationMode/list": { data: [] },
+  "config/read": { config: {} },
+  getUserSavedConfig: { config: {} },
+  "model/list": { data: [{ id: "gpt-5.4", isDefault: true, defaultReasoningEffort: "medium" }] },
+  "skills/list": { data: [] },
+  "thread/start": { thread: { id: "thread-1" } },
+  "thread/resume": { thread: { id: "thread-1" } },
+  "thread/loaded/list": { data: [] },
+  "thread/backgroundTerminals/list": { data: [], nextCursor: null },
+};
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  for (let index = buffer.indexOf("\\n"); index !== -1; index = buffer.indexOf("\\n")) {
+    const line = buffer.slice(0, index).trim();
+    buffer = buffer.slice(index + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    if (message.id === undefined || !message.method) continue;
+    process.stdout.write(JSON.stringify({ id: message.id, result: results[message.method] ?? {} }) + "\\n");
+  }
+});
+`;
+
+test("a wrapped refresh passes a Windows script provider command to the wrapper through the real spawn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-launch-wrap-refresh-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const launcher = join(workdir, "recording-app-server.cjs");
+  const launches = join(workdir, "launches.jsonl");
+  writeFileSync(launcher, RECORDING_CODEX_APP_SERVER);
+  // The version probes run `node --version`; sessions spawn through the production spawnProcess.
+  const codex = new CodexAppServerAgentClient(
+    logger,
+    { command: { mode: "replace", argv: [process.execPath] } },
+    {
+      appServerProcess: {
+        resolvePrefix: async () => ({ command: "C:\\codex\\codex.cmd", args: [] }),
+        spawn: ({ command, args, options }) => spawnProcess(command, args, options),
+      },
+    },
+  );
+  const client: AgentClient = Object.assign(codex, { supportsLaunchWrap: true });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    pluginSessions: launchWrapPluginSessions(() => [process.execPath, launcher, launches]).sessions,
+  });
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.reloadAgentSession(created.id);
+
+  const argv = readFileSync(launches, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as string[]);
+  expect(argv).toHaveLength(2);
+  for (const launched of argv)
+    expect(launched.slice(0, 2)).toEqual(["C:\\codex\\codex.cmd", "app-server"]);
+  expect(manager.getAgent(created.id)?.lifecycle).not.toBe("error");
+  await manager.closeAgent(created.id);
 });

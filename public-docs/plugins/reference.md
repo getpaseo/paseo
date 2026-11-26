@@ -15,15 +15,18 @@ Migrating an existing plugin? Follow the standalone [runtime-entry migration gui
 Local plugins are directory sources installed into one Paseo daemon. A plugin can contribute:
 
 - React Native screens and sidebar header and footer items to Paseo clients;
+- a [sidebar view](/docs/plugins/sidebar-views) that replaces the sidebar list, and [badges](#workspace-row-badge-items) on workspace rows;
 - workspace and agent panels opened as workspace tabs;
 - [file panels](#file-panels) for viewing or editing matching files;
 - global, workspace, and agent actions in the Command Center;
-- slash commands in the message composer;
+- slash commands, [controls](#composer-items), pills, and searchable external resources in the message composer;
+- [buttons](#header-buttons) in the workspace header and [fields](#new-workspace-items) on the New workspace screen;
+- [settings screens](#settings-screens) and light and dark themes in Settings → Appearance;
 - transformed and daemon-pushed agent timeline rows;
-- light and dark themes in Settings → Appearance;
-- schema-validated RPC handlers running beside the daemon;
-- normal Paseo operations through the TypeScript SDK;
-- searchable external resources in the message composer.
+- schema-validated RPC handlers and event streams running beside the daemon;
+- [hooks](/docs/plugins/hooks) that change or observe workspace, worktree, and agent operations;
+- [agent providers](/docs/plugins/providers), [usage sources](#usage-sources), and [worktree managers](#worktree-managers);
+- normal Paseo operations through the TypeScript SDK.
 
 Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
 
@@ -401,7 +404,7 @@ Use `openSettings`, `openScreen`, and `openPanel` for your own registered contri
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, `@getpaseo/plugin/server/usage`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
@@ -442,7 +445,10 @@ request. The promise returns a JSON value or rejects with the agent's JSON-RPC e
 
 In `toolCall`, use `context.mcpServerNames` to recognize servers that Paseo supplied when it opened
 the ACP session. Include an empty-list fallback for older SDK versions or servers configured
-directly in the agent.
+directly in the agent. `toolCall.content` holds the call's ACP `content` blocks, and
+`context.previous` is the call as Paseo last presented it, after every transformer. Both are absent
+on older SDK versions, and `previous` is absent on a call's first update. See
+[Adapt an ACP agent](/docs/plugins/providers#adapt-an-acp-agent) for the standard tool cards.
 
 Use `config(state, context)` to return the configuration snapshot that Paseo displays.
 Paseo calls this synchronous hook for initial, notification, and committed configuration snapshots.
@@ -1892,6 +1898,7 @@ Workspace snapshot fields:
 | `statusEnteredAt`    | ISO timestamp or `null`                                           |
 | `archivingAt`        | ISO timestamp or `null`                                           |
 | `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+| `parentWorkspace`    | `WorkspaceRef \| null`                                            |
 
 Agent snapshot fields:
 

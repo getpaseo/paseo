@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, resolve } from "node:path";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import { execCommand } from "../utils/spawn.js";
 import which from "which";
@@ -11,11 +11,46 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
-async function enumerateCandidates(name: string, env?: ProcessEnvRecord): Promise<string[]> {
-  if (process.platform !== "win32" && existsSync("/usr/bin/which")) {
-    return enumerateCandidatesViaSystemWhich(name, env);
+function stripWindowsPathQuotes(entry: string): string {
+  return process.platform === "win32" &&
+    entry.length >= 2 &&
+    entry.startsWith('"') &&
+    entry.endsWith('"')
+    ? entry.slice(1, -1)
+    : entry;
+}
+
+function normalizeDirectory(dir: string): string {
+  const resolved = resolve(dir);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function extractAbsolutePathDirs(rawPath: string | undefined): string[] {
+  if (!rawPath) {
+    return [];
   }
-  return enumerateCandidatesViaLibrary(name, env);
+  return rawPath
+    .split(delimiter)
+    .map(stripWindowsPathQuotes)
+    .filter((entry) => entry.length > 0 && isAbsolute(entry));
+}
+
+async function enumerateCandidates(name: string, env?: ProcessEnvRecord): Promise<string[]> {
+  const rawPath = env?.PATH !== undefined ? env.PATH : process.env.PATH;
+  const absolutePathDirs = extractAbsolutePathDirs(rawPath);
+  if (absolutePathDirs.length === 0) {
+    return [];
+  }
+  const filteredEnv: ProcessEnvRecord = {
+    ...(env ?? process.env),
+    PATH: absolutePathDirs.join(delimiter),
+  };
+  const allowedDirs = new Set(absolutePathDirs.map(normalizeDirectory));
+  const candidates =
+    process.platform !== "win32" && existsSync("/usr/bin/which")
+      ? await enumerateCandidatesViaSystemWhich(name, filteredEnv)
+      : await enumerateCandidatesViaLibrary(name, filteredEnv);
+  return candidates.filter((candidate) => allowedDirs.has(normalizeDirectory(dirname(candidate))));
 }
 
 async function enumerateCandidatesViaSystemWhich(

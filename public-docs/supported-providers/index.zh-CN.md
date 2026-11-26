@@ -57,7 +57,7 @@ Paseo 可以运行任何使用 [Agent Client Protocol](https://agentclientprotoc
 - [GLM Agent](https://github.com/stefandevo/glm-acp-agent)：智谱 AI 的 GLM 编程 Agent。
 - [goose](https://block.github.io/goose/)：Block 的本地开源 AI Agent。如果 goose 支持发现模型清单，Paseo 会列出 goose 中所有已配置 Provider 的模型。
 - [Grok](https://docs.x.ai/build/overview)：xAI 的 Grok Build Agent 编程 CLI。
-- [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)：Nous Research 的自我改进型 Agent。
+- [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)：Nous Research 的自我改进型 Agent。Paseo 会显示每次终端调用的完整命令。
 - [Junie](https://junie.jetbrains.com/docs/junie-cli-acp.html)：JetBrains 的编程 Agent。
 - [Kilo Code](https://kilo.ai/docs/code-with-ai/platforms/cli)：开源编程 Agent。
 - [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code)：月之暗面的编程助手。
