@@ -1891,8 +1891,7 @@ export const ar: TranslationResources = {
     waysToConnect: "طرق الاتصال",
     docs: "الوثائق",
     docsAccessibility: "افتح وثائق الاتصال",
-    recommended: "موصى به",
-    relay: { title: "التتابع", hint: "مشفّر من طرف إلى طرف، امسح رمز QR" },
+    relay: { title: "التتابع", hint: "دون إعداد، مشفّر من طرف إلى طرف، امسح رمز QR" },
     tailscale: {
       hint: "اتصال مباشر عبر شبكة tailnet الخاصة بك، أدخل عنوانًا",
       unavailable: "Tailscale لا يعمل على هذا المضيف",

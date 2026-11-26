@@ -1925,8 +1925,10 @@ export const ptBR: TranslationResources = {
     waysToConnect: "Formas de conexão",
     docs: "Docs",
     docsAccessibility: "Abrir documentação de conectividade",
-    recommended: "Recomendado",
-    relay: { title: "Relay", hint: "Criptografia de ponta a ponta, escaneie um código QR" },
+    relay: {
+      title: "Relay",
+      hint: "Sem configuração, criptografia de ponta a ponta, escaneie um código QR",
+    },
     tailscale: {
       hint: "Conexão direta pela sua tailnet, digite um endereço",
       unavailable: "O Tailscale não está em execução neste host",

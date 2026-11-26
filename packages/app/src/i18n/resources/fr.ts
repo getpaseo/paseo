@@ -1939,8 +1939,10 @@ export const fr: TranslationResources = {
     waysToConnect: "Moyens de connexion",
     docs: "Docs",
     docsAccessibility: "Ouvrir la documentation sur la connectivité",
-    recommended: "Recommandé",
-    relay: { title: "Relais", hint: "Chiffré de bout en bout, scannez un QR code" },
+    relay: {
+      title: "Relais",
+      hint: "Aucune configuration, chiffré de bout en bout, scannez un QR code",
+    },
     tailscale: {
       hint: "Connexion directe via votre tailnet, saisissez une adresse",
       unavailable: "Tailscale ne fonctionne pas sur cet hôte",

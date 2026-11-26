@@ -1903,8 +1903,7 @@ export const ko: TranslationResources = {
     waysToConnect: "연결 방법",
     docs: "문서",
     docsAccessibility: "연결 문서 열기",
-    recommended: "권장",
-    relay: { title: "릴레이", hint: "엔드투엔드 암호화, QR 코드를 스캔하세요" },
+    relay: { title: "릴레이", hint: "설정 불필요, 엔드투엔드 암호화, QR 코드를 스캔하세요" },
     tailscale: {
       hint: "tailnet으로 직접 연결, 주소 입력",
       unavailable: "이 호스트에서 Tailscale이 실행 중이 아닙니다",

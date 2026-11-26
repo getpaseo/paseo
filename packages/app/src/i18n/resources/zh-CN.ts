@@ -1873,8 +1873,7 @@ export const zhCN: TranslationResources = {
     waysToConnect: "连接方式",
     docs: "文档",
     docsAccessibility: "打开连接文档",
-    recommended: "推荐",
-    relay: { title: "中继", hint: "端到端加密，扫描二维码" },
+    relay: { title: "中继", hint: "无需配置，端到端加密，扫描二维码" },
     tailscale: {
       hint: "通过你的 tailnet 直连，输入地址即可",
       unavailable: "此主机未运行 Tailscale",

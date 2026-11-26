@@ -1912,8 +1912,7 @@ export const ja: TranslationResources = {
     waysToConnect: "接続方法",
     docs: "ドキュメント",
     docsAccessibility: "接続のドキュメントを開く",
-    recommended: "おすすめ",
-    relay: { title: "リレー", hint: "エンドツーエンド暗号化、QR コードをスキャン" },
+    relay: { title: "リレー", hint: "設定不要、エンドツーエンド暗号化、QR コードをスキャン" },
     tailscale: {
       hint: "tailnet 経由で直接接続、アドレスを入力",
       unavailable: "このホストで Tailscale が動作していません",

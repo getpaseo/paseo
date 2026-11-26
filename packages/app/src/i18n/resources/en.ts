@@ -1920,8 +1920,7 @@ export const en = {
     waysToConnect: "Ways to connect",
     docs: "Docs",
     docsAccessibility: "Open connectivity documentation",
-    recommended: "Recommended",
-    relay: { title: "Relay", hint: "End-to-end encrypted, scan a QR code" },
+    relay: { title: "Relay", hint: "No setup, end-to-end encrypted, scan a QR code" },
     tailscale: {
       hint: "Direct over your tailnet, enter an address",
       unavailable: "Tailscale is not running on this host",

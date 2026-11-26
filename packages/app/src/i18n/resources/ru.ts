@@ -1925,8 +1925,10 @@ export const ru: TranslationResources = {
     waysToConnect: "Способы подключения",
     docs: "Документация",
     docsAccessibility: "Открыть документацию по подключению",
-    recommended: "Рекомендуется",
-    relay: { title: "Ретранслятор", hint: "Сквозное шифрование, отсканируйте QR-код" },
+    relay: {
+      title: "Ретранслятор",
+      hint: "Без настройки, сквозное шифрование, отсканируйте QR-код",
+    },
     tailscale: {
       hint: "Прямое подключение через ваш tailnet, по адресу",
       unavailable: "Tailscale не запущен на этом хосте",
