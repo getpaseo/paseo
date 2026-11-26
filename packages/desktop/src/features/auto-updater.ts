@@ -132,6 +132,14 @@ export function shouldInstallAppUpdateOnQuit(input: {
 }
 
 const APP_UPDATE_DOWNLOAD_PROGRESS_EVENT = "paseo:event:app-update-download-progress";
+const activeProgressBarWindows = new WeakSet<BrowserWindow>();
+
+// macOS 26 Intel under Electron 44 wedges the main process and leaks gigabytes of
+// IOSurfaces in VizCompositorThread when BrowserWindow.setProgressBar() touches the
+// Dock tile. In-app download progress still updates via APP_UPDATE_DOWNLOAD_PROGRESS_EVENT.
+export function shouldUseWindowProgressBar(platform: NodeJS.Platform): boolean {
+  return platform !== "darwin";
+}
 
 function resolveProgressBarValue(progress: AppUpdateDownloadProgress | null): number {
   if (progress === null) return -1;
@@ -141,12 +149,22 @@ function resolveProgressBarValue(progress: AppUpdateDownloadProgress | null): nu
 
 function broadcastDownloadProgress(progress: AppUpdateDownloadProgress | null): void {
   const normalizedBar = resolveProgressBarValue(progress);
+  const useWindowProgressBar = shouldUseWindowProgressBar(process.platform);
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
-    try {
-      win.setProgressBar(normalizedBar);
-    } catch {
-      // Progress bar support is optional across desktop environments.
+    const shouldUpdateProgressBar =
+      useWindowProgressBar && (progress !== null || activeProgressBarWindows.has(win));
+    if (shouldUpdateProgressBar) {
+      try {
+        win.setProgressBar(normalizedBar);
+        if (progress === null) {
+          activeProgressBarWindows.delete(win);
+        } else {
+          activeProgressBarWindows.add(win);
+        }
+      } catch {
+        // Progress bar support is optional across desktop environments.
+      }
     }
     try {
       win.webContents.send(APP_UPDATE_DOWNLOAD_PROGRESS_EVENT, progress);
