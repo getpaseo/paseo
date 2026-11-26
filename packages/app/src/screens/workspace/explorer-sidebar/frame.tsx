@@ -35,7 +35,6 @@ function ExplorerFrameBase({
   const storedWidth = useWorkspaceLayoutStore(
     (state) => state.explorerSidebarWidthByWorkspace[persistenceKey],
   );
-  // A workspace keeps the width it was resized to; the others follow the app setting.
   const defaultWidth = useSettings((settings) => settings.explorerSidebarWidth);
   const resize = useWorkspaceLayoutStore((state) => state.resizeExplorerSidebar);
   const onResize = useCallback(

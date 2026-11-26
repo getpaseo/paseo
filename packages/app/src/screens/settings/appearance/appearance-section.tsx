@@ -24,10 +24,11 @@ import {
   MIN_CONTENT_FONT_SIZE,
   MIN_EXPLORER_SIDEBAR_WIDTH,
   MIN_UI_BASE_FONT_SIZE,
-  parseClampedFontSize,
+  parseClampedInteger,
   sanitizeFontFamily,
   useAppSettings,
   type AppSettings,
+  type AppSettingsUpdate,
   type ContentWidthPreset,
 } from "@/hooks/use-settings";
 import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK } from "@/styles/theme";
@@ -122,7 +123,7 @@ function FontFamilyRow({
   );
 }
 
-interface FontSizeRowProps {
+interface PixelInputRowProps {
   title: string;
   hint: string;
   accessibilityLabel: string;
@@ -132,7 +133,7 @@ interface FontSizeRowProps {
   onCommit: () => string;
 }
 
-function FontSizeRow({
+function PixelInputRow({
   title,
   hint,
   accessibilityLabel,
@@ -140,7 +141,7 @@ function FontSizeRow({
   withBorder = true,
   onChangeDraft,
   onCommit,
-}: FontSizeRowProps) {
+}: PixelInputRowProps) {
   const inputRef = useRef<EditingTextInputHandle>(null);
   const handleCommit = useCallback(() => {
     const committed = onCommit();
@@ -273,6 +274,35 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
   );
 }
 
+type PixelSetting = "uiBaseFontSize" | "contentFontSize" | "codeFontSize" | "explorerSidebarWidth";
+
+function usePixelSettingDraft(key: PixelSetting, min: number, max: number) {
+  const { settings, updateSettings } = useAppSettings();
+  const value = settings[key];
+  const [draft, setDraft] = useState(String(value));
+
+  // Resync when the committed value changes elsewhere.
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const onChangeDraft = useCallback((text: string) => {
+    setDraft(text.replace(/[^\d]/g, ""));
+  }, []);
+
+  const onCommit = useCallback(() => {
+    const next = parseClampedInteger(draft, { min, max }) ?? value;
+    setDraft(String(next));
+    if (next !== value) {
+      const update: AppSettingsUpdate = { [key]: next };
+      void updateSettings(update);
+    }
+    return String(next);
+  }, [draft, key, max, min, updateSettings, value]);
+
+  return { draft, onChangeDraft, onCommit };
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -286,26 +316,22 @@ export function AppearanceSection() {
 
   const [uiFontDraft, setUiFontDraft] = useState(settings.uiFontFamily);
   const [monoFontDraft, setMonoFontDraft] = useState(settings.monoFontFamily);
-  const [uiBaseSizeDraft, setUiBaseSizeDraft] = useState(String(settings.uiBaseFontSize));
-  const [contentSizeDraft, setContentSizeDraft] = useState(String(settings.contentFontSize));
-  const [codeSizeDraft, setCodeSizeDraft] = useState(String(settings.codeFontSize));
-  const [explorerWidthDraft, setExplorerWidthDraft] = useState(
-    String(settings.explorerSidebarWidth),
+  const uiBaseSize = usePixelSettingDraft(
+    "uiBaseFontSize",
+    MIN_UI_BASE_FONT_SIZE,
+    MAX_UI_BASE_FONT_SIZE,
   );
-
-  // Resync numeric drafts when the committed value changes elsewhere.
-  useEffect(() => {
-    setUiBaseSizeDraft(String(settings.uiBaseFontSize));
-  }, [settings.uiBaseFontSize]);
-  useEffect(() => {
-    setContentSizeDraft(String(settings.contentFontSize));
-  }, [settings.contentFontSize]);
-  useEffect(() => {
-    setCodeSizeDraft(String(settings.codeFontSize));
-  }, [settings.codeFontSize]);
-  useEffect(() => {
-    setExplorerWidthDraft(String(settings.explorerSidebarWidth));
-  }, [settings.explorerSidebarWidth]);
+  const contentSize = usePixelSettingDraft(
+    "contentFontSize",
+    MIN_CONTENT_FONT_SIZE,
+    MAX_CONTENT_FONT_SIZE,
+  );
+  const codeSize = usePixelSettingDraft("codeFontSize", MIN_CODE_FONT_SIZE, MAX_CODE_FONT_SIZE);
+  const explorerWidth = usePixelSettingDraft(
+    "explorerSidebarWidth",
+    MIN_EXPLORER_SIDEBAR_WIDTH,
+    MAX_EXPLORER_SIDEBAR_WIDTH,
+  );
 
   const handleContentWidthChange = useCallback(
     (contentWidth: ContentWidthPreset) => {
@@ -353,84 +379,16 @@ export function AppearanceSection() {
     [settings.monoFontFamily, updateSettings],
   );
 
-  const handleUiBaseSizeChange = useCallback((value: string) => {
-    setUiBaseSizeDraft(value.replace(/[^\d]/g, ""));
-  }, []);
-
-  const handleCodeSizeChange = useCallback((value: string) => {
-    setCodeSizeDraft(value.replace(/[^\d]/g, ""));
-  }, []);
-
-  const handleContentSizeChange = useCallback((value: string) => {
-    setContentSizeDraft(value.replace(/[^\d]/g, ""));
-  }, []);
-
-  const handleExplorerWidthChange = useCallback((value: string) => {
-    setExplorerWidthDraft(value.replace(/[^\d]/g, ""));
-  }, []);
-
-  const commitExplorerWidth = useCallback(() => {
-    const parsed = parseClampedFontSize(explorerWidthDraft, {
-      min: MIN_EXPLORER_SIDEBAR_WIDTH,
-      max: MAX_EXPLORER_SIDEBAR_WIDTH,
-    });
-    const next = parsed ?? settings.explorerSidebarWidth;
-    setExplorerWidthDraft(String(next));
-    if (next !== settings.explorerSidebarWidth) {
-      void updateSettings({ explorerSidebarWidth: next });
-    }
-    return String(next);
-  }, [explorerWidthDraft, settings.explorerSidebarWidth, updateSettings]);
-
-  const commitUiBaseSize = useCallback(() => {
-    const parsed = parseClampedFontSize(uiBaseSizeDraft, {
-      min: MIN_UI_BASE_FONT_SIZE,
-      max: MAX_UI_BASE_FONT_SIZE,
-    });
-    const next = parsed ?? settings.uiBaseFontSize;
-    setUiBaseSizeDraft(String(next));
-    if (next !== settings.uiBaseFontSize) {
-      void updateSettings({ uiBaseFontSize: next });
-    }
-    return String(next);
-  }, [settings.uiBaseFontSize, uiBaseSizeDraft, updateSettings]);
-
-  const commitCodeSize = useCallback(() => {
-    const parsed = parseClampedFontSize(codeSizeDraft, {
-      min: MIN_CODE_FONT_SIZE,
-      max: MAX_CODE_FONT_SIZE,
-    });
-    const next = parsed ?? settings.codeFontSize;
-    setCodeSizeDraft(String(next));
-    if (next !== settings.codeFontSize) {
-      void updateSettings({ codeFontSize: next });
-    }
-    return String(next);
-  }, [codeSizeDraft, settings.codeFontSize, updateSettings]);
-
-  const commitContentSize = useCallback(() => {
-    const parsed = parseClampedFontSize(contentSizeDraft, {
-      min: MIN_CONTENT_FONT_SIZE,
-      max: MAX_CONTENT_FONT_SIZE,
-    });
-    const next = parsed ?? settings.contentFontSize;
-    setContentSizeDraft(String(next));
-    if (next !== settings.contentFontSize) {
-      void updateSettings({ contentFontSize: next });
-    }
-    return String(next);
-  }, [contentSizeDraft, settings.contentFontSize, updateSettings]);
-
   // Live-while-typing: the in-progress drafts drive the preview without
   // committing to the global theme. Empty/invalid fields fall back to the
   // theme value inside the preview.
   const previewOverrides = useMemo(
     () => ({
-      contentFontSize: sizeDraftToOverride(contentSizeDraft),
+      contentFontSize: sizeDraftToOverride(contentSize.draft),
       monoFontFamily: monoFontDraft,
-      codeFontSize: sizeDraftToOverride(codeSizeDraft),
+      codeFontSize: sizeDraftToOverride(codeSize.draft),
     }),
-    [codeSizeDraft, contentSizeDraft, monoFontDraft],
+    [codeSize.draft, contentSize.draft, monoFontDraft],
   );
 
   return (
@@ -455,22 +413,22 @@ export function AppearanceSection() {
               onCommit={commitUiFontFamily}
             />
           ) : null}
-          <FontSizeRow
+          <PixelInputRow
             title={t("settings.appearance.fonts.interfaceSize")}
             hint={t("settings.appearance.fonts.interfaceSizeHint")}
             accessibilityLabel={t("settings.appearance.fonts.interfaceSizeAccessibility")}
-            draft={uiBaseSizeDraft}
+            draft={uiBaseSize.draft}
             withBorder={showInterfaceFontFamilyRow}
-            onChangeDraft={handleUiBaseSizeChange}
-            onCommit={commitUiBaseSize}
+            onChangeDraft={uiBaseSize.onChangeDraft}
+            onCommit={uiBaseSize.onCommit}
           />
-          <FontSizeRow
+          <PixelInputRow
             title={t("settings.appearance.fonts.contentSize")}
             hint={t("settings.appearance.fonts.contentSizeHint")}
             accessibilityLabel={t("settings.appearance.fonts.contentSizeAccessibility")}
-            draft={contentSizeDraft}
-            onChangeDraft={handleContentSizeChange}
-            onCommit={commitContentSize}
+            draft={contentSize.draft}
+            onChangeDraft={contentSize.onChangeDraft}
+            onCommit={contentSize.onCommit}
           />
           <FontFamilyRow
             title={t("settings.appearance.fonts.codeFont")}
@@ -483,26 +441,26 @@ export function AppearanceSection() {
             onChangeDraft={setMonoFontDraft}
             onCommit={commitMonoFontFamily}
           />
-          <FontSizeRow
+          <PixelInputRow
             title={t("settings.appearance.fonts.codeSize")}
             hint={t("settings.appearance.fonts.codeSizeHint")}
             accessibilityLabel={t("settings.appearance.fonts.codeSizeAccessibility")}
-            draft={codeSizeDraft}
-            onChangeDraft={handleCodeSizeChange}
-            onCommit={commitCodeSize}
+            draft={codeSize.draft}
+            onChangeDraft={codeSize.onChangeDraft}
+            onCommit={codeSize.onCommit}
           />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.layout.title")}>
         <View style={settingsStyles.card}>
           <ContentWidthRow value={settings.contentWidth} onChange={handleContentWidthChange} />
-          <FontSizeRow
+          <PixelInputRow
             title={t("settings.appearance.layout.explorerWidth")}
             hint={t("settings.appearance.layout.explorerWidthHint")}
             accessibilityLabel={t("settings.appearance.layout.explorerWidthAccessibility")}
-            draft={explorerWidthDraft}
-            onChangeDraft={handleExplorerWidthChange}
-            onCommit={commitExplorerWidth}
+            draft={explorerWidth.draft}
+            onChangeDraft={explorerWidth.onChangeDraft}
+            onCommit={explorerWidth.onCommit}
           />
         </View>
       </SettingsSection>

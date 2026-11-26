@@ -13,7 +13,7 @@ import {
   defaultContentFontSize,
   loadAppSettingsFromStorage,
   loadSettingsFromStorage,
-  parseClampedFontSize,
+  parseClampedInteger,
   parseTerminalScrollbackLines,
   resolveContentMaxWidth,
   sanitizeFontFamily,
@@ -1114,12 +1114,12 @@ describe("appearance settings", () => {
   });
 });
 
-describe("parseClampedFontSize", () => {
+describe("parseClampedInteger", () => {
   it("clamps to the bounds and rejects non-numeric strings", () => {
-    expect(parseClampedFontSize(999, { min: 11, max: 24 })).toBe(24);
-    expect(parseClampedFontSize(8, { min: 11, max: 24 })).toBe(11);
-    expect(parseClampedFontSize("15", { min: 11, max: 24 })).toBe(15);
-    expect(parseClampedFontSize("abc", { min: 11, max: 24 })).toBeNull();
+    expect(parseClampedInteger(999, { min: 11, max: 24 })).toBe(24);
+    expect(parseClampedInteger(8, { min: 11, max: 24 })).toBe(11);
+    expect(parseClampedInteger("15", { min: 11, max: 24 })).toBe(15);
+    expect(parseClampedInteger("abc", { min: 11, max: 24 })).toBeNull();
   });
 });
 

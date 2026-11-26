@@ -81,7 +81,7 @@ export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
-export { DEFAULT_EXPLORER_SIDEBAR_WIDTH, MIN_EXPLORER_SIDEBAR_WIDTH };
+export { MIN_EXPLORER_SIDEBAR_WIDTH };
 export const MAX_EXPLORER_SIDEBAR_WIDTH = 960;
 export { DEFAULT_CONTENT_MAX_WIDTH };
 const WIDE_CONTENT_MAX_WIDTH = 1200;
@@ -200,7 +200,7 @@ export const DEFAULT_APP_SETTINGS: Settings = {
 function clampedNumber(min: number, max: number) {
   return z
     .unknown()
-    .transform((value) => parseClampedFontSize(value, { min, max }))
+    .transform((value) => parseClampedInteger(value, { min, max }))
     .pipe(z.number());
 }
 
@@ -543,7 +543,7 @@ export function resolveContentMaxWidth({
   }
 }
 
-export function parseClampedFontSize(
+export function parseClampedInteger(
   value: unknown,
   bounds: { min: number; max: number },
 ): number | null {
