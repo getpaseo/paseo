@@ -262,6 +262,37 @@ describe("paseo worktree manager", () => {
     expect(existsSync(join(repoDir, "ran.txt"))).toBe(false);
   });
 
+  it("keeps a deleted worktree separate from the Paseo worktree that holds its daemon home", async () => {
+    const outer = await createLegacyWorktreeForTest({
+      branchName: "outer-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "outer",
+      paseoHome,
+    });
+    const nestedPaseoHome = join(outer.worktreePath, ".dev-home");
+    const inner = await createLegacyWorktreeForTest({
+      branchName: "inner-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "inner",
+      paseoHome: nestedPaseoHome,
+    });
+    rmSync(inner.worktreePath, { recursive: true, force: true });
+    execFileSync("git", ["worktree", "prune"], { cwd: repoDir });
+
+    await expect(
+      isPaseoOwnedWorktreeCwd(inner.worktreePath, { paseoHome: nestedPaseoHome }),
+    ).resolves.toMatchObject({ allowed: true, worktreePath: inner.worktreePath });
+
+    await deletePaseoWorktree({
+      cwd: repoDir,
+      worktreePath: inner.worktreePath,
+      paseoHome: nestedPaseoHome,
+    });
+    expect(existsSync(join(outer.worktreePath, "file.txt"))).toBe(true);
+  });
+
   it("rejects paths that are not under the paseo worktrees root", async () => {
     const outsidePath = join(tempDir, "outside-paseo-home");
     mkdirSync(outsidePath, { recursive: true });

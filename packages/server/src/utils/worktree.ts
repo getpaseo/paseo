@@ -1139,6 +1139,8 @@ export async function isPaseoOwnedWorktreeCwd(
     }
   }
 
+  const worktreesBaseRoot = resolvePaseoWorktreesBaseRoot(options);
+
   // Worktrees placed at plugin-chosen paths are
   // proven by the marker createWorktree writes unconditionally: a
   // paseo/worktree.json in the worktree's git admin dir, with the path
@@ -1146,7 +1148,12 @@ export async function isPaseoOwnedWorktreeCwd(
   // is not proof — it lives in a git admin dir a user can copy into a
   // hand-made directory that git does not know about.
   if (options?.knownGitCommonDir !== null) {
-    const metadataProof = await resolveMetadataOwnedWorktree(cwd, repoRoot, options);
+    const metadataProof = await resolveMetadataOwnedWorktree(
+      cwd,
+      repoRoot,
+      worktreesBaseRoot,
+      options,
+    );
     if (metadataProof) {
       return {
         allowed: true,
@@ -1157,7 +1164,6 @@ export async function isPaseoOwnedWorktreeCwd(
     }
   }
 
-  const worktreesBaseRoot = resolvePaseoWorktreesBaseRoot(options);
   const relativePath = await getOwnershipRelativePath(worktreesBaseRoot, resolvedCwd);
 
   // Ownership is defined by the path living under <worktrees-root>/<hash>/<slug>[/...].
@@ -1187,6 +1193,7 @@ export async function isPaseoOwnedWorktreeCwd(
 async function resolveMetadataOwnedWorktree(
   cwd: string,
   repoRoot: string | undefined,
+  worktreesBaseRoot: string,
   options?: PaseoWorktreeOwnershipOptions,
 ): Promise<{ worktreePath: string; worktreeRoot: string } | null> {
   try {
@@ -1194,6 +1201,15 @@ async function resolveMetadataOwnedWorktree(
     if (!root) return null;
     const candidate = await normalizePathForOwnership(root);
     if (repoRoot !== undefined && (await areEquivalentOwnershipPaths(candidate, repoRoot)))
+      return null;
+    // The marker search walks up from a deleted worktree to any Paseo worktree
+    // above it. For a path under the worktrees root, one that holds the root,
+    // such as a daemon home kept inside another Paseo worktree, owns none of
+    // the worktrees beneath it. The path shape below decides those.
+    if (
+      (await getOwnershipRelativePath(worktreesBaseRoot, cwd)) !== null &&
+      (await getOwnershipRelativePath(candidate, worktreesBaseRoot)) !== null
+    )
       return null;
     return (await isRegisteredGitWorktree(candidate, options))
       ? { worktreePath: candidate, worktreeRoot: dirname(candidate) }
