@@ -752,3 +752,15 @@ for (const target of ["terminal", "empty"] as const) {
     }
   });
 }
+
+test("repeated empty Create clicks provision once on a legacy host without workspace receipts", async ({
+  creation,
+  page,
+}) => {
+  await useCreationProtocol(page, true, { workspaceRequestReceipts: false });
+  await creation.openWorkspaceForm("local");
+  await creation.submitRepeatedly("Create");
+  await creation.expectOneCreatedWorkspace();
+  await page.reload();
+  await creation.expectOneCreatedWorkspace();
+});

@@ -22,7 +22,11 @@ import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/works
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
 
 /** Negotiate and verify a creation protocol against the real daemon on the next connection. */
-export async function useCreationProtocol(page: Page, legacy: boolean) {
+export async function useCreationProtocol(
+  page: Page,
+  legacy: boolean,
+  options?: { workspaceRequestReceipts?: boolean },
+) {
   const frames = await loadSessionMessageReaders();
   let agentRequests = 0;
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
@@ -41,6 +45,8 @@ export async function useCreationProtocol(page: Page, legacy: boolean) {
       const payload = envelope.message?.payload ?? envelope.payload;
       if (payload?.status === "server_info" && payload.features) {
         payload.features.creationLifecycle = !legacy;
+        if (options?.workspaceRequestReceipts !== undefined)
+          payload.features.workspaceRequestReceipts = options.workspaceRequestReceipts;
         browser.send(JSON.stringify(envelope));
       } else browser.send(frame);
     });

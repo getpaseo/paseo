@@ -1,3 +1,4 @@
+import { CreationClient } from "../../../../client/src/creation/index";
 import { describe, expect, it } from "vitest";
 import { draftCreationKey } from "./creation-key";
 import { createDraftCreations, DraftCreationOutcomeUnknownError } from "./creation-attempt";
@@ -1103,4 +1104,151 @@ it("agent admission reclaims an identity retired before it acquired the lock", a
       },
     }),
   ).toBe("claimed-agent");
+});
+
+it("coalesces identical overlapping controller submissions through the legacy SDK into one provisioning call", async () => {
+  const disk = storage();
+  const creations = creationsFor(disk);
+  const release = deferredValue<void>();
+  const started = deferredValue<void>();
+  let provisions = 0;
+  const sdk = new CreationClient({
+    supports: () => false,
+    requestId: () => "request-id",
+    request: async () => {
+      throw new Error("Modern creation must not run");
+    },
+    observe: () => () => {},
+    legacyAgent: async () => {
+      throw new Error("Empty creation must not start an agent");
+    },
+    legacyWorkspace: async () => {
+      provisions += 1;
+      const workspace = { ...handedOffWorkspace, id: `workspace-${provisions}` };
+      started.resolve();
+      await release.promise;
+      return { requestId: "legacy", workspace, error: null, setupTerminalId: null };
+    },
+  });
+  const input = { source: { kind: "directory" as const, path: "/repo" } };
+  expect(
+    await Promise.all([
+      creations.workspaceRetry({ ...scope, request: input }),
+      creations.workspaceRetry({ ...scope, request: input }),
+    ]),
+  ).toEqual([{ kind: "create" }, { kind: "create" }]);
+  const firstEvents: CreationSnapshot[] = [];
+  const secondEvents: CreationSnapshot[] = [];
+  const send = (options: {
+    idempotencyKey: string;
+    onEvent: (snapshot: CreationSnapshot) => void;
+  }) => sdk.createWorkspace({ ...input, ...options });
+  const first = creations.submit({
+    ...scope,
+    kind: "workspace",
+    request: input,
+    send,
+    onEvent: (snapshot) => {
+      firstEvents.push(snapshot);
+    },
+  });
+  const second = creations.submit({
+    ...scope,
+    kind: "workspace",
+    request: { source: { path: "/repo", kind: "directory" } },
+    send,
+    onEvent: (snapshot) => {
+      secondEvents.push(snapshot);
+    },
+  });
+  await started.promise;
+  release.resolve();
+  const results = await Promise.all([first, second]);
+  expect(provisions).toBe(1);
+  expect(results.map((result) => result.workspace?.id)).toEqual(["workspace-1", "workspace-1"]);
+  expect(firstEvents.map((snapshot) => snapshot.phase)).toEqual(["workspace_ready"]);
+  expect(secondEvents).toEqual(firstEvents);
+});
+
+it("releases a coalesced failed submission so the unchanged draft can retry", async () => {
+  const creations = creationsFor(storage());
+  const started = deferredValue<void>();
+  let reject!: (error: Error) => void;
+  const network = new Promise<string>((_resolve, fail) => {
+    reject = fail;
+  });
+  let sends = 0;
+  const send = async () => {
+    sends += 1;
+    started.resolve();
+    return network;
+  };
+  const first = creations.submit({ ...scope, kind: "agent", request, send });
+  const second = creations.submit({ ...scope, kind: "agent", request, send });
+  const joined = Promise.allSettled([first, second]);
+  await started.promise;
+  const rejection = new NotSentError("Local validation rejected this frame");
+  reject(rejection);
+  expect(await joined).toEqual([
+    { status: "rejected", reason: rejection },
+    { status: "rejected", reason: rejection },
+  ]);
+  expect(
+    await creations.submit({
+      ...scope,
+      kind: "agent",
+      request,
+      send: async () => {
+        sends += 1;
+        return "retried";
+      },
+    }),
+  ).toBe("retried");
+  expect(sends).toBe(2);
+});
+
+it("replays current progress to a caller joining an in-flight creation", async () => {
+  const creations = creationsFor(storage());
+  const published = deferredValue<void>();
+  const network = deferredValue<string>();
+  const snapshot = {
+    ...failure({
+      kind: "workspace",
+      idempotencyKey: draftCreationKey(scope.draftId, handedOffRequest),
+      unknown: false,
+    }),
+    phase: "workspace_ready" as const,
+    error: null,
+    workspace: handedOffWorkspace,
+  };
+  const first = creations.submit({
+    ...scope,
+    kind: "workspace",
+    request: handedOffRequest,
+    onEvent: () => {
+      throw new Error("Unmounted progress consumer");
+    },
+    send: async ({ onEvent }) => {
+      onEvent(snapshot);
+      published.resolve();
+      return network.promise;
+    },
+  });
+  await published.promise;
+  const joinedProgress = deferredValue<CreationSnapshot>();
+  let duplicateSends = 0;
+  const second = creations.submit({
+    ...scope,
+    kind: "workspace",
+    request: handedOffRequest,
+    onEvent: joinedProgress.resolve,
+    send: async () => {
+      duplicateSends += 1;
+      return "duplicate";
+    },
+  });
+  expect(await joinedProgress.promise).toEqual(snapshot);
+  network.resolve("original");
+  expect(await Promise.all([first, second])).toEqual(["original", "original"]);
+  expect(duplicateSends).toBe(0);
 });

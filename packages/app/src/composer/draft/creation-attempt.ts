@@ -79,6 +79,22 @@ interface Submission<Result> extends Identity {
   onAdmitted?: () => Promise<void>;
 }
 
+interface SubmissionProgress {
+  latest?: CreationSnapshot;
+  observers: Set<(snapshot: CreationSnapshot) => void>;
+}
+
+function notifyObserver(
+  observer: (snapshot: CreationSnapshot) => void,
+  snapshot: CreationSnapshot,
+) {
+  try {
+    observer(snapshot);
+  } catch {
+    // A progress consumer cannot control creation or other consumers' progress.
+  }
+}
+
 function requestsAgent(input: Pick<Submission<unknown>, "kind" | "request">): boolean {
   return input.kind === "agent" || ("agent" in input.request && input.request.agent != null);
 }
@@ -133,6 +149,7 @@ export class DraftCreationOutcomeUnknownError extends Error {
 /** Admission blocks on storage; progress persistence never replaces the host's result. */
 export function createDraftCreations(deps: Dependencies) {
   const scopes = new Map<string, Promise<Scope>>();
+  const inFlight = new Map<string, { result: Promise<unknown>; progress: SubmissionProgress }>();
 
   function scopeFor(identity: Identity): Promise<Scope> {
     const key = `draft-creation:${JSON.stringify([identity.serverId, identity.draftId])}`;
@@ -323,13 +340,43 @@ export function createDraftCreations(deps: Dependencies) {
 
   async function submit<Result>(input: Submission<Result>): Promise<Result> {
     const scope = await scopeFor(input);
+    const key = draftCreationKey(input.draftId, input.request);
+    const identity = JSON.stringify([scope.key, input.kind, key]);
+    const pending = inFlight.get(identity);
+    if (pending) {
+      if (input.onEvent) {
+        pending.progress.observers.add(input.onEvent);
+        if (pending.progress.latest) notifyObserver(input.onEvent, pending.progress.latest);
+      }
+      return pending.result as Promise<Result>;
+    }
+    const progress: SubmissionProgress = {
+      observers: new Set(input.onEvent ? [input.onEvent] : []),
+    };
+    const result = executeSubmission(scope, input, key, (snapshot) => {
+      progress.latest = snapshot;
+      for (const observer of progress.observers) notifyObserver(observer, snapshot);
+    });
+    inFlight.set(identity, { result, progress });
+    const release = () => {
+      if (inFlight.get(identity)?.result === result) inFlight.delete(identity);
+    };
+    void result.then(release, release);
+    return result;
+  }
+
+  async function executeSubmission<Result>(
+    scope: Scope,
+    input: Submission<Result>,
+    key: string,
+    notify: (snapshot: CreationSnapshot) => void,
+  ): Promise<Result> {
     return serialize(scope, async () => {
       const admitted = await serialize(
         scope,
         async () => {
           await scope.writes;
           const previous = scope.record;
-          const key = draftCreationKey(input.draftId, input.request);
           const prior = previous.attempt;
           const sameRequest = prior?.key === key && prior.kind === input.kind;
           const firstAgentInReadyWorkspace = canStartFirstAgent(previous, input);
@@ -371,7 +418,7 @@ export function createDraftCreations(deps: Dependencies) {
       );
 
       const onEvent = (snapshot: CreationSnapshot) => {
-        if (acceptSnapshot(scope, snapshot)) input.onEvent?.(snapshot);
+        if (acceptSnapshot(scope, snapshot)) notify(snapshot);
       };
 
       try {
