@@ -43,7 +43,11 @@ import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-pa
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
 import { readGitFileContents, readGitFileContentAtRef } from "./git-file-contents.js";
 import { unquoteGitPath } from "./git-quoted-path.js";
-import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
+import {
+  createRegisteredWorktreeLookup,
+  isPaseoOwnedWorktreeCwd,
+  resolvePaseoWorktreesBaseRoot,
+} from "./worktree.js";
 import {
   branchNameFromRef,
   findPaseoWorktreeRootForCwd,
@@ -970,11 +974,18 @@ export interface MergeFromBaseOptions {
   requireCleanTarget?: boolean;
 }
 
+export function createCheckoutReadSession() {
+  return { isRegisteredWorktree: createRegisteredWorktreeLookup() };
+}
+
+export type CheckoutReadSession = ReturnType<typeof createCheckoutReadSession>;
+
 export interface CheckoutContext {
   paseoHome?: string;
   worktreesRoot?: string;
   logger?: Pick<Logger, "trace" | "warn">;
   facts?: CheckoutSnapshotFacts | null;
+  readSession?: CheckoutReadSession;
   runGitCommand?: RunGitCommand;
   // `git config --get` results shared by the lookups of one snapshot, keyed by config key.
   // Several lookups read the same keys; this keeps each to one process.
@@ -1312,6 +1323,7 @@ async function getPaseoWorktreeForCwd(
     paseoHome: options.context?.paseoHome,
     worktreesRoot: options.context?.worktreesRoot,
     knownGitCommonDir: options.knownGitCommonDir,
+    isRegisteredWorktree: options.context?.readSession?.isRegisteredWorktree,
   });
   if (!ownership.allowed) {
     return { isPaseoOwnedWorktree: false };
@@ -2061,7 +2073,8 @@ interface CheckoutInspectionContext {
 
 async function inspectCheckoutContext(
   cwd: string,
-  context?: CheckoutContext,
+  context: CheckoutContext | undefined,
+  options: { includeAbsoluteGitDir: boolean },
 ): Promise<CheckoutInspectionContext | null> {
   const root = await getWorktreeRoot(cwd, context);
   if (!root) {
@@ -2071,7 +2084,7 @@ async function inspectCheckoutContext(
   const [currentBranch, remoteUrl, absoluteGitDir, gitCommonDir] = await Promise.all([
     getCurrentBranch(cwd, context),
     getOriginRemoteUrl(cwd, context),
-    resolveAbsoluteGitDir(cwd, context),
+    options.includeAbsoluteGitDir ? resolveAbsoluteGitDir(cwd, context) : null,
     resolveGitCommonDir(cwd, context),
   ]);
   const paseoWorktree = await getPaseoWorktreeForCwd(cwd, {
@@ -2316,7 +2329,7 @@ async function collectCheckoutSnapshotFacts(
   cwd: string,
   context: CheckoutContext,
 ): Promise<CheckoutSnapshotFacts> {
-  const inspected = await inspectCheckoutContext(cwd, context);
+  const inspected = await inspectCheckoutContext(cwd, context, { includeAbsoluteGitDir: true });
   if (!inspected) {
     return { isGit: false };
   }
@@ -2548,6 +2561,60 @@ async function getUntrackedDiffText(
     text: result.stdout,
     truncated: result.truncated,
     stat: { additions: 0, deletions: 0, isBinary: false },
+  };
+}
+
+export type CheckoutIdentity =
+  | { isGit: false }
+  | {
+      isGit: true;
+      repoRoot: string;
+      mainRepoRoot: string | null;
+      currentBranch: string | null;
+      remoteUrl: string | null;
+      isPaseoOwnedWorktree: boolean;
+    };
+
+/**
+ * What a checkout is, without the state of its files. Reports the same identity fields as
+ * `getCheckoutStatus` but never scans the working tree (`status`), compares against a base, or
+ * counts commits, so reading many checkouts in the background stays cheap.
+ */
+export async function getCheckoutIdentity(
+  cwd: string,
+  context?: CheckoutContext,
+): Promise<CheckoutIdentity> {
+  const inspected = await inspectCheckoutContext(cwd, context, { includeAbsoluteGitDir: false });
+  if (!inspected) {
+    return { isGit: false };
+  }
+  const { worktreeRoot, currentBranch, remoteUrl, paseoWorktree } = inspected;
+  const mainRepoRoot = await getMainRepoRootFromCommonDir(
+    cwd,
+    inspected.gitCommonDir,
+    context,
+  ).catch(() => null);
+  // `getCheckoutStatus` reports a worktree as Paseo-owned only when it also resolves a base.
+  const isPaseoOwnedWorktree =
+    paseoWorktree.isPaseoOwnedWorktree &&
+    Boolean(
+      storedBaseRefFromMetadata(await readPaseoWorktreeMetadata(worktreeRoot)) ??
+      (await resolveBaseRef(cwd, context)),
+    );
+  const isLinkedCheckout = mainRepoRoot !== null && resolve(mainRepoRoot) !== resolve(worktreeRoot);
+  let reportedMainRepoRoot: string | null = null;
+  if (isPaseoOwnedWorktree) {
+    reportedMainRepoRoot = mainRepoRoot ?? worktreeRoot;
+  } else if (isLinkedCheckout) {
+    reportedMainRepoRoot = mainRepoRoot;
+  }
+  return {
+    isGit: true,
+    repoRoot: worktreeRoot,
+    mainRepoRoot: reportedMainRepoRoot,
+    currentBranch,
+    remoteUrl,
+    isPaseoOwnedWorktree,
   };
 }
 

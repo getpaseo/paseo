@@ -137,6 +137,36 @@ test("a fresh checkout read makes a newly initialized repository available to ca
   expect(realpathSync.native(repoRoot)).toBe(realpathSync.native(repo));
 }, 30_000);
 
+test("a checkout read for reconciliation never scans the working tree", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-checkout-read-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+  });
+  cleanup.push(async () => {
+    await service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  startGitCommandMetrics();
+  const checkout = await service.getCheckout(repo, { priority: "background" });
+  const verbs = stopGitCommandMetrics().commands.map((command) => command.args[0]);
+
+  expect(checkout).toMatchObject({ isGit: true, currentBranch: "main" });
+  expect(verbs.length).toBeGreaterThan(0);
+  expect(verbs.filter((verb) => ["status", "ls-files", "rev-list"].includes(verb))).toEqual([]);
+}, 30_000);
+
 test("recursive observation updates tracked state and prunes ignored storms", async () => {
   const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-observation-")));
   const repoDir = path.join(tempDir, "repo");

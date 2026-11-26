@@ -244,6 +244,7 @@ export interface PaseoWorktreeOwnership {
 
 export interface PaseoWorktreeOwnershipOptions extends WorktreeRootOptions {
   knownGitCommonDir?: string | null;
+  isRegisteredWorktree?: RegisteredWorktreeLookup;
 }
 
 export interface WorktreeRootOptions {
@@ -1123,7 +1124,7 @@ export async function isPaseoOwnedWorktreeCwd(
   // is not proof — it lives in a git admin dir a user can copy into a
   // hand-made directory that git does not know about.
   if (options?.knownGitCommonDir !== null) {
-    const metadataProof = await resolveMetadataOwnedWorktree(cwd, repoRoot);
+    const metadataProof = await resolveMetadataOwnedWorktree(cwd, repoRoot, options);
     if (metadataProof) {
       return {
         allowed: true,
@@ -1164,6 +1165,7 @@ export async function isPaseoOwnedWorktreeCwd(
 async function resolveMetadataOwnedWorktree(
   cwd: string,
   repoRoot: string | undefined,
+  options?: PaseoWorktreeOwnershipOptions,
 ): Promise<{ worktreePath: string; worktreeRoot: string } | null> {
   try {
     const root = await findPaseoWorktreeRootForCwd(cwd);
@@ -1171,16 +1173,62 @@ async function resolveMetadataOwnedWorktree(
     const candidate = await normalizePathForOwnership(root);
     if (repoRoot !== undefined && candidate === (await normalizePathForOwnership(repoRoot)))
       return null;
-    const { entries } = await readGitWorktreeEntries(candidate);
-    for (const entry of entries) {
-      if ((await normalizePathForOwnership(entry.path)) === candidate) {
-        return { worktreePath: candidate, worktreeRoot: dirname(candidate) };
-      }
-    }
-    return null;
+    const isRegistered = options?.isRegisteredWorktree ?? isRegisteredGitWorktree;
+    return (await isRegistered(candidate, options?.knownGitCommonDir))
+      ? { worktreePath: candidate, worktreeRoot: dirname(candidate) }
+      : null;
   } catch {
     return null;
   }
+}
+
+type RegisteredWorktreeLookup = (
+  canonicalCheckoutPath: string,
+  gitCommonDir?: string | null,
+) => Promise<boolean>;
+
+async function isRegisteredGitWorktree(candidate: string): Promise<boolean> {
+  const { entries } = await readGitWorktreeEntries(candidate);
+  for (const entry of entries) {
+    if ((await normalizePathForOwnership(entry.path)) === candidate) return true;
+  }
+  return false;
+}
+
+/** Share Git's worktree registration proof for one batch of checkout reads. */
+export function createRegisteredWorktreeLookup(): RegisteredWorktreeLookup {
+  const reads = new Map<string, Promise<RegisteredWorktreeLookup>>();
+  return async (candidate, gitCommonDir) => {
+    if (!gitCommonDir) return isRegisteredGitWorktree(candidate);
+    const repository = await normalizePathForOwnership(gitCommonDir);
+    let membership = reads.get(repository);
+    if (!membership) {
+      membership = readRegisteredWorktreeLookup(candidate).catch((error) => {
+        reads.delete(repository);
+        throw error;
+      });
+      reads.set(repository, membership);
+    }
+    return (await membership)(candidate);
+  };
+}
+
+async function readRegisteredWorktreeLookup(cwd: string): Promise<RegisteredWorktreeLookup> {
+  const { entries } = await readGitWorktreeEntries(cwd);
+  const registeredPaths = new Set(entries.map((entry) => resolve(entry.path)));
+  const resolvedPaths = new Map<string, Promise<string>>();
+  return async (candidate) => {
+    if (registeredPaths.has(candidate)) return true;
+    for (const path of registeredPaths) {
+      let canonical = resolvedPaths.get(path);
+      if (!canonical) {
+        canonical = normalizePathForOwnership(path);
+        resolvedPaths.set(path, canonical);
+      }
+      if ((await canonical) === candidate) return true;
+    }
+    return false;
+  };
 }
 
 type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
