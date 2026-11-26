@@ -428,7 +428,7 @@ describe("OMP 19.1 HTML form ask", () => {
       {
         question: "Which tools?",
         header: "tools",
-        options: [{ label: "X, Y" }, { label: "Z", description: "Default" }],
+        options: [{ label: "X,Y" }, { label: "Z", description: "Default" }],
         multiSelect: true,
         allowOther: true,
         allowEmpty: true,
@@ -439,16 +439,16 @@ describe("OMP 19.1 HTML form ask", () => {
         options: [],
         multiSelect: false,
         allowOther: false,
-        allowEmpty: false,
+        allowEmpty: true,
       },
       {
         question: "Note",
         header: "note",
-        options: [],
+        options: [{ label: "keep logs", description: "Default" }],
         multiSelect: false,
-        allowOther: false,
+        allowOther: true,
         allowEmpty: true,
-        placeholder: "Default: keep logs",
+        placeholder: "Anything else?",
       },
       {
         question: "Region",
@@ -473,7 +473,7 @@ describe("OMP 19.1 HTML form ask", () => {
       updatedInput: {
         answers: {
           store: "Postgres",
-          tools: "X, Y, Z, hammer",
+          tools: "X,Y, Z, hammer",
           days: "7",
           note: "",
           region: "Europe",
@@ -520,6 +520,116 @@ describe("OMP 19.1 HTML form ask", () => {
     expect(omp.eventTypes()).toContain("permission_resolved");
     await expect(omp.respondToPermission("form-1", { behavior: "deny" })).rejects.toThrow();
     expect(omp.extensionUiResponses()).toEqual([]);
+  });
+
+  test("keeps Dismiss a cancel when a text field is prefilled", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(omp, "form-1", '<form><label>Branch <input name="branch" value="main"></label></form>');
+
+    // The card submits on Dismiss only when every question is optional free text;
+    // the prefilled value is an option, so Dismiss stays a cancel.
+    expect(questions(omp)).toEqual([
+      {
+        question: "Branch",
+        header: "branch",
+        options: [{ label: "main", description: "Default" }],
+        multiSelect: false,
+        allowOther: true,
+        allowEmpty: true,
+      },
+    ]);
+    await omp.respondToPermission("form-1", { behavior: "allow", updatedInput: { answers: {} } });
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { branch: "main" } } },
+    ]);
+  });
+
+  test("lets optional text fields stay blank and names Dismiss Skip when that submits", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(
+      omp,
+      "form-1",
+      '<form><label>Why? <input name="why"></label><label>Notes <textarea name="notes"></textarea></label></form>',
+    );
+
+    expect(questions(omp)).toMatchObject([
+      { header: "why", options: [], allowEmpty: true, dismissLabel: "Skip" },
+      { header: "notes", options: [], allowEmpty: true, dismissLabel: "Skip" },
+    ]);
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { answers: { why: "", notes: "" } },
+    });
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { why: "", notes: "" } } },
+    ]);
+  });
+
+  test("requires an answer for a required text field", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(
+      omp,
+      "form-1",
+      '<form><label>Name <input name="name" required></label><label>Why? <input name="why"></label></form>',
+    );
+
+    expect(questions(omp)).toMatchObject([
+      { header: "name", allowEmpty: false },
+      { header: "why", allowEmpty: true },
+    ]);
+    expect(questions(omp)).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ dismissLabel: expect.anything() })]),
+    );
+  });
+
+  test("keeps multi-select answers distinct when a label joins other labels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const html =
+      '<form><label><input type="checkbox" name="r" value="us">US</label><label><input type="checkbox" name="r" value="ca">Canada</label><label><input type="checkbox" name="r" value="both">US, Canada</label></form>';
+    form(omp, "form-1", html);
+    form(omp, "form-2", html);
+
+    expect(questions(omp)).toMatchObject([
+      { options: [{ label: "US" }, { label: "Canada" }, { label: "US,Canada" }] },
+    ]);
+    // The card joins checked labels with ", ".
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { answers: { r: "US, Canada" } },
+    });
+    await omp.respondToPermission("form-2", {
+      behavior: "allow",
+      updatedInput: { answers: { r: "US,Canada" } },
+    });
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { r: ["us", "ca"] } } },
+      { id: "form-2", response: { data: { r: ["both"] } } },
+    ]);
+  });
+
+  test("reads an option's text value the way OMP does when it wraps across lines", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(
+      omp,
+      "form-1",
+      '<form><label>Region <select name="region"><option>Europe</option><option>North\n  America</option></select></label></form>',
+    );
+
+    expect(questions(omp)).toMatchObject([
+      { options: [{ label: "Europe", description: "Default" }, { label: "North America" }] },
+    ]);
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { answers: { region: "North America" } },
+    });
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { region: "North America" } } },
+    ]);
   });
 
   test("shows a form without controls as readable text with a Continue answer", async () => {

@@ -31,6 +31,7 @@ export interface OmpFormChoiceField {
   /** Text shown before the field plus its own label. */
   prompt: string;
   options: OmpFormOption[];
+  required: boolean;
 }
 
 export interface OmpFormTextField {
@@ -39,6 +40,7 @@ export interface OmpFormTextField {
   prompt: string;
   value: string;
   placeholder: string;
+  required: boolean;
 }
 
 export type OmpFormField = OmpFormChoiceField | OmpFormTextField;
@@ -139,6 +141,11 @@ function collectElements(
   return found;
 }
 
+/** Source whitespace, newlines included, renders as one space; only `<br>` breaks a line. */
+function collapse(text: string): string {
+  return text.replace(/\s+/g, " ");
+}
+
 function normalize(text: string): string {
   return text
     .replace(/[^\S\n]+/g, " ")
@@ -151,7 +158,7 @@ function textOf(node: Node, options: { skipLabels?: boolean } = {}): string {
   const parts: string[] = [];
   const visit = (current: Node): void => {
     if (isText(current)) {
-      parts.push(current.value);
+      parts.push(collapse(current.value));
       return;
     }
     if (!isElement(current)) return;
@@ -225,7 +232,7 @@ class FormReader {
 
   private visit(node: Node, label: string | undefined): void {
     if (isText(node)) {
-      if (label === undefined) this.inline.push(node.value);
+      if (label === undefined) this.inline.push(collapse(node.value));
       return;
     }
     if (!isElement(node)) return;
@@ -256,7 +263,7 @@ class FormReader {
         return;
       case "pre":
         this.flush();
-        this.context.push(`\`\`\`\n${textOf(node).replace(/^\n/, "")}\n\`\`\``);
+        this.context.push(`\`\`\`\n${rawText(node).replace(/^\n/, "").trimEnd()}\n\`\`\``);
         return;
       case "table":
         this.table(node);
@@ -322,12 +329,14 @@ class FormReader {
     this.flush();
     const label = wrapping || this.detachedLabel(control);
     const name = attr(control, "name") ?? "";
+    const required = hasAttr(control, "required");
     const tag = control.tagName;
     if (tag === "select") {
       const multi = hasAttr(control, "multiple");
       const options = collectElements(control, (element) => element.tagName === "option").map(
         (option) => {
-          const text = textOf(option);
+          // Same text OMP derives an option's value from when `value` is absent.
+          const text = rawText(option).replace(/\s+/g, " ").trim();
           return {
             value: attr(option, "value") ?? text,
             label: text,
@@ -349,6 +358,7 @@ class FormReader {
         other: false,
         prompt: this.prompt(label),
         options,
+        required,
       });
       return;
     }
@@ -359,6 +369,7 @@ class FormReader {
         prompt: this.prompt(label),
         value: rawText(control).replace(/^\r?\n/, ""),
         placeholder: attr(control, "placeholder") ?? "",
+        required,
       });
       return;
     }
@@ -376,6 +387,7 @@ class FormReader {
       const group = this.groups.get(key);
       if (group) {
         group.options.push(option);
+        group.required ||= required;
         return;
       }
       const field: OmpFormChoiceField = {
@@ -386,6 +398,7 @@ class FormReader {
         other: false,
         prompt: this.prompt(""),
         options: [option],
+        required,
       };
       this.groups.set(key, field);
       this.addField(field);
@@ -397,6 +410,7 @@ class FormReader {
       prompt: this.prompt(label),
       value: value ?? "",
       placeholder: attr(control, "placeholder") ?? "",
+      required,
     });
   }
 

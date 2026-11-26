@@ -17,6 +17,7 @@ const YES = "Yes";
 const NO = "No";
 const CONTINUE = "Continue";
 const RESPONSE_HEADER = "Response";
+const SKIP = "Skip";
 
 interface CardOption {
   label: string;
@@ -31,6 +32,7 @@ interface CardQuestion {
   allowOther: boolean;
   allowEmpty: boolean;
   placeholder?: string;
+  dismissLabel?: string;
 }
 
 /** One form field as a card question, and how the card's answer becomes the field's value. */
@@ -44,11 +46,19 @@ function cardOption(label: string, isDefault: boolean): CardOption {
   return isDefault ? { label, description: DEFAULT } : { label };
 }
 
-/** Labels the card answers with must be unique within a question. */
-function labelOptions(options: OmpFormOption[]): Array<OmpFormOption & { cardLabel: string }> {
+/**
+ * Labels the card answers with must be unique within a question. The card joins
+ * multi-select labels with ", ", so those labels must not contain ", " or one
+ * selection could read as another ("US", "Canada" versus "US, Canada").
+ */
+function labelOptions(
+  options: OmpFormOption[],
+  multi: boolean,
+): Array<OmpFormOption & { cardLabel: string }> {
   const used = new Set<string>();
   return options.map((option, index) => {
-    let cardLabel = option.label || option.value;
+    const label = option.label || option.value;
+    let cardLabel = multi ? label.replaceAll(", ", ",") : label;
     if (used.has(cardLabel)) cardLabel = `${cardLabel} (${option.value})`;
     if (used.has(cardLabel)) cardLabel = `${cardLabel} ${index + 1}`;
     used.add(cardLabel);
@@ -80,10 +90,10 @@ function choiceQuestion(field: OmpFormChoiceField): FieldQuestion {
   if (field.control === "checkbox" && field.options.length === 1 && enabled[0]) {
     return checkboxQuestion(field, enabled[0]);
   }
-  const options = labelOptions(enabled);
-  const defaults = options.filter((option) => option.checked).map((option) => option.value);
   // OMP reports an array for checkbox groups and multi-selects of two or more options.
   const array = field.multi && field.options.length > 1;
+  const options = labelOptions(enabled, array);
+  const defaults = options.filter((option) => option.checked).map((option) => option.value);
   const valueOf = new Map(options.map((option) => [option.cardLabel, option.value]));
   return {
     name: field.name,
@@ -93,7 +103,8 @@ function choiceQuestion(field: OmpFormChoiceField): FieldQuestion {
       options: options.map((option) => cardOption(option.cardLabel, option.checked)),
       multiSelect: array,
       allowOther: field.other,
-      allowEmpty: array || defaults.length > 0,
+      // The card honors this only beside a text input, that is when the field offers Other.
+      allowEmpty: array || defaults.length > 0 || !field.required,
     },
     value(answer) {
       const typed = answer?.trim();
@@ -108,17 +119,18 @@ function choiceQuestion(field: OmpFormChoiceField): FieldQuestion {
 
 function fieldQuestion(field: OmpFormField): FieldQuestion {
   if (field.kind === "choice") return choiceQuestion(field);
-  const placeholder = field.value ? `${DEFAULT}: ${field.value}` : field.placeholder;
+  // A prefilled value is a one-tap option beside the text input.
+  const prefilled = field.value !== "";
   return {
     name: field.name,
     question: {
       question: field.prompt || field.name,
       header: field.name,
-      options: [],
+      options: prefilled ? [cardOption(field.value, true)] : [],
       multiSelect: false,
-      allowOther: false,
-      allowEmpty: field.value !== "",
-      ...(placeholder ? { placeholder } : {}),
+      allowOther: prefilled,
+      allowEmpty: prefilled || !field.required,
+      ...(field.placeholder ? { placeholder: field.placeholder } : {}),
     },
     value(answer) {
       return answer || field.value;
@@ -163,6 +175,11 @@ export class OmpFormQuestion {
     if (!last) fields.push(continueQuestion(form.notes));
     else if (form.notes) last.question.question = `${last.question.question}\n\n${form.notes}`;
     const questions = fields.map((field) => field.question);
+    // The card submits instead of cancelling when every question is optional free text;
+    // name that button for what it does.
+    if (questions.every((question) => question.options.length === 0 && question.allowEmpty)) {
+      for (const question of questions) question.dismissLabel = SKIP;
+    }
     return new OmpFormQuestion(
       {
         id: input.id,
