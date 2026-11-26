@@ -503,18 +503,21 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     }
     const bottomAnchorSettled =
       !followOutputRef.current || isScrollContainerNearBottom(scrollContainer);
+    const isUnderfilled =
+      (rowsHostRef.current?.getBoundingClientRect().height ?? 0) +
+        (auxiliaryRef.current?.getBoundingClientRect().height ?? 0) <
+      scrollContainer.clientHeight;
     return {
       distanceFromHistoryStart: scrollContainer.scrollTop,
-      isUnderfilled:
-        (rowsHostRef.current?.getBoundingClientRect().height ?? 0) +
-          (auxiliaryRef.current?.getBoundingClientRect().height ?? 0) <
-        scrollContainer.clientHeight,
+      isUnderfilled,
       hasOlderHistory,
       isLoadingOlderHistory,
       // An explicit jump owns the landing position. Revealing another local
       // page here changes the virtual index before the target has mounted.
+      // Reveal an already-filled viewport during initial layout before paint;
+      // still wait for rAF before auto-fetching older pages on underfilled views.
       isReady:
-        historyStartReadyRef.current &&
+        (historyStartReadyRef.current || !isUnderfilled) &&
         isAuthoritativeHistoryReady &&
         bottomAnchorSettled &&
         !isJumpSettling(),
