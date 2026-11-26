@@ -1650,6 +1650,14 @@ export class VoiceAssistantWebSocketServer {
     return this.socketCredentials.has(source) || this.pairingTokenSockets.has(source);
   }
 
+  private closeRevokedSocket(socket: WebSocketLike): void {
+    // Drop frames now; a peer can ignore the close handshake and keep sending.
+    this.revokedSockets.add(socket);
+    this.hostLinks.get(socket)?.close("permission_denied");
+    this.hostLinks.delete(socket);
+    socket.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Credential revoked");
+  }
+
   private credentialAuthority(source: object): CredentialAuthority {
     for (const [socket, connection] of this.sessions) {
       if (socket === source)
@@ -1706,6 +1714,13 @@ export class VoiceAssistantWebSocketServer {
               // A device may sign itself out but never revoke other devices or "*".
               if (this.isDeviceSocket(source) && id !== this.socketCredentials.get(source))
                 return false;
+              if (id === "*") {
+                // Revoke-all also ends pending pairings, so none can issue after the sweep.
+                this.deviceCredentials!.clearTokens();
+                for (const [socket] of this.sessions)
+                  if (this.pairingTokenSockets.has(socket) && !this.socketCredentials.has(socket))
+                    this.closeRevokedSocket(socket);
+              }
               const removed = await this.deviceCredentials!.revoke(id);
               return removed.length > 0;
             },
@@ -1713,11 +1728,7 @@ export class VoiceAssistantWebSocketServer {
               for (const [socket] of this.sessions) {
                 const id = this.socketCredentials.get(socket);
                 if (!id || this.deviceCredentials!.has(id)) continue;
-                // Drop frames now; a peer can ignore the close handshake and keep sending.
-                this.revokedSockets.add(socket);
-                this.hostLinks.get(socket)?.close("permission_denied");
-                this.hostLinks.delete(socket);
-                socket.close(WS_CLOSE_DAEMON_AUTH_FAILED, "Credential revoked");
+                this.closeRevokedSocket(socket);
               }
             },
           }

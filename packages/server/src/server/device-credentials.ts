@@ -122,6 +122,9 @@ export class DeviceCredentials {
     this.tokens.set(digest(token), now + 10 * 60 * 1000);
     return token;
   }
+  clearTokens(): void {
+    this.tokens.clear();
+  }
   consumeToken(token: string): boolean {
     const key = digest(token);
     const expiry = this.tokens.get(key);

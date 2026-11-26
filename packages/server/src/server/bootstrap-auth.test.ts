@@ -196,7 +196,7 @@ describe("daemon bearer auth", () => {
           );
         return parseConnectionOfferFromUrl(response.message.payload.url)?.pairingToken;
       }
-      expect(await offerToken(owner, "owner-offer")).toEqual(expect.any(String));
+      const pendingToken = z.string().parse(await offerToken(owner, "owner-offer"));
       expect(await offerToken(device, "device-offer")).toBeUndefined();
       const password = { kind: "password", password: "correct-password" };
       const routed = await hello("routed-session", password, { routed: true });
@@ -256,6 +256,27 @@ describe("daemon bearer auth", () => {
         }),
       ).toMatchObject({ message: { payload: { revoked: true } } });
       await expect(signedOut).resolves.toBe(4401);
+      const pairing = await hello("pending-pairing", { kind: "pairingToken", token: pendingToken });
+      const spareToken = z.string().parse(await offerToken(owner, "spare-offer"));
+      const pairingClosed = new Promise<number>((resolve) => pairing.once("close", resolve));
+      await request(owner, {
+        type: "access.device_credentials.revoke.request",
+        requestId: "revoke-all",
+        id: "*",
+      });
+      await expect(pairingClosed).resolves.toBe(4401);
+      await expectWebSocketCloses({
+        port: handle.port,
+        code: 4401,
+        reason: "Incorrect password",
+        hello: {
+          type: "hello",
+          clientId: "spare-pairing",
+          clientType: "cli",
+          protocolVersion: 1,
+          auth: { kind: "pairingToken", token: spareToken },
+        },
+      });
       await expectWebSocketCloses({
         port: handle.port,
         code: 4401,
