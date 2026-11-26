@@ -2885,6 +2885,10 @@ export const es: TranslationResources = {
         contentWidthWide: "Ancho",
         contentWidthFull: "Completo",
         contentWidthCustom: "Ancho personalizado · {{width}} px",
+        explorerWidth: "Ancho del panel lateral",
+        explorerWidthHint:
+          "Ancho inicial del panel lateral. Los espacios de trabajo que redimensionaste conservan su ancho.",
+        explorerWidthAccessibility: "Ancho del panel lateral",
       },
       syntax: {
         title: "Sintaxis",

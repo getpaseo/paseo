@@ -2853,6 +2853,10 @@ export const ar: TranslationResources = {
         contentWidthWide: "عريض",
         contentWidthFull: "كامل",
         contentWidthCustom: "عرض مخصص · {{width}} بكسل",
+        explorerWidth: "عرض اللوحة الجانبية",
+        explorerWidthHint:
+          "العرض الابتدائي للوحة الجانبية. تحتفظ مساحات العمل التي غيّرت حجمها بعرضها.",
+        explorerWidthAccessibility: "عرض اللوحة الجانبية",
       },
       syntax: {
         title: "بناء الجملة",

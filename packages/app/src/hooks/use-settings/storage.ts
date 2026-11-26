@@ -25,6 +25,10 @@ import {
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
 import {
+  DEFAULT_EXPLORER_SIDEBAR_WIDTH,
+  MIN_EXPLORER_SIDEBAR_WIDTH,
+} from "@/components/explorer-sidebar-layout";
+import {
   DEFAULT_CONTENT_MAX_WIDTH,
   FONT_SIZE,
   PLUGIN_THEME_PREFERENCE,
@@ -77,6 +81,8 @@ export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
+export { DEFAULT_EXPLORER_SIDEBAR_WIDTH, MIN_EXPLORER_SIDEBAR_WIDTH };
+export const MAX_EXPLORER_SIDEBAR_WIDTH = 960;
 export { DEFAULT_CONTENT_MAX_WIDTH };
 const WIDE_CONTENT_MAX_WIDTH = 1200;
 const legacyContentMaxWidthSchema = clampedNumber(600, 4000);
@@ -99,6 +105,8 @@ export interface AppSettings {
   codeFontSize: number; // clamped px, default 12
   /** Numbers preserve widths saved before presets were introduced. */
   contentWidth: ContentWidth;
+  /** Explorer dock width for workspaces without a width of their own. */
+  explorerSidebarWidth: number;
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
@@ -162,6 +170,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   contentWidth: "default",
+  explorerSidebarWidth: DEFAULT_EXPLORER_SIDEBAR_WIDTH,
   syntaxTheme: "one",
   workspaceTitleSource: "title",
   sidebarWorkspaceTrailing: "timestamp",
@@ -260,6 +269,10 @@ const StoredAppSettingsSchema = z
       .catch(undefined),
     // COMPAT(contentMaxWidth): preserve the previous numeric preference.
     contentMaxWidth: legacyContentMaxWidthSchema.nullish().catch(undefined),
+    explorerSidebarWidth: clampedNumber(
+      MIN_EXPLORER_SIDEBAR_WIDTH,
+      MAX_EXPLORER_SIDEBAR_WIDTH,
+    ).catch(DEFAULT_EXPLORER_SIDEBAR_WIDTH),
     syntaxTheme: z.string().refine(isSyntaxThemeId).catch("one"),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
     sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("timestamp"),

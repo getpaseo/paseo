@@ -2885,6 +2885,10 @@ export const fr: TranslationResources = {
         contentWidthWide: "Large",
         contentWidthFull: "Pleine largeur",
         contentWidthCustom: "Largeur personnalisée · {{width}} px",
+        explorerWidth: "Largeur de l’explorateur",
+        explorerWidthHint:
+          "Largeur initiale de la barre latérale de l’explorateur. Les espaces de travail redimensionnés conservent leur largeur.",
+        explorerWidthAccessibility: "Largeur de la barre latérale de l’explorateur",
       },
       syntax: {
         title: "Syntaxe",

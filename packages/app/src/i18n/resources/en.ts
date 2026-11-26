@@ -2951,6 +2951,10 @@ export const en = {
         contentWidthWide: "Wide",
         contentWidthFull: "Full",
         contentWidthCustom: "Custom width · {{width}} px",
+        explorerWidth: "Explorer width",
+        explorerWidthHint:
+          "Starting width of the Explorer sidebar. Workspaces you resized keep their width.",
+        explorerWidthAccessibility: "Explorer sidebar width",
       },
       syntax: {
         title: "Syntax",

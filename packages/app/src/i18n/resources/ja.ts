@@ -2845,6 +2845,10 @@ export const ja: TranslationResources = {
         contentWidthWide: "ワイド",
         contentWidthFull: "全幅",
         contentWidthCustom: "カスタム幅 · {{width}} px",
+        explorerWidth: "サイドパネルの幅",
+        explorerWidthHint:
+          "サイドパネルの初期幅。サイズを変更したワークスペースはその幅を保持します。",
+        explorerWidthAccessibility: "サイドパネルの幅",
       },
       syntax: {
         title: "構文ハイライト",

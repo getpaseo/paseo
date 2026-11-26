@@ -18,9 +18,11 @@ import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/t
 import {
   MAX_CODE_FONT_SIZE,
   MAX_CONTENT_FONT_SIZE,
+  MAX_EXPLORER_SIDEBAR_WIDTH,
   MAX_UI_BASE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_CONTENT_FONT_SIZE,
+  MIN_EXPLORER_SIDEBAR_WIDTH,
   MIN_UI_BASE_FONT_SIZE,
   parseClampedFontSize,
   sanitizeFontFamily,
@@ -287,6 +289,9 @@ export function AppearanceSection() {
   const [uiBaseSizeDraft, setUiBaseSizeDraft] = useState(String(settings.uiBaseFontSize));
   const [contentSizeDraft, setContentSizeDraft] = useState(String(settings.contentFontSize));
   const [codeSizeDraft, setCodeSizeDraft] = useState(String(settings.codeFontSize));
+  const [explorerWidthDraft, setExplorerWidthDraft] = useState(
+    String(settings.explorerSidebarWidth),
+  );
 
   // Resync numeric drafts when the committed value changes elsewhere.
   useEffect(() => {
@@ -298,6 +303,9 @@ export function AppearanceSection() {
   useEffect(() => {
     setCodeSizeDraft(String(settings.codeFontSize));
   }, [settings.codeFontSize]);
+  useEffect(() => {
+    setExplorerWidthDraft(String(settings.explorerSidebarWidth));
+  }, [settings.explorerSidebarWidth]);
 
   const handleContentWidthChange = useCallback(
     (contentWidth: ContentWidthPreset) => {
@@ -356,6 +364,23 @@ export function AppearanceSection() {
   const handleContentSizeChange = useCallback((value: string) => {
     setContentSizeDraft(value.replace(/[^\d]/g, ""));
   }, []);
+
+  const handleExplorerWidthChange = useCallback((value: string) => {
+    setExplorerWidthDraft(value.replace(/[^\d]/g, ""));
+  }, []);
+
+  const commitExplorerWidth = useCallback(() => {
+    const parsed = parseClampedFontSize(explorerWidthDraft, {
+      min: MIN_EXPLORER_SIDEBAR_WIDTH,
+      max: MAX_EXPLORER_SIDEBAR_WIDTH,
+    });
+    const next = parsed ?? settings.explorerSidebarWidth;
+    setExplorerWidthDraft(String(next));
+    if (next !== settings.explorerSidebarWidth) {
+      void updateSettings({ explorerSidebarWidth: next });
+    }
+    return String(next);
+  }, [explorerWidthDraft, settings.explorerSidebarWidth, updateSettings]);
 
   const commitUiBaseSize = useCallback(() => {
     const parsed = parseClampedFontSize(uiBaseSizeDraft, {
@@ -471,6 +496,14 @@ export function AppearanceSection() {
       <SettingsSection title={t("settings.appearance.layout.title")}>
         <View style={settingsStyles.card}>
           <ContentWidthRow value={settings.contentWidth} onChange={handleContentWidthChange} />
+          <FontSizeRow
+            title={t("settings.appearance.layout.explorerWidth")}
+            hint={t("settings.appearance.layout.explorerWidthHint")}
+            accessibilityLabel={t("settings.appearance.layout.explorerWidthAccessibility")}
+            draft={explorerWidthDraft}
+            onChangeDraft={handleExplorerWidthChange}
+            onCommit={commitExplorerWidth}
+          />
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.syntax.title")}>

@@ -1123,6 +1123,40 @@ describe("parseClampedFontSize", () => {
   });
 });
 
+describe("Explorer sidebar width", () => {
+  it("keeps the 320 px default when settings saved before the preference are loaded", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ codeFontSize: 14 }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).explorerSidebarWidth).toBe(320);
+  });
+
+  it("persists a chosen width across reloads", async () => {
+    const deps = makeDeps();
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      updates: { explorerSidebarWidth: 480 },
+      deps,
+    });
+    expect((await loadAppSettingsFromStorage(deps)).explorerSidebarWidth).toBe(480);
+  });
+
+  it.each([
+    [100, 240],
+    [5000, 960],
+    ["abc", 320],
+  ])("loads a stored %s as %s", async (stored, expected) => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ explorerSidebarWidth: stored }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).explorerSidebarWidth).toBe(expected);
+  });
+});
+
 describe("content width", () => {
   it("uses the default width when no preference is saved", async () => {
     const deps = makeDeps();

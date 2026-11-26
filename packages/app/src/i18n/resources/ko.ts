@@ -2833,6 +2833,10 @@ export const ko: TranslationResources = {
         contentWidthWide: "넓게",
         contentWidthFull: "전체",
         contentWidthCustom: "사용자 지정 너비 · {{width}} px",
+        explorerWidth: "사이드 패널 너비",
+        explorerWidthHint:
+          "사이드 패널의 기본 너비입니다. 크기를 조정한 워크스페이스는 해당 너비를 유지합니다.",
+        explorerWidthAccessibility: "사이드 패널 너비",
       },
       syntax: {
         title: "구문",

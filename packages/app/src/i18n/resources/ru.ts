@@ -2871,6 +2871,10 @@ export const ru: TranslationResources = {
         contentWidthWide: "Широкий",
         contentWidthFull: "На всю ширину",
         contentWidthCustom: "Своя ширина · {{width}} пкс",
+        explorerWidth: "Ширина боковой панели",
+        explorerWidthHint:
+          "Начальная ширина боковой панели. Рабочие пространства, размер которых вы меняли, сохраняют свою ширину.",
+        explorerWidthAccessibility: "Ширина боковой панели",
       },
       syntax: {
         title: "Синтаксис",

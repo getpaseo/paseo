@@ -2787,6 +2787,9 @@ export const zhCN: TranslationResources = {
         contentWidthWide: "宽版",
         contentWidthFull: "全宽",
         contentWidthCustom: "自定义宽度 · {{width}} px",
+        explorerWidth: "侧边面板宽度",
+        explorerWidthHint: "侧边面板的初始宽度。调整过大小的工作区保留其宽度。",
+        explorerWidthAccessibility: "侧边面板宽度",
       },
       syntax: {
         title: "语法",

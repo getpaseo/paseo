@@ -2865,6 +2865,10 @@ export const ptBR: TranslationResources = {
         contentWidthWide: "Largo",
         contentWidthFull: "Total",
         contentWidthCustom: "Largura personalizada · {{width}} px",
+        explorerWidth: "Largura do painel lateral",
+        explorerWidthHint:
+          "Largura inicial do painel lateral. Espaços de trabalho redimensionados mantêm a largura.",
+        explorerWidthAccessibility: "Largura do painel lateral",
       },
       syntax: {
         title: "Sintaxe",
