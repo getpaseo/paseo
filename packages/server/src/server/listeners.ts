@@ -1,5 +1,5 @@
 import type { Server as HttpServer } from "node:http";
-import { createServer, isIPv4, type Socket } from "node:net";
+import { createServer, isIPv4, type AddressInfo, type Socket } from "node:net";
 import { networkInterfaces } from "node:os";
 
 export function formatHostForHttpUrl(host: string): string {
@@ -139,6 +139,7 @@ export function createExtraListeners(http: HttpServer, retryMs = 2_000) {
       ready: listen(),
       retry: listen,
       state: () => (server.listening ? ("listening" as const) : ("waiting" as const)),
+      boundAddress: () => server.address(),
       close() {
         stopped = true;
         clearTimeout(retry);
@@ -173,6 +174,12 @@ export function createExtraListeners(http: HttpServer, retryMs = 2_000) {
     },
     status() {
       return Array.from(active, ([address, listener]) => ({ address, state: listener.state() }));
+    },
+    boundAddresses(): (AddressInfo | string)[] {
+      return Array.from(active.values()).flatMap((listener) => {
+        const address = listener.boundAddress();
+        return address ? [address] : [];
+      });
     },
   };
 }
@@ -298,6 +305,7 @@ export function createDaemonListeners(options: {
 
   return {
     status,
+    boundTcpAddresses: () => [http.address(), ...extras.boundAddresses()],
     async refreshStatus(localEndpoint?: string) {
       if (!stopped) await extras.retryWaiting();
       return status(localEndpoint);

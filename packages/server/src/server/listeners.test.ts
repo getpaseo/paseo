@@ -181,6 +181,8 @@ test("re-probes a waiting Tailscale listener immediately on refreshStatus", asyn
   const address = `127.0.0.2:${bound.port}`;
   const listen = `127.0.0.1:${bound.port},${address}`;
   const http = createServer((_req, res) => res.end("ok"));
+  http.listen(bound.port, "127.0.0.1");
+  await once(http, "listening");
   const listeners = createDaemonListeners({
     http,
     listen,
@@ -198,6 +200,7 @@ test("re-probes a waiting Tailscale listener immediately on refreshStatus", asyn
       tailscale: { ip: "127.0.0.2", address, state: "waiting" },
       extraListeners: [{ address, state: "waiting" }],
     });
+    expect(listeners.boundTcpAddresses()).toEqual([http.address()]);
 
     await new Promise<void>((resolve) => blocker.close(() => resolve()));
 
@@ -206,8 +209,15 @@ test("re-probes a waiting Tailscale listener immediately on refreshStatus", asyn
       extraListeners: [{ address, state: "listening" }],
     });
     expect(await (await fetch(`http://${address}`)).text()).toBe("ok");
+    expect(listeners.boundTcpAddresses()).toEqual([
+      http.address(),
+      { address: "127.0.0.2", family: "IPv4", port: bound.port },
+    ]);
+    await listeners.stop();
+    expect(listeners.boundTcpAddresses()).toEqual([http.address()]);
   } finally {
     await listeners.stop();
+    http.close();
     blocker.close();
   }
 });

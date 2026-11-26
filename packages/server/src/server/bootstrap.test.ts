@@ -30,7 +30,7 @@ test("reports only private addresses accepted by the bound listener", () => {
   };
   const endpointsFor = (boundHost: string) =>
     reachableDirectEndpoints({
-      boundAddress: { address: boundHost, family: "IPv4", port: 6767 },
+      boundAddresses: [{ address: boundHost, family: "IPv4", port: 6767 }],
       interfaces,
     });
   expect(endpointsFor("0.0.0.0")).toEqual(["100.100.1.5:6767", "192.168.1.30:6767"]);
@@ -38,12 +38,23 @@ test("reports only private addresses accepted by the bound listener", () => {
   expect(endpointsFor("127.0.0.1")).toEqual([]);
   expect(
     reachableDirectEndpoints({
-      boundAddress: { address: "0.0.0.0", family: "IPv4", port: 6767 },
+      boundAddresses: [{ address: "0.0.0.0", family: "IPv4", port: 6767 }],
       interfaces: { vpn: [] },
     }),
   ).toEqual([]);
   // A configured hostname can resolve to this bound address; the reported route uses the IP.
   expect(endpointsFor("192.168.1.30")).toEqual(["192.168.1.30:6767"]);
+  expect(
+    reachableDirectEndpoints({
+      boundAddresses: [
+        { address: "127.0.0.1", family: "IPv4", port: 6767 },
+        { address: "100.100.1.5", family: "IPv4", port: 6767 },
+        { address: "100.100.1.5", family: "IPv4", port: 6767 },
+        null,
+      ],
+      interfaces,
+    }),
+  ).toEqual(["100.100.1.5:6767"]);
 });
 
 test("reconciliation emits workspace updates when observer sync fails", async () => {

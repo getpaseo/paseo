@@ -29,6 +29,7 @@ import { join } from "path";
 import { getCachedHostMachineKind } from "./host-machine-kind.js";
 import { getHostName } from "./host-name.js";
 import { randomUUID } from "node:crypto";
+import type { AddressInfo } from "node:net";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -197,6 +198,7 @@ interface WebSocketConnectionIdentity {
 
 interface WebSocketServerConfig {
   daemonKeyPair?: KeyPair;
+  getBoundTcpAddresses?: () => readonly (AddressInfo | string | null)[];
   allowedOrigins?: Set<string>;
   hostnames?: HostnamesConfig;
   getAllowedOrigins?: () => Set<string>;
@@ -625,7 +627,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly connectedHosts: ConnectedHosts;
-  private readonly httpServer: HTTPServer;
+  private readonly getBoundTcpAddresses: () => readonly (AddressInfo | string | null)[];
 
   toolHosts() {
     return createToolHosts(this.connectedHosts);
@@ -846,7 +848,7 @@ export class VoiceAssistantWebSocketServer {
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
-    this.httpServer = server;
+    this.getBoundTcpAddresses = wsConfig.getBoundTcpAddresses ?? (() => [server.address()]);
     this.passwordHash = auth?.password;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
@@ -1029,7 +1031,9 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private getDirectEndpoints(): string[] {
-    return reachableDirectEndpoints({ boundAddress: this.httpServer.address() });
+    return reachableDirectEndpoints({
+      boundAddresses: this.getBoundTcpAddresses(),
+    });
   }
 
   private startDirectEndpointsInterval(): void {

@@ -1889,6 +1889,7 @@ export async function createPaseoDaemon(
               mcpBaseUrl,
               {
                 daemonKeyPair: daemonKeyPair.keyPair,
+                getBoundTcpAddresses: () => listeners.boundTcpAddresses(),
                 getAllowedOrigins: () => allowedOrigins,
                 getHostnames: () => configuredHostnames,
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,

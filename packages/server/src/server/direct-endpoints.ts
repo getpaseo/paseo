@@ -22,21 +22,22 @@ function isPrivateIpv4(address: string): boolean {
 
 /** Report only private IPv4 interfaces on which this daemon's TCP listener can accept traffic. */
 export function reachableDirectEndpoints(params: {
-  boundAddress: AddressInfo | string | null;
+  boundAddresses: readonly (AddressInfo | string | null)[];
   interfaces?: Interfaces;
 }): string[] {
-  const { boundAddress } = params;
-  if (!boundAddress || typeof boundAddress === "string") return [];
-  const { address, port } = boundAddress;
-  if (!port || port < 1 || port > 65535) return [];
   const interfaces = params.interfaces ?? os.networkInterfaces();
-  const wildcard = address === "0.0.0.0" || address === "::";
   const addresses = new Set<string>();
-  for (const entries of Object.values(interfaces)) {
-    for (const entry of entries ?? []) {
-      if (entry.family !== "IPv4" || entry.internal || !isPrivateIpv4(entry.address)) continue;
-      if (!wildcard && entry.address !== address) continue;
-      addresses.add(`${entry.address}:${port}`);
+  for (const boundAddress of params.boundAddresses) {
+    if (!boundAddress || typeof boundAddress === "string") continue;
+    const { address, port } = boundAddress;
+    if (!port || port < 1 || port > 65535) continue;
+    const wildcard = address === "0.0.0.0" || address === "::";
+    for (const entries of Object.values(interfaces)) {
+      for (const entry of entries ?? []) {
+        if (entry.family !== "IPv4" || entry.internal || !isPrivateIpv4(entry.address)) continue;
+        if (!wildcard && entry.address !== address) continue;
+        addresses.add(`${entry.address}:${port}`);
+      }
     }
   }
   return [...addresses].sort();
