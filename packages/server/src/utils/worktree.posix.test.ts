@@ -411,6 +411,86 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       },
     );
 
+    it("refreshes exact checkout refs from the longest configured remote", async () => {
+      const selectedRemote = join(tempDir, "selected.git");
+      const otherRemote = join(tempDir, "other.git");
+      const producer = join(tempDir, "producer");
+      for (const remotePath of [selectedRemote, otherRemote]) {
+        execFileSync("git", ["init", "--bare", "-b", "main", remotePath], { cwd: repoDir });
+      }
+      execFileSync("git", ["remote", "add", "team/company", selectedRemote], { cwd: repoDir });
+      // Git's remote-add guard rejects overlapping names; existing config can contain them.
+      execFileSync("git", ["config", "remote.team.url", otherRemote], { cwd: repoDir });
+      const otherMapping = "+refs/heads/main:refs/remotes/team/main";
+      execFileSync("git", ["config", "remote.team.fetch", otherMapping], { cwd: repoDir });
+      execFileSync("git", ["push", "team", "main:main"], { cwd: repoDir });
+      execFileSync("git", ["push", "team/company", "main:topic"], { cwd: repoDir });
+      const selectedRef = "refs/remotes/team/company/topic";
+      const staleTip = execFileSync("git", ["rev-parse", selectedRef], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim();
+      execFileSync("git", ["clone", "--branch", "topic", selectedRemote, producer], {
+        cwd: tempDir,
+      });
+      function commit(message: string) {
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+          ],
+          { cwd: producer },
+        );
+        return execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: producer,
+          encoding: "utf8",
+        }).trim();
+      }
+      const selectedTip = commit("selected remote tip");
+      execFileSync("git", ["push", "origin", "HEAD:topic"], { cwd: producer });
+      const otherTip = commit("other remote tip");
+      execFileSync("git", ["push", otherRemote, "HEAD:refs/heads/company/topic"], {
+        cwd: producer,
+      });
+      expect(new Set([staleTip, selectedTip, otherTip]).size).toBe(3);
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "longest-remote-checkout",
+        paseoHome,
+        source: { kind: "checkout-branch", branchName: "topic", remoteRef: selectedRef },
+      });
+      expect(
+        execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe(selectedTip);
+      expect(
+        execFileSync("git", ["rev-parse", selectedRef], { cwd: repoDir, encoding: "utf8" }).trim(),
+      ).toBe(selectedTip);
+      expect(
+        execFileSync("git", ["config", "branch.topic.remote"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("team/company");
+      expect(
+        execFileSync("git", ["config", "--get-all", "remote.team.fetch"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe(otherMapping);
+    });
+
     it.each(["origin", "company"])(
       "checks out an unmapped %s tracking ref without widening fetch configuration",
       async (remote) => {
@@ -1026,6 +1106,100 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const portValue = Number(portLine?.slice("port=".length));
       expect(Number.isInteger(portValue)).toBe(true);
       expect(portValue).toBeGreaterThan(0);
+    });
+
+    it("runs each setup command behind a plugin's wrap and stops at a refused one", async () => {
+      // The launcher records the argv it was given, marks the environment, then runs the rest.
+      const launcher = join(repoDir, "launcher.sh");
+      writeFileSync(
+        launcher,
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$(dirname "$0")/launch-argv.log"\nshift 2\nexport INSIDE=wrapped\nexec "$@"\n',
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            setup: [
+              'echo "$HOOK_MARK" > first.log && echo "$INSIDE" > second-part.log',
+              "echo refused > refused.log",
+            ],
+          },
+        }),
+      );
+      const seen: string[] = [];
+      const setup = runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        runtimeEnv: {
+          PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+          PASEO_ROOT_PATH: repoDir,
+          PASEO_WORKTREE_PATH: repoDir,
+          PASEO_BRANCH_NAME: "main",
+          PASEO_WORKTREE_PORT: "12345",
+        },
+        prepareCommand: async ({ command, env }) => {
+          seen.push(`${command} ${env.PASEO_BRANCH_NAME}`);
+          if (command.startsWith("echo refused")) throw new Error("not in this workspace");
+          return { env: { ...env, HOOK_MARK: "prepared" }, wrap: [launcher, "--profile", "a b"] };
+        },
+      });
+
+      await expect(setup).rejects.toMatchObject({
+        name: "WorktreeSetupError",
+        message:
+          "Worktree setup command refused: echo refused > refused.log\nnot in this workspace",
+        results: [expect.objectContaining({ exitCode: 0 })],
+      });
+      expect(seen).toEqual([
+        'echo "$HOOK_MARK" > first.log && echo "$INSIDE" > second-part.log main',
+        "echo refused > refused.log main",
+      ]);
+      expect(readFileSync(join(repoDir, "launch-argv.log"), "utf8").trim().split("\n")).toEqual([
+        "--profile",
+        "a b",
+        "bash",
+        "-c",
+        'echo "$HOOK_MARK" > first.log && echo "$INSIDE" > second-part.log',
+      ]);
+      expect(readFileSync(join(repoDir, "first.log"), "utf8").trim()).toBe("prepared");
+      // The part after `&&` ran inside the launcher too.
+      expect(readFileSync(join(repoDir, "second-part.log"), "utf8").trim()).toBe("wrapped");
+      expect(existsSync(join(repoDir, "refused.log"))).toBe(false);
+    });
+
+    it("reports a streamed setup command that cannot start as a failed command", async () => {
+      // Node refuses a null byte in an argument before it starts the process, as the SDK refuses a
+      // line break for a Windows cmd.exe launch.
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "echo a\0b" } }),
+      );
+      const events: string[] = [];
+      const setup = runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        runtimeEnv: {
+          PASEO_SOURCE_CHECKOUT_PATH: repoDir,
+          PASEO_ROOT_PATH: repoDir,
+          PASEO_WORKTREE_PATH: repoDir,
+          PASEO_BRANCH_NAME: "main",
+          PASEO_WORKTREE_PORT: "12345",
+        },
+        signal: new AbortController().signal,
+        onEvent: (event) => events.push(event.type),
+      });
+
+      await expect(setup).rejects.toMatchObject({
+        name: "WorktreeSetupError",
+        results: [
+          expect.objectContaining({
+            exitCode: null,
+            stderr: expect.stringContaining("null bytes"),
+          }),
+        ],
+      });
+      expect(events).toEqual(["command_started", "output", "command_completed"]);
     });
 
     it("runs string setup scripts from paseo.json as a single shell command", async () => {

@@ -498,6 +498,7 @@ function buildResumeStartInput(input: {
   return {
     cwd: input.processCwd,
     env: input.launchContext?.env,
+    wrap: input.launchContext?.wrap,
     session: input.sessionFile,
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     mcpConfigPath: input.mcpConfigFile?.path,
@@ -2660,11 +2661,13 @@ export class PiRpcAgentClient implements AgentClient {
   ): Promise<AgentSession> {
     const providerOptions = PiProviderOptionsSchema.parse(config.providerOptions ?? {});
     const runtime = this.resolveRuntime(providerOptions.rpcTimeoutMs);
-    const mcpEnv = {
-      ...this.runtimeSettings?.env,
-      ...launchContext?.env,
-    };
-    const mcp = await this.prepareMcpInjection(config.cwd, config.mcpServers, mcpEnv, runtime);
+    const { env, wrap } = launchContext ?? {};
+    const mcpEnv = { ...this.runtimeSettings?.env, ...env };
+    const mcp = await this.prepareMcpInjection(
+      { cwd: config.cwd, env: mcpEnv, wrap },
+      config.mcpServers,
+      runtime,
+    );
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
     const paseoExtension = createPiPaseoExtensionFile({
       systemPrompt: composeAgentSystemPrompt(config),
@@ -2677,7 +2680,8 @@ export class PiRpcAgentClient implements AgentClient {
         model: config.model,
         thinkingOptionId: normalizePiThinkingOption(config.thinkingOptionId) ?? undefined,
         noSession: config.internal === true,
-        env: launchContext?.env,
+        env,
+        wrap,
         mcpConfigPath: mcpConfigFile?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
       });
@@ -2729,9 +2733,8 @@ export class PiRpcAgentClient implements AgentClient {
       ...launchContext?.env,
     };
     const mcp = await this.prepareMcpInjection(
-      processCwd,
+      { cwd: processCwd, env: mcpEnv, wrap: launchContext?.wrap },
       resumeConfig.config.mcpServers,
-      mcpEnv,
       runtime,
     );
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
@@ -2930,16 +2933,17 @@ export class PiRpcAgentClient implements AgentClient {
     return this.runtime ?? createRuntime(this.logger, this.runtimeSettings, rpcTimeoutMs);
   }
 
+  /** `probe` starts the Pi process that detects MCP support, as the agent's own process starts. */
   private async prepareMcpInjection(
-    cwd: string,
+    probe: Pick<PiStartSessionInput, "cwd" | "env" | "wrap">,
     servers: Record<string, McpServerConfig> | undefined,
-    env: Record<string, string> | undefined,
     runtime: PiRuntime,
   ): Promise<PiMcpInjection | null> {
     if (!servers || Object.keys(servers).length === 0) {
       return null;
     }
-    const mcpSupport = await this.detectMcpSupport(cwd, env, runtime);
+    const { env } = probe;
+    const mcpSupport = await this.detectMcpSupport(probe, runtime);
     if (mcpSupport === "builtin") {
       return { kind: "builtin", servers: toPiBuiltinMcpServers(servers) };
     }
@@ -2953,12 +2957,11 @@ export class PiRpcAgentClient implements AgentClient {
   }
 
   private async detectMcpSupport(
-    cwd: string,
-    env: Record<string, string> | undefined,
+    probe: Pick<PiStartSessionInput, "cwd" | "env" | "wrap">,
     runtime: PiRuntime,
   ): Promise<PiMcpInjection["kind"] | null> {
-    const runtimeSession = await runtime.startSession({ cwd, env }).catch((error) => {
-      this.logger.debug({ err: error, cwd }, "Pi MCP probe failed to start");
+    const runtimeSession = await runtime.startSession(probe).catch((error) => {
+      this.logger.debug({ err: error, cwd: probe.cwd }, "Pi MCP probe failed to start");
       return null;
     });
     if (!runtimeSession) {
@@ -2971,7 +2974,7 @@ export class PiRpcAgentClient implements AgentClient {
       }
       return commands.some(isPiBuiltinMcpCommand) ? "builtin" : null;
     } catch (error) {
-      this.logger.debug({ err: error, cwd }, "Pi MCP probe failed");
+      this.logger.debug({ err: error, cwd: probe.cwd }, "Pi MCP probe failed");
       return null;
     } finally {
       await runtimeSession.close().catch(() => undefined);

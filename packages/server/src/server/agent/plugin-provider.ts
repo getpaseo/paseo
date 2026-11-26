@@ -81,6 +81,7 @@ import {
   formatProviderDiagnostic,
   type DiagnosticEntry,
 } from "./providers/diagnostic-utils.js";
+import { LaunchWrapUnsupportedError, ToolPolicyUnsupportedError } from "./provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -150,6 +151,10 @@ function describeVersion(inspection: ProviderInstallationInspection): string {
   return inspection.version?.trim() || "unknown";
 }
 
+function toProviderLaunch(launch: ProviderInstallationLaunch): ProviderLaunch {
+  return { command: launch.command, args: launch.args, env: launch.env };
+}
+
 class ProviderRuntime {
   private connection: ProviderConnection | null = null;
   connectedLaunch: ProviderLaunch | undefined;
@@ -212,13 +217,13 @@ class ProviderRuntime {
     const launch = await this.resolveEffectiveLaunch();
     if (!launch) return undefined;
     if (!launch.resolved) throw new Error(`${launch.command} not found on PATH`);
-    return { command: launch.command, args: launch.args, env: launch.env };
+    return toProviderLaunch(launch);
   }
 
   async resolveUsageLaunch(): Promise<ProviderLaunch | undefined> {
     const launch = await this.resolveEffectiveLaunch();
     if (!launch?.resolved) return undefined;
-    return { command: launch.command, args: launch.args, env: launch.env };
+    return toProviderLaunch(launch);
   }
 
   async inspectInstallation(signal: AbortSignal): Promise<ProviderInspection> {
@@ -281,11 +286,20 @@ class ProviderRuntime {
   async catalogCacheKey(options: FetchCatalogOptions): Promise<string | undefined> {
     const callback = this.registration.getCatalogCacheKey;
     if (!callback) return undefined;
-    return callback({ ...options, launch: await this.resolveLaunch() });
+    const launch = await this.resolveEffectiveLaunch();
+    // A missing executable gets its own catalogue, so refresh reports it unavailable instead of
+    // failing the key or reusing a catalogue cached while it was installed.
+    if (launch && !launch.resolved) return JSON.stringify(["unresolved", launch.command]);
+    return callback({ ...options, launch: launch && toProviderLaunch(launch) });
   }
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
+  }
+
+  /** The live connection's capabilities, connecting first when no connection exists yet. */
+  async connectedCapabilities(): Promise<readonly string[]> {
+    return (await this.getConnection()).capabilities;
   }
 
   get isClosed(): boolean {
@@ -335,6 +349,12 @@ class ProviderRuntime {
       throw new Error(`Provider session already exists: ${input.sessionId}`);
     }
     const connection = await this.getConnection();
+    if (input.config.toolPolicy && !connection.capabilities.includes("permission.tool_policy")) {
+      throw new ToolPolicyUnsupportedError(
+        this.registration.id,
+        `Provider '${this.registration.id}' cannot preapprove exact MCP tools: its connection does not offer permission.tool_policy`,
+      );
+    }
     requireProviderCapabilities(connection.capabilities, {
       type: "session.open",
       requestId: "capability-check",
@@ -433,6 +453,12 @@ class ProviderRuntime {
       pending.reject(
         signal?.reason instanceof Error ? signal.reason : new Error("Provider request aborted"),
       );
+      // Without the cancel, a provider keeps the abandoned work and whatever it spawned (#10734).
+      if (connection.capabilities.includes("request.cancel")) {
+        void connection
+          .send({ type: "request.cancel", requestId: input.requestId })
+          .catch(() => undefined);
+      }
     };
     signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -1043,7 +1069,10 @@ function createPluginProviderDefinition(
     requiresConfiguration: registration.requiresConfiguration,
     defaultModeId: null,
     modes: [],
+    // Each connection negotiates permission.tool_policy, so the registry lets a policy through and
+    // ProviderRuntime.openSession refuses it with ToolPolicyUnsupportedError when it is not offered.
     supportsExactMcpPreapproval: true,
+    supportsLaunchWrap: registration.launchWrap === true,
     createClient,
   };
 }
@@ -1062,10 +1091,12 @@ class PluginAgentClient implements AgentClient {
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
   readonly installation?: AgentClientInstallation;
+  readonly supportsLaunchWrap: boolean;
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
     this.label = registration.label;
+    this.supportsLaunchWrap = registration.launchWrap === true;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
@@ -1091,6 +1122,15 @@ class PluginAgentClient implements AgentClient {
 
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.runtime.negotiatedCapabilities);
+  }
+
+  async requireLaunchWrap(): Promise<void> {
+    if (!(await this.runtime.connectedCapabilities()).includes("session.launch_wrap")) {
+      throw new LaunchWrapUnsupportedError(
+        this.provider,
+        `Provider '${this.provider}' declares launch wrap support, but its connection does not offer session.launch_wrap`,
+      );
+    }
   }
 
   async createSession(
@@ -2135,6 +2175,7 @@ function mapSessionConfig(
     providerOptions: config.providerOptions,
     title: config.title ?? undefined,
     persist,
+    ...(launchContext?.wrap ? { wrap: launchContext.wrap } : {}),
   };
 }
 

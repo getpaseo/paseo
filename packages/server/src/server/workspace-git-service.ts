@@ -12,6 +12,7 @@ import type {
   ResolveRepositoryDefaultBranchRefInput,
   UpstreamState,
 } from "../utils/checkout-git.js";
+import type { CheckoutReadSession } from "../utils/checkout-read-session.js";
 import {
   type BranchCheckoutResolution,
   type BranchSuggestion,
@@ -23,6 +24,7 @@ import {
   getCheckoutRefDerivedState,
   getCheckoutSnapshotFacts,
   getCheckoutShortstat,
+  getCheckoutIdentity,
   getCheckoutStatus,
   getCheckoutWorktreeState,
   getPullRequestStatus,
@@ -49,7 +51,11 @@ import {
   type ForgeResolver,
 } from "../services/forge-resolver.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
-import { isPathInsideRoot, looksLikeDefiniteWindowsPath } from "../utils/path.js";
+import {
+  createPathContainmentMatcher,
+  isPathInsideRoot,
+  looksLikeDefiniteWindowsPath,
+} from "../utils/path.js";
 import {
   createRunGitCommand,
   runGitCommand,
@@ -63,6 +69,7 @@ import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
 import { classifyGitMetadataPath, getPrunedGitMetadataPaths } from "./git-metadata-event-rules.js";
 import {
   fetchWorkspaceGitRemote,
+  isGitFetchAuthError,
   type WorkspaceGitFetchResult,
   type WorkspaceGitFetchObserver,
   type WorkspaceGitRemoteRefChange,
@@ -92,6 +99,7 @@ const WORKSPACE_GIT_WATCH_DEBOUNCE_MS = 1_000;
 // and watchers instead of re-reading every checkout.
 const WORKSPACE_GIT_RELEASE_GRACE_MS = 90_000;
 export const BACKGROUND_GIT_FETCH_INTERVAL_MS = 180_000;
+export const BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS = 3_600_000;
 const FETCH_METADATA_ECHO_TTL_MS = 5_000;
 export const WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS = 60_000;
 const FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS = 20_000;
@@ -137,13 +145,23 @@ const WATCH_RECOVERY_MAX_BACKOFF_STEPS = 4;
 // next attempt, and every attempt repeats the full scan. Consecutive setup timeouts therefore
 // keep doubling the recovery delay past the ladder cap, up to an hour.
 const WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS = 3_600_000;
-const WATCH_SETUP_TIMEOUT_MAX_BACKOFF_STEPS = 7;
+const WATCH_SETUP_TIMEOUT_CACHE_MAX = 1_024;
 // Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
 // Small values (booleans, short strings, small arrays); generous cap.
 const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
+
+export function computeBackgroundGitFetchDelayMs(consecutiveErrors: number): number {
+  if (consecutiveErrors <= 0) {
+    return BACKGROUND_GIT_FETCH_INTERVAL_MS;
+  }
+  return Math.min(
+    BACKGROUND_GIT_FETCH_INTERVAL_MS * 2 ** Math.min(consecutiveErrors, 5),
+    BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS,
+  );
+}
 
 function mergeSets<T>(
   left: ReadonlySet<T>,
@@ -369,6 +387,7 @@ export type WorkspaceGitSnapshotOptions =
 type WorkspaceGitRefreshOrigin = "demand" | "observation";
 
 export interface WorkspaceGitCheckoutReadOptions {
+  readSession?: CheckoutReadSession;
   /** Git lane for the fresh checkout read; defaults to the caller's ambient lane. */
   priority?: GitProcessPriority;
 }
@@ -419,6 +438,7 @@ interface WorkspaceGitServiceDependencies {
   subscribe: SubscribeToFileChanges;
   getCheckoutSnapshotFacts: typeof getCheckoutSnapshotFacts;
   getCheckoutRefDerivedState: typeof getCheckoutRefDerivedState;
+  getCheckoutIdentity: typeof getCheckoutIdentity;
   getCheckoutStatus: typeof getCheckoutStatus;
   getCheckoutShortstat: typeof getCheckoutShortstat;
   getCheckoutWorktreeState: typeof getCheckoutWorktreeState;
@@ -450,6 +470,7 @@ interface WorkspaceGitServiceDependencies {
   createWatcherLivenessCanary: typeof createWatcherLivenessCanary;
   workspaceFolderExists: (cwd: string) => Promise<boolean>;
   now: () => Date;
+  monotonicNow: () => number;
 }
 
 interface WorkspaceGitServiceOptions {
@@ -513,6 +534,22 @@ interface WorkspaceGitTarget {
   closed: boolean;
 }
 
+type RepoFetchState =
+  | { kind: "idle"; remoteUrl: string | null | undefined }
+  | {
+      kind: "scheduled";
+      remoteUrl: string | undefined;
+      timer: NodeJS.Timeout;
+      consecutiveErrors: number;
+    }
+  | {
+      kind: "in-flight";
+      remoteUrl: string | null | undefined;
+      consecutiveErrors: number;
+      pendingRetry: "none" | "on-error" | "always";
+    }
+  | { kind: "paused-auth"; remoteUrl: string | undefined };
+
 interface RepoGitTarget {
   paths: GitObservationPaths;
   repoGitRoot: string;
@@ -523,8 +560,7 @@ interface RepoGitTarget {
   fallbackPollTimer: NodeJS.Timeout | null;
   fallbackPollQuietTickCount: number;
   recovery: WatchRecoveryState;
-  intervalId: NodeJS.Timeout | null;
-  fetchInFlight: boolean;
+  fetchState: RepoFetchState;
   bufferedFetchMetadataEvents: FileChange[];
   recentFetchRemoteRefChanges: Map<
     string,
@@ -606,10 +642,12 @@ interface WatchRecoveryState {
   // use (SMB/NFS, Docker virtiofs, some FUSE) resets the ladder on every
   // attempt and the backoff never engages.
   establishedAt: number | null;
-  // Setup attempts that hit WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS since the last accepted
-  // subscription. Reset on acceptance: finishing the startup scan in time is the proof that
-  // the next attempt is affordable.
-  setupTimeoutCount: number;
+  setupKey: string;
+}
+
+interface WatchSetupTimeout {
+  delayMs: number;
+  retryAtMs: number;
 }
 
 function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -643,6 +681,7 @@ function buildDefaultWorkspaceGitServiceDeps(
     subscribe,
     getCheckoutSnapshotFacts,
     getCheckoutRefDerivedState,
+    getCheckoutIdentity,
     getCheckoutStatus,
     getCheckoutShortstat,
     getCheckoutWorktreeState,
@@ -660,6 +699,7 @@ function buildDefaultWorkspaceGitServiceDeps(
     createWatcherLivenessCanary,
     workspaceFolderExists,
     now: () => new Date(),
+    monotonicNow: () => performance.now(),
   };
 }
 
@@ -708,6 +748,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
   private readonly workingTreeWatchResolutions = new Map<string, Promise<WorkingTreeWatchTarget>>();
   private readonly workingTreeWatchAliases = new Map<string, string>();
+  // A timed-out scan stays expensive even when the last observer disconnects.
+  private readonly watchSetupTimeouts = new LRUCache<string, WatchSetupTimeout>({
+    max: WATCH_SETUP_TIMEOUT_CACHE_MAX,
+  });
   private readonly branchValidationCache = new LRUCache<
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<WorkspaceGitBranchValidationResult>
@@ -821,7 +865,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     for (const target of this.repoTargets.values()) {
       repositoryWorkspaceLinkCount += target.workspaceKeys.size;
-      if (target.fetchInFlight) {
+      if (target.fetchState.kind === "in-flight") {
         fetchInFlightCount += 1;
       }
     }
@@ -867,6 +911,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     } else if (target.folderMissing) {
       await this.resumeWorkspaceIfFolderRestored(target);
     }
+    if (request.force) {
+      this.resumeRepoFetchIfPausedOrErrored(target);
+    }
     if (!request.force && target.latestSnapshot) {
       return target.latestSnapshot;
     }
@@ -880,17 +927,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<ProjectCheckoutLitePayload> {
     this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
-    const status = await this.deps.getCheckoutStatus(normalizedCwd, {
+    const identity = await this.deps.getCheckoutIdentity(normalizedCwd, {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
       resolveDefaultBranchRef: (input) => this.resolveDefaultBranchRef(input),
+      readSession: options?.readSession,
       ...(options?.priority
         ? { runGitCommand: createRunGitCommand("checkout-read", { priority: options.priority }) }
         : {}),
     });
     const cached = this.getCachedSnapshot(normalizedCwd);
-    if (cached && cached.git.isGit !== status.isGit) {
+    if (cached && cached.git.isGit !== identity.isGit) {
       // A fresh checkout read discovered a repository transition. Keep the
       // shared snapshot current before exposing the new project capability.
       await this.getSnapshot(normalizedCwd, {
@@ -899,7 +947,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         reason: "checkout-classification-changed",
       });
     }
-    if (!status.isGit) {
+    if (!identity.isGit) {
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
         isGit: false,
         currentBranch: null,
@@ -911,11 +959,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     return checkoutLiteFromGitSnapshot(normalizedCwd, {
       isGit: true,
-      currentBranch: status.currentBranch,
-      remoteUrl: status.remoteUrl,
-      repoRoot: status.repoRoot,
-      isPaseoOwnedWorktree: status.isPaseoOwnedWorktree,
-      mainRepoRoot: status.mainRepoRoot,
+      currentBranch: identity.currentBranch,
+      remoteUrl: identity.remoteUrl,
+      repoRoot: identity.repoRoot,
+      isPaseoOwnedWorktree: identity.isPaseoOwnedWorktree,
+      mainRepoRoot: identity.mainRepoRoot,
     });
   }
 
@@ -1163,6 +1211,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       void this.resumeWorkspaceIfFolderRestored(target);
       return;
     }
+    this.resumeRepoFetchIfPausedOrErrored(target);
     this.scheduleWorkspaceRefresh(target, {
       origin: "demand",
       force: true,
@@ -1206,6 +1255,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchSetups.clear();
     this.workingTreeWatchResolutions.clear();
     this.workingTreeWatchAliases.clear();
+    this.watchSetupTimeouts.clear();
     this.snapshotUpdatedListeners.clear();
     // Unsubscribing can remove a target while its Git command still owns the cwd.
     // Stop admission first, then drain those refreshes and the parent lookups they start.
@@ -1598,14 +1648,25 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
-      recovery: { attemptCount: 0, timer: null, establishedAt: null, setupTimeoutCount: 0 },
+      recovery: {
+        attemptCount: 0,
+        timer: null,
+        establishedAt: null,
+        setupKey: `working-tree:${paths.identity}`,
+      },
       listeners: new Set(),
       closed: false,
     };
 
     this.workingTreeWatchTargets.set(cwd, target);
     this.workingTreeWatchAliases.set(cwd, cwd);
-    await this.startWorkingTreeSubscription(target);
+    const retryInMs = this.watchSetupRetryInMs(target.recovery);
+    if (retryInMs > 0) {
+      this.startWorkingTreeWatchFallback(target, "watcher_setup_failed");
+      this.scheduleWorkingTreeWatchRecovery(target, retryInMs);
+    } else {
+      await this.startWorkingTreeSubscription(target);
+    }
     this.assertNotDisposed();
 
     if (repoRoot === null) {
@@ -1623,6 +1684,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<FileObserverSubscription> {
     this.assertNotDisposed();
     const signal = this.disposeController.signal;
+    const startedAtMs = this.deps.monotonicNow();
     let outcome: "pending" | "accepted" | "expired" = "pending";
     let timeout: NodeJS.Timeout | null = null;
     let removeAbortListener = () => {};
@@ -1682,6 +1744,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         unsubscribePromise ??= this.unsubscribeWatcherSubscription(subscription, watchPath);
         await unsubscribePromise;
         throw signal.reason;
+      }
+      // A synchronous stall can outlive the deadline and resolve `subscriptionPromise` in the
+      // microtask queue before the expired timeout timer fires. Enforce the monotonic deadline
+      // directly so late subscriptions still time out, clean up, and enter backoff.
+      if (this.deps.monotonicNow() - startedAtMs >= WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS) {
+        outcome = "expired";
+        const error = new WorkspaceGitWatcherSubscriptionTimeoutError(watchPath);
+        setupController.abort(error);
+        unsubscribePromise ??= this.unsubscribeWatcherSubscription(subscription, watchPath);
+        await unsubscribePromise;
+        throw error;
       }
       outcome = "accepted";
       return subscription;
@@ -1795,7 +1868,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // `scheduleWorkingTreeWatchRecovery` only resets the ladder once this
       // one has survived long enough to prove itself durable.
       target.recovery.establishedAt = this.deps.now().getTime();
-      target.recovery.setupTimeoutCount = 0;
+      this.watchSetupTimeouts.delete(target.recovery.setupKey);
       if (options?.replaceFallback && target.repoRoot !== null) {
         target.fallbackPolling = false;
         if (target.fallbackPollTimer) {
@@ -2044,28 +2117,60 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         2 ** Math.min(recovery.attemptCount - 1, WATCH_RECOVERY_MAX_BACKOFF_STEPS),
       WATCH_RECOVERY_MAX_DELAY_MS,
     );
-    if (recovery.setupTimeoutCount === 0) {
+    const timeout = this.getWatchSetupTimeout(recovery);
+    if (!timeout) {
       return ladderDelayMs;
     }
-    const setupTimeoutDelayMs = Math.min(
-      WATCH_RECOVERY_BASE_DELAY_MS *
-        2 ** Math.min(recovery.setupTimeoutCount - 1, WATCH_SETUP_TIMEOUT_MAX_BACKOFF_STEPS),
-      WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS,
-    );
-    return Math.max(ladderDelayMs, setupTimeoutDelayMs);
+    const delayMs = Math.max(ladderDelayMs, timeout.delayMs);
+    // Resume the retry that is actually scheduled, even if the ordinary
+    // recovery ladder asks for a longer wait than the setup-timeout ladder.
+    timeout.retryAtMs = this.deps.now().getTime() + delayMs;
+    return delayMs;
+  }
+
+  private watchSetupRetryInMs(recovery: WatchRecoveryState): number {
+    const timeout = this.getWatchSetupTimeout(recovery);
+    return timeout ? timeout.retryAtMs - this.deps.now().getTime() : 0;
+  }
+
+  private getWatchSetupTimeout(recovery: WatchRecoveryState): WatchSetupTimeout | undefined {
+    const timeout = this.watchSetupTimeouts.get(recovery.setupKey);
+    if (
+      timeout &&
+      timeout.retryAtMs + WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS <= this.deps.now().getTime()
+    ) {
+      this.watchSetupTimeouts.delete(recovery.setupKey);
+      return undefined;
+    }
+    return timeout;
   }
 
   private noteWatchSetupFailure(recovery: WatchRecoveryState, error: unknown): void {
-    if (error instanceof WorkspaceGitWatcherSubscriptionTimeoutError) {
-      recovery.setupTimeoutCount += 1;
+    if (!(error instanceof WorkspaceGitWatcherSubscriptionTimeoutError)) {
+      return;
     }
+
+    const previous = this.getWatchSetupTimeout(recovery);
+    const delayMs = previous
+      ? Math.min(previous.delayMs * 2, WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS)
+      : WATCH_RECOVERY_BASE_DELAY_MS;
+    const retryAtMs = this.deps.now().getTime() + delayMs;
+    // Age out history after one hour beyond the pending retry. No timers
+    // remain active once the last listener releases the watcher.
+    this.watchSetupTimeouts.set(recovery.setupKey, {
+      delayMs,
+      retryAtMs,
+    });
   }
 
-  private scheduleWorkingTreeWatchRecovery(target: WorkingTreeWatchTarget): void {
+  private scheduleWorkingTreeWatchRecovery(
+    target: WorkingTreeWatchTarget,
+    retryInMs?: number,
+  ): void {
     if (target.closed || target.subscription || target.recovery.timer) {
       return;
     }
-    const delayMs = this.advanceWatchRecoveryLadder(target.recovery);
+    const delayMs = retryInMs ?? this.advanceWatchRecoveryLadder(target.recovery);
     target.recovery.timer = setTimeout(() => {
       target.recovery.timer = null;
       void this.recoverWorkingTreeWatch(target).catch((error) => {
@@ -2156,14 +2261,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (isPathInsideRoot(gitDir, directory)) {
         continue;
       }
-      let ignored = false;
-      for (const ignoredDirectory of target.ignoredDirectories) {
-        if (isPathInsideRoot(ignoredDirectory, directory)) {
-          ignored = true;
-          break;
-        }
-      }
-      if (ignored) {
+      if (!target.acceptsEvent(directory)) {
         continue;
       }
       target.knownDirectories.add(directory);
@@ -2277,23 +2375,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (target.ignoredDirectories.size === 0) {
       return;
     }
-    const foldCase = looksLikeDefiniteWindowsPath(target.watchPath);
-    const comparable = (path: string) =>
-      foldCase ? path.replaceAll("\\", "/").toLowerCase() : path;
-    const ignoredPrefixes: string[] = [];
-    const foldedIgnoredExact = foldCase ? new Set<string>() : null;
-    for (const ignoredDirectory of target.ignoredDirectories) {
-      const ignored = comparable(ignoredDirectory);
-      ignoredPrefixes.push(`${ignored}/`);
-      foldedIgnoredExact?.add(ignored);
-    }
+    const ignoredMatcher = createPathContainmentMatcher({
+      roots: target.ignoredDirectories,
+      compareAsWindows: looksLikeDefiniteWindowsPath(target.watchPath),
+    });
     for (const directory of target.knownDirectories) {
-      const comparableDirectory = comparable(directory);
-      const comparableDirectoryWithSep = `${comparableDirectory}/`;
-      const isIgnored =
-        (foldedIgnoredExact ?? target.ignoredDirectories).has(comparableDirectory) ||
-        ignoredPrefixes.some((prefix) => comparableDirectoryWithSep.startsWith(prefix));
-      if (isIgnored) {
+      if (ignoredMatcher.matches(directory)) {
         target.knownDirectories.delete(directory);
       }
     }
@@ -2532,9 +2619,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
-      recovery: { attemptCount: 0, timer: null, establishedAt: null, setupTimeoutCount: 0 },
-      intervalId: null,
-      fetchInFlight: false,
+      recovery: {
+        attemptCount: 0,
+        timer: null,
+        establishedAt: null,
+        setupKey: `repository-metadata:${paths.identity}`,
+      },
+      fetchState: { kind: "idle", remoteUrl: undefined },
       bufferedFetchMetadataEvents: [],
       recentFetchRemoteRefChanges: new Map(),
       knownRemoteRefs: null,
@@ -2542,7 +2633,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       closed: false,
     };
     this.repoTargets.set(repoGitRoot, repoTarget);
-    await this.startRepoMetadataObservation(repoTarget);
+    const retryInMs = this.watchSetupRetryInMs(repoTarget.recovery);
+    if (retryInMs > 0) {
+      this.startRepoMetadataFallback(repoTarget);
+      this.scheduleRepoMetadataWatchRecovery(repoTarget, retryInMs);
+    } else {
+      await this.startRepoMetadataObservation(repoTarget);
+    }
     if (repoTarget.closed || this.repoTargets.get(repoGitRoot) !== repoTarget) {
       return;
     }
@@ -2557,21 +2654,42 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     repoTarget.cwd = fetchWorkspaceTarget.cwd;
+    await this.initializeRepoTargetFetch(repoTarget, fetchWorkspaceTarget);
+  }
+
+  private async initializeRepoTargetFetch(
+    repoTarget: RepoGitTarget,
+    fetchWorkspaceTarget: WorkspaceGitTarget,
+  ): Promise<void> {
     const facts = fetchWorkspaceTarget.latestFacts;
     const hasOrigin =
       facts?.isGit === true
         ? facts.remoteUrl !== null
         : await this.deps.hasOriginRemote(fetchWorkspaceTarget.cwd);
-    if (repoTarget.closed || this.repoTargets.get(repoGitRoot) !== repoTarget) {
+    if (repoTarget.closed || this.repoTargets.get(repoTarget.repoGitRoot) !== repoTarget) {
       return;
     }
-    if (!hasOrigin) {
+    if (repoTarget.fetchState.kind !== "idle") {
       return;
     }
-    repoTarget.intervalId = setInterval(() => {
+    if (repoTarget.fetchState.remoteUrl !== undefined) {
+      if (repoTarget.fetchState.remoteUrl !== null) {
+        void this.runRepoFetch(repoTarget);
+      }
+      return;
+    }
+    let initialRemoteUrl: string | null | undefined;
+    if (facts?.isGit === true) {
+      initialRemoteUrl = facts.remoteUrl;
+    } else if (hasOrigin) {
+      initialRemoteUrl = fetchWorkspaceTarget.latestGit?.remoteUrl ?? undefined;
+    } else {
+      initialRemoteUrl = null;
+    }
+    repoTarget.fetchState = { kind: "idle", remoteUrl: initialRemoteUrl };
+    if (hasOrigin) {
       void this.runRepoFetch(repoTarget);
-    }, BACKGROUND_GIT_FETCH_INTERVAL_MS);
-    void this.runRepoFetch(repoTarget);
+    }
   }
 
   private async startRepoMetadataObservation(
@@ -2637,15 +2755,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
               ignore.every((ignoredPath) => !isPathInsideRoot(ignoredPath, event.path)),
           );
           if (relevantEvents.length > 0) {
-            const immediateEvents = target.fetchInFlight
-              ? relevantEvents.filter((event) => {
-                  if (this.isFetchRemoteMetadataEvent(target, event)) {
-                    target.bufferedFetchMetadataEvents.push(event);
-                    return false;
-                  }
-                  return true;
-                })
-              : relevantEvents;
+            const immediateEvents =
+              target.fetchState.kind === "in-flight"
+                ? relevantEvents.filter((event) => {
+                    if (this.isFetchRemoteMetadataEvent(target, event)) {
+                      target.bufferedFetchMetadataEvents.push(event);
+                      return false;
+                    }
+                    return true;
+                  })
+                : relevantEvents;
             if (immediateEvents.length > 0) {
               this.refreshWorkingTreeIgnoresFromRepoMetadataEvents(target, immediateEvents);
               const routedRefreshes = this.routeRepoMetadataEvents(target, immediateEvents);
@@ -2704,7 +2823,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // subscribe success alone, only record when this subscription was
       // established.
       target.recovery.establishedAt = this.deps.now().getTime();
-      target.recovery.setupTimeoutCount = 0;
+      this.watchSetupTimeouts.delete(target.recovery.setupKey);
       if (options?.replaceFallback) {
         target.fallbackPolling = false;
         if (target.fallbackPollTimer) {
@@ -2747,11 +2866,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.startRepoMetadataFallback(target);
   }
 
-  private scheduleRepoMetadataWatchRecovery(target: RepoGitTarget): void {
+  private scheduleRepoMetadataWatchRecovery(target: RepoGitTarget, retryInMs?: number): void {
     if (target.closed || target.subscription || target.recovery.timer) {
       return;
     }
-    const delayMs = this.advanceWatchRecoveryLadder(target.recovery);
+    const delayMs = retryInMs ?? this.advanceWatchRecoveryLadder(target.recovery);
     target.recovery.timer = setTimeout(() => {
       target.recovery.timer = null;
       void this.recoverRepoMetadataWatch(target).catch((error) => {
@@ -3833,6 +3952,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target.lastShellOutAtMs = now.getTime();
 
     const cwd = target.cwd;
+    const hadPreviousGit = target.latestGit !== null;
+    const previousRemoteUrl = target.latestGit?.isGit ? target.latestGit.remoteUrl : null;
     const previousForgePrStatusPollKey = this.getForgePrStatusPollKey(target);
     const previousBaseRef = target.latestFacts?.isGit ? target.latestFacts.resolvedBaseRef : null;
     const baseContext: CheckoutContext = {
@@ -3859,6 +3980,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.latestForge = buildForgeUnavailableSnapshot();
       target.latestForgeWeb = null;
       target.latestForgeLoadedAtMs = target.latestGitLoadedAtMs;
+      this.syncRepoFetchRemoteUrl(target, hadPreviousGit, previousRemoteUrl, null);
       return facts;
     }
 
@@ -3899,6 +4021,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     };
     const loadedAtMs = this.deps.now().getTime();
     target.latestGitLoadedAtMs = loadedAtMs;
+    this.syncRepoFetchRemoteUrl(
+      target,
+      hadPreviousGit,
+      previousRemoteUrl,
+      checkoutStatus.remoteUrl,
+    );
 
     if (previousForgePrStatusPollKey !== this.getForgePrStatusPollKey(target)) {
       target.latestForge = buildForgeUnavailableSnapshot();
@@ -4116,12 +4244,179 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
   }
 
-  private async runRepoFetch(target: RepoGitTarget): Promise<void> {
-    if (target.fetchInFlight) {
+  private stopRepoFetchSchedule(target: RepoGitTarget): void {
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
+    }
+    if (!target.closed && target.fetchState.kind === "in-flight") {
+      target.fetchState = {
+        kind: "in-flight",
+        remoteUrl: null,
+        consecutiveErrors: 0,
+        pendingRetry: "none",
+      };
+      return;
+    }
+    target.fetchState = { kind: "idle", remoteUrl: null };
+  }
+
+  private resumeRepoFetch(target: RepoGitTarget, remoteUrlOverride?: string): void {
+    if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
+      return;
+    }
+    const remoteUrl =
+      remoteUrlOverride !== undefined ? remoteUrlOverride : target.fetchState.remoteUrl;
+    if (remoteUrl === null) {
+      return;
+    }
+    if (target.fetchState.kind === "in-flight") {
+      const pendingRetry =
+        remoteUrlOverride !== undefined || target.fetchState.pendingRetry === "always"
+          ? "always"
+          : "on-error";
+      target.fetchState = {
+        kind: "in-flight",
+        remoteUrl,
+        consecutiveErrors: 0,
+        pendingRetry,
+      };
+      return;
+    }
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
+    }
+    target.fetchState = { kind: "idle", remoteUrl };
+    void this.runRepoFetch(target);
+  }
+
+  private resumeRepoFetchIfPausedOrErrored(workspaceTarget: WorkspaceGitTarget): void {
+    if (!workspaceTarget.repoGitRoot) {
+      return;
+    }
+    const repoTarget = this.repoTargets.get(workspaceTarget.repoGitRoot);
+    if (!repoTarget || repoTarget.closed) {
+      return;
+    }
+    const state = repoTarget.fetchState;
+    if (
+      state.kind === "in-flight" ||
+      state.kind === "paused-auth" ||
+      (state.kind === "scheduled" && state.consecutiveErrors > 0)
+    ) {
+      this.resumeRepoFetch(repoTarget);
+    }
+  }
+
+  private syncRepoFetchRemoteUrl(
+    workspaceTarget: WorkspaceGitTarget,
+    hadPreviousGit: boolean,
+    previousRemoteUrl: string | null,
+    nextRemoteUrl: string | null,
+  ): void {
+    if (!workspaceTarget.repoGitRoot) {
+      return;
+    }
+    const repoTarget = this.repoTargets.get(workspaceTarget.repoGitRoot);
+    if (!repoTarget || repoTarget.closed) {
+      return;
+    }
+    if (repoTarget.fetchState.remoteUrl === undefined) {
+      if (nextRemoteUrl === null) {
+        this.stopRepoFetchSchedule(repoTarget);
+      } else {
+        repoTarget.fetchState = { ...repoTarget.fetchState, remoteUrl: nextRemoteUrl };
+      }
+      return;
+    }
+    if (!hadPreviousGit || previousRemoteUrl === nextRemoteUrl) {
+      return;
+    }
+    if (repoTarget.fetchState.remoteUrl === nextRemoteUrl) {
+      return;
+    }
+    if (nextRemoteUrl === null) {
+      this.stopRepoFetchSchedule(repoTarget);
+      return;
+    }
+    this.resumeRepoFetch(repoTarget, nextRemoteUrl);
+  }
+
+  private armRepoFetchTimer(
+    target: RepoGitTarget,
+    remoteUrl: string | undefined,
+    consecutiveErrors: number,
+    delayMs: number,
+  ): void {
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
+    }
+    const timer = setTimeout(() => {
+      void this.runRepoFetch(target);
+    }, delayMs);
+    target.fetchState = { kind: "scheduled", remoteUrl, timer, consecutiveErrors };
+  }
+
+  private scheduleNextRepoFetch(
+    target: RepoGitTarget,
+    remoteUrl: string | undefined,
+    previousErrors: number,
+    fetchError: unknown | null,
+  ): void {
+    if (target.closed || this.disposed || this.repoTargets.get(target.repoGitRoot) !== target) {
+      target.fetchState = { kind: "idle", remoteUrl: null };
       return;
     }
 
-    target.fetchInFlight = true;
+    if (fetchError !== null && isGitFetchAuthError(fetchError)) {
+      target.fetchState = { kind: "paused-auth", remoteUrl };
+      this.logger.warn(
+        { err: fetchError, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
+        "Background git fetch paused due to authentication failure",
+      );
+      return;
+    }
+
+    if (fetchError !== null) {
+      const consecutiveErrors = previousErrors + 1;
+      const delayMs = computeBackgroundGitFetchDelayMs(consecutiveErrors);
+      this.logger.warn(
+        {
+          err: fetchError,
+          repoGitRoot: target.repoGitRoot,
+          cwd: target.cwd,
+          attempt: consecutiveErrors,
+          retryInMs: delayMs,
+        },
+        "Background git fetch failed; retrying with backoff",
+      );
+      this.armRepoFetchTimer(target, remoteUrl, consecutiveErrors, delayMs);
+      return;
+    }
+
+    this.armRepoFetchTimer(target, remoteUrl, 0, BACKGROUND_GIT_FETCH_INTERVAL_MS);
+  }
+
+  private async runRepoFetch(target: RepoGitTarget): Promise<void> {
+    if (
+      target.closed ||
+      target.fetchState.kind === "in-flight" ||
+      target.fetchState.remoteUrl === null ||
+      this.repoTargets.get(target.repoGitRoot) !== target
+    ) {
+      return;
+    }
+    const previousErrors =
+      target.fetchState.kind === "scheduled" ? target.fetchState.consecutiveErrors : 0;
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
+    }
+
+    target.fetchState = {
+      kind: "in-flight",
+      remoteUrl: target.fetchState.remoteUrl,
+      consecutiveErrors: previousErrors,
+      pendingRetry: "none",
+    };
     this.logger.debug(
       { repoGitRoot: target.repoGitRoot, cwd: target.cwd },
       "Running background git fetch",
@@ -4129,6 +4424,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     let result: WorkspaceGitFetchResult | null = null;
     const preservedMetadataEvents: FileChange[] = [];
+    let thrownError: unknown = null;
     try {
       try {
         result = await this.deps.runGitFetch(
@@ -4155,14 +4451,49 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           createRunGitCommand("background-fetch", { priority: "background" }),
         );
       } catch (error) {
-        this.logger.warn(
-          { err: error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
-          "Background git fetch failed",
-        );
+        thrownError = error;
       }
+      if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
+        return;
+      }
+      const fetchError = thrownError ?? result?.error ?? null;
       this.applyRepoFetchResult(target, result, preservedMetadataEvents);
+      this.completeInFlightRepoFetch(target, fetchError);
     } finally {
-      target.fetchInFlight = false;
+      this.finalizeInFlightRepoFetch(target);
+    }
+  }
+
+  private completeInFlightRepoFetch(target: RepoGitTarget, fetchError: unknown | null): void {
+    const state = target.fetchState;
+    if (state.kind !== "in-flight") {
+      return;
+    }
+    if (state.remoteUrl === null) {
+      target.fetchState = { kind: "idle", remoteUrl: null };
+      return;
+    }
+    const shouldRetryImmediately =
+      state.pendingRetry === "always" || (state.pendingRetry === "on-error" && fetchError !== null);
+    if (shouldRetryImmediately) {
+      return;
+    }
+    this.scheduleNextRepoFetch(target, state.remoteUrl, state.consecutiveErrors, fetchError);
+  }
+
+  private finalizeInFlightRepoFetch(target: RepoGitTarget): void {
+    if (target.fetchState.kind !== "in-flight") {
+      return;
+    }
+    const { remoteUrl, pendingRetry } = target.fetchState;
+    target.fetchState = { kind: "idle", remoteUrl };
+    if (
+      remoteUrl !== null &&
+      pendingRetry !== "none" &&
+      !target.closed &&
+      this.repoTargets.get(target.repoGitRoot) === target
+    ) {
+      void this.runRepoFetch(target);
     }
   }
 
@@ -4178,16 +4509,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.recentFetchRemoteRefChanges.clear();
       target.knownRemoteRefs = null;
       this.flushBufferedFetchMetadataEvents(target);
-      if (result) {
+      if (result && !result.error) {
         this.logger.warn(
-          { err: result.error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
+          { repoGitRoot: target.repoGitRoot, cwd: target.cwd },
           "Background git fetch ref classification failed; using structural refresh",
         );
       }
       this.scheduleRepoMetadataRefresh(target, "repo-fetch-unclassified", false);
       return;
     }
-    if (result.error) {
+    if (result.error && (result.changes.length > 0 || result.nonRemoteRefsChanged === true)) {
       this.logger.warn(
         { err: result.error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
         "Background git fetch completed with errors after changing refs",
@@ -4425,10 +4756,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private closeRepoTarget(target: RepoGitTarget): void {
     target.closed = true;
-    if (target.intervalId) {
-      clearInterval(target.intervalId);
-      target.intervalId = null;
-    }
+    this.stopRepoFetchSchedule(target);
     if (target.fallbackPollTimer) {
       clearTimeout(target.fallbackPollTimer);
       target.fallbackPollTimer = null;

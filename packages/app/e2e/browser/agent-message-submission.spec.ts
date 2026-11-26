@@ -32,6 +32,7 @@ import {
   waitForWorkspaceTabsVisible,
 } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
+import { openSettingsSection } from "../support/helpers/settings";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
@@ -350,6 +351,7 @@ async function selectSendBehaviorInSettings(
   behaviorLabel: string,
   stored: string,
 ): Promise<void> {
+  await openSettingsSection(page, "chat");
   await page.getByRole("button", { name: /^Default send: / }).click();
   await page.getByRole("menuitem", { name: behaviorLabel, exact: true }).click();
   await expect

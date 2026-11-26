@@ -5,6 +5,7 @@ import type { PluginCleanup } from "../contracts.js";
 import type { ProviderRegistration } from "./provider.js";
 import type { UsageSourceRegistration } from "./usage.js";
 import type { PluginLifecycleRegistration } from "./lifecycle.js";
+import type { PluginNotifications } from "./notifications.js";
 import type { WorktreeManagerRegistration } from "./worktree.js";
 
 export interface PluginHandlerContext {
@@ -66,6 +67,7 @@ export interface PluginServerContext extends PluginLifecycleRegistration {
   registerProvider(provider: ProviderRegistration): void;
   registerUsageSource(source: UsageSourceRegistration): void;
   registerWorktreeManager(manager: WorktreeManagerRegistration): () => void;
+  notifications: PluginNotifications;
 }
 
 export type PluginServerContribution = (server: PluginServerContext) => PluginCleanup;

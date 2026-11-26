@@ -23,7 +23,7 @@ import {
 
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
 export const CONNECTIVITY_DOCS_URL = "https://paseo.sh/docs/connectivity";
-export const TAILSCALE_DOCS_URL = `${CONNECTIVITY_DOCS_URL}#tailscale`;
+const TAILSCALE_DOCS_URL = `${CONNECTIVITY_DOCS_URL}#tailscale`;
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedShieldCheck = withUnistyles(ShieldCheck);

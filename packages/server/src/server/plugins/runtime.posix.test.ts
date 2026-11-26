@@ -2228,13 +2228,18 @@ const examples = (await readdir(examplesDirectory, { withFileTypes: true }))
   .filter((entry) => entry.isDirectory() && entry.name !== "markdown-panel")
   .map((entry) => entry.name);
 
+const exampleDaemonVersions: Record<string, string> = {
+  "sidebar-views": "0.16.0",
+  notifications: "0.18.0-beta.1",
+};
+
 it.each(examples)("builds and loads the %s plugin example", async (example) => {
   const settingsDirectory = await mkdtemp(path.join(tmpdir(), "paseo-example-settings-"));
   temporaryDirectories.push(settingsDirectory);
   const runtime = createTestRuntime(
     { settingsDirectory },
     undefined,
-    example === "sidebar-views" ? "0.16.0" : resolveDaemonVersion(import.meta.url),
+    exampleDaemonVersions[example] ?? resolveDaemonVersion(import.meta.url),
   );
   try {
     await runtime.startPlugin(example, path.join(examplesDirectory, example));
@@ -2268,4 +2273,98 @@ export default function contribute() {
   } finally {
     await runtime.stopAll();
   }
+});
+
+describe("open-hook launch wrap across plugins", () => {
+  type OpenInput = Record<string, unknown> & { wrap?: string[] };
+
+  function createHookChild(name: string, hooks: string[], onHook: (input: OpenInput) => unknown) {
+    const child = createReloadChild(name, []);
+    const send = child.send.bind(child);
+    child.send = (message, callback) => {
+      if (message.type === "initialize") {
+        callback?.(null);
+        queueMicrotask(() =>
+          child.emitMessage({ type: "ready", methods: [], providers: [], hooks }),
+        );
+        return true;
+      }
+      if (message.type === "hook") {
+        callback?.(null);
+        const { requestId, input } = message as unknown as { requestId: string; input: OpenInput };
+        queueMicrotask(() =>
+          child.emitMessage({ type: "result", requestId, output: onHook(input) }),
+        );
+        return true;
+      }
+      return send(message, callback);
+    };
+    return child;
+  }
+
+  const request = {
+    agentId: "agent",
+    workspaceId: null,
+    provider: "codex",
+    cwd: "/project",
+    reason: "resume" as const,
+    purpose: "interactive" as const,
+    env: {},
+    title: null,
+    background: false,
+    labels: {},
+    metadata: {},
+    tools: [],
+    mcpServers: {},
+  };
+
+  // Ids sort like paseo-safehouse before zerosub, so the sandbox plugin runs first.
+  async function openWith(later: (input: OpenInput) => unknown) {
+    const calls: string[] = [];
+    // Started in the opposite order to their ids: the runtime orders hooks by id, not start order.
+    const children = [
+      createHookChild("zerosub", ["agent.open.before"], (input) => {
+        calls.push("zerosub");
+        return later(input);
+      }),
+      createHookChild("paseo-safehouse", ["agent.open.before"], (input) => {
+        calls.push("paseo-safehouse");
+        return { ...input, wrap: ["/opt/safehouse/bin/safehouse", "--profile", "a b"] };
+      }),
+    ];
+    const runtime = createTestRuntime({ spawnChild: () => children.shift()! as never });
+    await runtime.startPlugin("zerosub", await createPlugin("zerosub", "export default {}"));
+    await runtime.startPlugin(
+      "paseo-safehouse",
+      await createPlugin("paseo-safehouse", "export default {}"),
+    );
+    try {
+      return await runtime.before("agent.open.before", request);
+    } finally {
+      expect(calls).toEqual(["paseo-safehouse", "zerosub"]);
+      await runtime.stopAll();
+    }
+  }
+
+  it("keeps the first plugin's wrap when a later plugin omits it", async () => {
+    const result = await openWith(({ wrap: _wrap, ...input }) => ({
+      ...input,
+      env: { LATER: "1" },
+    }));
+    expect(result).toMatchObject({
+      wrap: ["/opt/safehouse/bin/safehouse", "--profile", "a b"],
+      env: { LATER: "1" },
+    });
+  });
+
+  it("passes when a later plugin returns the same wrap", async () => {
+    const result = await openWith((input) => input);
+    expect(result.wrap).toEqual(["/opt/safehouse/bin/safehouse", "--profile", "a b"]);
+  });
+
+  it("fails the open when a later plugin returns a different wrap", async () => {
+    await expect(
+      openWith((input) => ({ ...input, wrap: ["/usr/bin/other-sandbox"] })),
+    ).rejects.toThrow(/Plugin zerosub agent.open.before failed: .*cannot change a wrap/u);
+  });
 });

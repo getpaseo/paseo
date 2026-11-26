@@ -4,12 +4,15 @@
 //    never swallow entity tabs or lose the user's focus, and
 // 2) splitting a tab out of a pane leaves a New tab behind, and the app must stay
 //    interactive in the [agent | New | explorer] state.
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedCorruptedWorkspaceLayout } from "../support/helpers/workspace-layout";
 import {
   openChangesTreePanel,
+  openFilesPanel,
   waitForWorkspaceTabsVisible,
 } from "../support/helpers/workspace-tabs";
 
@@ -316,4 +319,76 @@ test("reloading a saved hidden generated Explorer recovers a usable workspace", 
   await expectNewLauncher(page);
   await gotoWorkspace(page, otherWorkspace.workspaceId);
   await expect(draftTabChip(page)).toHaveCount(1);
+});
+
+test("dragging a file tab into a split returns the previous pane to the tab you came from", async ({
+  page,
+  withWorkspace,
+  e2eWorkerClient,
+}) => {
+  const workspace = await withWorkspace({ prefix: "split-prev-tab-focus-" });
+  writeFileSync(path.join(workspace.repoPath, "notes.md"), "# Notes\nhello\n");
+
+  const agentA = await e2eWorkerClient.createAgent({
+    provider: "mock",
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title: "Agent A",
+  });
+  const agentB = await e2eWorkerClient.createAgent({
+    provider: "mock",
+    cwd: workspace.repoPath,
+    workspaceId: workspace.workspaceId,
+    title: "Agent B",
+  });
+
+  await gotoWorkspace(page, workspace.workspaceId);
+  await waitForWorkspaceTabsVisible(page);
+
+  const mainPane = page.getByTestId("workspace-pane-main");
+  await expect(mainPane.getByTestId(`workspace-tab-agent_${agentA.id}`)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(mainPane.getByTestId(`workspace-tab-agent_${agentB.id}`)).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const initialTabs = await mainPane
+    .locator('[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-context-"])')
+    .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+  const firstTab = mainPane.getByTestId(initialTabs[0]!);
+  const secondTab = mainPane.getByTestId(initialTabs[1]!);
+
+  // Open FILE while on B so B is the birth parent, then navigate A -> FILE before splitting.
+  await secondTab.click({ position: { x: 12, y: 13 } });
+  await expect(secondTab).toHaveAttribute("aria-selected", "true");
+
+  await openFilesPanel(page);
+  await page
+    .getByTestId("file-explorer-tree-scroll")
+    .getByText("notes.md", { exact: true })
+    .click();
+
+  const fileTab = mainPane
+    .locator('[data-testid^="workspace-tab-file_"]:not([data-testid^="workspace-tab-context-"])')
+    .first();
+  await expect(fileTab).toBeVisible({ timeout: 15_000 });
+
+  await firstTab.click({ position: { x: 12, y: 13 } });
+  await expect(firstTab).toHaveAttribute("aria-selected", "true");
+  await fileTab.click({ position: { x: 12, y: 13 } });
+  await expect(fileTab).toHaveAttribute("aria-selected", "true");
+
+  const mainBox = await mainPane.boundingBox();
+  if (!mainBox) throw new Error("mainPane has no bounding box");
+  await dragChipTo(page, fileTab, {
+    x: mainBox.x + mainBox.width * 0.92,
+    y: mainBox.y + mainBox.height * 0.5,
+  });
+
+  await expect(
+    page.locator('[data-testid^="workspace-pane-"]').filter({ visible: true }),
+  ).toHaveCount(2, { timeout: 10_000 });
+  await expect(firstTab).toHaveAttribute("aria-selected", "true");
+  await expect(secondTab).toHaveAttribute("aria-selected", "false");
 });

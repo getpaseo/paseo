@@ -7,6 +7,7 @@ import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { settingsRpc } from "@getpaseo/plugin";
 import { syncPluginCatalog } from "./catalog-sync-model";
 import { createPluginHosts } from "./hosts";
+import { openPluginNotification } from "./notification-open";
 import { PluginRegistry } from "./registry";
 import { pluginSettingsKey } from "./settings/query";
 import type { InstalledPlugin } from "./types";
@@ -391,13 +392,22 @@ it("replaces changed bundles on reconnect and disposes the old installation", as
 });
 
 it("replaces an explicitly reloaded bundle even when its source is unchanged", async () => {
-  const h = await connected();
+  let catalogChanges = 0;
+  const h = harness();
+  const stop = h.sync({
+    onCatalogChanged: () => {
+      catalogChanges++;
+    },
+  });
+  cleanups.push(stop);
+  await expect.poll(() => h.registry.getSnapshot().length).toBe(1);
   const plugin = h.installed();
   h.client.update({
     type: "status",
     payload: { status: "plugin_catalog_changed", pluginId: "reports" },
   });
   await expect.poll(() => h.installed() === plugin).toBe(false);
+  expect(catalogChanges).toBe(1);
   expect(h.disposals()).toBe(1);
   expect(h.evaluations()).toBe(2);
 });
@@ -503,4 +513,56 @@ it("ignores an in-flight catalog snapshot after disconnect", async () => {
   expect(h.registry.getSnapshot()).toBe(snapshot);
   expect(h.client.settings.reads).toBe(1);
   expect(h.evaluations()).toBe(1);
+});
+
+it("keeps catalog loading before server_info arrives so cold-launch plugin taps wait for onNotificationOpen", async () => {
+  const h = harness();
+  h.client.catalog = [
+    {
+      id: "ci-alerts",
+      requirements: { paseo: `>=${appPackage.version}` },
+      clientBundle: `(function() { return { default: function(plugin) {
+        plugin.addScreen({ id: "alert", title: "Alert", Component: function() { return null; } });
+        plugin.onNotificationOpen(function(ctx) {
+          ctx.openScreen({ screenId: "alert", params: { buildId: String(ctx.event.data && ctx.event.data.buildId || "") } });
+        });
+        return function() {};
+      } }; })`,
+    },
+  ];
+
+  // Before server_info arrives: supported is null (unknown) and connected is false.
+  const stopUnknown = h.sync({ connected: false, supported: null });
+  expect(h.registry.getCatalogStatus("host")).toBe("loading");
+
+  const openedRoutes: string[] = [];
+  const pendingTap = openPluginNotification(
+    {
+      kind: "plugin",
+      serverId: "host",
+      pluginId: "ci-alerts",
+      notificationId: "notif-cold",
+      open: { type: "screen", screenId: "fallback" },
+      data: { buildId: 77 },
+    },
+    {
+      registry: h.registry,
+      timeoutMs: 1_000,
+      openAgent: () => undefined,
+      openWorkspace: () => undefined,
+      openRoute: (route) => openedRoutes.push(route),
+    },
+  );
+
+  // Tap stays pending while server_info has not arrived (does not jump to fallback).
+  await Promise.resolve();
+  expect(openedRoutes).toEqual([]);
+
+  // Host connects and advertises plugin support -> catalog loads and invokes onNotificationOpen.
+  stopUnknown();
+  h.sync({ connected: true, supported: true });
+
+  await pendingTap;
+  expect(h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(openedRoutes).toEqual(["/h/host/plugin/ci-alerts/surface/alert?param.buildId=77"]);
 });

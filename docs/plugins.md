@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
+client slash commands, timeline items, notifications, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -462,8 +462,55 @@ Server entries register async handlers with `server.addHook(name, handler)`, ret
 function. Names follow `subject.operation.position`, ending in `before` or `after`. Waiting is a per-hook
 registry property, independent of position. The [hooks reference](../public-docs/plugins/hooks.md)
 owns payloads, ordering, failure behavior, and examples. `agent.create.before` edits saved
-configuration; `agent.open.before` contributes launch-only `env`, `tools`, and `mcpServers` on
-every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+configuration; `agent.open.before` contributes launch-only `env`, `tools`, `mcpServers`, and a
+[launch wrap](#launch-wrap) on every open. Executable tool definitions stay in the plugin process; only metadata crosses the boundary.
+`packages/server/src/server/plugins/session-attachments.ts` records what each plugin contributed to
+each live session. A plugin start, stop, or reload reruns only that plugin's callback per session,
+swaps its tools in place, and reopens a session only when its launch would differ. A reopen closes
+the provider process, so a reload must not reopen agents the plugin does not change.
+
+### Launch wrap
+
+An `agent.open.before` result can carry `wrap: [executable, ...args]`. The provider then starts that
+session's harness as `[...wrap, command, ...args]` with the final hook env. It starts with no shell,
+except Windows script launchers, which go through cmd.exe like any provider launcher
+(`spawnProcess` quotes each argument). An argument with spaces stays one element. `executable` must
+be an absolute path.
+The wrap is never saved on the agent; every open asks the hooks again, and a plugin session reopen
+reuses the wrap it opened with.
+
+- **Support is a provider property.** The provider snapshot entry carries `launchWrap: true` when the
+  provider can apply a wrap. Read it in `agent.create.before` with `paseo.providers.snapshot()`; an
+  absent field means unsupported, which is also what a host without this feature reports. Core
+  providers declare it in the provider contract table in `provider-registry.ts`; every core provider
+  that starts a local harness declares it, and custom ACP providers and providers that extend a core
+  one inherit it. A plugin provider declares `ProviderRegistration.launchWrap`;
+  `runAcpProvider({ command })` sets it, a connector declares it itself (Muse Code does). The declaration travels with the
+  registration metadata, so it is in the snapshot before the provider first connects.
+- **One wrap per open.** A later hook, in the same plugin or a later one, may omit the wrap or return
+  the same value. A different value fails the open.
+- **Fail closed.** `buildLaunchContext` admits a wrapped open before any session harness starts. It
+  throws `LaunchWrapUnsupportedError` (`code: "launch_wrap_unsupported"`) when the provider does not
+  declare support, or when a plugin provider's live connection lacks `session.launch_wrap`. A host
+  that predates `wrap` rejects the key: the hook result schema is strict. A missing launcher fails the
+  spawn; nothing retries the bare command.
+
+Once an open selects a wrap, a supported provider runs that session's harness through it or fails
+before starting the harness. Every provider starts through `spawnProcess({ wrap })`, which owns the
+argv and Windows launcher handling; `applyLaunchWrap` covers the launches that do not go through it
+(pty terminals, MCP stdio transports, worktree commands). The wrap also covers what Paseo starts for
+the session: stdio MCP servers Paseo hosts for the agent (OMP, OpenCode v2), Pi's MCP probe, and ACP
+client terminals. OpenCode shares one server between sessions, so a wrapped session gets a dedicated
+server instead; an explicitly configured external OpenCode server cannot be wrapped and the open
+fails. The guarantee does not cover:
+
+1. Paseo's host terminal tools (`create_terminal`, `send_terminal_keys`) run outside the wrap.
+2. Work before the open hook runs unwrapped: draft command and control discovery, and the catalog
+   lookup during create when no model is set.
+3. Host-side operations run unwrapped: availability and capability probes (the ACP connection's
+   initialize probe included), catalog and session listing, version and update commands, usage
+   queries, and Codex native archive and unarchive.
+4. Losing the plugin that chose the wrap is not covered: a later open without it runs unwrapped.
 
 Worktree placement is resolved before Git source planning, so a hook can change the branch and base
 without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
@@ -483,6 +530,17 @@ change requests; `remove` and `restore` fall back to built-in Git when the plugi
 [worktree managers reference](../public-docs/plugins/reference.md#worktree-managers) and
 `plugin-examples/worktrunk`.
 
+`terminal.create.before` runs in `withTerminalCreateHook`, which wraps the daemon's one terminal manager, so every creation path is covered and adopted terminals are not; callers pass an `origin` to name the source. `command.run.before` runs inside the setup and teardown runners through `commandRunHook`. Setup and archive dependencies take `lifecycle` as a required field so a new caller cannot skip the hook by omission; pass `null` only where no plugins run.
+
+Both hooks change only `env` and a [launch wrap](#launch-wrap); `keepSelectedWrap` in the lifecycle
+module applies the one-wrap rule to all three wrap hooks. The terminal wrap becomes the terminal's
+`command` and `args` in `withTerminalCreateHook`, so the terminal worker protocol does not change and
+no previous-version adapter is needed. A default-shell terminal resolves the shell there through
+`default-terminal-shell.ts`, which stays apart from `terminal.ts` so the daemon does not load node-pty.
+The wrapped shell starts without Paseo's shell integration, which is why a wrapped script does not
+report command completion. A setup or teardown wrap goes in front of the
+`buildStringCommandShellInvocation` argv.
+
 Emit from the operation owner, not a client subscription. Provider history replay must not trigger
 live hooks. Notifications must not be awaited inside agent mutations: a handler can send a prompt
 or answer a permission through its own daemon session. Awaiting it there deadlocks that command.
@@ -490,6 +548,26 @@ The same holds for a hook that runs inside an agent's lifecycle lane: an `agent.
 `agent.create.before` hook that awaits a write to the agent being opened (`setMetadata`, `setLabels`,
 an option, model, thinking or mode change) waits on the open, which waits on the hook. The hooks
 reference tells plugin authors to start such a write without awaiting it.
+
+## Send notifications
+
+Server plugins call `server.notifications.send(input)` over the `notification.send` /
+`notification.result` / `notification.error` IPC messages. `PluginNotificationDispatcher` in
+`packages/server/src/server/plugins/notifications.ts` trims and truncates `title` (<= 160 chars)
+and `body` (<= 500 chars), validates `key` (<= 128 chars), `open` (IDs <= 256 chars, serialized
+<= 1,024 UTF-8 bytes), and `data` (<= 1,024 UTF-8 bytes so APNs and FCM envelopes stay within
+4 KiB), drops duplicate `(pluginId, key)` pairs for 60 seconds, and enforces a per-plugin token
+bucket (burst 10, refill 1 per 6 seconds). Stopping a plugin clears its deduplication and
+rate-limit state.
+
+`WebSocketServer.sendPluginNotification` stamps the runtime `pluginId`, `serverId`, and
+`notificationId`, runs `computeNotificationPlan` (using `open.agentId` as the focus target when
+`open.type === "agent"`), filters Expo pushes per token with `{ kind: "plugin", pluginId }`, and
+publishes `plugin.notification` to sessions subscribed to that event category. Clients gate their
+`"plugin.notification"` subscription on `server_info.features.pluginNotifications` (`COMPAT(pluginNotifications)`).
+See [notifications.md](notifications.md) for tap routing and cold-launch catalog readiness, and the
+[public notifications reference](../public-docs/plugins/reference.md#notifications) for the author
+contract.
 
 ## Contribute a provider
 
@@ -581,6 +659,10 @@ Agent refresh closes the current provider session and opens it again with curren
 persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
 daemon launch from `connect` and the per-session env and MCP servers from `session.open`. There is
 no provider reload input.
+
+Declare `ProviderRegistration.launchWrap: true` when every session spawns its own harness and can
+run it as `[...config.wrap, command, ...args]`; offer `session.launch_wrap` on the connection. See
+[Launch wrap](#launch-wrap). `runAcpProvider({ command })` does both.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
 `@getpaseo/plugin/server/acp`. The shim builds the standard row for each ACP tool `kind`
@@ -882,6 +964,13 @@ runtime plugin ID, preserves the source timeline cursor and identity, validates 
 its Zod schema, and mounts the component inside the normal plugin runtime and error boundary. An
 optional output `id` distinguishes several stable replacements from the same source item; its output
 index is the default.
+
+Each replacement keeps a reference to the source row (`source` on the projected stream item), and
+turn logic reads a replaced reply through it. A reply split into several cards stays one reply: turn
+folding keeps every card visible, and the turn footer hangs under the last card, copies the original
+reply text once, forks at its message, and shows its duration and stats. Read the reply with
+`getAssistantReply` (`packages/app/src/types/stream.ts`) instead of checking `kind ===
+"assistant_message"`.
 
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.

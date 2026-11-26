@@ -14,8 +14,10 @@ import {
   decodeWorkspaceIdFromPathSegment,
   encodeFilePathForPathSegment,
   encodeWorkspaceIdForPathSegment,
+  buildClientHostSettingsRoute,
   isSettingsSectionSlug,
   normalizeHostSectionSlug,
+  normalizeSettingsSectionSlug,
   normalizeProjectSettingsRouteId,
   buildProviderSettingsRoute,
   parseHostAgentRouteFromPathname,
@@ -245,26 +247,46 @@ describe("global routes", () => {
 
 describe("host settings section slugs", () => {
   it("keeps current host settings sections", () => {
-    expect(normalizeHostSectionSlug("connections")).toBe("connections");
-    expect(normalizeHostSectionSlug("pair-device")).toBe("pair-device");
-    expect(normalizeHostSectionSlug("agents")).toBe("agents");
-    expect(normalizeHostSectionSlug("metadata")).toBe("metadata");
-    expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");
-    expect(normalizeHostSectionSlug("projects")).toBe("projects");
     expect(normalizeHostSectionSlug("providers")).toBe("providers");
+    expect(normalizeHostSectionSlug("agent-profiles")).toBe("agent-profiles");
+    expect(normalizeHostSectionSlug("tools")).toBe("tools");
+    expect(normalizeHostSectionSlug("projects")).toBe("projects");
+    expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");
+    expect(normalizeHostSectionSlug("voice")).toBe("voice");
     expect(normalizeHostSectionSlug("usage")).toBe("usage");
-    expect(normalizeHostSectionSlug("host")).toBe("host");
+    expect(normalizeHostSectionSlug("terminals")).toBe("terminals");
+    expect(normalizeHostSectionSlug("plugins")).toBe("plugins");
+    expect(normalizeHostSectionSlug("devices")).toBe("devices");
+    expect(normalizeHostSectionSlug("daemon")).toBe("daemon");
   });
 
   it("maps old host settings sections to their new names", () => {
-    expect(normalizeHostSectionSlug("orchestration")).toBe("agents");
-    expect(normalizeHostSectionSlug("daemon")).toBe("host");
+    expect(normalizeHostSectionSlug("pair-device")).toBe("devices");
+    expect(normalizeHostSectionSlug("agents")).toBe("tools");
+    expect(normalizeHostSectionSlug("orchestration")).toBe("tools");
+    expect(normalizeHostSectionSlug("metadata")).toBe("workspaces");
+    expect(normalizeHostSectionSlug("host")).toBe("daemon");
   });
 });
 
 describe("settings section slugs", () => {
-  it("includes desktop notification settings", () => {
+  it("includes consolidated app settings sections", () => {
+    expect(isSettingsSectionSlug("general")).toBe(true);
+    expect(isSettingsSectionSlug("hosts")).toBe(true);
+    expect(isSettingsSectionSlug("chat")).toBe(true);
     expect(isSettingsSectionSlug("notifications")).toBe(true);
+    expect(isSettingsSectionSlug("about")).toBe(true);
+    expect(buildClientHostSettingsRoute("host a")).toBe("/settings/device-hosts/host%20a");
+  });
+
+  it("maps legacy app settings sections to their consolidated sections", () => {
+    expect(normalizeSettingsSectionSlug("terminal")).toBe("chat");
+    expect(normalizeSettingsSectionSlug("browser")).toBe("chat");
+    expect(normalizeSettingsSectionSlug("editor")).toBe("chat");
+    expect(normalizeSettingsSectionSlug("files")).toBe("chat");
+    expect(normalizeSettingsSectionSlug("integrations")).toBe("general");
+    expect(normalizeSettingsSectionSlug("permissions")).toBe("notifications");
+    expect(normalizeSettingsSectionSlug("diagnostics")).toBe("about");
   });
 
   it("no longer treats daemon as a valid app-level settings section", () => {

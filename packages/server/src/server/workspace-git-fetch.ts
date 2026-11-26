@@ -1,4 +1,112 @@
+import { access } from "node:fs/promises";
+import { join } from "node:path";
+import type { ProcessEnvRecord } from "./paseo-env.js";
 import { runGitCommand, type RunGitCommand } from "../utils/run-git-command.js";
+
+const HEADLESS_DBUS_SESSION_BUS_ADDRESS = "unix:path=/dev/null";
+const GIT_FETCH_AUTH_ERROR_PATTERN =
+  /\b(terminal prompts disabled|could not read (?:username|password)|authentication failed|invalid username or (?:password|token)|invalid credentials|bad credentials|logon failed|access denied|permission denied|host key verification failed|too many authentication failures|agent refused operation|returned error: (?:401|403)|http (?:401|403)|401 unauthorized|403 forbidden)\b/i;
+
+function extractGitFetchErrorText(error: unknown): string {
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error instanceof Error) {
+    const stderr =
+      "stderr" in error && typeof (error as { stderr?: unknown }).stderr === "string"
+        ? (error as { stderr: string }).stderr
+        : "";
+    return stderr ? `${error.message}\n${stderr}` : error.message;
+  }
+  if (error && typeof error === "object" && "stderr" in error && typeof error.stderr === "string") {
+    return error.stderr;
+  }
+  return String(error);
+}
+
+/**
+ * Classifies git fetch errors that will keep failing without user intervention
+ * (missing credentials, disabled prompts, bad tokens, SSH key/host rejections).
+ */
+export function isGitFetchAuthError(error: unknown): boolean {
+  if (error === null || error === undefined) {
+    return false;
+  }
+  return GIT_FETCH_AUTH_ERROR_PATTERN.test(extractGitFetchErrorText(error));
+}
+
+export interface BackgroundFetchEnvOptions {
+  platform?: NodeJS.Platform;
+  env?: ProcessEnvRecord;
+  uid?: number | null;
+  socketExists?: (socketPath: string) => boolean | Promise<boolean>;
+}
+
+/**
+ * Builds the non-interactive subprocess environment overlay for background `git fetch`.
+ * Keeps `credential.helper` active so stored credentials work, while blocking terminal,
+ * SSH, and GUI prompts as well as Linux D-Bus autolaunch when no session bus exists.
+ */
+export async function buildBackgroundFetchEnvOverlay(
+  options: BackgroundFetchEnvOptions = {},
+): Promise<ProcessEnvRecord> {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const overlay: ProcessEnvRecord = {
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "",
+    GCM_INTERACTIVE: "0",
+    SSH_ASKPASS: "",
+    SSH_ASKPASS_REQUIRE: "never",
+  };
+  if (platform !== "linux") {
+    return overlay;
+  }
+
+  const dbusAddress = env.DBUS_SESSION_BUS_ADDRESS?.trim() ?? "";
+  const needsDbusFallback = dbusAddress === "" || dbusAddress.startsWith("autolaunch:");
+  if (!needsDbusFallback) {
+    return overlay;
+  }
+
+  const uid = options.uid === undefined ? (process.getuid?.() ?? null) : options.uid;
+  const socketExists = options.socketExists ?? pathExists;
+  const runtimeBusSocket = await findLinuxSessionBusSocket(env, uid, socketExists);
+  overlay.DBUS_SESSION_BUS_ADDRESS = runtimeBusSocket
+    ? `unix:path=${runtimeBusSocket}`
+    : HEADLESS_DBUS_SESSION_BUS_ADDRESS;
+  return overlay;
+}
+
+async function pathExists(socketPath: string): Promise<boolean> {
+  try {
+    await access(socketPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findLinuxSessionBusSocket(
+  env: ProcessEnvRecord,
+  uid: number | null,
+  socketExists: (socketPath: string) => boolean | Promise<boolean>,
+): Promise<string | null> {
+  const candidates = new Set<string>();
+  const xdgRuntimeDir = env.XDG_RUNTIME_DIR?.trim();
+  if (xdgRuntimeDir) {
+    candidates.add(join(xdgRuntimeDir, "bus"));
+  }
+  if (uid !== null && uid >= 0) {
+    candidates.add(`/run/user/${uid}/bus`);
+  }
+  for (const candidate of candidates) {
+    if (await socketExists(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
 
 export interface WorkspaceGitFetchResult {
   changes: WorkspaceGitRemoteRefChange[] | null;
@@ -20,6 +128,7 @@ export async function fetchWorkspaceGitRemote(
   cwd: string,
   observer: WorkspaceGitFetchObserver,
   run: RunGitCommand = runGitCommand,
+  envOptions?: BackgroundFetchEnvOptions,
 ): Promise<WorkspaceGitFetchResult> {
   let before: Map<string, string> | null = null;
   let after: Map<string, string> | null = null;
@@ -34,8 +143,8 @@ export async function fetchWorkspaceGitRemote(
     await run(["fetch", "origin", "--prune"], {
       cwd,
       // Terminal prompting and graphical credential prompting have separate controls.
-      // Keep cached credentials available, but never start a login from a passive fetch.
-      envOverlay: { GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GCM_INTERACTIVE: "0" },
+      // Keep cached credentials available, but never start a login or D-Bus autolaunch from a passive fetch.
+      envOverlay: await buildBackgroundFetchEnvOverlay(envOptions),
       timeout: 120_000,
     });
   } catch (caught) {

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Text,
@@ -6,7 +6,6 @@ import {
   Pressable,
   type ListRenderItemInfo,
   type PressableStateCallbackType,
-  type ViewToken,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -28,6 +27,7 @@ import { Button } from "./button";
 import { HighlightedText } from "./highlighted-text";
 import { mutedIconColorMapping } from "./icon-color";
 import { LoadingSpinner } from "./loading-spinner";
+import { useRevealActiveFlatListRow } from "./scroll-reveal";
 import { StatusBadge } from "./status-badge";
 
 export type AutocompleteOptionIcon =
@@ -247,8 +247,6 @@ function endSelected(
   return null;
 }
 
-const FULLY_VISIBLE = { itemVisiblePercentThreshold: 100 };
-
 function ListPadding() {
   return <View style={styles.listPadding} />;
 }
@@ -280,71 +278,12 @@ function AutocompleteRows({
 }: AutocompleteRowsProps) {
   const isCompact = useIsCompactFormFactor();
   const listRef = useRef<FlatList<AutocompleteOption>>(null);
-  const fullyVisibleRows = useRef<{ first: number; last: number } | null>(null);
-
-  // The row the keyboard selected, until it has been brought into the viewport. The row at the
-  // other end is never revealed here: selecting it gives the list a scroller that rests there.
-  const pendingReveal = useRef<number | null>(null);
-  const isPendingRowMeasured = useRef(true);
-  const revealPendingRow = useCallback(() => {
-    const list = listRef.current;
-    const row = pendingReveal.current;
-    const visible = fullyVisibleRows.current;
-    if (!list || row === null || !visible) return;
-    const span = visible.last - visible.first;
-    if (row >= visible.first && row <= visible.last) {
-      pendingReveal.current = null;
-    } else if (row === 0) {
-      list.scrollToOffset({ offset: 0, animated: false });
-      pendingReveal.current = null;
-      fullyVisibleRows.current = { first: 0, last: span };
-    } else {
-      // The row comes in at the edge it was beyond.
-      const isNearer = row < visible.first;
-      isPendingRowMeasured.current = true;
-      list.scrollToIndex({ index: row, viewPosition: isNearer ? 0 : 1, animated: false });
-      // A row that has not mounted has no position yet: the list was sent towards it instead, and
-      // is asked again as rows mount.
-      if (!isPendingRowMeasured.current) return;
-      pendingReveal.current = null;
-      // The list reports what it shows after it has scrolled; the next key press may come first.
-      fullyVisibleRows.current = isNearer
-        ? { first: row, last: row + span }
-        : { first: row - span, last: row };
-    }
-  }, []);
-  const handleScrollToIndexFailed = useCallback(
-    (info: { index: number; averageItemLength: number }) => {
-      isPendingRowMeasured.current = false;
-      listRef.current?.scrollToOffset({
-        offset: info.index * info.averageItemLength,
-        animated: false,
-      });
-    },
-    [],
-  );
-  useEffect(() => {
-    pendingReveal.current = selectedRow < 0 ? null : selectedRow;
-    revealPendingRow();
-  }, [revealPendingRow, selectedRow]);
-
-  const handleViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken<AutocompleteOption>[] }) => {
-      const indexes = viewableItems.flatMap((token) => (token.index === null ? [] : [token.index]));
-      if (indexes.length === 0) return;
-      fullyVisibleRows.current = { first: Math.min(...indexes), last: Math.max(...indexes) };
-      revealPendingRow();
-    },
-    [revealPendingRow],
-  );
-
-  // A viewport that got shorter can leave the selected row outside it.
-  const handleLayout = useCallback(() => {
-    // The list reports the rows its new height shows before the row is checked against them.
-    listRef.current?.recordInteraction();
-    pendingReveal.current = selectedRow < 0 ? null : selectedRow;
-    revealPendingRow();
-  }, [revealPendingRow, selectedRow]);
+  const reveal = useRevealActiveFlatListRow({
+    listRef,
+    itemCount: rows.length,
+    activeIndex: selectedRow < 0 ? null : selectedRow,
+    waitForViewable: true,
+  });
 
   const renderRow = useCallback(
     ({ item, index }: ListRenderItemInfo<AutocompleteOption>) => (
@@ -368,11 +307,11 @@ function AutocompleteRows({
       // The first commit fills the tallest popover, so the popover never opens short and grows.
       initialNumToRender={Math.ceil(maxHeight / ROW_MIN_HEIGHT) + 1}
       removeClippedSubviews={false}
-      viewabilityConfig={FULLY_VISIBLE}
-      onViewableItemsChanged={handleViewableItemsChanged}
-      onLayout={handleLayout}
-      onContentSizeChange={revealPendingRow}
-      onScrollToIndexFailed={handleScrollToIndexFailed}
+      viewabilityConfig={reveal.viewabilityConfig}
+      onViewableItemsChanged={reveal.onViewableItemsChanged}
+      onLayout={reveal.onLayout}
+      onContentSizeChange={reveal.onContentSizeChange}
+      onScrollToIndexFailed={reveal.onScrollToIndexFailed}
       // The list's padding. As a header and footer it counts in the list's own scroll positions.
       ListHeaderComponent={ListPadding}
       ListFooterComponent={ListPadding}

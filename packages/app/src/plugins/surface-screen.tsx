@@ -10,6 +10,7 @@ import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { CompactHeader } from "@/components/headers/compact-header";
 import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
+import { SidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import { HostFilter } from "@/components/hosts/host-filter";
 import type { HostPickerHost } from "@/components/hosts/host-picker";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -199,6 +200,7 @@ export function PluginSurfaceScreen() {
   const headerLeft = useMemo(
     () => (
       <>
+        <SidebarMenuToggle />
         {icon ? (
           <HeaderIconBadge>
             <ThemedPluginHeaderIcon icon={icon} uniProps={mutedColorMapping} />

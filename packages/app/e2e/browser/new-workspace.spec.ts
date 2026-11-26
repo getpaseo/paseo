@@ -56,7 +56,7 @@ import {
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
-import { chooseAddProjectMethod, expectAddProjectPage } from "../support/helpers/add-project-flow";
+import { expectAddProjectTab } from "../support/helpers/add-project-flow";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
 import {
   expectSidebarWorkspaceSelected,
@@ -292,8 +292,7 @@ test.describe("New workspace flow", () => {
       await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
       await addProject.click();
 
-      await expectAddProjectPage(page, "method");
-      await chooseAddProjectMethod(page, "directory-search");
+      await expectAddProjectTab(page, "existing");
     } finally {
       await repo.cleanup();
     }
@@ -935,6 +934,16 @@ test.describe("New workspace flow", () => {
           cwd: tempRepo.path,
         });
         const unrelatedTip = commitLocalOnly(unrelated, "unrelated-worktree-only");
+        // The shorter remote has company/topic too, but must never refresh the selected ref.
+        const otherRemote = path.join(tempRepo.path, "team.git");
+        execFileSync("git", ["init", "--bare", "-b", "main", otherRemote], { cwd: tempRepo.path });
+        execFileSync("git", ["config", "remote.team.url", otherRemote], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["config", "remote.team.fetch", "+refs/heads/main:refs/remotes/team/main"],
+          { cwd: tempRepo.path },
+        );
+        execFileSync("git", ["push", otherRemote, "HEAD:company/topic"], { cwd: unrelated });
         const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
         await openStartingRefPicker(page);
         await page.getByTestId("new-workspace-ref-picker-checkout").click();

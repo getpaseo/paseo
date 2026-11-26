@@ -1,16 +1,30 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationKind,
+} from "@getpaseo/protocol/notification-preferences";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AgentSnapshotPayload } from "./messages.js";
-import type { PushNotificationSender, PushPayload } from "./push/index.js";
+import {
+  createPushNotifications,
+  type PushNotificationSender,
+  type PushPayload,
+} from "./push/index.js";
 import { PRESENCE_THRESHOLD_MS } from "./agent-attention-policy.js";
 
 class RecordingPushNotificationSender implements PushNotificationSender {
   readonly sent: PushPayload[] = [];
+  readonly sentWithKind: Array<{ payload: PushPayload; kind?: NotificationKind }> = [];
 
-  async send(payload: PushPayload): Promise<void> {
+  async send(payload: PushPayload, kind?: NotificationKind): Promise<void> {
     this.sent.push(payload);
+    this.sentWithKind.push({ payload, kind });
   }
 }
 
@@ -57,6 +71,7 @@ describe("client activity tracking", () => {
       messageQueueLimit: null,
     });
     await client.connect();
+    await client.observeEvents(["agent_attention_required"], { notifications: true }).ready;
     return client;
   }
 
@@ -696,6 +711,124 @@ describe("client activity tracking", () => {
       expect(attention1.shouldNotify).toBe(true);
       expect(attention2.shouldNotify).toBe(false);
       expect(pushNotifications.sent).toEqual([]);
+    }, 120000);
+
+    test("pushes error attention when clients are stale and filters per registered token preferences while preserving sidebar attention state", async () => {
+      await daemon.close();
+      const home = mkdtempSync(path.join(tmpdir(), "paseo-e2e-push-prefs-"));
+      try {
+        const deliveries: Array<{ tokens: string[]; payload: PushPayload }> = [];
+        const realPushNotifications = createPushNotifications({
+          logger: pino({ level: "silent" }),
+          filePath: path.join(home, "push-tokens.json"),
+          deliver: async (tokens, payload) => {
+            deliveries.push({ tokens, payload });
+          },
+        });
+        daemon = await createTestPaseoDaemon({
+          pushNotifications: realPushNotifications,
+        });
+
+        client1 = await createClient(); // Phone A
+        client2 = await createClient(); // Phone B
+
+        // Phone A wants agentFinished, mutes agentError
+        client1.registerPushToken("ExponentPushToken[phone-a]", {
+          ...DEFAULT_NOTIFICATION_PREFERENCES,
+          events: {
+            ...DEFAULT_NOTIFICATION_PREFERENCES.events,
+            agentFinished: true,
+            agentError: false,
+          },
+        });
+
+        // Phone B uses defaults (agentFinished: false, agentError: true)
+        client2.registerPushToken("ExponentPushToken[phone-b]", DEFAULT_NOTIFICATION_PREFERENCES);
+
+        const staleTime = new Date(Date.now() - PRESENCE_THRESHOLD_MS - 5_000).toISOString();
+        client1.sendHeartbeat({
+          deviceType: "mobile",
+          focusedAgentId: null,
+          lastActivityAt: staleTime,
+          appVisible: false,
+        });
+        client2.sendHeartbeat({
+          deviceType: "mobile",
+          focusedAgentId: null,
+          lastActivityAt: staleTime,
+          appVisible: false,
+        });
+
+        const finishedAgent = await createAgent({
+          client: client1,
+          title: "Finished Prefs Agent",
+        });
+        const finishedAttentionPromise = waitForAttentionRequired(client1, finishedAgent.id);
+        await client1.sendMessage(finishedAgent.id, "Say 'hello' and nothing else");
+        const finishedAttention = await finishedAttentionPromise;
+
+        expect(finishedAttention.reason).toBe("finished");
+        expect(finishedAttention.shouldNotify).toBe(false);
+
+        const errorAgent = await createAgent({
+          client: client1,
+          title: "Error Prefs Agent",
+        });
+        const errorAttentionPromise = waitForAttentionRequired(client1, errorAgent.id);
+        await client1.sendMessage(errorAgent.id, "Emit a turn failure");
+        const errorAttention = await errorAttentionPromise;
+
+        expect(errorAttention.reason).toBe("error");
+        expect(errorAttention.shouldNotify).toBe(false);
+
+        const summarizedDeliveries: Array<{
+          tokens: string[];
+          agentId: unknown;
+          reason: unknown;
+        }> = [];
+        for (const delivery of deliveries) {
+          summarizedDeliveries.push({
+            tokens: delivery.tokens,
+            agentId: delivery.payload.data.agentId,
+            reason: delivery.payload.data.reason,
+          });
+        }
+        expect(summarizedDeliveries).toEqual([
+          {
+            tokens: ["ExponentPushToken[phone-a]"],
+            agentId: finishedAgent.id,
+            reason: "finished",
+          },
+          {
+            tokens: ["ExponentPushToken[phone-b]"],
+            agentId: errorAgent.id,
+            reason: "error",
+          },
+        ]);
+
+        // Sidebar attention state is unaffected by notification preferences.
+        const snapshots = await client1.fetchAgents();
+        let finishedSnapshot: AgentSnapshotPayload | undefined;
+        let errorSnapshot: AgentSnapshotPayload | undefined;
+        for (const entry of snapshots.entries) {
+          if (entry.agent.id === finishedAgent.id) {
+            finishedSnapshot = entry.agent;
+          }
+          if (entry.agent.id === errorAgent.id) {
+            errorSnapshot = entry.agent;
+          }
+        }
+        expect(finishedSnapshot).toMatchObject({
+          requiresAttention: true,
+          attentionReason: "finished",
+        });
+        expect(errorSnapshot).toMatchObject({
+          requiresAttention: true,
+          attentionReason: "error",
+        });
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
     }, 120000);
   });
 });
