@@ -18,6 +18,8 @@ const NO = "No";
 const CONTINUE = "Continue";
 const RESPONSE_HEADER = "Response";
 const SKIP = "Skip";
+const NONE = "None";
+const NO_SELECTION = "No selection";
 
 interface CardOption {
   label: string;
@@ -66,6 +68,10 @@ function labelOptions(
   });
 }
 
+function noneLabel(taken: Map<string, string>): string {
+  return taken.has(NONE) ? NO_SELECTION : NONE;
+}
+
 /** A lone checkbox is a yes/no question: checked gives its value, unchecked omits it. */
 function checkboxQuestion(field: OmpFormChoiceField, option: OmpFormOption): FieldQuestion {
   return {
@@ -95,12 +101,20 @@ function choiceQuestion(field: OmpFormChoiceField): FieldQuestion {
   const options = labelOptions(enabled, array);
   const defaults = options.filter((option) => option.checked).map((option) => option.value);
   const valueOf = new Map(options.map((option) => [option.cardLabel, option.value]));
+  // The card submits zero choices only beside a text input, so an optional
+  // multi-select without Other gets an explicit None choice.
+  const needsNone = array && !field.other && !field.required;
+  const none = needsNone ? noneLabel(valueOf) : undefined;
+  const labels = [...valueOf.keys(), ...(none ? [none] : [])];
   return {
     name: field.name,
     question: {
       question: field.prompt || field.name,
       header: field.name,
-      options: options.map((option) => cardOption(option.cardLabel, option.checked)),
+      options: [
+        ...options.map((option) => cardOption(option.cardLabel, option.checked)),
+        ...(none ? [{ label: none }] : []),
+      ],
       multiSelect: array,
       allowOther: field.other,
       // The card honors this only beside a text input, that is when the field offers Other.
@@ -110,7 +124,7 @@ function choiceQuestion(field: OmpFormChoiceField): FieldQuestion {
       const typed = answer?.trim();
       if (!typed) return array ? defaults : defaults[0];
       if (!array) return valueOf.get(typed) ?? (field.other ? typed : defaults[0]);
-      const { selected, custom } = splitMultiSelectAnswer(typed, [...valueOf.keys()]);
+      const { selected, custom } = splitMultiSelectAnswer(typed, labels);
       const values = selected.flatMap((label) => valueOf.get(label) ?? []);
       return field.other && custom && !values.includes(custom) ? [...values, custom] : values;
     },

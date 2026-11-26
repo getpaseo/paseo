@@ -611,6 +611,36 @@ describe("OMP 19.1 HTML form ask", () => {
     ]);
   });
 
+  test("offers None so an optional multi-select without a text input can submit no choices", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const html =
+      '<form><label>Tools <select name="tools" multiple><option value="d">Docker</option><option value="k">Kubernetes</option></select></label><label>Must <select name="must" multiple required><option value="a">A</option><option value="b">B</option></select></label></form>';
+    form(omp, "form-1", html);
+    form(omp, "form-2", html);
+
+    expect(questions(omp)).toMatchObject([
+      {
+        header: "tools",
+        options: [{ label: "Docker" }, { label: "Kubernetes" }, { label: "None" }],
+        allowOther: false,
+      },
+      { header: "must", options: [{ label: "A" }, { label: "B" }] },
+    ]);
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { answers: { tools: "None", must: "A" } },
+    });
+    await omp.respondToPermission("form-2", {
+      behavior: "allow",
+      updatedInput: { answers: { tools: "Docker, None", must: "B" } },
+    });
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { tools: [], must: ["a"] } } },
+      { id: "form-2", response: { data: { tools: ["d"], must: ["b"] } } },
+    ]);
+  });
+
   test("reads an option's text value the way OMP does when it wraps across lines", async () => {
     const omp = new OmpHarness();
     await omp.start();
