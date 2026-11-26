@@ -1397,17 +1397,20 @@ describe("checkout approval state on open and unarchive", () => {
     ).toBeUndefined();
   });
 
-  test("canceled-archive undo with an active workspace record still defers publication until agents unarchive", async () => {
+  test("canceled-archive undo with an active workspace record holds broadcast without hiding directory reads", async () => {
     const dirs = createCheckoutDirs("canceled-undo-defer");
     const active = await addWorktreeRecord(dirs, "feature/canceled-undo");
-    const observedDeferredStates: boolean[] = [];
+    const observedStates: Array<{ publicationDeferred: boolean; broadcastDeferred: boolean }> = [];
     const customProvisioning = createWorkspaceProvisioningService({
       serverId: "srv_test",
       workspaceRegistry,
       projectRegistry,
       workspaceGitService: gitService(),
       unarchiveWorkspaceAgents: async ({ workspaceId }) => {
-        observedDeferredStates.push(workspaceRegistry.isPublicationDeferred(workspaceId));
+        observedStates.push({
+          publicationDeferred: workspaceRegistry.isPublicationDeferred(workspaceId),
+          broadcastDeferred: workspaceRegistry.isBroadcastDeferred(workspaceId),
+        });
       },
       isDirectory,
       logger,
@@ -1415,8 +1418,9 @@ describe("checkout approval state on open and unarchive", () => {
 
     await customProvisioning.ensureWorkspaceRecordUnarchived(active, ARCHIVED_AT);
 
-    expect(observedDeferredStates).toEqual([true]);
+    expect(observedStates).toEqual([{ publicationDeferred: false, broadcastDeferred: true }]);
     expect(workspaceRegistry.isPublicationDeferred(active.workspaceId)).toBe(false);
+    expect(workspaceRegistry.isBroadcastDeferred(active.workspaceId)).toBe(false);
   });
 
   test("agent unarchive failure still releases deferred publication and publishes the recovered workspace", async () => {

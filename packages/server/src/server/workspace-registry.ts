@@ -173,8 +173,11 @@ export interface WorkspaceRegistry {
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
-  /** Hold publication of workspace mutations for `workspaceId` until `publishUpsert` releases `token`. */
-  deferPublication?(workspaceId: string, token: symbol): void;
+  /**
+   * Hold `workspace_update` broadcasts for an already-active workspace until `publishUpsert`
+   * releases `token`, without hiding the workspace from `WorkspaceDirectory` reads.
+   */
+  deferBroadcast?(workspaceId: string, token: symbol): void;
   /** Broadcast a previously persisted workspace upsert after dependent state finishes restoring. */
   publishUpsert?(
     record: PersistedWorkspaceRecord,
@@ -182,6 +185,8 @@ export interface WorkspaceRegistry {
   ): Promise<void>;
   /** True while an unarchive persisted the workspace record with `publish: false` and has not published yet. */
   isPublicationDeferred?(workspaceId: string): boolean;
+  /** True while `workspace_update` broadcasts are held (either deferred publication or deferred broadcast). */
+  isBroadcastDeferred?(workspaceId: string): boolean;
   /**
    * Resolves once any in-flight deferred or settling publication for `workspaceId` completes.
    * Returns true if this call waited on an active publication barrier.
@@ -546,6 +551,7 @@ export class FileBackedWorkspaceRegistry
     (workspaceId: string) => void | Promise<void>
   >();
   private readonly deferredPublications = new Map<string, Set<symbol>>();
+  private readonly deferredBroadcasts = new Map<string, Set<symbol>>();
   private readonly settlingPublicationCounts = new Map<string, number>();
   private readonly deferredWaiters = new Map<string, Set<() => void>>();
 
@@ -581,8 +587,13 @@ export class FileBackedWorkspaceRegistry
     return () => this.beforePublishListeners.delete(listener);
   }
 
-  deferPublication(workspaceId: string, token: symbol): void {
-    this.acquireDeferredPublication(workspaceId, token);
+  deferBroadcast(workspaceId: string, token: symbol): void {
+    let tokens = this.deferredBroadcasts.get(workspaceId);
+    if (!tokens) {
+      tokens = new Set();
+      this.deferredBroadcasts.set(workspaceId, tokens);
+    }
+    tokens.add(token);
   }
 
   private acquireDeferredPublication(workspaceId: string, token: symbol): void {
@@ -595,14 +606,23 @@ export class FileBackedWorkspaceRegistry
   }
 
   private hasDeferredToken(workspaceId: string, token?: symbol): boolean {
-    const tokens = this.deferredPublications.get(workspaceId);
-    if (!tokens || tokens.size === 0) return false;
-    return token ? tokens.has(token) : true;
+    const pubTokens = this.deferredPublications.get(workspaceId);
+    if (pubTokens && pubTokens.size > 0 && (!token || pubTokens.has(token))) return true;
+    const broadcastTokens = this.deferredBroadcasts.get(workspaceId);
+    if (broadcastTokens && broadcastTokens.size > 0 && (!token || broadcastTokens.has(token))) {
+      return true;
+    }
+    return false;
+  }
+
+  private clearAllDeferredHolds(workspaceId: string): void {
+    this.deferredPublications.delete(workspaceId);
+    this.deferredBroadcasts.delete(workspaceId);
   }
 
   private resolveDeferredWaitersIfSettled(workspaceId: string): void {
     if (
-      this.isPublicationDeferred(workspaceId) ||
+      this.isBroadcastDeferred(workspaceId) ||
       (this.settlingPublicationCounts.get(workspaceId) ?? 0) > 0
     ) {
       return;
@@ -620,16 +640,23 @@ export class FileBackedWorkspaceRegistry
     token?: symbol,
     options?: { resolveWaiters?: boolean },
   ): void {
-    const tokens = this.deferredPublications.get(workspaceId);
-    if (!tokens) return;
-    if (token) {
-      tokens.delete(token);
-    } else {
-      const first = tokens.values().next().value;
-      if (first) tokens.delete(first);
-    }
-    if (tokens.size === 0) {
-      this.deferredPublications.delete(workspaceId);
+    const releaseFrom = (store: Map<string, Set<symbol>>): boolean => {
+      const tokens = store.get(workspaceId);
+      if (!tokens) return false;
+      if (token) {
+        if (!tokens.delete(token)) return false;
+      } else {
+        const first = tokens.values().next().value;
+        if (!first) return false;
+        tokens.delete(first);
+      }
+      if (tokens.size === 0) {
+        store.delete(workspaceId);
+      }
+      return true;
+    };
+    if (!releaseFrom(this.deferredPublications)) {
+      releaseFrom(this.deferredBroadcasts);
     }
     if (options?.resolveWaiters !== false) {
       this.resolveDeferredWaitersIfSettled(workspaceId);
@@ -643,9 +670,9 @@ export class FileBackedWorkspaceRegistry
     const workspace = await super.update(workspaceId, updater);
     if (!workspace) return null;
     if (workspace.archivedAt) {
-      this.deferredPublications.delete(workspaceId);
+      this.clearAllDeferredHolds(workspaceId);
     }
-    if (!this.isPublicationDeferred(workspaceId)) {
+    if (!this.isBroadcastDeferred(workspaceId)) {
       await this.notifyMutation({ kind: "upsert", workspaceId, workspace });
       this.resolveDeferredWaitersIfSettled(workspaceId);
     }
@@ -669,9 +696,9 @@ export class FileBackedWorkspaceRegistry
     }
     await super.upsert(record);
     if (record.archivedAt) {
-      this.deferredPublications.delete(record.workspaceId);
+      this.clearAllDeferredHolds(record.workspaceId);
     }
-    if (this.isPublicationDeferred(record.workspaceId)) {
+    if (this.isBroadcastDeferred(record.workspaceId)) {
       return;
     }
     try {
@@ -711,7 +738,7 @@ export class FileBackedWorkspaceRegistry
           this.releaseDeferredPublication(workspaceId, token, { resolveWaiters: false });
         }
       }
-      if (!stillOwnedAfterHook || this.isPublicationDeferred(workspaceId)) {
+      if (!stillOwnedAfterHook || this.isBroadcastDeferred(workspaceId)) {
         return;
       }
       const current = await this.get(workspaceId);
@@ -739,10 +766,17 @@ export class FileBackedWorkspaceRegistry
     return (this.deferredPublications.get(workspaceId)?.size ?? 0) > 0;
   }
 
+  isBroadcastDeferred(workspaceId: string): boolean {
+    return (
+      this.isPublicationDeferred(workspaceId) ||
+      (this.deferredBroadcasts.get(workspaceId)?.size ?? 0) > 0
+    );
+  }
+
   async waitForDeferredPublication(workspaceId: string): Promise<boolean> {
     let waited = false;
     while (
-      this.isPublicationDeferred(workspaceId) ||
+      this.isBroadcastDeferred(workspaceId) ||
       (this.settlingPublicationCounts.get(workspaceId) ?? 0) > 0
     ) {
       waited = true;
@@ -779,7 +813,7 @@ export class FileBackedWorkspaceRegistry
       ];
     });
     if (!workspace) return false;
-    this.deferredPublications.delete(workspaceId);
+    this.clearAllDeferredHolds(workspaceId);
     try {
       await this.notifyMutation({ kind: "archive", workspaceId, workspace });
     } finally {
@@ -791,7 +825,7 @@ export class FileBackedWorkspaceRegistry
   override async remove(workspaceId: string): Promise<void> {
     const workspace = await this.removeIfPresent(workspaceId);
     if (!workspace) return;
-    this.deferredPublications.delete(workspaceId);
+    this.clearAllDeferredHolds(workspaceId);
     try {
       await this.notifyMutation({ kind: "remove", workspaceId, workspace });
     } finally {
@@ -828,7 +862,7 @@ export class FileBackedWorkspaceRegistry
     if (input.publish !== false) {
       await Promise.all(
         changed
-          .filter((workspace) => !this.isPublicationDeferred(workspace.workspaceId))
+          .filter((workspace) => !this.isBroadcastDeferred(workspace.workspaceId))
           .map((workspace) =>
             this.notifyMutation({ kind: "upsert", workspaceId: workspace.workspaceId, workspace }),
           ),

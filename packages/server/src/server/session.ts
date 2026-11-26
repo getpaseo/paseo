@@ -2088,7 +2088,7 @@ export class Session {
         .filter(
           (workspace) =>
             workspace.projectId === mutation.projectId &&
-            !this.workspaceRegistry.isPublicationDeferred?.(workspace.workspaceId),
+            !this.workspaceRegistry.isBroadcastDeferred?.(workspace.workspaceId),
         )
         .map((workspace) => workspace.workspaceId);
 
@@ -6798,7 +6798,7 @@ export class Session {
   ): Promise<void> {
     const uniqueWorkspaceIds = new Set<string>();
     for (const workspaceId of workspaceIds) {
-      if (this.workspaceRegistry.isPublicationDeferred?.(workspaceId)) continue;
+      if (this.workspaceRegistry.isBroadcastDeferred?.(workspaceId)) continue;
       uniqueWorkspaceIds.add(workspaceId);
     }
     if (uniqueWorkspaceIds.size === 0) return;

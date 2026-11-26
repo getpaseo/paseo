@@ -493,7 +493,7 @@ export function createWorkspaceProvisioningService(deps: {
   }): Promise<PersistedWorkspaceRecord> {
     const { workspace, next, archivedAt } = input;
     const deferPublish = Boolean(
-      archivedAt && workspaceRegistry.publishUpsert && (next || workspaceRegistry.deferPublication),
+      archivedAt && workspaceRegistry.publishUpsert && (next || workspaceRegistry.deferBroadcast),
     );
     const deferToken = deferPublish ? Symbol("workspace-unarchive") : undefined;
     if (next) {
@@ -504,10 +504,10 @@ export function createWorkspaceProvisioningService(deps: {
         deferPublish ? { publish: false, deferToken } : undefined,
       );
     } else if (deferPublish && deferToken) {
-      // Canceled mid-teardown undo: the workspace record is still active, but hold workspace
-      // broadcast while all workspace-archived agents unarchive so an early agent cannot
-      // emit `workspace_update` ahead of remaining agents.
-      workspaceRegistry.deferPublication?.(workspace.workspaceId, deferToken);
+      // Canceled mid-teardown undo: the workspace record is still active, so keep it visible
+      // in WorkspaceDirectory reads for other clients while holding `workspace_update`
+      // broadcast until all workspace-archived agents finish unarchiving.
+      workspaceRegistry.deferBroadcast?.(workspace.workspaceId, deferToken);
     }
     // A canceled archive supplies a modern stamp before the record itself is archived.
     if (archivedAt) {
