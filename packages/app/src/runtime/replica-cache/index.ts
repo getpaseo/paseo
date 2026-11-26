@@ -7,6 +7,7 @@ import {
   AgentTimelineItemPayloadSchema,
   ForgeWebSchema,
   WorkspaceGitHubRuntimePayloadSchema,
+  WorkspaceLaunchPayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import type { PluginTimelineData } from "@getpaseo/plugin";
@@ -337,6 +338,7 @@ const StoredWorkspaceSchema = z.strictObject({
   archivingAt: z.string().nullable(),
   diffStat: z.strictObject({ additions: z.number(), deletions: z.number() }).nullable(),
   scripts: z.array(WorkspaceScriptSchema),
+  launches: z.array(WorkspaceLaunchPayloadSchema).optional(),
   gitRuntime: WorkspaceGitRuntimeSchema,
   githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
   forge: z.string().optional(),
@@ -402,9 +404,9 @@ const DirectoryCheckpointSchema = z.strictObject({
 
 // A checkpoint is trusted only when this version wrote it. Earlier writers could store one for a
 // directory the cache no longer held: unversioned ones after an overlapping refresh, version 1
-// after an eviction. Rejecting them revalidates directory contents once without evicting cached
-// rows or timelines.
-const DIRECTORY_CHECKPOINT_VERSION = 2;
+// after an eviction, and version 2 omitted launches. Rejecting those checkpoints revalidates
+// directory contents once without evicting cached rows or timelines.
+const DIRECTORY_CHECKPOINT_VERSION = 3;
 
 const StoredDirectoryCheckpointSchema = z.strictObject({
   version: z.literal(DIRECTORY_CHECKPOINT_VERSION),
@@ -779,6 +781,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
       exitCode: script.exitCode,
       terminalId: script.terminalId,
     })),
+    launches: workspace.launches,
     gitRuntime: workspace.gitRuntime,
     githubRuntime: workspace.githubRuntime,
     forge: workspace.forge,
