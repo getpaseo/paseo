@@ -2958,4 +2958,186 @@ describe("WorkspaceGitServiceImpl background fetch backoff", () => {
     subscription.unsubscribe();
     await service.dispose();
   });
+
+  test("does not trigger a redundant follow-up fetch when force refresh or state change overlaps a healthy in-flight fetch", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+
+    await service.getSnapshot(workspace, { force: true, reason: "open-project" });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    releaseFirstFetch.resolve();
+
+    await settle(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect(git.fetchesIn(workspace)).toBe(1);
+
+    // Normal 3-minute schedule remains active.
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("triggers a follow-up fetch when remoteUrl changes during a healthy in-flight fetch", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    let currentRemoteUrl = "https://github.com/acme/repo.git";
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+
+    currentRemoteUrl = "git@github.com:acme/repo.git";
+    await service.getSnapshot(workspace, { force: true, reason: "remote-changed" });
+    releaseFirstFetch.resolve();
+
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("preserves in-flight state when origin is removed mid-fetch and avoids concurrent fetch if re-added", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    let currentRemoteUrl: string | null = "https://github.com/acme/repo.git";
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    const secondFetchStarted = createDeferred<void>();
+    const releaseSecondFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+      } else if (attempt === 2) {
+        secondFetchStarted.resolve();
+        await releaseSecondFetch.promise;
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+    await waitForRefreshesToSettle(service);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Removing origin while fetch 1 is in flight must keep fetchInFlightCount at 1.
+    currentRemoteUrl = null;
+    await service.refresh(workspace);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Re-adding origin while fetch 1 is still in flight must NOT launch a concurrent fetch 2.
+    currentRemoteUrl = "https://github.com/acme/other.git";
+    await service.getSnapshot(workspace, { force: true, reason: "re-added-origin" });
+    expect(git.fetchesIn(workspace)).toBe(1);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Releasing fetch 1 starts fetch 2 sequentially.
+    releaseFirstFetch.resolve();
+    await secondFetchStarted.promise;
+    expect(git.fetchesIn(workspace)).toBe(2);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Removing origin while fetch 2 is in flight and letting it settle leaves fetchInFlightCount at 0
+    // with no follow-up fetch scheduled.
+    currentRemoteUrl = null;
+    await service.getSnapshot(workspace, { force: true, reason: "removed-origin-again" });
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+    releaseSecondFetch.resolve();
+    await settle(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(2 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    expect(git.fetchesIn(workspace)).toBe(2);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("ensureRepoTarget preserves fetchState resolved during async observation setup", async () => {
+    const workspace = await createTemporaryFolder();
+    const gitDir = join(workspace, ".git");
+    await mkdir(gitDir);
+    const metadataWatchRelease = createDeferred<void>();
+    let currentRemoteUrl: string | null = "https://github.com/acme/repo.git";
+    const git = createFolderBackedGit({
+      heldWatch: { directory: gitDir, release: metadataWatchRelease.promise },
+    });
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await settle(() => {
+      expect(git.watchAttemptsFor(gitDir)).toBe(1);
+    });
+
+    // While ensureRepoTarget is awaiting startRepoMetadataObservation, remove origin and refresh.
+    currentRemoteUrl = null;
+    await service.getSnapshot(workspace, { force: true, reason: "origin-removed-during-setup" });
+
+    metadataWatchRelease.resolve();
+    await waitForObservationToSettle(service, 1);
+    expect(git.fetchesIn(workspace)).toBe(0);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
 });
