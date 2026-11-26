@@ -13,6 +13,10 @@ import { queryClient } from "@/data/query-client";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { showExplorerSidebar } from "@/workspace-tabs/explorer-sidebar";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import {
+  clearWorkspaceTabAutoFocusSuppression,
+  useIsWorkspaceTabAutoFocusSuppressed,
+} from "@/workspace-tabs/tab-navigation-focus";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -78,22 +82,29 @@ function useTerminalPanelDescriptor(
 }
 
 function TerminalPanel() {
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
+  const workspaceKey = workspaceId
+    ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId })
+    : null;
+  const suppressTabAutoFocus = useIsWorkspaceTabAutoFocusSuppressed(workspaceKey, tabId);
+  const handleUserFocus = useCallback(() => {
+    clearWorkspaceTabAutoFocusSuppression(workspaceKey);
+  }, [workspaceKey]);
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
   }));
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const isCompact = useIsCompactFormFactor();
   const handleOpenFileExplorer = useCallback(() => {
-    if (!workspaceDirectory) {
+    if (!workspaceDirectory || !workspaceKey) {
       return;
     }
     showExplorerSidebar({
       isCompact,
-      workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
+      workspaceKey,
     });
-  }, [isCompact, serverId, workspaceId, workspaceDirectory]);
+  }, [isCompact, workspaceDirectory, workspaceKey]);
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {
@@ -111,6 +122,8 @@ function TerminalPanel() {
       terminalId={target.terminalId}
       isWorkspaceFocused={isWorkspaceFocused}
       isPaneFocused={isPaneFocused}
+      suppressAutoFocus={suppressTabAutoFocus}
+      onUserFocus={handleUserFocus}
       onOpenFileExplorer={handleOpenFileExplorer}
       onOpenWorkspaceFile={openFileInWorkspace}
     />

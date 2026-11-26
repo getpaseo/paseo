@@ -12,7 +12,11 @@ import {
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useWindowLayout, resolveWorkspaceActionPlacement } from "@/window-layout";
-import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
+import {
+  revealWorkspaceTab,
+  revealWorkspaceTabPreservingBrowsingFocus,
+} from "@/workspace-tabs/navigation";
+import { clearWorkspaceTabAutoFocusSuppression } from "@/workspace-tabs/tab-navigation-focus";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ForgeShorthandProvider } from "@/git/forge-shorthand";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
@@ -1603,9 +1607,19 @@ function WorkspaceScreenContent({
     },
     [persistenceKey],
   );
+  const navigateRelativeToTabId = useCallback(
+    function navigateRelativeToTabId(tabId: string) {
+      if (!tabId || !persistenceKey) {
+        return;
+      }
+      revealWorkspaceTabPreservingBrowsingFocus({ workspaceKey: persistenceKey, tabId });
+    },
+    [persistenceKey],
+  );
   const selectTabInPane = useCallback(
     (paneId: string, tabId: string) => {
       if (persistenceKey) {
+        clearWorkspaceTabAutoFocusSuppression(persistenceKey);
         selectWorkspaceTabInPane(persistenceKey, paneId, tabId);
       }
     },
@@ -2577,14 +2591,16 @@ function WorkspaceScreenContent({
           return true;
         }
         case "workspace.tab.navigate-relative": {
-          if (tabs.length > 0) {
-            const currentIndex = tabs.findIndex((tab) => tab.tabId === activeTabId);
-            const fromIndex = currentIndex >= 0 ? currentIndex : 0;
-            const nextIndex = (fromIndex + action.delta + tabs.length) % tabs.length;
-            const next = tabs[nextIndex] ?? null;
-            if (next?.tabId) {
-              navigateToTabId(next.tabId);
-            }
+          if (tabs.length === 0) return true;
+          const currentIndex = tabs.findIndex((tab) => tab.tabId === activeTabId);
+          const fromIndex = currentIndex >= 0 ? currentIndex : 0;
+          const nextIndex = (fromIndex + action.delta + tabs.length) % tabs.length;
+          const next = tabs[nextIndex] ?? null;
+          if (!next?.tabId) return true;
+          if (!action.preserveBrowsingFocus) {
+            navigateToTabId(next.tabId);
+          } else if (next.tabId !== activeTabId) {
+            navigateRelativeToTabId(next.tabId);
           }
           return true;
         }
@@ -2600,6 +2616,7 @@ function WorkspaceScreenContent({
       handleCreateNewTab,
       handleCreateTerminal,
       focusedPaneTabState.pane?.id,
+      navigateRelativeToTabId,
       navigateToTabId,
       tabs,
     ],

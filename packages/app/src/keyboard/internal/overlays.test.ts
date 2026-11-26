@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { buildEffectiveBindings } from "../keyboard-shortcuts";
 import { createOverlayRegistry } from "./overlays";
+import { createKeyboardPipeline } from "./pipeline";
 
 function keyEvent(key: string) {
   return {
@@ -90,5 +92,53 @@ describe("overlay registration lifecycle", () => {
     release();
     unsubscribe();
     expect(observed).toEqual([["Enter"], []]);
+  });
+
+  it("blocks plain Cmd+ArrowLeft/Right tab switching when a floating menu overlay is open", () => {
+    const overlays = createOverlayRegistry();
+    const dispatched: string[] = [];
+    const pipeline = createKeyboardPipeline({
+      getContext: () => ({ isMac: true, usesDesktopBindings: true, commandCenterOpen: false }),
+      getBindings: () => buildEffectiveBindings({}),
+      isCapturing: () => false,
+      dispatch: (match) => {
+        dispatched.push(match.action);
+        return true;
+      },
+      overlays,
+    });
+
+    const releaseMenu = overlays.register({
+      getLayer: () => 30,
+      getKeys: () => ["ArrowUp", "ArrowDown", "Enter", "Escape"],
+      onKeyDown: (event) => event.key === "ArrowUp" || event.key === "ArrowDown",
+    });
+
+    expect(
+      pipeline.keyDown({
+        event: { ...keyEvent("ArrowLeft"), metaKey: true },
+        focusScope: "other",
+        captureFocusRestore() {},
+      }),
+    ).toBe(false);
+    expect(
+      pipeline.keyDown({
+        event: { ...keyEvent("ArrowRight"), metaKey: true },
+        focusScope: "other",
+        captureFocusRestore() {},
+      }),
+    ).toBe(false);
+    expect(dispatched).toEqual([]);
+
+    releaseMenu();
+    expect(
+      pipeline.keyDown({
+        event: { ...keyEvent("ArrowLeft"), metaKey: true },
+        focusScope: "other",
+        captureFocusRestore() {},
+      }),
+    ).toBe(true);
+    expect(dispatched).toEqual(["workspace.tab.navigate.relative"]);
+    pipeline.dispose();
   });
 });

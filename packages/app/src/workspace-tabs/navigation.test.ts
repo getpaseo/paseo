@@ -4,11 +4,16 @@ import {
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { revealWorkspaceTab } from "./navigation";
+import { revealWorkspaceTab, revealWorkspaceTabPreservingBrowsingFocus } from "./navigation";
 import { openWorkspaceTargetAtLocation } from "./open-beside";
+import {
+  clearWorkspaceTabAutoFocusSuppression,
+  isWorkspaceTabAutoFocusSuppressed,
+} from "./tab-navigation-focus";
 
 const workspaceKey = "server:workspace";
 beforeEach(() => {
+  clearWorkspaceTabAutoFocusSuppression(workspaceKey);
   useWorkspaceLayoutStore.setState({
     layoutMode: "split-panes",
     layoutByWorkspace: {},
@@ -130,3 +135,29 @@ it.each(["agent-list", "file-explorer"] as const)(
     expect(usePanelStore.getState().mobilePanel.target).toBe("agent");
   },
 );
+it("suppresses auto-focus during relative tab cycling and clears suppression on explicit reveal", () => {
+  const store = useWorkspaceLayoutStore.getState();
+  const agentTabId = store.openTab({
+    workspaceKey,
+    target: { kind: "agent", agentId: "root" },
+    intent: "reveal",
+  })!;
+  const fileTabId = store.openTab({
+    workspaceKey,
+    target: { kind: "file", path: "notes.md" },
+    intent: "reveal",
+  })!;
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
+
+  revealWorkspaceTabPreservingBrowsingFocus({ workspaceKey, tabId: agentTabId });
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(true);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(false);
+
+  revealWorkspaceTabPreservingBrowsingFocus({ workspaceKey, tabId: fileTabId });
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(true);
+
+  revealWorkspaceTab(workspaceKey, agentTabId);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, agentTabId)).toBe(false);
+  expect(isWorkspaceTabAutoFocusSuppressed(workspaceKey, fileTabId)).toBe(false);
+});
