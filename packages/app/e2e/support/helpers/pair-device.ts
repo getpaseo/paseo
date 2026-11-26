@@ -108,6 +108,7 @@ export async function enableTailscale(page: Page): Promise<void> {
   await expect(toggle).not.toBeChecked();
   await toggle.click();
   await expect(toggle).toBeChecked();
+  await expect(toggle).toBeEnabled();
 }
 
 export async function expectTailscaleAddress(page: Page, address: string): Promise<void> {
@@ -142,6 +143,7 @@ export async function disableTailscale(page: Page, address: string): Promise<voi
   await expect(toggle).toBeEnabled();
   await toggle.click();
   await expect(toggle).not.toBeChecked();
+  await expect(toggle).toBeEnabled();
   await expect(tailscaleAddressRow(page, address)).toHaveCount(0);
   await expectHostUnreachableAt(address);
 }
@@ -307,7 +309,8 @@ export async function expectTailscaleRowLoadsOn(
 
 /**
  * Holds every message between the app and the host on `port` for `ms` in each direction, as on a
- * slow network. The returned function brings the connection back to full speed.
+ * slow network. The returned function brings the connection back to full speed and flushes any
+ * queued messages.
  */
 export async function slowConnectionToHost(
   page: Page,
@@ -315,30 +318,29 @@ export async function slowConnectionToHost(
   ms: number,
 ): Promise<() => void> {
   let delay = ms;
+  const flushers = new Set<() => void>();
   await page.routeWebSocket(wsRoutePatternForPort(String(port)), (app) => {
     const host = app.connectToServer();
-    app.onMessage(
-      deliverInOrderAfter(
-        () => delay,
-        (message) => host.send(message),
-      ),
+    const appToHost = deliverInOrderAfter(
+      () => delay,
+      (message) => host.send(message),
     );
-    host.onMessage(
-      deliverInOrderAfter(
-        () => delay,
-        (message) => app.send(message),
-      ),
+    const hostToApp = deliverInOrderAfter(
+      () => delay,
+      (message) => app.send(message),
     );
+    flushers.add(appToHost.flushNow);
+    flushers.add(hostToApp.flushNow);
+    app.onMessage(appToHost.enqueue);
+    host.onMessage(hostToApp.enqueue);
   });
   return () => {
     delay = 0;
+    for (const flushNow of flushers) flushNow();
   };
 }
 
-function deliverInOrderAfter(
-  delay: () => number,
-  deliver: (message: string | Buffer) => void,
-): (message: string | Buffer) => void {
+function deliverInOrderAfter(delay: () => number, deliver: (message: string | Buffer) => void) {
   const queue: { at: number; message: string | Buffer }[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
   const flush = () => {
@@ -346,9 +348,26 @@ function deliverInOrderAfter(
     while (queue[0] && queue[0].at <= Date.now()) deliver(queue.shift()!.message);
     if (queue[0]) timer = setTimeout(flush, queue[0].at - Date.now());
   };
-  return (message) => {
-    queue.push({ at: Math.max(Date.now() + delay(), queue.at(-1)?.at ?? 0), message });
-    if (!timer) flush();
+  return {
+    enqueue: (message: string | Buffer) => {
+      queue.push({ at: Math.max(Date.now() + delay(), queue.at(-1)?.at ?? 0), message });
+      if (!timer) flush();
+    },
+    flushNow: () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      while (queue[0]) {
+        const next = queue.shift()!;
+        try {
+          deliver(next.message);
+        } catch {
+          queue.length = 0;
+          break;
+        }
+      }
+    },
   };
 }
 
