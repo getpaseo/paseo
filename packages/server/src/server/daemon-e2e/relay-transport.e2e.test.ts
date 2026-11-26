@@ -26,7 +26,7 @@ import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
 import { AgentManager } from "../agent/agent-manager.js";
@@ -577,12 +577,49 @@ async function waitForCapturedLog(
         expect(accessOnly.hostPolicies).toEqual([expect.objectContaining({ sourceId })]);
         expect(accessOnly).not.toHaveProperty("requests");
         expect(sent).toEqual([]);
-        await destinationClient.manageHostInstructions({
-          action: "decide",
-          sourceId,
-          id,
-          approve: true,
-        });
+        const { agentManager } = destination.daemon;
+        const permissionId = "permission-during-admission";
+        const reload = agentManager.reloadStalePluginSession.bind(agentManager);
+        const permissionAdded = Promise.withResolvers<void>();
+        const intercept = vi
+          .spyOn(agentManager, "reloadStalePluginSession")
+          .mockImplementationOnce(async (agentId) => {
+            await reload(agentId);
+            agentManager.getAgent(agentId)!.pendingPermissions.set(permissionId, {
+              id: permissionId,
+              provider: "claude",
+              name: "Permission arriving during instruction dispatch",
+              kind: "tool",
+            });
+            permissionAdded.resolve();
+          });
+        try {
+          await destinationClient.manageHostInstructions({
+            action: "decide",
+            sourceId,
+            id,
+            approve: true,
+          });
+          await withTimeout(
+            permissionAdded.promise,
+            10000,
+            "Expected a permission before admission",
+          );
+          const inboxFile = path.join(destination.paseoHome, "host-instructions", "inbox.json");
+          await expect
+            .poll(async () => JSON.parse(await readFile(inboxFile, "utf8")).requests)
+            .toEqual([
+              expect.objectContaining({
+                instruction: expect.objectContaining({ id }),
+                state: "queued",
+              }),
+            ]);
+          expect(agentManager.getAgent(agent.id)!.pendingPermissions.has(permissionId)).toBe(true);
+          expect(sent).toEqual([]);
+        } finally {
+          intercept.mockRestore();
+          agentManager.getAgent(agent.id)!.pendingPermissions.delete(permissionId);
+        }
         await expect.poll(() => sent.length, { timeout: 15000 }).toBe(1);
         expect(parseAgentMessage(sent[0])).toMatchObject({
           source: { kind: "host-instruction", serverId: sourceId },

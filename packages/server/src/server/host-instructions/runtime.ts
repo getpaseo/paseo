@@ -585,6 +585,7 @@ export class HostInstructionsRuntime {
     active.claim = this.inbox.claim(sourceId, id, currentTarget);
     const claim = await active.claim;
     if (this.stopped || claim?.state !== "dispatching") return;
+    let blockedByPermission = false;
     try {
       const { prompt, messageId } = prepareAgentMessage(
         `Host instruction from ${sourceId}. To send an explicit reply, use reply_host_instruction with sourceId "${sourceId}" and id "${id}".\n\n${instruction.prompt}`,
@@ -601,12 +602,13 @@ export class HostInstructionsRuntime {
         unarchive: false,
         allowOutOfBand: false,
         admit: () => {
-          const admit =
-            !this.stopped &&
-            this.inbox.canDispatch(sourceId, id) &&
-            !agentManager.getAgent(target.agentId)?.pendingPermissions.size;
-          if (admit) active.admitted = true;
-          return admit;
+          if (this.stopped || !this.inbox.canDispatch(sourceId, id)) return false;
+          if (agentManager.getAgent(target.agentId)?.pendingPermissions.size) {
+            blockedByPermission = true;
+            return false;
+          }
+          active.admitted = true;
+          return true;
         },
         logger,
       });
@@ -625,7 +627,9 @@ export class HostInstructionsRuntime {
       if (
         error instanceof AgentTurnBusyError ||
         (!active.admitted &&
-          (error instanceof AgentManagerShuttingDownError || !this.inbox.canDispatch(sourceId, id)))
+          (blockedByPermission ||
+            error instanceof AgentManagerShuttingDownError ||
+            !this.inbox.canDispatch(sourceId, id)))
       ) {
         await this.inbox.markBusy(sourceId, id);
       } else {
