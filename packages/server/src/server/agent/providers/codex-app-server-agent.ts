@@ -3841,6 +3841,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   private mcpElicitationPermissionIds = new Map<number, string>();
   private pendingPermissionHandlers = new Map<string, CodexPendingPermissionHandler>();
   private resolvedPermissionRequests = new Set<string>();
+  // Denial reasons by Codex item id, held until Codex settles the item.
+  private deniedItemErrors = new Map<string, { message: string }>();
   private pendingAgentMessages = new Map<string, string>();
   private pendingReasoning = new Map<string, string[]>();
   private pendingCommandOutputDeltas = new Map<string, string[]>();
@@ -5461,15 +5463,22 @@ export class CodexAppServerAgentSession implements AgentSession {
     } else {
       fallbackName = pendingRequest.name;
     }
+    const error = { message: response.message ?? "Permission denied" };
+    // Codex settles a declined command or patch under its own item id; denying on that id
+    // keeps one row instead of a second one for the permission.
+    const itemId = pendingRequest.metadata?.itemId;
+    if (typeof itemId === "string") {
+      this.deniedItemErrors.set(itemId, error);
+    }
     this.emitEvent({
       type: "timeline",
       provider: CODEX_PROVIDER,
       item: {
         type: "tool_call",
-        callId: requestId,
+        callId: typeof itemId === "string" ? itemId : requestId,
         name: fallbackName,
         status: "failed",
-        error: { message: response.message ?? "Permission denied" },
+        error,
         detail: pendingRequest.detail ?? {
           type: "unknown",
           input: pendingRequest.input ?? null,
@@ -7529,6 +7538,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         }
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
+      this.keepDenialReason(timelineItem, itemId);
     }
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
     if (timelineItem.type === "assistant_message") {
@@ -7543,8 +7553,20 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emittedItemStartedIds.delete(itemId);
       this.pendingCommandOutputDeltas.delete(itemId);
       this.pendingFileChangeOutputDeltas.delete(itemId);
+      this.deniedItemErrors.delete(itemId);
     }
     await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
+  }
+
+  // Codex settles a declined item without a reason; keep the one the user denied it with.
+  private keepDenialReason(
+    timelineItem: ToolCallTimelineItem,
+    itemId: string | null | undefined,
+  ): void {
+    const error = itemId ? this.deniedItemErrors.get(itemId) : undefined;
+    if (error && timelineItem.status === "failed") {
+      timelineItem.error = error;
+    }
   }
 
   private consumeStreamedTextCompletion(

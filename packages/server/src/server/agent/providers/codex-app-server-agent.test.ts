@@ -103,6 +103,7 @@ import { asInternals as castInternals, createStub } from "../../test-utils/class
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import { buildProviderRegistry } from "../provider-registry.js";
+import { mergeToolCallItems } from "../timeline-projection.js";
 
 interface CollaborationModeRecord {
   name: string;
@@ -283,6 +284,156 @@ describe("Codex file-change approvals", () => {
       await expect(appServer.waitForApprovalDecision("file-alpha")).resolves.toEqual({
         decision: "accept",
       });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+});
+
+describe("Codex denied command and file-change approvals", () => {
+  type ToolCallRow = Extract<AgentTimelineItem, { type: "tool_call" }>;
+
+  // Folds tool-call updates the way the daemon's timeline does, one row per call id.
+  function toolCallRows(events: AgentStreamEvent[]): ToolCallRow[] {
+    const rows = new Map<string, ToolCallRow>();
+    for (const event of events) {
+      if (event.type !== "timeline" || event.item.type !== "tool_call") continue;
+      const existing = rows.get(event.item.callId);
+      rows.set(event.item.callId, existing ? mergeToolCallItems(existing, event.item) : event.item);
+    }
+    return [...rows.values()];
+  }
+
+  test.each([
+    {
+      kind: "command",
+      itemId: "exec-denied",
+      name: "shell",
+      starts: (appServer: FakeCodexAppServer) =>
+        appServer.startsTerminalCommand({
+          threadId: "thread-1",
+          turnId: "native-A",
+          itemId: "exec-denied",
+          command: "rm -rf build",
+        }),
+      requestsApproval: (appServer: FakeCodexAppServer) =>
+        appServer.requestCommandApproval({
+          itemId: "exec-denied",
+          threadId: "thread-1",
+          turnId: "native-A",
+          command: "rm -rf build",
+          cwd: "/workspace/project",
+          reason: "Remove the build directory",
+        }),
+      declines: (appServer: FakeCodexAppServer) =>
+        appServer.declinesCommand({
+          threadId: "thread-1",
+          turnId: "native-A",
+          itemId: "exec-denied",
+          command: "rm -rf build",
+        }),
+    },
+    {
+      kind: "file change",
+      itemId: "patch-denied",
+      name: "apply_patch",
+      starts: (appServer: FakeCodexAppServer) =>
+        appServer.startsFileChange({
+          threadId: "thread-1",
+          turnId: "native-A",
+          callId: "patch-denied",
+          path: "/workspace/project/alpha.txt",
+          diff: "@@ -1 +1 @@\n-blue\n+green\n",
+        }),
+      requestsApproval: (appServer: FakeCodexAppServer) =>
+        appServer.requestFileChangeApproval({
+          itemId: "patch-denied",
+          threadId: "thread-1",
+          turnId: "native-A",
+          reason: "Apply the patch",
+        }),
+      declines: (appServer: FakeCodexAppServer) =>
+        appServer.declinesFileChange({
+          threadId: "thread-1",
+          turnId: "native-A",
+          callId: "patch-denied",
+          path: "/workspace/project/alpha.txt",
+          diff: "@@ -1 +1 @@\n-blue\n+green\n",
+        }),
+    },
+  ])(
+    "denying a $kind leaves one failed row",
+    async ({ itemId, name, starts, requestsApproval, declines }) => {
+      const appServer = createFakeCodexAppServer();
+      const { session } = await startPublicSteeringSession(appServer);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        starts(appServer);
+        const permission = waitForNextPermission(session);
+        requestsApproval(appServer);
+        const { request } = await permission;
+
+        await session.respondToPermission(request.id, {
+          behavior: "deny",
+          message: "Denied by user",
+        });
+        await expect(appServer.waitForApprovalDecision(itemId)).resolves.toEqual({
+          decision: "decline",
+        });
+        const turnCompleted = waitForNextEvent(session, "turn_completed");
+        declines(appServer);
+        appServer.completeTurn({ threadId: "thread-1" });
+        await turnCompleted;
+
+        expect(toolCallRows(events)).toEqual([
+          expect.objectContaining({
+            callId: itemId,
+            name,
+            status: "failed",
+            error: { message: "Denied by user" },
+            metadata: expect.objectContaining({ permissionRequestId: request.id, denied: true }),
+          }),
+        ]);
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test("denying a request without a Codex item keeps its row on the permission id", async () => {
+    const appServer = createFakeCodexAppServer();
+    const { session } = await startPublicSteeringSession(appServer);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      const permission = waitForNextPermission(session);
+      appServer.requestMcpElicitation({
+        threadId: "thread-1",
+        turnId: "native-A",
+        serverName: "browser",
+        message: "Allow the browser to open this page?",
+        requestedSchema: { type: "object", properties: {} },
+      });
+      const { request } = await permission;
+
+      await session.respondToPermission(request.id, {
+        behavior: "deny",
+        message: "Denied by user",
+      });
+      await expect(appServer.waitForMcpElicitationDecision()).resolves.toMatchObject({
+        action: "decline",
+      });
+
+      expect(toolCallRows(events)).toEqual([
+        expect.objectContaining({
+          callId: request.id,
+          status: "failed",
+          error: { message: "Denied by user" },
+        }),
+      ]);
       appServer.assertNoErrors();
     } finally {
       await session.close();
