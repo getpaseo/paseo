@@ -331,12 +331,12 @@ A stable desktop release reaches automatic updates in stages, so a bad release r
 | Canary         | For the first 8 hours, 5% of installs are admitted.                                                      |
 | Ramp           | From 8 hours to `rolloutHours` (18 by default), admission rises in a straight line from 5% to 100%.      |
 | Check interval | An install asks GitHub for the latest release at most once every 6 hours.                                |
-| Cooldown       | After an install updates, it skips paced releases for 72 hours.                                          |
+| Cooldown       | After an install updates, it skips paced releases for 24 hours.                                          |
 | Staged update  | An install that holds a downloaded update keeps it and does not download the paced release that follows. |
 
 A paced release is a stable release with `rolloutHours` above 0. When `rolloutHours` is under 16, the canary hold is half of `rolloutHours`.
 
-Every release places each install at a new position in the rollout, so the canary group changes with each release. With one or two releases per day, an install updates at most once every 72 hours and skips the releases in between.
+Every release places each install at a new position in the rollout, so the canary group changes with each release. With one or two releases per day, an install updates at most once every 24 hours and skips the releases in between.
 
 These paths skip the stages:
 
@@ -443,7 +443,7 @@ To resume a halted release, run `gh release edit v0.1.42 --latest` with its tag.
      -f rollout_hours=0
    ```
 
-Do not leave the fix as a paced release. The installs that took the bad release are in their 72-hour cooldown and skip a paced release. An install that holds the bad release as a staged update, and did not check during the halt, keeps it when a paced release follows. An emergency release reaches both.
+Do not leave the fix as a paced release. The installs that took the bad release are in their 24-hour cooldown and skip a paced release. An install that holds the bad release as a staged update, and did not check during the halt, keeps it when a paced release follows. An emergency release reaches both.
 
 ### Custom ramp on a manually-dispatched build
 

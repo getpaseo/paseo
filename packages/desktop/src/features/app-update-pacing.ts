@@ -6,7 +6,7 @@ import { z } from "zod";
 import { isNewerVersion } from "./app-update-version.js";
 
 export const AUTOMATIC_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-export const UPDATE_COOLDOWN_MS = 72 * 60 * 60 * 1000;
+export const UPDATE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Paces automatic updates so frequent releases stay calm: automatic checks run

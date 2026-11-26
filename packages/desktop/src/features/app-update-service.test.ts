@@ -1697,7 +1697,7 @@ describe("update cooldown", () => {
     return { install, app };
   }
 
-  it("defers a paced release for 72 hours after the app updated", async () => {
+  it("defers a paced release for 24 hours after the app updated", async () => {
     const { install, app } = await launchRightAfterUpdating();
 
     app.publish(pacedRelease("1.2.5"));
