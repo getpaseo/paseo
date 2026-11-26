@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
+import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -56,7 +56,7 @@ interface CompactModelSheetProps {
   profiles?: AgentProfilePicker | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => void;
+  onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
   onOpen?: () => void;
   onClose?: () => void;
@@ -74,8 +74,9 @@ interface CompactModelSheetProps {
 }
 
 function resolveModelSheetProfileActions(
-  onCreateProfile: ((seed: AgentProfileSeed) => void) | undefined,
+  onCreateProfile: ((seed: AgentProfileSeed) => Promise<AgentProfile | null> | void) | undefined,
   onEditProfile: ((profileId: string) => void) | undefined,
+  onSelect: (provider: string, modelId: string) => void,
   close: () => void,
 ): {
   create?: (seed: AgentProfileSeed) => void;
@@ -84,8 +85,11 @@ function resolveModelSheetProfileActions(
   return {
     create: onCreateProfile
       ? (seed: AgentProfileSeed) => {
+          if (seed.modelId) {
+            onSelect(seed.provider, seed.modelId);
+          }
           close();
-          onCreateProfile(seed);
+          void onCreateProfile(seed);
         }
       : undefined,
     edit: onEditProfile
@@ -281,7 +285,12 @@ export function CompactModelSheet({
     onEditProfiles?.();
   }, [close, onEditProfiles]);
 
-  const profileActions = resolveModelSheetProfileActions(onCreateProfile, onEditProfile, close);
+  const profileActions = resolveModelSheetProfileActions(
+    onCreateProfile,
+    onEditProfile,
+    onSelect,
+    close,
+  );
 
   const toggle = useCallback(() => {
     if (isOpen) {
@@ -338,6 +347,7 @@ export function CompactModelSheet({
         onClose={close}
         snapPoints={SNAP_POINTS}
         scrollable={false}
+        keyboard={rootBrowser.keyboard}
         contentStyle={styles.sheetBody}
         contextBridge={contextBridge}
         testID="agent-controls-model-sheet"
@@ -387,6 +397,7 @@ export function CompactModelSheet({
           snapPoints={SNAP_POINTS}
           scrollable={false}
           presentation="push"
+          keyboard={modelBrowser.keyboard}
           contentStyle={styles.sheetBody}
           contextBridge={contextBridge}
           testID="agent-controls-model-browser-sheet"

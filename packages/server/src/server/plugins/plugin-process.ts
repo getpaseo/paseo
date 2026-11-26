@@ -14,6 +14,9 @@ import type {
 } from "@getpaseo/plugin";
 import type {
   PluginHandlerContext,
+  PluginNotificationSendInput,
+  PluginNotificationSendResult,
+  PluginNotifications,
   PluginServerContext,
   PluginServerContribution,
   PluginWorktreeCreateInput,
@@ -21,6 +24,7 @@ import type {
   PluginWorktreeRestoreRequest,
   WorktreeManagerRegistration,
 } from "@getpaseo/plugin/server";
+import { randomUUID } from "node:crypto";
 import { assertPluginWireValue } from "@getpaseo/protocol/binary-frames/index";
 import {
   PluginSubscriptionHandlers,
@@ -127,6 +131,13 @@ export function createPluginWorker(options: {
   >();
   const pendingProviderConnections = new Map<string, { tombstoned: boolean }>();
   const installationRequests = new Map<string, AbortController>();
+  const notificationRequests = new Map<
+    string,
+    {
+      resolve: (result: PluginNotificationSendResult) => void;
+      reject: (error: Error) => void;
+    }
+  >();
   let cleanup: (() => void | Promise<void>) | null = null;
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
@@ -207,6 +218,11 @@ export function createPluginWorker(options: {
     }
     if (provider.status !== undefined && typeof provider.status !== "function")
       throw new Error(`Invalid status callback for plugin provider ${id}`);
+    if (
+      provider.docsUrl !== undefined &&
+      (typeof provider.docsUrl !== "string" || !isHttpUrl(provider.docsUrl))
+    )
+      throw new Error(`Plugin provider ${id} docsUrl must be an http(s) URL`);
     validateProviderInstallation(id, provider.installation);
     if (
       provider.command !== undefined &&
@@ -226,7 +242,10 @@ export function createPluginWorker(options: {
       typeof source.fetch !== "function" ||
       typeof source.discover !== "function" ||
       !source.input ||
-      typeof source.input.parseAsync !== "function"
+      typeof source.input.parseAsync !== "function" ||
+      (source.providers !== undefined &&
+        (!Array.isArray(source.providers) ||
+          source.providers.some((provider) => typeof provider !== "string" || !provider.trim())))
     ) {
       throw new Error(`Invalid usage source: ${source.id}`);
     }
@@ -264,12 +283,36 @@ export function createPluginWorker(options: {
     };
   }
 
+  const notifications: PluginNotifications = {
+    send(input: PluginNotificationSendInput): Promise<PluginNotificationSendResult> {
+      if (stopping) {
+        return Promise.reject(new Error("Plugin is stopping"));
+      }
+      let payload: unknown;
+      try {
+        payload = jsonTransportValue(input);
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+      const requestId = randomUUID();
+      return new Promise<PluginNotificationSendResult>((resolve, reject) => {
+        notificationRequests.set(requestId, { resolve, reject });
+        send({
+          type: "notification.send",
+          requestId,
+          input: payload,
+        });
+      });
+    },
+  };
+
   function providerMetadata(provider: ProviderRegistration) {
     return {
       id: provider.id,
       label: provider.label,
       description: provider.description,
       iconPath: provider.icon,
+      docsUrl: provider.docsUrl,
       requiresConfiguration: provider.requiresConfiguration,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
@@ -283,6 +326,7 @@ export function createPluginWorker(options: {
           }
         : undefined,
       command: provider.command,
+      launchWrap: provider.launchWrap,
     };
   }
 
@@ -457,6 +501,9 @@ export function createPluginWorker(options: {
       // The runtime re-attaches a session when the daemon drops this socket.
       reconnect: { enabled: true },
       transportFactory,
+      // The channel is a pipe to the daemon (or an in-process queue for built-in plugins); its
+      // loss is reported directly, so a 10 s ping would only wake both sides.
+      livenessHeartbeat: false,
     });
     paseo = createPaseoApi(daemonClient);
     await daemonClient.connect();
@@ -471,6 +518,7 @@ export function createPluginWorker(options: {
       registerUsageSource,
       registerWorktreeManager,
       registerSettings,
+      notifications,
       addHook: hooks.addHook,
       on: hooks.on,
       before: hooks.before,
@@ -486,6 +534,7 @@ export function createPluginWorker(options: {
           id: source.id,
           label: source.label,
           provider: source.provider,
+          providers: source.providers ? [...source.providers] : undefined,
           icon: source.icon
             ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
             : undefined,
@@ -517,6 +566,9 @@ export function createPluginWorker(options: {
     for (const request of installationRequests.values())
       request.abort(new Error("Plugin is stopping"));
     for (const request of worktreeRequests.values()) request.abort(new Error("Plugin is stopping"));
+    for (const pending of notificationRequests.values())
+      pending.reject(new Error("Plugin is stopping"));
+    notificationRequests.clear();
     worktreeManager = null;
     const currentCleanup = cleanup;
     cleanup = null;
@@ -668,6 +720,59 @@ export function createPluginWorker(options: {
     return handleInstallationMessage(message);
   }
 
+  function handleNotificationMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "notification.result" | "notification.error" }
+  > {
+    if (message.type !== "notification.result" && message.type !== "notification.error") {
+      return false;
+    }
+    const pending = notificationRequests.get(message.requestId);
+    if (!pending) return true;
+    notificationRequests.delete(message.requestId);
+    if (message.type === "notification.result") pending.resolve(message.result);
+    else pending.reject(new Error(message.error));
+    return true;
+  }
+
+  function handleProviderConnectOrSend(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "provider.connect" | "provider.send" | "provider.close" }
+  > {
+    if (message.type === "provider.connect") {
+      void connectProvider(message).catch((error) => {
+        if (stopping) return;
+        send({
+          type: "provider.connect_failed",
+          connectionId: message.connectionId,
+          error: describeError(error),
+        });
+      });
+      return true;
+    }
+    if (message.type === "provider.send") {
+      void sendProviderInput(message).catch((error) => {
+        if (stopping) return;
+        send({
+          type: "provider.rejected",
+          connectionId: message.connectionId,
+          acceptanceId: message.acceptanceId,
+          error: describeError(error),
+        });
+      });
+      return true;
+    }
+    if (message.type === "provider.close") {
+      void closeProviderConnection(message.connectionId);
+      return true;
+    }
+    return false;
+  }
+
   function handleMessage(rawMessage: unknown): void {
     const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
     if (!parsed.success) {
@@ -705,6 +810,7 @@ export function createPluginWorker(options: {
       void shutdown();
       return;
     }
+    if (handleNotificationMessage(message)) return;
     if (stopping) {
       rejectWhileStopping(message);
       return;
@@ -715,33 +821,7 @@ export function createPluginWorker(options: {
       handleUsageRequest(message);
       return;
     }
-    if (message.type === "provider.connect") {
-      void connectProvider(message).catch((error) => {
-        if (stopping) return;
-        send({
-          type: "provider.connect_failed",
-          connectionId: message.connectionId,
-          error: describeError(error),
-        });
-      });
-      return;
-    }
-    if (message.type === "provider.send") {
-      void sendProviderInput(message).catch((error) => {
-        if (stopping) return;
-        send({
-          type: "provider.rejected",
-          connectionId: message.connectionId,
-          acceptanceId: message.acceptanceId,
-          error: describeError(error),
-        });
-      });
-      return;
-    }
-    if (message.type === "provider.close") {
-      void closeProviderConnection(message.connectionId);
-      return;
-    }
+    if (handleProviderConnectOrSend(message)) return;
     if (message.type === "paseo_frame" || message.type === "paseo_close") return;
     if (isHookMessage(message)) {
       handleHookMessage(message);
@@ -903,6 +983,7 @@ export function createPluginWorker(options: {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   let worker: ReturnType<typeof createPluginWorker> | null = null;
+  let closedByShutdown = false;
   const handlers = new Set<(message: PluginProcessRequest) => void>();
   const channel: PluginWorkerChannel = {
     send(message, callback) {
@@ -916,9 +997,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       };
     },
     disconnect() {
+      closedByShutdown = true;
       process.disconnect();
     },
   };
+  // The daemon worker owns this process through the IPC channel. When the channel closes without
+  // this process closing it (the worker crashed or was killed), nothing can reach the plugin any
+  // more, so exit instead of running on as an orphan. A normal shutdown closes the channel itself
+  // and lets work still in flight finish.
+  process.once("disconnect", () => {
+    if (!closedByShutdown) process.exit(0);
+  });
   process.on("message", (raw) => {
     const parsed = PluginProcessRequestSchema.safeParse(raw);
     if (!worker && parsed.success && parsed.data.type === "initialize") {

@@ -55,7 +55,7 @@ import {
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
-import { chooseAddProjectMethod, expectAddProjectPage } from "../support/helpers/add-project-flow";
+import { expectAddProjectTab } from "../support/helpers/add-project-flow";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
 import {
   expectSidebarWorkspaceSelected,
@@ -291,8 +291,7 @@ test.describe("New workspace flow", () => {
       await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
       await addProject.click();
 
-      await expectAddProjectPage(page, "method");
-      await chooseAddProjectMethod(page, "directory-search");
+      await expectAddProjectTab(page, "existing");
     } finally {
       await repo.cleanup();
     }

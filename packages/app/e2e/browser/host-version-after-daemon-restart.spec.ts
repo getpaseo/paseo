@@ -84,7 +84,7 @@ async function expectHelpHostVersion(page: Page, serverId: string, version: stri
 async function openHostPage(page: Page, host: RestartableHostDaemon): Promise<void> {
   await openSettings(page);
   await selectSettingsHost(page, host.serverId);
-  await openHostSection(page, host.serverId, "host");
+  await openHostSection(page, host.serverId, "daemon");
 }
 
 function hostIdentity(page: Page) {

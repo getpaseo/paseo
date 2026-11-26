@@ -27,7 +27,9 @@ import {
 } from "./resolve-worktree-creation-intent.js";
 import type { ChangeRequestCheckoutSource, FirstAgentContext } from "@getpaseo/protocol/messages";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { runWithRepositoryRoot } from "../utils/git-repository-discovery.js";
 import { runGitCommand, runWithGitCommandPriority } from "../utils/run-git-command.js";
+import { setPaseoWorktreeUntrustedSource } from "../utils/worktree-metadata.js";
 
 import type { UntrustedWorkspaceSource } from "./workspace-automation-gate.js";
 
@@ -78,6 +80,16 @@ async function createWorktreeCoreWithPriority(
   deps: CreateWorktreeCoreDeps,
 ): Promise<CreateWorktreeCoreResult> {
   const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
+  return runWithRepositoryRoot(repoRoot, () =>
+    createWorktreeAtRepositoryRoot(input, deps, repoRoot),
+  );
+}
+
+async function createWorktreeAtRepositoryRoot(
+  input: CreateWorktreeCoreInput,
+  deps: CreateWorktreeCoreDeps,
+  repoRoot: string,
+): Promise<CreateWorktreeCoreResult> {
   const requestedWorktreeSlug = input.worktreeSlug
     ? normalizeWorktreeSlug(input.worktreeSlug)
     : undefined;
@@ -174,18 +186,9 @@ async function createWorktreeCoreWithPriority(
     input,
     deps,
   });
-  if (managedWorktree) {
-    return {
-      worktree: managedWorktree,
-      intent,
-      untrustedSource,
-      repoRoot,
-      created: true,
-    };
-  }
-
-  return {
-    worktree: await createWorktree({
+  const createdWorktree =
+    managedWorktree ??
+    (await createWorktree({
       cwd: repoRoot,
       worktreeSlug: normalizedSlug,
       worktreePath: transformed.path,
@@ -193,7 +196,12 @@ async function createWorktreeCoreWithPriority(
       preparedBranchOff,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
-    }),
+    }));
+  if (untrustedSource) {
+    await setPaseoWorktreeUntrustedSource(createdWorktree.worktreePath, untrustedSource);
+  }
+  return {
+    worktree: createdWorktree,
     intent,
     untrustedSource,
     repoRoot,

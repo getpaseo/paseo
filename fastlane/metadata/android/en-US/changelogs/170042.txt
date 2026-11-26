@@ -1,0 +1,7 @@
+Fixed
+- Fixed numbered sublists overlapping their text and quotes inside lists overlapping later messages on Android
+- Fixed Android terminal input so it asks the keyboard to exclude typed text from personalized learning
+- Fixed conversations disappearing when directory capitalization differs on a case-insensitive file system
+- Fixed interrupt and steer messages to archived agents being queued without starting a turn
+
+Full notes: https://paseo.sh/changelog

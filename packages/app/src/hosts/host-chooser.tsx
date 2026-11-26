@@ -7,14 +7,16 @@ import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
-import { Server } from "lucide-react-native";
 import { create } from "zustand";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { HostStatusDotSlot } from "@/components/hosts/host-picker";
+import { HostStatusDot } from "@/components/host-status-dot";
 import { isWeb } from "@/constants/platform";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
+import { resolveHostIcon } from "@/hosts/appearance";
+import { HostConnectionLine, HostIconGlyph, HostLatencyLabel } from "@/hosts/host-icon";
 import { OverlayLayerProvider, useGlobalOverlayLayer } from "@/lib/overlay-root";
-import { useHosts } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { orderHostsLocalFirst, type HostProfile } from "@/types/host-connection";
 
 type HostFilter = (host: HostProfile) => boolean;
@@ -101,36 +103,52 @@ function HostChooserRow({
   active: boolean;
   onChooseHost: (serverId: string) => void;
 }) {
-  const { theme } = useUnistyles();
+  const detectedMachineKind = useSessionStore(
+    (state) => state.sessions[host.serverId]?.serverInfo?.machineKind ?? null,
+  );
+  const resolvedIcon = resolveHostIcon({ appearance: host.appearance, detectedMachineKind });
+  const [hovered, setHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setHovered(true), []);
+  const handlePointerLeave = useCallback(() => setHovered(false), []);
   const handlePress = useCallback(() => onChooseHost(host.serverId), [host.serverId, onChooseHost]);
   const rowStyle = useCallback(
-    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+    ({ pressed }: PressableStateCallbackType) => [
       styles.row,
       (active || hovered || pressed) && styles.rowActive,
     ],
-    [active],
+    [active, hovered],
   );
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={handlePress}
-      style={rowStyle}
-      testID={`host-chooser-row-${host.serverId}`}
-    >
-      <View style={styles.rowIconSlot}>
-        <HostStatusDotSlot serverId={host.serverId} />
-      </View>
-      <View style={styles.rowText}>
-        <Text style={styles.rowTitle} numberOfLines={1}>
-          {host.label}
-        </Text>
-        <Text style={styles.rowSubtitle} numberOfLines={1}>
-          {host.serverId}
-        </Text>
-      </View>
-      <Server size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-    </Pressable>
+    <View onPointerEnter={handlePointerEnter} onPointerLeave={handlePointerLeave}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={handlePress}
+        style={rowStyle}
+        testID={`host-chooser-row-${host.serverId}`}
+      >
+        <View style={styles.rowIconSlot}>
+          <HostStatusDot serverId={host.serverId} />
+        </View>
+        <View style={styles.rowText}>
+          <View style={styles.rowHeader}>
+            <HostIconGlyph
+              icon={resolvedIcon}
+              color={host.appearance.color}
+              size={14}
+              style={styles.rowGlyph}
+            />
+            <Text style={styles.rowTitle} numberOfLines={1}>
+              {host.label}
+            </Text>
+          </View>
+          <HostConnectionLine serverId={host.serverId} />
+        </View>
+        <View style={styles.rowTrailing}>
+          <HostLatencyLabel serverId={host.serverId} />
+        </View>
+      </Pressable>
+    </View>
   );
 }
 
@@ -161,6 +179,7 @@ export function HostChooserModal() {
 
   useEffect(() => {
     if (!request) return;
+    getHostRuntimeStore().refreshActiveLatencies(request.serverIds);
     inputRef.current?.replaceText("");
     setQuery("");
     setActiveIndex(0);
@@ -328,7 +347,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   row: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: theme.spacing[3],
     minHeight: 56,
     paddingHorizontal: theme.spacing[4],
@@ -337,19 +356,39 @@ const styles = StyleSheet.create((theme) => ({
   rowActive: {
     backgroundColor: theme.colors.surface1,
   },
+  rowTrailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 20,
+    flexShrink: 0,
+  },
   rowIconSlot: {
-    width: 18,
+    width: 16,
+    height: 20,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   rowText: {
     flex: 1,
     minWidth: 0,
     gap: theme.spacing[1],
   },
+  rowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 0,
+  },
+  rowGlyph: {
+    flexShrink: 0,
+  },
   rowTitle: {
+    flex: 1,
+    minWidth: 0,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+    lineHeight: 20,
   },
   rowSubtitle: {
     color: theme.colors.foregroundMuted,

@@ -151,20 +151,26 @@ describe("ACP provider catalog", () => {
   });
 });
 
-it("adds bundled goose on capable hosts and uses the ACP config on older hosts", () => {
-  const goose = findProvider("goose");
-  expect(buildAcpProviderConfigPatch(goose, (feature) => feature === "gooseProvider")).toEqual({
-    providers: { goose: { enabled: true } },
-  });
-  expect(buildAcpProviderConfigPatch(goose)).toEqual({
-    providers: {
-      goose: {
-        extends: "acp",
-        label: "goose",
-        description: goose.description,
-        command: ["goose", "acp"],
-        env: {},
+it.each([
+  { id: "goose", feature: "gooseProvider" },
+  { id: "hermes", feature: "hermesProvider" },
+] as const)(
+  "adds bundled $id on capable hosts and uses the ACP config on older hosts",
+  ({ id, feature }) => {
+    const entry = findProvider(id);
+    expect(buildAcpProviderConfigPatch(entry, (supported) => supported === feature)).toEqual({
+      providers: { [id]: { enabled: true } },
+    });
+    expect(buildAcpProviderConfigPatch(entry)).toEqual({
+      providers: {
+        [id]: {
+          extends: "acp",
+          label: entry.title,
+          description: entry.description,
+          command: [id, "acp"],
+          env: {},
+        },
       },
-    },
-  });
-});
+    });
+  },
+);

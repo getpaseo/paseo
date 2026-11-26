@@ -4,6 +4,7 @@ import { existsSync as nodeExistsSync, readdirSync as nodeReaddirSync } from "no
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path, { posix, win32 } from "node:path";
+import { stripAppImageRuntimeEnv } from "@getpaseo/server/process";
 import { app, shell } from "electron";
 
 import type {
@@ -44,11 +45,15 @@ const RUNTIME_CONTROL_ENV_KEYS = [
   "ELECTRON_NO_ATTACH_CONSOLE",
 ] as const;
 
-function createExternalProcessEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function createExternalProcessEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
   const env = { ...baseEnv };
   for (const key of RUNTIME_CONTROL_ENV_KEYS) {
     delete env[key];
   }
+  stripAppImageRuntimeEnv(env, { platform });
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) {
       delete env[key];
@@ -185,7 +190,7 @@ export function createEditorTargetRuntime(
         try {
           child = spawn(launchCommand, launchArgs, {
             detached: true,
-            env: createExternalProcessEnv(env),
+            env: createExternalProcessEnv(env, platform),
             shell: commandScript,
             stdio: "ignore",
           });

@@ -645,6 +645,32 @@ test("new provider extending codex archives and unarchives its native sessions",
   ]);
 });
 
+test("launch-wrap support comes from the provider contract and follows extends", () => {
+  const registry = buildProviderRegistry(logger, {
+    isDev: true,
+    providerOverrides: {
+      "my-claude": { extends: "claude", label: "My Claude" },
+      "my-acp": { extends: "acp", label: "My ACP", command: ["my-acp", "--acp"] },
+    },
+  });
+
+  const support = Object.fromEntries(
+    Object.keys(registry).map((id) => [id, registry[id].createClient(logger).supportsLaunchWrap]),
+  );
+  expect(support).toEqual({
+    claude: true,
+    codex: true,
+    copilot: true,
+    opencode: true,
+    pi: true,
+    omp: true,
+    mock: false,
+    "mock-slow": false,
+    "my-claude": true,
+    "my-acp": true,
+  });
+});
+
 test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {
   const omp = new FakeOmp(["custom-omp"]);
   const registry = buildProviderRegistry(logger, {

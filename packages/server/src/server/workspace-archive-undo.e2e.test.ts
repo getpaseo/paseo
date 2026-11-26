@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
@@ -467,6 +467,187 @@ test.skipIf(process.platform === "win32")(
     await ctx.client.restoreWorkspace(workspaceId);
     expect(await isWorkspaceActive(workspaceId)).toBe(true);
     expect(await isAgentArchived(agentId)).toBe(false);
+  },
+  60000,
+);
+
+test("restoring an archived workspace and project delivers all agent upserts before workspace upsert without removals", async () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-atomic-restore-"));
+  const repoDir = path.join(tempRoot, "multi-agent-atomic-restore");
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoDir });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: repoDir },
+  );
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "directory", path: repoDir },
+  });
+  const workspaceId = created.workspace!.id;
+  const a = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: repoDir,
+    workspaceId,
+    title: "Agent A",
+  });
+  const b = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: repoDir,
+    workspaceId,
+    title: "Agent B",
+  });
+  const c = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: repoDir,
+    workspaceId,
+    title: "Agent C (pre-archived)",
+  });
+  await ctx.daemon.daemon.agentManager.archiveAgent(c.id, "2020-01-01T00:00:00.000Z");
+  await ctx.client.archiveWorkspace(workspaceId);
+
+  // Subscribe a fresh observer client (simulating reload/second client) to both directories.
+  const observer = new DaemonClient({
+    url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+  });
+  await observer.connect();
+  const events: string[] = [];
+  const unsubAgent = observer.on("agent_update", (msg) => {
+    if (msg.type !== "agent_update") return;
+    const p = msg.payload;
+    if (p.kind === "remove") {
+      events.push(`agent:remove:${p.agentId}`);
+    } else {
+      events.push(`agent:upsert:${p.agent.id}:${p.agent.archivedAt ?? "null"}`);
+    }
+  });
+  const unsubWorkspace = observer.on("workspace_update", (msg) => {
+    if (msg.type !== "workspace_update") return;
+    const p = msg.payload;
+    if (p.kind === "upsert" && p.workspace.id === workspaceId) {
+      events.push(`workspace:upsert:${p.workspace.id}`);
+    }
+  });
+  try {
+    await observer.fetchAgents({ subscribe: {} });
+    await observer.fetchWorkspaces({ subscribe: {} });
+    events.length = 0;
+
+    await ctx.client.restoreWorkspace(workspaceId);
+    // Wait for observer to receive the workspace upsert.
+    await vi.waitFor(() => {
+      expect(events).toContain(`workspace:upsert:${workspaceId}`);
+    });
+
+    const aIdx = events.indexOf(`agent:upsert:${a.id}:null`);
+    const bIdx = events.indexOf(`agent:upsert:${b.id}:null`);
+    const wsIdx = events.indexOf(`workspace:upsert:${workspaceId}`);
+    expect(aIdx).toBeGreaterThanOrEqual(0);
+    expect(bIdx).toBeGreaterThanOrEqual(0);
+    expect(wsIdx).toBeGreaterThan(aIdx);
+    expect(wsIdx).toBeGreaterThan(bIdx);
+    expect(events.filter((e) => e.startsWith("agent:remove:"))).toEqual([]);
+    expect(await isAgentArchived(c.id)).toBe(true);
+  } finally {
+    unsubAgent();
+    unsubWorkspace();
+    await observer.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 60000);
+
+test.skipIf(process.platform === "win32")(
+  "undoing an in-flight archive restores only workspace-archived agents before publishing workspace upsert",
+  async () => {
+    const repo = createRepoWithGatedTeardown();
+    const { workspaceId, directory, agentId } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      "undo-restoring-stamp",
+    );
+    const secondActive = await ctx.client.createAgent({
+      ...getFullAccessConfig("codex"),
+      cwd: directory,
+      workspaceId,
+      title: "Second active",
+    });
+    const preArchived = await ctx.client.createAgent({
+      ...getFullAccessConfig("codex"),
+      cwd: directory,
+      workspaceId,
+      title: "Pre-archived",
+    });
+    await ctx.daemon.daemon.agentManager.archiveAgent(preArchived.id, "2020-01-01T00:00:00.000Z");
+
+    const observer = new DaemonClient({
+      url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    });
+    await observer.connect();
+    const events: string[] = [];
+    const unsubAgent = observer.on("agent_update", (msg) => {
+      if (msg.type !== "agent_update") return;
+      const p = msg.payload;
+      events.push(
+        p.kind === "remove"
+          ? `agent:remove:${p.agentId}`
+          : `agent:upsert:${p.agent.id}:${p.agent.archivedAt ?? "null"}`,
+      );
+    });
+    const unsubWorkspace = observer.on("workspace_update", (msg) => {
+      if (msg.type !== "workspace_update") return;
+      const p = msg.payload;
+      if (p.kind === "upsert" && p.workspace.id === workspaceId) {
+        events.push(`workspace:upsert:${p.workspace.id}`);
+      }
+    });
+    let archivePromise: Promise<unknown> | null = null;
+    try {
+      await observer.fetchAgents({ subscribe: {} });
+      await observer.fetchWorkspaces({ subscribe: {} });
+      archivePromise = ctx.client.archiveWorkspace(workspaceId);
+      await expect.poll(() => existsSync(repo.teardownStartedPath), { timeout: 15000 }).toBe(true);
+
+      const agentSnapshot = await ctx.client.fetchAgent(agentId);
+      const workspaceArchiveStamp = agentSnapshot?.agent?.archivedAt ?? null;
+      expect(workspaceArchiveStamp).not.toBeNull();
+      expect(workspaceArchiveStamp).not.toBe("2020-01-01T00:00:00.000Z");
+
+      events.length = 0;
+      const undoPromise = ctx.client.undoWorkspaceArchive(workspaceId);
+      repo.releaseTeardown();
+      await Promise.all([archivePromise, undoPromise]);
+
+      await vi.waitFor(() => {
+        expect(events).toContain(`workspace:upsert:${workspaceId}`);
+      });
+
+      const agent1UpsertIdx = events.indexOf(`agent:upsert:${agentId}:null`);
+      const agent2UpsertIdx = events.indexOf(`agent:upsert:${secondActive.id}:null`);
+      const wsUpsertIdx = events.indexOf(`workspace:upsert:${workspaceId}`);
+      expect(agent1UpsertIdx).toBeGreaterThanOrEqual(0);
+      expect(agent2UpsertIdx).toBeGreaterThanOrEqual(0);
+      expect(wsUpsertIdx).toBeGreaterThan(Math.max(agent1UpsertIdx, agent2UpsertIdx));
+      expect(events.filter((e) => e.includes(preArchived.id))).toEqual([]);
+      expect(await isAgentArchived(agentId)).toBe(false);
+      expect(await isAgentArchived(secondActive.id)).toBe(false);
+      expect(await isAgentArchived(preArchived.id)).toBe(true);
+    } finally {
+      repo.releaseTeardown();
+      await archivePromise?.catch(() => undefined);
+      unsubAgent();
+      unsubWorkspace();
+      await observer.close();
+    }
   },
   60000,
 );

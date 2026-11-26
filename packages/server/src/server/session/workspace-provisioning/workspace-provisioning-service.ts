@@ -275,12 +275,10 @@ export function createWorkspaceProvisioningService(deps: {
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
       const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
-      const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
-      const inheritedUntrustedSource = (await workspaceRegistry.listAll()).find(
-        (candidate) =>
-          Boolean(candidate.untrustedSource) &&
-          matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
-      )?.untrustedSource;
+      const { untrustedSource: inheritedUntrustedSource } = await resolveCheckoutUntrustedSource(
+        checkoutRoot,
+        baseMetadata?.untrustedSource,
+      );
       const timestamp = new Date().toISOString();
       const workspace = createPersistedWorkspaceRecord({
         workspaceId: context?.workspaceId ?? generateWorkspaceId(),
@@ -429,6 +427,49 @@ export function createWorkspaceProvisioningService(deps: {
     ).workspaceId;
   }
 
+  async function resolveCheckoutUntrustedSource(
+    checkoutRoot: string,
+    knownMetadataUntrustedSource?: UntrustedWorkspaceSource,
+  ): Promise<{ hasEvidence: boolean; untrustedSource: UntrustedWorkspaceSource | undefined }> {
+    const metadataUntrustedSource =
+      knownMetadataUntrustedSource ??
+      (await readPaseoWorktreeMetadata(checkoutRoot).catch(() => null))?.untrustedSource;
+    if (metadataUntrustedSource) {
+      return { hasEvidence: true, untrustedSource: metadataUntrustedSource };
+    }
+    const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+    const active = (await workspaceRegistry.listActive()).filter((candidate) =>
+      matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+    );
+    if (active.length === 0) {
+      return { hasEvidence: false, untrustedSource: undefined };
+    }
+    return {
+      hasEvidence: true,
+      untrustedSource: active.find((candidate) => Boolean(candidate.untrustedSource))
+        ?.untrustedSource,
+    };
+  }
+
+  async function syncUnarchivedCheckoutUntrustedSource(
+    workspace: PersistedWorkspaceRecord,
+  ): Promise<PersistedWorkspaceRecord> {
+    const resolved = await resolveCheckoutUntrustedSource(workspace.worktreeRoot ?? workspace.cwd);
+    if (!resolved.hasEvidence) {
+      return workspace;
+    }
+    if (resolved.untrustedSource) {
+      return workspace.untrustedSource
+        ? workspace
+        : { ...workspace, untrustedSource: resolved.untrustedSource };
+    }
+    if (!workspace.untrustedSource) {
+      return workspace;
+    }
+    const { untrustedSource: _stale, ...approved } = workspace;
+    return approved;
+  }
+
   async function resolveRestoredAutoArchiveChangeRequestUrl(
     workspace: PersistedWorkspaceRecord,
   ): Promise<string | null> {
@@ -443,6 +484,46 @@ export function createWorkspaceProvisioningService(deps: {
     return snapshot.forge.pullRequest?.isMerged
       ? snapshot.forge.pullRequest.url
       : workspace.autoArchivedChangeRequestUrl;
+  }
+
+  async function commitUnarchivedWorkspaceAndAgents(input: {
+    workspace: PersistedWorkspaceRecord;
+    next: PersistedWorkspaceRecord | null;
+    archivedAt: string | null;
+  }): Promise<PersistedWorkspaceRecord> {
+    const { workspace, next, archivedAt } = input;
+    const deferPublish = Boolean(
+      archivedAt && workspaceRegistry.publishUpsert && (next || workspaceRegistry.deferBroadcast),
+    );
+    const deferToken = deferPublish ? Symbol("workspace-unarchive") : undefined;
+    if (next) {
+      // Persist the recovered workspace before unarchiving agents so a failed write leaves
+      // agents archived for retry, while deferring broadcast until agents finish unarchiving.
+      await workspaceRegistry.upsert(
+        next,
+        deferPublish ? { publish: false, deferToken } : undefined,
+      );
+    } else if (deferPublish && deferToken) {
+      // Canceled mid-teardown undo: the workspace record is still active, so keep it visible
+      // in WorkspaceDirectory reads for other clients while holding `workspace_update`
+      // broadcast until all workspace-archived agents finish unarchiving.
+      workspaceRegistry.deferBroadcast?.(workspace.workspaceId, deferToken);
+    }
+    // A canceled archive supplies a modern stamp before the record itself is archived.
+    if (archivedAt) {
+      try {
+        await deps.unarchiveWorkspaceAgents({
+          workspaceId: workspace.workspaceId,
+          archivedAt,
+          allowLegacyFallback: Boolean(workspace.archivedAt),
+        });
+      } finally {
+        if (deferPublish) {
+          await workspaceRegistry.publishUpsert?.(next ?? workspace, { deferToken });
+        }
+      }
+    }
+    return next ?? workspace;
   }
 
   async function ensureWorkspaceRecordUnarchived(
@@ -466,7 +547,7 @@ export function createWorkspaceProvisioningService(deps: {
         updatedAt: timestamp,
       });
       next = {
-        ...(placementUpdate?.workspace ?? workspace),
+        ...(await syncUnarchivedCheckoutUntrustedSource(placementUpdate?.workspace ?? workspace)),
         archivedAt: null,
         autoArchivedChangeRequestUrl,
         updatedAt: timestamp,
@@ -495,16 +576,7 @@ export function createWorkspaceProvisioningService(deps: {
         });
       }
     }
-    if (next) await workspaceRegistry.upsert(next);
-    // A canceled archive supplies a modern stamp before the record itself is archived.
-    if (archivedAt) {
-      await deps.unarchiveWorkspaceAgents({
-        workspaceId: workspace.workspaceId,
-        archivedAt,
-        allowLegacyFallback: Boolean(workspace.archivedAt),
-      });
-    }
-    return next ?? workspace;
+    return commitUnarchivedWorkspaceAndAgents({ workspace, next, archivedAt });
   }
 
   async function refreshWorkspaceRecord(

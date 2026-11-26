@@ -82,7 +82,7 @@ MCP 不提供解除 Agent 父子关系的工具。解除关系是用户在应用
 | 工具                 | 功能                                                                                                                                                                                                                             |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `create_agent`       | 创建 Agent，可用 `workspaceId` 把它放到已有的工作区。用 `initialPrompt` 开始工作；不等待完成就返回。`background: true` 会把它从标签页、默认列表、你的子 Agent 列表和通知中隐藏；你仍会收到它的完成通知。省略时继承你自己的设置。 |
-| `send_agent_prompt`  | 用 `agentId` 和 `prompt` 发送提示词；不等待完成就返回。                                                                                                                                                                          |
+| `send_agent_prompt`  | 用 `agentId` 和 `prompt` 发送提示词；不等待完成就返回。由 Agent 发送时，除非 `activeTurnBehavior` 是 `steer` 或 `interrupt`，提示词会等到正在进行的轮次结束。                                                                    |
 | `get_agent_status`   | 返回 Agent 的最新快照。                                                                                                                                                                                                          |
 | `list_agents`        | 以精简元数据列出最近的 Agent；`includeBackground: true` 会包含后台工作。                                                                                                                                                         |
 | `cancel_agent`       | 中止 Agent 当前的运行，但保留该 Agent。                                                                                                                                                                                          |
@@ -147,7 +147,7 @@ Paseo Agent 默认会收到完成、错误和权限通知；设置 `notifyOnFini
 
 MCP heartbeat 是临时的：只能创建或删除。要修改一个 heartbeat，请删除它并创建一个替代的。暂停、恢复、更新、查看、日志和单次运行只适用于新建 Agent 的定时任务。
 
-默认情况下，新建 Agent 的定时任务每次运行结束时都会归档其工作区。`create_schedule` 和 `update_schedule` 不提供 **Archive on finish**（`archiveOnFinish`）；要让之后的运行工作区保持活跃，请[在应用中修改该选项](/docs/schedules#keep-run-workspaces)。
+默认情况下，新建 Agent 的定时任务每次运行结束时都会归档其工作区。向 `create_schedule` 或 `update_schedule` 传入 `archiveOnFinish: false`，即可[让之后的运行工作区保持活跃](/docs/schedules#keep-run-workspaces)；它对应应用中的 **Archive on finish** 选项。
 
 ### Agent 配置 {#agent-profiles}
 

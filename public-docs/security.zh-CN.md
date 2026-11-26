@@ -8,7 +8,7 @@ nav: 安全
 
 Paseo 采用客户端-服务器架构，与 Docker 类似。daemon 运行在你的机器上，管理你的编程 Agent。客户端（移动应用、CLI 或 Web 界面）连接到 daemon，用来监控和控制这些 Agent。
 
-你的代码从不离开你的机器。Paseo 是一个本地优先的工具，直接连接到你的开发环境。
+你的代码留在你的机器上。Paseo 不收集任何遥测数据，不需要账号，并直接连接到你的开发环境。
 
 ## 架构 {#architecture}
 
@@ -29,25 +29,29 @@ Paseo daemon 可以运行在任何你想运行 Agent 的地方：你的笔记本
 
 ### 工作原理 {#how-it-works}
 
-1. daemon 生成一个持久的 ECDH 密钥对，并保存在 `$PASEO_HOME/daemon-keypair.json` 中
-2. 当你扫描二维码或点击配对链接时，你的手机会收到 daemon 的公钥
-3. 你的手机发送一条包含其自身公钥的握手消息。在握手完成之前，daemon 不会接受任何命令。
-4. 双方各自把自己的 Curve25519 密钥与对方的公钥结合，然后使用由此得到的 NaCl `box` 通道传输受 XSalsa20-Poly1305 保护的负载。
+1. 首次运行时，daemon 会生成一个持久的 Curve25519 密钥对，并保存在 `$PASEO_HOME/daemon-keypair.json` 中（Unix 下权限为 `0600`）。
+2. 当你扫描二维码或打开配对链接（`https://app.paseo.sh/#offer=...`）时，客户端会从 URL 片段中读取 daemon 的公钥。浏览器从不把 URL 片段发送到服务器，因此 `app.paseo.sh` 永远看不到该公钥。
+3. 客户端通过中继连接时，双方都会生成新的临时密钥，并围绕 daemon 的公钥执行 Noise `NK` 握手。握手使用 `X25519`、`ChaCha20-Poly1305` 和 `SHA-256`。在握手完成之前，daemon 会忽略所有命令。
+4. 握手完成后，每条消息都使用 `ChaCha20-Poly1305` 和递增计数器加密。当任意一方尚未支持 Noise 时，会话会回退到 NaCl `box`（`XSalsa20-Poly1305`），直到双方都完成更新。
 
-中继只能看到：IP 地址、时间、消息大小和会话 ID。它无法读取消息内容、伪造消息，也无法通过观察握手推导出加密密钥。
+中继只能看到 IP 地址、连接时间、消息大小、会话 ID 和公开的握手帧。它无法读取消息内容、篡改消息，也无法推导出加密密钥。
 
 ### 为什么中继无法攻击你 {#why-the-relay-cant-attack-you}
 
-daemon 在处理任何命令之前都要求一次有效的密码学握手。被攻破的中继无法：
+daemon 在接受任何命令之前都要求一次有效的密码学握手。被攻破的中继无法做到以下任何一点：
 
-- **发送命令**：没有你手机的私钥，它无法完成握手
-- **读取你的流量**：只有已配对的两端才能打开 NaCl `box` 负载
-- **伪造消息**：带认证的加密算法会拒绝被篡改的负载
-- **重放旧消息**：每个会话都会派生新的加密密钥
+- 冒充 daemon：没有 daemon 的私钥，中继无法完成握手，你的客户端会拒绝它注入的任何流量。
+- 读取你的流量：只有你的客户端和 daemon 持有会话密钥。
+- 伪造或修改消息：带认证的加密会拒绝被篡改的负载。
+- 重放旧消息：每个 Noise 会话都会混入双方新生成的临时密钥并校验递增计数器。重放、重复或乱序的消息都会关闭连接。
+
+迁移期间，旧版 NaCl `box` 会话默认仍受支持，但不具备防重放保护。等 daemon 和所有客户端都更新后，在 `config.json` 中将 `daemon.relay.requireProtectedSecurity` 设为 `true` 并重启 daemon，强制要求 Noise 握手。
 
 ### 信任模型 {#trust-model}
 
-二维码或配对链接是信任锚点。它包含 daemon 的公钥，这是建立加密连接所必需的。请像对待密码一样对待它，不要公开分享。
+二维码或配对链接是信任锚点。它包含 daemon 的公钥，客户端需要这个公钥才能建立加密会话，而这个公钥从不会发送给中继。请像对待密码一样对待配对链接，不要公开分享。
+
+如果你还设置了 daemon 密码，中继客户端会在加密通道内发送该密码。daemon 会拒绝未提供正确密码的客户端，因此仅泄露配对链接不足以获得访问权限。
 
 ## 直接连接 {#direct-connections}
 
@@ -124,7 +128,7 @@ Compose 和反向代理的示例见 [Docker](/docs/docker)。
 
 当两者都不可用时，AppImage 和解压后的 tar 包会在禁用 Chromium 沙盒的情况下启动。如果你需要 Chromium 进程隔离，请使用 `.deb` 或 `.rpm` 软件包。显式传入 `--no-sandbox` 会禁用沙盒。
 
-打开 **设置 → 诊断 → App diagnostic** 查看沙盒状态及原因。[桌面日志](/docs/troubleshooting#reading-the-logs)也会记录同样的决定。
+打开 **设置 → 关于 → App diagnostic** 查看沙盒状态及原因。[桌面日志](/docs/troubleshooting#reading-the-logs)也会记录同样的决定。
 
 ## Agent 身份验证 {#agent-authentication}
 

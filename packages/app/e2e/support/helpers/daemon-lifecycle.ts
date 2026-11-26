@@ -16,7 +16,7 @@ export async function openDaemonOverview(page: Page, daemon: IsolatedHostDaemon)
   await page.reload();
   await openSettings(page);
   await openSettingsHost(page, daemon.serverId);
-  await openHostSection(page, daemon.serverId, "host");
+  await openHostSection(page, daemon.serverId, "daemon");
 }
 
 export async function restartDaemonInSettings(

@@ -19,7 +19,7 @@ Skills give your agents reusable instructions for delegation, handoffs, and revi
 
 ## Installation
 
-- **In Paseo:** Open **Settings → your host → Agents → Orchestration skills** and choose which skills to install on that host.
+- **In Paseo:** Open **Settings → Host → Tools & prompts → Paseo skills** and choose which skills to install on that host.
 - **From the terminal:** Run `npx skills add getpaseo/paseo` on the machine where your agents run.
 
 Use the same settings card to update or uninstall skills. The host also refreshes selected installed Paseo skills on startup.

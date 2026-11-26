@@ -7,6 +7,7 @@ export default function contribute(server: PluginServerContext) {
     id: "kimi",
     label: "Kimi",
     icon: "icon.svg",
+    providers: ["kimi"],
     input: inputSchema,
     discover: (scope) => (scope.kind === "global" ? discover() : Promise.resolve([])),
     fetch: fetchUsage,
