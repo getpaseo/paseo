@@ -2477,6 +2477,48 @@ export const en = {
     },
     notifications: {
       title: "Notifications",
+      enabled: {
+        label: "Enable notifications",
+        description: "Receive notifications from agents, terminals, and plugins on this device",
+        pausedDescription: "All notifications, including plugins, are paused on this device",
+      },
+      events: {
+        title: "Events",
+        agentPermission: {
+          label: "Agent needs permission",
+          description: "Approvals, plans, and questions",
+        },
+        agentError: {
+          label: "Agent errored",
+          description: "When an agent stops with an error",
+        },
+        agentFinished: {
+          label: "Agent finished",
+          description: "When an agent completes a turn",
+        },
+        terminalNeedsInput: {
+          label: "Terminal needs input",
+          description: "When a terminal command is waiting for input",
+        },
+        terminalFinished: {
+          label: "Terminal finished",
+          description: "When a terminal command finishes",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Plugin notifications",
+          description: "Allow installed plugins to send notifications",
+        },
+        empty: "Installed plugins appear here so you can mute them individually",
+      },
+      legacyHostTitle: "Update host for push preferences",
+      legacyHostHint:
+        "Update connected hosts to sync custom push notification preferences from this device",
+      desktop: {
+        title: "System",
+      },
       permission: "Notification permission",
       refreshAccessibility: "Refresh notification permission",
       playSound: "Play sound",

@@ -2420,6 +2420,47 @@ export const ko: TranslationResources = {
     },
     notifications: {
       title: "알림",
+      enabled: {
+        label: "알림 사용",
+        description: "이 기기에서 에이전트, 터미널, 플러그인 알림을 받습니다",
+        pausedDescription: "플러그인을 포함한 모든 알림이 이 기기에서 일시 중지되었습니다",
+      },
+      events: {
+        title: "이벤트",
+        agentPermission: {
+          label: "에이전트 권한 필요",
+          description: "승인, 계획 및 질문",
+        },
+        agentError: {
+          label: "에이전트 오류",
+          description: "에이전트가 오류로 중단될 때",
+        },
+        agentFinished: {
+          label: "에이전트 완료",
+          description: "에이전트가 턴을 완료할 때",
+        },
+        terminalNeedsInput: {
+          label: "터미널 입력 대기",
+          description: "터미널 명령이 입력을 기다릴 때",
+        },
+        terminalFinished: {
+          label: "터미널 완료",
+          description: "터미널 명령이 완료될 때",
+        },
+      },
+      plugins: {
+        title: "플러그인",
+        enabled: {
+          label: "플러그인 알림",
+          description: "설치된 플러그인이 알림을 보낼 수 있도록 허용",
+        },
+        empty: "설치된 플러그인이 여기에 표시되어 개별적으로 음소거할 수 있습니다",
+      },
+      legacyHostTitle: "푸시 설정을 위해 호스트 업데이트 필요",
+      legacyHostHint: "이 기기의 맞춤 푸시 알림 설정을 동기화하려면 연결된 호스트를 업데이트하세요",
+      desktop: {
+        title: "시스템",
+      },
       permission: "알림 권한",
       refreshAccessibility: "알림 권한 새로 고침",
       playSound: "소리 재생",

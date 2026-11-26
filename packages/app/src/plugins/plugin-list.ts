@@ -1,7 +1,13 @@
+import { useMemo } from "react";
 import type { PluginListItem } from "@getpaseo/protocol/messages";
-import { useFetchQuery } from "@/data/query";
-import { useHostFeature } from "@/runtime/host-features";
-import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useFetchQueries, useFetchQuery } from "@/data/query";
+import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
+import {
+  getHostRuntimeStore,
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+  useHosts,
+} from "@/runtime/host-runtime";
 
 export function pluginListQueryKey(serverId: string) {
   return ["plugins", serverId] as const;
@@ -37,4 +43,39 @@ export function usePluginDisplayName(
   if (!target) return undefined;
   const plugin = plugins.data?.find((candidate) => candidate.id === target.pluginId);
   return plugin ? pluginDisplayName(plugin) : target.pluginId;
+}
+
+/** Configured plugins across all connected hosts advertising `pluginManagement`, including server-only plugins. */
+export function useConfiguredPluginsAcrossHosts(): readonly Pick<PluginListItem, "id" | "name">[] {
+  const hosts = useHosts();
+  const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
+  const featureMap = useHostFeatureMap(serverIds, "pluginManagement");
+  const queries = useFetchQueries(
+    hosts.map((host) => {
+      const serverId = host.serverId;
+      const client = getHostRuntimeStore().getClient(serverId);
+      const supported = featureMap.get(serverId) === true;
+      return {
+        queryKey: pluginListQueryKey(serverId),
+        queryFn: async () => {
+          const currentClient = getHostRuntimeStore().getClient(serverId);
+          if (!currentClient) throw new Error("Plugin host is offline");
+          return currentClient.listPlugins();
+        },
+        enabled: Boolean(client?.isConnected && supported),
+        dataShape: "list" as const,
+        staleTimeMs: 1_000,
+      };
+    }),
+  );
+  return useMemo(
+    () =>
+      queries.flatMap((query) =>
+        (query.data ?? []).map((plugin) => ({
+          id: plugin.id,
+          name: pluginDisplayName(plugin),
+        })),
+      ),
+    [queries],
+  );
 }

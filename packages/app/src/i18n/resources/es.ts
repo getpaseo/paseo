@@ -2460,6 +2460,49 @@ export const es: TranslationResources = {
     },
     notifications: {
       title: "Notificaciones",
+      enabled: {
+        label: "Activar notificaciones",
+        description: "Recibe notificaciones de agentes, terminales y plugins en este dispositivo",
+        pausedDescription:
+          "Todas las notificaciones, incluidas las de plugins, están en pausa en este dispositivo",
+      },
+      events: {
+        title: "Eventos",
+        agentPermission: {
+          label: "El agente necesita permiso",
+          description: "Aprobaciones, planes y preguntas",
+        },
+        agentError: {
+          label: "Error del agente",
+          description: "Cuando un agente se detiene con un error",
+        },
+        agentFinished: {
+          label: "El agente terminó",
+          description: "Cuando un agente completa un turno",
+        },
+        terminalNeedsInput: {
+          label: "La terminal necesita entrada",
+          description: "Cuando un comando de terminal espera entrada",
+        },
+        terminalFinished: {
+          label: "La terminal terminó",
+          description: "Cuando finaliza un comando de terminal",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Notificaciones de plugins",
+          description: "Permitir que los plugins instalados envíen notificaciones",
+        },
+        empty: "Los plugins instalados aparecen aquí para que puedas silenciarlos individualmente",
+      },
+      legacyHostTitle: "Actualiza el host para preferencias push",
+      legacyHostHint:
+        "Actualiza los hosts conectados para sincronizar preferencias de notificaciones push desde este dispositivo",
+      desktop: {
+        title: "Sistema",
+      },
       permission: "Permiso de notificaciones",
       refreshAccessibility: "Actualizar permiso de notificaciones",
       playSound: "Reproducir sonido",
