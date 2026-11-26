@@ -507,7 +507,10 @@ function BrowserRoutingPill({
   let dotStyle = styles.routingDotPending;
   if (state.kind === "ready" && state.proxyStatus === "ready") {
     dotStyle = styles.routingDotReady;
-  } else if (state.kind === "proxy_error") {
+  } else if (
+    state.kind === "proxy_error" ||
+    (state.kind === "ready" && state.proxyStatus === "error")
+  ) {
     dotStyle = styles.routingDotError;
   }
 

@@ -139,7 +139,9 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
       partition: entry.partition,
       status: entry.status,
       error: entry.error,
-      socksPort: entry.socksPort,
+      // Only expose socksPort once Chromium's session proxy has been configured and
+      // verified via resolveProxy so renderers never mount an unverified partition.
+      socksPort: entry.sessionConfigured ? entry.socksPort : null,
     };
   }
 
@@ -238,7 +240,9 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
     }
 
     const nextStatus: BrowserProxyStatus =
-      entry.status === "ready" || entry.status === "reconnecting" ? "reconnecting" : "connecting";
+      entry.sessionConfigured || entry.status === "ready" || entry.status === "reconnecting"
+        ? "reconnecting"
+        : "connecting";
     setEntryStatus(entry, nextStatus, null);
 
     const connectTask = (async () => {

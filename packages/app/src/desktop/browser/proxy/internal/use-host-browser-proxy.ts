@@ -56,6 +56,15 @@ export type BrowserProxyPaneState =
       retry: () => void;
     };
 
+function hasPreparedHostPartition(
+  snapshot: ReturnType<typeof getCachedBrowserProxyStatus>,
+): snapshot is NonNullable<ReturnType<typeof getCachedBrowserProxyStatus>> & {
+  partition: string;
+  socksPort: number;
+} {
+  return Boolean(snapshot?.partition && snapshot.socksPort !== null);
+}
+
 function resolveRemoteUnavailablePaneState(
   support: Exclude<
     Extract<ReturnType<typeof classifyHostBrowserRouting>, { kind: "remote" }>["support"],
@@ -69,11 +78,7 @@ function resolveRemoteUnavailablePaneState(
   // state, forms, scroll, and DevTools survive. Requests still fail closed at the
   // local SOCKS5 listener while the tunnel is down.
   const isTransientDisconnect = support === "host_connecting" || support === "host_offline";
-  if (
-    isTransientDisconnect &&
-    proxyStatusSnapshot?.partition &&
-    proxyStatusSnapshot.socksPort !== null
-  ) {
+  if (isTransientDisconnect && hasPreparedHostPartition(proxyStatusSnapshot)) {
     return {
       kind: "ready",
       partition: proxyStatusSnapshot.partition,
@@ -98,6 +103,19 @@ function resolveRemoteUnavailablePaneState(
     effectiveRoutingMode: "host",
     hostLabel,
   };
+}
+
+function resolvePreparedHostPaneStatus(
+  status: DesktopBrowserProxyStatus,
+  ensureError: string | null,
+): DesktopBrowserProxyStatus {
+  if (ensureError || status === "error") {
+    return "error";
+  }
+  if (status === "ready") {
+    return "ready";
+  }
+  return "reconnecting";
 }
 
 export function resolveBrowserProxyPaneState(input: {
@@ -134,25 +152,17 @@ export function resolveBrowserProxyPaneState(input: {
     return resolveRemoteUnavailablePaneState(routing.support, hostLabel, proxyStatusSnapshot);
   }
 
-  if (proxyStatusSnapshot?.status === "ready") {
+  // Once the fixed-port SOCKS5 session partition is verified (socksPort !== null),
+  // keep the webview mounted even if a background poll (e.g. HMR) left the cached
+  // tunnel status in "error" or "reconnecting" while the host reconnects.
+  if (hasPreparedHostPartition(proxyStatusSnapshot)) {
     return {
       kind: "ready",
       partition: proxyStatusSnapshot.partition,
       isRemoteHost: true,
       effectiveRoutingMode: "host",
       hostLabel,
-      proxyStatus: "ready",
-    };
-  }
-
-  if (proxyStatusSnapshot?.status === "reconnecting" && proxyStatusSnapshot.partition) {
-    return {
-      kind: "ready",
-      partition: proxyStatusSnapshot.partition,
-      isRemoteHost: true,
-      effectiveRoutingMode: "host",
-      hostLabel,
-      proxyStatus: "reconnecting",
+      proxyStatus: resolvePreparedHostPaneStatus(proxyStatusSnapshot.status, ensureError),
     };
   }
 

@@ -302,7 +302,64 @@ describe("BrowserProxyManager", () => {
     });
 
     expect(result.status).toBe("error");
+    expect(result.socksPort).toBeNull();
     expect(result.error).toMatch(/resolveProxy|proxy/i);
     expect(manager.isAllowedHostPartition(result.partition)).toBe(false);
+  });
+
+  test("keeps socksPort null on initial tunnel failure, and preserves socksPort across later reconnect errors", async () => {
+    const session = createFakeSession();
+    let wireCalls = 0;
+    let failTicket = true;
+    const wires: Array<ReturnType<typeof createEchoTunnelWire>> = [];
+
+    const manager = createBrowserProxyManager({
+      verifySocketOwner: async () => true,
+      requestTicket: async () => {
+        if (failTicket) {
+          throw new Error("host disconnected");
+        }
+        return `ticket-${wireCalls + 1}`;
+      },
+      openTunnelWire: async () => {
+        wireCalls += 1;
+        const created = createEchoTunnelWire();
+        wires.push(created);
+        return created.wire;
+      },
+      getSessionForPartition: () => session,
+    });
+    managers.push(manager);
+
+    const target: BrowserProxyTarget = { type: "directTcp", endpoint: "10.0.0.11:6767" };
+    const initialFail = await manager.ensureHostProxy({ serverId: "remote-flaky", target });
+    expect(initialFail.status).toBe("error");
+    expect(initialFail.socksPort).toBeNull();
+    expect(manager.isAllowedHostPartition(initialFail.partition)).toBe(false);
+
+    failTicket = false;
+    const ready = await manager.ensureHostProxy({ serverId: "remote-flaky", target });
+    expect(ready.status).toBe("ready");
+    expect(ready.socksPort).toBeGreaterThan(0);
+
+    // Simulate outage + background page poll (e.g. HMR) failing tunnel reconnect.
+    failTicket = true;
+    wires[0]!.drop();
+    await expect(
+      socks5ConnectAndExchange(ready.socksPort!, "localhost", 5173, "hmr-poll"),
+    ).rejects.toThrow(/SOCKS5 CONNECT failed/);
+    const afterPollError = manager.getHostProxyStatus("remote-flaky");
+    expect(afterPollError?.status).toBe("error");
+    expect(afterPollError?.socksPort).toBe(ready.socksPort);
+
+    // Host recovers -> next ensureHostProxy brings the same fixed port back to ready.
+    failTicket = false;
+    const recovered = await manager.ensureHostProxy({
+      serverId: "remote-flaky",
+      target,
+      forceReconnect: true,
+    });
+    expect(recovered.status).toBe("ready");
+    expect(recovered.socksPort).toBe(ready.socksPort);
   });
 });

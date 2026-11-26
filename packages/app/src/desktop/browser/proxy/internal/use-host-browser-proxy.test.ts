@@ -94,4 +94,63 @@ describe("resolveBrowserProxyPaneState", () => {
       proxyStatus: "reconnecting",
     });
   });
+
+  it("keeps the prepared host partition mounted when a background poll left cached status in error as host returns online", () => {
+    const supportedRouting = {
+      kind: "remote" as const,
+      support: "supported" as const,
+      target: { type: "directTcp" as const, endpoint: "10.0.0.5:6767" },
+    };
+
+    expect(
+      resolveBrowserProxyPaneState({
+        routing: supportedRouting,
+        effectiveRoutingMode: "host",
+        localPartition: "persist:paseo-browser",
+        hostLabel: "devbox",
+        proxyStatusSnapshot: {
+          serverId: "srv-remote",
+          partition: "persist:paseo-browser-host-0123456789abcdef",
+          status: "error",
+          error: "Host disconnected",
+          socksPort: 41234,
+        },
+        ensureError: null,
+        onRetry: noop,
+      }),
+    ).toEqual({
+      kind: "ready",
+      partition: "persist:paseo-browser-host-0123456789abcdef",
+      isRemoteHost: true,
+      effectiveRoutingMode: "host",
+      hostLabel: "devbox",
+      proxyStatus: "error",
+    });
+
+    // Unprepared partition (socksPort === null) still fails closed with proxy_error.
+    expect(
+      resolveBrowserProxyPaneState({
+        routing: supportedRouting,
+        effectiveRoutingMode: "host",
+        localPartition: "persist:paseo-browser",
+        hostLabel: "devbox",
+        proxyStatusSnapshot: {
+          serverId: "srv-remote",
+          partition: "persist:paseo-browser-host-0123456789abcdef",
+          status: "error",
+          error: "Unable to create ticket",
+          socksPort: null,
+        },
+        ensureError: null,
+        onRetry: noop,
+      }),
+    ).toEqual({
+      kind: "proxy_error",
+      isRemoteHost: true,
+      effectiveRoutingMode: "host",
+      hostLabel: "devbox",
+      message: "Unable to create ticket",
+      retry: noop,
+    });
+  });
 });
