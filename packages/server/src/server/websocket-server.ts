@@ -2191,6 +2191,8 @@ export class VoiceAssistantWebSocketServer {
         pluginTimelineItems: true,
         // COMPAT(pluginSubscriptions): added in v0.15.0, remove gate after 2027-05-02.
         pluginSubscriptions: true,
+        // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+        pluginNotifications: true,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -3205,6 +3207,106 @@ export class VoiceAssistantWebSocketServer {
           reason: params.reason,
           title,
           body,
+          shouldNotify,
+        },
+      });
+      if (message.type === "session" && this.sessions.get(ws)?.session.delivery.isModern(ws))
+        this.sessions.get(ws)!.session.publishToSource(ws, message.message);
+      else this.sendToClient(ws, message);
+    }
+  }
+
+  public sendPluginNotification(params: {
+    pluginId: string;
+    notificationId: string;
+    title: string;
+    body: string;
+    open?: import("@getpaseo/protocol/messages").PluginNotificationOpenTarget;
+    data?: Record<string, import("@getpaseo/protocol/agent-types").JsonValue>;
+  }): void {
+    this.broadcastPluginNotification(params);
+  }
+
+  public broadcastPluginNotification(params: {
+    pluginId: string;
+    notificationId: string;
+    title: string;
+    body: string;
+    open?: import("@getpaseo/protocol/messages").PluginNotificationOpenTarget;
+    data?: Record<string, import("@getpaseo/protocol/agent-types").JsonValue>;
+  }): void {
+    const clientEntries: Array<{
+      ws: WebSocketLike;
+      state: ClientPresenceState;
+    }> = [];
+
+    for (const [ws, connection] of this.sessions) {
+      if (this.pluginSocketIds.has(ws)) {
+        continue;
+      }
+      if (!connection.session.wantsSourceEvent(ws, "plugin.notification")) {
+        continue;
+      }
+      clientEntries.push({
+        ws,
+        state: this.getClientActivityState(connection.session, ws),
+      });
+    }
+
+    const notificationEntries = clientEntries.filter(({ ws }) =>
+      this.sessions.get(ws)?.session.wantsSourceNotification(ws, "plugin.notification"),
+    );
+    const allStates = notificationEntries.map((entry) => entry.state);
+    const nowMs = Date.now();
+    const focusTarget =
+      params.open?.type === "agent" ? { kind: "agent" as const, id: params.open.agentId } : null;
+
+    const plan = computeNotificationPlan({
+      allStates,
+      focusTarget,
+      pushEligible: true,
+      nowMs,
+    });
+
+    if (plan.shouldPush) {
+      void this.pushNotificationSender
+        .send(
+          {
+            title: params.title,
+            body: params.body,
+            data: {
+              kind: "plugin",
+              serverId: this.serverId,
+              pluginId: params.pluginId,
+              notificationId: params.notificationId,
+              ...(params.open ? { open: params.open } : {}),
+              ...(params.data ? { data: params.data } : {}),
+            },
+          },
+          { kind: "plugin", pluginId: params.pluginId },
+        )
+        .catch((err) => {
+          this.logger.warn(
+            { err, pluginId: params.pluginId, notificationId: params.notificationId },
+            "Failed to send plugin push notification",
+          );
+        });
+    }
+
+    for (const { ws } of clientEntries) {
+      const shouldNotify =
+        plan.inAppRecipientIndex !== null &&
+        notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
+      const message = wrapSessionMessage({
+        type: "plugin.notification",
+        payload: {
+          serverId: this.serverId,
+          pluginId: params.pluginId,
+          notificationId: params.notificationId,
+          title: params.title,
+          body: params.body,
+          ...(params.open ? { open: params.open } : {}),
+          ...(params.data ? { data: params.data } : {}),
           shouldNotify,
         },
       });

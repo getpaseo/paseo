@@ -25,6 +25,7 @@ import { readPluginManifest } from "./manifest.js";
 import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime, type PluginWorktreeManagerRuntime } from "./runtime.js";
+import type { ValidatedPluginNotification } from "./notifications.js";
 import type { PluginRuntimeSubscription } from "./runtime-subscription.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type {
@@ -83,6 +84,7 @@ interface PluginServiceDependencies {
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
   builtinPlugins?: BuiltinPluginLoader;
+  onNotification?: (notification: ValidatedPluginNotification) => void | Promise<void>;
 }
 
 function resolvePluginStatus(input: {
@@ -138,6 +140,7 @@ export class PluginService {
       dependencies.runtime ??
       new PluginRuntime(logger, daemonVersion, {
         settingsDirectory: dependencies.settingsDirectory,
+        onNotification: dependencies.onNotification,
         onSettingsChanged: (pluginId, settingsId) => {
           for (const listener of this.settingsListeners) listener(pluginId, settingsId);
         },

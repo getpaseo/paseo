@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS } from "@/hooks/use-settings/storage";
 import {
   deliverAgentAttentionOsNotification,
+  deliverPluginOsNotification,
   deliverTerminalAttentionOsNotification,
   getCurrentNotificationPreferences,
 } from "./session-notifications";
@@ -248,5 +249,128 @@ describe("session OS notification filtering", () => {
     }
 
     expect(recorder.sent).toEqual([]);
+  });
+
+  it("filters plugin.notification OS notifications across master, plugin switch, per-plugin mute, and all-builtins-off combinations", () => {
+    const recorder = createNotificationRecorder();
+    const basePayload = {
+      serverId: "srv-1",
+      pluginId: "ci-alerts",
+      notificationId: "notif-1",
+      title: "Build failed",
+      body: "Check logs",
+      open: { type: "screen" as const, screenId: "report", params: { buildId: "42" } },
+      data: { buildId: 42 },
+      shouldNotify: true,
+    };
+
+    // shouldNotify: false -> not delivered
+    expect(
+      deliverPluginOsNotification({
+        serverId: "srv-1",
+        payload: { ...basePayload, shouldNotify: false },
+        preferences: DEFAULT_NOTIFICATION_PREFERENCES,
+        sendNotification: recorder.sendNotification,
+      }),
+    ).toBe(false);
+
+    // Master off -> blocks plugin notification
+    expect(
+      deliverPluginOsNotification({
+        serverId: "srv-1",
+        payload: basePayload,
+        preferences: { ...DEFAULT_NOTIFICATION_PREFERENCES, enabled: false },
+        sendNotification: recorder.sendNotification,
+      }),
+    ).toBe(false);
+
+    // Plugins switch off -> blocks plugin notification
+    expect(
+      deliverPluginOsNotification({
+        serverId: "srv-1",
+        payload: basePayload,
+        preferences: {
+          ...DEFAULT_NOTIFICATION_PREFERENCES,
+          plugins: { enabled: false, muted: [] },
+        },
+        sendNotification: recorder.sendNotification,
+      }),
+    ).toBe(false);
+
+    // Per-plugin mute -> blocks muted plugin while allowing unmuted plugin
+    const mutedPreferences: NotificationPreferences = {
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      plugins: {
+        enabled: true,
+        muted: ["ci-alerts"],
+      },
+    };
+    expect(
+      deliverPluginOsNotification({
+        serverId: "srv-1",
+        payload: basePayload,
+        preferences: mutedPreferences,
+        sendNotification: recorder.sendNotification,
+      }),
+    ).toBe(false);
+    expect(
+      deliverPluginOsNotification({
+        serverId: "srv-1",
+        payload: { ...basePayload, pluginId: "deploy-watch", notificationId: "notif-2" },
+        preferences: mutedPreferences,
+        sendNotification: recorder.sendNotification,
+      }),
+    ).toBe(true);
+
+    // All built-in events off + plugins on -> delivers plugin notification
+    const onlyPluginsPreferences: NotificationPreferences = {
+      enabled: true,
+      events: {
+        agentPermission: false,
+        agentError: false,
+        agentFinished: false,
+        terminalNeedsInput: false,
+        terminalFinished: false,
+      },
+      plugins: {
+        enabled: true,
+        muted: [],
+      },
+    };
+    expect(
+      deliverPluginOsNotification({
+        serverId: "srv-1",
+        payload: basePayload,
+        preferences: onlyPluginsPreferences,
+        sendNotification: recorder.sendNotification,
+      }),
+    ).toBe(true);
+
+    expect(recorder.sent).toEqual([
+      {
+        title: "Build failed",
+        body: "Check logs",
+        data: {
+          kind: "plugin",
+          serverId: "srv-1",
+          pluginId: "deploy-watch",
+          notificationId: "notif-2",
+          open: { type: "screen", screenId: "report", params: { buildId: "42" } },
+          data: { buildId: 42 },
+        },
+      },
+      {
+        title: "Build failed",
+        body: "Check logs",
+        data: {
+          kind: "plugin",
+          serverId: "srv-1",
+          pluginId: "ci-alerts",
+          notificationId: "notif-1",
+          open: { type: "screen", screenId: "report", params: { buildId: "42" } },
+          data: { buildId: 42 },
+        },
+      },
+    ]);
   });
 });

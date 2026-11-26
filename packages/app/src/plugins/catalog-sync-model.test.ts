@@ -391,13 +391,22 @@ it("replaces changed bundles on reconnect and disposes the old installation", as
 });
 
 it("replaces an explicitly reloaded bundle even when its source is unchanged", async () => {
-  const h = await connected();
+  let catalogChanges = 0;
+  const h = harness();
+  const stop = h.sync({
+    onCatalogChanged: () => {
+      catalogChanges++;
+    },
+  });
+  cleanups.push(stop);
+  await expect.poll(() => h.registry.getSnapshot().length).toBe(1);
   const plugin = h.installed();
   h.client.update({
     type: "status",
     payload: { status: "plugin_catalog_changed", pluginId: "reports" },
   });
   await expect.poll(() => h.installed() === plugin).toBe(false);
+  expect(catalogChanges).toBe(1);
   expect(h.disposals()).toBe(1);
   expect(h.evaluations()).toBe(2);
 });

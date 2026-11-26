@@ -19,11 +19,13 @@ type NotificationSwitchName =
 export async function installBrowserNotificationRecorder(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const recorded: RecordedBrowserNotification[] = [];
-    (
-      window as unknown as {
-        __paseoRecordedNotifications?: RecordedBrowserNotification[];
-      }
-    ).__paseoRecordedNotifications = recorded;
+    const instances: Array<{ triggerClick: () => void }> = [];
+    const win = window as unknown as {
+      __paseoRecordedNotifications?: RecordedBrowserNotification[];
+      __paseoNotificationInstances?: Array<{ triggerClick: () => void }>;
+    };
+    win.__paseoRecordedNotifications = recorded;
+    win.__paseoNotificationInstances = instances;
 
     class StubBrowserNotification {
       static permission: NotificationPermission = "granted";
@@ -34,6 +36,7 @@ export async function installBrowserNotificationRecorder(page: Page): Promise<vo
       title: string;
       body: string | null;
       data: Record<string, unknown> | null;
+      private readonly clickListeners: Array<() => void> = [];
 
       constructor(
         title: string,
@@ -47,9 +50,20 @@ export async function installBrowserNotificationRecorder(page: Page): Promise<vo
           body: this.body,
           data: this.data,
         });
+        instances.push({
+          triggerClick: () => {
+            for (const listener of this.clickListeners) {
+              listener();
+            }
+          },
+        });
       }
 
-      addEventListener(): void {}
+      addEventListener(type: string, listener: () => void): void {
+        if (type === "click" && typeof listener === "function") {
+          this.clickListeners.push(listener);
+        }
+      }
       close(): void {}
     }
 
@@ -76,11 +90,74 @@ export async function clearRecordedBrowserNotifications(page: Page): Promise<voi
   await page.evaluate(() => {
     const win = window as unknown as {
       __paseoRecordedNotifications?: RecordedBrowserNotification[];
+      __paseoNotificationInstances?: Array<{ triggerClick: () => void }>;
     };
     if (win.__paseoRecordedNotifications) {
       win.__paseoRecordedNotifications.length = 0;
     }
+    if (win.__paseoNotificationInstances) {
+      win.__paseoNotificationInstances.length = 0;
+    }
   });
+}
+
+export async function clickRecordedBrowserNotification(page: Page, index = 0): Promise<void> {
+  await page.evaluate((targetIndex) => {
+    const win = window as unknown as {
+      __paseoNotificationInstances?: Array<{ triggerClick: () => void }>;
+    };
+    const instance = win.__paseoNotificationInstances?.[targetIndex];
+    if (!instance) {
+      throw new Error(`No recorded browser notification at index ${targetIndex}`);
+    }
+    instance.triggerClick();
+  }, index);
+}
+
+export async function expectRecordedPluginNotifications(
+  page: Page,
+  expected: ReadonlyArray<{
+    pluginId: string;
+    title: string;
+    body: string;
+    notificationId?: string;
+  }>,
+): Promise<void> {
+  await expect
+    .poll(async () => (await readRecordedBrowserNotifications(page)).length)
+    .toBe(expected.length);
+
+  const notifications = await readRecordedBrowserNotifications(page);
+  const includeId = expected.some((item) => item.notificationId !== undefined);
+  expect(
+    notifications.map((entry) =>
+      includeId
+        ? {
+            pluginId: entry.data?.pluginId,
+            title: entry.title,
+            body: entry.body,
+            notificationId: entry.data?.notificationId,
+          }
+        : {
+            pluginId: entry.data?.pluginId,
+            title: entry.title,
+            body: entry.body,
+          },
+    ),
+  ).toEqual(expected);
+}
+
+export async function setPluginNotificationSwitch(
+  page: Page,
+  pluginLabel: string,
+  checked: boolean,
+): Promise<void> {
+  const toggle = page.getByRole("switch", { name: pluginLabel, exact: true });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-checked", String(!checked));
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", String(checked));
 }
 
 export async function expectRecordedAgentNotifications(

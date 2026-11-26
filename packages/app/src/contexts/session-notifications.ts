@@ -21,6 +21,11 @@ type TerminalAttentionPayload = Extract<
   { type: "terminal_attention_required" }
 >["payload"];
 
+type PluginNotificationPayload = Extract<
+  SessionOutboundMessage,
+  { type: "plugin.notification" }
+>["payload"];
+
 export type OsNotificationSender = (payload: {
   title: string;
   body?: string;
@@ -192,6 +197,38 @@ export function deliverTerminalAttentionOsNotification(input: {
       terminalId: input.payload.terminalId,
       cwd: input.payload.cwd,
       ...(input.payload.workspaceId ? { workspaceId: input.payload.workspaceId } : {}),
+    },
+  });
+  return true;
+}
+
+export function deliverPluginOsNotification(input: {
+  serverId: string;
+  payload: PluginNotificationPayload;
+  preferences: NotificationPreferences;
+  sendNotification: OsNotificationSender;
+}): boolean {
+  if (!input.payload.shouldNotify) {
+    return false;
+  }
+  if (
+    !shouldDeliverNotification(input.preferences, {
+      kind: "plugin",
+      pluginId: input.payload.pluginId,
+    })
+  ) {
+    return false;
+  }
+  void input.sendNotification({
+    title: input.payload.title,
+    body: input.payload.body,
+    data: {
+      kind: "plugin",
+      serverId: input.payload.serverId ?? input.serverId,
+      pluginId: input.payload.pluginId,
+      notificationId: input.payload.notificationId,
+      ...(input.payload.open ? { open: input.payload.open } : {}),
+      ...(input.payload.data ? { data: input.payload.data } : {}),
     },
   });
   return true;

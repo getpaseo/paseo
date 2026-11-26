@@ -46,6 +46,11 @@ export type {
   SettingsState,
 } from "./contracts.js";
 export type {
+  PluginNotificationOpenEvent,
+  PluginNotificationOpenContext,
+  PluginNotificationOpenHandler,
+} from "./notifications.js";
+export type {
   PluginButton,
   PluginButtonBehavior,
   PluginButtonContentProps,

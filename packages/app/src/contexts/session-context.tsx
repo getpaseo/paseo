@@ -19,12 +19,14 @@ import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   deliverAgentAttentionOsNotification,
+  deliverPluginOsNotification,
   deliverTerminalAttentionOsNotification,
   getCurrentNotificationPreferences,
 } from "./session-notifications";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
+import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/audio";
@@ -135,6 +137,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+  const supportsPluginNotifications =
+    useHostFeature(serverId, "pluginNotifications") ||
+    client.getLastServerInfoMessage()?.features?.pluginNotifications === true;
   const toast = useToast();
 
   // Zustand store actions
@@ -589,6 +595,38 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     voiceRuntime,
     voiceAudioEngine,
   ]);
+
+  useEffect(() => {
+    // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+    if (!supportsPluginNotifications) {
+      return;
+    }
+    const pluginNotificationsFeed = client.observeEvents(["plugin.notification"], {
+      notifications: true,
+    });
+    const unsubPluginNotification = pluginNotificationsFeed.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "plugin.notification") {
+          return;
+        }
+        deliverPluginOsNotification({
+          serverId,
+          payload: message.payload,
+          preferences: getCurrentNotificationPreferences(queryClient),
+          sendNotification: sendOsNotification,
+        });
+      },
+    });
+    return () => {
+      unsubPluginNotification();
+      void pluginNotificationsFeed
+        .release()
+        .catch((error) =>
+          console.warn("[Session] Failed to release plugin notifications feed", error),
+        );
+    };
+  }, [client, queryClient, serverId, supportsPluginNotifications]);
 
   const _cancelAgentRun = useCallback(
     (agentId: string) => {

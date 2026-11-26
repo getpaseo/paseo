@@ -13,6 +13,7 @@ interface CatalogSyncInput {
     PluginRegistry,
     "installCatalog" | "getSnapshot" | "removeHost" | "setCatalogStatus"
   >;
+  onCatalogChanged?: () => void;
 }
 
 export function syncPluginCatalog({
@@ -22,6 +23,7 @@ export function syncPluginCatalog({
   connected,
   supported,
   registry,
+  onCatalogChanged,
 }: CatalogSyncInput): () => void {
   if (!supported || !audio) {
     registry.removeHost(serverId);
@@ -88,6 +90,7 @@ export function syncPluginCatalog({
         }
       }
       if (message.payload.status === "plugin_catalog_changed") {
+        onCatalogChanged?.();
         const pluginId = message.payload.pluginId;
         if (typeof pluginId === "string") void refresh(pluginId);
       }

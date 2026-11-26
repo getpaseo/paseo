@@ -404,6 +404,7 @@ const OUTBOUND_PERMISSION = {
   "plugin.logs.get.response": "daemon.manage",
   "plugin.reload.response": "daemon.manage",
   "plugin.remove.response": "daemon.manage",
+  "plugin.notification": "workspace.read",
   "plugin.rpc.invoke.response": "daemon.manage",
   "plugin.rpc.subscribe.response": "daemon.manage",
   "plugin.rpc.event": "daemon.manage",

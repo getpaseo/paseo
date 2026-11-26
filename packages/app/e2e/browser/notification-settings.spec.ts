@@ -2,15 +2,19 @@ import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
   clearRecordedBrowserNotifications,
+  clickRecordedBrowserNotification,
   expectDefaultNotificationSettings,
   expectNotificationSubControlsDisabled,
   expectNotificationSwitchState,
   expectRecordedAgentNotifications,
+  expectRecordedPluginNotifications,
   installBrowserNotificationRecorder,
   openNotificationSettings,
   readRecordedBrowserNotifications,
   setNotificationSwitch,
+  setPluginNotificationSwitch,
 } from "../support/helpers/notification-settings";
+import { copyPluginExample } from "../support/helpers/plugin-fixture";
 import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-client";
 
 const FAST_FINISHED_PROMPT =
@@ -51,6 +55,8 @@ test.describe("Settings → Notifications and OS notification filtering", () => 
   }) => {
     await installBrowserNotificationRecorder(page);
     const seeded = await seedWorkspace({ repoPrefix: "notification-settings-" });
+    const pluginExample = await copyPluginExample("notifications");
+    let installedPlugin = false;
 
     try {
       await gotoAppShell(page);
@@ -160,7 +166,68 @@ test.describe("Settings → Notifications and OS notification filtering", () => 
         await page.waitForTimeout(300);
         expect(await readRecordedBrowserNotifications(page)).toEqual([]);
       });
+
+      await test.step("delivers plugin notifications, routes OS notification taps through client.onNotificationOpen, and suppresses notifications when the plugin is muted", async () => {
+        await setNotificationSwitch(page, "Enable notifications", true);
+        await seeded.client.patchDaemonConfig({ pluginsEnabled: true });
+        await seeded.client.installDirectoryPlugin(pluginExample.directory);
+        installedPlugin = true;
+
+        const pluginToggle = page.getByRole("switch", { name: "Build alerts", exact: true });
+        await expect(pluginToggle).toBeVisible();
+        await expect(pluginToggle).toHaveAttribute("aria-checked", "true");
+
+        await clearRecordedBrowserNotifications(page);
+
+        const sent = (await seeded.client.invokePluginRpc("notifications-example", "alerts.send", {
+          buildId: "204",
+          title: "Build #204 failed",
+          body: "Playwright suite failed on main",
+        })) as { status: string; notificationId: string };
+        expect(sent.status).toBe("sent");
+
+        await expectRecordedPluginNotifications(page, [
+          {
+            pluginId: "notifications-example",
+            title: "Build #204 failed",
+            body: "Playwright suite failed on main",
+            notificationId: sent.notificationId,
+          },
+        ]);
+
+        await clickRecordedBrowserNotification(page, 0);
+        await expect(page.getByText("Build alert #204", { exact: true })).toBeVisible();
+        await expect(
+          page.getByText("Playwright suite failed on main", { exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByText(`Notification ID: ${sent.notificationId}`, { exact: true }),
+        ).toBeVisible();
+
+        await openSettings(page);
+        await openNotificationSettings(page);
+        await setPluginNotificationSwitch(page, "Build alerts", false);
+        await clearRecordedBrowserNotifications(page);
+
+        const mutedResult = (await seeded.client.invokePluginRpc(
+          "notifications-example",
+          "alerts.send",
+          {
+            buildId: "205",
+            title: "Build #205 failed",
+            body: "Muted build alert",
+          },
+        )) as { status: string };
+        expect(mutedResult.status).toBe("sent");
+
+        await page.waitForTimeout(300);
+        expect(await readRecordedBrowserNotifications(page)).toEqual([]);
+      });
     } finally {
+      if (installedPlugin) {
+        await seeded.client.removePlugin("notifications-example").catch(() => undefined);
+      }
+      await pluginExample.cleanup().catch(() => undefined);
       await seeded.cleanup();
     }
   });
