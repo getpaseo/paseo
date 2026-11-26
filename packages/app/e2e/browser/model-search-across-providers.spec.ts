@@ -3,6 +3,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { test, expect, type Page } from "../support/fixtures";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import {
+  clickModelRowWhileProviderOpens,
   closeModelPicker,
   expectModelSearchEmptyState,
   expectModelPickerHeight,
@@ -255,6 +256,16 @@ test.describe("Cross-provider model search", () => {
         await page.keyboard.press("Enter");
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("Ten second stream");
+      });
+
+      await test.step("a press on a model row selects it while the provider list is still opening", async () => {
+        await openModelPicker(page);
+        await clickModelRowWhileProviderOpens(page, {
+          provider: "mock",
+          modelLabel: "One minute stream",
+        });
+        await expect(viewport).toHaveCount(0);
+        await expect(trigger).toContainText("One minute stream");
       });
 
       await test.step("Enter on the active profile row applies it", async () => {

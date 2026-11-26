@@ -13,3 +13,11 @@ export function focusedModelBrowserControlOwnsEnter(): boolean {
   if (active.closest('[data-model-browser-row="true"]')) return false;
   return active.matches(ACTIVATES_ON_ENTER);
 }
+
+/**
+ * A pointer press also focuses the row it lands on. Only keyboard focus marks a row
+ * active, so the press does not scroll the list to that row before the button is released.
+ */
+export function focusCameFromKeyboard(target: unknown): boolean {
+  return target instanceof Element && target.matches(":focus-visible");
+}

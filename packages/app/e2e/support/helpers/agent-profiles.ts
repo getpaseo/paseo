@@ -768,6 +768,33 @@ export async function selectModelRow(
   await modelRow(page, input).click();
 }
 
+/**
+ * Opens a provider on a slow machine and clicks a model row before the list has
+ * finished laying out, holding the button as long as a person does.
+ */
+export async function clickModelRowWhileProviderOpens(
+  page: Page,
+  input: { provider: string; modelLabel: string },
+): Promise<void> {
+  const viewport = pickerViewport(page);
+  await drillIntoProvider(page, input.provider);
+  const rowBox = await viewport.getByText(input.modelLabel, { exact: true }).boundingBox();
+  if (!rowBox) throw new Error(`Model row ${input.modelLabel} has no box`);
+  await viewport.getByRole("button", { name: "Back", exact: true }).click();
+
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 10 });
+  try {
+    await drillIntoProvider(page, input.provider);
+    await page.mouse.click(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2, {
+      delay: 150,
+    });
+  } finally {
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await cdp.detach();
+  }
+}
+
 // ─── Cross-provider model search ───────────────────────────────────────────
 
 export async function searchAllModels(page: Page, query: string): Promise<void> {

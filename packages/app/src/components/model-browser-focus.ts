@@ -2,3 +2,8 @@
 export function focusedModelBrowserControlOwnsEnter(): boolean {
   return false;
 }
+
+/** Native fires focus on rows only for a hardware keyboard or a TV remote. */
+export function focusCameFromKeyboard(_target: unknown): boolean {
+  return true;
+}

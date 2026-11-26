@@ -18,6 +18,7 @@ import {
   Text,
   View,
   type AccessibilityActionEvent,
+  type FocusEvent,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   type NativeScrollEvent,
@@ -75,7 +76,10 @@ import {
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { focusedModelBrowserControlOwnsEnter } from "@/components/model-browser-focus";
+import {
+  focusCameFromKeyboard,
+  focusedModelBrowserControlOwnsEnter,
+} from "@/components/model-browser-focus";
 import {
   MODEL_BROWSER_CREATE_PROFILE_KEY,
   MODEL_BROWSER_KEYBOARD_KEYS,
@@ -630,6 +634,12 @@ function ModelBrowserPressable({
     },
     [onPress],
   );
+  const handleFocus = useCallback(
+    (event: FocusEvent) => {
+      if (onFocus && focusCameFromKeyboard(event.target)) onFocus();
+    },
+    [onFocus],
+  );
   const handleAccessibilityAction = useCallback(
     (event: AccessibilityActionEvent) => {
       if (event.nativeEvent.actionName === "activate") onPress();
@@ -651,7 +661,7 @@ function ModelBrowserPressable({
         ref={rowRef}
         onLayout={onLayout}
         onPress={handlePress}
-        onFocus={onFocus}
+        onFocus={handleFocus}
         hitSlop={hitSlop}
         style={style}
         accessibilityRole="button"
