@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, View, type StyleProp, type ViewStyle } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { Image } from "expo-image";
+import { View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { ViewportFitOptions, ViewportSize } from "./geometry";
 import { measureImage } from "./image-size";
 import { ZoomableViewport } from "./index";
 import type { ZoomableViewportAction } from "./types";
+
+// Expo Image draws SVG as well as raster images; React Native's Image cannot draw SVG on native.
+const ViewportImage = withUnistyles(Image);
 
 interface ZoomableImageProps {
   uri: string;
@@ -77,12 +81,12 @@ export function ZoomableImage({
       testID={testID}
       wheelActivation={wheelActivation}
     >
-      <Image
-        // Android fades a freshly decoded image in over 300ms; it appears with its toolbar instead.
-        fadeDuration={0}
+      <ViewportImage
+        // No transition, so the image appears together with its toolbar.
+        transition={null}
+        contentFit="contain"
         onError={onError}
         onLoad={handleLoad}
-        resizeMode="contain"
         source={source}
         style={styles.image}
         testID={`${testID}-image`}
