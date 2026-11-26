@@ -34,6 +34,7 @@ import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
+import { APPLICATION_SOCKET_LEASE_MS } from "@getpaseo/protocol/application-socket-lease";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -1536,6 +1537,9 @@ export class DaemonClient {
   private livenessHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLivenessRttMs: number | null = null;
   private consecutiveLivenessFailures = 0;
+  // Wall-clock deadline (Date.now()) at which the daemon's application socket lease expires,
+  // or null until this connection has sent its first ping.
+  private socketLeaseDeadlineWallMs: number | null = null;
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
@@ -1897,6 +1901,16 @@ export class DaemonClient {
   private recordTransportActivity(): void {
     this.consecutiveLivenessFailures = 0;
     if (this.pingProbe) this.pingProbe.receivedActivity = true;
+    // An inbound frame proves the daemon has not closed this socket. If the local lease
+    // deadline had already passed (e.g. an older daemon without leases, or an overdue frame
+    // answered before the daemon's sweep tick), clear the expired state so foreground
+    // verification does not tear down a live socket.
+    if (this.socketLeaseDeadlineWallMs !== null) {
+      const now = Date.now();
+      if (now >= this.socketLeaseDeadlineWallMs) {
+        this.socketLeaseDeadlineWallMs = now + APPLICATION_SOCKET_LEASE_MS;
+      }
+    }
   }
 
   requireConnectedHosts(): void {
@@ -2224,7 +2238,9 @@ export class DaemonClient {
     try {
       submitted?.();
       const payload = typeof frame === "string" ? frame : asUint8Array(frame)!;
-      return this.chunkedTransport!.send(payload);
+      const sendPromise = this.chunkedTransport!.send(payload);
+      this.renewSocketLease();
+      return sendPromise;
     } finally {
       this.endTraceSection(isOpen);
     }
@@ -2731,6 +2747,7 @@ export class DaemonClient {
     };
     try {
       void this.sendJsonMessage("ping", "ping", { type: "ping" }).catch(rejectSend);
+      this.claimSocketLease();
     } catch (error) {
       rejectSend(error);
     }
@@ -2766,8 +2783,44 @@ export class DaemonClient {
     }, LIVENESS_HEARTBEAT_INTERVAL_MS);
   }
 
+  private claimSocketLease(): void {
+    if (this.socketLeaseDeadlineWallMs === null) {
+      this.socketLeaseDeadlineWallMs = Date.now() + APPLICATION_SOCKET_LEASE_MS;
+    }
+  }
+
+  private renewSocketLease(): void {
+    if (this.socketLeaseDeadlineWallMs === null) return;
+    const now = Date.now();
+    // Sending onto a dead socket after the lease already expired cannot renew it on the daemon;
+    // keep the deadline expired so foreground verification still reconnects immediately.
+    if (now < this.socketLeaseDeadlineWallMs) {
+      this.socketLeaseDeadlineWallMs = now + APPLICATION_SOCKET_LEASE_MS;
+    }
+  }
+
+  private isSocketLeaseExpired(): boolean {
+    return this.socketLeaseDeadlineWallMs !== null && Date.now() >= this.socketLeaseDeadlineWallMs;
+  }
+
+  private reconnectExpiredSocketOnForeground(): void {
+    const reason = "Application socket lease expired";
+    this.consecutiveLivenessFailures = 0;
+    this.lastErrorValue = reason;
+    this.disposeTransport(1001, reason);
+    this.scheduleReconnect({
+      reason,
+      event: "APPLICATION_LEASE_EXPIRED",
+      reasonCode: "application_lease_expired",
+      immediate: true,
+    });
+  }
+
   /**
-   * The app came back to the foreground. Start a fresh verification cycle: two
+   * The app came back to the foreground. If this connection already claimed the daemon's
+   * application socket lease and wall-clock time has passed that lease without an inbound
+   * frame proving it still alive, tear down and reconnect immediately instead of waiting out
+   * two silent 5-second windows. Otherwise start a fresh verification cycle: two
    * FOREGROUND_LIVENESS_TIMEOUT_MS windows back to back, then teardown and an immediate
    * reconnect. Misses recorded before the app was suspended do not count, and a heartbeat
    * probe that straddled the suspension measured the suspension, not the socket, so it is
@@ -2775,6 +2828,10 @@ export class DaemonClient {
    * probe they joined does not fail them.
    */
   private verifyConnectionOnForeground(): void {
+    if (this.config.reconnect?.enabled !== false && this.isSocketLeaseExpired()) {
+      this.reconnectExpiredSocketOnForeground();
+      return;
+    }
     // A cycle already running keeps its deadline and its window count.
     if (this.pingProbe?.role === "foreground") return;
     if (this.pingProbe?.role === "heartbeat") {
@@ -7537,6 +7594,7 @@ export class DaemonClient {
   }
 
   private disposeTransport(code = 1001, reason = "Reconnecting"): void {
+    this.socketLeaseDeadlineWallMs = null;
     this.chunkedTransport?.close();
     this.chunkedTransport = null;
     this.owned.disconnected();
@@ -7665,7 +7723,7 @@ export class DaemonClient {
       return;
     }
 
-    this.consecutiveLivenessFailures = 0;
+    this.recordTransportActivity();
 
     if (parsed.data.type === "pong") {
       this.traceInstant("paseo.ws.message.inbound", {
@@ -7706,7 +7764,7 @@ export class DaemonClient {
 
   private handlePluginFrame(rawBytes: Uint8Array): void {
     const frame = decodePluginFrame(rawBytes);
-    this.consecutiveLivenessFailures = 0;
+    this.recordTransportActivity();
     this.runtimeMetrics?.recordBinaryFrame("plugin", rawBytes.byteLength, 0);
     if (frame?.opcode === PluginFrameOpcode.Event) {
       this.owned.receiveBinary(frame.subscriptionId, frame.payload);
