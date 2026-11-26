@@ -1099,6 +1099,8 @@ export type PluginCatalogEntry = Omit<PluginCatalogResponseEntry, "clientBundle"
   clientBundle: string;
 };
 
+class DaemonClientClosedError extends Error {}
+
 export class DaemonConnectionError extends Error {
   readonly serverId?: string;
   readonly outcome?: "unknown";
@@ -1858,11 +1860,13 @@ export class DaemonClient {
     this.resetConnectTimeout();
     this.disposeTransport(1000, "Client closed");
     this.providerSnapshotUpdates.clear();
-    this.clearWaiters(new Error("Daemon client closed"));
+    const closedError = new DaemonClientClosedError("Daemon client closed");
+    this.clearWaiters(closedError);
+    this.rejectPendingSendQueue(closedError);
     await this.diffStreams.close();
     await this.owned.close();
+    await this.creations.settleRequests();
     this.creations.close();
-    this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.rejectPongWaiters(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
@@ -2435,7 +2439,7 @@ export class DaemonClient {
       if (
         !dispatched &&
         isCreationRequest(wire.message.type) &&
-        err instanceof DaemonConnectionError
+        (err instanceof DaemonConnectionError || err instanceof DaemonClientClosedError)
       ) {
         err = new CreationNotSentError(err);
         const index = this.pendingSendQueue.findIndex(

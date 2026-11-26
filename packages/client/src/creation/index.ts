@@ -51,6 +51,7 @@ interface Operation {
 /** Client-owned observation and compatibility. UI callbacks never advance creation. */
 export class CreationClient {
   private readonly operations = new Map<string, Operation>();
+  private readonly requests = new Set<Promise<void>>();
   constructor(private readonly deps: Dependencies) {}
 
   createAgent(input: CreateAgentRequestOptions): Promise<CreationResult> {
@@ -177,14 +178,34 @@ export class CreationClient {
     this.operations.set(identity, operation);
     if (operation.modern) void this.submit(operation);
     else
-      void legacy(operation).then(
-        (value) => this.finish(operation, value),
-        (error) => this.fail(operation, error),
+      void this.trackRequest(
+        legacy(operation).then(
+          (value) => this.finish(operation, value),
+          (error) => this.fail(operation, error),
+        ),
       );
     return result;
   }
 
-  private async submit(operation: Operation): Promise<void> {
+  private trackRequest(request: Promise<void>): Promise<void> {
+    this.requests.add(request);
+    void request.then(
+      () => this.requests.delete(request),
+      () => this.requests.delete(request),
+    );
+    return request;
+  }
+
+  /** Propagate transport shutdown failures before closing unresolved observations. */
+  async settleRequests(): Promise<void> {
+    await Promise.all(this.requests);
+  }
+
+  private submit(operation: Operation): Promise<void> {
+    return this.trackRequest(this.execute(operation));
+  }
+
+  private async execute(operation: Operation): Promise<void> {
     try {
       const result = await this.deps.request(operation.kind, {
         ...operation.input,

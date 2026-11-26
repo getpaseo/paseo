@@ -114,13 +114,10 @@ function isStandaloneReplay(attempt: Attempt, draftId: string, request: object):
   return attempt.kind === "agent" && attempt.key === draftCreationKey(draftId, request);
 }
 
-function workspaceReceiptToObserve(
-  record: Record,
-  input: WorkspaceRetryInput,
-): Attempt | undefined {
+function receiptForWorkspaceRetry(record: Record, input: WorkspaceRetryInput): Attempt | undefined {
   const prior = record.attempt;
   if (
-    prior?.kind !== "workspace" ||
+    !prior ||
     prior.outcome === "failed" ||
     prior.key === draftCreationKey(input.draftId, input.request)
   )
@@ -133,6 +130,7 @@ function workspaceReceiptToObserve(
       (prior.outcome !== "pending" && prior.outcome !== "unknown"))
   )
     return undefined;
+  if (!record.workspace && prior.kind !== "workspace") return undefined;
   return prior;
 }
 
@@ -289,12 +287,12 @@ export function createDraftCreations(deps: Dependencies) {
     await scope.writes;
     const observe = input.observe;
     // Identical retries must reach the in-flight coalescer without waiting on observation.
-    if (observe && workspaceReceiptToObserve(scope.record, input)) {
+    if (observe && receiptForWorkspaceRetry(scope.record, input)) {
       await serialize(scope, async () => {
         await scope.writes;
-        const prior = workspaceReceiptToObserve(scope.record, input);
+        const prior = receiptForWorkspaceRetry(scope.record, input);
         if (!prior) return;
-        const snapshot = await observe("workspace", prior.key, (update) =>
+        const snapshot = await observe(prior.kind, prior.key, (update) =>
           acceptSnapshot(scope, update, true),
         );
         await scope.writes;
