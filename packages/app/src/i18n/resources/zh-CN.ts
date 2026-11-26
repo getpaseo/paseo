@@ -294,6 +294,7 @@ export const zhCN: TranslationResources = {
     archived: {
       callout: "此 Agent 已归档",
       unarchive: "取消归档",
+      unarchiving: "正在取消归档...",
     },
   },
   sessions: {

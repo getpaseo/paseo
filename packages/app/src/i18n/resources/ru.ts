@@ -298,6 +298,7 @@ export const ru: TranslationResources = {
     archived: {
       callout: "Этот агент находится в архиве",
       unarchive: "Разархивировать",
+      unarchiving: "Разархивация...",
     },
   },
   sessions: {

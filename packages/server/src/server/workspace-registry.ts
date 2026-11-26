@@ -124,6 +124,8 @@ export interface WorkspaceMutation {
 
 export interface WorkspaceMutationContext {
   expectsInitialAgent?: boolean;
+  publish?: boolean;
+  deferToken?: symbol;
 }
 
 export interface WorkspaceArchiveContext {
@@ -171,6 +173,20 @@ export interface WorkspaceRegistry {
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null>;
   upsert(record: PersistedWorkspaceRecord, context?: WorkspaceMutationContext): Promise<void>;
+  /** Hold publication of workspace mutations for `workspaceId` until `publishUpsert` releases `token`. */
+  deferPublication?(workspaceId: string, token: symbol): void;
+  /** Broadcast a previously persisted workspace upsert after dependent state finishes restoring. */
+  publishUpsert?(
+    record: PersistedWorkspaceRecord,
+    context?: Omit<WorkspaceMutationContext, "publish">,
+  ): Promise<void>;
+  /** True while an unarchive persisted the workspace record with `publish: false` and has not published yet. */
+  isPublicationDeferred?(workspaceId: string): boolean;
+  /**
+   * Resolves once any in-flight deferred or settling publication for `workspaceId` completes.
+   * Returns true if this call waited on an active publication barrier.
+   */
+  waitForDeferredPublication?(workspaceId: string): Promise<boolean>;
   archive(
     workspaceId: string,
     archivedAt: string,
@@ -181,6 +197,8 @@ export interface WorkspaceRegistry {
   subscribeToMutations?(
     listener: (mutation: WorkspaceMutation) => void | Promise<void>,
   ): () => void;
+  /** Runs while a deferred workspace unarchive is still hidden so sessions can flush dependent agent updates first. */
+  subscribeBeforePublish?(listener: (workspaceId: string) => void | Promise<void>): () => void;
 }
 
 type RegistryRecord = PersistedProjectRecord | PersistedWorkspaceRecord;
@@ -524,6 +542,12 @@ export class FileBackedWorkspaceRegistry
   private readonly mutationListeners = new Set<
     (mutation: WorkspaceMutation) => void | Promise<void>
   >();
+  private readonly beforePublishListeners = new Set<
+    (workspaceId: string) => void | Promise<void>
+  >();
+  private readonly deferredPublications = new Map<string, Set<symbol>>();
+  private readonly settlingPublicationCounts = new Map<string, number>();
+  private readonly deferredWaiters = new Map<string, Set<() => void>>();
 
   constructor(
     filePath: string,
@@ -552,13 +576,78 @@ export class FileBackedWorkspaceRegistry
     return () => this.mutationListeners.delete(listener);
   }
 
+  subscribeBeforePublish(listener: (workspaceId: string) => void | Promise<void>): () => void {
+    this.beforePublishListeners.add(listener);
+    return () => this.beforePublishListeners.delete(listener);
+  }
+
+  deferPublication(workspaceId: string, token: symbol): void {
+    this.acquireDeferredPublication(workspaceId, token);
+  }
+
+  private acquireDeferredPublication(workspaceId: string, token: symbol): void {
+    let tokens = this.deferredPublications.get(workspaceId);
+    if (!tokens) {
+      tokens = new Set();
+      this.deferredPublications.set(workspaceId, tokens);
+    }
+    tokens.add(token);
+  }
+
+  private hasDeferredToken(workspaceId: string, token?: symbol): boolean {
+    const tokens = this.deferredPublications.get(workspaceId);
+    if (!tokens || tokens.size === 0) return false;
+    return token ? tokens.has(token) : true;
+  }
+
+  private resolveDeferredWaitersIfSettled(workspaceId: string): void {
+    if (
+      this.isPublicationDeferred(workspaceId) ||
+      (this.settlingPublicationCounts.get(workspaceId) ?? 0) > 0
+    ) {
+      return;
+    }
+    const waiters = this.deferredWaiters.get(workspaceId);
+    if (!waiters) return;
+    this.deferredWaiters.delete(workspaceId);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  private releaseDeferredPublication(
+    workspaceId: string,
+    token?: symbol,
+    options?: { resolveWaiters?: boolean },
+  ): void {
+    const tokens = this.deferredPublications.get(workspaceId);
+    if (!tokens) return;
+    if (token) {
+      tokens.delete(token);
+    } else {
+      const first = tokens.values().next().value;
+      if (first) tokens.delete(first);
+    }
+    if (tokens.size === 0) {
+      this.deferredPublications.delete(workspaceId);
+    }
+    if (options?.resolveWaiters !== false) {
+      this.resolveDeferredWaitersIfSettled(workspaceId);
+    }
+  }
+
   override async update(
     workspaceId: string,
     updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
   ): Promise<PersistedWorkspaceRecord | null> {
     const workspace = await super.update(workspaceId, updater);
-    if (workspace) {
+    if (!workspace) return null;
+    if (workspace.archivedAt) {
+      this.deferredPublications.delete(workspaceId);
+    }
+    if (!this.isPublicationDeferred(workspaceId)) {
       await this.notifyMutation({ kind: "upsert", workspaceId, workspace });
+      this.resolveDeferredWaitersIfSettled(workspaceId);
     }
     return workspace;
   }
@@ -567,13 +656,106 @@ export class FileBackedWorkspaceRegistry
     record: PersistedWorkspaceRecord,
     context?: WorkspaceMutationContext,
   ): Promise<void> {
+    if (context?.publish === false) {
+      const token = context.deferToken ?? Symbol("workspace-defer");
+      this.acquireDeferredPublication(record.workspaceId, token);
+      try {
+        await super.upsert(record);
+      } catch (error) {
+        this.releaseDeferredPublication(record.workspaceId, token);
+        throw error;
+      }
+      return;
+    }
     await super.upsert(record);
-    await this.notifyMutation({
-      kind: "upsert",
-      workspaceId: record.workspaceId,
-      workspace: record,
-      ...(context?.expectsInitialAgent ? { expectsInitialAgent: true } : {}),
-    });
+    if (record.archivedAt) {
+      this.deferredPublications.delete(record.workspaceId);
+    }
+    if (this.isPublicationDeferred(record.workspaceId)) {
+      return;
+    }
+    try {
+      await this.notifyMutation({
+        kind: "upsert",
+        workspaceId: record.workspaceId,
+        workspace: record,
+        ...(context?.expectsInitialAgent ? { expectsInitialAgent: true } : {}),
+      });
+    } finally {
+      this.resolveDeferredWaitersIfSettled(record.workspaceId);
+    }
+  }
+
+  async publishUpsert(
+    record: PersistedWorkspaceRecord,
+    context?: Omit<WorkspaceMutationContext, "publish">,
+  ): Promise<void> {
+    const token = context?.deferToken;
+    if (!this.hasDeferredToken(record.workspaceId, token)) {
+      return;
+    }
+    const workspaceId = record.workspaceId;
+    this.settlingPublicationCounts.set(
+      workspaceId,
+      (this.settlingPublicationCounts.get(workspaceId) ?? 0) + 1,
+    );
+    // Keep the workspace deferred until every session finishes flushing dependent agent
+    // updates, so no per-agent workspace update can race ahead of remaining agents.
+    try {
+      let stillOwnedAfterHook = false;
+      try {
+        await this.notifyBeforePublish(workspaceId);
+        stillOwnedAfterHook = this.hasDeferredToken(workspaceId, token);
+      } finally {
+        if (this.hasDeferredToken(workspaceId, token)) {
+          this.releaseDeferredPublication(workspaceId, token, { resolveWaiters: false });
+        }
+      }
+      if (!stillOwnedAfterHook || this.isPublicationDeferred(workspaceId)) {
+        return;
+      }
+      const current = await this.get(workspaceId);
+      if (!current || current.archivedAt) {
+        return;
+      }
+      await this.notifyMutation({
+        kind: "upsert",
+        workspaceId: current.workspaceId,
+        workspace: current,
+        ...(context?.expectsInitialAgent ? { expectsInitialAgent: true } : {}),
+      });
+    } finally {
+      const remaining = (this.settlingPublicationCounts.get(workspaceId) ?? 1) - 1;
+      if (remaining <= 0) {
+        this.settlingPublicationCounts.delete(workspaceId);
+      } else {
+        this.settlingPublicationCounts.set(workspaceId, remaining);
+      }
+      this.resolveDeferredWaitersIfSettled(workspaceId);
+    }
+  }
+
+  isPublicationDeferred(workspaceId: string): boolean {
+    return (this.deferredPublications.get(workspaceId)?.size ?? 0) > 0;
+  }
+
+  async waitForDeferredPublication(workspaceId: string): Promise<boolean> {
+    let waited = false;
+    while (
+      this.isPublicationDeferred(workspaceId) ||
+      (this.settlingPublicationCounts.get(workspaceId) ?? 0) > 0
+    ) {
+      waited = true;
+      await new Promise<void>((resolve) => {
+        let waiters = this.deferredWaiters.get(workspaceId);
+        if (!waiters) {
+          waiters = new Set();
+          this.deferredWaiters.set(workspaceId, waiters);
+        }
+        waiters.add(resolve);
+      });
+    }
+    return waited;
   }
 
   async archive(
@@ -597,14 +779,24 @@ export class FileBackedWorkspaceRegistry
       ];
     });
     if (!workspace) return false;
-    await this.notifyMutation({ kind: "archive", workspaceId, workspace });
+    this.deferredPublications.delete(workspaceId);
+    try {
+      await this.notifyMutation({ kind: "archive", workspaceId, workspace });
+    } finally {
+      this.resolveDeferredWaitersIfSettled(workspaceId);
+    }
     return true;
   }
 
   override async remove(workspaceId: string): Promise<void> {
     const workspace = await this.removeIfPresent(workspaceId);
     if (!workspace) return;
-    await this.notifyMutation({ kind: "remove", workspaceId, workspace });
+    this.deferredPublications.delete(workspaceId);
+    try {
+      await this.notifyMutation({ kind: "remove", workspaceId, workspace });
+    } finally {
+      this.resolveDeferredWaitersIfSettled(workspaceId);
+    }
   }
 
   async commitWorkspaceLabelMutation<TResult>(input: {
@@ -635,9 +827,11 @@ export class FileBackedWorkspaceRegistry
     );
     if (input.publish !== false) {
       await Promise.all(
-        changed.map((workspace) =>
-          this.notifyMutation({ kind: "upsert", workspaceId: workspace.workspaceId, workspace }),
-        ),
+        changed
+          .filter((workspace) => !this.isPublicationDeferred(workspace.workspaceId))
+          .map((workspace) =>
+            this.notifyMutation({ kind: "upsert", workspaceId: workspace.workspaceId, workspace }),
+          ),
       );
     }
     return committed.result;
@@ -645,6 +839,21 @@ export class FileBackedWorkspaceRegistry
 
   blockAllMutationsUntilRestart(): void {
     this.freezeMutationsUntilRestart();
+  }
+
+  private async notifyBeforePublish(workspaceId: string): Promise<void> {
+    await Promise.all(
+      [...this.beforePublishListeners].map(async (listener) => {
+        try {
+          await listener(workspaceId);
+        } catch (error) {
+          this.logger.error(
+            { err: error, workspaceId },
+            "Workspace before-publish listener failed",
+          );
+        }
+      }),
+    );
   }
 
   private async notifyMutation(mutation: WorkspaceMutation): Promise<void> {
