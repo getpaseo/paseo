@@ -38,6 +38,6 @@ Check these items in order:
 
 ## Webhook and schedule runs
 
-Runs started by inbound webhooks appear in **Activity** under `webhook.received`. If an HTTP `POST` returns an error status (`400`, `401`, `403`, `409`, `413`, or `429`), see [Inbound webhooks](/docs/hub/triggers/webhooks#request-limits-and-responses).
+Runs started by inbound webhooks appear in **Activity** under `webhook.received`. If an HTTP `POST` returns an error status (`400`, `401`, `403`, `409`, `413`, `429`, or `503`), see [Inbound webhooks](/docs/hub/triggers/webhooks#request-limits-and-responses).
 
 Scheduled runs appear in **Activity** under `schedule.tick`. While a scheduled run is still active, Hub skips newly due occurrences for that trigger until the active run completes or fails.

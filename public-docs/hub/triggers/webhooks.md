@@ -97,6 +97,7 @@ Runs appear in [Activity](/docs/hub/activity) under the source `webhook.received
 | `409`  | The trigger is disabled.                                                |
 | `413`  | Request body exceeds 32 KiB.                                            |
 | `429`  | Endpoint exceeded 60 new deliveries in the current minute window.       |
+| `503`  | Hub's database is unavailable. Retry after `Retry-After` seconds.       |
 
 ## How the payload reaches the agent
 
