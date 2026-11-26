@@ -18,6 +18,7 @@ import {
   expectTailscaleAvailable,
   expectTailscaleRowLoadsOn,
   expectTailscaleUnavailable,
+  observeDaemonStatusPolling,
   openSetupMobileStep,
   refreshTailscaleAvailability,
   slowConnectionToHost,
@@ -122,6 +123,7 @@ test("refreshes Tailscale availability in place after Tailscale starts", async (
   test.setTimeout(120_000);
   if (!baseURL) throw new Error("Expected the app base URL");
   const daemon = await startTailscaleTestDaemon(baseURL, { initialAvailable: false });
+  const statusPolling = observeDaemonStatusPolling(page, daemon.port);
   try {
     await preparePairingHost(page, daemon);
     await expectTailscaleUnavailable(page);
@@ -137,9 +139,12 @@ test("refreshes Tailscale availability in place after Tailscale starts", async (
     });
 
     await test.step("Refreshing after Tailscale starts enables the switch in place", async () => {
+      await statusPolling.waitForFreshPollWindow();
       await daemon.setTailscaleAvailable(true);
+      const refreshRequest = statusPolling.waitForStatusRequest(1_000);
       await refreshTailscaleAvailability(page);
-      await expectTailscaleAvailable(page);
+      await refreshRequest;
+      await expectTailscaleAvailable(page, { timeout: 1_000 });
       await enableTailscale(page);
       await expectTailscaleAddress(page, daemon.tailscaleAddress);
       await disableTailscale(page, daemon.tailscaleAddress);
@@ -149,9 +154,12 @@ test("refreshes Tailscale availability in place after Tailscale starts", async (
       await daemon.setTailscaleAvailable(false);
       await openSetupMobileStep(page, daemon);
       await expectTailscaleUnavailable(page);
+      await statusPolling.waitForFreshPollWindow();
       await daemon.setTailscaleAvailable(true);
+      const refreshRequest = statusPolling.waitForStatusRequest(1_000);
       await refreshTailscaleAvailability(page);
-      await expectTailscaleAvailable(page);
+      await refreshRequest;
+      await expectTailscaleAvailable(page, { timeout: 1_000 });
     });
   } finally {
     await daemon.close();
