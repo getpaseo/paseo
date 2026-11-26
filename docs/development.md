@@ -655,6 +655,12 @@ sending a message. Use `paseo://h/<server-id>/agent/<agent-id>`, or run
 `paseo agent open <agent-id>`. The CLI reads the local daemon's server ID by
 default; pass `--server <server-id>` when targeting another server.
 
+Desktop integrations can also offer a remote host. `paseo://hosts/add?ssh=<SSH URI>`, with the
+SSH URI percent-encoded, opens the Remote SSH form with that address filled in. The desktop app
+adds the host only when you click **Connect**, so the link never adds a host by itself. It accepts
+only an address the form accepts (`parseSshTransportUri`); build it with `buildAddHostDeepLink`
+from `@getpaseo/protocol/add-host-deep-link`.
+
 ## Agent state
 
 Agent data lives at:

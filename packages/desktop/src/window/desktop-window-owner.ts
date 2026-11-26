@@ -31,6 +31,8 @@ export interface DesktopWindowOwner<TAgentTarget> {
   }): Promise<void>;
   openAdditional(input?: { pendingProjectPath?: string | null }): Promise<void>;
   openOrFocusAgent(target: TAgentTarget): Promise<void>;
+  /** Brings a window to the front, or opens the primary window when none is open. */
+  openOrFocusWindow(): Promise<OwnedDesktopWindow<TAgentTarget> | null>;
   restoreWhenActivated(): Promise<void>;
   takePendingProject(webContentsId: number): string | null;
 }
@@ -39,7 +41,28 @@ export function createDesktopWindowOwner<TAgentTarget>(
   port: DesktopWindowOwnerPort<TAgentTarget>,
 ): DesktopWindowOwner<TAgentTarget> {
   const pendingProjects = new PendingOpenProjectStore();
-  let agentWindowCreation: Promise<void> | null = null;
+  let windowCreation: Promise<void> | null = null;
+
+  function frontWindow(): OwnedDesktopWindow<TAgentTarget> | null {
+    const windows = port.windows();
+    const window =
+      port.focusedWindow() ?? windows.find((candidate) => candidate.isVisible()) ?? windows[0];
+    return window && !window.isDestroyed() ? window : null;
+  }
+
+  function bringToFront(window: OwnedDesktopWindow<TAgentTarget>): void {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  }
+
+  // Links that arrive together while no window is open share one new window.
+  function openFrontWindow(initialRoute: string | null): Promise<void> {
+    windowCreation = owner.openPrimary({ initialRoute }).finally(() => {
+      windowCreation = null;
+    });
+    return windowCreation;
+  }
 
   const open = async (input: {
     initialRoute: string | null;
@@ -68,28 +91,28 @@ export function createDesktopWindowOwner<TAgentTarget>(
         restoreWindowState: false,
       }),
     async openOrFocusAgent(target) {
-      const windows = port.windows();
-      const window =
-        port.focusedWindow() ?? windows.find((candidate) => candidate.isVisible()) ?? windows[0];
-      if (!window || window.isDestroyed()) {
-        if (!agentWindowCreation) {
-          agentWindowCreation = owner
-            .openPrimary({ initialRoute: port.agentRoute(target) })
-            .finally(() => {
-              agentWindowCreation = null;
-            });
-          await agentWindowCreation;
+      const window = frontWindow();
+      if (!window) {
+        if (!windowCreation) {
+          await openFrontWindow(port.agentRoute(target));
           return;
         }
-        await agentWindowCreation;
+        await windowCreation;
         await owner.openOrFocusAgent(target);
         return;
       }
-      if (window.isMinimized()) window.restore();
-      window.show();
-      window.focus();
+      bringToFront(window);
       const deliverable = port.deliverAgent(window.webContentsId, target);
       if (deliverable) window.sendAgent(deliverable);
+    },
+    async openOrFocusWindow() {
+      const window = frontWindow();
+      if (window) {
+        bringToFront(window);
+        return window;
+      }
+      await (windowCreation ?? openFrontWindow(null));
+      return frontWindow();
     },
     async restoreWhenActivated() {
       if (port.windows().length === 0) await owner.openPrimary();

@@ -46,4 +46,17 @@ describe("add host flow", () => {
     expect(flow.store.getState().session).toBe(session);
     expect(session.step.getState()).toEqual({ method: null });
   });
+
+  it("starts a link request on the Remote SSH step with its address", () => {
+    const flow = createAddHostFlow();
+    flow.open({ method: "direct" });
+    const earlier = flow.store.getState().session!;
+    expect(earlier.sshTarget).toBe("");
+
+    flow.open({ method: "ssh", sshTarget: "ssh://instabox-dev-1" });
+    const session = flow.store.getState().session!;
+    expect(session).not.toBe(earlier);
+    expect(session.sshTarget).toBe("ssh://instabox-dev-1");
+    expect(session.step.getState()).toEqual({ method: "ssh" });
+  });
 });

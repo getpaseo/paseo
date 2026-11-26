@@ -30,6 +30,13 @@ export function useAddHost({ method, onAdded }: AddHostOptions = {}) {
   return useCallback(() => flow.open({ method, onAdded }), [flow, method, onAdded]);
 }
 
+/** Opens the Remote SSH form with `sshTarget` filled in. The user still clicks Connect. */
+export function useAddSshHostFromLink() {
+  const flow = useContext(Context);
+  if (!flow) throw new Error("useAddSshHostFromLink requires AddHostProvider");
+  return useCallback((sshTarget: string) => flow.open({ method: "ssh", sshTarget }), [flow]);
+}
+
 function AddHostSessionView({ session }: { session: AddHostSession }) {
   const { t } = useTranslation();
   const method = useStore(session.step, (state) => state.method);
@@ -61,6 +68,7 @@ function AddHostSessionView({ session }: { session: AddHostSession }) {
       />
       <AddRemoteSshHostModal
         visible={method === "ssh"}
+        initialTarget={session.sshTarget}
         onClose={session.close}
         onCancel={back}
         onSaved={session.complete}

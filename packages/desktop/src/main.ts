@@ -112,7 +112,11 @@ import {
   parseAgentDeepLink,
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
-import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import {
+  parseAddHostDeepLink,
+  type AddHostDeepLinkTarget,
+} from "@getpaseo/protocol/add-host-deep-link";
+import { DeepLinkInbox, findDeepLinkInArgv } from "./deep-link-inbox.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -126,7 +130,8 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
 });
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
-const agentNavigationInbox = new AgentNavigationInbox();
+const agentNavigationInbox = new DeepLinkInbox<AgentDeepLinkTarget>();
+const addHostLinkInbox = new DeepLinkInbox<AddHostDeepLinkTarget>();
 
 // A second-instance launch can arrive before the packaged protocol handler,
 // IPC handlers, and first window exist. Wait for full bootstrap, not just
@@ -363,7 +368,8 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   argv: process.argv,
   isDefaultApp: process.defaultApp,
 });
-let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
+let pendingAgentNavigation = findDeepLinkInArgv(process.argv, parseAgentDeepLink);
+let pendingAddHostLink = findDeepLinkInArgv(process.argv, parseAddHostDeepLink);
 
 // Each window pulls its own pending open-project path on mount, keyed by
 // webContents id, so deep-linked windows (second-instance launches, the
@@ -391,6 +397,10 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
 
 ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
+});
+
+ipcMain.handle("paseo:add-host-link:ready", (event) => {
+  return addHostLinkInbox.windowReady(event.sender.id);
 });
 
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
@@ -732,11 +742,13 @@ async function createWindow(
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
     if (isMainFrame && !isSameDocument) {
       agentNavigationInbox.windowLoading(webContentsId);
+      addHostLinkInbox.windowLoading(webContentsId);
     }
   });
   mainWindow.on("closed", () => {
     options.onClosed?.(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
+    addHostLinkInbox.removeWindow(webContentsId);
     unregisterPaseoBrowserHost(webContentsId);
     browserKeyboard.detachHost(webContentsId);
   });
@@ -876,9 +888,39 @@ function receiveAgentDeepLink(input: string): void {
   });
 }
 
+// The link only opens the Remote SSH form with the address filled in. The
+// renderer adds the host when the user clicks Connect.
+async function openAddHostLink(target: AddHostDeepLinkTarget): Promise<void> {
+  const window = await desktopWindowOwner.openOrFocusWindow();
+  if (!window) {
+    return;
+  }
+  const deliverable = addHostLinkInbox.deliverOrQueue(window.webContentsId, target);
+  if (deliverable) {
+    webContents.fromId(window.webContentsId)?.send("paseo:event:add-host", deliverable);
+  }
+}
+
+function receiveAddHostDeepLink(input: string): void {
+  const target = parseAddHostDeepLink(input);
+  if (!target) {
+    return;
+  }
+
+  // bootstrap() opens a link that arrives before the first window exists.
+  if (!bootstrapIsComplete) {
+    pendingAddHostLink = target;
+    return;
+  }
+  void openAddHostLink(target).catch((error) =>
+    log.error("[window] failed to open add host link", error),
+  );
+}
+
 app.on("open-url", (event, url) => {
   event.preventDefault();
   receiveAgentDeepLink(url);
+  receiveAddHostDeepLink(url);
 });
 
 function setupSingleInstanceLock(): boolean {
@@ -894,11 +936,20 @@ function setupSingleInstanceLock(): boolean {
   }
 
   app.on("second-instance", (_event, commandLine) => {
-    const agentTarget = parseAgentDeepLinkFromArgv(commandLine);
+    const agentTarget = findDeepLinkInArgv(commandLine, parseAgentDeepLink);
     if (agentTarget) {
       void bootstrapComplete
         .then(() => desktopWindowOwner.openOrFocusAgent(agentTarget))
         .catch((error) => log.error("[window] failed to route second-instance agent link", error));
+      return;
+    }
+    const addHostTarget = findDeepLinkInArgv(commandLine, parseAddHostDeepLink);
+    if (addHostTarget) {
+      void bootstrapComplete
+        .then(() => openAddHostLink(addHostTarget))
+        .catch((error) =>
+          log.error("[window] failed to open second-instance add host link", error),
+        );
       return;
     }
 
@@ -1024,6 +1075,12 @@ async function bootstrap(): Promise<void> {
     await desktopWindowOwner.openOrFocusAgent(target);
   }
 
+  if (pendingAddHostLink) {
+    const target = pendingAddHostLink;
+    pendingAddHostLink = null;
+    await openAddHostLink(target);
+  }
+
   app.on("activate", () => {
     void desktopWindowOwner.restoreWhenActivated().catch((error) => {
       console.error("Failed to restore a desktop window after activation", error);
@@ -1032,7 +1089,9 @@ async function bootstrap(): Promise<void> {
 }
 
 void runDesktopStartup({
-  hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
+  hasPendingGuiLaunchRequest: Boolean(
+    pendingOpenProjectPath || pendingAgentNavigation || pendingAddHostLink,
+  ),
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,

@@ -9,6 +9,7 @@ function harness() {
   const windows: OwnedDesktopWindow<Target>[] = [];
   const launches: Array<{ initialRoute: string | null; restoreWindowState: boolean }> = [];
   const sent: Target[] = [];
+  const focusedIds: number[] = [];
   let nextId = 1;
   let focused: OwnedDesktopWindow<Target> | null = null;
   let closeWindow = (_id: number) => {};
@@ -27,7 +28,7 @@ function harness() {
         isMinimized: () => false,
         restore: () => {},
         show: () => {},
-        focus: () => {},
+        focus: () => focusedIds.push(id),
         sendAgent: (target) => sent.push(target),
       };
       windows.push(window);
@@ -43,6 +44,7 @@ function harness() {
     owner,
     launches,
     sent,
+    focusedIds,
     windows,
     setFocused: (window: OwnedDesktopWindow<Target>) => {
       focused = window;
@@ -71,6 +73,32 @@ describe("desktop window owner", () => {
     await h.owner.openOrFocusAgent({ id: "agent-7" });
     expect(h.launches).toHaveLength(1);
     expect(h.sent).toEqual([{ id: "agent-7" }]);
+  });
+
+  it("brings the focused window to the front for a link without a route", async () => {
+    const h = harness();
+    await h.owner.openPrimary();
+    await h.owner.openAdditional();
+    h.setFocused(h.windows[1]);
+    const window = await h.owner.openOrFocusWindow();
+    expect(window?.webContentsId).toBe(2);
+    expect(h.focusedIds).toEqual([2]);
+    expect(h.launches).toHaveLength(2);
+  });
+
+  it("opens one primary window for links that arrive while none is open", async () => {
+    const h = harness();
+    const [, window] = await Promise.all([
+      h.owner.openOrFocusAgent({ id: "agent-7" }),
+      h.owner.openOrFocusWindow(),
+    ]);
+    expect(h.launches).toEqual([{ initialRoute: "/agent/agent-7", restoreWindowState: true }]);
+    expect(window?.webContentsId).toBe(1);
+
+    const fresh = harness();
+    const opened = await fresh.owner.openOrFocusWindow();
+    expect(fresh.launches).toEqual([{ initialRoute: null, restoreWindowState: true }]);
+    expect(opened?.webContentsId).toBe(1);
   });
 
   it("removes pending routing state when a window closes", async () => {

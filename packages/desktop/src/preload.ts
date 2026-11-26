@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
         agentId: string;
       } | null>,
   },
+  addHostLink: {
+    ready: () => ipcRenderer.invoke("paseo:add-host-link:ready") as Promise<{ ssh: string } | null>,
+  },
   events: {
     on: (event: string, handler: EventHandler): Promise<() => void> => {
       const listener = (_ipcEvent: Electron.IpcRendererEvent, payload: unknown) => {

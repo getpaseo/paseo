@@ -79,6 +79,8 @@ const styles = StyleSheet.create((theme) => {
 
 export interface AddRemoteSshHostModalProps {
   visible: boolean;
+  /** Read once, when the modal mounts. */
+  initialTarget?: string;
   onClose: () => void;
   onCancel?: () => void;
   onSaved?: (result: {
@@ -91,6 +93,7 @@ export interface AddRemoteSshHostModalProps {
 
 export function AddRemoteSshHostModal({
   visible,
+  initialTarget = "",
   onClose,
   onCancel,
   onSaved,
@@ -98,7 +101,7 @@ export function AddRemoteSshHostModal({
   const { t } = useTranslation();
   const hosts = useHosts();
   const { probeAndUpsertRemoteSshConnection } = useHostMutations();
-  const targetRef = useRef("");
+  const targetRef = useRef(initialTarget);
   const passwordRef = useRef("");
   const inputRef = useRef<EditingTextInputHandle>(null);
   const passwordInputRef = useRef<EditingTextInputHandle>(null);
@@ -220,7 +223,7 @@ export function AddRemoteSshHostModal({
           ref={inputRef}
           testID="remote-ssh-target-input"
           accessibilityLabel={t("pairing.remoteSsh.fields.target")}
-          initialValue=""
+          initialValue={initialTarget}
           onChangeText={handleTargetChange}
           placeholder="ssh://user@host"
           autoCapitalize="none"

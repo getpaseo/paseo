@@ -94,6 +94,7 @@ import {
 } from "@/navigation/settings-presentation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { AddHostLinkListener } from "@/desktop/add-host-link";
 import { AgentNavigationListener } from "@/desktop/agent-navigation";
 import { LegacyAgentSkillsMigration } from "@/agent-skills/legacy-migration";
 import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
@@ -964,6 +965,7 @@ function AppShell() {
       <HorizontalScrollProvider>
         <OpenProjectListener />
         <AgentNavigationListener />
+        <AddHostLinkListener />
         <AppWithSidebar>
           <WorkspaceRouteNavigationBridge />
           <RootStack />
