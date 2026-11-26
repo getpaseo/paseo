@@ -151,7 +151,7 @@ describe("update cooldown", () => {
     });
   });
 
-  it("starts when the app launches on a newer version and lasts 72 hours", async () => {
+  it("starts when the app launches on a newer version and lasts 24 hours", async () => {
     const install = await createInstall();
     await install.launch("1.2.3").start();
 
