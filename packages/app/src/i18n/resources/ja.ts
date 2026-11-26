@@ -2435,7 +2435,6 @@ export const ja: TranslationResources = {
       shortcuts: "ショートカット",
       integrations: "連携",
       notifications: "通知",
-      notificationsAndAccess: "通知とアクセス",
       permissions: "権限",
       diagnostics: "診断",
       about: "アプリ情報",

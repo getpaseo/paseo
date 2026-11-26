@@ -2451,7 +2451,6 @@ export const ru: TranslationResources = {
       shortcuts: "Сочетания клавиш",
       integrations: "Интеграции",
       notifications: "Уведомления",
-      notificationsAndAccess: "Уведомления и доступ",
       permissions: "Разрешения",
       diagnostics: "Диагностика",
       about: "О приложении",

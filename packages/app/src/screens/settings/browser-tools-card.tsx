@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from "react";
 import { Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { SettingsCard, SettingsRow } from "@/components/settings";
+import { SettingsRow } from "@/components/settings";
 import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -70,18 +70,5 @@ export function BrowserToolsRow({ serverId }: { serverId: string }) {
         testID="host-page-browser-tools-switch"
       />
     </SettingsRow>
-  );
-}
-
-export function BrowserToolsOptInCard({ serverId }: { serverId: string }) {
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const { config } = useDaemonConfig(serverId);
-  const state = getBrowserToolsCardState({ isConnected, config });
-  if (!state.isVisible) return null;
-
-  return (
-    <SettingsCard>
-      <BrowserToolsRow serverId={serverId} />
-    </SettingsCard>
   );
 }

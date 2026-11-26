@@ -2446,7 +2446,6 @@ export const ar: TranslationResources = {
       shortcuts: "الاختصارات",
       integrations: "التكامل",
       notifications: "الإشعارات",
-      notificationsAndAccess: "الإشعارات والوصول",
       permissions: "الأذونات",
       diagnostics: "التشخيص",
       about: "عن",

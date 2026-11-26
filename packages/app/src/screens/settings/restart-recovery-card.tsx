@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
-import { SettingsCard, SettingsInfoTip, SettingsRow } from "@/components/settings";
+import { SettingsInfoTip, SettingsRow } from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -110,18 +110,6 @@ export function RestartRecoveryRow({ serverId }: { serverId: string }) {
         />
       ) : null}
     </>
-  );
-}
-
-export function RestartRecoveryCard({ serverId }: { serverId: string }) {
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const isSupported = useHostFeature(serverId, "resumeOnStartupSetting");
-  const { config } = useDaemonConfig(serverId);
-  if (!isConnected || !isSupported || !config) return null;
-  return (
-    <SettingsCard>
-      <RestartRecoveryRow serverId={serverId} />
-    </SettingsCard>
   );
 }
 

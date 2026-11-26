@@ -1538,7 +1538,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               {isDesktopApp ? <OpenLocationSection /> : null}
               {isWeb ? <EditorSection /> : null}
               <TerminalSection />
-              <FilesSection hideWhenEmpty />
+              <FilesSection />
               {isDesktopApp ? <BrowserDataSection /> : null}
             </>
           );

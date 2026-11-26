@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { SettingsCard, SettingsInfoTip, SettingsRow } from "@/components/settings";
+import { SettingsInfoTip, SettingsRow } from "@/components/settings";
 import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostFeature } from "@/runtime/host-features";
@@ -59,17 +59,5 @@ export function IdleRuntimeCleanupRow({ serverId }: { serverId: string }) {
         testID="host-page-idle-runtime-cleanup-switch"
       />
     </SettingsRow>
-  );
-}
-
-export function IdleRuntimeCleanupCard({ serverId }: { serverId: string }) {
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const isSupported = useHostFeature(serverId, "idleRuntimeCleanupSetting");
-  const { config } = useDaemonConfig(serverId);
-  if (!isConnected || !isSupported || !config) return null;
-  return (
-    <SettingsCard>
-      <IdleRuntimeCleanupRow serverId={serverId} />
-    </SettingsCard>
   );
 }

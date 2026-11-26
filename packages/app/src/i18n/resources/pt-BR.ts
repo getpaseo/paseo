@@ -2450,7 +2450,6 @@ export const ptBR: TranslationResources = {
       shortcuts: "Atalhos",
       integrations: "Integrações",
       notifications: "Notificações",
-      notificationsAndAccess: "Notificações e acesso",
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
       about: "Sobre",

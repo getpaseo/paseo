@@ -2422,7 +2422,6 @@ export const ko: TranslationResources = {
       shortcuts: "단축키",
       integrations: "통합",
       notifications: "알림",
-      notificationsAndAccess: "알림 및 권한",
       permissions: "권한",
       diagnostics: "진단",
       about: "정보",

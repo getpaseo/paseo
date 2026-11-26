@@ -328,7 +328,11 @@ export function HostWorkspacesPage({ serverId }: { serverId: string }) {
           </SettingsSection>
           <MetadataGenerationPage serverId={serverId} />
         </>
-      ) : null}
+      ) : (
+        <View style={[settingsStyles.card, styles.emptyCard]}>
+          <Text style={styles.emptyText}>{t("settings.host.workspaces.unavailable")}</Text>
+        </View>
+      )}
     </View>
   );
 }

@@ -2440,7 +2440,6 @@ export const en = {
       shortcuts: "Shortcuts",
       integrations: "Integrations",
       notifications: "Notifications",
-      notificationsAndAccess: "Notifications & access",
       permissions: "Permissions",
       diagnostics: "Diagnostics",
       about: "About",

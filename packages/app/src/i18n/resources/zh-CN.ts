@@ -2387,7 +2387,6 @@ export const zhCN: TranslationResources = {
       shortcuts: "快捷键",
       integrations: "集成",
       notifications: "通知",
-      notificationsAndAccess: "通知与权限",
       permissions: "权限",
       diagnostics: "诊断",
       about: "关于",

@@ -2465,7 +2465,6 @@ export const fr: TranslationResources = {
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
       notifications: "Notifications",
-      notificationsAndAccess: "Notifications et accès",
       permissions: "Autorisations",
       diagnostics: "Diagnostic",
       about: "À propos",
