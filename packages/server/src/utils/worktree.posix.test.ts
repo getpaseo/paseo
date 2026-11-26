@@ -597,7 +597,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain(
-        "Unable to fetch change request refs for worktree branch contributor/private: <direct remote> refs/heads/contributor/private",
+        "Unable to fetch change request refs into refs/heads/contributor/private: <direct remote> refs/heads/contributor/private",
       );
       expect((error as Error).message).not.toMatch(/forge-secret|query-secret/);
     });
