@@ -1945,6 +1945,8 @@ export const fr: TranslationResources = {
       hint: "Connexion directe via votre tailnet, saisissez une adresse",
       unavailable: "Tailscale ne fonctionne pas sur cet hôte",
       install: "Obtenir Tailscale",
+      refresh: "Actualiser",
+      refreshing: "Actualisation...",
       waiting: "En attente du démarrage de Tailscale sur cet hôte",
       alwaysOn: "Toujours activé, car cet hôte accepte déjà les connexions Tailscale",
       socket: "Désactivé, car cet hôte écoute sur un socket local",

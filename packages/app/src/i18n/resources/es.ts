@@ -1947,6 +1947,8 @@ export const es: TranslationResources = {
       hint: "Conexión directa por tu tailnet, introduce una dirección",
       unavailable: "Tailscale no se está ejecutando en este host",
       install: "Obtener Tailscale",
+      refresh: "Actualizar",
+      refreshing: "Actualizando...",
       waiting: "Esperando a que Tailscale se inicie en este host",
       alwaysOn: "Siempre activado, porque este host ya acepta conexiones de Tailscale",
       socket: "Desactivado, porque este host escucha en un socket local",

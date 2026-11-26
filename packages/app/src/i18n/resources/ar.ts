@@ -1897,6 +1897,8 @@ export const ar: TranslationResources = {
       hint: "اتصال مباشر عبر شبكة tailnet الخاصة بك، أدخل عنوانًا",
       unavailable: "Tailscale لا يعمل على هذا المضيف",
       install: "احصل على Tailscale",
+      refresh: "تحديث",
+      refreshing: "جارٍ التحديث...",
       waiting: "في انتظار بدء Tailscale على هذا المضيف",
       alwaysOn: "مفعّل دائمًا، لأن هذا المضيف يقبل اتصالات Tailscale بالفعل",
       socket: "متوقف، لأن هذا المضيف يستمع على مقبس محلي",

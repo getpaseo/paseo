@@ -1931,6 +1931,8 @@ export const ru: TranslationResources = {
       hint: "Прямое подключение через ваш tailnet, по адресу",
       unavailable: "Tailscale не запущен на этом хосте",
       install: "Скачать Tailscale",
+      refresh: "Обновить",
+      refreshing: "Обновление...",
       waiting: "Ожидаем запуска Tailscale на этом хосте",
       alwaysOn: "Всегда включено, так как хост уже принимает подключения Tailscale",
       socket: "Выключено, так как хост слушает локальный сокет",

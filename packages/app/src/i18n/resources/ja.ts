@@ -1918,6 +1918,8 @@ export const ja: TranslationResources = {
       hint: "tailnet 経由で直接接続、アドレスを入力",
       unavailable: "このホストで Tailscale が動作していません",
       install: "Tailscale を入手",
+      refresh: "更新",
+      refreshing: "更新中...",
       waiting: "このホストで Tailscale が起動するのを待っています",
       alwaysOn: "常にオン。このホストはすでに Tailscale からの接続を受け付けています",
       socket: "オフ。このホストはローカルソケットで待ち受けています",

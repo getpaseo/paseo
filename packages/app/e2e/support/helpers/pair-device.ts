@@ -358,6 +358,29 @@ export async function expectTailscaleUpdateRequired(page: Page): Promise<void> {
   await expect(page.getByRole("link", { name: "How to update", exact: true })).toBeVisible();
 }
 
+export async function expectTailscaleUnavailable(page: Page): Promise<void> {
+  await expect(page.getByRole("switch", { name: "Tailscale", exact: true })).toBeDisabled();
+  await expect(
+    page.getByText("Tailscale is not running on this host", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Get Tailscale", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+}
+
+export async function refreshTailscaleAvailability(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+}
+
+export async function expectTailscaleAvailable(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+  const toggle = page.getByRole("switch", { name: "Tailscale", exact: true });
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).not.toBeChecked();
+  await expect(
+    page.getByText("Direct over your tailnet, enter an address", { exact: true }),
+  ).toBeVisible();
+}
+
 export async function openPairDeviceModal(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Relay", exact: true }).click();
   await expect(page.getByTestId("devices-relay-pairing")).toBeVisible();

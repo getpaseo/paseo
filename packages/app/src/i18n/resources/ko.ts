@@ -1909,6 +1909,8 @@ export const ko: TranslationResources = {
       hint: "tailnet으로 직접 연결, 주소 입력",
       unavailable: "이 호스트에서 Tailscale이 실행 중이 아닙니다",
       install: "Tailscale 받기",
+      refresh: "새로 고침",
+      refreshing: "새로 고치는 중...",
       waiting: "이 호스트에서 Tailscale이 시작되기를 기다리는 중",
       alwaysOn: "항상 켜짐. 이 호스트가 이미 Tailscale 연결을 받고 있습니다",
       socket: "꺼짐. 이 호스트가 로컬 소켓에서 수신 대기 중입니다",

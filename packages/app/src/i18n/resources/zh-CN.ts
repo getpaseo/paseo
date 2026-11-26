@@ -1879,6 +1879,8 @@ export const zhCN: TranslationResources = {
       hint: "通过你的 tailnet 直连，输入地址即可",
       unavailable: "此主机未运行 Tailscale",
       install: "获取 Tailscale",
+      refresh: "刷新",
+      refreshing: "刷新中...",
       waiting: "正在等待此主机上的 Tailscale 启动",
       alwaysOn: "始终开启，因为此主机已接受 Tailscale 连接",
       socket: "已关闭，因为此主机监听的是本地套接字",

@@ -1931,6 +1931,8 @@ export const ptBR: TranslationResources = {
       hint: "Conexão direta pela sua tailnet, digite um endereço",
       unavailable: "O Tailscale não está em execução neste host",
       install: "Baixar o Tailscale",
+      refresh: "Atualizar",
+      refreshing: "Atualizando...",
       waiting: "Aguardando o Tailscale iniciar neste host",
       alwaysOn: "Sempre ativado, porque este host já aceita conexões do Tailscale",
       socket: "Desativado, porque este host escuta em um socket local",

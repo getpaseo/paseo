@@ -1926,6 +1926,8 @@ export const en = {
       hint: "Direct over your tailnet, enter an address",
       unavailable: "Tailscale is not running on this host",
       install: "Get Tailscale",
+      refresh: "Refresh",
+      refreshing: "Refreshing...",
       waiting: "Waiting for Tailscale to start on this host",
       alwaysOn: "Always on, because this host already accepts Tailscale connections",
       socket: "Off, because this host listens on a local socket",
