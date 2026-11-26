@@ -151,7 +151,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
 
   function getService(forge: string): ForgeService | null {
     const normalized = forge.trim().toLowerCase();
-    return normalized ? adapter(normalized)?.service ?? null : null;
+    return normalized ? (adapter(normalized)?.service ?? null) : null;
   }
 
   function adapter(forge: string): { revision: number; service: ForgeService } | null {

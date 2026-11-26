@@ -24,7 +24,6 @@ import type {
   PluginWorktreeRestoreRequest,
   WorktreeManagerRegistration,
 } from "@getpaseo/plugin/server";
-import { randomUUID } from "node:crypto";
 import { assertPluginWireValue } from "@getpaseo/protocol/binary-frames/index";
 import {
   PluginSubscriptionHandlers,

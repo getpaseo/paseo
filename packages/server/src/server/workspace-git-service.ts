@@ -780,12 +780,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       options.deps,
     );
     this.forgeRegistry = options.forgeRegistry ?? defaultForgeRegistry;
-    this.forgeResolver = this.deps.forgeResolver ?? createForgeResolver({
-      registry: this.forgeRegistry,
-      resolveSshHostname: this.deps.resolveSshHostname,
-      createService: (forge) =>
-        this.deps.forgeOverrides?.[forge] ?? this.forgeRegistry.create(forge),
-    });
+    this.forgeResolver =
+      this.deps.forgeResolver ??
+      createForgeResolver({
+        registry: this.forgeRegistry,
+        resolveSshHostname: this.deps.resolveSshHostname,
+        createService: (forge) =>
+          this.deps.forgeOverrides?.[forge] ?? this.forgeRegistry.create(forge),
+      });
     this.unsubscribeForgeRegistry = this.forgeRegistry.subscribe(() => {
       this.handleForgeRegistryChange();
     });
@@ -3477,6 +3479,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         });
       }
       this.scheduleWorkspaceRefresh(target, {
+        origin: "observation",
         force: true,
         includeForge: true,
         reason: "forge-registry-change",

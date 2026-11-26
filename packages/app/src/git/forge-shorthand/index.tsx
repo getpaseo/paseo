@@ -29,11 +29,14 @@ export function ForgeShorthandProvider({
   const referenceRepository = forgeWeb?.referenceRepository;
   const value = useMemo(
     () =>
-      createForgeShorthand({
-        forge,
-        remoteUrl,
-        forgeWeb: webHost ? { host: webHost, referenceRepository } : null,
-      }, host),
+      createForgeShorthand(
+        {
+          forge,
+          remoteUrl,
+          forgeWeb: webHost ? { host: webHost, referenceRepository } : null,
+        },
+        host,
+      ),
     [forge, remoteUrl, webHost, referenceRepository, host],
   );
   return <ForgeShorthandContext.Provider value={value}>{children}</ForgeShorthandContext.Provider>;

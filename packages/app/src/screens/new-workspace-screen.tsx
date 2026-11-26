@@ -562,6 +562,14 @@ function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome>
   return submission;
 }
 
+function editableLaunchMetadata(draftId: string | undefined) {
+  const metadata = draftId ? useDraftStore.getState().getAgentLaunchMetadata(draftId) : undefined;
+  if (metadata?.submissionState === "outcome_unknown_readonly") {
+    throw new Error(LAUNCH_OUTCOME_UNKNOWN_MESSAGE);
+  }
+  return metadata;
+}
+
 async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
   const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
   const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
@@ -573,12 +581,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   if (!provider) {
     throw new Error(input.labels.selectModel);
   }
-  const launchMetadata = input.draftId
-    ? useDraftStore.getState().getAgentLaunchMetadata(input.draftId)
-    : undefined;
-  if (launchMetadata?.submissionState === "outcome_unknown_readonly") {
-    throw new Error(LAUNCH_OUTCOME_UNKNOWN_MESSAGE);
-  }
+  const launchMetadata = editableLaunchMetadata(input.draftId);
   const launchJournal = createChatLaunchJournal(launchMetadata?.draftId ?? null);
   const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
     supportsForgeAttachments: input.supportsForgeSearch,
@@ -1264,6 +1267,7 @@ export function NewWorkspaceScreen({
 
   const changeRequestContext = useChangeRequestContext({
     serverId: selectedServerId,
+    clientForgeHost,
     cwd: selectedSourceDirectory,
     pickerOpen: pickerQueryEnabled,
     selectedItem,
@@ -1787,6 +1791,7 @@ export function NewWorkspaceScreen({
       onActionChange: setup.chooseRefAction,
       canChooseAction: supportsRefActions,
       changeRequestContext,
+      clientForgeHost,
     },
     launch: {
       serverId: selectedServerId,
@@ -2047,6 +2052,7 @@ const styles = StyleSheet.create((theme) => ({
  */
 function useChangeRequestContext(input: {
   serverId: string;
+  clientForgeHost: ReturnType<typeof useClientForgeHost>;
   cwd: string | null;
   pickerOpen: boolean;
   selectedItem: PickerItem | null;
@@ -2056,5 +2062,5 @@ function useChangeRequestContext(input: {
     cwd: input.cwd ?? "",
     enabled: input.pickerOpen || input.selectedItem?.kind === "github-pr",
   });
-  return getForgePresentation(forge).changeRequestContext;
+  return getForgePresentation(forge, input.clientForgeHost).changeRequestContext;
 }

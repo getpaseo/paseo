@@ -61,7 +61,11 @@ export type {
   SearchResult,
 } from "@getpaseo/plugin/server";
 
-import type { CurrentPullRequestStatus, ForgeReadOptions, PluginForgeServerService } from "@getpaseo/plugin/server";
+import type {
+  CurrentPullRequestStatus,
+  ForgeReadOptions,
+  PluginForgeServerService,
+} from "@getpaseo/plugin/server";
 
 /**
  * A built-in adapter. It implements the plugin-facing contract plus the pieces

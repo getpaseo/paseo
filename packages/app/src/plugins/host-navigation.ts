@@ -26,7 +26,9 @@ export function buildPluginHostNavigation(
     ...createPluginHostNavigation(serverId, {
       browserAvailable: getIsElectron(),
       isHostRegistered: (targetServerId) =>
-        getHostRuntimeStore().getHosts().some((host) => host.serverId === targetServerId),
+        getHostRuntimeStore()
+          .getHosts()
+          .some((host) => host.serverId === targetServerId),
       focusHost: (targetServerId) => useSidebarViewStore.getState().focusHost(targetServerId),
       // Pinned like the agent history list, so an archived agent keeps the tab it was opened in.
       openAgent: ({ pendingMessage, ...input }) => {

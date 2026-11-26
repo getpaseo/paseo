@@ -98,6 +98,7 @@ function makeInstalledPlugin(input: {
     timelineTransformers: [],
     timelineRenderers: [],
     notificationOpenHandlers: input.handlers ?? [],
+    forgeClientProviders: [],
   };
 }
 

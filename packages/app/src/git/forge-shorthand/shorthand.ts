@@ -36,7 +36,12 @@ export function createForgeShorthand(
   const forge = input.forge || forgeFromRemoteUrl(remoteUrl, host);
   if (!forge || !remoteUrl) return null;
   const sigils = forgeSigils(forge, host).filter(
-    (sigil) => buildForgeReferenceUrl(forge, { remoteUrl, forgeWeb: input.forgeWeb, sigil, number: 1 }, host) !== null,
+    (sigil) =>
+      buildForgeReferenceUrl(
+        forge,
+        { remoteUrl, forgeWeb: input.forgeWeb, sigil, number: 1 },
+        host,
+      ) !== null,
   );
   if (sigils.length === 0) return null;
   return {

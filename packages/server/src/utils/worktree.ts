@@ -2815,7 +2815,12 @@ async function fetchFirstAvailableRefAtRepositoryRoot(
     const remoteName = checkoutRef.remoteName ?? "origin";
     lastCheckoutRef = checkoutRef;
     lastResult = await runGitCommand(
-      ["fetch", checkoutRef.remoteUrl ?? remoteName, `+${checkoutRef.remoteRef}:${options.destination}`, "--force"],
+      [
+        "fetch",
+        checkoutRef.remoteUrl ?? remoteName,
+        `+${checkoutRef.remoteRef}:${options.destination}`,
+        "--force",
+      ],
       {
         cwd: options.cwd,
         timeout: 120_000,

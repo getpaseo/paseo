@@ -173,6 +173,9 @@ describe("plugin host navigation", () => {
       openAgent: unavailable,
       openWorkspace: unavailable,
       createBrowser: unavailable,
+      withdrawPendingAgentMessage: unavailable,
+      hasSurface: () => false,
+      openSurface: unavailable,
       focusHost: (serverId) => focusedHosts.push(serverId),
     });
     expect(() => navigation.openAgent({ agentId: "missing", focusHost: true })).toThrow(

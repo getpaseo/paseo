@@ -1088,7 +1088,11 @@ export class PluginRuntime {
                 void send(child, { type: "provider.installation.cancel", requestId }).catch(
                   () => {},
                 );
-              reject(new Error(options.timedOutMessage ?? `Plugin RPC timed out: ${pluginId}.${message.type}`));
+              reject(
+                new Error(
+                  options.timedOutMessage ?? `Plugin RPC timed out: ${pluginId}.${message.type}`,
+                ),
+              );
             }, timeoutMs);
       signal?.addEventListener("abort", cancel, { once: true });
       loaded.pending.set(requestId, {
@@ -1133,7 +1137,6 @@ export class PluginRuntime {
     return this.request(
       loaded,
       { type: "invoke_forge", requestId: randomUUID(), providerId, method, input },
-      undefined,
       {
         timeoutMs: method === "probeHost" ? FORGE_PROBE_TIMEOUT_MS : FORGE_REQUEST_TIMEOUT_MS,
         timedOutMessage: `Plugin forge request timed out: ${pluginId}.${providerId}.${method}`,
