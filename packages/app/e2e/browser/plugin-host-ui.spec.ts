@@ -16,11 +16,12 @@ import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 
 const PLUGIN_ID = "plugin-host-ui-e2e";
 
 const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast, Markdown } from "@getpaseo/plugin/client/ui";
+import { Icon, Modal, useToast, Markdown, ScrollView, TextInput } from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -54,8 +55,23 @@ function Surface({ playAudio }) {
     catch { setAudioStatus("Audio rejected"); }
   }
   const [open, setOpen] = useState(false);
+  const [sizingOpen, setSizingOpen] = useState(false);
+  const [long, setLong] = useState(false);
   return <View>
     <Text>{audioStatus}</Text>
+    <Pressable accessibilityRole="button" onPress={() => setSizingOpen(true)}><Text>Open sized modal</Text></Pressable>
+    <Modal title="Sized modal" open={sizingOpen} onOpenChange={setSizingOpen}>
+      <Modal.Content scrollable={false} desktopSizing="content" contentContainerStyle={{ flexShrink: 1, minHeight: 0, padding: 0, gap: 0 }}>
+        <View style={{ flexShrink: 1, minHeight: 0 }}>
+          <ScrollView testID="sized-scroll" style={{ flexShrink: 1, minHeight: 0 }} contentContainerStyle={{ padding: 16 }}>
+            <Pressable accessibilityRole="button" onPress={() => setLong(!long)}><Text>Toggle length</Text></Pressable>
+            <View style={{ height: long ? 1600 : 100 }}><Text>Question content</Text></View>
+            <TextInput testID="sized-input" multiline style={{ height: 60, resize: "vertical" }} />
+          </ScrollView>
+          <View testID="sized-actions" style={{ height: 56 }}><Text>Fixed actions</Text></View>
+        </View>
+      </Modal.Content>
+    </Modal>
     <Pressable accessibilityRole="button" onPress={() => play(AUDIO_BASE64)}><Text>Play plugin audio</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => play("UklGRg==")}><Text>Play invalid audio</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
@@ -171,11 +187,53 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
       await closeCenteredPluginDialog(page);
     });
 
+    await test.step("content-sized dialogs grow to the limit and keep actions visible", async () => {
+      await page.getByRole("button", { name: "Open sized modal" }).click();
+      const dialog = page.getByRole("dialog");
+      const actions = page.getByTestId("sized-actions");
+      const scroll = page.getByTestId("sized-scroll");
+      const shortHeight = (await dialog.boundingBox())!.height;
+      expect(shortHeight).toBeLessThan(500);
+      await expect(page.getByTestId("sized-input")).toHaveCSS("resize", "vertical");
+      await page.getByRole("button", { name: "Toggle length" }).click();
+      const longHeight = (await dialog.boundingBox())!.height;
+      expect(longHeight).toBeGreaterThan(shortHeight);
+      expect(longHeight).toBeLessThanOrEqual(800 * 0.85 + 1);
+      await expect(actions).toBeVisible();
+      const before = (await actions.boundingBox())!.y;
+      await scroll.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+      });
+      expect(await scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      expect((await actions.boundingBox())!.y).toBe(before);
+      await expect(page.getByTestId("sized-input")).toBeVisible();
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    });
+
     await test.step("compact layouts preserve host contexts inside a sheet", async () => {
       await useCompactLayout(page);
       await openPluginModal(page);
       await expectCompactPluginSheet(page);
       await savePluginIssue(page);
+    });
+
+    await test.step("compact sheets keep sized modal scrolling and actions visible", async () => {
+      await page.getByRole("button", { name: "Open sized modal" }).click();
+      const title = page.getByText("Sized modal", { exact: true });
+      await expect(title).toBeInViewport();
+      await waitForSettledPosition(title);
+      const actions = page.getByTestId("sized-actions");
+      const scroll = page.getByTestId("sized-scroll");
+      await expect(actions).toBeInViewport();
+      const before = (await actions.boundingBox())!.y;
+      await scroll.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+      });
+      expect(await scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      expect((await actions.boundingBox())!.y).toBe(before);
+      await expect(page.getByTestId("sized-input")).toBeInViewport();
+      await page.getByRole("button", { name: "Close", exact: true }).last().click();
+      await expect(title).not.toBeVisible();
     });
   } finally {
     await client.removePlugin(PLUGIN_ID).catch(() => undefined);
