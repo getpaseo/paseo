@@ -330,6 +330,140 @@ describe("runAcpProvider", () => {
     },
   );
 
+  it.each(["responds", "hangs"] as const)(
+    "scopes Stop to the active prompt when cancellation %s",
+    async (behavior) => {
+      const sessionId = "session-1";
+      let approval: Promise<unknown> | undefined;
+      let firstPrompt: AcpRequestMessage | undefined;
+      const { connector, instances } = connectorHarness({
+        capabilities: { loadSession: true },
+        handleRequest(runtime, request) {
+          if (request.method !== "session/prompt" || firstPrompt) return false;
+          firstPrompt = request;
+          runtime.notify("session/update", {
+            sessionId: "connector-session",
+            update: textChunk("Work in progress"),
+          });
+          approval = runtime.request("session/request_permission", {
+            sessionId: "connector-session",
+            toolCall: { toolCallId: "pending-tool", title: "Write a file" },
+            options: [{ optionId: "yes", kind: "allow_once", name: "Allow" }],
+          });
+          return true;
+        },
+        handleMessage(runtime, message) {
+          if (!("method" in message) || message.method !== "session/cancel") return false;
+          if (behavior === "responds" && firstPrompt) {
+            runtime.respond(firstPrompt, { stopReason: "cancelled" });
+          }
+          return true;
+        },
+      });
+      const connection = await runAcpProvider({
+        id: "cancel-acp",
+        label: "Cancel ACP",
+        connector,
+        acpOptions: { promptCancelTimeoutMs: 50 },
+      }).connect({
+        versions: [1],
+        capabilities: ["prompt.message", "session.persistence", "permission"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      const open = {
+        ...openInput(),
+        persistence: { version: 1, data: { sessionId: "connector-session" } },
+      };
+      const prompt = (clientMessageId: string) =>
+        connection.send({
+          type: "session.prompt",
+          sessionId,
+          prompt: {
+            clientMessageId,
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: clientMessageId }] },
+          },
+        });
+      try {
+        await connection.send(open);
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await prompt("first");
+        await waitForEvent(
+          events,
+          (event) => event.type === "timeline.item" && event.item.type === "assistant_message",
+        );
+        await waitForEvent(events, (event) => event.type === "session.permission");
+        await Promise.all(
+          ["stop-1", "stop-2"].map((requestId) =>
+            connection.send({ type: "session.interrupt", sessionId, requestId }),
+          ),
+        );
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:first" &&
+            event.state === "canceled",
+        );
+        expect(await approval).toMatchObject({ outcome: { outcome: "cancelled" } });
+        expect(countRequests(instances[1], "session/prompt")).toBe(1);
+        const closed = events.findIndex((event) => event.type === "session.closed");
+        if (closed !== -1) {
+          for (const requestId of ["stop-1", "stop-2"]) {
+            const ack = events.findIndex(
+              (event) => event.type === "request.completed" && event.requestId === requestId,
+            );
+            expect(ack).toBeGreaterThan(-1);
+            expect(ack).toBeLessThan(closed);
+          }
+        }
+        expect(
+          events.filter(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:first" &&
+              event.state !== "started",
+          ),
+        ).toHaveLength(1);
+        if (behavior === "hangs") {
+          await waitForEvent(events, (event) => event.type === "session.closed");
+          expect(instances[1].readsCanceled).toBe(true);
+          await connection.send({ ...open, requestId: "reopen" });
+          await waitForEvent(
+            events,
+            (event) => event.type === "session.ready" && event.requestId === "reopen",
+          );
+          expect(instances[2].requests).toContainEqual(
+            expect.objectContaining({
+              method: "session/load",
+              params: expect.objectContaining({ sessionId: "connector-session" }),
+            }),
+          );
+        } else {
+          expect(instances[1].readsCanceled).toBe(false);
+          expect(events.some((event) => event.type === "session.closed")).toBe(false);
+        }
+        for (const id of ["stop-1", "stop-2"]) {
+          await waitForEvent(
+            events,
+            (event) => event.type === "request.completed" && event.requestId === id,
+          );
+        }
+        await prompt("next");
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:next" &&
+            event.state === "completed",
+        );
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
   it("keeps history that streams after session/load for longer than five quiet periods", async () => {
     const sessionId = "connector-session";
     const historyLength = 40;

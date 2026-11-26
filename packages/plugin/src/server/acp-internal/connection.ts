@@ -97,6 +97,7 @@ interface AcpBoundarySession {
   runtime: AcpRuntime;
   capabilities: readonly ProviderCapability[];
   mutationLane: Promise<void>;
+  stop?: { requestIds: string[]; settled: Promise<void> };
 }
 
 export async function createAcpProviderConnection(
@@ -329,9 +330,25 @@ async function dispatch(
     }
     case "session.interrupt": {
       const session = requireSession(state, input.sessionId);
-      const retired = await session.runtime.interrupt();
-      state.emit({ type: "request.completed", requestId: input.requestId });
-      if (retired) retireSession(state, input.sessionId);
+      if (session.stop) {
+        session.stop.requestIds.push(input.requestId);
+        await session.stop.settled;
+        return;
+      }
+      const requestIds = [input.requestId];
+      const settled = session.runtime.interrupt().then((retired) => {
+        // A session.closed event rejects the daemon's pending requests. Acknowledge all
+        // Stop requests for this turn before closing their session.
+        for (const requestId of requestIds) state.emit({ type: "request.completed", requestId });
+        if (retired) retireSession(state, input.sessionId);
+        return undefined;
+      });
+      session.stop = { requestIds, settled };
+      try {
+        await settled;
+      } finally {
+        session.stop = undefined;
+      }
       return;
     }
     case "session.permission":
@@ -571,6 +588,7 @@ interface ActivePrompt {
   turnId: string;
   settled: Promise<void>;
   cancelling: boolean;
+  retiring?: boolean;
   wirePromptsInFlight: number;
   wirePromptLane: Promise<void>;
   lastPromptResponseWireSeq: number | null;
@@ -633,7 +651,8 @@ class AcpRuntime {
   private closing = false;
   private closePromise: Promise<void> | null = null;
   private deferredRetirement: Promise<boolean> | null = null;
-  private deferredFinalized = false;
+  private retiredTurnFinalized = false;
+  private promptInterrupt: Promise<boolean> | null = null;
   private processFailed = false;
   private processFailureMessage: string | null = null;
   private configTransaction = false;
@@ -1002,6 +1021,7 @@ class AcpRuntime {
     ).then(
       async (response): Promise<void> => {
         await this.drainNotifications();
+        if (activePrompt.retiring) return;
         activePrompt.wirePromptsInFlight -= 1;
         if (response.usage) {
           this.lastUsage = {
@@ -1027,6 +1047,7 @@ class AcpRuntime {
       },
       async (error): Promise<void> => {
         await this.drainNotifications();
+        if (activePrompt.retiring) return;
         activePrompt.wirePromptsInFlight -= 1;
         this.finishPromptTurn(turnId, "failed", { message: describeError(error) });
         return undefined;
@@ -1041,6 +1062,7 @@ class AcpRuntime {
 
   async interrupt(): Promise<boolean> {
     if (this.deferredRetirement) return this.deferredRetirement;
+    if (this.promptInterrupt) return this.promptInterrupt;
     const active = this.activePrompt;
     const deferredTurnId = active?.deferred ? active.turnId : null;
     if (active && deferredTurnId) {
@@ -1051,22 +1073,43 @@ class AcpRuntime {
       this.deferredRetirement = retirement;
       return retirement;
     }
+    const timeout = this.options.options.acpOptions?.promptCancelTimeoutMs;
+    if (active && timeout !== undefined) {
+      const interrupt = this.interruptPrompt(active, timeout);
+      this.promptInterrupt = interrupt;
+      try {
+        return await interrupt;
+      } finally {
+        this.promptInterrupt = null;
+      }
+    }
+    await this.sendCancel(active);
+    return false;
+  }
+
+  private async sendCancel(active: ActivePrompt | null): Promise<void> {
     if (active) active.cancelling = true;
     try {
       await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
     } finally {
       // An agent may wait for its outstanding permission replies before ending the prompt.
-      if (active) {
-        this.finishTurnPermissions(active.turnId);
-      }
+      if (active) this.finishTurnPermissions(active.turnId);
     }
-    return false;
   }
 
-  private finalizeDeferredTurn(deferredTurnId: string, emitRetired: boolean): void {
-    if (this.deferredFinalized) return;
-    this.deferredFinalized = true;
-    this.finishPromptTurn(deferredTurnId, "canceled", undefined, {
+  private async interruptPrompt(active: ActivePrompt, timeout: number): Promise<boolean> {
+    const ended = this.sendCancel(active).then(() => active.settled);
+    if (await settlesWithin(ended, timeout)) return false;
+    if (this.activePrompt !== active || this.closing || this.processFailed) return false;
+
+    active.retiring = true;
+    return this.closeCanceledTurn(active.turnId, true);
+  }
+
+  private finalizeCanceledTurn(turnId: string, emitRetired: boolean): void {
+    if (this.retiredTurnFinalized) return;
+    this.retiredTurnFinalized = true;
+    this.finishPromptTurn(turnId, "canceled", undefined, {
       suppressTrailingToolEcho: true,
     });
     if (emitRetired) this.options.onRetired?.();
@@ -1096,16 +1139,20 @@ class AcpRuntime {
     // already returned. Close the process first while the turn still appears running,
     // then emit the canceled turn synchronously before request.completed and session.closed
     // so queued work and config changes immediately observe the retired session.
+    return this.closeCanceledTurn(deferredTurnId, cancelTimedOut);
+  }
+
+  private async closeCanceledTurn(turnId: string, force: boolean): Promise<boolean> {
     try {
-      await this.close({ force: cancelTimedOut, timeoutMs: 1_000 });
+      await this.close({ force, timeoutMs: 1_000 });
     } catch (error) {
       void this.whenConnectorClosed()?.then(
-        () => this.finalizeDeferredTurn(deferredTurnId, true),
+        () => this.finalizeCanceledTurn(turnId, true),
         () => undefined,
       );
       throw error;
     }
-    this.finalizeDeferredTurn(deferredTurnId, false);
+    this.finalizeCanceledTurn(turnId, false);
     return true;
   }
 
@@ -2751,8 +2798,15 @@ function withTimeout<Value>(
 }
 
 async function settlesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
-  return Promise.race([
-    promise.then(() => true),
-    new Promise<false>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
