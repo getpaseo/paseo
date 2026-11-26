@@ -1,5 +1,6 @@
+/** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it } from "vitest";
-import { useDraftStore } from "./index";
+import { useDraftStore, prepareDraftCreation, claimDraftCreation } from "./index";
 import { migratePersistedState, PersistedDraftStoreSchema } from "./migration";
 import { draftCreationKey } from "@/composer/draft/creation-key";
 
@@ -146,4 +147,46 @@ describe("a draft's plugin metadata", () => {
     store.clearDraftMetadata({ draftKey });
     expect(useDraftStore.getState().metadataByDraftKey[draftKey]).toBeUndefined();
   });
+});
+
+it("allocates a fresh creation identity for an explicit content draft after retirement and reload", async () => {
+  useDraftStore.setState({ drafts: {}, metadataByDraftKey: {}, creationIdByDraftKey: {} });
+  const input = { serverId, draftKey, proposedId: "explicit-fork-route" };
+  const original = await prepareDraftCreation(input);
+  const store = useDraftStore.getState();
+  store.editDraftText({ draftKey, text: "A newer fork idea" });
+  store.clearDraftCreationId(input);
+  const saved = PersistedDraftStoreSchema.parse(
+    JSON.parse(
+      JSON.stringify(useDraftStore.persist.getOptions().partialize!(useDraftStore.getState())),
+    ),
+  );
+  const restored = await migratePersistedState(saved, {
+    migrateLegacyImages: async () => [],
+    nowMs: 1,
+  });
+  useDraftStore.setState({
+    ...restored,
+    creationIdByDraftKey: restored.creationIdByDraftKey ?? {},
+  });
+  const next = await prepareDraftCreation(input);
+  expect(next).not.toBe(original);
+  expect(next).toMatch(/^draft_/);
+  expect(await prepareDraftCreation(input)).toBe(next);
+  expect(useDraftStore.getState().getDraftInput(draftKey)?.text).toBe("A newer fork idea");
+});
+
+it("reclaims a prepared ID retired before admission without overriding a newer owner", async () => {
+  useDraftStore.setState({ drafts: {}, metadataByDraftKey: {}, creationIdByDraftKey: {} });
+  const input = { serverId, draftKey, proposedId: "explicit-route-to-claim" };
+  const prepared = await prepareDraftCreation(input);
+  useDraftStore.getState().clearDraftCreationId(input);
+  await claimDraftCreation({ serverId, draftKey, expectedId: prepared });
+  expect(useDraftStore.getState().getDraftCreationId(input)).toBe(prepared);
+  useDraftStore.getState().clearDraftCreationId(input);
+  const newer = await prepareDraftCreation(input);
+  await expect(claimDraftCreation({ serverId, draftKey, expectedId: prepared })).rejects.toThrow(
+    "The draft now belongs to another start",
+  );
+  expect(useDraftStore.getState().getDraftCreationId(input)).toBe(newer);
 });

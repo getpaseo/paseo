@@ -407,6 +407,7 @@ async function createMultiplicityWorkspace(input: {
     serverId: input.serverId,
     draftId: input.idempotencyKey,
     request: admissionRequest,
+    observe: (kind, key, onEvent) => input.client.waitForCreation(kind, key, onEvent),
   });
   if (retry.kind === "reuse") {
     const ready = retry.workspace;
@@ -479,6 +480,7 @@ interface CreateChatAgentInput {
   draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftId?: string;
+  sourceDraftId?: string;
   draftContextScopeKey: string | null;
   supportsForgeSearch: boolean;
   resolveClient: () => DaemonClient;
@@ -1494,6 +1496,7 @@ export function NewWorkspaceScreen({
           const clearConsumedDraft = captureWorkspaceDraftCleanup({
             serverId: selectedServerId,
             draftId: creationDraftId,
+            sourceDraftId: draftId,
             draftKey,
             clearDraft: chatDraft.clear,
             draftContextScopeKey,
@@ -1545,6 +1548,7 @@ export function NewWorkspaceScreen({
           clearDraft: chatDraft.clear,
           draftKey,
           draftId: creationDraftId,
+          sourceDraftId: draftId,
           draftContextScopeKey,
           supportsForgeSearch,
           resolveClient: withConnectedClient,

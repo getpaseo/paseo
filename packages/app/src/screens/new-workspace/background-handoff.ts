@@ -27,6 +27,7 @@ export function handOffDraftMetadata(input: {
 interface WorkspaceDraftCleanupInput {
   serverId: string;
   draftId?: string;
+  sourceDraftId?: string;
   draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftContextScopeKey: string | null;
@@ -35,9 +36,10 @@ interface WorkspaceDraftCleanupInput {
 /** Capture ownership before workspace creation starts, not when its response arrives. */
 export function captureWorkspaceDraftCleanup(input: WorkspaceDraftCleanupInput): () => void {
   const draftId = input.draftId?.trim() ?? "";
+  const sourceDraftId = input.sourceDraftId?.trim() || draftId;
   const scopeKey = input.draftContextScopeKey ?? "";
   const draftVersion = useDraftStore.getState().drafts[input.draftKey]?.version;
-  const setup = useWorkspaceDraftSubmissionStore.getState().setupByDraftId[draftId];
+  const setup = useWorkspaceDraftSubmissionStore.getState().setupByDraftId[sourceDraftId];
   const attachments = useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey];
 
   return () => {
@@ -49,12 +51,12 @@ export function captureWorkspaceDraftCleanup(input: WorkspaceDraftCleanupInput):
     // Any newer draft state owns the whole draft, including its unchanged context.
     if (
       useDraftStore.getState().drafts[input.draftKey]?.version !== draftVersion ||
-      useWorkspaceDraftSubmissionStore.getState().setupByDraftId[draftId] !== setup ||
+      useWorkspaceDraftSubmissionStore.getState().setupByDraftId[sourceDraftId] !== setup ||
       useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey] !== attachments
     ) {
       return;
     }
-    useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
+    useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId: sourceDraftId });
     if (scopeKey) {
       useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({ scopeKey });
     }

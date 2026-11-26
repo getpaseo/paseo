@@ -39,6 +39,7 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { applyMetadataPatch } from "@/composer/draft/metadata";
 import { hasDraftContent } from "@/composer/draft/input-draft-core";
+import { generateDraftId } from "@/stores/draft-keys";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -110,13 +111,18 @@ export async function prepareDraftCreation(input: {
   serverId: string;
   draftKey: string;
   proposedId: string;
+  reclaimRetired?: boolean;
 }): Promise<string> {
   await initialHydration;
   if (hydrationError !== undefined) {
     await useDraftStore.persist.rehydrate();
     if (hydrationError !== undefined) throw hydrationError;
   }
-  const id = useDraftStore.getState().ensureDraftCreationId(input);
+  const store = useDraftStore.getState();
+  const retired =
+    store.creationIdByDraftKey[JSON.stringify([input.serverId, input.draftKey])] === null;
+  const proposedId = retired && !input.reclaimRetired ? generateDraftId() : input.proposedId;
+  const id = store.ensureDraftCreationId({ ...input, proposedId });
   await draftPersistStorage.checkpoint("paseo-drafts", {
     state: persistedDraftState(useDraftStore.getState()),
     version: DRAFT_STORE_VERSION,
@@ -134,6 +140,7 @@ export async function claimDraftCreation(input: {
     serverId: input.serverId,
     draftKey: input.draftKey,
     proposedId: input.expectedId,
+    reclaimRetired: true,
   });
   if (actual !== input.expectedId)
     throw new Error(

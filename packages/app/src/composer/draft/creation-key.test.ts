@@ -1372,3 +1372,84 @@ it.each(["unknown", "completed", "missing"] as const)(
     ).rejects.toThrow(DraftCreationOutcomeUnknownError);
   },
 );
+
+it("recovers a host workspace receipt before routing an edited retry without a local ready milestone", async () => {
+  const disk = storage();
+  await creationsFor(disk).submit({
+    ...scope,
+    kind: "workspace",
+    request: handedOffRequest,
+    send: async () => undefined,
+  });
+  const restored = creationsFor(disk);
+  const edited = {
+    ...handedOffRequest,
+    agent: { ...request, initialPrompt: "Corrected after early reload" },
+  };
+  const observed: string[] = [];
+  expect(
+    await restored.workspaceRetry({
+      ...scope,
+      request: edited,
+      observe: async (kind, key, onEvent) => {
+        observed.push(kind, key);
+        const receipt = {
+          ...failure({ kind, idempotencyKey: key, unknown: false }),
+          workspace: handedOffWorkspace,
+        };
+        onEvent(receipt);
+        return receipt;
+      },
+    }),
+  ).toEqual({ kind: "reuse", workspace: handedOffWorkspace });
+  expect(observed).toEqual(["workspace", draftCreationKey(scope.draftId, handedOffRequest)]);
+  expect(
+    await restored.submit({
+      ...scope,
+      kind: "agent",
+      request: { ...destinationRequest, initialPrompt: "Corrected after early reload" },
+      send: async () => "corrected-agent",
+    }),
+  ).toBe("corrected-agent");
+});
+
+it.each(["missing", "unknown"] as const)(
+  "keeps an edited workspace retry protected without a ready milestone when its receipt is %s",
+  async (outcome) => {
+    const disk = storage();
+    await creationsFor(disk).submit({
+      ...scope,
+      kind: "workspace",
+      request: handedOffRequest,
+      send: async () => undefined,
+    });
+    const restored = creationsFor(disk);
+    const edited = {
+      ...handedOffRequest,
+      agent: { ...request, initialPrompt: "Edited before ready" },
+    };
+    const retry = restored.workspaceRetry({
+      ...scope,
+      request: edited,
+      observe: async (kind, key, onEvent) => {
+        if (outcome === "missing") return null;
+        const receipt = failure({ kind, idempotencyKey: key, unknown: true });
+        onEvent(receipt);
+        return receipt;
+      },
+    });
+    await expect(retry).rejects.toThrow(DraftCreationOutcomeUnknownError);
+    let sends = 0;
+    await expect(
+      restored.submit({
+        ...scope,
+        kind: "workspace",
+        request: edited,
+        send: async () => {
+          sends += 1;
+        },
+      }),
+    ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+    expect(sends).toBe(0);
+  },
+);

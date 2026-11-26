@@ -665,7 +665,7 @@ type AgentCreationIntent = Pick<
 
 export interface WorkspaceCreatedDelayControl {
   agentRequests: readonly AgentCreationIntent[];
-  release(): void;
+  release(options?: { discard?: boolean }): void;
   waitForCreateRequest(): Promise<void>;
 }
 
@@ -721,9 +721,11 @@ export async function delayBrowserWorkspaceCreatedResponse(
 
   return {
     agentRequests,
-    release() {
+    release(options) {
       releaseRequested = true;
-      for (const forward of delayedForwards.splice(0)) {
+      const forwards = delayedForwards.splice(0);
+      if (options?.discard) return;
+      for (const forward of forwards) {
         forward();
       }
     },

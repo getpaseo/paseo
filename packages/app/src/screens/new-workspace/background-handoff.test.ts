@@ -209,3 +209,37 @@ describe("createWorkspaceAgentInBackground", () => {
     expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[SCOPE_KEY]).toHaveLength(1);
   });
 });
+
+it("clears consumed fork setup by its content route ID when the creation identity is fresh", async () => {
+  const store = useDraftStore.getState();
+  store.clearDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY });
+  const creationId = store.ensureDraftCreationId({
+    serverId: SERVER_ID,
+    draftKey: DRAFT_KEY,
+    proposedId: "fresh-creation",
+  });
+  useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+    draftId: DRAFT_ID,
+    setup: {
+      cwd: "/work/fork",
+      provider: "codex",
+      modeId: null,
+      model: null,
+      thinkingOptionId: null,
+      providerOptions: {},
+    },
+  });
+  const cleanup = captureWorkspaceDraftCleanup({
+    serverId: SERVER_ID,
+    draftId: creationId,
+    sourceDraftId: DRAFT_ID,
+    draftKey: DRAFT_KEY,
+    draftContextScopeKey: SCOPE_KEY,
+    clearDraft: (lifecycle) =>
+      useDraftStore.getState().clearDraftInput({ draftKey: DRAFT_KEY, lifecycle }),
+  });
+  await run(async () => undefined, cleanup);
+  expect(useWorkspaceDraftSubmissionStore.getState().setupByDraftId[DRAFT_ID]).toBeUndefined();
+  expect(store.getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY })).toBeUndefined();
+  expect(draftText()).toBe("");
+});

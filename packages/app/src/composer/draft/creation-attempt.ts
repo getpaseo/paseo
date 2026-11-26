@@ -61,6 +61,17 @@ interface Identity {
   draftId: string;
 }
 
+type ObserveCreation = (
+  kind: CreationSnapshot["kind"],
+  key: string,
+  onEvent: (snapshot: CreationSnapshot) => void,
+) => Promise<CreationSnapshot | null>;
+
+interface WorkspaceRetryInput extends Identity {
+  request: object;
+  observe?: ObserveCreation;
+}
+
 type WorkspaceRetry =
   | { kind: "create" }
   | { kind: "replay" }
@@ -101,6 +112,21 @@ function requestsAgent(input: Pick<Submission<unknown>, "kind" | "request">): bo
 
 function isStandaloneReplay(attempt: Attempt, draftId: string, request: object): boolean {
   return attempt.kind === "agent" && attempt.key === draftCreationKey(draftId, request);
+}
+
+function workspaceReceiptToObserve(
+  record: Record,
+  input: WorkspaceRetryInput,
+): Attempt | undefined {
+  const prior = record.attempt;
+  if (
+    record.workspace ||
+    prior?.kind !== "workspace" ||
+    prior.outcome === "failed" ||
+    prior.key === draftCreationKey(input.draftId, input.request)
+  )
+    return undefined;
+  return prior;
 }
 
 function canStartFirstAgent(
@@ -251,9 +277,27 @@ export function createDraftCreations(deps: Dependencies) {
     });
   }
 
-  async function workspaceRetry(input: Identity & { request: object }): Promise<WorkspaceRetry> {
+  async function workspaceRetry(input: WorkspaceRetryInput): Promise<WorkspaceRetry> {
     const scope = await scopeFor(input);
     await scope.writes;
+    const observe = input.observe;
+    // Identical retries must reach the in-flight coalescer without waiting on observation.
+    if (observe && workspaceReceiptToObserve(scope.record, input)) {
+      await serialize(scope, async () => {
+        await scope.writes;
+        const prior = workspaceReceiptToObserve(scope.record, input);
+        if (!prior) return;
+        const snapshot = await observe("workspace", prior.key, (update) =>
+          acceptSnapshot(scope, update, true),
+        );
+        await scope.writes;
+        if (snapshot?.kind !== prior.kind || snapshot.idempotencyKey !== prior.key)
+          throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
+        const conclusiveFailure = snapshot.phase === "failed" && snapshot.outcomeUnknown === false;
+        if (!scope.record.workspace && !conclusiveFailure)
+          throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
+      });
+    }
     if (!scope.record.workspace) return { kind: "create" };
     const prior = scope.record.attempt;
     const sameRequest =
@@ -281,11 +325,7 @@ export function createDraftCreations(deps: Dependencies) {
     input: Identity & {
       workspaceId: string;
       request: object;
-      observe: (
-        kind: CreationSnapshot["kind"],
-        key: string,
-        onEvent: (snapshot: CreationSnapshot) => void,
-      ) => Promise<CreationSnapshot | null>;
+      observe: ObserveCreation;
     },
   ): Promise<AgentSnapshotPayload | undefined> {
     const scope = await scopeFor(input);

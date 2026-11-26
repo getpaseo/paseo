@@ -870,3 +870,112 @@ test("an edited standalone agent draft observes its pending receipt after reload
     await client.close();
   }
 });
+
+for (const outcome of ["failed", "completed"] as const) {
+  test(`an edited source draft recovers its workspace receipt when reload loses readiness (${outcome})`, async ({
+    creation,
+    startup,
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const delay = await delayBrowserWorkspaceCreatedResponse(page);
+    const client = await connectNewWorkspaceDaemonClient();
+    try {
+      await creation.openWorkspaceForm("local");
+      const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+      await creation.submitPrompt("Original task before any ready checkpoint", "Create");
+      await delay.waitForCreateRequest();
+      await creation.leaveWorkspaceForm();
+      await page.waitForFunction(() =>
+        Object.keys(localStorage).some((key) => {
+          if (!key.startsWith("draft-creation:")) return false;
+          const record = JSON.parse(localStorage.getItem(key)!);
+          return (
+            !record.workspace &&
+            record.attempt?.kind === "workspace" &&
+            record.attempt.outcome === "pending"
+          );
+        }),
+      );
+      await creation.returnToWorkspaceForm();
+      await page.reload();
+      delay.release({ discard: true });
+      await reselectModel(page, "mock", "Ten second stream");
+      if (outcome === "failed") await startup.fail();
+      else await startup.release();
+      await creation.submitPrompt("Edited task after lost readiness", "Create");
+      if (outcome === "failed")
+        await creation.expectPromptVisible("Edited task after lost readiness");
+      else
+        await expect(
+          page
+            .getByText(
+              "The previous start may still be running. Check your workspaces and agents before starting another.",
+            )
+            .filter({ visible: true })
+            .first(),
+        ).toBeVisible();
+      const workspaces = (await client.fetchWorkspaces()).entries.filter(
+        (entry) => !before.has(entry.id),
+      );
+      expect(workspaces).toHaveLength(1);
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchAgents()).entries.filter(
+              (entry) => entry.agent.workspaceId === workspaces[0]!.id,
+            ).length,
+        )
+        .toBe(1);
+    } finally {
+      delay.release({ discard: true });
+      await startup.release();
+      await client.close();
+    }
+  });
+}
+
+test("a retired explicit fork route uses a fresh creation scope when revisited after completion", async ({
+  creation,
+  page,
+}) => {
+  const client = await connectNewWorkspaceDaemonClient();
+  const routeDraftId = "draft_explicit_fork_retry";
+  try {
+    await creation.openWorkspaceForm("local");
+    const url = new URL(page.url());
+    url.searchParams.set("draftId", routeDraftId);
+    const route = `${url.pathname}${url.search}`;
+    await page.goto(route);
+    await selectWorkspaceIsolation(page, "local");
+    await reselectModel(page, "mock", "Ten second stream");
+    const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+    await creation.submitPrompt("Original explicit fork idea", "Create");
+    await creation.expectPromptVisible("Original explicit fork idea");
+    const scopeKey = JSON.stringify([getServerId(), `new-workspace:draft:${routeDraftId}`]);
+    await page.waitForFunction(
+      (key) =>
+        JSON.parse(localStorage.getItem("paseo-drafts")!).state.creationIdByDraftKey[key] === null,
+      scopeKey,
+    );
+    await page.goto(route);
+    await reselectModel(page, "mock", "Ten second stream");
+    await creation.submitPrompt("A newer explicit fork idea", "Create");
+    await creation.expectPromptVisible("A newer explicit fork idea");
+    const workspaces = (await client.fetchWorkspaces()).entries.filter(
+      (entry) => !before.has(entry.id),
+    );
+    expect(workspaces).toHaveLength(2);
+    const ids = new Set(workspaces.map((workspace) => workspace.id));
+    await expect
+      .poll(
+        async () =>
+          (await client.fetchAgents()).entries.filter((entry) =>
+            ids.has(entry.agent.workspaceId ?? ""),
+          ).length,
+      )
+      .toBe(2);
+  } finally {
+    await client.close();
+  }
+});
