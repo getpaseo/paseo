@@ -4,6 +4,7 @@ const path = require("path");
 const { smokePackagedDesktopApp } = require("../e2e/packaged-app-smoke.js");
 
 const { installLinuxLauncher } = require("./linux-sandbox");
+const { compileWindowsCliStub } = require("./windows-cli-stub");
 
 const EXECUTABLE_NAME = "Paseo";
 
@@ -121,6 +122,10 @@ exports.default = async function afterPack(context) {
     installLinuxLauncher(context.appOutDir);
   }
 
+  if (platform === "win32") {
+    installWindowsCliStub(context.appOutDir);
+  }
+
   if (platform === "linux" || platform === "win32") {
     if (arch !== process.arch) {
       console.log(
@@ -131,6 +136,16 @@ exports.default = async function afterPack(context) {
     }
   }
 };
+
+function installWindowsCliStub(appOutDir) {
+  const binDir = path.join(appOutDir, "resources", "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const legacyCmd = path.join(binDir, "paseo.cmd");
+  if (fs.existsSync(legacyCmd)) {
+    fs.rmSync(legacyCmd);
+  }
+  compileWindowsCliStub(path.join(binDir, "paseo.exe"));
+}
 
 async function smokeUnpackedAppIfRequested(appOutDir) {
   if (process.env.PASEO_DESKTOP_SMOKE !== "1") {

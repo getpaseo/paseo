@@ -79,5 +79,7 @@ function resolvePaseoCliShim(binDir: string): string | null {
 }
 
 function paseoCliShimNames(): string[] {
-  return process.platform === "win32" ? ["paseo.cmd", "paseo.exe", "paseo"] : ["paseo"];
+  // paseo.exe preserves PowerShell arguments. A sibling paseo.cmd is the legacy launcher
+  // that strips quotes, so it only applies when the exe is absent.
+  return process.platform === "win32" ? ["paseo.exe", "paseo.cmd", "paseo"] : ["paseo"];
 }

@@ -38,10 +38,23 @@ export function resolveCliShimPath(input: {
 }): string {
   if (!input.isPackaged) return input.resolveWorkspaceCli();
 
-  const filename = input.platform === "win32" ? "paseo.cmd" : "paseo";
   if (input.platform === "darwin") {
     const bundle = input.executablePath.replace(/\/Contents\/MacOS\/.+$/, "");
-    return path.join(bundle, "Contents", "Resources", "bin", filename);
+    return path.join(bundle, "Contents", "Resources", "bin", "paseo");
   }
-  return path.join(path.dirname(input.executablePath), "resources", "bin", filename);
+  if (input.platform === "win32") {
+    return path.win32.join(
+      path.win32.dirname(input.executablePath),
+      "resources",
+      "bin",
+      "paseo.exe",
+    );
+  }
+  return path.join(path.dirname(input.executablePath), "resources", "bin", "paseo");
+}
+
+export function cliTargetFileName(platform: NodeJS.Platform, isPackaged: boolean): string {
+  if (platform === "win32" && isPackaged) return "paseo.exe";
+  if (platform === "win32") return "paseo.cmd";
+  return "paseo";
 }

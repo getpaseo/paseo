@@ -83,7 +83,7 @@ function getCliShimPath(appPath) {
   }
 
   if (process.platform === "win32") {
-    return path.join(appPath, "resources", "bin", "paseo.cmd");
+    return path.join(appPath, "resources", "bin", "paseo.exe");
   }
 
   return path.join(appPath, "resources", "bin", "paseo");
@@ -593,7 +593,7 @@ function runShellCommand({ script, env, label }) {
 function getCliShimScript(cliShimPath, args) {
   const commandArgs = args.map(shellQuoteCliArg).join(" ");
   if (process.platform === "win32") {
-    return `call "${cliShimPath}" ${commandArgs}`;
+    return `"${cliShimPath}" ${commandArgs}`;
   }
 
   return `${shellQuote(cliShimPath)} ${commandArgs}`;
