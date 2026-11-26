@@ -267,6 +267,7 @@ export const ar: TranslationResources = {
       implement: "ينفذ",
       question: "كيف تريد المتابعة؟",
       proposedPlan: "الخطة المقترحة",
+      addFeedback: "إضافة ملاحظات",
       requestChanges: "طلب تغييرات",
       implementWithNotes: "التنفيذ مع ملاحظات",
       feedbackPlaceholder: "أضف ملاحظات على الخطة",

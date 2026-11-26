@@ -269,6 +269,7 @@ export const ru: TranslationResources = {
       implement: "Реализовать",
       question: "Как бы вы хотели продолжить?",
       proposedPlan: "Предлагаемый план",
+      addFeedback: "Добавить отзыв",
       requestChanges: "Запросить изменения",
       implementWithNotes: "Реализовать с примечаниями",
       feedbackPlaceholder: "Оставьте отзыв о плане",

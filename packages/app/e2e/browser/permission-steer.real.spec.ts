@@ -268,26 +268,31 @@ test.describe("plan review actions", () => {
         const original = readFileSync(readme, "utf8");
         await fillComposerDraft(
           page,
-          "Present a concise plan to append FIRST_PLAN_MARKER to README.md. Include the literal marker in the plan. Do not implement or ask clarification.",
+          "Present a concise plan to append FIRST_PLAN_MARKER to README.md. Include the literal marker in the plan and use relative paths. Do not implement or ask clarification.",
         );
         await page.getByRole("button", { name: "Send message", exact: true }).click();
         const plan = page.getByTestId("permission-plan-card");
         await expect(plan).toContainText("FIRST_PLAN_MARKER", { timeout: 120_000 });
+        const addFeedback = plan.getByRole("button", { name: "Add feedback", exact: true });
         if (enablePlanReview) {
-          await expect(plan.getByTestId("plan-request-changes")).toHaveCount(0);
-          await expect(plan.getByTestId("plan-implement-with-notes")).toHaveCount(0);
+          await expect(addFeedback).toHaveCount(0);
+          await expect(plan.getByTestId("permission-request-deny")).toBeVisible();
           await expect(plan.getByRole("button", { name: "Implement", exact: true })).toBeVisible();
           enablePlanReview();
           await page.reload();
-          await expect(plan.getByTestId("plan-request-changes")).toBeVisible({ timeout: 30_000 });
-          await capturePlanReview(plan, testInfo, "plan-review-actions");
         }
+        await expect(addFeedback).toBeVisible({ timeout: 30_000 });
+        await expect(plan.getByTestId("permission-request-deny")).toBeVisible();
+        await expect(plan.getByTestId("permission-request-accept")).toBeVisible();
+        await capturePlanReview(plan, testInfo, "plan-review-actions");
         const input = page.getByTestId("plan-review-input");
         const requestChanges = page.getByTestId("plan-review-submit-changes");
         const implementWithNotes = page.getByTestId("plan-review-submit-implementation");
 
-        await plan.getByTestId("plan-implement-with-notes").click();
+        await addFeedback.click();
         await expect(input).toBeFocused();
+        await expect(addFeedback).toHaveCount(0);
+        await expect(plan).toContainText("FIRST_PLAN_MARKER");
         await expect(input).toHaveAttribute("placeholder", "Give feedback on the plan");
         await expect(requestChanges).toBeDisabled();
         await expect(implementWithNotes).toBeDisabled();
@@ -304,7 +309,7 @@ test.describe("plan review actions", () => {
         await expect(input).toHaveCount(0);
         await expect(plan).toContainText("FIRST_PLAN_MARKER");
 
-        await plan.getByTestId("plan-implement-with-notes").click();
+        await addFeedback.click();
         await expect(input).toHaveValue(revision);
         await capturePlanReview(plan, testInfo, "shared-plan-review-editor");
         await requestChanges.click();
@@ -320,7 +325,7 @@ test.describe("plan review actions", () => {
         await togglePlan(page, "timeline-plan-card", "Rejected plan", false);
         expect(readFileSync(readme, "utf8")).toBe(original);
 
-        await plan.getByTestId("plan-request-changes").click();
+        await addFeedback.click();
         await expect(input).toHaveValue("");
         await input.fill(
           "Append FINAL_PLAN_MARKER instead of REVISED_PLAN_MARKER.\nKeep all existing lines.",

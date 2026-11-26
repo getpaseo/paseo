@@ -267,6 +267,7 @@ export const zhCN: TranslationResources = {
       implement: "实施",
       question: "你想如何继续？",
       proposedPlan: "建议计划",
+      addFeedback: "添加反馈",
       requestChanges: "请求修改",
       implementWithNotes: "按备注实施",
       feedbackPlaceholder: "提供对计划的反馈",

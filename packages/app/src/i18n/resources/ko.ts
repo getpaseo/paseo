@@ -267,6 +267,7 @@ export const ko: TranslationResources = {
       implement: "구현",
       question: "어떻게 진행할까요?",
       proposedPlan: "제안된 계획",
+      addFeedback: "피드백 추가",
       requestChanges: "변경 요청",
       implementWithNotes: "메모와 함께 구현",
       feedbackPlaceholder: "계획에 대한 의견을 입력하세요",

@@ -269,6 +269,7 @@ export const ja: TranslationResources = {
       implement: "実装",
       question: "どのように続けますか？",
       proposedPlan: "提案されたプラン",
+      addFeedback: "フィードバックを追加",
       requestChanges: "変更を依頼",
       implementWithNotes: "補足付きで実装",
       feedbackPlaceholder: "プランにフィードバックを追加",

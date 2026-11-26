@@ -268,6 +268,7 @@ export const ptBR: TranslationResources = {
       implement: "Implementar",
       question: "Como você quer prosseguir?",
       proposedPlan: "Plano proposto",
+      addFeedback: "Adicionar feedback",
       requestChanges: "Solicitar alterações",
       implementWithNotes: "Implementar com notas",
       feedbackPlaceholder: "Dê feedback sobre o plano",

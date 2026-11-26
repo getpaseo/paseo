@@ -265,6 +265,7 @@ export const en = {
       implement: "Implement",
       question: "How would you like to proceed?",
       proposedPlan: "Proposed plan",
+      addFeedback: "Add feedback",
       requestChanges: "Request changes",
       implementWithNotes: "Implement with notes",
       feedbackPlaceholder: "Give feedback on the plan",

@@ -8,17 +8,11 @@ import { Button } from "@/components/ui/button";
 import { EditingTextInput } from "@/components/ui/text-input";
 import type { PendingPermission } from "@/types/shared";
 
-export const planReviewLabelKey = {
-  request_changes: "agentStream.permission.requestChanges",
-  implement_with_notes: "agentStream.permission.implementWithNotes",
-} as const;
-
 const PlanFeedbackInput = withUnistyles(EditingTextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
 
 export function PlanReviewForm({
-  primaryAction,
   permission,
   client,
   isAwaitingReview,
@@ -28,7 +22,6 @@ export function PlanReviewForm({
   onClose,
   onSubmitSuccess,
 }: {
-  primaryAction: AgentPlanReviewAction;
   permission: PendingPermission;
   client: DaemonClient | null;
   isAwaitingReview: boolean;
@@ -103,23 +96,23 @@ export function PlanReviewForm({
         {isCompact ? null : cancelButton}
         <Button
           size={isCompact ? "md" : "sm"}
-          variant={primaryAction === "request_changes" ? "default" : "outline"}
+          variant="outline"
           onPress={requestChanges}
           loading={submittingAction === "request_changes"}
           disabled={submitDisabled}
           testID="plan-review-submit-changes"
         >
-          {t(planReviewLabelKey.request_changes)}
+          {t("agentStream.permission.requestChanges")}
         </Button>
         <Button
           size={isCompact ? "md" : "sm"}
-          variant={primaryAction === "implement_with_notes" ? "default" : "outline"}
+          variant="outline"
           onPress={implementWithNotes}
           loading={submittingAction === "implement_with_notes"}
           disabled={submitDisabled}
           testID="plan-review-submit-implementation"
         >
-          {t(planReviewLabelKey.implement_with_notes)}
+          {t("agentStream.permission.implementWithNotes")}
         </Button>
         {isCompact ? cancelButton : null}
       </View>
