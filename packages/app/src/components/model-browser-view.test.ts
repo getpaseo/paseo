@@ -16,6 +16,7 @@ import {
   resolveModelBrowserAllView,
   resolveModelBrowserKeyCommand,
   resolveModelBrowserNavItems,
+  resolveModelBrowserProjection,
   resolveModelBrowserScrolling,
 } from "./model-browser-view";
 
@@ -484,6 +485,134 @@ describe("model browser keyboard navigation", () => {
         preferredKey: modelBrowserProviderKey("codex"),
       }),
     ).toBe(modelBrowserProviderKey("codex"));
+  });
+
+  it("omits initial highlight when suppressed on native touch until an arrow key moves selection", () => {
+    const items = resolveModelBrowserNavItems({
+      view: { kind: "all" },
+      providers,
+      profiles,
+      showProfilesSection: true,
+      canCreateProfileRow: false,
+      normalizedQuery: "",
+      isSearchFocused: false,
+      hasCustomRootBrowseContent: false,
+    });
+
+    expect(
+      resolveActiveModelBrowserKey({
+        explicitActiveKey: null,
+        items,
+        view: { kind: "all" },
+        normalizedQuery: "",
+        selectedProvider: "claude",
+        selectedModel: "opus-5",
+        suppressInitialActive: true,
+      }),
+    ).toBeNull();
+
+    const firstMove = moveModelBrowserActiveKey({ items, activeKey: null, key: "ArrowDown" });
+    expect(firstMove).toBe(modelBrowserProfileKey("reviewer"));
+    expect(
+      resolveActiveModelBrowserKey({
+        explicitActiveKey: firstMove,
+        items,
+        view: { kind: "all" },
+        normalizedQuery: "",
+        selectedProvider: "claude",
+        selectedModel: "opus-5",
+        suppressInitialActive: true,
+      }),
+    ).toBe(modelBrowserProfileKey("reviewer"));
+
+    expect(moveModelBrowserActiveKey({ items, activeKey: null, key: "ArrowUp" })).toBe(
+      modelBrowserProviderKey("codex"),
+    );
+  });
+
+  it("projects rendered sections and keyboard nav items from a single model", () => {
+    const browse = resolveModelBrowserProjection({
+      view: { kind: "all" },
+      providers,
+      profiles,
+      showProfilesSection: true,
+      canCreateProfileRow: true,
+      normalizedQuery: "",
+      isSearchFocused: false,
+      hasCustomRootBrowseContent: false,
+    });
+    expect(browse.kind).toBe("browse");
+    if (browse.kind === "browse") {
+      expect(browse.profileSection).toEqual({ kind: "profiles", rows: profiles });
+      expect(browse.providers.map((entry) => entry.id)).toEqual(["claude", "codex"]);
+      expect(browse.showProvidersHeading).toBe(true);
+      expect(browse.isEmpty).toBe(false);
+      expect(browse.navItems.map((item) => item.key)).toEqual([
+        modelBrowserProfileKey("reviewer"),
+        modelBrowserProfileKey("quick"),
+        modelBrowserProviderKey("claude"),
+        modelBrowserProviderKey("codex"),
+      ]);
+    }
+
+    const providerSearch = resolveModelBrowserProjection({
+      view: { kind: "provider", providerId: "claude", providerLabel: "Claude Code" },
+      providers,
+      profiles,
+      showProfilesSection: true,
+      canCreateProfileRow: true,
+      normalizedQuery: "opus",
+      isSearchFocused: true,
+      hasCustomRootBrowseContent: false,
+    });
+    expect(providerSearch.kind).toBe("modelList");
+    if (providerSearch.kind === "modelList") {
+      expect(providerSearch.showProviderLabel).toBe(false);
+      expect(providerSearch.profileSection).toEqual({
+        kind: "searchProfiles",
+        rows: [reviewer],
+        showModelsHeading: true,
+      });
+      expect(providerSearch.modelRows.map((row) => row.modelId)).toEqual(["opus-5"]);
+      expect(providerSearch.navItems.map((item) => item.key)).toEqual([
+        modelBrowserProfileKey("reviewer"),
+        modelBrowserModelKey("claude:opus-5"),
+      ]);
+    }
+
+    expect(
+      resolveModelBrowserProjection({
+        view: { kind: "provider", providerId: "pi", providerLabel: "Pi" },
+        providers: [{ id: "pi", label: "Pi", modelSelection: { kind: "error", message: "boom" } }],
+        profiles: null,
+        showProfilesSection: false,
+        canCreateProfileRow: false,
+        normalizedQuery: "",
+        isSearchFocused: false,
+        hasCustomRootBrowseContent: false,
+      }),
+    ).toEqual({
+      kind: "providerError",
+      providerId: "pi",
+      message: "boom",
+      navItems: [],
+    });
+
+    expect(
+      resolveModelBrowserProjection({
+        view: { kind: "all" },
+        providers,
+        profiles,
+        showProfilesSection: true,
+        canCreateProfileRow: true,
+        normalizedQuery: "zzzz",
+        isSearchFocused: true,
+        hasCustomRootBrowseContent: false,
+      }),
+    ).toEqual({
+      kind: "noSearchMatches",
+      navItems: [],
+    });
   });
 
   it("wraps active key movement across all items", () => {

@@ -173,6 +173,46 @@ export type ModelBrowserNavItem =
   | { key: string; kind: "provider"; providerId: string; providerLabel: string }
   | { key: string; kind: "model"; provider: string; modelId: string; modelIndex: number };
 
+export type ModelBrowserProfileSection<TProfile extends NavigableProfileRow = NavigableProfileRow> =
+    | { kind: "none" }
+    | { kind: "createProfile" }
+    | { kind: "profiles"; rows: TProfile[] }
+    | { kind: "searchProfiles"; rows: TProfile[]; showModelsHeading: boolean };
+
+export type ModelBrowserProjection<TProfile extends NavigableProfileRow = NavigableProfileRow> =
+  | { kind: "providerLoading"; navItems: ModelBrowserNavItem[] }
+  | { kind: "providerError"; providerId: string; message: string; navItems: ModelBrowserNavItem[] }
+  | { kind: "empty"; navItems: ModelBrowserNavItem[] }
+  | { kind: "noSearchMatches"; navItems: ModelBrowserNavItem[] }
+  | {
+      kind: "modelList";
+      profileSection: ModelBrowserProfileSection<TProfile>;
+      modelRows: ProviderSelectionModelRow[];
+      showProviderLabel: boolean;
+      navItems: ModelBrowserNavItem[];
+    }
+  | {
+      kind: "browse";
+      profileSection: ModelBrowserProfileSection<TProfile>;
+      providers: ProviderSelectorProvider[];
+      showProvidersHeading: boolean;
+      isEmpty: boolean;
+      navItems: ModelBrowserNavItem[];
+    };
+
+export interface ModelBrowserProjectionInput<
+  TProfile extends NavigableProfileRow = NavigableProfileRow,
+> {
+  view: ModelBrowserView;
+  providers: ProviderSelectorProvider[];
+  profiles: readonly TProfile[] | null;
+  showProfilesSection: boolean;
+  canCreateProfileRow: boolean;
+  normalizedQuery: string;
+  isSearchFocused: boolean;
+  hasCustomRootBrowseContent: boolean;
+}
+
 function toProfileNavItems(rows: readonly NavigableProfileRow[]): ModelBrowserNavItem[] {
   return rows.map((row) => ({
     key: modelBrowserProfileKey(row.id),
@@ -181,16 +221,56 @@ function toProfileNavItems(rows: readonly NavigableProfileRow[]): ModelBrowserNa
   }));
 }
 
-function toBrowseProfileNavItems(
-  rows: readonly NavigableProfileRow[] | null,
+function profileSectionToNavItems<TProfile extends NavigableProfileRow>(
+  section: ModelBrowserProfileSection<TProfile>,
+): ModelBrowserNavItem[] {
+  if (section.kind === "none") return [];
+  if (section.kind === "createProfile") {
+    return [{ key: MODEL_BROWSER_CREATE_PROFILE_KEY, kind: "createProfile" }];
+  }
+  return toProfileNavItems(section.rows);
+}
+
+function resolveBrowseProfileSection<TProfile extends NavigableProfileRow>(
+  rows: readonly TProfile[] | null,
   showProfilesSection: boolean,
   canCreateProfileRow: boolean,
-): ModelBrowserNavItem[] {
-  if (!showProfilesSection || rows === null) return [];
-  if (rows.length > 0) return toProfileNavItems(rows);
-  return canCreateProfileRow
-    ? [{ key: MODEL_BROWSER_CREATE_PROFILE_KEY, kind: "createProfile" }]
-    : [];
+): ModelBrowserProfileSection<TProfile> {
+  if (!showProfilesSection || rows === null) return { kind: "none" };
+  if (rows.length > 0) return { kind: "profiles", rows: [...rows] };
+  return canCreateProfileRow ? { kind: "createProfile" } : { kind: "none" };
+}
+
+function resolveProviderProfileSection<TProfile extends NavigableProfileRow>({
+  providerProfiles,
+  showProfilesSection,
+  canCreateProfileRow,
+  normalizedQuery,
+  hasModelRows,
+}: {
+  providerProfiles: readonly TProfile[] | null;
+  showProfilesSection: boolean;
+  canCreateProfileRow: boolean;
+  normalizedQuery: string;
+  hasModelRows: boolean;
+}): ModelBrowserProfileSection<TProfile> {
+  if (!showProfilesSection || providerProfiles === null) return { kind: "none" };
+  if (normalizedQuery.length === 0) {
+    return resolveBrowseProfileSection(providerProfiles, true, canCreateProfileRow);
+  }
+  const matched = filterAndRankProfileRows(providerProfiles, normalizedQuery);
+  return matched.length > 0
+    ? { kind: "searchProfiles", rows: matched, showModelsHeading: hasModelRows }
+    : { kind: "none" };
+}
+
+function toProviderNavItems(providers: readonly ProviderSelectorProvider[]): ModelBrowserNavItem[] {
+  return providers.map((provider) => ({
+    key: modelBrowserProviderKey(provider.id),
+    kind: "provider",
+    providerId: provider.id,
+    providerLabel: provider.label,
+  }));
 }
 
 function toModelNavItems(rows: readonly ProviderSelectionModelRow[]): ModelBrowserNavItem[] {
@@ -203,7 +283,7 @@ function toModelNavItems(rows: readonly ProviderSelectionModelRow[]): ModelBrows
   }));
 }
 
-function resolveProviderNavItems({
+function resolveProviderProjection<TProfile extends NavigableProfileRow>({
   providerId,
   providers,
   profiles,
@@ -213,88 +293,123 @@ function resolveProviderNavItems({
 }: {
   providerId: string;
   providers: ProviderSelectorProvider[];
-  profiles: readonly NavigableProfileRow[] | null;
+  profiles: readonly TProfile[] | null;
   showProfilesSection: boolean;
   canCreateProfileRow: boolean;
   normalizedQuery: string;
-}): ModelBrowserNavItem[] {
+}): ModelBrowserProjection<TProfile> {
   const provider = providers.find((entry) => entry.id === providerId) ?? null;
-  if (!provider || provider.modelSelection.kind !== "models") return [];
-
-  const providerProfiles =
-    profiles !== null ? profiles.filter((row) => row.provider === providerId) : null;
-  let profileItems: ModelBrowserNavItem[] = [];
-  if (normalizedQuery.length === 0) {
-    profileItems = toBrowseProfileNavItems(
-      providerProfiles,
-      showProfilesSection,
-      canCreateProfileRow,
-    );
-  } else if (showProfilesSection && providerProfiles) {
-    profileItems = toProfileNavItems(filterAndRankProfileRows(providerProfiles, normalizedQuery));
+  if (!provider) return { kind: "empty", navItems: [] };
+  if (provider.modelSelection.kind === "loading") return { kind: "providerLoading", navItems: [] };
+  if (provider.modelSelection.kind === "error") {
+    return {
+      kind: "providerError",
+      providerId,
+      message: provider.modelSelection.message,
+      navItems: [],
+    };
   }
 
-  const visibleModels = filterAndRankModelRows(getProviderModelRows(provider), normalizedQuery);
-  return [...profileItems, ...toModelNavItems(visibleModels)];
+  const modelRows = filterAndRankModelRows(getProviderModelRows(provider), normalizedQuery);
+  const providerProfiles =
+    profiles !== null ? profiles.filter((row) => row.provider === providerId) : null;
+  const profileSection = resolveProviderProfileSection({
+    providerProfiles,
+    showProfilesSection,
+    canCreateProfileRow,
+    normalizedQuery,
+    hasModelRows: modelRows.length > 0,
+  });
+
+  if (modelRows.length === 0 && profileSection.kind === "none") {
+    return { kind: "empty", navItems: [] };
+  }
+
+  return {
+    kind: "modelList",
+    profileSection,
+    modelRows,
+    showProviderLabel: false,
+    navItems: [...profileSectionToNavItems(profileSection), ...toModelNavItems(modelRows)],
+  };
 }
 
 /**
- * Builds the flat visual order of keyboard-navigable rows for the current ModelBrowser state.
- * Mirrors the exact top-to-bottom layout across profiles, providers, and models.
+ * Single source of truth for what ModelBrowser renders and the flat keyboard navigation order.
+ * Deriving navItems directly from the projected sections keeps rendering and arrow keys in lockstep.
  */
-export function resolveModelBrowserNavItems({
-  view,
-  providers,
-  profiles,
-  showProfilesSection,
-  canCreateProfileRow,
-  normalizedQuery,
-  isSearchFocused,
-  hasCustomRootBrowseContent,
-}: {
-  view: ModelBrowserView;
-  providers: ProviderSelectorProvider[];
-  profiles: readonly NavigableProfileRow[] | null;
-  showProfilesSection: boolean;
-  canCreateProfileRow: boolean;
-  normalizedQuery: string;
-  isSearchFocused: boolean;
-  hasCustomRootBrowseContent: boolean;
-}): ModelBrowserNavItem[] {
-  if (view.kind === "provider") {
-    return resolveProviderNavItems({
-      providerId: view.providerId,
-      providers,
-      profiles,
-      showProfilesSection,
-      canCreateProfileRow,
-      normalizedQuery,
+export function resolveModelBrowserProjection<TProfile extends NavigableProfileRow>(
+  input: ModelBrowserProjectionInput<TProfile>,
+): ModelBrowserProjection<TProfile> {
+  if (input.view.kind === "provider") {
+    return resolveProviderProjection({
+      providerId: input.view.providerId,
+      providers: input.providers,
+      profiles: input.profiles,
+      showProfilesSection: input.showProfilesSection,
+      canCreateProfileRow: input.canCreateProfileRow,
+      normalizedQuery: input.normalizedQuery,
     });
   }
 
   const allView = resolveModelBrowserAllView({
-    providers,
-    profiles: showProfilesSection && profiles ? profiles : [],
-    normalizedQuery,
-    isSearchFocused,
+    providers: input.providers,
+    profiles: input.showProfilesSection && input.profiles ? input.profiles : [],
+    normalizedQuery: input.normalizedQuery,
+    isSearchFocused: input.isSearchFocused,
   });
 
-  if (allView.kind === "noSearchMatches") return [];
-
-  if (allView.kind === "searchResults") {
-    return [...toProfileNavItems(allView.profiles), ...toModelNavItems(allView.rows)];
+  if (allView.kind === "noSearchMatches") {
+    return { kind: "noSearchMatches", navItems: [] };
   }
 
-  const profileItems = toBrowseProfileNavItems(profiles, showProfilesSection, canCreateProfileRow);
-  if (hasCustomRootBrowseContent) return profileItems;
+  if (allView.kind === "searchResults") {
+    const profileSection: ModelBrowserProfileSection<TProfile> =
+      allView.profiles.length > 0
+        ? {
+            kind: "searchProfiles",
+            rows: allView.profiles,
+            showModelsHeading: allView.rows.length > 0,
+          }
+        : { kind: "none" };
+    return {
+      kind: "modelList",
+      profileSection,
+      modelRows: allView.rows,
+      showProviderLabel: true,
+      navItems: [...profileSectionToNavItems(profileSection), ...toModelNavItems(allView.rows)],
+    };
+  }
 
-  const providerItems: ModelBrowserNavItem[] = providers.map((provider) => ({
-    key: modelBrowserProviderKey(provider.id),
-    kind: "provider",
-    providerId: provider.id,
-    providerLabel: provider.label,
-  }));
-  return [...profileItems, ...providerItems];
+  const profileSection = resolveBrowseProfileSection(
+    input.profiles,
+    input.showProfilesSection,
+    input.canCreateProfileRow,
+  );
+  const visibleProviders = input.hasCustomRootBrowseContent ? [] : input.providers;
+  const hasResults =
+    input.profiles !== null || input.providers.length > 0 || input.hasCustomRootBrowseContent;
+
+  return {
+    kind: "browse",
+    profileSection,
+    providers: visibleProviders,
+    showProvidersHeading: input.showProfilesSection && input.profiles !== null,
+    isEmpty: !hasResults,
+    navItems: [
+      ...profileSectionToNavItems(profileSection),
+      ...toProviderNavItems(visibleProviders),
+    ],
+  };
+}
+
+/**
+ * Returns the flat visual order of keyboard-navigable rows for the current ModelBrowser state.
+ */
+export function resolveModelBrowserNavItems<TProfile extends NavigableProfileRow>(
+  input: ModelBrowserProjectionInput<TProfile>,
+): ModelBrowserNavItem[] {
+  return resolveModelBrowserProjection(input).navItems;
 }
 
 export function resolveInitialModelBrowserActiveKey({
@@ -339,6 +454,7 @@ export function resolveActiveModelBrowserKey({
   selectedProvider,
   selectedModel,
   preferredKey,
+  suppressInitialActive = false,
 }: {
   explicitActiveKey: string | null;
   items: readonly ModelBrowserNavItem[];
@@ -347,9 +463,14 @@ export function resolveActiveModelBrowserKey({
   selectedProvider: string;
   selectedModel: string;
   preferredKey?: string | null;
+  /** Skip initial highlight on native touch surfaces until the user navigates with a keyboard. */
+  suppressInitialActive?: boolean;
 }): string | null {
   if (explicitActiveKey && items.some((item) => item.key === explicitActiveKey)) {
     return explicitActiveKey;
+  }
+  if (suppressInitialActive) {
+    return null;
   }
   return resolveInitialModelBrowserActiveKey({
     items,

@@ -67,7 +67,6 @@ import type { KeyboardInputEvent } from "@/keyboard";
 import {
   buildProviderQualifiedDescription,
   buildSelectedTriggerLabel,
-  filterAndRankModelRows,
   getAllProviderModelRows,
   getProviderModelRows,
   resolveSelectedModelLabel,
@@ -81,16 +80,17 @@ import { focusedModelBrowserControlOwnsEnter } from "@/components/model-browser-
 import {
   MODEL_BROWSER_CREATE_PROFILE_KEY,
   MODEL_BROWSER_KEYBOARD_KEYS,
-  filterAndRankProfileRows,
   groupProfilesByProviderModel,
   modelBrowserModelKey,
   modelBrowserProfileKey,
   modelBrowserProviderKey,
   resolveActiveModelBrowserKey,
   resolveInitialModelBrowserView,
-  resolveModelBrowserAllView,
   resolveModelBrowserKeyCommand,
-  resolveModelBrowserNavItems,
+  resolveModelBrowserProjection,
+  type ModelBrowserNavItem,
+  type ModelBrowserProfileSection,
+  type ModelBrowserProjection,
   type ModelBrowserView,
 } from "@/components/model-browser-view";
 
@@ -210,6 +210,18 @@ function AgentProfilesEditAction({ onPress }: { onPress: () => void }) {
 const IndependentScrollGestureContext = createContext<ReturnType<typeof Gesture.Native> | null>(
   null,
 );
+
+interface ModelBrowserNavContextValue {
+  activeKey: string | null;
+  onActivateKey: (key: string) => void;
+  activeItemRef?: RefObject<View | null>;
+  onActiveLayout?: () => void;
+}
+
+const ModelBrowserNavContext = createContext<ModelBrowserNavContextValue>({
+  activeKey: null,
+  onActivateKey: () => {},
+});
 
 const foregroundMutedMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -1005,10 +1017,8 @@ function SelectableModelRow({
   row,
   serverId,
   isSelected,
-  isActive,
   showProviderLabel,
   onSelect,
-  onActivateKey,
   profiledRows,
   onCreateProfile,
   onEditProfile,
@@ -1017,27 +1027,27 @@ function SelectableModelRow({
   row: ProviderSelectionModelRow;
   serverId: string | null;
   isSelected: boolean;
-  isActive: boolean;
   showProviderLabel?: boolean;
   onSelect: (provider: string, modelId: string) => void;
-  onActivateKey?: (key: string) => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
 }) {
+  const { activeKey, onActivateKey } = useContext(ModelBrowserNavContext);
+  const rowKey = modelBrowserModelKey(row.favoriteKey);
   const handlePress = useCallback(() => {
     onSelect(row.provider, row.modelId);
   }, [onSelect, row.modelId, row.provider]);
   const handleFocus = useCallback(() => {
-    onActivateKey?.(modelBrowserModelKey(row.favoriteKey));
-  }, [onActivateKey, row.favoriteKey]);
+    onActivateKey(rowKey);
+  }, [onActivateKey, rowKey]);
   return (
     <ModelRow
       row={row}
       serverId={serverId}
       isSelected={isSelected}
-      isActive={isActive}
+      isActive={activeKey === rowKey}
       showProviderLabel={showProviderLabel}
       onPress={handlePress}
       onFocus={handleFocus}
@@ -1052,25 +1062,17 @@ function SelectableModelRow({
 function AgentProfilePickerRowView({
   row,
   serverId,
-  active,
-  activeItemRef,
-  onActiveLayout,
   onApply,
-  onActivateKey,
 }: {
   row: AgentProfilePickerRowModel;
   serverId: string | null;
-  active: boolean;
-  activeItemRef?: RefObject<View | null>;
-  onActiveLayout?: () => void;
   onApply: (profileId: string) => void;
-  onActivateKey?: (key: string) => void;
 }) {
+  const { activeKey, onActivateKey, activeItemRef, onActiveLayout } =
+    useContext(ModelBrowserNavContext);
+  const rowKey = modelBrowserProfileKey(row.id);
   const handlePress = useCallback(() => onApply(row.id), [onApply, row.id]);
-  const handleFocus = useCallback(
-    () => onActivateKey?.(modelBrowserProfileKey(row.id)),
-    [onActivateKey, row.id],
-  );
+  const handleFocus = useCallback(() => onActivateKey(rowKey), [onActivateKey, rowKey]);
   const leadingSlot = useMemo(
     () => (
       <AgentProfileGlyph
@@ -1088,7 +1090,7 @@ function AgentProfilePickerRowView({
       label={row.name}
       description={row.summary}
       tone="elevated"
-      active={active}
+      active={activeKey === rowKey}
       activeItemRef={activeItemRef}
       onActiveLayout={onActiveLayout}
       onPress={handlePress}
@@ -1107,21 +1109,13 @@ function AgentProfilePickerRowView({
 function AgentProfilesPickerSection({
   rows,
   serverId,
-  activeKey,
-  activeItemRef,
-  onActiveLayout,
   onApplyProfile,
   onEditProfiles,
-  onActivateKey,
 }: {
   rows: AgentProfilePickerRowModel[];
   serverId: string | null;
-  activeKey: string | null;
-  activeItemRef?: RefObject<View | null>;
-  onActiveLayout?: () => void;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
-  onActivateKey?: (key: string) => void;
 }) {
   const { t } = useTranslation();
   const handleApply = useCallback(
@@ -1143,33 +1137,19 @@ function AgentProfilesPickerSection({
           key={row.id}
           row={row}
           serverId={serverId}
-          active={activeKey === modelBrowserProfileKey(row.id)}
-          activeItemRef={activeItemRef}
-          onActiveLayout={onActiveLayout}
           onApply={handleApply}
-          onActivateKey={onActivateKey}
         />
       ))}
     </View>
   );
 }
 
-function CreateAgentProfileRow({
-  active,
-  activeItemRef,
-  onActiveLayout,
-  onPress,
-  onActivateKey,
-}: {
-  active: boolean;
-  activeItemRef?: RefObject<View | null>;
-  onActiveLayout?: () => void;
-  onPress: () => void;
-  onActivateKey?: (key: string) => void;
-}) {
+function CreateAgentProfileRow({ onPress }: { onPress: () => void }) {
   const { t } = useTranslation();
+  const { activeKey, onActivateKey, activeItemRef, onActiveLayout } =
+    useContext(ModelBrowserNavContext);
   const handleFocus = useCallback(
-    () => onActivateKey?.(MODEL_BROWSER_CREATE_PROFILE_KEY),
+    () => onActivateKey(MODEL_BROWSER_CREATE_PROFILE_KEY),
     [onActivateKey],
   );
   const leadingSlot = useMemo(
@@ -1184,57 +1164,13 @@ function CreateAgentProfileRow({
     <ModelBrowserRow
       label={t("modelSelector.createProfile")}
       labelMuted
-      active={active}
+      active={activeKey === MODEL_BROWSER_CREATE_PROFILE_KEY}
       activeItemRef={activeItemRef}
       onActiveLayout={onActiveLayout}
       leadingSlot={leadingSlot}
       onPress={onPress}
       onFocus={handleFocus}
       testID="model-profiles-empty"
-    />
-  );
-}
-
-function AgentProfilesPickerContent({
-  rows,
-  serverId,
-  activeKey,
-  activeItemRef,
-  onActiveLayout,
-  onApplyProfile,
-  onEditProfiles,
-  onActivateKey,
-}: {
-  rows: AgentProfilePickerRowModel[];
-  serverId: string | null;
-  activeKey: string | null;
-  activeItemRef?: RefObject<View | null>;
-  onActiveLayout?: () => void;
-  onApplyProfile?: (profileId: string) => void;
-  onEditProfiles?: () => void;
-  onActivateKey?: (key: string) => void;
-}) {
-  if (rows.length === 0) {
-    return onEditProfiles ? (
-      <CreateAgentProfileRow
-        active={activeKey === MODEL_BROWSER_CREATE_PROFILE_KEY}
-        activeItemRef={activeItemRef}
-        onActiveLayout={onActiveLayout}
-        onPress={onEditProfiles}
-        onActivateKey={onActivateKey}
-      />
-    ) : null;
-  }
-  return (
-    <AgentProfilesPickerSection
-      rows={rows}
-      serverId={serverId}
-      activeKey={activeKey}
-      activeItemRef={activeItemRef}
-      onActiveLayout={onActiveLayout}
-      onApplyProfile={onApplyProfile}
-      onEditProfiles={onEditProfiles}
-      onActivateKey={onActivateKey}
     />
   );
 }
@@ -1247,18 +1183,14 @@ function ProfileSearchResultsHeader({
   rows,
   serverId,
   hasModelRows,
-  activeKey,
   onApplyProfile,
   onEditProfiles,
-  onActivateKey,
 }: {
   rows: AgentProfilePickerRowModel[];
   serverId: string | null;
   hasModelRows: boolean;
-  activeKey: string | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
-  onActivateKey?: (key: string) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -1266,10 +1198,8 @@ function ProfileSearchResultsHeader({
       <AgentProfilesPickerSection
         rows={rows}
         serverId={serverId}
-        activeKey={activeKey}
         onApplyProfile={onApplyProfile}
         onEditProfiles={onEditProfiles}
-        onActivateKey={onActivateKey}
       />
       {hasModelRows ? (
         <View style={styles.sectionHeading}>
@@ -1280,31 +1210,62 @@ function ProfileSearchResultsHeader({
   );
 }
 
+function ModelBrowserProfileSectionView({
+  section,
+  serverId,
+  onApplyProfile,
+  onEditProfiles,
+}: {
+  section: ModelBrowserProfileSection<AgentProfilePickerRowModel>;
+  serverId: string | null;
+  onApplyProfile?: (profileId: string) => void;
+  onEditProfiles?: () => void;
+}) {
+  if (section.kind === "none") return null;
+  if (section.kind === "createProfile") {
+    return onEditProfiles ? <CreateAgentProfileRow onPress={onEditProfiles} /> : null;
+  }
+  if (section.kind === "searchProfiles") {
+    return (
+      <ProfileSearchResultsHeader
+        rows={section.rows}
+        serverId={serverId}
+        hasModelRows={section.showModelsHeading}
+        onApplyProfile={onApplyProfile}
+        onEditProfiles={onEditProfiles}
+      />
+    );
+  }
+  return (
+    <AgentProfilesPickerSection
+      rows={section.rows}
+      serverId={serverId}
+      onApplyProfile={onApplyProfile}
+      onEditProfiles={onEditProfiles}
+    />
+  );
+}
+
 function GroupProviderButton({
   provider,
   serverId,
-  active,
-  activeItemRef,
-  onActiveLayout,
   onDrillDown,
-  onActivateKey,
 }: {
   provider: ProviderSelectorProvider;
   serverId: string | null;
-  active: boolean;
-  activeItemRef?: RefObject<View | null>;
-  onActiveLayout?: () => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
-  onActivateKey?: (key: string) => void;
 }) {
   const { t } = useTranslation();
+  const { activeKey, onActivateKey, activeItemRef, onActiveLayout } =
+    useContext(ModelBrowserNavContext);
+  const rowKey = modelBrowserProviderKey(provider.id);
   const selection = provider.modelSelection;
   const handlePress = useCallback(() => {
     onDrillDown(provider.id, provider.label);
   }, [onDrillDown, provider.id, provider.label]);
   const handleFocus = useCallback(() => {
-    onActivateKey?.(modelBrowserProviderKey(provider.id));
-  }, [onActivateKey, provider.id]);
+    onActivateKey(rowKey);
+  }, [onActivateKey, rowKey]);
 
   const stateNode = useMemo(() => {
     if (selection.kind === "models") {
@@ -1355,7 +1316,7 @@ function GroupProviderButton({
       trailingSlot={trailingSlot}
       tone="drillDown"
       spacing="provider"
-      active={active}
+      active={activeKey === rowKey}
       activeItemRef={activeItemRef}
       onActiveLayout={onActiveLayout}
       onPress={handlePress}
@@ -1368,34 +1329,18 @@ function GroupProviderButton({
 function GroupedProviderRows({
   providers,
   serverId,
-  activeKey,
-  activeItemRef,
-  onActiveLayout,
   onDrillDown,
-  onActivateKey,
 }: {
   providers: ProviderSelectorProvider[];
   serverId: string | null;
-  activeKey: string | null;
-  activeItemRef?: RefObject<View | null>;
-  onActiveLayout?: () => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
-  onActivateKey?: (key: string) => void;
 }) {
   return (
     <View>
       {providers.map((provider, index) => (
         <View key={provider.id}>
           {index > 0 ? <View style={styles.separator} /> : null}
-          <GroupProviderButton
-            provider={provider}
-            serverId={serverId}
-            active={activeKey === modelBrowserProviderKey(provider.id)}
-            activeItemRef={activeItemRef}
-            onActiveLayout={onActiveLayout}
-            onDrillDown={onDrillDown}
-            onActivateKey={onActivateKey}
-          />
+          <GroupProviderButton provider={provider} serverId={serverId} onDrillDown={onDrillDown} />
         </View>
       ))}
     </View>
@@ -1595,12 +1540,10 @@ function ModelRowList({
   serverId,
   selectedProvider,
   selectedModel,
-  activeKey,
   activeModelIndex,
   hasActiveHeaderItem,
   shouldRevealActive,
   onSelect,
-  onActivateKey,
   showProviderLabel = false,
   header,
   scrolling,
@@ -1613,12 +1556,10 @@ function ModelRowList({
   serverId: string | null;
   selectedProvider: string;
   selectedModel: string;
-  activeKey: string | null;
   activeModelIndex: number;
   hasActiveHeaderItem: boolean;
   shouldRevealActive: boolean;
   onSelect: (provider: string, modelId: string) => void;
-  onActivateKey: (key: string) => void;
   showProviderLabel?: boolean;
   header?: React.ReactElement;
   scrolling: "sheet" | "independent";
@@ -1628,16 +1569,15 @@ function ModelRowList({
   onEditProfiles?: () => void;
 }) {
   const isCompact = useIsCompactFormFactor();
+  const { activeKey } = useContext(ModelBrowserNavContext);
   const renderItem = useCallback(
     ({ item }: { item: ProviderSelectionModelRow }) => (
       <SelectableModelRow
         row={item}
         serverId={serverId}
         isSelected={item.provider === selectedProvider && item.modelId === selectedModel}
-        isActive={activeKey === modelBrowserModelKey(item.favoriteKey)}
         showProviderLabel={showProviderLabel}
         onSelect={onSelect}
-        onActivateKey={onActivateKey}
         profiledRows={profiledLookup.get(`${item.provider}:${item.modelId}`) ?? []}
         onCreateProfile={onCreateProfile}
         onEditProfile={onEditProfile}
@@ -1645,8 +1585,6 @@ function ModelRowList({
       />
     ),
     [
-      activeKey,
-      onActivateKey,
       onEditProfile,
       onEditProfiles,
       onCreateProfile,
@@ -1738,156 +1676,9 @@ function ModelSearchEmptyState() {
   );
 }
 
-function ProviderModelBrowserContent({
-  serverId,
-  view,
-  provider,
-  profiles,
-  selectedProvider,
-  selectedModel,
-  activeKey,
-  activeModelIndex,
-  hasActiveHeaderItem,
-  shouldRevealActive,
-  normalizedQuery,
-  onSelect,
-  onActivateKey,
-  onApplyProfile,
-  onEditProfiles,
-  onCreateProfile,
-  onEditProfile,
-  profiledLookup,
-  showProfilesSection = true,
-  onRetryProvider,
-  isRetryingProvider,
-  scrolling,
-}: {
-  serverId: string | null;
-  view: Extract<ModelBrowserView, { kind: "provider" }>;
-  provider: ProviderSelectorProvider | null;
-  profiles: AgentProfilePicker | null;
-  selectedProvider: string;
-  selectedModel: string;
-  activeKey: string | null;
-  activeModelIndex: number;
-  hasActiveHeaderItem: boolean;
-  shouldRevealActive: boolean;
-  normalizedQuery: string;
-  onSelect: (provider: string, modelId: string) => void;
-  onActivateKey: (key: string) => void;
-  onApplyProfile?: (profileId: string) => void;
-  onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
-  onEditProfile?: (profileId: string) => void;
-  profiledLookup: Map<string, AgentProfilePickerRowModel[]>;
-  showProfilesSection?: boolean;
-  onRetryProvider?: (provider: AgentProvider) => void;
-  isRetryingProvider: boolean;
-  scrolling: "sheet" | "independent";
-}) {
-  const { t } = useTranslation();
-  const visibleRows = useMemo(
-    () => (provider ? filterAndRankModelRows(getProviderModelRows(provider), normalizedQuery) : []),
-    [normalizedQuery, provider],
-  );
-  const providerProfileRows = useMemo(
-    () => profiles?.rows.filter((row) => row.provider === view.providerId) ?? [],
-    [profiles, view.providerId],
-  );
-  const matchedProfileRows = useMemo(
-    () => filterAndRankProfileRows(providerProfileRows, normalizedQuery),
-    [normalizedQuery, providerProfileRows],
-  );
-  const profileHeader = useMemo(() => {
-    if (!showProfilesSection || !profiles) return undefined;
-    if (normalizedQuery.length === 0) {
-      return (
-        <AgentProfilesPickerContent
-          rows={providerProfileRows}
-          serverId={serverId}
-          activeKey={activeKey}
-          onApplyProfile={onApplyProfile}
-          onEditProfiles={onEditProfiles}
-          onActivateKey={onActivateKey}
-        />
-      );
-    }
-    return matchedProfileRows.length > 0 ? (
-      <ProfileSearchResultsHeader
-        rows={matchedProfileRows}
-        serverId={serverId}
-        hasModelRows={visibleRows.length > 0}
-        activeKey={activeKey}
-        onApplyProfile={onApplyProfile}
-        onEditProfiles={onEditProfiles}
-        onActivateKey={onActivateKey}
-      />
-    ) : undefined;
-  }, [
-    activeKey,
-    matchedProfileRows,
-    normalizedQuery,
-    onActivateKey,
-    onApplyProfile,
-    onEditProfiles,
-    profiles,
-    providerProfileRows,
-    serverId,
-    showProfilesSection,
-    visibleRows.length,
-  ]);
-
-  if (!provider) return <ModelSearchEmptyState />;
-  const selection = provider.modelSelection;
-  if (selection.kind === "loading") {
-    return (
-      <View style={styles.emptyState}>
-        <View style={styles.rowSpinner}>
-          <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
-        </View>
-        <Text style={styles.emptyStateText}>{t("modelSelector.loadingShort")}</Text>
-      </View>
-    );
-  }
-  if (selection.kind === "error") {
-    return (
-      <ProviderErrorEmptyState
-        providerId={view.providerId}
-        message={selection.message}
-        onRetryProvider={onRetryProvider}
-        isRetryingProvider={isRetryingProvider}
-      />
-    );
-  }
-  // Profile-only results still go through the list: it owns scrolling.
-  if (visibleRows.length === 0 && !profileHeader) {
-    return <ModelSearchEmptyState />;
-  }
-  return (
-    <ModelRowList
-      serverId={serverId}
-      rows={visibleRows}
-      selectedProvider={selectedProvider}
-      selectedModel={selectedModel}
-      activeKey={activeKey}
-      activeModelIndex={activeModelIndex}
-      hasActiveHeaderItem={hasActiveHeaderItem}
-      shouldRevealActive={shouldRevealActive}
-      onSelect={onSelect}
-      onActivateKey={onActivateKey}
-      header={profileHeader}
-      scrolling={scrolling}
-      profiledLookup={profiledLookup}
-      onCreateProfile={onCreateProfile}
-      onEditProfile={onEditProfile}
-      onEditProfiles={onEditProfiles}
-    />
-  );
-}
-
 interface ModelBrowserKeyboardBinding {
   view: ModelBrowserView;
-  navItems: ReturnType<typeof resolveModelBrowserNavItems>;
+  navItems: readonly ModelBrowserNavItem[];
   activeKey: string | null;
   searchQuery: string;
   canGoBack: boolean;
@@ -1963,77 +1754,70 @@ function useModelBrowserKeyboard(
 
 function ModelBrowserBrowseView({
   serverId,
-  providers,
-  profiles,
-  activeKey,
+  projection,
   activeNavIndex,
   listKey,
-  showProfilesSection,
   rootBrowseContent,
   scrolling,
   onApplyProfile,
   onEditProfiles,
   onDrillDown,
-  onActivateKey,
 }: {
   serverId: string | null;
-  providers: ProviderSelectorProvider[];
-  profiles: AgentProfilePicker | null;
-  activeKey: string | null;
+  projection: Extract<ModelBrowserProjection<AgentProfilePickerRowModel>, { kind: "browse" }>;
   activeNavIndex: number;
   listKey: string;
-  showProfilesSection: boolean;
   rootBrowseContent?: React.ReactNode;
   scrolling: "sheet" | "independent";
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
   onDrillDown: (providerId: string, providerLabel: string) => void;
-  onActivateKey: (key: string) => void;
 }) {
   const { t } = useTranslation();
+  const nav = useContext(ModelBrowserNavContext);
   const browseScrollRef = useRef<ScrollView>(null);
   const browseReveal = useRevealActiveItem({
     activeIndex: activeNavIndex,
     listKey,
     scrollRef: browseScrollRef,
   });
-  const hasResults = profiles !== null || providers.length > 0 || rootBrowseContent != null;
+  const browseNav = useMemo<ModelBrowserNavContextValue>(
+    () => ({
+      activeKey: nav.activeKey,
+      onActivateKey: nav.onActivateKey,
+      activeItemRef: browseReveal.activeItemRef,
+      onActiveLayout: browseReveal.onItemLayout,
+    }),
+    [browseReveal.activeItemRef, browseReveal.onItemLayout, nav.activeKey, nav.onActivateKey],
+  );
 
   const allProvidersContent = (
-    <View ref={browseReveal.contentRef} collapsable={false}>
-      {showProfilesSection && profiles ? (
-        <AgentProfilesPickerContent
-          rows={profiles.rows}
+    <ModelBrowserNavContext.Provider value={browseNav}>
+      <View ref={browseReveal.contentRef} collapsable={false}>
+        <ModelBrowserProfileSectionView
+          section={projection.profileSection}
           serverId={serverId}
-          activeKey={activeKey}
-          activeItemRef={browseReveal.activeItemRef}
-          onActiveLayout={browseReveal.onItemLayout}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
-          onActivateKey={onActivateKey}
         />
-      ) : null}
-      {rootBrowseContent ??
-        (providers.length > 0 ? (
-          <View>
-            {showProfilesSection && profiles ? (
-              <View style={styles.sectionHeading}>
-                <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
-              </View>
-            ) : null}
-            <GroupedProviderRows
-              providers={providers}
-              serverId={serverId}
-              activeKey={activeKey}
-              activeItemRef={browseReveal.activeItemRef}
-              onActiveLayout={browseReveal.onItemLayout}
-              onDrillDown={onDrillDown}
-              onActivateKey={onActivateKey}
-            />
-          </View>
-        ) : null)}
-      {!hasResults ? <ModelSearchEmptyState /> : null}
-    </View>
+        {rootBrowseContent ??
+          (projection.providers.length > 0 ? (
+            <View>
+              {projection.showProvidersHeading ? (
+                <View style={styles.sectionHeading}>
+                  <Text style={styles.sectionHeadingText}>{t("modelSelector.providers")}</Text>
+                </View>
+              ) : null}
+              <GroupedProviderRows
+                providers={projection.providers}
+                serverId={serverId}
+                onDrillDown={onDrillDown}
+              />
+            </View>
+          ) : null)}
+        {projection.isEmpty ? <ModelSearchEmptyState /> : null}
+      </View>
+    </ModelBrowserNavContext.Provider>
   );
 
   return scrolling === "independent" ? (
@@ -2099,30 +1883,9 @@ function ModelBrowserContent({
     () => groupProfilesByProviderModel(profiles?.rows ?? []),
     [profiles],
   );
-  const selectedViewProvider = useMemo(
+  const projection = useMemo(
     () =>
-      view.kind === "provider"
-        ? (providers.find((provider) => provider.id === view.providerId) ?? null)
-        : null,
-    [providers, view],
-  );
-  const searchableProfileRows = useMemo(
-    () => (showProfilesSection ? (profiles?.rows ?? []) : []),
-    [profiles, showProfilesSection],
-  );
-  const allView = useMemo(
-    () =>
-      resolveModelBrowserAllView({
-        providers,
-        profiles: searchableProfileRows,
-        normalizedQuery,
-        isSearchFocused: searchAllOnFocus && isSearchFocused,
-      }),
-    [isSearchFocused, normalizedQuery, providers, searchAllOnFocus, searchableProfileRows],
-  );
-  const navItems = useMemo(
-    () =>
-      resolveModelBrowserNavItems({
+      resolveModelBrowserProjection({
         view,
         providers,
         profiles: profiles?.rows ?? null,
@@ -2144,6 +1907,7 @@ function ModelBrowserContent({
       view,
     ],
   );
+  const { navItems } = projection;
   const activeKey = useMemo(
     () =>
       resolveActiveModelBrowserKey({
@@ -2154,6 +1918,7 @@ function ModelBrowserContent({
         selectedProvider,
         selectedModel,
         preferredKey: preferredActiveKey,
+        suppressInitialActive: isNative,
       }),
     [
       explicitActiveKey,
@@ -2181,6 +1946,10 @@ function ModelBrowserContent({
     },
     [onActivateKey],
   );
+  const navContext = useMemo<ModelBrowserNavContextValue>(
+    () => ({ activeKey, onActivateKey: handleActivateRowKey }),
+    [activeKey, handleActivateRowKey],
+  );
 
   useModelBrowserKeyboard(registerKeyboardHandler, {
     view,
@@ -2197,53 +1966,42 @@ function ModelBrowserContent({
     onEditProfiles,
   });
 
-  const searchResultsHeader = useMemo(
+  const listHeader = useMemo(
     () =>
-      allView.kind === "searchResults" && allView.profiles.length > 0 ? (
-        <ProfileSearchResultsHeader
-          rows={allView.profiles}
+      projection.kind === "modelList" && projection.profileSection.kind !== "none" ? (
+        <ModelBrowserProfileSectionView
+          section={projection.profileSection}
           serverId={serverId}
-          hasModelRows={allView.rows.length > 0}
-          activeKey={activeKey}
           onApplyProfile={onApplyProfile}
           onEditProfiles={onEditProfiles}
-          onActivateKey={handleActivateRowKey}
         />
       ) : undefined,
-    [activeKey, allView, handleActivateRowKey, onApplyProfile, onEditProfiles, serverId],
+    [onApplyProfile, onEditProfiles, projection, serverId],
   );
 
-  if (view.kind === "provider") {
-    return (
-      <ProviderModelBrowserContent
-        serverId={serverId}
-        view={view}
-        provider={selectedViewProvider}
-        profiles={profiles}
-        selectedProvider={selectedProvider}
-        selectedModel={selectedModel}
-        activeKey={activeKey}
-        activeModelIndex={activeModelIndex}
-        hasActiveHeaderItem={hasActiveHeaderItem}
-        shouldRevealActive={shouldRevealActive}
-        normalizedQuery={normalizedQuery}
-        onSelect={onSelect}
-        onActivateKey={handleActivateRowKey}
-        onApplyProfile={onApplyProfile}
-        onEditProfiles={onEditProfiles}
-        onCreateProfile={onCreateProfile}
-        onEditProfile={onEditProfile}
-        profiledLookup={profiledLookup}
-        showProfilesSection={showProfilesSection}
+  let content: React.ReactNode;
+  if (projection.kind === "providerLoading") {
+    content = (
+      <View style={styles.emptyState}>
+        <View style={styles.rowSpinner}>
+          <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+        </View>
+        <Text style={styles.emptyStateText}>{t("modelSelector.loadingShort")}</Text>
+      </View>
+    );
+  } else if (projection.kind === "providerError") {
+    content = (
+      <ProviderErrorEmptyState
+        providerId={projection.providerId}
+        message={projection.message}
         onRetryProvider={onRetryProvider}
         isRetryingProvider={isRetryingProvider}
-        scrolling={scrolling}
       />
     );
-  }
-
-  if (allView.kind === "noSearchMatches") {
-    return (
+  } else if (projection.kind === "empty") {
+    content = <ModelSearchEmptyState />;
+  } else if (projection.kind === "noSearchMatches") {
+    content = (
       <View style={styles.emptyState} testID="model-search-empty">
         <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
         <Text style={styles.emptyStateText}>
@@ -2251,23 +2009,19 @@ function ModelBrowserContent({
         </Text>
       </View>
     );
-  }
-
-  if (allView.kind === "searchResults") {
-    return (
+  } else if (projection.kind === "modelList") {
+    content = (
       <ModelRowList
         serverId={serverId}
-        rows={allView.rows}
+        rows={projection.modelRows}
         selectedProvider={selectedProvider}
         selectedModel={selectedModel}
-        activeKey={activeKey}
         activeModelIndex={activeModelIndex}
         hasActiveHeaderItem={hasActiveHeaderItem}
         shouldRevealActive={shouldRevealActive}
         onSelect={onSelect}
-        onActivateKey={handleActivateRowKey}
-        showProviderLabel
-        header={searchResultsHeader}
+        showProviderLabel={projection.showProviderLabel}
+        header={listHeader}
         scrolling={scrolling}
         profiledLookup={profiledLookup}
         onCreateProfile={onCreateProfile}
@@ -2275,24 +2029,24 @@ function ModelBrowserContent({
         onEditProfiles={onEditProfiles}
       />
     );
+  } else {
+    content = (
+      <ModelBrowserBrowseView
+        serverId={serverId}
+        projection={projection}
+        activeNavIndex={activeNavIndex}
+        listKey={browseListKey}
+        rootBrowseContent={rootBrowseContent}
+        scrolling={scrolling}
+        onApplyProfile={onApplyProfile}
+        onEditProfiles={onEditProfiles}
+        onDrillDown={onDrillDown}
+      />
+    );
   }
 
   return (
-    <ModelBrowserBrowseView
-      serverId={serverId}
-      providers={providers}
-      profiles={profiles}
-      activeKey={activeKey}
-      activeNavIndex={activeNavIndex}
-      listKey={browseListKey}
-      showProfilesSection={showProfilesSection}
-      rootBrowseContent={rootBrowseContent}
-      scrolling={scrolling}
-      onApplyProfile={onApplyProfile}
-      onEditProfiles={onEditProfiles}
-      onDrillDown={onDrillDown}
-      onActivateKey={handleActivateRowKey}
-    />
+    <ModelBrowserNavContext.Provider value={navContext}>{content}</ModelBrowserNavContext.Provider>
   );
 }
 
