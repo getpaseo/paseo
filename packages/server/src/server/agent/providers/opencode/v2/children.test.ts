@@ -275,4 +275,74 @@ describe("OpenCode v2 child presentation", () => {
     await children.reconcile("session");
     expect(upserts()[0]).toMatchObject({ title: "Check the worker model", subtitle: "worker" });
   });
+
+  test("coalesces rapid child delta bursts via enqueue and syncs child messages from the tail", async () => {
+    const harness = new V2Harness();
+    const child: SessionInfo = {
+      ...harness.info,
+      id: "child",
+      parentID: "session",
+      title: "Worker",
+    };
+    let getCalls = 0;
+    const messageCalls: Array<{ order?: string; cursor?: string }> = [];
+    harness.api.session.list = async (input) => ({
+      data: input?.parentID === "session" ? [child] : [],
+      cursor: {},
+    });
+    harness.api.session.get = async () => {
+      getCalls += 1;
+      return child;
+    };
+    const originalList = harness.api.message.list;
+    harness.api.message.list = async (input, options) => {
+      messageCalls.push({ order: input.order, cursor: input.cursor });
+      return originalList(input, options);
+    };
+    const events: AgentStreamEvent[] = [];
+    const children = new SessionChildren({
+      client: () => harness.api,
+      id: "session",
+      emit: (event) => events.push(event),
+      reconcilePermissions: async () => {},
+      deltaDebounceMs: 30,
+    });
+    try {
+      await children.reconcile("session");
+      getCalls = 0;
+      messageCalls.length = 0;
+      harness.history.push({
+        id: "c-msg-1",
+        type: "assistant",
+        agent: "worker",
+        model: { providerID: "test", id: "model" },
+        time: { created: 10 },
+        content: [{ type: "text", text: "hello world" }],
+      });
+      for (let i = 0; i < 40; i++) {
+        children.enqueue({
+          id: `d-${i}`,
+          created: 10 + i,
+          type: "session.text.delta",
+          data: { sessionID: "child", assistantMessageID: "c-msg-1", ordinal: 0, delta: "a" },
+        });
+      }
+      // Enqueue is synchronous and coalesces the 40-delta burst into a single tail sync.
+      expect(getCalls).toBe(0);
+      await expect.poll(() => getCalls).toBe(1);
+      expect(messageCalls.length).toBeGreaterThan(0);
+      expect(messageCalls.every((call) => call.order === "desc")).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "provider_subagent" &&
+            event.event.type === "timeline" &&
+            event.event.item.type === "assistant_message" &&
+            event.event.item.text === "hello world",
+        ),
+      ).toBe(true);
+    } finally {
+      children.close();
+    }
+  });
 });

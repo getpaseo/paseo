@@ -23,6 +23,8 @@ function detachedSuffix(text: string, start: number): string {
 export class V2Timeline {
   private readonly content = new Map<string, string>();
   private readonly streams = new Map<string, string>();
+  private readonly settledAssistants = new Set<string>();
+  private readonly acceptedStructuredTurns = new Set<string>();
 
   resetStreams() {
     this.streams.clear();
@@ -65,9 +67,10 @@ export class V2Timeline {
     messages: SessionMessageInfo[],
     publish: (event: AgentStreamEvent) => void,
     published?: (message: SessionMessageInfo) => void,
+    options?: { startIndex?: number },
   ): Promise<void> {
     const result = this.pendingMessages.then(() =>
-      this.publishMessages(messages, publish, published),
+      this.publishMessages(messages, publish, published, options?.startIndex ?? 0),
     );
     this.pendingMessages = result.catch(() => {});
     return result;
@@ -77,9 +80,21 @@ export class V2Timeline {
     messages: SessionMessageInfo[],
     publish: (event: AgentStreamEvent) => void,
     published?: (message: SessionMessageInfo) => void,
+    rawStartIndex = 0,
   ): Promise<void> {
-    const state: TimelineState = { structured: false, accepted: false };
-    for (const message of messages) {
+    const startIndex = Math.max(0, Math.min(rawStartIndex, messages.length));
+    const state: TimelineState = { structured: false, accepted: false, userId: undefined };
+    for (let i = startIndex - 1; i >= 0; i--) {
+      const prior = messages[i];
+      if (prior.type === "user") {
+        state.userId = prior.id;
+        state.structured = prior.metadata?.paseoOutputSchema !== undefined;
+        state.accepted = this.acceptedStructuredTurns.has(prior.id);
+        break;
+      }
+    }
+    for (let i = startIndex; i < messages.length; i++) {
+      const message = messages[i];
       const timestamp = new Date(message.time.created).toISOString();
       const push = (item: AgentTimelineItem) =>
         publish({ type: "timeline", provider: "opencode", item, timestamp });
@@ -95,8 +110,9 @@ export class V2Timeline {
     state: TimelineState,
     push: (item: AgentTimelineItem) => void,
   ) {
+    state.userId = message.id;
     state.structured = message.metadata?.paseoOutputSchema !== undefined;
-    state.accepted = false;
+    state.accepted = this.acceptedStructuredTurns.has(message.id);
     if (this.content.has(message.id)) return;
     this.content.set(message.id, message.text);
     const clientMessageId = message.metadata?.paseoClientMessageId;
@@ -115,6 +131,11 @@ export class V2Timeline {
     state: TimelineState,
     push: (item: AgentTimelineItem) => void,
   ) {
+    if (this.settledAssistants.has(message.id)) {
+      if (state.structured && state.userId && this.acceptedStructuredTurns.has(state.userId))
+        state.accepted = true;
+      return;
+    }
     // Snapshot parts are indexed by position in `message.content`, but deltas
     // number text and reasoning separately. Track a per-type ordinal so both
     // paths address the same cursor entry.
@@ -128,6 +149,12 @@ export class V2Timeline {
         this.textPart(message.id, part, ordinal, state, push);
       } else {
         await this.toolPart(message.id, partIndex, part, push);
+      }
+    }
+    if (isAssistantSettled(message)) {
+      this.settledAssistants.add(message.id);
+      for (const [partIndex, part] of message.content.entries()) {
+        if (part.type === "tool") this.content.delete(`${message.id}:${partIndex}`);
       }
     }
   }
@@ -146,6 +173,7 @@ export class V2Timeline {
     const value = part.state.metadata?.paseoStructuredOutput;
     if (value === undefined) return;
     state.accepted = true;
+    if (state.userId) this.acceptedStructuredTurns.add(state.userId);
     const key = `${messageID}:${partIndex}`;
     const text = JSON.stringify(value);
     if (this.content.get(key) === text) return;
@@ -221,6 +249,15 @@ export class V2Timeline {
 interface TimelineState {
   structured: boolean;
   accepted: boolean;
+  userId: string | undefined;
+}
+
+function isAssistantSettled(message: Extract<SessionMessageInfo, { type: "assistant" }>): boolean {
+  if (message.time.completed === undefined) return false;
+  return message.content.every(
+    (part) =>
+      part.type !== "tool" || part.state.status === "completed" || part.state.status === "error",
+  );
 }
 
 interface TextPartIdentity {

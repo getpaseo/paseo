@@ -8,6 +8,7 @@ import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
 import type { V2RuntimeAcquireOptions } from "./runtime.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
+import { OpenCodeV2Session } from "./session.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import type { V2Api } from "./api.js";
 import { V2Runtime } from "./runtime.js";
@@ -522,7 +523,7 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
-  test("recovers the latest execution from the durable log when shutdown and resume events were missed", async () => {
+  test("recovers a resumed execution from persisted session info when shutdown and resume events were missed", async () => {
     const harness = new V2Harness();
     harness.autoComplete = false;
     const client = new OpenCodeV2AgentClient({
@@ -535,30 +536,16 @@ describe("OpenCode v2 session lifecycle", () => {
     try {
       await session.startTurn("resumable work");
       await expect.poll(() => harness.prompts).toHaveLength(1);
+      // Shutdown clears /api/session/active without advancing time.idle; a prior outcome can remain.
       harness.active = false;
       harness.info.outcome = "succeeded";
-      harness.api.session.log = async function* () {
-        yield {
-          id: "shutdown",
-          created: 3,
-          type: "session.execution.interrupted",
-          durable: { aggregateID: "session", seq: 3, version: 1 },
-          data: { sessionID: "session", reason: "shutdown" },
-        };
-      };
       const reads = harness.activeReads;
       harness.push({ id: "reconnect", created: 4, type: "server.connected", data: {} });
       await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
       expect(terminalEvents(events)).toEqual([]);
-      harness.api.session.log = async function* () {
-        yield {
-          id: "done",
-          created: 6,
-          type: "session.execution.succeeded",
-          durable: { aggregateID: "session", seq: 6, version: 1 },
-          data: { sessionID: "session" },
-        };
-      };
+      // OpenCode resumes and finishes while SSE misses both events (and session.log has only log.synced).
+      harness.startExecution(false);
+      harness.finishExecution("succeeded", false);
       harness.push({
         id: "reconnect-after-resume",
         created: 7,
@@ -1107,7 +1094,7 @@ describe("OpenCode v2 session lifecycle", () => {
 
   test("retries observation failures without replacing the execution error", async () => {
     const harness = new V2Harness();
-    harness.info.outcome = "failed";
+    harness.autoComplete = false;
     const client = new OpenCodeV2AgentClient({
       logger: createTestLogger(),
       runtime: harness.runtime,
@@ -1116,25 +1103,21 @@ describe("OpenCode v2 session lifecycle", () => {
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
     try {
-      let attempted = false;
-      harness.api.session.log = () => {
-        attempted = true;
-        throw new Error("log unavailable");
-      };
       await session.startTurn("hello");
+      await expect.poll(() => harness.prompts).toEqual(["hello"]);
+      let attempted = false;
+      const originalList = harness.api.message.list;
+      harness.api.message.list = async () => {
+        attempted = true;
+        throw new Error("messages unavailable");
+      };
+      harness.finishExecution("failed", false, { message: "quota exhausted" });
+      harness.push({ id: "reconnect-1", created: 2, type: "server.connected", data: {} });
       const failures = () => events.filter((event) => event.type === "turn_failed");
       await expect.poll(() => attempted).toBe(true);
       expect(failures()).toEqual([]);
-      harness.api.session.log = async function* () {
-        yield {
-          id: "failure",
-          created: 2,
-          durable: { aggregateID: "session", seq: 2, version: 1 },
-          type: "session.execution.failed",
-          data: { sessionID: "session", error: { type: "provider", message: "quota exhausted" } },
-        };
-      };
-      harness.push({ id: "reconnect", created: 3, type: "server.connected", data: {} });
+      harness.api.message.list = originalList;
+      harness.push({ id: "reconnect-2", created: 3, type: "server.connected", data: {} });
       await expect.poll(failures).toHaveLength(1);
       expect(failures()[0]).toMatchObject({ error: "quota exhausted" });
       expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(0);
@@ -1379,6 +1362,441 @@ describe("OpenCode v2 session lifecycle", () => {
       harness.autoComplete = true;
       await session.startTurn("retry");
       await expect.poll(() => harness.prompts).toEqual(["first", "retry"]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("settles missed interrupted and failed SSE events from persisted session info", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      // 1. Missed interrupted SSE event settles cleanly and unblocks follow-up work.
+      await session.startTurn("cancel without sse");
+      await expect.poll(() => harness.prompts).toEqual(["cancel without sse"]);
+      harness.finishExecution("interrupted", false);
+      harness.push({ id: "reconnect-1", created: 10, type: "server.connected", data: {} });
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_canceled" });
+
+      // 2. Missed failed SSE event reads idle.error.message (OpenCode 2.1+).
+      await session.startTurn("fail with idle error");
+      await expect.poll(() => harness.prompts).toHaveLength(2);
+      harness.finishExecution("failed", false, { message: "provider rejected request" });
+      harness.push({ id: "reconnect-2", created: 20, type: "server.connected", data: {} });
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      expect(terminalEvents(events)[1]).toMatchObject({
+        type: "turn_failed",
+        error: "provider rejected request",
+      });
+
+      // 3. OpenCode 2.0.10-2.0.x without idle.error falls back to latest assistant.error.message.
+      await session.startTurn("fail with assistant error");
+      await expect.poll(() => harness.prompts).toHaveLength(3);
+      harness.history.push({
+        id: "assistant-err",
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "test", id: "model" },
+        time: { created: 30, completed: 31 },
+        content: [],
+        error: { type: "provider", message: "assistant step failed" } as never,
+      });
+      harness.finishExecution("failed", false);
+      harness.push({ id: "reconnect-3", created: 35, type: "server.connected", data: {} });
+      await expect.poll(() => terminalEvents(events)).toHaveLength(3);
+      expect(terminalEvents(events)[2]).toMatchObject({
+        type: "turn_failed",
+        error: "assistant step failed",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("settles missed completions on OpenCode 2.0.10-2.2.1 without time.busy", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    // Simulate an out-of-band turn completed while Paseo was idle (no time.busy on 2.0.10-2.2.1).
+    harness.info.time.idle = 50;
+    delete harness.info.time.busy;
+    harness.info.outcome = "succeeded";
+    const originalGet = harness.api.session.get;
+    harness.api.session.get = async (input, options) => {
+      const info = await originalGet(input, options);
+      delete (info.time as { busy?: number }).busy;
+      return info;
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      // Simulate another client finishing a turn while Paseo is idle.
+      harness.info.time.idle = 100;
+      await session.startTurn("legacy server work");
+      await expect.poll(() => harness.prompts).toEqual(["legacy server work"]);
+      // Shutdown pauses execution without advancing time.idle past baseline 100.
+      harness.active = false;
+      const reads = harness.activeReads;
+      harness.push({ id: "reconnect-1", created: 105, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(reads);
+      expect(terminalEvents(events)).toEqual([]);
+      // Resumed turn finishes and advances time.idle past 100.
+      harness.finishExecution("succeeded", false);
+      delete harness.info.time.busy;
+      harness.push({ id: "reconnect-2", created: 110, type: "server.connected", data: {} });
+      await expect.poll(() => terminalEvents(events)).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("settles interrupt promptly without waiting for a slow history reconcileSnapshot", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    let releaseList!: () => void;
+    const listGate = new Promise<void>((resolve) => {
+      releaseList = resolve;
+    });
+    const originalList = harness.api.message.list;
+    try {
+      await session.startTurn("large session work");
+      await expect.poll(() => harness.prompts).toEqual(["large session work"]);
+      // Block message.list to simulate a slow full-history reconcileSnapshot (>2 s).
+      harness.api.message.list = async (input, options) => {
+        await listGate;
+        return originalList(input, options);
+      };
+      const startedAt = Date.now();
+      await session.interrupt();
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
+      // Immediate replacement startTurn must succeed without colliding with the stopped turn.
+      harness.api.message.list = originalList;
+      harness.autoComplete = true;
+      await session.startTurn("replacement work");
+      await expect.poll(() => harness.prompts).toEqual(["large session work", "replacement work"]);
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+    } finally {
+      releaseList();
+      await session.close();
+    }
+  });
+
+  test("settles interrupt promptly when OpenCode clears active asynchronously without SSE", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    harness.interrupt = async () => {
+      // Simulate OpenCode's forked Fiber.interrupt: returns immediately while active clears ~35ms later
+      // and the SSE event is missed.
+      setTimeout(() => {
+        harness.finishExecution("interrupted", false);
+      }, 35);
+      return { interrupted: true };
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("async interrupt work");
+      await expect.poll(() => harness.prompts).toEqual(["async interrupt work"]);
+      const startedAt = Date.now();
+      await session.interrupt();
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reconciles live snapshots from the tail without re-reading page 1 of ascending history", async () => {
+    const harness = new V2Harness();
+    for (let i = 0; i < 60; i++) {
+      harness.history.push(
+        {
+          id: `u-${i}`,
+          type: "user",
+          text: `prompt ${i}`,
+          time: { created: i * 10 + 1 },
+        },
+        {
+          id: `a-${i}`,
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "test", id: "model" },
+          time: { created: i * 10 + 2, completed: i * 10 + 3 },
+          content: [
+            {
+              type: "tool",
+              id: `call-${i}`,
+              name: "read",
+              state: {
+                status: "completed",
+                input: { path: `file-${i}.ts` },
+                content: [{ type: "text", text: `content-${i}` }],
+                metadata: {},
+              },
+              time: { created: i * 10 + 2, ran: i * 10 + 2, completed: i * 10 + 3 },
+            },
+            { type: "text", text: `reply ${i}` },
+          ],
+          tokens: { input: 100, output: 50, reasoning: 0, cache: { read: 0, write: 0 } },
+          cost: 0.01,
+        },
+        {
+          id: `i-${i}`,
+          type: "idle",
+          outcome: "succeeded",
+          time: { created: i * 10 + 4 },
+        },
+      );
+    }
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const liveCalls: Array<{ order?: string; cursor?: string; limit?: number }> = [];
+    const originalList = harness.api.message.list;
+    harness.api.message.list = async (input, options) => {
+      liveCalls.push({ order: input.order, cursor: input.cursor, limit: input.limit });
+      return originalList(input, options);
+    };
+    harness.prompt = async (input) => {
+      harness.prompts.push(input.text);
+      harness.history.push(
+        {
+          id: "u-live",
+          type: "user",
+          text: input.text,
+          metadata: input.metadata,
+          time: { created: 10_000 },
+        },
+        {
+          id: "a-live",
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "test", id: "model" },
+          time: { created: 10_000, completed: 11_000 },
+          content: [{ type: "text", text: "tail reply" }],
+          tokens: { input: 200, output: 100, reasoning: 0, cache: { read: 0, write: 0 } },
+          cost: 0.02,
+        },
+      );
+    };
+    try {
+      const result = await session.run("live prompt");
+      expect(result.finalText).toBe("tail reply");
+      expect(liveCalls.length).toBeGreaterThan(0);
+      // Every live reconcile must fetch from the descending tail (never ascending from page 1).
+      expect(liveCalls.every((call) => call.order === "desc" && call.cursor === undefined)).toBe(
+        true,
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not stall parent Stop during a burst of slow child SSE events", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const child: SessionInfo = { ...harness.info, id: "child", parentID: "session" };
+    harness.api.session.list = async (input) => ({
+      data: input?.parentID === "session" ? [child] : [],
+      cursor: {},
+    });
+    let releaseChildGet!: () => void;
+    const childGetGate = new Promise<void>((resolve) => {
+      releaseChildGet = resolve;
+    });
+    let blockChildGet = false;
+    const originalGet = harness.api.session.get;
+    harness.api.session.get = async (input, options) => {
+      if (input.sessionID === "child") {
+        if (blockChildGet) await childGetGate;
+        return child;
+      }
+      return originalGet(input, options);
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("parent turn");
+      await expect.poll(() => harness.prompts).toEqual(["parent turn"]);
+      blockChildGet = true;
+      for (let i = 0; i < 20; i++) {
+        harness.push({
+          id: `child-delta-${i}`,
+          created: 100 + i,
+          type: "session.text.delta",
+          data: { sessionID: "child", assistantMessageID: "c-msg", ordinal: 0, delta: "x" },
+        });
+      }
+      const startedAt = Date.now();
+      await session.interrupt();
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
+    } finally {
+      releaseChildGet();
+      await session.close();
+    }
+  });
+
+  test("reconnects and reconciles when a half-open SSE stream stalls without activity", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    let subscriptions = 0;
+    const originalSubscribe = harness.api.event.subscribe;
+    harness.api.event.subscribe = (options) => {
+      subscriptions += 1;
+      return originalSubscribe(options);
+    };
+    const session = new OpenCodeV2Session({
+      connection: harness.connection,
+      info: harness.info,
+      config: { provider: "opencode", cwd: "/tmp/project" },
+      logger: createTestLogger(),
+      persist: true,
+      requiresPaseoPlugin: false,
+      streamIdleTimeoutMs: 120,
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.initialize();
+    try {
+      // Keepalive activity frames prevent spurious reconnects while the stream is healthy.
+      const keepalive = setInterval(() => harness.pingActivity(), 40);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(subscriptions).toBe(1);
+      } finally {
+        clearInterval(keepalive);
+      }
+      // Once the socket goes silent (no events or heartbeats), the watchdog reconnects and reconciles.
+      await session.startTurn("finish on silent socket");
+      await expect.poll(() => harness.prompts).toEqual(["finish on silent socket"]);
+      harness.finishExecution("succeeded", false);
+      await expect.poll(() => subscriptions, { timeout: 2_000 }).toBeGreaterThanOrEqual(2);
+      await expect.poll(() => terminalEvents(events), { timeout: 2_000 }).toHaveLength(1);
+      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("bridges multi-page tail updates and preserves structured output validation", async () => {
+    const harness = new V2Harness();
+    for (let i = 0; i < 40; i++) {
+      harness.history.push(
+        { id: `u-${i}`, type: "user", text: `old ${i}`, time: { created: i * 10 + 1 } },
+        {
+          id: `a-${i}`,
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "test", id: "model" },
+          time: { created: i * 10 + 2, completed: i * 10 + 3 },
+          content: [{ type: "text", text: `old reply ${i}` }],
+        },
+      );
+    }
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const calls: Array<{ order?: string; cursor?: string }> = [];
+    const originalList = harness.api.message.list;
+    harness.api.message.list = async (input, options) => {
+      calls.push({ order: input.order, cursor: input.cursor });
+      return originalList(input, options);
+    };
+    harness.prompt = async (input) => {
+      harness.prompts.push(input.text);
+      harness.history.push({
+        id: "u-structured",
+        type: "user",
+        text: input.text,
+        metadata: input.metadata,
+        time: { created: 10_000 },
+      });
+      // Add 30 intermediate assistant steps (> 1 tail page of 25) so cursor bridging is exercised
+      // and the user message with paseoOutputSchema sits on page 2.
+      for (let step = 0; step < 30; step++) {
+        harness.history.push({
+          id: `a-step-${step}`,
+          type: "assistant",
+          agent: "build",
+          model: { providerID: "test", id: "model" },
+          time: { created: 10_001 + step, completed: 10_002 + step },
+          content: [{ type: "text", text: `intermediate prose ${step}` }],
+        });
+      }
+      harness.history.push({
+        id: "a-final",
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "test", id: "model" },
+        time: { created: 10_100, completed: 10_101 },
+        content: [
+          { type: "text", text: "prose to suppress" },
+          {
+            type: "tool",
+            id: "out",
+            name: "paseo_structured_output",
+            time: { created: 10_100, ran: 10_100, completed: 10_101 },
+            state: {
+              status: "completed",
+              input: { value: { ok: true } },
+              content: [{ type: "text", text: "ok" }],
+              metadata: { paseoStructuredOutput: { ok: true } },
+            },
+          },
+        ],
+      });
+    };
+    try {
+      const result = await session.run("structured multi-step", {
+        outputSchema: {
+          type: "object",
+          properties: { ok: { const: true } },
+          required: ["ok"],
+        },
+      });
+      expect(result.finalText).toBe('{"ok":true}');
+      // Cursor bridging must never combine cursor with order, and must never fall back to order=asc.
+      expect(calls.some((call) => call.order === "desc")).toBe(true);
+      expect(calls.some((call) => call.cursor !== undefined && call.order === undefined)).toBe(
+        true,
+      );
+      expect(calls.some((call) => call.order === "asc")).toBe(false);
     } finally {
       await session.close();
     }
