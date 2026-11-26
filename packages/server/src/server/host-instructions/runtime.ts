@@ -127,7 +127,7 @@ export class HostInstructionsRuntime {
     const inbox = await HostInstructionInbox.open(options.paseoHome);
     const writer = new InstructionFileWriter(file);
     const deliver = async (key: string, request: Exclude<Request, { action: "list" }>) => {
-      const registration = registrations.get(key);
+      const registration = await writer.readSettled(() => registrations.get(key));
       const receipt = await exchange(registration, request);
       if (receipt?.state === "revoked" && registration) {
         await retireRegistration(registrations, writer, registration);
@@ -228,12 +228,13 @@ export class HostInstructionsRuntime {
         };
       }
       case "has_registration": {
-        await this.registrationWriter.settled();
-        const registration = this.registrations.get(command.id);
-        return {
-          hasRegistration:
-            registration?.destinationId === command.destinationId && !registration.agentId,
-        };
+        return this.registrationWriter.readSettled(() => {
+          const registration = this.registrations.get(command.id);
+          return {
+            hasRegistration:
+              registration?.destinationId === command.destinationId && !registration.agentId,
+          };
+        });
       }
       case "register": {
         if (command.destinationId === this.options.serverId) throw new Error("Choose another host");
@@ -265,7 +266,9 @@ export class HostInstructionsRuntime {
   }
 
   async listDestinations() {
-    const registrations = [...this.registrations.values()];
+    const registrations = await this.registrationWriter.readSettled(() => [
+      ...this.registrations.values(),
+    ]);
     const hostTargets = await Promise.all(
       registrations
         .filter((entry) => !entry.agentId)
@@ -275,10 +278,13 @@ export class HostInstructionsRuntime {
           ),
         ),
     );
-    const hostPolicies = new Set(
-      [...this.registrations.values()]
-        .filter((entry) => !entry.agentId)
-        .map((entry) => entry.destinationId),
+    const hostPolicies = await this.registrationWriter.readSettled(
+      () =>
+        new Set(
+          [...this.registrations.values()]
+            .filter((entry) => !entry.agentId)
+            .map((entry) => entry.destinationId),
+        ),
     );
     const legacyTargets = registrations.flatMap(({ destinationId, agentId, workspaceId }) =>
       agentId && workspaceId && !hostPolicies.has(destinationId)
@@ -307,16 +313,22 @@ export class HostInstructionsRuntime {
   }
 
   async submit(destinationId: string, agentId: string, prompt: string, workspaceId?: string) {
-    await this.registrationWriter.settled();
-    const entries = [...this.registrations.values()].filter(
-      (registration) => registration.destinationId === destinationId,
+    const entries = await this.registrationWriter.readSettled(() =>
+      [...this.registrations.values()].filter(
+        (registration) => registration.destinationId === destinationId,
+      ),
     );
     const host = entries.findLast((registration) => !registration.agentId);
     const conversation = entries.findLast((registration) => registration.agentId === agentId);
     // Check for revocation before choosing when both credentials could route this instruction.
     // A missing response leaves the host credential eligible for offline queueing.
     const targets = host && (conversation || !workspaceId) ? await this.discover(host) : [];
-    const entry = (host && this.registrations.get(registrationKey(host))) ?? conversation;
+    const entry = await this.registrationWriter.readSettled(() =>
+      [host, conversation].find(
+        (candidate) =>
+          candidate && this.registrations.get(registrationKey(candidate)) === candidate,
+      ),
+    );
     if (!entry) throw new Error("This conversation has no instruction grant");
     const targetWorkspace =
       entry.workspaceId ??

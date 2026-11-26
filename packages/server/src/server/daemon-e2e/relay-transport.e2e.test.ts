@@ -573,6 +573,9 @@ async function waitForCapturedLog(
               prompt: "Run the local check",
             }),
           ]);
+        const accessOnly = await accessManager.manageHostInstructions({ action: "list" });
+        expect(accessOnly.hostPolicies).toEqual([expect.objectContaining({ sourceId })]);
+        expect(accessOnly).not.toHaveProperty("requests");
         expect(sent).toEqual([]);
         await destinationClient.manageHostInstructions({
           action: "decide",

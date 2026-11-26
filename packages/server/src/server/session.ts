@@ -3728,10 +3728,16 @@ export class Session {
   private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
     if (msg.type === "host.instructions.manage.request") {
       if (!this.hostInstructions) throw new Error("Host instructions are unavailable");
-      const result = await this.hostInstructions.manage(msg.command);
+      const { requests, ...result } = await this.hostInstructions.manage(msg.command);
       this.emit({
         type: "host.instructions.manage.response",
-        payload: { requestId: msg.requestId, ...result },
+        payload: {
+          requestId: msg.requestId,
+          ...result,
+          ...(this.authorization.allowsInbound({ type: "fetch_agent_timeline_request" })
+            ? { requests }
+            : {}),
+        },
       });
       return;
     }
