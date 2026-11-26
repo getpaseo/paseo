@@ -101,7 +101,7 @@ See [Providers](/docs/providers) for the mental model and [Supported providers](
 
 Paseo releases resumable idle agent processes after one hour when its daemon baseline allows
 cleanup and any implemented provider check agrees. Your next prompt resumes the same conversation. Disable this
-for the entire host by turning off **Release idle agents** in **Settings → your host → Agents**, or with:
+for the entire host by turning off **Release idle agents** in **Settings → Host → Daemon**, or with:
 
 ```json
 { "agents": { "idleRuntimeCleanup": false } }

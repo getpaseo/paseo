@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { identityForeground, type IdentityColorName } from "@/styles/identity-colors";
 import { openSettings } from "./app";
 import { buildSeededHost } from "./daemon-registry";
-import { clickSettingsBackToWorkspace, openHostSection, selectSettingsHost } from "./settings";
+import { clickSettingsBackToWorkspace, openClientHostSettings } from "./settings";
 
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
@@ -170,8 +170,7 @@ export async function selectAllHostsFilter(page: Page): Promise<void> {
 
 export async function openHostAppearanceSettings(page: Page, serverId: string): Promise<void> {
   await openSettings(page);
-  await selectSettingsHost(page, serverId);
-  await openHostSection(page, serverId, "host");
+  await openClientHostSettings(page, serverId);
   await expect(page.getByTestId("host-appearance-preview")).toBeVisible({ timeout: 15_000 });
 }
 

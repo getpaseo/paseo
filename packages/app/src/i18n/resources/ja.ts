@@ -2405,7 +2405,7 @@ export const ja: TranslationResources = {
     title: "設定",
     loading: "設定を読み込み中...",
     groups: {
-      app: "アプリ",
+      app: "このデバイス",
       host: "ホスト",
     },
     hostPicker: {
@@ -2423,7 +2423,9 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
+      hosts: "ホスト",
       chat: "チャット",
+      chatAndPanes: "チャットとペイン",
       appearance: "外観",
       sidebar: "サイドバー",
       terminal: "ターミナル",
@@ -2436,6 +2438,16 @@ export const ja: TranslationResources = {
       permissions: "権限",
       diagnostics: "診断",
       about: "アプリ情報",
+    },
+    clientHosts: {
+      title: "保存済みホスト",
+      info: "このデバイスが接続するホストです。ここでの名前、アイコン、バッジ、経路はこのデバイスにのみ反映されます。",
+      backToHosts: "ホスト一覧に戻る",
+      routesTitle: "このデバイスの接続経路",
+      routesInfo:
+        "このデバイスがこのホストに到達するために保存された経路です。Paseoは利用可能な最速の経路を選びます。",
+      addRoute: "経路を追加",
+      activeRoute: "接続中",
     },
     layout: en.settings.layout,
     editor: {
@@ -2470,6 +2482,7 @@ export const ja: TranslationResources = {
       projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
+      tools: "ツールとプロンプト",
       agentProfiles: "エージェントプロファイル",
       metadata: "メタデータ",
       voice: "音声",
@@ -2479,6 +2492,7 @@ export const ja: TranslationResources = {
       terminals: "ターミナル",
       plugins: "プラグイン",
       host: "概要",
+      daemon: "デーモン",
     },
     plugins: pluginSettings.ja,
     metadataGeneration: {
@@ -3021,6 +3035,10 @@ export const ja: TranslationResources = {
           delete: "スキルを削除",
         },
       },
+      tools: {
+        instructionsTitle: "指示",
+        toolsTitle: "エージェントツール",
+      },
       orchestration: {
         title: "オーケストレーション",
         unavailable: "オーケストレーションを管理するにはこのホストに接続してください",
@@ -3149,6 +3167,7 @@ export const ja: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "エージェントランタイム",
         rename: {
           editLabel: "ラベルを編集",
           title: "ホストの名前を変更",

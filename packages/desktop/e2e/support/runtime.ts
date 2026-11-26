@@ -412,9 +412,7 @@ export async function waitForDirectoryDialog(
 export async function openDesktopSettings(page: Page, serverId: string): Promise<void> {
   await openSettings(page);
   await openSettingsHost(page, serverId);
-  // The daemon-lifecycle card moved to the Host section in the flat-settings
-  // layout; navigate there before asserting it.
-  await openSettingsHostSection(page, serverId, "host");
+  await openSettingsHostSection(page, serverId, "daemon");
   await expect(page.getByTestId("host-page-daemon-lifecycle-card")).toBeVisible({
     timeout: 15_000,
   });

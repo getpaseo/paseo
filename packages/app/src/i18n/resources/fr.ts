@@ -2435,7 +2435,7 @@ export const fr: TranslationResources = {
     title: "Paramètres",
     loading: "Chargement des paramètres…",
     groups: {
-      app: "Application",
+      app: "Cet appareil",
       host: "Hôte",
     },
     hostPicker: {
@@ -2453,7 +2453,9 @@ export const fr: TranslationResources = {
     groupInfo: "À propos de {{title}}",
     sections: {
       general: "Général",
+      hosts: "Hôtes",
       chat: "Discussion",
+      chatAndPanes: "Chat et panneaux",
       appearance: "Apparence",
       sidebar: "Barre latérale",
       terminal: "Terminal",
@@ -2466,6 +2468,16 @@ export const fr: TranslationResources = {
       permissions: "Autorisations",
       diagnostics: "Diagnostic",
       about: "À propos",
+    },
+    clientHosts: {
+      title: "Hôtes enregistrés",
+      info: "Hôtes auxquels cet appareil se connecte. Les noms, icônes, badges et routes ici ne concernent que cet appareil.",
+      backToHosts: "Retour aux hôtes",
+      routesTitle: "Comment cet appareil se connecte",
+      routesInfo:
+        "Routes enregistrées utilisées par cet appareil pour joindre cet hôte. Paseo choisit la plus rapide disponible.",
+      addRoute: "Ajouter une route",
+      activeRoute: "Active",
     },
     layout: en.settings.layout,
     editor: {
@@ -2500,6 +2512,7 @@ export const fr: TranslationResources = {
       projects: "Projets",
       connections: "Connexions",
       agents: "Agents",
+      tools: "Outils et instructions",
       agentProfiles: "Profils d’agent",
       metadata: "Métadonnées",
       voice: "Voix",
@@ -2509,6 +2522,7 @@ export const fr: TranslationResources = {
       terminals: "Terminaux",
       plugins: "Plugins",
       host: "Aperçu",
+      daemon: "Daemon",
     },
     plugins: pluginSettings.fr,
     metadataGeneration: {
@@ -3059,6 +3073,10 @@ export const fr: TranslationResources = {
           delete: "Supprimer le skill",
         },
       },
+      tools: {
+        instructionsTitle: "Instructions",
+        toolsTitle: "Outils des agents",
+      },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connectez-vous à cet hôte pour gérer l’orchestration",
@@ -3188,6 +3206,7 @@ export const fr: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "Exécution des agents",
         rename: {
           editLabel: "Modifier le libellé",
           title: "Renommer l’hôte",
