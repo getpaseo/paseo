@@ -1,9 +1,11 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import {
+  expectTimelinePromptVisible,
   holdOlderHistoryPages,
   scrollTimelineRowIntoView,
   userScrollsTimelineToHistoryStart,
+  waitForTimelineGeometryToSettle,
 } from "../support/helpers/timeline-pagination";
 import { getActiveTabTestId } from "../support/helpers/launcher";
 import type { Page, Locator } from "@playwright/test";
@@ -491,6 +493,39 @@ async function seedWholeTurnHistory() {
   return agent;
 }
 
+/** Read every command across the scroll window, without requiring offscreen rows to mount. */
+async function expectExpandedCommandsReadable(page: Page, count: number) {
+  const timeline = page.getByTestId("agent-chat-scroll");
+  const commands = new Set<number>();
+  await timeline.hover();
+  await waitForTimelineGeometryToSettle(page);
+  for (let step = 0; step < count && commands.size < count; step += 1) {
+    const labels = await timeline
+      .getByRole("button", { name: /echo stress-\d+/ })
+      .allTextContents();
+    for (const label of labels) {
+      const command = /echo stress-(\d+)/.exec(label);
+      if (command) commands.add(Number(command[1]));
+    }
+    if (commands.size < count) {
+      await page.mouse.wheel(0, 300);
+      await waitForTimelineGeometryToSettle(page);
+    }
+  }
+  expect([...commands].sort((a, b) => a - b)).toEqual(
+    Array.from({ length: count }, (_, index) => index),
+  );
+}
+
+async function returnToExpandedSummary(page: Page, summary: Locator) {
+  await page.getByTestId("agent-chat-scroll").hover();
+  for (let step = 0; step < 120 && !(await summary.isVisible()); step += 1) {
+    await page.mouse.wheel(0, -300);
+    await waitForTimelineGeometryToSettle(page);
+  }
+  await scrollTimelineRowIntoView(page, summary);
+}
+
 async function expectInitialFillIsConcealed(page: Page) {
   await expect(page.getByTestId("agent-initial-fill")).toBeVisible();
   await expect(page.getByTestId("agent-chat-scroll")).toHaveCSS("opacity", "0");
@@ -564,14 +599,14 @@ test("loads complete long turns and preserves expansion while revealing older hi
     ).toBeVisible();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
     await latest.click();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    await expectExpandedCommandsReadable(page, 120);
     await userScrollsTimelineToHistoryStart(page);
     await history.expectRequestedPages(3);
     history.releasePage(3);
-    await page.getByTestId("scroll-to-bottom-button").click();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    await expectTimelinePromptVisible(page, "Short 4: emit 1 coalesced agent stream updates");
+    await expectExpandedCommandsReadable(page, 120);
     history.expectNoRepeatedEntries();
-    await scrollTimelineRowIntoView(page, latest);
+    await returnToExpandedSummary(page, latest);
     await latest.click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
   } finally {
@@ -705,7 +740,7 @@ test("a scheduled heartbeat opens a separate turn without reopening the previous
   });
   const schedules = agent.client as unknown as Pick<
     DaemonClient,
-    "scheduleCreate" | "scheduleRunOnce" | "scheduleDelete"
+    "scheduleCreate" | "scheduleRunOnce" | "scheduleDelete" | "scheduleList"
   >;
   let scheduleId: string | undefined;
   try {
@@ -728,7 +763,15 @@ test("a scheduled heartbeat opens a separate turn without reopening the previous
     });
     expect(created.error).toBeNull();
     scheduleId = created.schedule!.id;
-    const fired = await schedules.scheduleRunOnce({ id: scheduleId });
+    const running = page.getByTestId("workspace-status-indicator-running");
+    const tasks = page.getByRole("button", { name: "1 background task", exact: true });
+    await expect(tasks).toBeVisible();
+    await expect(running).toHaveCount(0);
+
+    const [fired] = await Promise.all([
+      schedules.scheduleRunOnce({ id: scheduleId }),
+      expect(running.first()).toBeVisible(),
+    ]);
     expect(fired.error).toBeNull();
     await expect(
       page.getByTestId("tool-call-badge").filter({ hasText: /^Heartbeat/ }),
@@ -743,7 +786,17 @@ test("a scheduled heartbeat opens a separate turn without reopening the previous
     await expect(summaries).toHaveCount(2);
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
     await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(2);
-    await page.screenshot({ path: "/tmp/heartbeat-turn-footer.png" });
+    await expect(running).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toHaveCount(0);
+    await tasks.click();
+    const panel = page.getByTestId("background-work-panel");
+    await expect(panel).toContainText("Heartbeat");
+    await panel.getByRole("button", { name: "Stop Check the completed work" }).click();
+    await expect(tasks).toHaveCount(0);
+    await expect(running).toHaveCount(0);
+    const remaining = await schedules.scheduleList();
+    expect(remaining.error).toBeNull();
+    expect(remaining.schedules.map((schedule) => schedule.id)).not.toContain(scheduleId);
   } finally {
     if (scheduleId) await schedules.scheduleDelete({ id: scheduleId });
     await agent.cleanup();

@@ -19,8 +19,8 @@ provider icon map. You do not need a core manifest entry or provider factory.
 
 | Provider    | Transport                                  | Setup and limitations                                            |
 | ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
-| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
+| Antigravity | ACP over the installed `agy acp` CLI       | [Antigravity](../public-docs/supported-providers/antigravity.md) |
+| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/supported-providers/muse-code.md)     |
 
 ## Provider-native session options
 
@@ -50,8 +50,8 @@ or without a control.
   reject. A key the running session cannot apply (one the provider reads only when it opens) is
   rejected too, so a stored option always describes what runs. Claude reads most options when it
   starts its query, and replacing a started query would end its background work, so after the
-  first prompt only Fast can change. Codex fixes its approval policy and sandbox when the thread
-  starts, so it applies only `service_tier` and `plan_mode` live. A session with no
+  first prompt only Fast and Ultracode can change. Codex fixes its approval policy and sandbox
+  when the thread starts, so it applies only `service_tier` and `plan_mode` live. A session with no
   `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
   it ended up with when they differ from the request. The daemon stores the patch and that
   result in one step after the call resolves. Throwing rejects the whole patch and none of it is
@@ -150,6 +150,15 @@ Pi import discovery reads Pi's persisted JSONL session files because Pi RPC does
 
 OMP is a first-class built-in provider, disabled by default. Its launch contract, typed runtime, agent/session behavior, history, permissions, imports, and test fake live under `providers/omp/`; only the provider-neutral JSONL child-process transport is shared with Pi. It launches `omp --mode rpc-ui`, uses OMP's `get_available_commands` RPC for slash-command discovery, bridges OMP `rpc-ui` approval dialogs into Paseo permissions, and imports terminal-started sessions from `~/.omp/agent/sessions` when enabled.
 
+OMP rewind is a branch, not an edit: `branch` writes a new session file whose header names the
+previous file as `parentSession` and leaves that previous file untouched. A rewind chain therefore
+adds one file to `~/.omp/agent/sessions` per step, and `omp --resume` lists all of them. The
+previous file also keeps whatever head it had recorded, which can be an older branch than the one
+the user last saw. Treat the provider session file selected by OMP as the authority; do not assume
+the newest file or the newest message wins. Import listings hand back a file path, so persist the
+resumed session's own identity (`sessionId`) with that path as `nativeHandle`, not the listed
+handle as both.
+
 OMP supports native Paseo host tools. The adapter registers the full caller-scoped Paseo tool catalog directly with OMP, matching providers such as Claude that expose the full catalog through MCP. Serialize every OMP host definition with `loadMode: "essential"` so `create_agent`, `send_agent_prompt`, `wait_for_agent`, and related tools remain direct calls; omitting the field makes OMP mount non-built-in names under `xd://` instead. OMP's provider-managed task subagents are surfaced as Paseo subagents through `child_session` imports; the parent keeps the subagents track while the child runtime stays owned by OMP. Custom OMP profiles should extend `omp`; other Pi-compatible forks can still extend `pi`, override `command`, and set `params.sessionDir` to their JSONL session directory.
 
 Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
@@ -160,9 +169,9 @@ Use OpenCode v2 execution events to trigger turn completion, with active-state a
 
 V2.0.4 also removed the activation endpoint that gated a cold location, and a cold location registers its config-derived commands, skills, and providers asynchronously. Wait until `plugin.list` returns a populated inventory before reading the catalog or commands; an empty inventory means the location is still warming. Fail when the readiness deadline expires, including when an inventory request stalls.
 
-Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. The global manifest must use agent-scoped schemas before a session is bound, because every bridge call executes in an agent session. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
+Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. The global manifest must use agent-scoped schemas before a session is bound, because every bridge call executes in an agent session. V2 discovers definitions from each bound session's catalog: plugin-contributed tools can be absent from the global manifest, and an allowlist cannot register a missing definition. Registration is location-wide, so session filtering and caller-scoped execution must remain in place. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
 
-An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. V2 supports session environment, but its MCP configuration remains location-scoped, so separate servers still prevent one agent from changing another agent's MCP setup. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
+No v2 agent gets a dedicated OpenCode server, because a reused server cannot provide one. OpenCode's MCP configuration is location-scoped, so Paseo never calls `mcp.add` for an agent. The daemon connects the agent's MCP servers itself (`v2/session-mcp.ts`), and the v2 plugin exposes their tools under OpenCode's native `<server>_<tool>` names. Each name registers once per location. The plugin's `context` hook gives each session its own definition and removes the tool from other sessions. If the user's own OpenCode configuration registered a tool with the same name first, other sessions keep that tool and its execution. Execution routes to the calling session's root binding. The hook also adds the servers' instructions to each request. OpenCode loads instruction entries before the hook runs, so an entry written when a child is adopted would miss the child's first request. The plugin calls OpenCode's `permission.assert` before each call, so `toolPolicy.preapproved` grants still apply. That API exists from OpenCode 2.0.29. Bind reports `features.mcpTools`, so an older server or a stale plugin fails the session at creation instead of hiding its tools. Per-agent `launch.env` reaches shells through `session.environment`, which child sessions do not inherit. The plugin asks the daemon to adopt each descendant in its first `context` hook, before its first model request.
 
 OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prompt APIs; let OpenCode create `msg*` IDs and record the user timeline item from the `message.updated` event.
 
@@ -212,11 +221,35 @@ Plugin callbacks follow the same contract; see [plugin providers](plugins.md#con
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
 multiple catalog requests must not apply this deadline separately to each request. The manager
-aborts the shared refresh signal at the deadline. Providers name active catalog operations and
+aborts the shared refresh signal at the deadline, and when it stops. Shutdown waits for running
+probes to settle before it shuts down provider clients, so a probe cannot start provider work,
+such as an OpenCode server, after its client has cleaned up. Providers name active catalog operations and
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
-that were still active when the deadline expired.
+that were still active when the deadline expired. A plugin provider's connection is shared with its
+running sessions, so the bridge cannot close it at the deadline; it sends `request.cancel` for the
+abandoned request instead, and the provider stops that request's work
+([provider guide](../public-docs/plugins/providers.md#stop-a-request-paseo-cancels)).
 
-Catalogue results stay cached by identity until explicit refresh or a change to that provider's configuration.
+Catalogue results stay cached by identity until a refresh or a change to that provider's configuration.
+Providers change their model lists on the server without a CLI update, so the daemon refreshes
+each enabled provider about every 30 minutes (`ProviderRefreshSchedule`). One timer ticks
+`30 min / enabled providers` apart, and each tick starts at most one refresh: the provider refreshed
+longest ago, if that was a full interval ago. Ticks do not wait for refreshes, so a provider that
+probes many workspace targets does not delay the others, and provider CLIs never start in a burst.
+Any forced refresh, configuration change, or newly enabled provider counts as a refresh and pushes
+that provider's next one back a full interval.
+The background refresh takes the settings refresh path for one provider, with these differences:
+
+- It joins discovery already in flight.
+- It passes `force: false`, because providers treat `force` as a requested hard refresh. OpenCode
+  rotates its shared server on it.
+- An unchanged catalogue keeps the published record and its `fetchedAt`, so idle clients receive
+  no update.
+- A result that is not ready, or a catalogue the provider marks `incomplete`, keeps a ready
+  catalogue. Plugin status probes report a failed startup as unavailable, so that counts as
+  transient. Set `ProviderCatalog.incomplete` when discovery fails and you fall back to a partial
+  list, as Claude does when model discovery times out. A manual refresh still publishes all three.
+
 Keys are resolved on each read so project configuration can select a different cached catalogue.
 Selector opening may read a loading or stale query, but does not force provider probing.
 
@@ -253,6 +286,53 @@ identity, so unchanged registrations and builtins keep their results. Await the 
 promise for completion: equal results, including equal discovery timestamps, emit no transition.
 
 ---
+
+## Installation and updates
+
+The provider list and the **Installation** section of a provider's page read `AgentClient.installation`. Built-ins set
+it on the client; plugins set `ProviderRegistration.installation`, which the plugin bridge maps to
+the same interface. `ProviderInstallations` in `packages/server/src/server/agent/provider-installation/`
+owns deadlines, caching and the one running update per provider, so a provider only answers.
+
+Declare only what the vendor offers:
+
+- `installUrl` and `updateUrl` link the vendor's own install and update docs.
+- `inspect` reports the version the CLI prints. Versions are opaque: Paseo shows them as written
+  and never parses them.
+- `checkForUpdates` receives the version `inspect` reported as `installedVersion` and asks the
+  source the CLI's own updater reads, such as the vendor's release endpoint or the CLI's
+  `update --check`. Do not read the version again. Leave it out when that source is inside the binary or
+  depends on how the CLI was installed, which is why Copilot and OpenCode have no check. Do not
+  build a release lookup of your own.
+- `update` runs the CLI's own update command and passes its output through, using
+  `runUpdateCommand`. Paseo adds no verification, signature check or rollback, so the update does
+  exactly what the same command does in a terminal.
+
+The three calls are separate because they cost differently. `inspect` runs for every provider
+whenever the provider list shows, because each row states its version; a provider's page shares the
+row's request. It has a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
+network. Paseo calls it only after `inspect` reports the CLI installed, and keeps a conclusive
+answer for an hour while `inspect` reports the same version, so a CLI updated outside Paseo is
+checked again once the 30 s inspection expires. `update` runs for minutes, streams output, and is
+aborted only when the daemon stops. A failed update stays on the provider until the next refresh
+of its installation, which tells every client observing the provider's updates that it is gone; a
+running one is never dropped.
+
+The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
+for a provider that declares `update`, or **Update instructions** for one that declares only
+`updateUrl`, whatever the check answers and whether the provider has one. The check's answer shows
+beside the action when it has one. Copilot and OpenCode have no check, so they show **Update** alone.
+
+Write the success message for the provider's process model. A CLI that Paseo starts once per agent
+uses `updatedForNewAgents()`. OpenCode agents share one server that keeps the old binary running,
+so its message asks the user to restart the daemon.
+
+`createCliInstallation()` covers a CLI that prints `--version` and updates with a subcommand. It
+resolves the configured command, so a profile that extends a built-in reports and updates the CLI
+that profile launches. Clients for `extends: "acp"` providers declare no installation.
+
+Test with fake executables, as `providers/provider-update-checks.test.ts` does. Running a real
+updater during development replaces the CLI on your machine.
 
 ## Usage sources
 

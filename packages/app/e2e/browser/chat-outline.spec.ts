@@ -2,7 +2,7 @@ import { expect, test } from "../support/fixtures";
 import { trackPromptJumpRequests } from "../support/helpers/agent-timeline-gate";
 import {
   clickChatOutlineRowEdge,
-  disableChatOutlineFromAppearance,
+  disableChatOutline,
   expectActiveChatOutlinePrompt,
   expectActiveChatOutlinePromptMovedFrom,
   expectChatOutlinePreview,
@@ -314,13 +314,13 @@ test.describe("desktop chat outline", () => {
     }
   });
 
-  test("can be disabled from Appearance settings", async ({ page }) => {
+  test("can be disabled from Chat settings", async ({ page }) => {
     const agent = await seedLongMockAgentTimeline({ turns: 2 });
     try {
       await page.setViewportSize(WIDE_VIEWPORT);
       await openAgentTimeline(page, agent);
 
-      await disableChatOutlineFromAppearance(page);
+      await disableChatOutline(page);
 
       await expectNoChatOutline(page);
     } finally {

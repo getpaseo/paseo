@@ -18,44 +18,6 @@ test.each(["3.0.0", "2.0.9", "2.0.7", "2.0.4", "2.0.3", "v2.0.1"])(
   },
 );
 
-test("records the runtime once and retains its position across resume", async () => {
-  const { withOpenCodeRuntimeNotice } = await import("./runtime-notice.js");
-  const { V2Harness } = await import("./test-utils/v2-harness.js");
-  const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
-  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
-  const harness = new V2Harness();
-  const client = new OpenCodeV2AgentClient({
-    logger: createTestLogger(),
-    runtime: harness.runtime,
-  });
-  const original = withOpenCodeRuntimeNotice(
-    await client.createSession({ provider: "opencode", cwd: "/tmp/project" }),
-    2,
-  );
-  const notice = { type: "notification", level: "info", message: "This chat uses OpenCode v2." };
-  try {
-    expect(original.initialTimeline?.map((entry) => entry.item)).toEqual([notice]);
-    const handle = original.describePersistence()!;
-    await original.close();
-    const resumed = withOpenCodeRuntimeNotice(await client.resumeSession(handle), 2, handle);
-    try {
-      expect(resumed.initialTimeline).toEqual([]);
-      const history = [];
-      for await (const event of resumed.streamHistory()) history.push(event);
-      expect(history).toEqual([
-        { type: "timeline", provider: "opencode", ...original.initialTimeline![0] },
-      ]);
-      expect(resumed.describePersistence()?.metadata?.openCodeRuntimeNotices).toEqual(
-        handle.metadata?.openCodeRuntimeNotices,
-      );
-    } finally {
-      await resumed.close();
-    }
-  } finally {
-    await client.shutdown();
-  }
-});
-
 test("retries a rejected version probe after the configured binary changes", async () => {
   const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
@@ -113,58 +75,110 @@ test.each([
   }
 });
 
-test("appends a first notice after old history and records a changed major version", async () => {
-  const { withOpenCodeRuntimeNotice } = await import("./runtime-notice.js");
-  const { V2Harness } = await import("./test-utils/v2-harness.js");
-  const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
+test("re-probes a v1 runtime on a forced refresh after OpenCode is updated to v2", async () => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
   const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
-  const harness = new V2Harness();
-  harness.history.push({ id: "old", type: "user", text: "Earlier prompt", time: { created: 1 } });
-  const client = new OpenCodeV2AgentClient({
-    logger: createTestLogger(),
-    runtime: harness.runtime,
+  const root = await mkdtemp(join(tmpdir(), "opencode-version-upgrade-"));
+  const script = join(root, "version.cjs");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, script] },
+    env: { XDG_STATE_HOME: root },
   });
-  const previous = {
-    provider: "opencode",
-    sessionId: "session",
-    metadata: { cwd: "/tmp/project" },
-  };
-  const session = withOpenCodeRuntimeNotice(await client.resumeSession(previous), 2, previous);
+  const controlLabel = async () =>
+    (await client.listControls({ provider: "opencode", cwd: root })).controls[0]?.label;
   try {
-    const history = [];
-    for await (const event of session.streamHistory()) history.push(event);
-    expect(history).toEqual([
-      expect.objectContaining({
-        type: "timeline",
-        item: { type: "user_message", text: "Earlier prompt", messageId: "old" },
-      }),
-      expect.objectContaining({
-        type: "timeline",
-        item: { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
-      }),
-    ]);
-    await session.close();
-    const v1Handle = {
-      ...previous,
-      metadata: {
-        ...previous.metadata,
-        openCodeRuntimeNotices: [{ major: 1, timestamp: "2026-01-01T00:00:00.000Z" }],
-      },
-    };
-    const changed = withOpenCodeRuntimeNotice(await client.resumeSession(v1Handle), 2, v1Handle);
-    try {
-      expect(changed.initialTimeline?.map((entry) => entry.item)).toEqual([
-        { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
-      ]);
-      expect(changed.describePersistence()?.metadata?.openCodeRuntimeNotices).toHaveLength(2);
-    } finally {
-      await changed.close();
-    }
+    await writeFile(script, 'console.log("1.14.46")');
+    expect(await controlLabel()).toBe("Auto Accept");
+    await writeFile(script, 'console.log("opencode v2.0.10")');
+    expect(await controlLabel()).toBe("Auto Accept");
+
+    // The fake binary cannot serve, so the refresh fails on the v2 startup path it switched to.
+    await expect(client.fetchCatalog({ scope: "global", force: true })).rejects.toThrow(
+      "OpenCode v2 server exited during startup",
+    );
+
+    expect(await controlLabel()).toBe("Auto-accept");
   } finally {
-    await session.close();
     await client.shutdown();
+    await rm(root, { recursive: true, force: true });
   }
 });
+
+async function createCountingVersionBinary(prefix: string) {
+  const { mkdtemp, writeFile, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  const script = join(root, "version.cjs");
+  const probes = join(root, "probes");
+  await writeFile(probes, "");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, script] },
+    env: { XDG_STATE_HOME: root },
+  });
+  return {
+    client,
+    root,
+    report: (version: string) =>
+      writeFile(
+        script,
+        `if (process.argv.includes("--version")) require("node:fs").appendFileSync(${JSON.stringify(probes)}, "x"); console.log(${JSON.stringify(version)})`,
+      ),
+    probeCount: async () => (await readFile(probes, "utf8")).length,
+    controlLabel: async () =>
+      (await client.listControls({ provider: "opencode", cwd: root })).controls[0]?.label,
+    dispose: async () => {
+      await client.shutdown();
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+test("keeps a v2 runtime on a forced refresh without probing the binary again", async () => {
+  const binary = await createCountingVersionBinary("opencode-v2-refresh-");
+  try {
+    await binary.report("opencode v2.0.10");
+    expect(await binary.controlLabel()).toBe("Auto-accept");
+    expect(await binary.probeCount()).toBe(1);
+
+    await expect(binary.client.fetchCatalog({ scope: "global", force: true })).rejects.toThrow(
+      "OpenCode v2 server exited during startup",
+    );
+
+    expect(await binary.probeCount()).toBe(1);
+    expect(await binary.controlLabel()).toBe("Auto-accept");
+  } finally {
+    await binary.dispose();
+  }
+});
+
+test.each([0, 1, 2, 3, 4, 5, 6, 8])(
+  "probes once when a second forced refresh starts %i microtasks after the first",
+  async (ticks) => {
+    const binary = await createCountingVersionBinary("opencode-concurrent-refresh-");
+    try {
+      await binary.report("1.14.46");
+      expect(await binary.controlLabel()).toBe("Auto Accept");
+      await binary.report("opencode v2.0.10");
+
+      const first = binary.client.fetchCatalog({ scope: "global", force: true });
+      for (let tick = 0; tick < ticks; tick++) await Promise.resolve();
+      const second = binary.client.fetchCatalog({ scope: "global", force: true });
+      const results = await Promise.allSettled([first, second]);
+
+      expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+      expect(await binary.probeCount()).toBe(2);
+      expect(await binary.controlLabel()).toBe("Auto-accept");
+    } finally {
+      await binary.dispose();
+    }
+  },
+);
 
 test.each([
   "process.exit(1)",

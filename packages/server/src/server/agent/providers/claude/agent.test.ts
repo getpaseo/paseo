@@ -543,21 +543,20 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         return models.find((model) => model.id === modelId)?.thinkingOptions?.map(({ id }) => id);
       };
 
-      expect(getThinkingIds("claude-opus-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-5")).not.toContain("ultracode");
       expect(getThinkingIds("claude-mythos-5-1")).toEqual([
         "low",
         "medium",
         "high",
         "xhigh",
         "max",
-        "ultracode",
       ]);
-      expect(getThinkingIds("claude-fable-5-1")).toContain("ultracode");
-      expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
-      expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
-      expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
+      expect(getThinkingIds("claude-fable-5-1")).not.toContain("ultracode");
+      expect(getThinkingIds("claude-fable-5")).not.toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-8[1m]")).not.toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-8")).not.toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-5")).toContain("xhigh");
-      expect(getThinkingIds("claude-sonnet-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-sonnet-5")).not.toContain("ultracode");
       expect(getThinkingIds("claude-haiku-5-5")).toEqual([
         "off",
         "low",
@@ -565,12 +564,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         "high",
         "xhigh",
         "max",
-        "ultracode",
       ]);
       expect(getThinkingIds("claude-sonnet-5-5")).toContain("xhigh");
       expect(getThinkingIds("claude-sonnet-5-5")).not.toContain("off");
-      expect(getThinkingIds("claude-opus-4-7[1m]")).toContain("ultracode");
-      expect(getThinkingIds("claude-opus-4-7")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-7[1m]")).not.toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-7")).not.toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-4-6")).not.toContain("ultracode");
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
@@ -998,6 +996,43 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("carries the SDK decision reason onto the permission request description", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      canUseTool(
+        "Bash",
+        { command: "printf test" },
+        {
+          toolUseID: "tool-hook-ask",
+          decisionReason:
+            "\u001b[33mHeredoc input to python3 -- cannot statically verify safety\u001b[0m",
+        },
+      ).catch(() => undefined);
+
+      expect(events.find((event) => event.type === "permission_requested")).toMatchObject({
+        type: "permission_requested",
+        request: {
+          name: "Bash",
+          description: "Heredoc input to python3 -- cannot statically verify safety",
+        },
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
   test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({
@@ -1057,6 +1092,153 @@ describe("ClaudeAgentSession features", () => {
     });
     expect(queryFactory.mock.calls[0]?.[0].options.allowedTools).not.toContain("mcp__hub__reply");
     await session.close();
+  });
+
+  test.each([
+    { claudeCodeVersion: "2.1.326", expected: "initialize" },
+    { claudeCodeVersion: "2.2.0", expected: "initialize" },
+    { claudeCodeVersion: "2.1.325", expected: "argv" },
+    { claudeCodeVersion: undefined, expected: "argv" },
+  ])(
+    "delivers MCP servers by $expected for Claude Code $claudeCodeVersion",
+    async ({ claudeCodeVersion, expected }) => {
+      const { queryFactory } = createQueryMock();
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => {
+          if (claudeCodeVersion === undefined) {
+            throw new Error("Unable to parse Claude Code version from --version output");
+          }
+          return claudeCodeVersion;
+        },
+      });
+      const session = await client.createSession({
+        provider: "claude",
+        cwd: process.cwd(),
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer secret-token" },
+          },
+        },
+      });
+
+      await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+
+      expect(queryFactory.mock.calls[0]?.[0].options.mcpServersDelivery).toBe(expected);
+      await session.close();
+    },
+  );
+
+  test("probes the configured Claude command in the workspace with the session environment", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "claude-mcp-workspace-"));
+    const versionProbe = `
+      const workspace = process.cwd().endsWith(${JSON.stringify(path.basename(cwd))});
+      const selected = workspace && process.env.TEST_CLAUDE_WORKSPACE_VERSION;
+      console.log((selected || "2.1.326") + " (Claude Code)");
+    `;
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      runtimeSettings: {
+        command: { mode: "replace", argv: [process.execPath, "-e", versionProbe, "--"] },
+      },
+    });
+    try {
+      const session = await client.createSession(
+        {
+          provider: "claude",
+          cwd,
+          mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+        },
+        { env: { TEST_CLAUDE_WORKSPACE_VERSION: "2.1.325" } },
+      );
+      try {
+        await session.setModel?.("claude-sonnet-4-6");
+        expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual(["argv"]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("uses stdin on new launches and relaunches after Claude Code upgrades", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    let version = "2.1.325";
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => version,
+    });
+    const config = {
+      provider: "claude",
+      cwd: process.cwd(),
+      mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+    } as const;
+    const existing = await client.createSession(config);
+    try {
+      await existing.setModel?.("claude-sonnet-4-6");
+      expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual(["argv"]);
+
+      version = "2.1.326";
+      const fresh = await client.createSession(config);
+      try {
+        await fresh.setModel?.("claude-sonnet-4-6");
+        await existing.setThinkingOption?.("high");
+        await existing.setModel?.("claude-sonnet-4-6");
+
+        expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual([
+          "argv",
+          "initialize",
+          "initialize",
+        ]);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await existing.close();
+    }
+  });
+
+  test("warns about argv delivery only on launches with MCP servers", async () => {
+    const messages: string[] = [];
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger: pino({}, { write: (message: string) => messages.push(JSON.parse(message).msg) }),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => "2.1.325",
+    });
+    const warnings = () => messages.filter((message) => message.includes("MCP server headers"));
+    const config = { provider: "claude", cwd: process.cwd() } as const;
+    const launch = async (sessionConfig: Parameters<typeof client.createSession>[0]) => {
+      const session = await client.createSession(sessionConfig);
+      try {
+        await session.setModel?.("claude-sonnet-4-6");
+      } finally {
+        await session.close();
+      }
+    };
+    await launch(config);
+    await launch({ ...config, mcpServers: {} });
+    expect(warnings()).toEqual([]);
+
+    const withMcp = {
+      ...config,
+      mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+    } as const;
+    await launch(withMcp);
+    await launch(withMcp);
+    expect(warnings()).toEqual([
+      "Claude Code is too old or reports no version; MCP server headers go on its command line",
+    ]);
   });
 
   test("passes extra Claude Code CLI arguments to the SDK", async () => {
@@ -1144,8 +1326,8 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
-  test("lists fast mode only for supported Opus models", async () => {
-    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
+  test("lists Claude controls by model capability", async () => {
+    const client = new ClaudeAgentClient({ logger, resolveVersion: async () => "2.1.284" });
 
     await expect(
       client.listControls({
@@ -1154,7 +1336,10 @@ describe("ClaudeAgentSession features", () => {
         model: "claude-opus-4-8",
       }),
     ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      controls: [
+        expect.objectContaining({ key: "fast_mode", type: "toggle" }),
+        expect.objectContaining({ key: "ultracode", type: "toggle" }),
+      ],
       options: {},
     });
 
@@ -1165,7 +1350,10 @@ describe("ClaudeAgentSession features", () => {
         model: "claude-opus-4-8[1m]",
       }),
     ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      controls: [
+        expect.objectContaining({ key: "fast_mode", type: "toggle" }),
+        expect.objectContaining({ key: "ultracode", type: "toggle" }),
+      ],
       options: {},
     });
 
@@ -1176,7 +1364,10 @@ describe("ClaudeAgentSession features", () => {
         model: "claude-opus-4-8-20260101",
       }),
     ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      controls: [
+        expect.objectContaining({ key: "fast_mode", type: "toggle" }),
+        expect.objectContaining({ key: "ultracode", type: "toggle" }),
+      ],
       options: {},
     });
 
@@ -1187,7 +1378,10 @@ describe("ClaudeAgentSession features", () => {
         model: "claude-opus-5",
       }),
     ).resolves.toEqual({
-      controls: [expect.objectContaining({ key: "fast_mode", type: "toggle" })],
+      controls: [
+        expect.objectContaining({ key: "fast_mode", type: "toggle" }),
+        expect.objectContaining({ key: "ultracode", type: "toggle" }),
+      ],
       options: {},
     });
 
@@ -1197,7 +1391,10 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "openrouter/anthropic/claude-opus-4-8",
       }),
-    ).resolves.toEqual({ controls: [], options: {} });
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "ultracode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
       client.listControls({
@@ -1205,7 +1402,10 @@ describe("ClaudeAgentSession features", () => {
         cwd: process.cwd(),
         model: "claude-sonnet-5",
       }),
-    ).resolves.toEqual({ controls: [], options: {} });
+    ).resolves.toEqual({
+      controls: [expect.objectContaining({ key: "ultracode", type: "toggle" })],
+      options: {},
+    });
 
     await expect(
       client.listControls({
@@ -1501,6 +1701,60 @@ describe("ClaudeAgentSession features", () => {
       await Promise.resolve();
       await Promise.resolve();
       expect(rewindReachedLiveInput).toBe(false);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("accepts a steer while Claude compacts, so the compaction is not interrupted", async () => {
+    const { queryFactory, push } = createStreamingQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      const { turnId } = await session.startTurn("/compact");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      const iterator = input[Symbol.asyncIterator]();
+      await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({ type: "user_message" }),
+          }),
+        ),
+      );
+      push({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "session-1",
+      } as unknown as SDKMessage);
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: { type: "compaction", status: "loading" },
+          }),
+        ),
+      );
+
+      const admission = await session.steerActiveTurn?.("message during compaction", {
+        expectedTurnId: turnId,
+      });
+
+      // Claude Code holds a `next` message until the compaction finishes. Refusing it makes the
+      // manager replace the turn, and the interrupt cancels the compaction.
+      expect(admission).toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      await expect(iterator.next()).resolves.toMatchObject({
+        value: { type: "user", priority: "next" },
+      });
     } finally {
       unsubscribe();
       await session.close();

@@ -49,9 +49,17 @@ Large unbounded timeline responses can exceed relay frame limits, so catch-up us
 
 Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
-When live delivery detects a sequence gap, the app fetches `direction: "after"`. If the daemon
-responds with `hasNewer: true`, the app immediately fetches the next page from `endCursor`. Gap
-recovery is complete only when `hasNewer: false`.
+When live delivery detects a sequence gap, the app fetches `direction: "after"` its end cursor. If
+the daemon responds with `hasNewer: true`, the app immediately fetches the next page from
+`endCursor`. Gap recovery is complete only when `hasNewer: false`.
+
+A chat that was empty when it last caught up has no end cursor to compare a live row against. Such a
+row starts coverage only if it is the epoch's first row, seq 1. A later row means the chat missed the
+rows before it, such as a prompt sent while the app was offline, so the app drops it and recovers
+after seq 0. Coverage started at that later row would make the resume page look already applied, and
+the chat and its replica cache would keep only the end of the reply. A recovery that waits behind a
+running catch-up starts after whatever that catch-up applied, because the app applies a forward page
+row by row and an older cursor repeats rows.
 
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 
@@ -95,10 +103,11 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
 The daemon validates the epoch and locates the projected item at the selected position. A fork
-includes projected items through that checkpoint. If an item the fork copies spans the checkpoint
-and changed afterward, the daemon refuses that fork with an actionable error: discarded historical
-payloads cannot be reconstructed from sequence metadata. Plugin cards are not copied, so a card
-updated after the checkpoint does not block it. Forking the current context remains available.
+includes projected items through that checkpoint. A tool call that started before the checkpoint
+and changed after it, such as background work that outlives a reply, is copied as still running:
+the projection keeps only its latest payload, so its state at the checkpoint can't be read back.
+Plugin cards are not copied. A position from another epoch, or one that is gone, is refused;
+forking the current context remains available.
 
 ## Resume behavior
 
@@ -193,10 +202,23 @@ owner wraps cached preparation, network catch-up, accepted timeline application,
 behind one interface. React supplies transport and projection operations without selecting a cache
 path or issuing a separate persistence notification.
 
-Active-agent list reconciliation does not own transcript lifetime. An archived agent's fresh
-history response can arrive before the active-list response that omits it. Clearing history there
-would discard accepted rows while the viewed owner still considers them synchronized. Entity
-deletion clears the transcript; list membership changes do not.
+The viewed-timeline owner also owns how long a transcript stays in memory. An active agent's
+transcript stays resident while its chat is hidden, so switching back to it needs no fetch. An
+archived agent's transcript stays resident only while its chat is shown, for example when it is
+opened from History. When an agent is archived, or the active list drops it because its workspace
+was archived, the owner releases the transcript unless the chat is shown. It also releases the
+transcript when the chat stops being shown. A released chat leaves the opened chats. When it is
+shown again, it reads the replica cache and catches up again. A history page, live event, or cache
+read that arrives after the release is dropped.
+
+The active-list reconciliation does not release transcripts itself. An archived agent's fresh
+history response can arrive before the active-list response that omits it, while the chat is
+open in History. Clearing history there would discard rows the user is reading.
+
+An agent counts as archived when the active list omits it, when its row has an archive timestamp,
+or when the workspace list omits its workspace. The workspace check matters because a workspace
+archive can complete while one of its agents keeps a row with no archive timestamp. Until a list
+first hydrates, it marks no agent as archived. Deleting the agent clears the transcript.
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.

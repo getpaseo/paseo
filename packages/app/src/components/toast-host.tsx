@@ -4,11 +4,19 @@ import {
 } from "@/components/floating-header";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Platform, StyleSheet as NativeStyleSheet, Text, ToastAndroid, View } from "react-native";
+import {
+  Platform,
+  StyleSheet as NativeStyleSheet,
+  Text,
+  ToastAndroid,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
+import { CONTROL_HEIGHTS, mapLayout } from "@/components/ui/control-geometry";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -21,10 +29,16 @@ import {
 } from "@/constants/layout";
 
 export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
+/**
+ * `action` tightens vertical and trailing insets around `size="sm"` pill controls and uses a
+ * concentric corner radius (`controlHeight / 2 + inset`) so buttons nest evenly in the shell.
+ */
+export type ToastLayout = "default" | "action";
 
 export interface ToastShowOptions {
   icon?: ReactNode;
   variant?: ToastVariant;
+  layout?: ToastLayout;
   durationMs?: number | null;
   nativeAndroid?: boolean;
   testID?: string;
@@ -38,6 +52,7 @@ export interface ToastState {
   nativeMessage: string | null;
   icon?: ReactNode;
   variant: ToastVariant;
+  layout?: ToastLayout;
   durationMs: number | null;
   testID?: string;
   onDismiss?: () => void;
@@ -45,6 +60,12 @@ export interface ToastState {
 
 /** Dismisses the toast it was returned for; a no-op once another toast replaced it. */
 export type DismissToast = () => void;
+
+/**
+ * Dismisses the toast with this ID, and does nothing once another toast replaced it. Without an
+ * ID, it dismisses whichever toast is shown.
+ */
+export type DismissToastById = (id?: number) => void;
 
 export interface ToastApi {
   show: (content: ReactNode, options?: ToastShowOptions) => DismissToast;
@@ -57,8 +78,16 @@ type ToastViewportPlacement = "app-shell" | "panel" | "sidebar";
 const DEFAULT_DURATION_MS = 2200;
 const noopDismiss: DismissToast = () => {};
 const TOAST_MAX_WIDTH = 480;
-const toastEntering = FadeIn.duration(140);
-const toastExiting = FadeOut.duration(140);
+/** How long a toast takes to fade in or out. */
+export const TOAST_FADE_MS = 140;
+const SIDEBAR_TOAST_INSET = SPACING[2];
+const ACTION_TOAST_INSET = SPACING[1.5];
+const ACTION_TOAST_RADIUS = mapLayout(
+  CONTROL_HEIGHTS.sm,
+  (height) => height / 2 + ACTION_TOAST_INSET,
+);
+const toastEntering = FadeIn.duration(TOAST_FADE_MS);
+const toastExiting = FadeOut.duration(TOAST_FADE_MS);
 const ThemedCheckCircle = withUnistyles(CheckCircle2);
 const ThemedInfo = withUnistyles(Info);
 const ThemedWarning = withUnistyles(AlertTriangle);
@@ -71,7 +100,7 @@ const errorIcon = (theme: Theme) => ({ color: theme.colors.destructive });
 export function useToastHost(): {
   api: ToastApi;
   toast: ToastState | null;
-  dismiss: () => void;
+  dismiss: DismissToastById;
 } {
   const { t } = useTranslation();
   const [toast, setToastState] = useState<ToastState | null>(null);
@@ -85,6 +114,13 @@ export function useToastHost(): {
     setToastState(next);
     previous?.onDismiss?.();
   }, []);
+
+  const dismiss = useCallback<DismissToastById>(
+    (id) => {
+      if (id === undefined || toastRef.current?.id === id) setToast(null);
+    },
+    [setToast],
+  );
 
   const show = useCallback(
     (content: ReactNode, options?: ToastShowOptions): DismissToast => {
@@ -113,15 +149,14 @@ export function useToastHost(): {
         nativeMessage,
         icon: options?.icon,
         variant,
+        layout: options?.layout,
         durationMs,
         testID: options?.testID,
         onDismiss: options?.onDismiss,
       });
-      return () => {
-        if (toastRef.current?.id === id) setToast(null);
-      };
+      return () => dismiss(id);
     },
-    [setToast],
+    [dismiss, setToast],
   );
 
   const api = useMemo<ToastApi>(
@@ -137,21 +172,24 @@ export function useToastHost(): {
     [show, t],
   );
 
-  const dismiss = useCallback(() => {
-    setToast(null);
-  }, [setToast]);
-
   return { api, toast, dismiss };
 }
 
 export function ToastViewport({
   toast,
+  persistentToast = null,
   onDismiss,
   placement = "app-shell",
+  onBottomCoverageChange,
 }: {
   toast: ToastState | null;
-  onDismiss: () => void;
+  /** Sidebar placement: persistent bar (such as select mode) that stays visible below transient toasts. */
+  persistentToast?: ToastState | null;
+  /** Called with the ID of the toast that timed out. */
+  onDismiss: (id: number) => void;
   placement?: ToastViewportPlacement;
+  /** Sidebar placement: reports the distance from the region's bottom edge to the toast's top. */
+  onBottomCoverageChange?: (coverage: number) => void;
 }) {
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
@@ -167,7 +205,7 @@ export function ToastViewport({
   }, []);
 
   const scheduleDismiss = useCallback(
-    (durationMs: number | null) => {
+    (id: number, durationMs: number | null) => {
       clearTimer();
       if (durationMs === null) {
         remainingDurationRef.current = 0;
@@ -177,8 +215,10 @@ export function ToastViewport({
       const nextDurationMs = Math.max(0, durationMs);
       remainingDurationRef.current = nextDurationMs;
       dismissDeadlineRef.current = Date.now() + nextDurationMs;
+      // A replacing toast is in the host before this viewport renders it and reschedules, so the
+      // timer names its own toast rather than dismissing whichever one is current.
       timeoutRef.current = setTimeout(() => {
-        onDismiss();
+        onDismiss(id);
       }, nextDurationMs);
     },
     [onDismiss, clearTimer],
@@ -196,15 +236,26 @@ export function ToastViewport({
     if (!toast || toast.durationMs === null) {
       return;
     }
-    scheduleDismiss(remainingDurationRef.current || toast.durationMs);
+    scheduleDismiss(toast.id, remainingDurationRef.current || toast.durationMs);
   }, [scheduleDismiss, toast]);
 
   const toastId = toast?.id;
   const durationMs = toast?.durationMs ?? null;
   useEffect(() => {
-    scheduleDismiss(durationMs);
+    if (toastId === undefined) return;
+    scheduleDismiss(toastId, durationMs);
     return clearTimer;
   }, [clearTimer, durationMs, scheduleDismiss, toastId]);
+
+  const handleSidebarLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const height = event.nativeEvent.layout.height;
+      if (height > 0) {
+        onBottomCoverageChange?.(height + SIDEBAR_TOAST_INSET);
+      }
+    },
+    [onBottomCoverageChange],
+  );
 
   const panelClearance = useFloatingHeaderOverlayClearance();
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
@@ -212,39 +263,86 @@ export function ToastViewport({
   const topOffset =
     placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : panelClearance;
 
-  const content = (
-    <View
-      style={
-        placement === "sidebar" ? styles.sidebarContainer : styles.container(placement, topOffset)
-      }
+  if (placement === "sidebar") {
+    return (
+      <View
+        style={animatedStyles.sidebarContainer}
+        pointerEvents="box-none"
+        collapsable={false}
+        onLayout={handleSidebarLayout}
+      >
+        <SidebarToastSlot
+          toast={toast}
+          onPointerEnter={pauseDismiss}
+          onPointerLeave={resumeDismiss}
+        />
+        <SidebarToastSlot
+          toast={persistentToast}
+          onPointerEnter={noopDismiss}
+          onPointerLeave={noopDismiss}
+        />
+      </View>
+    );
+  }
+
+  // Keep the bottom anchor and its contents together while the native exit retains the view.
+  const content = toast ? (
+    <Animated.View
+      entering={toastEntering}
+      exiting={toastExiting}
+      style={[
+        animatedStyles.container,
+        { top: topOffset + (placement === "app-shell" ? SPACING[2] : SPACING[3]) },
+      ]}
       pointerEvents="box-none"
       collapsable={false}
     >
-      <View
-        style={placement === "sidebar" ? styles.sidebarWidthBoundary : styles.widthBoundary}
-        pointerEvents="box-none"
-        collapsable={false}
-      >
-        {toast ? (
-          <Animated.View
-            entering={toastEntering}
-            exiting={toastExiting}
-            style={animatedStyles.surface}
-            testID={toast.testID ?? "app-toast"}
-            accessibilityRole="alert"
-          >
-            <ToastCard toast={toast} onPointerEnter={pauseDismiss} onPointerLeave={resumeDismiss} />
-          </Animated.View>
-        ) : null}
+      <View style={styles.widthBoundary} pointerEvents="box-none" collapsable={false}>
+        <View
+          style={animatedStyles.surface}
+          testID={toast.testID ?? "app-toast"}
+          accessibilityRole="alert"
+        >
+          <ToastCard toast={toast} onPointerEnter={pauseDismiss} onPointerLeave={resumeDismiss} />
+        </View>
       </View>
-    </View>
-  );
+    </Animated.View>
+  ) : null;
 
   if (placement === "app-shell" && isWeb && typeof document !== "undefined") {
     return createPortal(content, getOverlayRoot());
   }
 
   return placement === "panel" ? <FloatingHeaderOverlay>{content}</FloatingHeaderOverlay> : content;
+}
+
+function SidebarToastSlot({
+  toast,
+  onPointerEnter,
+  onPointerLeave,
+}: {
+  toast: ToastState | null;
+  onPointerEnter: () => void;
+  onPointerLeave: () => void;
+}) {
+  if (!toast) return null;
+  return (
+    <Animated.View
+      entering={toastEntering}
+      exiting={toastExiting}
+      style={styles.sidebarWidthBoundary}
+      pointerEvents="box-none"
+      collapsable={false}
+    >
+      <View
+        style={animatedStyles.surface}
+        testID={toast.testID ?? "app-toast"}
+        accessibilityRole="alert"
+      >
+        <ToastCard toast={toast} onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave} />
+      </View>
+    </Animated.View>
+  );
 }
 
 function ToastCard({
@@ -274,6 +372,7 @@ function ToastCard({
       onPointerLeave={onPointerLeave}
       style={[
         styles.toast,
+        toast.layout === "action" ? styles.toastAction : null,
         toast.variant === "info" ? styles.toastInfo : null,
         toast.variant === "warning" ? styles.toastWarning : null,
         toast.variant === "error" ? styles.toastError : null,
@@ -294,26 +393,26 @@ function ToastCard({
 }
 
 const animatedStyles = NativeStyleSheet.create({
+  container: {
+    position: "absolute",
+    left: SPACING[4],
+    right: SPACING[4],
+    zIndex: OVERLAY_Z.toast,
+    alignItems: "center",
+  },
+  sidebarContainer: {
+    position: "absolute",
+    left: SIDEBAR_TOAST_INSET,
+    right: SIDEBAR_TOAST_INSET,
+    bottom: SIDEBAR_TOAST_INSET,
+    zIndex: OVERLAY_Z.toast,
+    alignItems: "center",
+    gap: SIDEBAR_TOAST_INSET,
+  },
   surface: { alignSelf: "center", maxWidth: "100%" },
 });
 
 const styles = StyleSheet.create((theme) => ({
-  container: (placement: Exclude<ToastViewportPlacement, "sidebar">, topOffset: number) => ({
-    position: "absolute",
-    left: theme.spacing[4],
-    right: theme.spacing[4],
-    top: topOffset + (placement === "app-shell" ? theme.spacing[2] : theme.spacing[3]),
-    zIndex: OVERLAY_Z.toast,
-    alignItems: "center",
-  }),
-  sidebarContainer: {
-    position: "absolute",
-    left: theme.spacing[2],
-    right: theme.spacing[2],
-    bottom: theme.spacing[2],
-    zIndex: OVERLAY_Z.toast,
-    alignItems: "center",
-  },
   widthBoundary: {
     width: "92%",
     maxWidth: TOAST_MAX_WIDTH,
@@ -336,6 +435,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     ...theme.shadow.md,
+  },
+  toastAction: {
+    borderRadius: ACTION_TOAST_RADIUS,
+    paddingVertical: theme.spacing[1.5],
+    paddingLeft: theme.spacing[3.5],
+    paddingRight: theme.spacing[1.5],
   },
   toastInfo: {
     borderColor: theme.colors.palette.blue[300],

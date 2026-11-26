@@ -57,5 +57,15 @@ export default function contribute(server: PluginServerContext) {
     logHook("agent.archive.after", event);
   });
 
+  server.addHook("terminal.create.before", async ({ request }) => {
+    logHook("terminal.create.before", { request });
+    return request;
+  });
+
+  server.addHook("command.run.before", async ({ request }) => {
+    logHook("command.run.before", { request });
+    return request;
+  });
+
   return () => {};
 }

@@ -1,6 +1,8 @@
 import { createAssistantMarkdownParser } from "./assistant-markdown-parser";
 
 const markdownRenderer = createAssistantMarkdownParser();
+// Disable linkify for selection HTML so text from unwrapped links stays unlinked.
+const unlinkedMarkdownRenderer = createAssistantMarkdownParser().set({ linkify: false });
 
 type ClipboardMimeType = "text/plain" | "text/html";
 
@@ -23,6 +25,21 @@ export function createMarkdownClipboardContent(markdown: string): MarkdownClipbo
   return {
     plainText: markdown,
     html: `<meta charset="utf-8">${markdownRenderer.render(markdown)}`,
+  };
+}
+
+/**
+ * Clipboard payload for Markdown text. `markdown` is escaped and feeds `text/html`, which
+ * renders it; `plainText` goes to `text/plain` unchanged, so callers that escape for the
+ * rich flavor can hand over the same text the user saw.
+ */
+export function createSelectionClipboardContent(
+  markdown: string,
+  plainText: string,
+): MarkdownClipboardContent {
+  return {
+    plainText,
+    html: `<meta charset="utf-8">${unlinkedMarkdownRenderer.render(markdown)}`,
   };
 }
 
@@ -69,19 +86,30 @@ export async function writeMarkdownToRichClipboard(
   markdown: string,
   environment: MarkdownClipboardEnvironment,
 ): Promise<void> {
+  await writeClipboardContent(createMarkdownClipboardContent(markdown), environment);
+}
+
+/**
+ * Writes both flavors, or `plainText` alone where the host has no rich clipboard.
+ * Resolves false when the host refused the write.
+ */
+export async function writeClipboardContent(
+  content: MarkdownClipboardContent,
+  environment: MarkdownClipboardEnvironment,
+): Promise<boolean> {
   if (environment.richWriter?.supportsHtml()) {
-    const content = createMarkdownClipboardContent(markdown);
     try {
       await environment.richWriter.write({
         "text/plain": new Blob([content.plainText], { type: "text/plain" }),
         "text/html": new Blob([content.html], { type: "text/html" }),
       });
-      return;
+      return true;
     } catch {
       // Fall through to the plain-text path. Some webviews expose rich clipboard
       // APIs but deny writes depending on focus, permissions, or browser policy.
     }
   }
 
-  await environment.writePlainText(markdown);
+  // Expo resolves false for a write the host refused, instead of rejecting.
+  return (await environment.writePlainText(content.plainText)) !== false;
 }

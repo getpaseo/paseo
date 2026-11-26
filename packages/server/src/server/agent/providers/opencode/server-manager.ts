@@ -7,6 +7,7 @@ import path from "node:path";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
+import type { LaunchWrap } from "../../../../utils/launch-wrap.js";
 import { spawnProcess, type SpawnProcessOptions } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill, type ProcessTerminator } from "../../../../utils/tree-kill.js";
 import type { ManagedProcessRegistry } from "../../../managed-processes/managed-processes.js";
@@ -36,10 +37,16 @@ export interface OpenCodeServerAcquisition {
   release: () => Promise<void>;
 }
 
+/** How a session's own server starts: the session's environment, behind the session's wrap. */
+export interface OpenCodeDedicatedLaunch {
+  env: Record<string, string>;
+  wrap?: LaunchWrap;
+}
+
 export interface OpenCodeServerManagerLike {
   acquireCurrent(signal?: AbortSignal): Promise<OpenCodeServerAcquisition>;
   acquireNew(signal?: AbortSignal): Promise<OpenCodeServerAcquisition>;
-  acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
+  acquireDedicated(launch: OpenCodeDedicatedLaunch): Promise<OpenCodeServerAcquisition>;
   acquireExisting(url: string): OpenCodeServerAcquisition | null;
   shutdown(): Promise<void>;
 }
@@ -86,6 +93,14 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private retiredServers = new Set<OpenCodeServerGeneration>();
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
+  /** Startups that have not yet produced a generation; shutdown waits for them. */
+  private readonly pendingStarts = new Set<Promise<OpenCodeServerGeneration>>();
+  /**
+   * Counts shutdowns. An operation that can start a server records the epoch it began in, and
+   * spawning refuses once a shutdown has passed, so no process starts after cleanup returns. The
+   * manager is a process-wide singleton, so operations that begin after shutdown still start.
+   */
+  private epoch = 0;
   private readonly logger: Logger;
   private readonly baseEnv?: SpawnProcessOptions["baseEnv"];
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -172,8 +187,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     return this.acquireServer(server);
   }
 
-  async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    const server = await this.startServer(env);
+  async acquireDedicated(launch: OpenCodeDedicatedLaunch): Promise<OpenCodeServerAcquisition> {
+    const server = await this.startServer({ launch, epoch: this.epoch });
     server.retired = true;
     this.retiredServers.add(server);
     const acquisition = this.acquireServer(server);
@@ -248,10 +263,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return this.newServerPromise;
     }
 
+    const epoch = this.epoch;
     this.newServerPromise = Promise.resolve()
       .then(async () => {
         await this.rotateCurrentServer();
-        const server = await this.startServer();
+        const server = await this.startServer({ epoch });
         if (!server.retired) {
           this.currentServer = server;
         }
@@ -280,7 +296,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       return this.currentServer;
     }
 
-    this.startPromise = this.startServer().then((server) => {
+    this.startPromise = this.startServer({ epoch: this.epoch }).then((server) => {
       if (!server.retired) {
         this.currentServer = server;
       }
@@ -315,7 +331,22 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     }
   }
 
-  private async startServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
+  private startServer(options: {
+    launch?: OpenCodeDedicatedLaunch;
+    epoch: number;
+  }): Promise<OpenCodeServerGeneration> {
+    const start = this.spawnServer(options);
+    this.pendingStarts.add(start);
+    const forget = () => this.pendingStarts.delete(start);
+    start.then(forget, forget);
+    return start;
+  }
+
+  private async spawnServer(options: {
+    launch?: OpenCodeDedicatedLaunch;
+    epoch: number;
+  }): Promise<OpenCodeServerGeneration> {
+    const launchEnv = options.launch?.env;
     const port = await this.portAllocator();
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await this.resolveCommandPrefix();
@@ -340,11 +371,13 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       runtimeSettings: this.runtimeSettings,
       overlays: [launchEnv, bridgeEnv],
     });
+    if (options.epoch !== this.epoch) throw new Error("OpenCode server manager shut down");
     const serverProcess = this.spawnServerProcess(launchPrefix.command, serverArgs, {
       cwd: serverCwd,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       baseEnv: environment,
+      wrap: options.launch?.wrap,
     });
     const managedProcessRecord = this.recordManagedServerProcess({
       process: serverProcess,
@@ -379,7 +412,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       managedProcessRecord,
     };
     this.logger.info(
-      { ...generationLogContext(server), dedicated: launchEnv !== undefined },
+      { ...generationLogContext(server), dedicated: options.launch !== undefined },
       "OpenCode server generation started",
     );
     void managedProcessRecord.then((record) => {
@@ -488,14 +521,18 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   async shutdown(): Promise<void> {
-    const servers = [
+    this.epoch += 1;
+    // Startups begun before this point either refuse to spawn or have spawned; collect them.
+    const started = await Promise.allSettled(this.pendingStarts);
+    const servers = new Set([
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
-    ];
+      ...started.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])),
+    ]);
     for (const server of servers) {
       this.logger.info(generationLogContext(server), "OpenCode server generation stopping");
     }
-    await Promise.all(servers.map((server) => this.killServer(server)));
+    await Promise.all([...servers].map((server) => this.killServer(server)));
     this.currentServer = null;
     this.retiredServers.clear();
   }

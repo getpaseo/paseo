@@ -10,7 +10,7 @@ category: Getting started
 
 Paseo follows a client-server architecture, similar to Docker. The daemon runs on your machine and manages your coding agents. Clients (the mobile app, CLI, or web interface) connect to the daemon to monitor and control those agents.
 
-Your code never leaves your machine. Paseo is a local-first tool that connects directly to your development environment.
+Your code stays on your machine. Paseo collects no telemetry, requires no account, and connects directly to your development environment.
 
 ## Architecture
 
@@ -31,26 +31,29 @@ Relay is off on new installations. When you pair a device from `paseo`, `paseo d
 
 ### How it works
 
-1. The daemon generates a persistent ECDH keypair and stores it in `$PASEO_HOME/daemon-keypair.json`
-2. When you scan the QR code or click the pairing link, your phone receives the daemon's public key
-3. Your phone sends a handshake message with its own public key. The daemon will not accept any commands until this handshake completes.
-4. Each side combines its Curve25519 key with the peer public key, then uses the resulting NaCl
-   `box` channel for XSalsa20-Poly1305 protected payloads.
+1. On first run, the daemon generates a persistent Curve25519 keypair and saves it to `$PASEO_HOME/daemon-keypair.json` (mode `0600` on Unix).
+2. When you scan the QR code or open the pairing link (`https://app.paseo.sh/#offer=...`), your client reads the daemon's public key from the URL fragment. Browsers never send URL fragments to the server, so `app.paseo.sh` never sees the key.
+3. When a client connects through the relay, both sides generate fresh ephemeral keys and run a Noise `NK` handshake bound to the daemon's public key. The handshake uses `X25519`, `ChaCha20-Poly1305`, and `SHA-256`. The daemon ignores all commands until the handshake completes.
+4. After the handshake, every message is encrypted with `ChaCha20-Poly1305` and an incrementing counter. When either side predates Noise, the session falls back to NaCl `box` (`XSalsa20-Poly1305`) until both sides are updated.
 
-The relay sees only: IP addresses, timing, message sizes, and session IDs. It cannot read message contents, forge messages, or derive encryption keys from observing the handshake.
+The relay sees only IP addresses, connection timing, message sizes, session IDs, and the public handshake frames. It cannot read message contents, tamper with messages, or derive encryption keys.
 
 ### Why the relay can't attack you
 
-The daemon requires a valid cryptographic handshake before processing any commands. A compromised relay cannot:
+The daemon requires a valid cryptographic handshake before it accepts any command. A compromised relay cannot do the following:
 
-- **Send commands**, Without your phone's private key, it cannot complete the handshake
-- **Read your traffic**, Only the paired endpoints can open the NaCl `box` payloads
-- **Forge messages**, The authenticated cipher rejects modified payloads
-- **Replay old messages**, Each session derives fresh encryption keys
+- Impersonate the daemon: without the daemon's private key, the relay cannot complete the handshake, so your client rejects any traffic it injects.
+- Read your traffic: only your client and daemon hold the session keys.
+- Forge or modify messages: authenticated encryption rejects tampered payloads.
+- Replay old messages: each Noise session uses fresh ephemeral keys from both sides and checks message counters. Replayed, duplicated, or reordered messages close the connection.
+
+Legacy NaCl `box` sessions remain supported by default during migration and do not have replay protection. Once both your daemon and clients are updated, set `daemon.relay.requireProtectedSecurity` to `true` in `config.json` and restart the daemon to require the Noise handshake.
 
 ### Trust model
 
-The QR code or pairing link is the trust anchor. It contains the daemon's public key, which is required to establish the encrypted connection. Treat it like a password, don't share it publicly.
+The QR code or pairing link is the trust anchor. It contains the daemon's public key, which the client needs to start an encrypted session and which is never sent to the relay. Treat the link like a password and do not share it publicly.
+
+If you also set a daemon password, relay clients send it inside the encrypted channel. The daemon rejects any client without the right password, so a leaked pairing link alone does not grant access.
 
 ## Direct connections
 
@@ -141,13 +144,15 @@ Paseo never stores or transmits provider API keys. Agents run in your user conte
 
 ## Hub identities and credentials
 
-Hub CLI login and daemon enrollment are separate identities. `paseo hub login [origin]` stores a durable organization-scoped human credential in a private file under `PASEO_HOME`, keyed by the normalized Hub origin. A stored credential is never sent to another origin. Protect `PASEO_HOME` as sensitive local state.
+Hub CLI login and daemon enrollment are separate identities. `paseo hub login [origin]` stores a durable organization-scoped credential in a private file under `PASEO_HOME`, keyed by the normalized Hub origin.
 
-Hub CLI credentials are bearer secrets. Remote Hub origins must use HTTPS; cleartext HTTP is accepted only for loopback development origins (`localhost`, `127.0.0.1`, and `[::1]`).
+A stored credential is never sent to another origin, so protect `PASEO_HOME` as sensitive local state. Hub CLI credentials are bearer secrets, and remote Hub origins must use HTTPS (cleartext HTTP is accepted only on `localhost`, `127.0.0.1`, and `[::1]`).
 
-`paseo hub connect [origin]` uses that credential, or an explicit API key, only to request a short-lived one-time enrollment token. The daemon exchanges the token and retains its own independently generated relationship credential. Logging out of the CLI does not silently remove daemon authority. Interactive logout completes any accepted same-origin daemon disconnection before deleting the login. In JSON and noninteractive use, `logout` never prompts or disconnects; pass `--disconnect-daemon` only when automation intends to remove both identities.
+`paseo hub connect [origin]` uses your CLI login or an API key only to request a short-lived one-time enrollment token. The daemon exchanges that token for its own independent relationship credential.
 
-`--api-key` and `PASEO_HUB_API_KEY` override stored login without being persisted. Prefer environment or secret-manager injection for automation, and avoid command-line flags when local process listings or shell history are visible to other users.
+Logging out of the CLI does not silently remove daemon authority. Interactive `logout` asks whether to disconnect a same-origin daemon before deleting the login, while JSON and non-interactive logouts require `--disconnect-daemon` to remove both identities.
+
+`--api-key` and `PASEO_HUB_API_KEY` override stored login without being persisted. Prefer environment variables or secret-manager injection for automation, and avoid command-line flags when local process listings or shell history are visible to other users.
 
 ## Recommendations
 
@@ -157,4 +162,4 @@ Hub CLI credentials are bearer secrets. Remote Hub origins must use HTTPS; clear
 - **Never bind to 0.0.0.0 without a password**, without one, any device on your network can connect
 - **Scope Docker mounts tightly**, agents can access mounted workspaces and provider credentials
 - **Keep your daemon updated**, security improvements are released regularly
-- **Protect the Hub configuration branch**, push access to the `.paseo` bundle controls what that project can reach, see [How Hub works](/docs/hub/concepts)
+- **Protect Hub trigger files and organization access**, push access to `.paseo/triggers/*.yml` controls what Hub can run on your daemons, see [How Hub works](/docs/hub/concepts)

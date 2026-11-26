@@ -88,6 +88,20 @@ function nodeTerminalCommand(script: string): { command: string; args: string[] 
   };
 }
 
+const terminalStopFile = ".test-terminal-stop";
+const terminalStopDirectories = new Set<string>();
+
+function terminalCommandWithStopFile(cwd: string, script = "") {
+  terminalStopDirectories.add(cwd);
+  return nodeTerminalCommand(`
+    ${script}
+    const { existsSync } = require('node:fs');
+    setInterval(() => {
+      if (existsSync('${terminalStopFile}')) process.exit(0);
+    }, 50);
+  `);
+}
+
 async function waitForCondition(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs: number,
@@ -217,6 +231,15 @@ function trackTerminal(session: TerminalSession): TerminalSession {
   return session;
 }
 
+// A forcibly stopped worker can leave a terminal program alive with a temporary
+// directory as its cwd. Remember the processes until teardown confirms they exited.
+const crashedWorkerProcesses: number[] = [];
+
+function crashWorker(record: TerminalWorkerRecord): void {
+  crashedWorkerProcesses.push(record.pid, ...record.terminals.map((terminal) => terminal.pid));
+  process.kill(record.pid, "SIGKILL");
+}
+
 async function removeTemporaryDir(dir: string): Promise<void> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -245,12 +268,40 @@ afterEach(async () => {
   );
   await manager?.closeTerminals();
   manager = null;
+  // The stop file reaches fixtures even if the worker and its PTY connection are gone.
+  for (const cwd of terminalStopDirectories) {
+    writeFileSync(join(cwd, terminalStopFile), "");
+  }
+  terminalStopDirectories.clear();
+  const crashed = crashedWorkerProcesses.splice(0);
+  await waitForCondition(() => !crashed.some(isProcessAlive), 10000);
   while (temporaryDirs.length > 0) {
     const dir = temporaryDirs.pop();
     if (dir) {
       await removeTemporaryDir(dir);
     }
   }
+});
+
+it("teardown stops a terminal fixture without a worker connection", async () => {
+  const cwd = createTemporaryHome();
+  // Bound the child lifetime if teardown fails to deliver the stop file.
+  const command = terminalCommandWithStopFile(
+    cwd,
+    "process.send('ready'); setTimeout(() => process.exit(0), 15000);",
+  );
+  const child = spawn(command.command, command.args, {
+    cwd,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("message", () => resolve());
+    child.once("error", reject);
+    child.once("exit", (code) =>
+      reject(new Error(`Terminal fixture exited before ready: ${code}`)),
+    );
+  });
+  crashedWorkerProcesses.push(child.pid!);
 });
 
 it("retires a killed worker's sessions and shares one replacement across concurrent creates", async () => {
@@ -260,8 +311,9 @@ it("retires a killed worker's sessions and shares one replacement across concurr
   const terminal = await manager.createTerminal({
     workspaceId: "ws-recovery",
     cwd: paseoHome,
-    ...nodeTerminalCommand(
-      "process.stdin.on('data', chunk => process.stdout.write('echo:' + process.env.QA_RECOVERY_ENV + ':' + chunk)); setInterval(() => {}, 1000)",
+    ...terminalCommandWithStopFile(
+      paseoHome,
+      "process.stdin.on('data', chunk => process.stdout.write('echo:' + process.env.QA_RECOVERY_ENV + ':' + chunk));",
     ),
   });
   const records = await listTerminalWorkerRecords(paseoHome);
@@ -273,7 +325,7 @@ it("retires a killed worker's sessions and shares one replacement across concurr
   );
   const exits: unknown[] = [];
   terminal.onExit((info) => exits.push(info));
-  process.kill(file.record.pid, "SIGKILL");
+  crashWorker(file.record);
   await waitForCondition(() => manager!.getTerminal(terminal.id) === undefined, 10000);
   expect(changes).toContainEqual([]);
   expect(exits).toHaveLength(1);
@@ -352,10 +404,10 @@ it.each(["detach", "closeTerminals"] as const)(
     await manager.createTerminal({
       workspaceId: "ws-stop-recovery",
       cwd: paseoHome,
-      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+      ...terminalCommandWithStopFile(paseoHome),
     });
     const [record] = await workerRecords(paseoHome);
-    process.kill(record!.pid, "SIGKILL");
+    crashWorker(record!);
     await manager[operation]();
     await expect(
       manager.createTerminal({ workspaceId: "ws-stop-recovery", cwd: paseoHome }),
@@ -374,10 +426,10 @@ it.each(["detach", "closeTerminals"] as const)(
     const terminal = await manager.createTerminal({
       workspaceId: "ws-launch-race",
       cwd: paseoHome,
-      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+      ...terminalCommandWithStopFile(paseoHome),
     });
     const [record] = await workerRecords(paseoHome);
-    process.kill(record!.pid, "SIGKILL");
+    crashWorker(record!);
     await waitForCondition(() => !manager!.getTerminal(terminal.id), 10000);
     const creating = manager.createTerminal({ workspaceId: "ws-launch-race", cwd: paseoHome });
     const rejected = expect(creating).rejects.toBeInstanceOf(NoTerminalWorkerAvailableError);
@@ -404,7 +456,7 @@ it.each(["current", "draining"] as const)(
     const added = await manager.createTerminal({
       workspaceId: "ws-peer",
       cwd: seed.cwd,
-      ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
+      ...terminalCommandWithStopFile(seed.cwd),
     });
     const records = await workerRecords(paseoHome);
     const current = records.find((record) =>
@@ -416,7 +468,7 @@ it.each(["current", "draining"] as const)(
     const healthyId = target === "current" ? drainingId : added.id;
     const healthy = manager.getTerminal(healthyId);
     expect(healthy).toBeDefined();
-    process.kill(target === "current" ? current.pid : draining.pid, "SIGKILL");
+    crashWorker(target === "current" ? current : draining);
     await waitForCondition(() => !manager!.getTerminal(deadId), 10000);
     expect(manager.getTerminal(healthyId)).toBe(healthy);
     expect(await readReplay(manager, healthyId)).not.toBeNull();
@@ -1690,8 +1742,10 @@ it("leaves a worker from a newer Paseo running, reports it incompatible, and clo
 
   await manager.closeTerminals();
 
-  expect(isProcessAlive(newer.workerPid)).toBe(false);
   expect(isProcessAlive(newer.programPid)).toBe(false);
+  // Cleanup counts the worker gone once its socket refuses connections, which happens before
+  // its process exits.
+  await waitForCondition(() => !isProcessAlive(newer.workerPid), 5000);
   expect(await workerRecords(paseoHome)).toEqual([]);
 });
 
@@ -1723,7 +1777,7 @@ async function launchDetachedWorkerWithTerminal(
   const session = await worker.createTerminal({
     workspaceId: "ws-detached",
     cwd,
-    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+    ...terminalCommandWithStopFile(cwd),
   });
   await worker.detach();
   return { terminalId: session.id, workerPid: launched.record.pid, cwd };
@@ -2285,21 +2339,30 @@ it.each(["replacement", "socket-overflow"] as const)(
   async (loss) => {
     const paseoHome = createTemporaryHome();
     const drained = join(paseoHome, "burst-drained");
+    // The worker closes its controller socket above 4 MiB of queued writes.
+    // Leave room for bytes already in the pipe.
+    const burstMiB = 8;
     manager = await startRealWorkerManager({ paseoHome });
     const session = trackTerminal(
       await manager.createTerminal({
         cwd: paseoHome,
         workspaceId: "attached-reconnect",
         ...nodeTerminalCommand(
-          `process.stdout.write("RETAINED\\r\\n"); process.stdin.on("data", data => {
-            if (data.toString().includes("BURST")) process.stdout.write("x".repeat(12 * 1024 * 1024) + "\\r\\nRETAINED-AFTER-LOSS\\r\\n", () => require("node:fs").writeFileSync(${JSON.stringify(drained)}, "done"));
-            else process.stdout.write("ECHO:" + data);
+          `process.stdout.write("BEFORE-LOSS\\r\\n"); process.stdin.on("data", data => {
+            if (data.toString().includes("BURST")) {
+              // Keep the startup line in the main screen while filling the socket.
+              const burst = "\\x1b[?1049h" + "x".repeat(${burstMiB} * 1024 * 1024);
+              process.stdout.write(burst + "\\x1b[?1049lAFTER-LOSS\\r\\n", () => {
+                require("node:fs").writeFileSync(${JSON.stringify(drained)}, "done");
+              });
+            } else process.stdout.write("ECHO:" + data);
           }); setInterval(() => {}, 1000);`,
         ),
       }),
     );
     await waitForCondition(
-      async () => (await manager!.captureTerminal(session.id)).lines.join("").includes("RETAINED"),
+      async () =>
+        (await manager!.captureTerminal(session.id)).lines.join("").includes("BEFORE-LOSS"),
       10000,
     );
     const viewers = terminalViewers(manager, session.id);
@@ -2322,15 +2385,15 @@ it.each(["replacement", "socket-overflow"] as const)(
         const stall = new Int32Array(new SharedArrayBuffer(4));
         const deadline = Date.now() + 10000;
         while (!existsSync(drained) && Date.now() < deadline) Atomics.wait(stall, 0, 0, 25);
-        expect(existsSync(drained)).toBe(true);
+        expect(existsSync(drained), "terminal finished writing the overflow burst").toBe(true);
       }
       await waitForCondition(() => viewers.replayed(desktop), 10000);
       const replay = viewers.frames
         .filter((row) => row.frame.opcode === TerminalStreamOpcode.ReplayData)
         .map((row) => Buffer.from(row.frame.payload).toString("utf8"))
         .join("");
-      expect(replay).toContain("RETAINED");
-      if (loss === "socket-overflow") expect(replay).toContain("RETAINED-AFTER-LOSS");
+      expect(replay).toContain("BEFORE-LOSS");
+      if (loss === "socket-overflow") expect(replay).toContain("AFTER-LOSS");
       expect((await workerRecords(paseoHome)).map((worker) => worker.pid)).toEqual([record!.pid]);
       session.send({ type: "input", data: "RECOVERED\r" });
       await waitForCondition(() => viewers.text(desktop).includes("ECHO:RECOVERED"), 3000);
@@ -2540,14 +2603,20 @@ it.each([false, true])(
         ...nodeTerminalCommand(`
       process.stdin.setRawMode(true);
       let row = 0;
-      function print(count) {
-        for(let i=0;i<count;i++,row++) process.stdout.write("\\x1b[31mrow-" + String(row).padStart(5,"0") + " 界é🙂 " + "log ".repeat(20) + "\\x1b[0m\\r\\n");
+      function nextRow() {
+        return "\\x1b[31mrow-" + String(row++).padStart(5,"0") + " 界é🙂 " + "log ".repeat(20) + "\\x1b[0m\\r\\n";
       }
-      print(12050);
+      // Fill the initial history in batches to avoid a TTY write for every row.
+      for (let start = 0; start < 12050; start += 256) {
+        const count = Math.min(256, 12050 - start);
+        process.stdout.write(Array.from({ length: count }, nextRow).join(""));
+      }
       process.stdout.write("READY\\r\\n");
       process.stdin.on("data", data => {
-        if(data.toString().includes("BURST")) { print(4000); process.stdout.write("BURST-DONE\\r\\n"); }
-        else process.stdout.write("ECHO:" + data.toString() + "\\r\\n");
+        if(data.toString().includes("BURST")) {
+          for (let i = 0; i < 4000; i++) process.stdout.write(nextRow());
+          process.stdout.write("BURST-DONE\\r\\n");
+        } else process.stdout.write("ECHO:" + data.toString() + "\\r\\n");
       });
       setInterval(()=>{},1000);
     `),

@@ -14,6 +14,7 @@ const entries = {
   "./server/usage": "server",
   "./server/acp": "server",
   "./internal/lifecycle": "server",
+  "./internal/windows-command": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/ui": "client",
@@ -392,7 +393,8 @@ describe("lifecycle hook SDK types", () => {
   it("infers payloads and replacement requests and requires async handlers and new names", () => {
     expect(
       typeErrors(`
-      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult, PluginLaunchWrap } from "@getpaseo/plugin/server";
+      import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
           if (request.kind === "checkout-branch") {
@@ -426,8 +428,49 @@ describe("lifecycle hook SDK types", () => {
           const { metadata, ...withoutMetadata } = request;
           return withoutMetadata;
         });
-        server.addHook("agent.turn.after", async ({ agent, outcome, timeline }, { paseo, signal }) => {
+        server.addHook("agent.create.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          // @ts-expect-error The agent's workspace is read-only.
+          request.workspaceId = "wks_other";
+        });
+        // Results built before workspaceId existed still typecheck; the daemon keeps the id.
+        server.addHook("agent.create.before", async ({ request }) => ({ config: request.config, env: request.env }));
+        server.before("agent.create", ({ request }) => ({ config: request.config, env: request.env }));
+        server.addHook("terminal.create.before", async ({ request }) => {
+          const source: "client" | "agent" | "script" | "worktree" = request.source;
+          const input: string | null = request.input;
+          const program: string | null = request.command;
+          // @ts-expect-error The terminal's workspace is read-only.
+          request.workspaceId = "wks_other";
+          // @ts-expect-error The terminal's program is read-only; return a wrap instead.
+          request.command = "/usr/bin/other";
+          const wrap: PluginLaunchWrap = ["/usr/bin/sandbox", "--workspace", request.workspaceId];
+          return { ...request, env: { A: "1" }, wrap };
+        });
+        server.addHook("command.run.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          const purpose: "setup" | "teardown" = request.purpose;
+          // @ts-expect-error A command's purpose is read-only.
+          request.purpose = "setup";
+          // @ts-expect-error The configured command is read-only; return a wrap instead.
+          request.command = "wrapper " + request.command;
+          return { ...request, wrap: ["/usr/bin/sandbox"] };
+        });
+        server.addHook("agent.open.before", async ({ request }) => ({
+          ...request,
+          wrap: ["/usr/bin/sandbox", "--workspace", request.workspaceId ?? "none"],
+        }));
+        server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
+          const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
+          // @ts-expect-error Turn payloads carry no history; read it from the agent's timeline.
+          event.timeline;
+          const turn = await paseo.agents
+            .ref(agent.id)
+            .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+          const items: readonly AgentTimelineItem[] = turn.entries
+            .filter((entry) => entry.turnId === event.turnId)
+            .map(({ item }) => item);
           // @ts-expect-error Notification payloads have no creation request.
           outcome.request;
         });
@@ -574,6 +617,78 @@ describe("sidebar data SDK boundary", () => {
         }
         const query: Query<PluginWorkspaceSnapshot> = { hosts: [workspace.hostId], orderBy: ["name", "desc"] };
         return null;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("worktree manager SDK boundary", () => {
+  it("types create, remove, and restore handlers with discriminated results and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        WorktreeManagerRegistration,
+        PluginWorktreeCreateInput,
+        PluginWorktreeCreateResult,
+        PluginWorktreeRemoveRequest,
+        PluginWorktreeRemoveResult,
+        PluginWorktreeRestoreRequest,
+        PluginWorktreeRestoreResult,
+      } from "@getpaseo/plugin/server";
+
+      export default function contribute(server: PluginServerContext) {
+        const manager: WorktreeManagerRegistration = {
+          async create(request: PluginWorktreeCreateInput, { paseo, signal }) {
+            const untrusted: boolean = request.untrusted;
+            const headSha: string | undefined = request.headSha;
+            void headSha;
+            // @ts-expect-error untrusted is read-only
+            request.untrusted = true;
+            // @ts-expect-error headSha is read-only
+            request.headSha = "deadbeef";
+            if (request.kind === "branch-off") {
+              const start: string = request.startPoint ?? request.baseRef;
+              // @ts-expect-error startPoint is read-only
+              request.startPoint = "other";
+              if (!start || untrusted) return;
+            }
+            if (signal.aborted) return;
+            void paseo;
+            const result: PluginWorktreeCreateResult = { type: "created", path: request.path };
+            return result;
+          },
+          async remove(request: PluginWorktreeRemoveRequest, { signal }) {
+            const reason: "archive" | "rollback" = request.reason;
+            const force: boolean = request.force;
+            const untrusted: boolean = request.untrusted;
+            // @ts-expect-error remove request fields are read-only
+            request.path = "/other";
+            if (!reason || !force || untrusted || signal.aborted) return;
+            const result: PluginWorktreeRemoveResult = { type: "removed" };
+            return result;
+          },
+          async restore(request: PluginWorktreeRestoreRequest) {
+            const untrusted: boolean = request.untrusted;
+            void untrusted;
+            if (request.target.type === "commit") return;
+            if (request.target.type === "from-base") {
+              const base: string = request.target.baseRef;
+              void base;
+            }
+            const result: PluginWorktreeRestoreResult = { type: "restored", path: request.path };
+            return result;
+          },
+        };
+        const dispose: () => void = server.registerWorktreeManager(manager);
+        server.registerWorktreeManager({
+          // @ts-expect-error create result requires discriminant
+          async create() {
+            return { path: "/tmp/wt" };
+          },
+        });
+        return dispose;
       }
     `),
     ).toEqual([]);

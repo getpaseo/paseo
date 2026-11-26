@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile, rm, readFile, lstat } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, lstat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
@@ -102,6 +102,67 @@ test("supports empty trees, unborn HEAD, staged and unstaged comparisons", async
       content: "const value = 2;",
     });
     await unstaged.close();
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { name: "index to working tree", base: { kind: "index" } as const },
+  {
+    name: "commit to working tree with a file removed from the index",
+    base: { kind: "rev", rev: "HEAD" } as const,
+  },
+])("$name sees a same-size edit saved in the timestamp tick it was staged", async ({ base }) => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-racy-index-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const file = join(cwd, "x.ts");
+  const indexPath = join(cwd, ".git", "index");
+  const tick = new Date("2026-01-01T00:00:00Z");
+  try {
+    git("init", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    // Only mtime, size, and inode tell this edit apart; ctime always moves.
+    git("config", "core.trustctime", "false");
+    await writeFile(file, "const value = 1;\n");
+    await writeFile(join(cwd, "y.ts"), "const kept = 1;\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    await writeFile(file, "const value = 2;\n");
+    await utimes(file, tick, tick);
+    git("add", "x.ts");
+    if (base.kind === "rev") {
+      git("-c", "commit.gpgsign=false", "commit", "-m", "staged");
+      // A file on disk and in the base commit but absent from the index
+      // selects the private index for commit to working tree comparisons.
+      git("rm", "--cached", "y.ts");
+    }
+    // The index is written in the tick the file was staged, and the file is
+    // saved again with the same size within that tick.
+    await utimes(indexPath, tick, tick);
+    await writeFile(file, "const value = 3;\n");
+    await utimes(file, tick, tick);
+    expect(git("diff", "--name-only")).toBe("x.ts");
+    const originalIndex = await readFile(indexPath);
+    const originalMtime = (await lstat(indexPath, { bigint: true })).mtimeNs;
+
+    const comparison = await listComparison({
+      cwd,
+      base,
+      head: { kind: "worktree" },
+      highlight: false,
+    });
+    expect(comparison.files.map((entry) => entry.entry.path)).toEqual(["x.ts"]);
+    const record = await readBody(comparison);
+    expect(record.body.hunks[0].lines).toEqual([
+      { type: "header", content: "@@ -1 +1 @@" },
+      { type: "remove", content: "const value = 2;" },
+      { type: "add", content: "const value = 3;" },
+    ]);
+    await comparison.close();
+    expect(await readFile(indexPath)).toEqual(originalIndex);
+    expect((await lstat(indexPath, { bigint: true })).mtimeNs).toBe(originalMtime);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -717,3 +778,40 @@ test.each([
     }
   },
 );
+
+test("an uninitialized submodule below a bare repository layout does not fail the comparison", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-uninitialized-submodule-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const { mkdir } = await import("node:fs/promises");
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "README.md"), "base\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    const base = git("rev-parse", "HEAD");
+    git("update-index", "--add", "--cacheinfo", `160000,${base},vendor/sub`);
+    git("-c", "commit.gpgsign=false", "commit", "-m", "record submodule");
+    // `vendor/` holds files shaped like a bare repository; git discovery from the
+    // uninitialized `vendor/sub` would stop there before reaching the superproject.
+    git("init", "--bare", "-q", "vendor");
+    await mkdir(join(cwd, "vendor", "sub"));
+    const comparison = await listComparison({
+      cwd,
+      base: { kind: "rev", rev: base },
+      head: { kind: "worktree" },
+      highlight: false,
+    });
+    try {
+      expect(comparison.files.map((file) => [file.entry.path, file.entry.change])).toContainEqual([
+        "vendor/sub",
+        "added",
+      ]);
+    } finally {
+      await comparison.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

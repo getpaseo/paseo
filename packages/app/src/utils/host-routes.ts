@@ -515,8 +515,9 @@ export function isSettingsSectionSlug(value: string): value is SettingsSectionSl
 export const HOST_SECTION_SLUGS = [
   "projects",
   "connections",
-  "pair-device",
+  "devices",
   "agents",
+  "agent-profiles",
   "metadata",
   "voice",
   "workspaces",
@@ -530,6 +531,7 @@ export const HOST_SECTION_SLUGS = [
 export type HostSectionSlug = (typeof HOST_SECTION_SLUGS)[number];
 
 const LEGACY_HOST_SECTION_SLUGS: Record<string, HostSectionSlug> = {
+  "pair-device": "devices",
   orchestration: "agents",
   daemon: "host",
 };
@@ -582,6 +584,13 @@ export function buildProjectSettingsRoute(serverId: string, projectId: string) {
     throw new Error("buildProjectSettingsRoute requires a serverId and projectId");
   }
   return `/settings/hosts/${encodeSegment(serverId)}/projects/${encodeSegment(projectId)}` as const;
+}
+
+export function buildProviderSettingsRoute(serverId: string, providerId: string) {
+  if (!serverId.trim() || !providerId.trim()) {
+    throw new Error("buildProviderSettingsRoute requires a serverId and providerId");
+  }
+  return `/settings/hosts/${encodeSegment(serverId)}/providers/${encodeSegment(providerId)}` as const;
 }
 
 export function normalizeProjectSettingsRouteId(value: string | string[] | undefined): string {

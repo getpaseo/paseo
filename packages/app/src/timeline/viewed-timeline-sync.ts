@@ -1,5 +1,6 @@
 import {
   planTimelineCatchUpAfter,
+  planTimelineCatchUpPastApplied,
   planTimelineResumeFetch,
   type ProjectedTimelineForwardFetchPlan,
 } from "./timeline-sync-plan";
@@ -10,6 +11,7 @@ import {
   useSessionStore,
   type AgentTimelineCursorState,
   type AgentTimelineState,
+  type SessionState,
 } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -101,6 +103,8 @@ export interface TimelineReplica {
   timelineUpdated(agentId: string): void;
   catchUpOwed(agentId: string): void;
   catchUpSettled(agentId: string): void;
+  /** Forgets a released chat's cached range, so showing it again reads the cache afresh. */
+  release(agentId: string): void;
 }
 
 class TimelineReplicaOwner implements TimelineReplica {
@@ -185,6 +189,10 @@ class TimelineReplicaOwner implements TimelineReplica {
   catchUpSettled(agentId: string): void {
     if (this.preparations.has(agentId)) this.settledDuringPreparation.add(agentId);
     useSessionStore.getState().setAgentTimelineUnsettledTurn(this.serverId, agentId, null);
+  }
+
+  release(agentId: string): void {
+    this.cachedRanges.delete(agentId);
   }
 }
 
@@ -374,6 +382,11 @@ function buildCurrentTimelinePage(
 
 export interface ViewedTimelineSyncPorts {
   prepare(agentId: string): Promise<void>;
+  /**
+   * Whether the agent left the active list: it, or its workspace, is archived. A hidden chat
+   * of an archived agent leaves the opened chats, so showing it again reads it afresh.
+   */
+  isArchived(agentId: string): boolean;
   replaceDemandedAgentIds(agentIds: string[]): void;
   /** Whether the daemon answers with each cursor's freshness in the subscribe response. */
   canCheckFreshness(): boolean;
@@ -446,9 +459,17 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
   dispose(): void;
 }
 
+/** What the timeline owner needs from membership beyond the UI-facing surface. */
+export interface ViewedTimelineMembership extends ViewedTimelineSync {
+  isVisible(agentId: string): boolean;
+  /** Re-reads `isArchived` for the opened chats, after the active list changed. */
+  archiveChanged(): void;
+}
+
 export type ViewedTimelineOwnerPorts = Omit<
   ViewedTimelineSyncPorts,
   | "prepare"
+  | "isArchived"
   | "replaceDemandedAgentIds"
   | "onCatchUpEnded"
   | "onCatchUpOwed"
@@ -476,8 +497,14 @@ export function createViewedTimelineOwner(input: {
   ports: ViewedTimelineOwnerPorts;
 }): ViewedTimelineOwner {
   const forcedTailReplacements = new Set<string>();
+  const isArchived = (agentId: string) =>
+    isAgentArchived(useSessionStore.getState().sessions[input.serverId], agentId);
+  // Active chats stay resident while hidden so switching back needs no fetch. An archived
+  // chat is resident only while it is shown, as when it is open from History.
+  const isResident = (agentId: string) => sync.isVisible(agentId) || !isArchived(agentId);
   const sync = createViewedTimelineSync({
     ...input.ports,
+    isArchived,
     fetchLatestTail: async (agentId) => {
       forcedTailReplacements.add(agentId);
       try {
@@ -486,7 +513,11 @@ export function createViewedTimelineOwner(input: {
         forcedTailReplacements.delete(agentId);
       }
     },
-    prepare: (agentId) => input.replica.prepare(agentId),
+    prepare: async (agentId) => {
+      await input.replica.prepare(agentId);
+      // A cache read that lands after its archived chat was left paints a chat nobody shows.
+      releaseHiddenArchivedTimelines();
+    },
     readCursor: (agentId) => input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId),
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
     applyCurrentTimeline: (agentId) => {
@@ -513,9 +544,40 @@ export function createViewedTimelineOwner(input: {
     recoverTimelineGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
     onCommitted: (agentId) => input.replica.timelineUpdated(agentId),
   });
+  const releaseHiddenArchivedTimelines = () => {
+    const session = useSessionStore.getState().sessions[input.serverId];
+    if (!session) return;
+    for (const agentId of selectResidentTimelineAgentIds(session)) {
+      if (isResident(agentId)) continue;
+      streamQueue.flushAgent(agentId);
+      input.replica.release(agentId);
+      useSessionStore.getState().releaseAgentTimeline(input.serverId, agentId);
+    }
+  };
+  // Archiving an agent or its workspace reaches this host as the agent leaving the active list.
+  let observedSession = useSessionStore.getState().sessions[input.serverId];
+  const stopObservingArchive = useSessionStore.subscribe((state) => {
+    const session = state.sessions[input.serverId];
+    const changed =
+      session?.agents !== observedSession?.agents ||
+      session?.agentDetails !== observedSession?.agentDetails ||
+      session?.hasHydratedAgents !== observedSession?.hasHydratedAgents ||
+      session?.workspaces !== observedSession?.workspaces ||
+      session?.hasHydratedWorkspaces !== observedSession?.hasHydratedWorkspaces;
+    observedSession = session;
+    if (!changed) return;
+    sync.archiveChanged();
+    releaseHiddenArchivedTimelines();
+  });
   return {
     ...sync,
+    replaceVisibleAgentIds(sourceId, agentIds) {
+      sync.replaceVisibleAgentIds(sourceId, agentIds);
+      releaseHiddenArchivedTimelines();
+    },
     applyTimelineResponse(receivedPayload) {
+      // A read that answers after its archived chat was released must not bring it back.
+      if (!isResident(receivedPayload.agentId)) return;
       const payload = consumeForcedTimelineTailReplacement(receivedPayload, forcedTailReplacements);
       const accepted = applyAuthoritativeTimelineResponse({
         serverId: input.serverId,
@@ -527,6 +589,7 @@ export function createViewedTimelineOwner(input: {
       if (accepted) input.replica.timelineUpdated(payload.agentId);
     },
     applyStreamEvent(agentId, event) {
+      if (!isResident(agentId)) return;
       streamQueue.enqueue(agentId, event);
       const turnLiveness = deriveAgentStreamTurnLiveness([event]);
       if (turnLiveness.length === 0) return;
@@ -538,18 +601,59 @@ export function createViewedTimelineOwner(input: {
       streamQueue.flushAgent(agentId);
     },
     dispose() {
+      stopObservingArchive();
       streamQueue.dispose({ flush: true });
       sync.dispose();
     },
   };
 }
 
+/**
+ * An agent is archived once the hydrated active list lacks it, its row carries an archive
+ * timestamp, or the hydrated workspace list lacks its workspace. Workspace archive can leave
+ * an agent row without a timestamp. Until a list hydrates, it rules nothing out.
+ */
+function isAgentArchived(session: SessionState | undefined, agentId: string): boolean {
+  if (!session?.hasHydratedAgents) return false;
+  const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
+  if (!agent || agent.archivedAt != null) return true;
+  return (
+    session.hasHydratedWorkspaces &&
+    agent.workspaceId !== undefined &&
+    !session.workspaces.has(agent.workspaceId)
+  );
+}
+
+function selectResidentTimelineAgentIds(session: SessionState): Set<string> {
+  return new Set([
+    ...session.agentStreamTail.keys(),
+    ...session.agentStreamHead.keys(),
+    ...session.agentTimelineCursor.keys(),
+    ...session.agentAuthoritativeHistoryApplied.keys(),
+  ]);
+}
+
+const MAX_HIDDEN_CATCH_UPS = 2;
+
 type CatchUpStatus = "running" | "complete" | "error";
+
+interface CatchUpRequest {
+  page: ProjectedTimelineForwardFetchPlan;
+  kind: "resume" | "gap";
+}
 
 interface CatchUpState {
   generation: number;
   status: CatchUpStatus;
-  request?: ProjectedTimelineForwardFetchPlan;
+  request?: CatchUpRequest;
+}
+
+function planCatchUpRequest(
+  request: CatchUpRequest | undefined,
+  applied: { epoch: string; endSeq: number } | undefined,
+): CatchUpRequest {
+  if (!request) return { page: planTimelineResumeFetch(applied), kind: "resume" };
+  return { ...request, page: planTimelineCatchUpPastApplied(request.page, applied) };
 }
 
 function isSameCatchUpRequest(
@@ -572,11 +676,11 @@ function decideCatchUp(input: {
   if (input.supersede) {
     if (
       input.current.status === "running" &&
-      isSameCatchUpRequest(input.current.request, input.request)
+      isSameCatchUpRequest(input.current.request?.page, input.request)
     ) {
       return "keep";
     }
-    if (input.current.status === "running" && input.current.request?.direction === "tail") {
+    if (input.current.status === "running" && input.current.request?.page.direction === "tail") {
       return "keep-and-park";
     }
     return "replace";
@@ -592,13 +696,15 @@ function sameAgentIds(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((agentId, index) => agentId === right[index]);
 }
 
-export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): ViewedTimelineSync {
+export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): ViewedTimelineMembership {
   const sources = new Map<string, string[]>();
   const catchUps = new Map<string, CatchUpState>();
   const catchUpGenerations = new Map<string, number>();
-  // Authoritative fetch owed but not runnable yet: disconnected, unacknowledged, or parked.
+  // Fetches can outlive their catch-up generation when superseded or when a tab closes.
+  const inFlightCatchUps = new Set<{ agentId: string }>();
+  // Authoritative fetch owed but not runnable yet: disconnected, unacknowledged, or queued.
   // Membership acknowledgement and catch-up completion drain parked requests.
-  const pendingCatchUps = new Map<string, ProjectedTimelineForwardFetchPlan>();
+  const pendingCatchUps = new Map<string, CatchUpRequest>();
   const visibilityCatchUpPending = new Set<string>();
   const visibilityCatchUpErrors = new Map<string, string>();
   // A user-initiated retry owes a pending state until it settles.
@@ -690,7 +796,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
 
   // The delay measures the daemon's answer, so it starts when the question is sent. On a cold
   // start the cache read that precedes the question can outlast it on its own. Only opening a
-  // chat escalates. A reconnect already shows Reconnecting to host until the answer. A resume
+  // chat escalates. A reconnect already shows Reconnecting until the answer. A resume
   // kept its socket subscribed, so a slow answer is no reason to doubt the chat; a socket that
   // died quietly is caught by the foreground liveness probe and becomes a reconnect.
   const startFreshnessCheckDelay = (agentId: string) => {
@@ -722,16 +828,16 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const fetchUntilCurrent = async (
     agentId: string,
     generation: number,
-    request: ProjectedTimelineForwardFetchPlan,
+    request: CatchUpRequest,
     fallbackToLatestTailOnOverflow: boolean,
   ): Promise<void> => {
     if (!ownsCatchUp(agentId, generation)) return;
 
     try {
-      const page = await ports.fetchPage(agentId, request);
+      const page = await ports.fetchPage(agentId, request.page);
       if (!ownsCatchUp(agentId, generation)) return;
       if (page.hasNewer && page.endCursor) {
-        if (fallbackToLatestTailOnOverflow) {
+        if (request.page.direction === "after" && fallbackToLatestTailOnOverflow) {
           await ports.fetchLatestTail(agentId);
           if (!ownsCatchUp(agentId, generation)) return;
           catchUps.set(agentId, { generation, status: "complete" });
@@ -741,7 +847,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         await fetchUntilCurrent(
           agentId,
           generation,
-          planTimelineCatchUpAfter(page.endCursor),
+          {
+            ...request,
+            page: planTimelineCatchUpPastApplied(
+              planTimelineCatchUpAfter(page.endCursor),
+              ports.readCursor(agentId),
+            ),
+          },
           false,
         );
         return;
@@ -750,29 +862,26 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         throw new Error(`Timeline page for ${agentId} hasNewer without an end cursor`);
       }
       catchUps.set(agentId, { generation, status: "complete" });
-      const pendingCatchUp = pendingCatchUps.get(agentId);
-      if (pendingCatchUp) {
-        startCatchUp(agentId, { request: pendingCatchUp, supersede: true });
-        return;
-      }
-      setVisibilityCatchUpReady(agentId);
+      if (!pendingCatchUps.has(agentId)) setVisibilityCatchUpReady(agentId);
     } catch (error) {
       if (catchUps.get(agentId)?.generation === generation) {
+        // The parked follow-up belongs to the failed attempt. A retry owns the next request.
+        pendingCatchUps.delete(agentId);
         catchUps.set(agentId, { generation, status: "error", request });
         setVisibilityCatchUpError([agentId], error);
         ports.reportError(error);
       }
-    } finally {
-      startAcknowledgedCatchUps();
     }
   };
 
   const ensureCacheLoaded = (agentId: string): void => {
     if (loadedCache.has(agentId) || cacheLoads.has(agentId)) return;
-    const load = ports
+    const load: Promise<void> = ports
       .prepare(agentId)
       .catch((error) => ports.reportError(error))
       .finally(() => {
+        // A released chat forgot this load; showing it again starts its own.
+        if (cacheLoads.get(agentId) !== load) return;
         cacheLoads.delete(agentId);
         loadedCache.add(agentId);
         const pending = pendingCatchUps.get(agentId);
@@ -794,23 +903,29 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     );
   };
 
+  const hiddenCatchUpSlotsAreFull = (agentId: string) => {
+    const visible = new Set(visibleAgentIds());
+    if (visible.has(agentId)) return false;
+    let hidden = 0;
+    for (const attempt of inFlightCatchUps) {
+      if (!visible.has(attempt.agentId)) hidden += 1;
+    }
+    return hidden >= MAX_HIDDEN_CATCH_UPS;
+  };
+
   const startCatchUp = (
     agentId: string,
     options: {
-      request?: ProjectedTimelineForwardFetchPlan;
+      request?: CatchUpRequest;
       supersede?: boolean;
     } = {},
   ) => {
     const { request, supersede = false } = options;
-    if (freshnessChecks.has(agentId)) {
-      if (request) pendingCatchUps.set(agentId, request);
-      return;
-    }
-    if (!canCatchUp(agentId)) {
-      if (request) pendingCatchUps.set(agentId, request);
-      return;
-    }
-    if (shouldWaitForVisibleCatchUp(agentId)) {
+    if (
+      freshnessChecks.has(agentId) ||
+      !canCatchUp(agentId) ||
+      shouldWaitForVisibleCatchUp(agentId)
+    ) {
       if (request) pendingCatchUps.set(agentId, request);
       return;
     }
@@ -819,9 +934,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       ensureCacheLoaded(agentId);
       return;
     }
-    const nextRequest = request ?? planTimelineResumeFetch(ports.readCursor(agentId));
+    const applied = ports.readCursor(agentId);
+    const nextRequest = planCatchUpRequest(request, applied);
     const current = catchUps.get(agentId);
-    const decision = decideCatchUp({ current, request: nextRequest, supersede });
+    const decision = decideCatchUp({ current, request: nextRequest.page, supersede });
     if (decision === "keep-and-park") {
       pendingCatchUps.set(agentId, nextRequest);
       return;
@@ -829,16 +945,31 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (decision === "keep") {
       return;
     }
+    if (hiddenCatchUpSlotsAreFull(agentId)) {
+      if (request) pendingCatchUps.set(agentId, request);
+      return;
+    }
     const generation = (catchUpGenerations.get(agentId) ?? 0) + 1;
     catchUpGenerations.set(agentId, generation);
     catchUps.set(agentId, { generation, status: "running", request: nextRequest });
     pendingCatchUps.delete(agentId);
+    const attempt = { agentId };
+    inFlightCatchUps.add(attempt);
+    if (current?.status === "error" && !manualRetries.has(agentId)) {
+      visibilityCatchUpErrors.delete(agentId);
+      markCatchUpOwed(agentId);
+      notifyListeners();
+    }
+    // A queued gap uses the coverage available when its fetch starts.
     void fetchUntilCurrent(
       agentId,
       generation,
       nextRequest,
-      request === undefined && nextRequest.direction === "after",
-    );
+      nextRequest.kind === "resume" || !applied,
+    ).finally(() => {
+      inFlightCatchUps.delete(attempt);
+      startAcknowledgedCatchUps();
+    });
   };
 
   const startAcknowledgedCatchUps = () => {
@@ -850,13 +981,19 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     for (const agentId of ordered) {
       const pendingCatchUp = pendingCatchUps.get(agentId);
       const current = catchUps.get(agentId);
-      // Completion of a different chat must not bypass a failed chat's error or
-      // supersede an in-flight tail that owns its parked gap recovery.
-      if (current && !(current.status === "complete" && pendingCatchUp)) continue;
+      // A running tail owns its parked gap. A failed catch-up can only have a queued retry.
+      if (current?.status === "running" || (current && !pendingCatchUp)) continue;
       startCatchUp(agentId, {
         request: pendingCatchUp,
         supersede: Boolean(pendingCatchUp),
       });
+    }
+  };
+
+  const retryFailedCatchUp = (agentId: string) => {
+    const catchUp = catchUps.get(agentId);
+    if (catchUp?.status === "error") {
+      startCatchUp(agentId, { request: catchUp.request, supersede: true });
     }
   };
 
@@ -966,9 +1103,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       void reconcileMembership();
       return;
     }
-    if (catchUp?.status === "error") {
-      startCatchUp(agentId, { request: catchUp.request, supersede: true });
-    }
+    retryFailedCatchUp(agentId);
   };
 
   const commitDesiredMembership = (
@@ -1034,10 +1169,29 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   };
 
   const publishVisibleMembership = () => {
-    commitDesiredMembership(normalizeAgentIds([...openedAgentIds, ...visibleAgentIds()]));
+    const visible = visibleAgentIds();
+    const kept = openedAgentIds.filter(
+      (agentId) => visible.includes(agentId) || !ports.isArchived(agentId),
+    );
+    if (kept.length !== openedAgentIds.length) {
+      for (const agentId of openedAgentIds) {
+        if (kept.includes(agentId)) continue;
+        loadedCache.delete(agentId);
+        cacheLoads.delete(agentId);
+      }
+      openedAgentIds = kept;
+    }
+    commitDesiredMembership(normalizeAgentIds([...openedAgentIds, ...visible]));
   };
 
   return {
+    isVisible(agentId) {
+      for (const agentIds of sources.values()) if (agentIds.includes(agentId)) return true;
+      return false;
+    },
+    archiveChanged() {
+      publishVisibleMembership();
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -1059,11 +1213,17 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       publishVisibleMembership();
     },
     replaceVisibleAgentIds(sourceId, agentIds) {
+      const previouslyVisible = new Set(visibleAgentIds());
       const normalized = normalizeAgentIds(agentIds);
       if (normalized.length === 0) sources.delete(sourceId);
       else sources.set(sourceId, normalized);
       rememberOpenedAgentIds(normalized);
       publishVisibleMembership();
+      if (active) {
+        for (const agentId of normalized) {
+          if (!previouslyVisible.has(agentId)) retryFailedCatchUp(agentId);
+        }
+      }
       startAcknowledgedCatchUps();
     },
     setActive(nextActive) {
@@ -1076,7 +1236,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       }
       const canCheck = connected && ports.canCheckFreshness();
       for (const agentId of visibleAgentIds()) {
-        if (visibilityCatchUpErrors.has(agentId)) continue;
+        if (visibilityCatchUpErrors.has(agentId)) {
+          retryFailedCatchUp(agentId);
+          continue;
+        }
         markCatchUpOwed(agentId);
         if (
           canCheck &&
@@ -1123,7 +1286,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     recoverGap(agentId, cursor) {
       if (!isDesired(agentId) || catchUps.get(agentId)?.status === "error") return;
       startCatchUp(agentId, {
-        request: planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq }),
+        request: {
+          page: planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq }),
+          kind: "gap",
+        },
         supersede: true,
       });
     },

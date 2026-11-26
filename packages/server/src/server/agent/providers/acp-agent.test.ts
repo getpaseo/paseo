@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -19,6 +20,7 @@ import {
   RequestPermissionRequest,
   SessionConfigOption,
   SessionUpdate,
+  type NewSessionResponse,
 } from "@agentclientprotocol/sdk";
 
 import {
@@ -36,6 +38,7 @@ import {
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
+import { AgentManager } from "../agent-manager.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
@@ -50,7 +53,6 @@ import {
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
-import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type {
   AgentCapabilityFlags,
@@ -2114,6 +2116,117 @@ describe("deriveModelDefinitionsFromACP", () => {
       },
     ]);
   });
+
+  test("gives a model that reports its own reasoning levels those levels and default", () => {
+    const models = deriveModelDefinitionsFromACP(
+      "acp",
+      {
+        currentModelId: "startup",
+        availableModels: [
+          { modelId: "startup", name: "Startup" },
+          {
+            modelId: "other",
+            name: "Other",
+            _meta: {
+              reasoningEffort: "xhigh",
+              reasoningEfforts: [
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra high" },
+              ],
+            },
+          },
+        ],
+      },
+      [selectConfigOption("thought_level", ["none", "low"], "low")],
+    );
+
+    expect(models[0]).toMatchObject({
+      thinkingOptions: [{ id: "none" }, { id: "low" }],
+      defaultThinkingOptionId: "low",
+    });
+    expect(models[1]).toMatchObject({
+      thinkingOptions: [
+        { id: "high", label: "High", isDefault: false },
+        { id: "xhigh", label: "Extra high", isDefault: true },
+      ],
+      defaultThinkingOptionId: "xhigh",
+    });
+  });
+
+  test("uses the wire value and a model's marked default when no reasoningEffort is provided", () => {
+    const models = deriveModelDefinitionsFromACP("acp", {
+      currentModelId: "current",
+      availableModels: [
+        {
+          modelId: "current",
+          name: "Current",
+          _meta: {
+            reasoningEfforts: [
+              {
+                id: "display-id",
+                value: "wire/id@large",
+                label: "Custom",
+                default: true,
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(models[0]).toMatchObject({
+      thinkingOptions: [{ id: "wire/id@large", label: "Custom", isDefault: true }],
+      defaultThinkingOptionId: "wire/id@large",
+    });
+  });
+
+  test.each([{ supportsReasoningEffort: false }, { reasoningEfforts: [] }])(
+    "shows no thinking options for a model that reports none: %j",
+    (metadata) => {
+      const models = deriveModelDefinitionsFromACP(
+        "acp",
+        {
+          currentModelId: "current",
+          availableModels: [{ modelId: "current", name: "Current", _meta: metadata }],
+        },
+        [selectConfigOption("thought_level", ["low", "high"], "high")],
+      );
+
+      expect(models[0].thinkingOptions).toBeUndefined();
+      expect(models[0].defaultThinkingOptionId).toBeUndefined();
+    },
+  );
+
+  test.each([
+    { supportsReasoningEffort: true },
+    { reasoningEfforts: [{ id: "high", label: "High", description: 42 }] },
+    {
+      reasoningEfforts: [
+        { id: "high", label: "High" },
+        { id: "high", label: "Duplicate" },
+      ],
+    },
+  ])(
+    "keeps session thinking options when a model's reasoning table is unusable: %j",
+    (metadata) => {
+      const models = deriveModelDefinitionsFromACP(
+        "acp",
+        {
+          currentModelId: "default",
+          availableModels: [
+            { modelId: "default", name: "Default" },
+            { modelId: "other", name: "Other", _meta: metadata },
+          ],
+        },
+        [selectConfigOption("thought_level", ["off", "on"], "on")],
+      );
+
+      expect(models[1]).toMatchObject({
+        thinkingOptions: [{ id: "off" }, { id: "on" }],
+        defaultThinkingOptionId: "on",
+      });
+    },
+  );
 });
 
 describe("ACPAgentClient modelTransformer", () => {
@@ -2148,7 +2261,12 @@ describe("ACPAgentClient modelTransformer", () => {
       provider: "pi",
       logger: createTestLogger(),
       defaultCommand: ["test-acp"],
-      modelTransformer: transformPiModels,
+      modelTransformer: (models) =>
+        models.map((model) => ({
+          ...model,
+          label: model.label.split("/").at(-1) ?? model.label,
+          description: model.id,
+        })),
     });
 
     await expect(
@@ -2171,6 +2289,164 @@ describe("ACPAgentClient modelTransformer", () => {
 });
 
 describe("ACPAgentClient catalog discovery without a model resolver", () => {
+  test.each(["magpie/workbuddy/deepseek-v4.1-flash", "grok-4.7"])(
+    "reads each exact model's reasoning metadata through the ACP response schema with default %s without switching models",
+    async (currentModelId) => {
+      const requests: string[] = [];
+      const response: NewSessionResponse = {
+        sessionId: "catalog-session",
+        models: {
+          currentModelId,
+          availableModels: [
+            {
+              modelId: "grok-4.7",
+              name: "Grok 4.7",
+              _meta: {
+                supportsReasoningEffort: true,
+                reasoningEffort: "high",
+                reasoningEfforts: [
+                  { id: "xhigh", value: "xhigh", label: "Extra High", default: false },
+                  { id: "high", value: "high", label: "High", default: true },
+                  { id: "medium", value: "medium", label: "Medium", default: false },
+                  { id: "low", value: "low", label: "Low", default: false },
+                ],
+              },
+            },
+            {
+              modelId: "magpie/codex/gpt-6.1-sol",
+              name: "Sol",
+              _meta: {
+                supportsReasoningEffort: true,
+                reasoningEffort: "low",
+                reasoningEfforts: [
+                  { id: "low", value: "low", label: "Low", description: null, default: false },
+                  { id: "medium", value: "medium", label: "Medium", default: false },
+                  { id: "high", value: "high", label: "High", default: false },
+                  { id: "xhigh", value: "xhigh", label: "X-High", default: false },
+                  { id: "max", value: "max", label: "Max", default: false },
+                ],
+              },
+            },
+            {
+              modelId: "magpie/workbuddy/deepseek-v4.1-flash",
+              name: "DeepSeek",
+              _meta: {
+                supportsReasoningEffort: true,
+                reasoningEffort: "high",
+                reasoningEfforts: [
+                  { id: "none", value: "none", label: "None", default: false },
+                  { id: "low", value: "low", label: "Low", default: false },
+                  { id: "high", value: "high", label: "High", default: false },
+                  { id: "max", value: "max", label: "Max", default: false },
+                ],
+              },
+            },
+          ],
+        },
+        configOptions: [
+          selectConfigOption(
+            "thought_level",
+            currentModelId === "grok-4.7"
+              ? ["xhigh", "high", "medium", "low"]
+              : ["none", "low", "high", "max"],
+            currentModelId === "grok-4.7" ? "medium" : "high",
+          ),
+          selectConfigOption("mode", ["https://example.com/modes#agent"]),
+        ],
+      };
+      const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+      const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+      const agent: Agent = {
+        async initialize() {
+          return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} };
+        },
+        async newSession({ cwd }) {
+          requests.push(`session/new:${cwd}`);
+          return response;
+        },
+        async setSessionConfigOption() {
+          throw new Error("Catalog discovery must not change the selected model");
+        },
+        async prompt() {
+          throw new Error("Catalog discovery must not send a prompt");
+        },
+        async authenticate() {},
+        async cancel() {},
+      };
+      const agentConnection = new AgentSideConnection(
+        () => agent,
+        ndJsonStream(agentToClient.writable, clientToAgent.readable),
+      );
+      const connection = new ClientSideConnection(
+        () => ({
+          async requestPermission() {
+            return { outcome: { outcome: "cancelled" } };
+          },
+          async sessionUpdate() {},
+        }),
+        ndJsonStream(clientToAgent.writable, agentToClient.readable),
+      );
+      const initialize = await connection.initialize({ protocolVersion: PROTOCOL_VERSION });
+      class CatalogClient extends GenericACPAgentClient {
+        protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+          return { child: createProbeChildStub(), connection, initialize };
+        }
+        protected override async closeProbe(): Promise<void> {
+          requests.push("close");
+        }
+      }
+      const client = new CatalogClient({
+        logger: createTestLogger(),
+        command: ["test-acp"],
+        providerId: "grok",
+      });
+
+      const catalog = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/sc/.worktrees/model-options",
+      });
+
+      const modelOptions = [];
+      for (const model of catalog.models) {
+        modelOptions.push({
+          id: model.id,
+          isDefault: model.isDefault,
+          thinking: model.thinkingOptions?.map((option) => option.id),
+          defaultThinkingOptionId: model.defaultThinkingOptionId,
+        });
+      }
+      expect(modelOptions).toEqual([
+        {
+          id: "grok-4.7",
+          isDefault: currentModelId === "grok-4.7",
+          thinking: ["xhigh", "high", "medium", "low"],
+          defaultThinkingOptionId: currentModelId === "grok-4.7" ? "medium" : "high",
+        },
+        {
+          id: "magpie/codex/gpt-6.1-sol",
+          isDefault: false,
+          thinking: ["low", "medium", "high", "xhigh", "max"],
+          defaultThinkingOptionId: "low",
+        },
+        {
+          id: "magpie/workbuddy/deepseek-v4.1-flash",
+          isDefault: currentModelId === "magpie/workbuddy/deepseek-v4.1-flash",
+          thinking: ["none", "low", "high", "max"],
+          defaultThinkingOptionId: "high",
+        },
+      ]);
+      expect(catalog.models[1].thinkingOptions?.[0]).toMatchObject({
+        id: "low",
+        label: "Low",
+        isDefault: true,
+        description: undefined,
+      });
+      expect(catalog.modes.map(({ id }) => id)).toEqual(["https://example.com/modes#agent"]);
+      expect(requests).toEqual(["session/new:/tmp/sc/.worktrees/model-options", "close"]);
+      expect(agentConnection.signal.aborted).toBe(false);
+    },
+  );
+
   test("never switches models during catalog discovery even with multiple models and a thinking picker", async () => {
     // Model discovery extensions live on providers that opt in. The base
     // client ships no catalog model resolver, so a slow or nonconforming ACP can't
@@ -2625,6 +2901,450 @@ describe("ACPAgentClient listImportableSessions", () => {
   });
 });
 
+describe("ACPAgentClient import listing deadlines", () => {
+  type ListingPhase = "spawn" | "initialize" | "session/list";
+  const phases: ListingPhase[] = ["initialize", "session/list"];
+
+  function createBlockedListing(
+    phase: ListingPhase,
+    terminator = new FakeTerminator(),
+    responseError?: RequestError,
+  ) {
+    const child = createProbeChildStub();
+    const clientToAgent = new PassThrough();
+    const agentToClient = new PassThrough();
+    child.stdin = clientToAgent;
+    child.stdout = agentToClient;
+    child.stderr = new PassThrough();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const operations: string[] = [];
+    const agent: Agent = {
+      async initialize() {
+        operations.push("initialize");
+        if (phase === "initialize") {
+          markStarted();
+          await blocked;
+          if (responseError) throw responseError;
+        }
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { sessionCapabilities: { list: {} } },
+        };
+      },
+      async listSessions() {
+        operations.push("session/list");
+        if (phase === "session/list") {
+          markStarted();
+          await blocked;
+          if (responseError) throw responseError;
+        }
+        return { sessions: [] };
+      },
+      async newSession() {
+        throw new Error("Import listing must not create a session");
+      },
+      async prompt() {
+        throw new Error("Import listing must not submit a prompt");
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(Writable.toWeb(agentToClient), Readable.toWeb(clientToAgent)),
+    );
+    const connection = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate() {},
+      }),
+      ndJsonStream(Writable.toWeb(clientToAgent), Readable.toWeb(agentToClient)),
+    );
+
+    const processError = new Promise<never>((_resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", () => reject(new Error("Import probe exited during cleanup")));
+    });
+
+    class ListingClient extends ACPAgentClient {
+      protected override async spawnTransport() {
+        if (phase === "spawn") {
+          operations.push("spawn");
+          markStarted();
+          await blocked;
+        }
+        return {
+          child,
+          connection,
+          stderrChunks: [],
+          spawnReady: Promise.resolve(),
+          processError,
+        };
+      }
+    }
+
+    const client = new ListingClient({
+      provider: "test-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+      terminateProcess: async (target, options) => {
+        const result = await terminator.terminate(target, options);
+        child.emit("close", 0, null);
+        return result;
+      },
+    });
+    return { client, child, agentConnection, terminator, started, release, operations };
+  }
+
+  function listSessionsThroughManager(client: ACPAgentClient) {
+    return new AgentManager({
+      clients: { [client.provider]: client },
+      logger: createTestLogger(),
+    }).listImportableSessions({ limit: 1 });
+  }
+
+  test.runIf(process.platform !== "win32")(
+    "reclaims the stalled listing provider after its launcher exits",
+    async () => {
+      const fixtureDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-listing-"));
+      const fixturePath = path.join(fixtureDir, "launcher.cjs");
+      const readyPath = path.join(fixtureDir, "listing-ready");
+      const pidsPath = path.join(fixtureDir, "pids.json");
+      await writeFile(
+        fixturePath,
+        `
+          const { spawn } = require("node:child_process");
+          const { writeFileSync } = require("node:fs");
+          const { createInterface } = require("node:readline");
+          if (process.argv[4] === "provider") {
+            process.on("SIGTERM", () => {});
+            createInterface({ input: process.stdin }).on("line", (line) => {
+              const { id, method } = JSON.parse(line);
+              if (method === "initialize") {
+                console.log(JSON.stringify({ jsonrpc: "2.0", id, result: {
+                  protocolVersion: ${PROTOCOL_VERSION},
+                  agentCapabilities: { sessionCapabilities: { list: {} } },
+                }}));
+              }
+              if (method === "session/list") {
+                writeFileSync(process.argv[2], "ready");
+                setInterval(() => {}, 1000);
+              }
+            });
+          } else {
+            const child = spawn(process.execPath, [...process.argv.slice(1), "provider"], {
+              stdio: "inherit",
+            });
+            writeFileSync(process.argv[3], JSON.stringify({
+              launcher: process.pid, provider: child.pid,
+            }));
+          }
+        `,
+      );
+
+      const client = new ACPAgentClient({
+        provider: "test-acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, fixturePath, readyPath, pidsPath],
+        defaultModes: [],
+      });
+      const isRunning = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          return false;
+        }
+      };
+
+      const readPids = async (): Promise<{ launcher: number; provider: number }> =>
+        JSON.parse(await readFile(pidsPath, "utf8"));
+      vi.useFakeTimers({ now: 0, toFake: ["setTimeout", "clearTimeout", "performance", "Date"] });
+      let responseReceived = false;
+      const listing = listSessionsThroughManager(client).then((response) => {
+        responseReceived = true;
+        return response;
+      });
+
+      try {
+        await vi.waitFor(() => readFile(readyPath, "utf8"), { timeout: 3000 });
+        const { launcher, provider } = await readPids();
+        expect(isRunning(launcher)).toBe(true);
+        expect(isRunning(provider)).toBe(true);
+
+        // waitFor advances the fake clock while starting the real processes.
+        await vi.advanceTimersByTimeAsync(89_999 - Date.now());
+        expect(responseReceived).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(listing).resolves.toEqual({
+          sessions: [],
+          providerErrors: [
+            {
+              provider: "test-acp",
+              message:
+                "Timed out listing importable sessions for provider 'test-acp' after 90000ms",
+            },
+          ],
+        });
+        await vi.waitFor(() => expect(isRunning(launcher)).toBe(false));
+        await vi.waitFor(
+          () => expect(isRunning(provider), "provider outlived launcher cleanup").toBe(false),
+          { timeout: 3500 },
+        );
+      } finally {
+        vi.useRealTimers();
+        const pids = await readPids().catch(() => ({}));
+        for (const pid of Object.values(pids)) {
+          if (isRunning(pid)) process.kill(pid, "SIGKILL");
+        }
+        await rm(fixtureDir, { recursive: true, force: true });
+      }
+    },
+    10_000,
+  );
+
+  test("accepts a listing that finishes within the daemon's provider deadline", async () => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing("session/list");
+    const listing = listSessionsThroughManager(probe.client);
+
+    try {
+      await probe.started;
+      await vi.advanceTimersByTimeAsync(88_000);
+      probe.release();
+
+      await expect(listing).resolves.toEqual({ sessions: [], providerErrors: [] });
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test.each<{ phase: ListingPhase; errorMessage?: string }>([
+    { phase: "session/list" },
+    { phase: "session/list", errorMessage: "Provider rejected listing" },
+    { phase: "initialize", errorMessage: "Sign in to the provider and retry" },
+  ])(
+    "returns a timely $phase outcome while its probe is still shutting down ($errorMessage)",
+    async ({ phase, errorMessage }) => {
+      vi.useFakeTimers();
+      const terminator = new FakeTerminator("deferred");
+      const responseError = errorMessage ? new RequestError(-32001, errorMessage) : undefined;
+      const probe = createBlockedListing(phase, terminator, responseError);
+      const providerErrors = errorMessage
+        ? [{ provider: "test-acp", message: expect.stringContaining(errorMessage) }]
+        : [];
+      const listing = listSessionsThroughManager(probe.client);
+
+      try {
+        await probe.started;
+        await vi.advanceTimersByTimeAsync(88_000);
+        probe.release();
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        expect(terminator.terminated.map((child) => child.pid)).toEqual([probe.child.pid]);
+        expect(probe.child.stdout.destroyed).toBe(false);
+        await expect(listing).resolves.toEqual({ sessions: [], providerErrors });
+        terminator.releaseAll();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(probe.child.stdout.destroyed).toBe(true);
+      } finally {
+        probe.release();
+        terminator.releaseAll();
+        await listing;
+        await vi.advanceTimersByTimeAsync(0);
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test.each(phases)("cleans up when import listing stalls in %s", async (phase) => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing(phase);
+    const listing = listSessionsThroughManager(probe.client);
+
+    try {
+      await probe.started;
+      await vi.advanceTimersByTimeAsync(89_999);
+      expect(probe.terminator.terminated).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(listing).resolves.toEqual({
+        sessions: [],
+        providerErrors: [
+          {
+            provider: "test-acp",
+            message: "Timed out listing importable sessions for provider 'test-acp' after 90000ms",
+          },
+        ],
+      });
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(phases)("cleans up when import listing is aborted in %s", async (phase) => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing(phase);
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(errors).toEqual([reason]);
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+
+      probe.release();
+      await listing;
+      expect(probe.operations).toEqual(
+        phase === "initialize" ? ["initialize"] : ["initialize", "session/list"],
+      );
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test("closes an import probe that finishes spawning after cancellation", async () => {
+    const probe = createBlockedListing("spawn");
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled before spawn completed");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const unhandledRejections: unknown[] = [];
+    function recordUnhandledRejection(error: unknown): void {
+      unhandledRejections.push(error);
+    }
+    process.on("unhandledRejection", recordUnhandledRejection);
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await listing;
+      expect(errors).toEqual([reason]);
+      expect(probe.terminator.terminated).toEqual([]);
+
+      probe.release();
+      // Node reports unhandled rejections after the cleanup microtasks settle.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+      expect(probe.operations).toEqual(["spawn"]);
+      expect(errors).toEqual([reason]);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      probe.release();
+      await listing;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      process.removeListener("unhandledRejection", recordUnhandledRejection);
+    }
+  });
+
+  test("preserves process failures during import probe initialization", async () => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing("initialize");
+    const failure = new Error("Import probe failed during initialize");
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions({ limit: 1 }).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      probe.child.emit("error", failure);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(errors).toEqual([
+        expect.objectContaining({ message: "Import probe failed during initialize" }),
+      ]);
+      expect(probe.operations).toEqual(["initialize"]);
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test("waits for owned import probe cleanup before rejecting cancellation", async () => {
+    vi.useFakeTimers();
+    const terminator = new FakeTerminator("deferred");
+    const probe = createBlockedListing("session/list", terminator);
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled during session/list");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(terminator.terminated).toEqual([probe.child]);
+      expect(errors).toEqual([]);
+
+      terminator.releaseAll();
+      await listing;
+      expect(errors).toEqual([reason]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await vi.advanceTimersByTimeAsync(0);
+      terminator.releaseAll();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("ACP providers advertise session listing", () => {
   // The daemon's agent-manager only queries providers whose
   // capabilities.supportsSessionListing is true. Without it, ACP providers
@@ -2641,60 +3361,6 @@ describe("ACP providers advertise session listing", () => {
   test("Copilot ACP client reports supportsSessionListing", () => {
     const client = new CopilotACPAgentClient({ logger: createTestLogger() });
     expect(client.capabilities.supportsSessionListing).toBe(true);
-  });
-});
-
-describe("transformPiModels", () => {
-  test("keeps slash-free labels unchanged", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "gpt-4.1-mini",
-          label: "GPT 4.1 Mini",
-          description: "Fast",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "gpt-4.1-mini",
-        label: "GPT 4.1 Mini",
-        description: "Fast",
-      },
-    ]);
-  });
-
-  test("uses the last path segment as label and preserves existing descriptions", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-4.1-mini",
-          label: "openrouter/openai/gpt-4.1-mini",
-          description: undefined,
-        },
-        {
-          provider: "pi",
-          id: "anthropic/claude-sonnet-4",
-          label: "anthropic/claude-sonnet-4",
-          description: "Balanced",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-4.1-mini",
-        label: "gpt-4.1-mini",
-        description: "openrouter/openai/gpt-4.1-mini",
-      },
-      {
-        provider: "pi",
-        id: "anthropic/claude-sonnet-4",
-        label: "claude-sonnet-4",
-        description: "Balanced",
-      },
-    ]);
   });
 });
 
@@ -5196,5 +5862,66 @@ describe("custom ACP provider with configured models", () => {
     const created = await createSessionOnModel(registry, "stale/removed-model");
 
     expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
+  });
+});
+
+describe("ACPAgentSession launch wrap against an ACP agent", () => {
+  const fakeAgentPath = fileURLToPath(new URL("./test-utils/fake-acp-agent.mjs", import.meta.url));
+
+  test("starts the agent and its terminals behind the session's wrap", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-acp-wrap-"));
+    const record = path.join(root, "launches.jsonl");
+    const launcher = path.join(root, "launcher.cjs");
+    await writeFile(
+      launcher,
+      `
+      const [, , ...argv] = process.argv;
+      require("node:fs").appendFileSync(${JSON.stringify(record)}, JSON.stringify(argv) + "\\n");
+      const child = require("node:child_process").spawn(argv[0], argv.slice(1), { stdio: "inherit" });
+      child.on("exit", (code) => process.exit(code ?? 1));
+    `,
+    );
+    const session = new ACPAgentSession(
+      { provider: "acp", cwd: root },
+      {
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, fakeAgentPath, "{}"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        wrap: [process.execPath, launcher],
+      },
+    );
+    try {
+      await session.initializeNewSession();
+      const { terminalId } = await session.createTerminal({
+        sessionId: "session-1",
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        cwd: root,
+      });
+      await expect(
+        session.waitForTerminalExit({ sessionId: "session-1", terminalId }),
+      ).resolves.toMatchObject({ exitCode: 0 });
+
+      const launches = (await readFile(record, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(launches).toEqual([
+        [process.execPath, fakeAgentPath, "{}"],
+        [process.execPath, "-e", "process.exit(0)"],
+      ]);
+    } finally {
+      await session.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

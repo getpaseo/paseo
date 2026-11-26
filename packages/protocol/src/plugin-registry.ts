@@ -79,12 +79,43 @@ export const PluginRegistryIndexSchema = z.object({
   featured: z.array(z.string()),
   generatedAt: z.string(),
 });
+
+/**
+ * A listing as a host sends it to apps. The registry's schema is closed, so its artifact is open
+ * here: an app older than its host keeps listing plugins whose artifact kind it does not know, and
+ * installs them through the host by ID.
+ */
+const PluginListingArtifactSchema = z.object({
+  kind: z.string(),
+  package: z.string().optional(),
+  version: z.string().optional(),
+  commit: z.string().optional(),
+});
+export const PluginListingSchema = PublishedPluginSchema.extend({
+  artifact: PluginListingArtifactSchema,
+});
+export const PluginListingDetailSchema = PublishedPluginDetailSchema.extend({
+  artifact: PluginListingArtifactSchema,
+});
+export const PluginListingIndexSchema = PluginRegistryIndexSchema.extend({
+  schemaVersion: z.number().int(),
+  plugins: z.array(PluginListingSchema),
+});
+export type PluginListing = z.infer<typeof PluginListingSchema>;
+export type PluginListingDetail = z.infer<typeof PluginListingDetailSchema>;
+export type PluginListingIndex = z.infer<typeof PluginListingIndexSchema>;
+
 export type PluginRegistryIdentity = z.infer<typeof PluginRegistryIdentitySchema>;
 export type PluginRegistries = z.infer<typeof PluginRegistriesSchema>;
+export type PublishedPlugin = z.infer<typeof PublishedPluginSchema>;
+export type PublishedPluginDetail = z.infer<typeof PublishedPluginDetailSchema>;
+export type PluginRegistryIndex = z.infer<typeof PluginRegistryIndexSchema>;
+
+export const DEFAULT_PLUGIN_REGISTRY_URL = "https://plugins.paseo.sh";
 
 export function parsePluginRegistryReference(
   source: string,
-  defaultUrl = "https://plugins.paseo.sh",
+  defaultUrl = DEFAULT_PLUGIN_REGISTRY_URL,
 ): PluginRegistryIdentity | null {
   const segments = source.split("/");
   if (segments.length === 2 && PluginRegistryIdSchema.safeParse(source).success)

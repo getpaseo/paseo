@@ -577,20 +577,27 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
 
   // chmod cannot make a file unreadable to root.
   describe.skipIf(process.getuid?.() === 0)("a record that cannot be opened for a moment", () => {
-    it("still ends a live worker it names, then retires the record", async () => {
-      const home = makeHome();
+    // The reaper signals a worker only once its socket accepts, so wait for the listen.
+    async function spawnListeningWorker(socketPath: string): Promise<ChildProcess> {
       const worker = spawn(
         process.execPath,
         [
           "-e",
-          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live-record-under-test.sock"))});setInterval(() => {}, 1e9)`,
+          `require("node:net").createServer(() => {}).listen(${JSON.stringify(socketPath)}, () => process.stdout.write("listening\\n"));setInterval(() => {}, 1e9)`,
           "--",
           "--paseo-terminal-worker",
           "record-under-test",
         ],
-        { detached: true, stdio: "ignore" },
+        { detached: true, stdio: ["ignore", "pipe", "ignore"] },
       );
       children.push(worker);
+      await new Promise((resolve) => worker.stdout!.once("data", resolve));
+      return worker;
+    }
+
+    it("still ends a live worker it names, then retires the record", async () => {
+      const home = makeHome();
+      const worker = await spawnListeningWorker(path.join(home, "live-record-under-test.sock"));
       const recordPath = writeRecord(home, {
         pid: worker.pid!,
         socketPath: path.join(home, "live-record-under-test.sock"),
@@ -632,18 +639,7 @@ describe.skipIf(isPlatform("win32"))("terminal worker reaper", () => {
 
     it("still reports a record that stays unreadable, and signals nothing it names", async () => {
       const home = makeHome();
-      const worker = spawn(
-        process.execPath,
-        [
-          "-e",
-          `require("node:net").createServer(() => {}).listen(${JSON.stringify(path.join(home, "live-record-under-test.sock"))});setInterval(() => {}, 1e9)`,
-          "--",
-          "--paseo-terminal-worker",
-          "record-under-test",
-        ],
-        { detached: true, stdio: "ignore" },
-      );
-      children.push(worker);
+      const worker = await spawnListeningWorker(path.join(home, "live-record-under-test.sock"));
       const recordPath = writeRecord(home, {
         pid: worker.pid!,
         socketPath: path.join(home, "live-record-under-test.sock"),

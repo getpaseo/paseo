@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
+import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -31,6 +31,12 @@ import {
   toolbarSlot,
   type ToolbarGlyphs,
 } from "@/components/ui/control-geometry";
+import { getAgentControlHintKey, shortModelLabel } from "./utils";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ControlTooltipHint } from "./composer-control";
+import { useModelPickerShortcut } from "./control-items";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -44,12 +50,13 @@ interface CompactModelSheetProps {
   selectedProvider: string;
   selectedModel: string;
   thinkingLabel: string | null;
+  effortKeys: ReturnType<typeof useShortcutKeys>;
   onSelect: (provider: string, modelId: string) => void;
   isLoading: boolean;
   profiles?: AgentProfilePicker | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
-  onCreateProfile?: (seed: AgentProfileSeed) => void;
+  onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
   onOpen?: () => void;
   onClose?: () => void;
@@ -66,14 +73,10 @@ interface CompactModelSheetProps {
   children: ReactNode;
 }
 
-function shortModelLabel(label: string): string {
-  const separatorIndex = label.lastIndexOf("/");
-  return separatorIndex === -1 ? label : label.slice(separatorIndex + 1);
-}
-
 function resolveModelSheetProfileActions(
-  onCreateProfile: ((seed: AgentProfileSeed) => void) | undefined,
+  onCreateProfile: ((seed: AgentProfileSeed) => Promise<AgentProfile | null> | void) | undefined,
   onEditProfile: ((profileId: string) => void) | undefined,
+  onSelect: (provider: string, modelId: string) => void,
   close: () => void,
 ): {
   create?: (seed: AgentProfileSeed) => void;
@@ -82,8 +85,11 @@ function resolveModelSheetProfileActions(
   return {
     create: onCreateProfile
       ? (seed: AgentProfileSeed) => {
+          if (seed.modelId) {
+            onSelect(seed.provider, seed.modelId);
+          }
           close();
-          onCreateProfile(seed);
+          void onCreateProfile(seed);
         }
       : undefined,
     edit: onEditProfile
@@ -137,6 +143,7 @@ export function CompactModelSheet({
   selectedProvider,
   selectedModel,
   thinkingLabel,
+  effortKeys,
   onSelect,
   isLoading,
   profiles = null,
@@ -278,7 +285,12 @@ export function CompactModelSheet({
     onEditProfiles?.();
   }, [close, onEditProfiles]);
 
-  const profileActions = resolveModelSheetProfileActions(onCreateProfile, onEditProfile, close);
+  const profileActions = resolveModelSheetProfileActions(
+    onCreateProfile,
+    onEditProfile,
+    onSelect,
+    close,
+  );
 
   const toggle = useCallback(() => {
     if (isOpen) {
@@ -320,11 +332,13 @@ export function CompactModelSheet({
         glyphs={glyphs}
         iconOnly={!showLabels && hasSelectedProvider}
         isOpen={isOpen}
+        searchFocused={rootBrowser.isSearchFocused || modelBrowser.isSearchFocused}
         disabled={disabled}
         onPress={toggle}
         accessibilityLabel={t("modelSelector.selectedModel", {
           model: rootBrowser.selectedModelLabel,
         })}
+        effortKeys={effortKeys}
       />
 
       <AdaptiveModalSheet
@@ -413,17 +427,7 @@ export function CompactModelSheet({
  * The folded model control in the toolbar: the provider glyph, then the model and thinking
  * labels for as long as they fit.
  */
-function ModelSheetTrigger({
-  ModelIcon,
-  modelLabel,
-  thinkingLabel,
-  glyphs,
-  iconOnly,
-  isOpen,
-  disabled,
-  onPress,
-  accessibilityLabel,
-}: {
+interface ModelSheetTriggerProps {
   /** The selected provider's glyph, or null before a provider is selected. */
   ModelIcon: ReturnType<typeof useProviderIcon> | null;
   modelLabel: string;
@@ -431,10 +435,36 @@ function ModelSheetTrigger({
   glyphs: ToolbarGlyphs;
   iconOnly: boolean;
   isOpen: boolean;
+  searchFocused: boolean;
   disabled: boolean;
   onPress: () => void;
   accessibilityLabel: string;
-}) {
+  effortKeys: ReturnType<typeof useShortcutKeys>;
+}
+
+function ModelSheetTrigger({
+  ModelIcon,
+  modelLabel,
+  thinkingLabel,
+  glyphs,
+  iconOnly,
+  isOpen,
+  searchFocused,
+  disabled,
+  onPress,
+  accessibilityLabel,
+  effortKeys,
+}: ModelSheetTriggerProps) {
+  const { t } = useTranslation();
+  const { action: toggleAction, keys: modelKeys } = useModelPickerShortcut(disabled);
+  useKeyboardToggle({
+    action: toggleAction,
+    disabled,
+    open: isOpen,
+    searchFocused,
+    onToggle: onPress,
+  });
+
   const glyphRole = iconOnly ? "icon" : "label";
   const glyph = glyphs[glyphRole];
   const triggerLabels = useModelTriggerLabels({
@@ -455,7 +485,7 @@ function ModelSheetTrigger({
     [disabled, iconOnly, isOpen],
   );
 
-  return (
+  const trigger = (
     <View style={styles.triggerFrame} onLayout={triggerLabels.onFrameLayout}>
       <ComboboxTrigger
         collapsable={false}
@@ -524,6 +554,23 @@ function ModelSheetTrigger({
         </View>
       ) : null}
     </View>
+  );
+
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild triggerRefProp="ref">
+        {trigger}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <ControlTooltipHint label={t(getAgentControlHintKey("model"))} shortcutKeys={modelKeys} />
+        {effortKeys ? (
+          <ControlTooltipHint
+            label={t("settings.shortcuts.help.cycleEffort")}
+            shortcutKeys={effortKeys}
+          />
+        ) : null}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

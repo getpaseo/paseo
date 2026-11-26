@@ -3,7 +3,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { Text, View } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
-import { MenuRoot, MenuSurface, MenuTrigger, type Size } from "./index";
+import {
+  MenuItem,
+  MenuRoot,
+  MenuSubTrigger,
+  MenuSurface,
+  MenuTrigger,
+  type MenuPageDefinition,
+  type Size,
+} from "./index";
 
 // App sources compile against the classic JSX runtime, which expects React on the global.
 beforeEach(() => vi.stubGlobal("React", React));
@@ -120,5 +128,67 @@ describe("anchored menu surface on web", () => {
     const body = element("body").getBoundingClientRect();
     const panel = element("panel").getBoundingClientRect();
     expect(panel.width).toBeGreaterThanOrEqual(body.width);
+  });
+});
+
+const SUB_PAGES: MenuPageDefinition[] = [
+  {
+    id: "show",
+    title: "Show",
+    content: (
+      <MenuItem testID="show-option" closeOnSelect={false}>
+        Archived
+      </MenuItem>
+    ),
+  },
+];
+
+/** Past the grace a flyout is given after the pointer leaves, so a queued close has landed. */
+const HOVER_CLOSE_SETTLED_MS = 600;
+
+/**
+ * A tap as the browser reports it: the finger enters the row as it lands and leaves it as it
+ * lifts, and only then does the click arrive.
+ */
+function tap(target: HTMLElement): void {
+  const pointer = (type: string) =>
+    target.dispatchEvent(
+      new PointerEvent(type, { bubbles: true, pointerType: "touch", isPrimary: true }),
+    );
+  act(() => {
+    pointer("pointerover");
+    pointer("pointerdown");
+    pointer("pointerup");
+    pointer("pointerout");
+    target.click();
+  });
+}
+
+describe("submenu flyout on a touch screen", () => {
+  beforeEach(async () => {
+    await page.viewport(1280, 900);
+  });
+
+  it("stays open after a tap on its row, and after a tap inside it", async () => {
+    mount(
+      <MenuRoot>
+        <MenuTrigger testID="pill" accessibilityLabel="Open menu">
+          <Text>Open menu</Text>
+        </MenuTrigger>
+        <MenuSurface pages={SUB_PAGES} testID="panel">
+          <MenuSubTrigger id="show" testID="show-row">
+            Show
+          </MenuSubTrigger>
+        </MenuSurface>
+      </MenuRoot>,
+    );
+    act(() => element("pill").click());
+
+    tap(element("show-row"));
+    await wait(HOVER_CLOSE_SETTLED_MS);
+    tap(element("show-option"));
+    await wait(HOVER_CLOSE_SETTLED_MS);
+
+    expect(document.querySelector('[data-testid="show-option"]')).not.toBeNull();
   });
 });

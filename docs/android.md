@@ -112,6 +112,29 @@ need an artifact. `android:clear` removes the generated Android project.
 
 Run `npm run test:android --workspace=@getpaseo/app` explicitly with a local Android toolchain to prebuild Android and run native module unit tests. Ordinary CI does not prebuild Android or run these tests.
 
+With an emulator or device connected, run the hardware keyboard's window-dispatch regression tests
+from `packages/app/android`:
+
+```bash
+./gradlew :paseo-hardware-keyboard:connectedDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
+These check terminal arrow ownership, held-key repeats and modifiers, and ordinary text-field editing.
+
+Run the terminal module's tests the same way with `:paseo-terminal:connectedDebugAndroidTest`. Besides
+row layout, they check that the terminal input asks the keyboard not to learn what is typed
+(`IME_FLAG_NO_PERSONALIZED_LEARNING`), so passwords typed at a prompt stay out of Gboard's
+suggestions in other apps. React Native's TextInput has no prop for that flag, and it replaces
+`imeOptions` when `returnKeyType` or `disableFullscreenUI` is set, so the terminal input sets neither.
+
+Run the display density regression tests the same way:
+
+```bash
+./gradlew :paseo-display-metrics:connectedDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
+These check that React Native sizes text at the window's density when the window is on another display, such as Samsung DeX.
+
 ### Diagnostic logs without ADB
 
 In a dogfood build, open Android's Files app → Downloads → **Paseo diagnostics** and share all
@@ -177,10 +200,10 @@ This is the Android counterpart of the iOS local-simulator flow in [development.
 ## Scroll view corrections
 
 `modules/paseo-scroll` replaces React Native's vertical scroll view with `PaseoScrollView`, which
-keeps React Native's scroll manager interface and corrects `maintainVisibleContentPosition` for the
-chat timeline. [agent-stream-disclosure.md](agent-stream-disclosure.md#scroll-view-corrections)
-lists the corrections and the React Native issues they work around. Its instrumentation test,
-`VisibleContentPositionClampTest`, mounts through React Native's own mounting manager:
+keeps React Native's scroll manager interface and corrects how the chat timeline holds its position.
+[agent-stream-disclosure.md](agent-stream-disclosure.md#scroll-view-corrections) lists the
+corrections and the React Native issues they work around. Its instrumentation tests run the scroll
+view in a real window, mounting through React Native's own mounting manager and injecting touches:
 
 ```bash
 cd packages/app/android

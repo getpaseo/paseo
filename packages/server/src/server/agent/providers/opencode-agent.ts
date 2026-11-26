@@ -30,6 +30,7 @@ import {
   type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
+  type AgentResumeSessionOptions,
   type AgentMode,
   type AgentModelDefinition,
   type AgentPermissionAction,
@@ -78,6 +79,7 @@ import {
 } from "../provider-launch-config.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand } from "../../../utils/spawn.js";
+import type { LaunchWrap } from "../../../utils/launch-wrap.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
   OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS,
@@ -1521,6 +1523,7 @@ export class OpenCodeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    _options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
@@ -1535,7 +1538,10 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
+    // A registered parent server runs outside this launch's wrap, so a wrapped resume starts its own.
+    const registeredServerUrl = launchContext?.wrap
+      ? undefined
+      : getOpenCodeChildSessionServerUrl(handle.sessionId);
     const registeredAcquisition = registeredServerUrl
       ? this.serverManager.acquireExisting(registeredServerUrl)
       : null;
@@ -1615,12 +1621,23 @@ export class OpenCodeAgentClient implements AgentClient {
     config: OpenCodeAgentConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<OpenCodeServerAcquisition> {
-    if (!this.bridge || requiresDedicatedOpenCodeServer(config, launchContext)) {
-      return launchContext?.env
-        ? this.serverManager.acquireDedicated(launchContext.env)
-        : this.serverManager.acquireCurrent();
+    if (launchContext?.wrap)
+      return this.acquireWrappedServer(launchContext.wrap, launchContext.env);
+    if (
+      launchContext?.env &&
+      (!this.bridge || requiresDedicatedOpenCodeServer(config, launchContext))
+    ) {
+      return this.serverManager.acquireDedicated({ env: launchContext.env });
     }
     return this.serverManager.acquireCurrent();
+  }
+
+  /** A wrapped session gets its own server, so it never shares one that runs outside its wrap. */
+  private acquireWrappedServer(
+    wrap: LaunchWrap,
+    env: Record<string, string> = {},
+  ): Promise<OpenCodeServerAcquisition> {
+    return this.serverManager.acquireDedicated({ env, wrap });
   }
 
   private bindBridgeSession(
@@ -1710,7 +1727,11 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const acquisition = await this.serverManager.acquireCurrent();
+    const wrap = context.launchContext?.wrap;
+    // A wrapped import reads the session behind its wrap too, so it never starts a server outside it.
+    const acquisition = wrap
+      ? await this.acquireWrappedServer(wrap, context.launchContext?.env)
+      : await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
       baseUrl: url,
@@ -3692,6 +3713,7 @@ class OpenCodeAgentSession implements AgentSession {
     const systemPrompt = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
     const model = this.parseModel(this.config.model);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
@@ -4029,6 +4051,7 @@ class OpenCodeAgentSession implements AgentSession {
           const systemPrompt = composeSystemPromptParts(
             this.config.systemPrompt,
             this.config.daemonAppendSystemPrompt,
+            ...(this.config.pluginAppendSystemPrompt ?? []),
           );
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
@@ -5045,22 +5068,24 @@ class OpenCodeAgentSession implements AgentSession {
           answers,
         });
       }
-
-      this.pendingPermissions.delete(requestId);
-      this.pendingPermissionDirectories.delete(requestId);
-      return;
+    } else {
+      const reply = resolveOpenCodePermissionReply(response);
+      await this.client.permission.reply({
+        requestID: requestId,
+        directory,
+        reply,
+        message: response.behavior === "deny" ? response.message : undefined,
+      });
     }
-
-    const reply = resolveOpenCodePermissionReply(response);
-    await this.client.permission.reply({
-      requestID: requestId,
-      directory,
-      reply,
-      message: response.behavior === "deny" ? response.message : undefined,
-    });
 
     this.pendingPermissions.delete(requestId);
     this.pendingPermissionDirectories.delete(requestId);
+    this.notifySubscribers({
+      type: "permission_resolved",
+      provider: "opencode",
+      requestId,
+      resolution: response,
+    });
   }
 
   describePersistence(): AgentPersistenceHandle | null {

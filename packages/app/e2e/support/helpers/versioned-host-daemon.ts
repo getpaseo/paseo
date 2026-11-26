@@ -62,6 +62,38 @@ export async function startRestartableHostDaemon(version: string): Promise<Resta
   };
 }
 
+export interface HostDaemon {
+  serverId: string;
+  port: number;
+  dispose(): Promise<void>;
+}
+
+/** A host daemon of its own, for tests that need host configuration the worker daemon lacks. */
+export async function startHostDaemon(options: {
+  version: string;
+  pluginRegistryUrl?: string;
+}): Promise<HostDaemon> {
+  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-e2e-host-"));
+  try {
+    const daemon = await startVersionedHostDaemon({
+      ...options,
+      port: await getAvailableHostDaemonPort(),
+      paseoHomeRoot,
+    });
+    return {
+      serverId: daemon.serverId,
+      port: daemon.port,
+      async dispose() {
+        await daemon.stop();
+        await rm(paseoHomeRoot, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    await rm(paseoHomeRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 interface VersionedHostDaemon {
   serverId: string;
   port: number;
@@ -73,6 +105,7 @@ interface VersionedHostDaemonOptions {
   version: string;
   port: number;
   paseoHomeRoot: string;
+  pluginRegistryUrl?: string;
 }
 
 // Starts the versioned test daemon on an explicit port with a caller-owned PASEO_HOME. The caller
@@ -83,7 +116,12 @@ async function startVersionedHostDaemon(
   const child = spawnTsx(
     VERSIONED_DAEMON_ENTRYPOINT,
     [options.version, String(options.port), options.paseoHomeRoot],
-    { stdio: ["ignore", "pipe", "pipe", "ipc"] },
+    {
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+      env: options.pluginRegistryUrl
+        ? { ...process.env, PASEO_PLUGIN_REGISTRY: options.pluginRegistryUrl }
+        : process.env,
+    },
   );
   const ready = Promise.withResolvers<{ port: number; serverId: string }>();
   let output = "";

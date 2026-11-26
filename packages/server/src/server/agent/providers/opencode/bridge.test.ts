@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
-import Ajv from "ajv";
+import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -77,6 +77,161 @@ function readPluginOptions(env: Record<string, string>): {
 }
 
 describe("OpenCodeBridge", () => {
+  test("discovers only the requested session's catalog and retains global discovery", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-discovery-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    const catalog = createCatalog();
+    bridge.setManifestCatalog(catalog);
+    await bridge.start();
+    const unbind = bridge.bindSession({ sessionId: "bound", env: {}, tools: catalog });
+    bridge.bindSession({ sessionId: "disabled", env: {} });
+    try {
+      const { baseUrl, token } = bridge.sharedV2Connection();
+      async function discover(query: string) {
+        const response = await fetch(`${baseUrl}/_internal/opencode/tools${query}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return { status: response.status, body: await response.json() };
+      }
+      const expected = {
+        status: 200,
+        body: {
+          tools: [
+            {
+              name: "echo_context",
+              title: "Echo context",
+              description: "Returns the supplied value.",
+              inputSchema: serializePaseoToolInputParameters(catalog.getTool("echo_context")!),
+            },
+          ],
+          mcpTools: [],
+        },
+      };
+      expect(await discover("")).toEqual(expected);
+      expect(await discover("?sessionID=bound")).toEqual(expected);
+      expect(await discover("?sessionID=disabled")).toEqual({
+        status: 200,
+        body: { tools: [], mcpTools: [] },
+      });
+      const missing = {
+        status: 404,
+        body: { error: "OpenCode session is not bound to a Paseo agent" },
+      };
+      expect(await discover("?sessionID=unknown")).toEqual(missing);
+      expect(await discover("?sessionID=")).toEqual(missing);
+      unbind();
+      expect(await discover("?sessionID=bound")).toEqual(missing);
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  test("registers and executes session-only tools without exposing them to other sessions", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-session-tools-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    const builtin = createCatalog();
+    const pluginTool = {
+      name: "plugin_action",
+      description: "Run a session-specific plugin action.",
+      inputSchema: { value: z.string() },
+    };
+    const tools = new Map([...builtin.tools, [pluginTool.name, pluginTool] as const]);
+    const calls: unknown[] = [];
+    const author: PaseoToolCatalog = {
+      tools,
+      getTool: (name) => tools.get(name),
+      executeTool: async (name, input, context) => {
+        if (name !== pluginTool.name) return builtin.executeTool(name, input, context);
+        calls.push(input);
+        return { content: [{ type: "text", text: "Plugin action complete" }] };
+      },
+    };
+    bridge.setManifestCatalog(builtin);
+    await bridge.start();
+    bridge.bindSession({ sessionId: "author/one", env: {}, tools: author });
+    bridge.bindSession({ sessionId: "other", env: {}, tools: builtin });
+    bridge.bindSession({ sessionId: "disabled", env: {} });
+    try {
+      const registered = new Map<string, V2TestTool>();
+      const hooks: Array<(input: V2TestContext) => Promise<void>> = [];
+      const dispose = await setupBoundV2Plugin(
+        bridge,
+        {
+          tool: {
+            transform: async (transform) => {
+              transform({
+                add: (tool) => {
+                  registered.set(tool.name, tool);
+                },
+              });
+              return { dispose: async () => undefined };
+            },
+          },
+          session: {
+            context: async () => [],
+            get: async ({ sessionID }) => ({
+              parentID: sessionID === "child" ? "author/one" : undefined,
+            }),
+            hook: async (_name, hook) => {
+              hooks.push(hook);
+              return { dispose: async () => undefined };
+            },
+          },
+        },
+        ["author/one", "other", "disabled"],
+      );
+      try {
+        expect([...registered.keys()]).toEqual([
+          "paseo_structured_output",
+          "paseo_echo_context",
+          `paseo_${pluginTool.name}`,
+        ]);
+        const submit = registered.get(`paseo_${pluginTool.name}`)!;
+        expect(submit.input).toEqual(serializePaseoToolInputParameters(pluginTool));
+        const visibleTools = [
+          ["author/one", ["paseo_echo_context", `paseo_${pluginTool.name}`, "native"]],
+          ["child", ["paseo_echo_context", `paseo_${pluginTool.name}`, "native"]],
+          ["other", ["paseo_echo_context", "native"]],
+          ["disabled", ["native"]],
+          ["unrelated", ["native"]],
+        ] as const;
+        for (const [sessionID, expected] of visibleTools) {
+          const input = {
+            sessionID,
+            tools: Object.fromEntries([...registered.keys(), "native"].map((name) => [name, {}])),
+          };
+          for (const hook of hooks) await hook(input);
+          expect(Object.keys(input.tools)).toEqual(expected);
+        }
+        await expect(
+          submit.execute({ value: "revision" }, { sessionID: "author/one" }),
+        ).resolves.toMatchObject({ content: [{ type: "text", text: "Plugin action complete" }] });
+        await expect(
+          submit.execute({ value: "child revision" }, { sessionID: "child" }),
+        ).resolves.toMatchObject({ content: [{ type: "text", text: "Plugin action complete" }] });
+        await expect(submit.execute({}, { sessionID: "other" })).rejects.toThrow(
+          "Paseo tool not found",
+        );
+        await expect(submit.execute({}, { sessionID: "disabled" })).rejects.toThrow(
+          "Paseo tools are disabled",
+        );
+        await expect(submit.execute({}, { sessionID: "unrelated" })).rejects.toThrow("not bound");
+        expect(calls).toEqual([{ value: "revision" }, { value: "child revision" }]);
+        await expect(
+          registered
+            .get("paseo_echo_context")!
+            .execute({ value: "builtin" }, { sessionID: "other" }),
+        ).resolves.toMatchObject({ content: [{ type: "text", text: "builtin" }] });
+      } finally {
+        await dispose();
+      }
+    } finally {
+      await bridge.close();
+    }
+  });
+
   test("advertises agent-scoped schemas that execute through both bridge plugins", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-manifest-"));
     temporaryDirectories.push(paseoHome);
@@ -129,7 +284,7 @@ describe("OpenCodeBridge", () => {
           properties: { notifyOnFinish: { default: false } },
         });
       }
-      const ajv = new Ajv({ useDefaults: true, strict: false });
+      const ajv = new Ajv2020({ useDefaults: true, strict: false });
       const createInput = {
         title: "Bridge child",
         provider: "codex/gpt-5.4",
@@ -314,10 +469,11 @@ describe("OpenCodeBridge", () => {
               type: "object",
               properties: { value: { type: "string" } },
               required: ["value"],
-              $schema: "http://json-schema.org/draft-07/schema#",
+              $schema: "https://json-schema.org/draft/2020-12/schema",
             },
           },
         ],
+        mcpTools: [],
       });
 
       const execution = await fetch(
@@ -706,6 +862,67 @@ describe("OpenCodeBridge", () => {
       const manifest = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
       expect(manifest).toMatchObject({ type: "module", exports: { "./server": "./server.js" } });
     } finally {
+      await bridge.close();
+    }
+  });
+
+  test("runs a session's MCP tools with their structured results and stops them on disconnect", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-bridge-mcp-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    await bridge.start();
+    const started = Promise.withResolvers<void>();
+    const stopped = Promise.withResolvers<unknown>();
+    const release = bridge.bindSession({
+      sessionId: "ses_mcp",
+      env: {},
+      mcp: {
+        tools: [
+          { name: "hub_lookup", description: "Look up", inputSchema: { type: "object" } },
+          { name: "hub_wait", description: "Wait", inputSchema: { type: "object" } },
+        ],
+        instructions: "Use the lookup.",
+        async execute(name, _input, signal) {
+          if (name === "hub_lookup")
+            return { content: [], structuredContent: { answer: "the lookup value" } };
+          started.resolve();
+          signal?.addEventListener("abort", () => stopped.resolve(signal.reason));
+          return await new Promise(() => {});
+        },
+      },
+    });
+    try {
+      const { baseUrl, token } = bridge.sharedV2Connection();
+      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+      const route = (tool: string) =>
+        `${baseUrl}/_internal/opencode/sessions/ses_mcp/mcp-tools/${tool}`;
+      const context = await fetch(`${baseUrl}/_internal/opencode/sessions/ses_mcp/context?tools`, {
+        headers,
+      });
+      expect(await context.json()).toMatchObject({ mcpInstructions: "Use the lookup." });
+
+      const lookup = await fetch(route("hub_lookup"), { method: "POST", headers, body: "{}" });
+      expect(await lookup.json()).toEqual({
+        content: [{ type: "text", text: expect.stringContaining("the lookup value") }],
+        structuredContent: { answer: "the lookup value" },
+      });
+
+      // OpenCode aborts the request when the user stops the turn.
+      const abort = new AbortController();
+      const waiting = fetch(route("hub_wait"), {
+        method: "POST",
+        headers,
+        body: "{}",
+        signal: abort.signal,
+      }).catch(() => undefined);
+      await started.promise;
+      abort.abort();
+      await waiting;
+      await expect(stopped.promise).resolves.toEqual(
+        new Error("OpenCode tool request was aborted"),
+      );
+    } finally {
+      release();
       await bridge.close();
     }
   });

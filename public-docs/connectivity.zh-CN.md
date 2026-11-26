@@ -49,13 +49,13 @@ paseo --host 'ssh://user@host?daemonPort=7777' ls -a
 
 ## Paseo 中继 {#paseo-relay}
 
-中继无需 Tailscale、端口转发或网络配置即可工作。流量是端到端加密的。
+中继无需 Tailscale、端口转发或网络配置即可工作。流量经过[端到端加密](/docs/security)。
 
 在你启用之前，中继是关闭的。
 
 ### 在 Paseo 桌面端启用中继 {#enable-relay-from-paseo-desktop}
 
-1. 打开 **设置 → 你的主机 → 配对设备**。
+1. 打开 **设置 → 你的主机 → 设备 → 中继**。
 2. 选择 **启用中继**。
 3. 用手机上的 Paseo 扫描二维码，或者复制配对链接并粘贴到手机应用中。
 
@@ -73,51 +73,12 @@ paseo daemon pair
 
 在 daemon 所在的机器和你的手机上安装 [Tailscale](https://tailscale.com/download)，并在两台设备上登录同一个 tailnet。
 
-### 1. 找到 daemon 机器的 Tailscale IP {#1-find-the-daemon-machines-tailscale-ip}
+1. 在已连接到主机的设备上，打开 **设置 → 你的主机 → 设备**。你也可以在初始设置的手机步骤中操作。
+2. 打开 **Tailscale** 并复制地址。
+3. 在手机上的 Paseo 中，打开 **设置 → 添加主机 → 直接连接**。
+4. 在 **Host** 中输入 IP，在 **端口** 中输入端口号。保持 **使用 SSL** 关闭，然后选择 **连接**。
 
-在 daemon 机器上运行：
-
-```bash
-tailscale ip -4
-```
-
-复制它打印出的地址。下面的示例使用 `100.101.102.103`。
-
-### 2. 配置 daemon {#2-configure-the-daemon}
-
-打开 `~/.paseo/config.json`，把 `daemon.listen` 设置为 Tailscale IP：
-
-```json
-{
-  "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
-  "version": 1,
-  "daemon": {
-    "listen": "100.101.102.103:6767"
-  }
-}
-```
-
-保留文件中已有的其他设置。如果文件中已有 `daemon` 对象，请把 `listen` 加到该对象中。
-
-如需用密码限制访问，请参见[密码认证](/docs/configuration#password-authentication)。
-
-重启 daemon：
-
-```bash
-paseo daemon restart
-```
-
-如果 daemon 由 Paseo 桌面端管理，请使用 **设置 → 你的主机 → 概览 → 重启 Daemon**。
-
-### 3. 连接手机应用 {#3-connect-the-phone-app}
-
-1. 在手机上连接 Tailscale。
-2. 打开 Paseo，进入 **设置 → 添加主机 → 直接连接**。
-3. 在 **Host** 中输入 Tailscale IP。
-4. 在 **端口** 中输入 `6767`。
-5. 保持 **使用 SSL** 关闭，然后选择 **连接**。
-
-如果该主机已经通过中继配对过，Paseo 会把直连添加到同一个主机上。
+如果你已通过中继配对此主机，Paseo 会将直连添加到同一主机。
 
 ## 故障排查 {#troubleshooting}
 
@@ -126,4 +87,4 @@ paseo daemon restart
 - **SSH 能连上但 Paseo 报告 “Password required”**：远程 daemon 受密码保护。从主机中移除这个 SSH 连接并重新添加，这次在 **守护进程密码** 中输入 daemon 密码。
 - **连接超时**：检查两台设备上的 Tailscale 是否都已连接，以及你使用的是否是 daemon 机器的 Tailscale IP。
 - **连接被拒绝**：运行 `paseo daemon status`，确认 daemon 正在配置的 IP 和端口上运行。
-- **配置修改没有生效**：运行 `paseo reload`。`daemon.listen` 是启动时生效的设置，所以当命令提示时请重启。
+- **配置修改没有生效**：运行 `paseo reload`。如果命令报告主监听地址发生变化，请重启。

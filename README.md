@@ -48,7 +48,7 @@ Paseo is an open source agentic development environment for desktop, mobile, web
 - **Multi-provider:** Claude Code, Codex, Copilot, OpenCode, Pi, Antigravity, and Muse Code through the same interface. Pick the right model for each job.
 - **Voice control:** Dictate tasks or talk through problems in voice mode. Hands-free when you need it.
 - **Cross-device:** iOS, Android, desktop, web, and CLI. Start work at your desk, check in from your phone, script it from the terminal.
-- **Privacy-first:** Paseo doesn't have any telemetry, tracking, or forced log-ins.
+- **Privacy-first:** No telemetry, tracking, or forced login. Remote access uses an optional end-to-end encrypted relay.
 
 [Run parallel tasks in Paseo](https://paseo.sh/docs/parallel-development): start agents in separate worktrees, review their diffs, run each app, and check it in the built-in browser.
 
@@ -91,8 +91,12 @@ You need at least one agent CLI installed and configured with your credentials:
 - [GitHub Copilot](https://github.com/features/copilot/cli/)
 - [OpenCode](https://github.com/anomalyco/opencode)
 - [Pi](https://pi.dev)
-- [Antigravity](https://paseo.sh/docs/supported-providers#antigravity)
-- [Muse Code](https://paseo.sh/docs/muse-code)
+- [Antigravity](https://paseo.sh/docs/supported-providers/antigravity)
+- [Muse Code](https://paseo.sh/docs/supported-providers/muse-code)
+- [fx](https://paseo.sh/docs/supported-providers/fx)
+- [Hoplite](https://paseo.sh/docs/supported-providers/hoplite)
+
+Paseo also runs Cursor, Gemini CLI, and many other agents. See [Supported providers](https://paseo.sh/docs/supported-providers) for the full list and setup steps.
 
 ### Desktop app (recommended)
 

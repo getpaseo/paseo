@@ -1,6 +1,10 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PortalProvider } from "@gorhom/portal";
+import type { AgentMetric } from "@getpaseo/protocol/agent-types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
+import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { i18n } from "@/i18n/i18next";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
@@ -91,4 +95,99 @@ it.each([
     [input.duration]: 1,
     "Friday 11:11 PM": 1,
   });
+});
+
+const COMPLETED_TIMING: TurnTiming = { completedAt: FRIDAY_NIGHT, durationMs: 26_000 };
+
+describe("turn stats", () => {
+  const metrics: AgentMetric[] = [
+    { label: "Model", value: "opus" },
+    { label: "Cost", value: "$0.42", tone: "warning" },
+  ];
+
+  function renderFooterWithMetrics(turnMetrics?: AgentMetric[]): void {
+    act(() =>
+      root.render(
+        <PortalProvider>
+          <CompletedTurnFooterRow
+            strategy={createNativeStreamStrategy()}
+            items={[reply]}
+            timing={COMPLETED_TIMING}
+            startIndex={0}
+            supportsTimelineCursor={false}
+            turnMetrics={turnMetrics}
+          />
+          <FloatingPanelPortalHost />
+        </PortalProvider>,
+      ),
+    );
+  }
+
+  it("has no trigger when the provider reported nothing for the turn", () => {
+    renderFooterWithMetrics(undefined);
+
+    expect(page.getByRole("button", { name: "Turn stats" }).elements()).toHaveLength(0);
+  });
+
+  it("shows the turn's metrics while the pointer is on the trigger", async () => {
+    renderFooterWithMetrics(metrics);
+
+    await page.getByRole("button", { name: "Turn stats" }).hover();
+
+    const card = page.getByRole("dialog", { name: "Turn stats" });
+    await expect.element(card).toBeVisible();
+    await expect.element(card.getByText("Model")).toBeVisible();
+    await expect.element(card.getByText("opus")).toBeVisible();
+    await expect.element(card.getByText("$0.42")).toBeVisible();
+  });
+
+  it("keeps the footer's height when the trigger appears", () => {
+    renderFooterWithMetrics(undefined);
+    const without = host.getBoundingClientRect().height;
+
+    renderFooterWithMetrics(metrics);
+
+    expect(host.getBoundingClientRect().height).toBe(without);
+  });
+});
+
+const projectedReply: StreamItem = {
+  kind: "plugin",
+  id: "genui/reply/1",
+  source: {
+    kind: "assistant_message",
+    id: "reply",
+    messageId: "provider-reply-1",
+    text: 'Done.\n\n```ui\nCard("Summary", [])\n```',
+    timelineCursor: { epoch: "e1", seq: 5 },
+    timestamp: FRIDAY_NIGHT,
+  },
+  timelineCursor: { epoch: "e1", seq: 5 },
+  timestamp: FRIDAY_NIGHT,
+  pluginId: "genui",
+  pluginItemId: "reply/1",
+  itemKind: "genui-block",
+  version: 1,
+  data: {},
+};
+
+it("renders copy, fork, and duration for a plugin-projected assistant reply", () => {
+  const onFork = vi.fn();
+
+  act(() =>
+    root.render(
+      <CompletedTurnFooterRow
+        strategy={createNativeStreamStrategy()}
+        items={[projectedReply]}
+        timing={COMPLETED_TIMING}
+        startIndex={0}
+        supportsTimelineCursor={true}
+        onForkAssistantTurn={onFork}
+      />,
+    ),
+  );
+
+  expect(host.querySelector('[aria-label="Copy turn"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="Fork chat from here"]')).not.toBeNull();
+  expect(host.textContent).toContain("Worked for 26s");
 });

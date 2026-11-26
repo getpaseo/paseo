@@ -44,6 +44,7 @@ function createQueryMock(events: unknown[], options: QueryMockOptions = {}): Que
     close: vi.fn(() => undefined),
     setPermissionMode: vi.fn(async () => undefined),
     setModel: vi.fn(async () => undefined),
+    applyFlagSettings: vi.fn(async () => undefined),
     supportedModels: vi.fn(async () => [{ value: "opus", displayName: "Opus" }]),
     supportedCommands: vi.fn(async () => []),
     rewindFiles: vi.fn(async () => ({ canRewind: true })),
@@ -347,6 +348,41 @@ describe("Claude runtime exit", () => {
     }
   });
 
+  test("reports the failure before it empties background work when the idle process dies", async () => {
+    let capturedOptions: Options | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock(BACKGROUND_SHELL_TURN_EVENTS);
+    });
+    const child = createChildProcessStub();
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      await session.run("start a background shell");
+      capturedOptions?.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      child.emit("exit", 1, null);
+
+      // A watcher that sees the work end first takes the idle child for settled.
+      expect(
+        events
+          .filter((event) => event.type === "turn_failed" || event.type === "background_work")
+          .map((event) => event.type),
+      ).toEqual(["turn_failed", "background_work"]);
+      expect(session.hasPendingWakeup?.()).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("empties background work when a query restart retires the process", async () => {
     let capturedOptions: Options | undefined;
     const child = createChildProcessStub();
@@ -377,6 +413,84 @@ describe("Claude runtime exit", () => {
       expect(events).toContainEqual(
         expect.objectContaining({ type: "background_work", provider: "claude", items: null }),
       );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps the process and its background work when the effort level changes", async () => {
+    let capturedOptions: Options | undefined;
+    const child = createChildProcessStub();
+    const query = createQueryMock(BACKGROUND_SHELL_TURN_EVENTS, {
+      tail: new Promise<never>(() => undefined),
+      onReturn: () => child.emit("exit", 0, null),
+    });
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return query;
+    });
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      thinkingOptionId: "low",
+    });
+
+    try {
+      await session.run("start a background shell");
+      capturedOptions?.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      await expect(session.setThinkingOption?.("high")).resolves.toBeUndefined();
+      // A pending restart would be carried out here.
+      await session.listCommands();
+
+      expect(query.applyFlagSettings).toHaveBeenCalledWith({ effortLevel: "high" });
+      expect(queryFactory).toHaveBeenCalledTimes(1);
+      expect(query.return).not.toHaveBeenCalled();
+      expect(child.killSignals).toEqual([]);
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: "background_work", provider: "claude", items: null }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("restarts with the new effort level when the running process does not take it", async () => {
+    const efforts: Options["effort"][] = [];
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      efforts.push(options.effort);
+      const query = createQueryMock(BACKGROUND_SHELL_TURN_EVENTS, {
+        tail: new Promise<never>(() => undefined),
+      });
+      vi.mocked(query.applyFlagSettings).mockRejectedValue(new Error("unsupported"));
+      return query;
+    });
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(createChildProcessStub());
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      thinkingOptionId: "low",
+    });
+
+    try {
+      await session.run("start a background shell");
+      await session.setThinkingOption?.("high");
+      await session.listCommands();
+
+      expect(efforts).toEqual(["low", "high"]);
     } finally {
       await session.close();
     }

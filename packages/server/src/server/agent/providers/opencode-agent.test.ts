@@ -2477,6 +2477,42 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
   });
 
+  test("reports a question rejected by a human steer as resolved", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_steer_question");
+    openCode.sessionPromptAsyncEvents = [];
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("first");
+    openCode.emitEvent({
+      type: "question.asked",
+      properties: {
+        id: "question-steer",
+        sessionID: "ses_steer_question",
+        questions: [{ question: "Which color?", header: "Color", options: [] }],
+      },
+    });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.steerActiveTurn?.("never mind", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(openCode.calls.questionReject).toContainEqual(
+      expect.objectContaining({ requestID: "question-steer" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: "question-steer",
+        resolution: expect.objectContaining({ behavior: "deny" }),
+      }),
+    );
+    await session.close();
+  });
+
   test("keeps multiple native steers correlated in admission order", async () => {
     const { parent: session, openCode } = await createParentSession("ses_native_steer_fifo");
     openCode.sessionPromptAsyncEvents = [];
@@ -4527,6 +4563,47 @@ describe("OpenCode persisted sessions", () => {
     ]);
   });
 
+  test("importSession reads a wrapped session on a server started behind the wrap", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const metadataClient = new TestOpenCodeClient();
+    const resumedClient = new TestOpenCodeClient();
+    const cwd = "/workspace/repo";
+    const selectedSession = {
+      id: "ses_selected",
+      directory: cwd,
+      title: "Selected session",
+      time: { created: 2000, updated: 3000 },
+    };
+    metadataClient.sessionGetResponse = { data: selectedSession };
+    metadataClient.sessionMessagesResponse = { data: [] };
+    resumedClient.sessionGetResponse = { data: selectedSession };
+    resumedClient.sessionMessagesResponse = { data: [] };
+    runtime.enqueueClient(metadataClient);
+    runtime.enqueueClient(resumedClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "import"] as const;
+
+    const imported = await client.importSession(
+      { providerHandleId: "ses_selected", cwd },
+      {
+        config: { provider: "opencode", cwd },
+        storedConfig: { provider: "opencode", cwd },
+        launchContext: { env: { PASEO_AGENT_ID: "imported" }, wrap },
+      },
+    );
+    await imported.session.close();
+
+    expect(runtime.acquisitions.map((acquisition) => [acquisition.kind, acquisition.wrap])).toEqual(
+      [
+        ["dedicated", wrap],
+        ["dedicated", wrap],
+      ],
+    );
+  });
+
   test("listImportableSessions matches Windows cwd paths with forward slashes", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
@@ -4711,6 +4788,52 @@ describe("OpenCode provider subagent contract", () => {
       { baseUrl: runtime.server.url, directory: "/workspace/repo" },
       { baseUrl: runtime.server.url, directory: "/workspace/repo" },
     ]);
+  });
+
+  test("resumes a wrapped child on its own server behind the wrap, not the parent's server", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const parentClient = new TestOpenCodeClient();
+    const childClient = new TestOpenCodeClient();
+    parentClient.sessionCreateResponse = { data: { id: "ses_parent_wrapped" } };
+    runtime.enqueueClient(parentClient);
+    runtime.enqueueClient(childClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const parent = await client.createSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      { env: { PASEO_AGENT_ID: "parent-agent" } },
+    );
+    parentClient.emitEvent({
+      type: "session.created",
+      properties: {
+        info: { id: "ses_child_wrapped", parentID: "ses_parent_wrapped", title: "Live child" },
+      },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const wrap = ["/opt/sandbox/bin/run", "--profile", "child"] as const;
+
+    const child = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "ses_child_wrapped",
+        nativeHandle: "ses_child_wrapped",
+        metadata: { cwd: "/workspace/repo" },
+      },
+      undefined,
+      { env: { PASEO_AGENT_ID: "child-agent" }, wrap },
+    );
+    await child.close();
+    await parent.close();
+
+    expect(runtime.acquisitions.map((acquisition) => [acquisition.kind, acquisition.wrap])).toEqual(
+      [
+        ["dedicated", undefined],
+        ["dedicated", wrap],
+      ],
+    );
   });
 
   test("synthesizes an autonomous turn for adopted child timeline events", async () => {

@@ -34,6 +34,11 @@ export interface PluginWorkspaceSnapshot {
   readonly createdAt: string | null;
   readonly lastPromptAt: string | null;
   readonly parentAgent: AgentRef | null;
+  /**
+   * The workspace whose agent created this one, on the same host. Null when the host records no
+   * parent, as for root workspaces. The parent may be archived, so `useWorkspace` can return null.
+   */
+  readonly parentWorkspace: WorkspaceRef | null;
   readonly indicator: WorkspaceIndicator;
   readonly indicatorLabel: string | null;
   readonly id: string;
@@ -90,6 +95,12 @@ export interface PluginThemeColors {
   accent?: string;
   mutedForeground: string;
   ring: string;
+  sidebar?: string;
+  sidebarHover?: string;
+  sidebarSelected?: string;
+  surface3?: string;
+  surface4?: string;
+  foregroundExtraMuted?: string;
 }
 
 export interface PluginThemeContribution<Text extends PluginText = string> {

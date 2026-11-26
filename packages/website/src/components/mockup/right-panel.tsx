@@ -1,5 +1,6 @@
 import {
   CircleCheck,
+  CircleX,
   ChevronDown,
   ExternalLink,
   FileDiff,
@@ -14,12 +15,26 @@ import type { TFunction } from "i18next";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { ChangesBranchRow, ChangesCommitsRow, ChangesScopeRow, ExplorerChangesTree } from "./diff";
-import { RIGHT_PANEL_W, TABBAR_H, TITLEBAR_H } from "./geometry";
-import type { MockupStateId } from "./states";
+import { RIGHT_PANEL_W, RIGHT_PANEL_WIDE_W, TABBAR_H, TITLEBAR_H } from "./geometry";
+import { AnimatePresence, motion } from "framer-motion";
+import { useSceneClock } from "./player";
+import { failingCheckListed } from "./plugin-build";
 
 const TABBAR_STYLE = { height: TITLEBAR_H };
 const SUBHEADER_STYLE = { height: TABBAR_H };
-const PANEL_STYLE = { width: RIGHT_PANEL_W };
+
+export type PanelId = "changes" | "ship" | "plugin";
+
+/** How wide the docked panel is for what it shows. Only the file tree fits the narrow width. */
+export function panelWidth(panel: PanelId): number {
+  return panel === "changes" ? RIGHT_PANEL_W : RIGHT_PANEL_WIDE_W;
+}
+
+const PANEL_STYLES: Record<PanelId, { width: number }> = {
+  changes: { width: panelWidth("changes") },
+  ship: { width: panelWidth("ship") },
+  plugin: { width: panelWidth("plugin") },
+};
 
 interface PanelTab {
   label: string;
@@ -52,10 +67,12 @@ function PanelTabs({ tabs, active }: { tabs: PanelTab[]; active: number }) {
 }
 
 function PanelShell({
+  panel,
   tabs,
   active,
   children,
 }: {
+  panel: PanelId;
   tabs: PanelTab[];
   active: number;
   children: React.ReactNode;
@@ -63,7 +80,7 @@ function PanelShell({
   return (
     <div
       className="flex h-full shrink-0 flex-col overflow-hidden bg-mock-sidebar"
-      style={PANEL_STYLE}
+      style={PANEL_STYLES[panel]}
     >
       <PanelTabs tabs={tabs} active={active} />
       {children}
@@ -88,7 +105,7 @@ function changesTabs(t: TFunction): PanelTab[] {
 function ChangesPanel({ selectedFile }: { selectedFile?: string }) {
   const { t } = useTranslation();
   return (
-    <PanelShell tabs={changesTabs(t)} active={1}>
+    <PanelShell panel="changes" tabs={changesTabs(t)} active={1}>
       <ChangesBranchRow />
       <ChangesScopeRow />
       <ExplorerChangesTree selectedFile={selectedFile} />
@@ -118,7 +135,7 @@ function CheckGlyph() {
 function ShipPanel() {
   const { t } = useTranslation();
   return (
-    <PanelShell tabs={changesTabs(t)} active={2}>
+    <PanelShell panel="ship" tabs={changesTabs(t)} active={2}>
       <div
         className="flex shrink-0 items-center border-b border-mock-border px-[16px]"
         style={SUBHEADER_STYLE}
@@ -235,10 +252,38 @@ function recentlyMerged(t: TFunction): { title: string; meta: string; tone: stri
   ];
 }
 
-function PluginDashboard() {
+const SECTION_CLOSED = { height: 0, opacity: 0 };
+const SECTION_OPEN = { height: "auto", opacity: 1 };
+
+/** The section the user asks for after the panel is live: which check is failing. */
+function FailingCheck() {
   const { t } = useTranslation();
   return (
-    <PanelShell tabs={pluginTabs(t)} active={3}>
+    <motion.div initial={SECTION_CLOSED} animate={SECTION_OPEN} className="overflow-hidden">
+      <div className="pt-[16px] text-[11px] text-mock-fg-muted">
+        {t("landing.mockup.app.failing")}
+      </div>
+      <div className="mt-[7px] flex items-center gap-[10px] rounded-[10px] border border-mock-border-accent bg-mock-surface1 px-[12px] py-[9px]">
+        <CircleX size={15} className="shrink-0 text-mock-tile-red" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12px] leading-[16px] text-mock-fg">
+            app-tests (macos)
+          </span>
+          <span className="block truncate text-[10.5px] leading-[13px] text-mock-fg-muted">
+            #3976 · Honor configured commit signing
+          </span>
+        </span>
+        <span className="shrink-0 text-[11px] tabular-nums text-mock-fg-muted">5m 02s</span>
+      </div>
+    </motion.div>
+  );
+}
+
+function PluginDashboard() {
+  const { t } = useTranslation();
+  const listsFailingCheck = useSceneClock("extend", failingCheckListed);
+  return (
+    <PanelShell panel="plugin" tabs={pluginTabs(t)} active={3}>
       <div
         className="flex shrink-0 items-center gap-[8px] border-b border-mock-border px-[16px]"
         style={SUBHEADER_STYLE}
@@ -264,6 +309,10 @@ function PluginDashboard() {
             </div>
           ))}
         </div>
+
+        <AnimatePresence initial={false}>
+          {listsFailingCheck ? <FailingCheck key="failing-check" /> : null}
+        </AnimatePresence>
 
         <div className="mt-[16px] rounded-[10px] border border-mock-border-accent bg-mock-surface1 px-[14px] pt-[12px] pb-[13px]">
           <div className="flex items-center justify-between text-[11px] text-mock-fg-muted">
@@ -307,8 +356,8 @@ function PluginDashboard() {
   );
 }
 
-export function RightPanel({ state }: { state: MockupStateId }) {
-  if (state === "ship") return <ShipPanel />;
-  if (state === "extend") return <PluginDashboard />;
+export function RightPanel({ panel }: { panel: PanelId }) {
+  if (panel === "ship") return <ShipPanel />;
+  if (panel === "plugin") return <PluginDashboard />;
   return <ChangesPanel />;
 }

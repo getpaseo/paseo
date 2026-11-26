@@ -1,0 +1,21 @@
+{
+  "$comment": "Pins the RaTeX Apple integration for vendor-ratex.mjs. Instead of React Native's spm_dependency (which builds/signs RaTeX's Swift wrapper from SPM source at build time and caused #491/#527), we vendor the prebuilt static XCFramework plus RaTeX's four core Swift sources and KaTeX fonts into packages/react-native-enriched-markdown/ios/vendor/ (gitignored, reproduced on demand, shipped in the npm tarball via prepack). Same mechanism as the tree-sitter runtime pin in grammar-versions.json. To re-pin: bump tag, download the two assets, run `node vendor/vendor-ratex.mjs --force`, and paste the sha256 it prints on mismatch. The swiftSources list mirrors erweixin/RaTeX's RaTeXCore.podspec; PlatformCompat.swift and RaTeXView.swift are intentionally omitted (the four files typecheck standalone and pull in no React Native/UI surface).",
+  "tag": "v0.1.14",
+  "xcframework": {
+    "url": "https://github.com/erweixin/RaTeX/releases/download/v0.1.14/RaTeX.xcframework.zip",
+    "sha256": "16b84a5e9b9f80ed4910c490f96dda047662e9bdd0934817ecf4464cf02581f2"
+  },
+  "source": {
+    "url": "https://github.com/erweixin/RaTeX/archive/refs/tags/v0.1.14.tar.gz",
+    "sha256": "2da907eb5dfcb464c7eef3b4c657fbdee144e3c6633e81efb1e56dcf1c76e01b",
+    "prefix": "RaTeX-0.1.14",
+    "swiftSources": [
+      "platforms/ios/Sources/Ratex/DisplayList.swift",
+      "platforms/ios/Sources/Ratex/RaTeXEngine.swift",
+      "platforms/ios/Sources/Ratex/RaTeXFontLoader.swift",
+      "platforms/ios/Sources/Ratex/RaTeXRenderer.swift"
+    ],
+    "fontsDir": "platforms/ios/Sources/Ratex/Fonts",
+    "license": "LICENSE"
+  }
+}

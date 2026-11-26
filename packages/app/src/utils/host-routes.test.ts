@@ -17,6 +17,7 @@ import {
   isSettingsSectionSlug,
   normalizeHostSectionSlug,
   normalizeProjectSettingsRouteId,
+  buildProviderSettingsRoute,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -199,6 +200,14 @@ describe("projects settings routes", () => {
   });
 });
 
+describe("provider settings routes", () => {
+  it("buildProviderSettingsRoute addresses one provider on a host", () => {
+    expect(buildProviderSettingsRoute("host a", "acp/gemini")).toBe(
+      "/settings/hosts/host%20a/providers/acp%2Fgemini",
+    );
+  });
+});
+
 describe("global routes", () => {
   it("buildSessionsRoute returns the all-host Sessions route", () => {
     expect(buildSessionsRoute()).toBe("/sessions");
@@ -237,7 +246,8 @@ describe("global routes", () => {
 describe("host settings section slugs", () => {
   it("keeps current host settings sections", () => {
     expect(normalizeHostSectionSlug("connections")).toBe("connections");
-    expect(normalizeHostSectionSlug("pair-device")).toBe("pair-device");
+    expect(normalizeHostSectionSlug("devices")).toBe("devices");
+    expect(normalizeHostSectionSlug("pair-device")).toBe("devices");
     expect(normalizeHostSectionSlug("agents")).toBe("agents");
     expect(normalizeHostSectionSlug("metadata")).toBe("metadata");
     expect(normalizeHostSectionSlug("workspaces")).toBe("workspaces");

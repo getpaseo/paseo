@@ -87,6 +87,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
   const pushNotifications = new RecordingPushNotificationSender();
   const agentManager = {
     subscribe: vi.fn(() => () => {}),
+    onStop: () => () => {},
     setAgentAttentionCallback: vi.fn(),
     getAgent: vi.fn(() => ({ workspaceId: WORKSPACE_ID, pendingPermissions: new Map() })),
     getLastAssistantMessage: vi.fn(async () => null),
@@ -246,6 +247,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(unsubscribed.send).not.toHaveBeenCalled();
@@ -270,6 +272,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(pushNotifications.sent).toEqual([
@@ -304,6 +307,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-2",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(pushNotifications.sent).toHaveLength(1);
@@ -330,6 +334,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-X",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(electronWs).shouldNotify).toBe(true);
@@ -345,6 +350,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
@@ -359,9 +365,60 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "error",
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
     expect(pushNotifications.sent).toEqual([]);
+  });
+  it("notifies once while an agent's finish stays unread", async () => {
+    const { server, pushNotifications } = createServer();
+    const broadcast = (attentionTimestamp: Date) =>
+      asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "finished",
+        attentionTimestamp,
+      });
+    const firstUnreadFinish = new Date(1_000);
+
+    await broadcast(firstUnreadFinish);
+    await broadcast(firstUnreadFinish);
+    await broadcast(firstUnreadFinish);
+    expect(pushNotifications.sent).toHaveLength(1);
+
+    // After the user reads the agent (or marks it unread), its next unread finish is new.
+    await broadcast(new Date(2_000));
+    expect(pushNotifications.sent).toHaveLength(2);
+  });
+
+  it("notifies a repeated finish when the user had the agent on screen for the first one", async () => {
+    const { server, pushNotifications } = createServer();
+    const activity = {
+      deviceType: "web" as const,
+      appVisible: true,
+      focusedAgentId: "agent-1" as string | null,
+      lastActivityAt: new Date(),
+    };
+    connectClient(server, activity);
+    const unreadFinish = new Date(1_000);
+    const broadcast = () =>
+      asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "finished",
+        attentionTimestamp: unreadFinish,
+      });
+
+    await broadcast();
+    expect(pushNotifications.sent).toEqual([]);
+
+    // The user leaves; the agent keeps finishing turns it starts on its own.
+    activity.appVisible = false;
+    activity.focusedAgentId = null;
+    activity.lastActivityAt = new Date(Date.now() - 600_000);
+    await broadcast();
+    await broadcast();
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 });

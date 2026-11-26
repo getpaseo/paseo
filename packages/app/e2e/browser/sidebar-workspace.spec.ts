@@ -25,6 +25,10 @@ import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { escapeRegex } from "../support/helpers/regex";
 import { openFilesPanel } from "../support/helpers/workspace-tabs";
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  readSharedStylesheetChanges,
+  rememberSharedStylesheet,
+} from "../support/helpers/shared-stylesheet";
 
 const GITHUB_REMOTE_URL = "https://github.com/test-owner/test-repo.git";
 
@@ -206,13 +210,14 @@ async function simulateDamagedLegacyDirectoryCache(
               return;
             }
             const stored = JSON.parse(checkpoint.payload);
-            // Accept either writer so this fixture also reproduces on the unfixed client.
-            const cursors = stored.version === 1 ? stored.cursors : stored;
-            if (!cursors.workspaces?.generation) {
+            // Read the cursors from whichever version wrote them, then store them as version 1:
+            // the format whose writer could keep a checkpoint after evicting the rows it describes.
+            const cursors = typeof stored.version === "number" ? stored.cursors : stored;
+            if (!cursors?.workspaces?.generation) {
               transaction.abort();
               return;
             }
-            store.put({ ...checkpoint, payload: JSON.stringify(cursors) });
+            store.put({ ...checkpoint, payload: JSON.stringify({ version: 1, cursors }) });
             for (const row of rows) {
               if (
                 row.serverId === serverId &&
@@ -423,6 +428,32 @@ test.describe("Sidebar workspace list", () => {
       const hoverCard = await openWorkspaceHoverCard(page, workspace.workspaceId);
       await expect(page.getByTestId("hover-card-workspace-host")).toHaveText("localhost");
       await expect(hoverCard).not.toContainText(/\b(Online|Connecting|Offline|Error|Idle)\b/);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("workspace hover card opens and closes without rebuilding the shared stylesheet", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-stylesheet-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await rememberSharedStylesheet(page);
+
+      await openWorkspaceHoverCard(page, workspace.workspaceId);
+      const opened = await readSharedStylesheetChanges(page);
+      // The card brings styles nothing else on screen uses, so the stylesheet has to grow.
+      expect(opened.added).toBeGreaterThan(0);
+      expect(opened.rebuilt).toBe(0);
+
+      await rememberSharedStylesheet(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+      expect((await readSharedStylesheetChanges(page)).rebuilt).toBe(0);
     } finally {
       await workspace.cleanup();
     }

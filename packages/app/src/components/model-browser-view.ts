@@ -1,3 +1,4 @@
+import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import {
   filterAndRankModelRows,
   getAllProviderModelRows,
@@ -49,30 +50,55 @@ export function groupProfilesByProviderModel<T extends ModelProfileRef>(
   return lookup;
 }
 
+/** What a profile row offers search: its name and its "Claude Code · Opus 5 · Plan" summary. */
+export interface SearchableProfileRow {
+  name: string;
+  summary: string;
+}
+
+/** Profiles matching the query, best first. An empty query keeps every profile in order. */
+export function filterAndRankProfileRows<T extends SearchableProfileRow>(
+  rows: readonly T[],
+  normalizedQuery: string,
+): T[] {
+  if (!normalizedQuery) return [...rows];
+  return rows
+    .map((row) => ({ row, score: scoreTextFields(normalizedQuery, [row.name, row.summary]) }))
+    .filter((entry): entry is { row: T; score: NonNullable<typeof entry.score> } =>
+      Boolean(entry.score),
+    )
+    .sort((a, b) => compareMatchScores(a.score, b.score) || a.row.name.localeCompare(b.row.name))
+    .map((entry) => entry.row);
+}
+
 /** What the root view shows: the provider drill-down, or ranked cross-provider results. */
-export type ModelBrowserAllView =
+export type ModelBrowserAllView<T extends SearchableProfileRow> =
   | { kind: "browse" }
-  | { kind: "searchResults"; rows: ProviderSelectionModelRow[] }
+  | { kind: "searchResults"; profiles: T[]; rows: ProviderSelectionModelRow[] }
   | { kind: "noSearchMatches" };
 
-export function resolveModelBrowserAllView({
+export function resolveModelBrowserAllView<T extends SearchableProfileRow>({
   providers,
+  profiles,
   normalizedQuery,
   isSearchFocused,
 }: {
   providers: ProviderSelectorProvider[];
+  /** Profiles the search may offer; empty when the surface shows none. */
+  profiles: readonly T[];
   normalizedQuery: string;
   isSearchFocused: boolean;
-}): ModelBrowserAllView {
+}): ModelBrowserAllView<T> {
   if (!normalizedQuery && !isSearchFocused) {
     return { kind: "browse" };
   }
   const allRows = getAllProviderModelRows(providers);
   const rows = normalizedQuery ? filterAndRankModelRows(allRows, normalizedQuery) : allRows;
-  if (rows.length === 0) {
+  const matchedProfiles = filterAndRankProfileRows(profiles, normalizedQuery);
+  if (rows.length === 0 && matchedProfiles.length === 0) {
     return { kind: "noSearchMatches" };
   }
-  return { kind: "searchResults", rows };
+  return { kind: "searchResults", profiles: matchedProfiles, rows };
 }
 
 /** Where the picker lands when it opens. A sole provider skips the redundant root view. */

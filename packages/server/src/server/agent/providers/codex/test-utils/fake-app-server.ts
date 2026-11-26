@@ -14,7 +14,7 @@ interface FakeSubAgentActivity {
   callId: string;
   threadId: string;
   agentPath: string;
-  kind: "started" | "interacted" | "interrupted";
+  kind: "started" | "interacted" | "interrupted" | "completed";
   parentThreadId?: string;
 }
 interface FakeLegacyCommand {
@@ -33,7 +33,7 @@ interface FakeTerminalCommand {
   threadId: string;
   turnId: string;
   itemId: string;
-  processId: string;
+  processId?: string;
   command: string;
 }
 interface FakeTerminalInput {
@@ -79,6 +79,14 @@ export interface FakeCodexAppServer {
     status?: "completed" | "failed" | "interrupted";
     error?: { message: string } | null;
   }): void;
+  reportsTurnError(params: {
+    threadId: string;
+    turnId: string;
+    message: string;
+    additionalDetails?: string;
+    willRetry: boolean;
+  }): void;
+  warns(params: { threadId: string | null; message: string }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -163,7 +171,7 @@ export function createFakeCodexAppServer(
   const child = createCodexAppServerChildProcess();
   const recordedRollbacks: JsonObject[] = [];
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
-    initialize: () => ({}),
+    initialize: () => ({ userAgent: "codex/0.150.0" }),
     "collaborationMode/list": () => ({ data: [] }),
     "config/read": () => ({ config: {} }),
     getUserSavedConfig: () => ({ config: {} }),
@@ -181,6 +189,7 @@ export function createFakeCodexAppServer(
     "thread/loaded/list": () => ({ data: [] }),
     "thread/backgroundTerminals/list": () => ({ data: [], nextCursor: null }),
     "thread/resume": () => ({}),
+    "thread/inject_items": () => ({}),
     "turn/start": () => ({}),
     "thread/fork": (params) => ({
       thread: {
@@ -436,6 +445,21 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    reportsTurnError(params) {
+      writeNotification("error", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        willRetry: params.willRetry,
+        error: {
+          message: params.message,
+          codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+          additionalDetails: params.additionalDetails ?? null,
+        },
+      });
+    },
+    warns(params) {
+      writeNotification("warning", { threadId: params.threadId, message: params.message });
     },
     startsSubAgent(params) {
       writeSubAgentActivity("item/completed", { ...params, kind: "started" });

@@ -97,18 +97,15 @@ export class ImportSessionFlow {
     await target.scrollIntoViewIfNeeded();
     await expect(target).toBeInViewport();
   }
+  /**
+   * Scrolls the virtualized list, the only one that leaves rows unmounted. A row handle is no way
+   * in: the list unmounts rows as it scrolls, and a detached row has no scroller above it.
+   */
   private async scrollList(forward: boolean) {
-    await this.page
-      .locator('[data-testid^="import-session-session-"]')
-      .first()
-      .evaluate((row, advance) => {
-        let element = row.parentElement;
-        while (element && !["auto", "scroll"].includes(getComputedStyle(element).overflowY))
-          element = element.parentElement;
-        if (!element) throw new Error("Import list has no scroll owner");
-        element.scrollTop = advance ? element.scrollTop + element.clientHeight * 0.8 : 0;
-        element.dispatchEvent(new Event("scroll"));
-      }, forward);
+    await this.page.getByTestId("import-session-list").evaluate((list, advance) => {
+      list.scrollTop = advance ? list.scrollTop + list.clientHeight * 0.8 : 0;
+      list.dispatchEvent(new Event("scroll"));
+    }, forward);
   }
   async search(query: string) {
     await this.page.getByTestId("import-session-search").fill(query);
@@ -120,11 +117,18 @@ export class ImportSessionFlow {
     await this.page.getByTestId("import-session-search").fill("");
     await expect(this.page.getByTestId("import-session-load-more")).toBeVisible();
   }
+  /** Load more keeps the reader down the list instead of sending them back to the top. */
   async loadMore() {
-    await this.page.getByTestId("import-session-load-more").click();
+    const loadMore = this.page.getByTestId("import-session-load-more");
+    const topRow = this.page.getByTestId((await this.rowIds())[0]!);
+    await expect(topRow).toBeInViewport();
+    await loadMore.click();
+    // The next page is the last and short, so the button leaves once it lands.
+    await expect(loadMore).toHaveCount(0);
+    await expect(this.page.getByText("Loading sessions...", { exact: true })).toHaveCount(0);
+    await expect(topRow).not.toBeInViewport();
     await this.revealSession("fixture-root-20");
     await expect(this.page.getByText("Root session 20", { exact: true })).toBeInViewport();
-    await expect(this.page.getByTestId("import-session-load-more")).toHaveCount(0);
   }
   async retryProvider(provider: string, label: string) {
     await this.expectProviderError(label);
@@ -133,12 +137,21 @@ export class ImportSessionFlow {
     await this.expectProviderError(label);
     await expect(this.page.getByRole("progressbar")).toHaveCount(0);
   }
-  async importSession(id: string) {
+  async startImport(id: string) {
     await this.revealSession(id);
     await this.page.getByTestId(rowTestId(id)).click();
+  }
+  async importSession(id: string) {
+    await this.startImport(id);
+    await this.expectClosed();
+  }
+  async expectClosed() {
     await expect(this.page.getByTestId("import-session-sheet")).toHaveCount(0, {
       timeout: 30_000,
     });
+  }
+  async expectSessionUnavailable(id: string) {
+    await expect(this.page.getByTestId(rowTestId(id))).toHaveCount(0);
   }
   async expectTranscript(userText: string, assistantText: string) {
     await expect(this.page.getByTestId("user-message").filter({ visible: true })).toContainText(
@@ -164,6 +177,13 @@ export class ImportSessionFlow {
   async close() {
     await this.page.getByRole("button", { name: "Close", exact: true }).last().click();
     await expect(this.page.getByTestId("import-session-sheet")).toHaveCount(0);
+  }
+  async chooseHostForImport(hostLabel: string) {
+    const panel = await openCommandCenter(this.page);
+    await panel.getByTestId("command-center-input").fill("import");
+    await panel.getByText("Import session", { exact: true }).click();
+    await this.page.getByRole("dialog").getByRole("button", { name: hostLabel }).click();
+    await this.expectScope(`Sessions on ${hostLabel}`);
   }
   async expectCommandCenterMatch() {
     const panel = await openCommandCenter(this.page);

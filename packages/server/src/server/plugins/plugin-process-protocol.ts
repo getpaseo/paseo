@@ -6,9 +6,12 @@ import type {
   ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
+  ProviderInstallationLaunch,
   ProviderStatusRequest,
+  ProviderUpdateReport,
 } from "@getpaseo/plugin/server/provider";
 import {
+  ProviderUpdateReportSchema,
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderLaunchSchema,
@@ -19,17 +22,35 @@ export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
+  installation?: PluginProviderInstallationMetadata;
   command?: readonly [string, ...string[]];
+  launchWrap?: boolean;
   id: string;
   label: string;
   description?: string;
   iconPath?: string;
+  docsUrl?: string;
+}
+
+export interface PluginProviderInstallationMetadata {
+  installUrl?: string;
+  updateUrl?: string;
+  hasInspect: boolean;
+  hasCheckForUpdates: boolean;
+  hasUpdate?: boolean;
 }
 
 export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
+  provider?: string;
+  providers?: string[];
   icon?: string;
+}
+
+export interface PluginWorktreeManagerCapabilities {
+  hasRemove: boolean;
+  hasRestore: boolean;
 }
 
 export type PluginProcessRequest =
@@ -42,6 +63,19 @@ export type PluginProcessRequest =
       providerId: string;
       request: ProviderStatusRequest;
     }
+  | {
+      type: "provider.installation.inspect" | "provider.installation.update";
+      requestId: string;
+      providerId: string;
+      request: { launch?: ProviderInstallationLaunch };
+    }
+  | {
+      type: "provider.installation.check_updates";
+      requestId: string;
+      providerId: string;
+      request: { launch?: ProviderInstallationLaunch; installedVersion?: string };
+    }
+  | { type: "provider.installation.cancel"; requestId: string }
   | {
       type: "initialize";
       pluginId: string;
@@ -58,6 +92,10 @@ export type PluginProcessRequest =
     }
   | { type: "hook"; requestId: string; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
+  | { type: "worktree.create"; requestId: string; request: unknown }
+  | { type: "worktree.remove"; requestId: string; request: unknown }
+  | { type: "worktree.restore"; requestId: string; request: unknown }
+  | { type: "worktree.cancel"; requestId: string }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
@@ -90,15 +128,21 @@ export type PluginProcessMessage =
   | { type: "settings.changed"; settingsId: string }
   | { type: "hooks.changed"; hooks: string[] }
   | {
+      type: "worktree_manager.changed";
+      worktreeManager: PluginWorktreeManagerCapabilities | null;
+    }
+  | {
       type: "ready";
       methods: string[];
       subscriptions?: string[];
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: string[];
+      worktreeManager?: PluginWorktreeManagerCapabilities | null;
     }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
+  | { type: "provider.installation.report"; requestId: string; report: ProviderUpdateReport }
   | { type: "fatal"; error: string }
   | { type: "subscription.event"; subscriptionId: string; event: unknown }
   | { type: "subscription.closed"; subscriptionId: string; error?: string }
@@ -122,6 +166,12 @@ export type PluginProcessMessage =
   | { type: "paseo_close" };
 
 const hooksSchema = z.array(z.string());
+const worktreeManagerCapabilitiesSchema = z
+  .object({
+    hasRemove: z.boolean(),
+    hasRestore: z.boolean(),
+  })
+  .strict();
 
 const providerMetadataSchema = z
   .object({
@@ -129,19 +179,37 @@ const providerMetadataSchema = z
     label: z.string().min(1),
     description: z.string().optional(),
     iconPath: z.string().optional(),
+    docsUrl: z.string().optional(),
     requiresConfiguration: z.boolean().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
+    installation: z
+      .object({
+        installUrl: z.string().optional(),
+        updateUrl: z.string().optional(),
+        hasInspect: z.boolean(),
+        hasCheckForUpdates: z.boolean(),
+        hasUpdate: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
+    launchWrap: z.boolean().optional(),
   })
   .strict();
 const usageSourceMetadataSchema = z
   .object({
     id: z.string().min(1),
     label: z.string().min(1),
+    provider: z.string().min(1).optional(),
+    providers: z.array(z.string().min(1)).optional(),
     icon: z.string().optional(),
   })
   .strict();
+const ProviderInstallationLaunchSchema = ProviderLaunchSchema.extend({
+  resolved: z.boolean(),
+}).strict();
+
 const providerConnectRequestSchema = z
   .object({
     launch: ProviderLaunchSchema.optional(),
@@ -189,6 +257,28 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .strict(),
     z
       .object({
+        type: z.enum(["provider.installation.inspect", "provider.installation.update"]),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z.object({ launch: ProviderInstallationLaunchSchema.optional() }).strict(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.installation.check_updates"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z
+          .object({
+            launch: ProviderInstallationLaunchSchema.optional(),
+            installedVersion: z.string().optional(),
+          })
+          .strict(),
+      })
+      .strict(),
+    z.object({ type: z.literal("provider.installation.cancel"), requestId: z.string() }).strict(),
+    z
+      .object({
         type: z.literal("initialize"),
         pluginId: z.string().min(1),
         bundle: z.string(),
@@ -230,6 +320,14 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),
+    z
+      .object({
+        type: z.enum(["worktree.create", "worktree.remove", "worktree.restore"]),
+        requestId: z.string().min(1),
+        request: z.unknown(),
+      })
+      .strict(),
+    z.object({ type: z.literal("worktree.cancel"), requestId: z.string().min(1) }).strict(),
     z
       .object({
         type: z.literal("usage.fetch"),
@@ -294,12 +392,19 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
     z.object({ type: z.literal("hooks.changed"), hooks: hooksSchema }).strict(),
     z
       .object({
+        type: z.literal("worktree_manager.changed"),
+        worktreeManager: worktreeManagerCapabilitiesSchema.nullable(),
+      })
+      .strict(),
+    z
+      .object({
         type: z.literal("ready"),
         methods: z.array(z.string()),
         subscriptions: z.array(z.string()).optional(),
         providers: z.array(providerMetadataSchema),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
+        worktreeManager: worktreeManagerCapabilitiesSchema.nullable().optional(),
       })
       .strict(),
     z
@@ -307,6 +412,13 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .strict(),
     z
       .object({ type: z.literal("error"), requestId: z.string().min(1), error: z.string() })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.installation.report"),
+        requestId: z.string().min(1),
+        report: ProviderUpdateReportSchema,
+      })
       .strict(),
     z.object({ type: z.literal("fatal"), error: z.string() }).strict(),
     z

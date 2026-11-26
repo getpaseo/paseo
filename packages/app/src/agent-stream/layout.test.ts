@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TurnTiming } from "@/timeline/turn-time";
+import type { TimelineItemTransform } from "@/plugins/timeline";
+import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import type { StreamItem } from "@/types/stream";
 import {
   orderHeadForStreamRenderStrategy,
@@ -393,6 +395,39 @@ describe("layoutStream", () => {
     expect(findLayoutItem(layout, thinking.id).toolSequence).toBe("last");
   });
 
+  it.each(["web", "android"] as const)(
+    "carries turn metrics from the footer's source row on %s",
+    (platform) => {
+      const metrics = [{ label: "Model", value: "opus" }];
+      const earlier = { ...assistantMessage("a1", 2), turnMetrics: metrics };
+      const latest = { ...toolCall("tool-2", 5), turnMetrics: [{ label: "Steps", value: "2" }] };
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), earlier, toolCall("tool-1", 3), userMessage("u2", 4), latest],
+      });
+
+      expect(findLayoutItem(layout, "tool-1").completedFooter?.turnMetrics).toBe(metrics);
+      expect(layout.auxiliaryTurnFooter?.turnMetrics).toBe(latest.turnMetrics);
+    },
+  );
+
+  it("lays out the footer again when its source row gains turn metrics", () => {
+    const assistant = assistantMessage("a1", 2);
+    const trailing = toolCall("tool-2", 4);
+    const tail = [userMessage("u1", 1), assistant, toolCall("tool-1", 3), trailing];
+    const next = userMessage("u2", 5);
+    const before = layoutFor({ platform: "android", tail: [...tail, next] });
+
+    const metrics = [{ label: "Model", value: "opus" }];
+    const stamped = [...tail];
+    stamped[1] = { ...assistant, turnMetrics: metrics };
+    const after = layoutFor({ platform: "android", tail: [...stamped, next] });
+
+    expect(findLayoutItem(before, trailing.id).completedFooter?.turnMetrics).toBeUndefined();
+    expect(findLayoutItem(after, trailing.id).completedFooter?.turnMetrics).toBe(metrics);
+    expect(findLayoutItem(after, next.id)).toBe(findLayoutItem(before, next.id));
+  });
+
   it("keeps bottom and inline footer ownership mutually exclusive", () => {
     const assistant = assistantMessage("a1", 2);
     const layout = layoutFor({
@@ -543,6 +578,42 @@ describe("layoutStream", () => {
       expect(layout.auxiliaryTurnFooter).toBeNull();
       expect(findLayoutItem(layout, assistant.id).completedFooter).toBeNull();
       expect(footerOwners(layout)).toEqual([]);
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "attaches the turn footer to the final card of a plugin-split reply on %s",
+    (platform) => {
+      const metrics = [{ label: "Model", value: "opus" }];
+      const first = { ...assistantMessage("a1", 2), turnMetrics: [{ label: "Steps", value: "1" }] };
+      const latest = { ...assistantMessage("a2", 4), turnMetrics: metrics };
+      const splitIntoCards: TimelineItemTransform = ({ item, sourceId }) =>
+        item.type !== "assistant_message"
+          ? undefined
+          : ["text", "card"].map((part) => ({
+              type: "plugin",
+              id: `${sourceId}/${part}`,
+              pluginId: "genui",
+              kind: `genui-${part}`,
+              version: 1,
+              data: {},
+            }));
+      const tail = projectPluginTimelineItems(
+        [userMessage("u1", 1), first, userMessage("u2", 3), latest],
+        splitIntoCards,
+      );
+
+      const layout = layoutFor({
+        platform,
+        tail,
+        timingIds: ["genui/a1/card", "genui/a2/card"],
+      });
+
+      expect(footerOwners(layout)).toEqual(["genui/a1/card", "genui/a2/card"]);
+      expect(findLayoutItem(layout, "genui/a1/card").completedFooter?.turnMetrics).toBe(
+        first.turnMetrics,
+      );
+      expect(layout.auxiliaryTurnFooter?.turnMetrics).toBe(metrics);
     },
   );
 });

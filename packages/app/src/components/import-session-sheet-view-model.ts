@@ -17,6 +17,11 @@ export function nextPageLimit(limit: number): number {
   return PAGE_LIMITS.find((candidate) => candidate > limit) ?? limit;
 }
 
+/** The page Load more grew this limit from, or null for the first page. */
+export function previousPageLimit(limit: number): number | null {
+  return PAGE_LIMITS.findLast((candidate) => candidate < limit) ?? null;
+}
+
 export function requiresImportSessionsHostUpgrade(input: {
   supportsSnapshot: boolean;
   workspaceId?: string | null;
@@ -34,6 +39,8 @@ export interface SessionsQueryResult {
       }
     | undefined;
   isError: boolean;
+  error?: Error | null;
+  isFetching?: boolean;
   isLoading: boolean;
   isPending: boolean;
   isPlaceholderData?: boolean;
@@ -115,6 +122,8 @@ export function hasMoreSessions(
 export interface ProviderErrorRow {
   provider: string;
   label: string;
+  message: string | null;
+  retrying: boolean;
 }
 
 /**
@@ -135,7 +144,15 @@ export function collectProviderErrorRows(
     if (!query || provider === undefined) continue;
     const failed = query.isError || (query.data?.providerErrors?.length ?? 0) > 0;
     if (!failed) continue;
-    rows.push({ provider, label: providerLabelById.get(provider) ?? provider });
+    const failure = query.data?.providerErrors?.find((error) => error.provider === provider);
+    const failureMessage = query.isError ? query.error?.message : failure?.message;
+    const message = failureMessage?.trim() || null;
+    rows.push({
+      provider,
+      label: providerLabelById.get(provider) ?? provider,
+      message,
+      retrying: query.isFetching === true,
+    });
   }
   return rows;
 }

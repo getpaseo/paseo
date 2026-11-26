@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import type { ProviderRuntimeSettings } from "../../../provider-launch-config.js";
 import type { OpenCodeBridge } from "../bridge.js";
-import { OpenCodeHttpError } from "../http-error.js";
+import { validateOpenCodeResponse } from "./http-response.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { openCodeConfigDirectory, provisionLocalBridge } from "./bridge-provisioning.js";
 import { awaitPaseoPlugin } from "./readiness.js";
@@ -53,15 +53,26 @@ export async function connectSharedService(
       const signal = init?.signal
         ? AbortSignal.any([init.signal, lifetime.signal])
         : lifetime.signal;
-      const response = await fetch(request, { ...init, signal });
-      const html = response.headers.get("content-type")?.includes("text/html") ?? false;
-      if (!response.ok || html) {
-        const requestUrl = request instanceof Request ? request.url : String(request);
-        throw new OpenCodeHttpError(new URL(requestUrl).pathname, response.status, html);
+      let response: Response;
+      try {
+        response = await fetch(request, { ...init, signal });
+      } catch (error) {
+        // Paseo does not own this process, so a refused connection is its only exit signal.
+        if (isConnectionRefused(error)) markExited(error);
+        throw error;
       }
-      return response;
+      return validateOpenCodeResponse(request, response);
     },
   });
+  const markExited = (cause: unknown) => {
+    if (lifetime.signal.aborted) return;
+    const error = new Error(`OpenCode server at ${server.url} stopped accepting connections`, {
+      cause,
+    });
+    logger.warn({ url: server.url }, "OpenCode v2 server stopped accepting connections");
+    lifetime.abort(error);
+    resolveExited(error);
+  };
   let info: Awaited<ReturnType<typeof client.server.info>>;
   try {
     info = await client.server.info({
@@ -117,6 +128,13 @@ export async function connectSharedService(
   return generation;
 }
 
+function isConnectionRefused(error: unknown): boolean {
+  const cause = error instanceof Error ? error.cause : undefined;
+  return Boolean(
+    cause && typeof cause === "object" && "code" in cause && cause.code === "ECONNREFUSED",
+  );
+}
+
 function validateBridgeAddress(
   selection: Extract<OpenCodeServiceSelection, { kind: "explicit" | "discovered" }>,
   bridge: OpenCodeBridge | undefined,
@@ -137,6 +155,11 @@ function validateBridgeAddress(
     throw new Error(
       "Remote OpenCode requires PASEO_OPENCODE_BRIDGE_URL pointing to a reachable Paseo bridge tunnel and the Paseo plugin installed on the server",
     );
+}
+
+interface BindOutput {
+  error?: unknown;
+  features?: { mcpTools?: boolean };
 }
 
 export function bridgeBindings(
@@ -164,8 +187,13 @@ export function bridgeBindings(
           { cause: error },
         );
       }
-      if (result.output && typeof result.output === "object" && "error" in result.output)
-        throw new Error(String(result.output.error));
+      const output = result.output as BindOutput | undefined;
+      if (output?.error !== undefined) throw new Error(String(output.error));
+      // An OpenCode older than 2.0.29, or a plugin from an older Paseo, ignores MCP tools.
+      if (bridge.hasMcpTools(sessionId) && output?.features?.mcpTools !== true)
+        throw new Error(
+          `This OpenCode server cannot run the agent's MCP servers. Update OpenCode to 2.0.29 or newer${pluginDirectory ? `, install the Paseo plugin from ${pluginDirectory}, and restart the server` : ""}.`,
+        );
     },
     unbindSession: async (sessionId, cwd) => {
       if (bridge)

@@ -4,12 +4,18 @@ import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
 class FakeImage implements TabImage {
+  public constructor(private readonly alpha = 255) {}
+
   public toPNG(): Uint8Array {
     return new Uint8Array([137, 80, 78, 71]);
   }
 
   public getSize(): { width: number; height: number } {
     return { width: 640, height: 480 };
+  }
+
+  public toBitmap(): Uint8Array {
+    return new Uint8Array([0, 0, 0, 0, 10, 20, 30, this.alpha]);
   }
 }
 
@@ -263,6 +269,24 @@ describe("browser automation IPC adapter", () => {
     contents.frameListener?.(new FakeImage());
 
     expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
+    expect(contents.frameListener).toBeNull();
+    controller.abort();
+    expect(contents.endedFrameSubscriptions).toBe(1);
+  });
+
+  test("skips frames with no painted pixels and captures the first painted frame", async () => {
+    const contents = new FakeWebContents(2004);
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const capture = tab.captureFrame(controller.signal);
+    const unpainted = new FakeImage(0);
+    const painted = new FakeImage(255);
+
+    contents.frameListener?.(unpainted);
+    expect(contents.frameListener).not.toBeNull();
+    contents.frameListener?.(painted);
+
+    expect(await capture).toBe(painted);
     expect(contents.frameListener).toBeNull();
     controller.abort();
     expect(contents.endedFrameSubscriptions).toBe(1);
