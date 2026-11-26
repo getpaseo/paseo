@@ -403,6 +403,10 @@ class NativeArchiveRecordingClient extends TestAgentClient {
   archivedAtDuringUnarchive: string | null | undefined;
   unarchiveFailure: Error | null = null;
 
+  async readSessionHistory() {
+    return { events: [], coverage: { kind: "complete" as const } };
+  }
+
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
     this.archivedHandles.push(handle);
   }
@@ -11350,7 +11354,7 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
   expect(client.unarchivedHandles).toHaveLength(1);
 });
 
-test("clearAgentAttention is a no-op for live archived agents loaded for history", async () => {
+test("clearAgentAttention is a no-op for a live runtime whose record is archived", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-attention-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -11370,16 +11374,12 @@ test("clearAgentAttention is a no-op for live archived agents loaded for history
     undefined,
     { workspaceId: undefined },
   );
-  await manager.archiveAgent(agent.id);
-  const archivedRecord = await storage.get(agent.id);
-  if (!archivedRecord) throw new Error("expected archived agent record");
-  await storage.upsert({
-    ...archivedRecord,
-    requiresAttention: true,
-    attentionReason: "finished",
-    attentionTimestamp: archivedRecord.updatedAt,
-  });
-  await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+  await manager.markAgentUnread(agent.id);
+  await manager.flush();
+  const liveRecord = await storage.get(agent.id);
+  if (!liveRecord) throw new Error("expected a persisted agent");
+  await storage.upsert({ ...liveRecord, archivedAt: new Date().toISOString() });
+  expect(manager.getAgent(agent.id)?.attention.requiresAttention).toBe(true);
 
   const emitted: Array<{ id: string; lifecycle: string }> = [];
   const unsubscribe = manager.subscribe(
@@ -16444,7 +16444,7 @@ test("workspace archive preserves a loaded history agent stamp and stamps cascad
   const workdir = mkdtempSync(join(tmpdir(), "workspace-stamp-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const manager = new AgentManager({
-    clients: { codex: new TestAgentClient() },
+    clients: { codex: new NativeArchiveRecordingClient() },
     registry: storage,
     logger,
   });
@@ -16463,7 +16463,8 @@ test("workspace archive preserves a loaded history agent stamp and stamps cascad
     expect((await storage.get(parent.id))?.archivedAt).toBe(stamp);
     expect((await storage.get(child.id))?.archivedAt).toBe(stamp);
     await ensureAgentLoaded(parent.id, { agentManager: manager, agentStorage: storage, logger });
-    await manager.archiveAgent(parent.id, laterStamp);
+    expect(manager.getAgent(parent.id)).toBeNull();
+    await manager.archiveSnapshot(parent.id, laterStamp);
     expect((await storage.get(parent.id))?.archivedAt).toBe(stamp);
     expect((await storage.get(parent.id))?.updatedAt).toBe(laterStamp);
   } finally {

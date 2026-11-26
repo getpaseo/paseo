@@ -3349,9 +3349,9 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    // Archiving is the agent's latest change, as markRecordArchived records it for a loaded agent.
+    // Re-archiving updates activity while preserving the original archive stamp.
     const nextRecord = await this.persistArchivedRecord(record, {
-      archivedAt,
+      archivedAt: record.archivedAt ?? archivedAt,
       updatedAt: archivedAt,
     });
 
@@ -3406,8 +3406,9 @@ export class AgentManager {
       };
       await registry.upsert(nextRecord);
     } catch (error) {
-      if (closedAgent) {
-        this.emitState(closedAgent, { persist: false });
+      const snapshot = closedAgent ?? this.historySnapshots.get(agentId);
+      if (snapshot) {
+        this.emitState(snapshot, { persist: false });
       }
       throw error;
     }
