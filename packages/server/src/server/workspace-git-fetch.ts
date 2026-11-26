@@ -71,9 +71,10 @@ export async function buildBackgroundFetchEnvOverlay(
 
   const uid = options.uid === undefined ? (process.getuid?.() ?? null) : options.uid;
   const socketExists = options.socketExists ?? pathExists;
-  if (!(await hasLinuxSessionBusSocket(env, uid, socketExists))) {
-    overlay.DBUS_SESSION_BUS_ADDRESS = HEADLESS_DBUS_SESSION_BUS_ADDRESS;
-  }
+  const runtimeBusSocket = await findLinuxSessionBusSocket(env, uid, socketExists);
+  overlay.DBUS_SESSION_BUS_ADDRESS = runtimeBusSocket
+    ? `unix:path=${runtimeBusSocket}`
+    : HEADLESS_DBUS_SESSION_BUS_ADDRESS;
   return overlay;
 }
 
@@ -86,11 +87,11 @@ async function pathExists(socketPath: string): Promise<boolean> {
   }
 }
 
-async function hasLinuxSessionBusSocket(
+async function findLinuxSessionBusSocket(
   env: ProcessEnvRecord,
   uid: number | null,
   socketExists: (socketPath: string) => boolean | Promise<boolean>,
-): Promise<boolean> {
+): Promise<string | null> {
   const candidates = new Set<string>();
   const xdgRuntimeDir = env.XDG_RUNTIME_DIR?.trim();
   if (xdgRuntimeDir) {
@@ -101,10 +102,10 @@ async function hasLinuxSessionBusSocket(
   }
   for (const candidate of candidates) {
     if (await socketExists(candidate)) {
-      return true;
+      return candidate;
     }
   }
-  return false;
+  return null;
 }
 
 export interface WorkspaceGitFetchResult {

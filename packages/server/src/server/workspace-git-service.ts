@@ -528,6 +528,22 @@ interface WorkspaceGitTarget {
   closed: boolean;
 }
 
+type RepoFetchState =
+  | { kind: "idle"; remoteUrl: string | null | undefined }
+  | {
+      kind: "scheduled";
+      remoteUrl: string | undefined;
+      timer: NodeJS.Timeout;
+      consecutiveErrors: number;
+    }
+  | {
+      kind: "in-flight";
+      remoteUrl: string | undefined;
+      consecutiveErrors: number;
+      resumePending: boolean;
+    }
+  | { kind: "paused-auth"; remoteUrl: string | undefined };
+
 interface RepoGitTarget {
   paths: GitObservationPaths;
   repoGitRoot: string;
@@ -538,12 +554,7 @@ interface RepoGitTarget {
   fallbackPollTimer: NodeJS.Timeout | null;
   fallbackPollQuietTickCount: number;
   recovery: WatchRecoveryState;
-  fetchTimer: NodeJS.Timeout | null;
-  fetchInFlight: boolean;
-  fetchPausedReason: "auth" | null;
-  fetchConsecutiveErrors: number;
-  fetchResumePending: boolean;
-  fetchRemoteUrl: string | null | undefined;
+  fetchState: RepoFetchState;
   bufferedFetchMetadataEvents: FileChange[];
   recentFetchRemoteRefChanges: Map<
     string,
@@ -837,7 +848,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     for (const target of this.repoTargets.values()) {
       repositoryWorkspaceLinkCount += target.workspaceKeys.size;
-      if (target.fetchInFlight) {
+      if (target.fetchState.kind === "in-flight") {
         fetchInFlightCount += 1;
       }
     }
@@ -2568,12 +2579,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         establishedAt: null,
         setupKey: `repository-metadata:${paths.identity}`,
       },
-      fetchTimer: null,
-      fetchInFlight: false,
-      fetchPausedReason: null,
-      fetchConsecutiveErrors: 0,
-      fetchResumePending: false,
-      fetchRemoteUrl: undefined,
+      fetchState: { kind: "idle", remoteUrl: undefined },
       bufferedFetchMetadataEvents: [],
       recentFetchRemoteRefChanges: new Map(),
       knownRemoteRefs: null,
@@ -2609,13 +2615,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (repoTarget.closed || this.repoTargets.get(repoGitRoot) !== repoTarget) {
       return;
     }
+    let initialRemoteUrl: string | null | undefined;
     if (facts?.isGit === true) {
-      repoTarget.fetchRemoteUrl = facts.remoteUrl;
+      initialRemoteUrl = facts.remoteUrl;
     } else if (hasOrigin) {
-      repoTarget.fetchRemoteUrl = fetchWorkspaceTarget.latestGit?.remoteUrl ?? undefined;
+      initialRemoteUrl = fetchWorkspaceTarget.latestGit?.remoteUrl ?? undefined;
     } else {
-      repoTarget.fetchRemoteUrl = null;
+      initialRemoteUrl = null;
     }
+    repoTarget.fetchState = { kind: "idle", remoteUrl: initialRemoteUrl };
     if (!hasOrigin) {
       return;
     }
@@ -2685,15 +2693,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
               ignore.every((ignoredPath) => !isPathInsideRoot(ignoredPath, event.path)),
           );
           if (relevantEvents.length > 0) {
-            const immediateEvents = target.fetchInFlight
-              ? relevantEvents.filter((event) => {
-                  if (this.isFetchRemoteMetadataEvent(target, event)) {
-                    target.bufferedFetchMetadataEvents.push(event);
-                    return false;
-                  }
-                  return true;
-                })
-              : relevantEvents;
+            const immediateEvents =
+              target.fetchState.kind === "in-flight"
+                ? relevantEvents.filter((event) => {
+                    if (this.isFetchRemoteMetadataEvent(target, event)) {
+                      target.bufferedFetchMetadataEvents.push(event);
+                      return false;
+                    }
+                    return true;
+                  })
+                : relevantEvents;
             if (immediateEvents.length > 0) {
               this.refreshWorkingTreeIgnoresFromRepoMetadataEvents(target, immediateEvents);
               const routedRefreshes = this.routeRepoMetadataEvents(target, immediateEvents);
@@ -4116,33 +4125,34 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private stopRepoFetchSchedule(target: RepoGitTarget): void {
-    if (target.fetchTimer) {
-      clearTimeout(target.fetchTimer);
-      target.fetchTimer = null;
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
     }
-    target.fetchPausedReason = null;
-    target.fetchConsecutiveErrors = 0;
-    target.fetchResumePending = false;
+    target.fetchState = { kind: "idle", remoteUrl: null };
   }
 
-  private resumeRepoFetch(target: RepoGitTarget): void {
+  private resumeRepoFetch(target: RepoGitTarget, remoteUrlOverride?: string): void {
     if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
       return;
     }
-    if (target.fetchRemoteUrl === null) {
+    const remoteUrl =
+      remoteUrlOverride !== undefined ? remoteUrlOverride : target.fetchState.remoteUrl;
+    if (remoteUrl === null) {
       return;
     }
-    if (target.fetchTimer) {
-      clearTimeout(target.fetchTimer);
-      target.fetchTimer = null;
-    }
-    target.fetchPausedReason = null;
-    target.fetchConsecutiveErrors = 0;
-    if (target.fetchInFlight) {
-      target.fetchResumePending = true;
+    if (target.fetchState.kind === "in-flight") {
+      target.fetchState = {
+        kind: "in-flight",
+        remoteUrl: remoteUrl ?? undefined,
+        consecutiveErrors: 0,
+        resumePending: true,
+      };
       return;
     }
-    target.fetchResumePending = false;
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
+    }
+    target.fetchState = { kind: "idle", remoteUrl };
     void this.runRepoFetch(target);
   }
 
@@ -4154,10 +4164,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!repoTarget || repoTarget.closed) {
       return;
     }
+    const state = repoTarget.fetchState;
     if (
-      repoTarget.fetchInFlight ||
-      repoTarget.fetchPausedReason !== null ||
-      repoTarget.fetchConsecutiveErrors > 0
+      state.kind === "in-flight" ||
+      state.kind === "paused-auth" ||
+      (state.kind === "scheduled" && state.consecutiveErrors > 0)
     ) {
       this.resumeRepoFetch(repoTarget);
     }
@@ -4176,92 +4187,103 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!repoTarget || repoTarget.closed) {
       return;
     }
-    if (repoTarget.fetchRemoteUrl === undefined) {
-      repoTarget.fetchRemoteUrl = nextRemoteUrl;
+    if (repoTarget.fetchState.remoteUrl === undefined) {
+      if (nextRemoteUrl === null) {
+        this.stopRepoFetchSchedule(repoTarget);
+      } else {
+        repoTarget.fetchState = { ...repoTarget.fetchState, remoteUrl: nextRemoteUrl };
+      }
       return;
     }
     if (!hadPreviousGit || previousRemoteUrl === nextRemoteUrl) {
       return;
     }
-    if (repoTarget.fetchRemoteUrl === nextRemoteUrl) {
+    if (repoTarget.fetchState.remoteUrl === nextRemoteUrl) {
       return;
     }
-    repoTarget.fetchRemoteUrl = nextRemoteUrl;
     if (nextRemoteUrl === null) {
       this.stopRepoFetchSchedule(repoTarget);
       return;
     }
-    this.resumeRepoFetch(repoTarget);
+    this.resumeRepoFetch(repoTarget, nextRemoteUrl);
   }
 
-  private armRepoFetchTimer(target: RepoGitTarget, delayMs: number): void {
-    if (target.fetchTimer) {
-      clearTimeout(target.fetchTimer);
+  private armRepoFetchTimer(
+    target: RepoGitTarget,
+    remoteUrl: string | undefined,
+    consecutiveErrors: number,
+    delayMs: number,
+  ): void {
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
     }
-    target.fetchTimer = setTimeout(() => {
-      target.fetchTimer = null;
+    const timer = setTimeout(() => {
       void this.runRepoFetch(target);
     }, delayMs);
+    target.fetchState = { kind: "scheduled", remoteUrl, timer, consecutiveErrors };
   }
 
-  private scheduleNextRepoFetch(target: RepoGitTarget, fetchError: unknown | null): void {
-    if (
-      target.closed ||
-      this.disposed ||
-      this.repoTargets.get(target.repoGitRoot) !== target ||
-      target.fetchRemoteUrl === null
-    ) {
+  private scheduleNextRepoFetch(
+    target: RepoGitTarget,
+    remoteUrl: string | undefined,
+    previousErrors: number,
+    fetchError: unknown | null,
+  ): void {
+    if (target.closed || this.disposed || this.repoTargets.get(target.repoGitRoot) !== target) {
+      target.fetchState = { kind: "idle", remoteUrl: null };
       return;
     }
 
     if (fetchError !== null && isGitFetchAuthError(fetchError)) {
-      target.fetchConsecutiveErrors = 0;
-      if (target.fetchPausedReason !== "auth") {
-        target.fetchPausedReason = "auth";
-        this.logger.warn(
-          { err: fetchError, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
-          "Background git fetch paused due to authentication failure",
-        );
-      }
+      target.fetchState = { kind: "paused-auth", remoteUrl };
+      this.logger.warn(
+        { err: fetchError, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
+        "Background git fetch paused due to authentication failure",
+      );
       return;
     }
 
-    target.fetchPausedReason = null;
     if (fetchError !== null) {
-      target.fetchConsecutiveErrors += 1;
-      const delayMs = computeBackgroundGitFetchDelayMs(target.fetchConsecutiveErrors);
+      const consecutiveErrors = previousErrors + 1;
+      const delayMs = computeBackgroundGitFetchDelayMs(consecutiveErrors);
       this.logger.warn(
         {
           err: fetchError,
           repoGitRoot: target.repoGitRoot,
           cwd: target.cwd,
-          attempt: target.fetchConsecutiveErrors,
+          attempt: consecutiveErrors,
           retryInMs: delayMs,
         },
         "Background git fetch failed; retrying with backoff",
       );
-      this.armRepoFetchTimer(target, delayMs);
+      this.armRepoFetchTimer(target, remoteUrl, consecutiveErrors, delayMs);
       return;
     }
 
-    target.fetchConsecutiveErrors = 0;
-    this.armRepoFetchTimer(target, BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    this.armRepoFetchTimer(target, remoteUrl, 0, BACKGROUND_GIT_FETCH_INTERVAL_MS);
   }
 
   private async runRepoFetch(target: RepoGitTarget): Promise<void> {
     if (
       target.closed ||
-      target.fetchInFlight ||
+      target.fetchState.kind === "in-flight" ||
+      target.fetchState.remoteUrl === null ||
       this.repoTargets.get(target.repoGitRoot) !== target
     ) {
       return;
     }
-    if (target.fetchTimer) {
-      clearTimeout(target.fetchTimer);
-      target.fetchTimer = null;
+    const previousErrors =
+      target.fetchState.kind === "scheduled" ? target.fetchState.consecutiveErrors : 0;
+    if (target.fetchState.kind === "scheduled") {
+      clearTimeout(target.fetchState.timer);
     }
 
-    target.fetchInFlight = true;
+    target.fetchState = {
+      kind: "in-flight",
+      remoteUrl: target.fetchState.remoteUrl,
+      consecutiveErrors: previousErrors,
+      resumePending: false,
+    };
     this.logger.debug(
       { repoGitRoot: target.repoGitRoot, cwd: target.cwd },
       "Running background git fetch",
@@ -4292,21 +4314,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
       const fetchError = thrownError ?? result?.error ?? null;
       this.applyRepoFetchResult(target, result, eventsBeforeFetchSnapshot);
-      if (!target.fetchResumePending) {
-        this.scheduleNextRepoFetch(target, fetchError);
+      const state = target.fetchState;
+      if (state.kind === "in-flight" && !state.resumePending) {
+        this.scheduleNextRepoFetch(target, state.remoteUrl, state.consecutiveErrors, fetchError);
       }
     } finally {
-      target.fetchInFlight = false;
-      if (
-        target.fetchResumePending &&
-        !target.closed &&
-        this.repoTargets.get(target.repoGitRoot) === target &&
-        target.fetchRemoteUrl !== null
-      ) {
-        target.fetchResumePending = false;
-        void this.runRepoFetch(target);
-      } else {
-        target.fetchResumePending = false;
+      if (target.fetchState.kind === "in-flight") {
+        const { remoteUrl, resumePending } = target.fetchState;
+        target.fetchState = { kind: "idle", remoteUrl };
+        if (
+          resumePending &&
+          !target.closed &&
+          this.repoTargets.get(target.repoGitRoot) === target
+        ) {
+          void this.runRepoFetch(target);
+        }
       }
     }
   }

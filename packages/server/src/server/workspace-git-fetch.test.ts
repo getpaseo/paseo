@@ -49,7 +49,7 @@ describe("buildBackgroundFetchEnvOverlay", () => {
     });
   });
 
-  test("preserves DBUS_SESSION_BUS_ADDRESS when a session bus address or runtime socket exists", async () => {
+  test("preserves explicit DBUS_SESSION_BUS_ADDRESS and resolves existing runtime bus sockets", async () => {
     await expect(
       buildBackgroundFetchEnvOverlay({
         platform: "linux",
@@ -78,12 +78,15 @@ describe("buildBackgroundFetchEnvOverlay", () => {
       GCM_INTERACTIVE: "0",
       SSH_ASKPASS: "",
       SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
     });
 
+    // Systemd service with unset XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS,
+    // but an active logind runtime socket at /run/user/<uid>/bus.
     await expect(
       buildBackgroundFetchEnvOverlay({
         platform: "linux",
-        env: { DBUS_SESSION_BUS_ADDRESS: "" },
+        env: {},
         uid: 1000,
         socketExists: (socketPath) => socketPath === "/run/user/1000/bus",
       }),
@@ -93,6 +96,23 @@ describe("buildBackgroundFetchEnvOverlay", () => {
       GCM_INTERACTIVE: "0",
       SSH_ASKPASS: "",
       SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    });
+
+    await expect(
+      buildBackgroundFetchEnvOverlay({
+        platform: "linux",
+        env: { DBUS_SESSION_BUS_ADDRESS: "autolaunch:" },
+        uid: 1000,
+        socketExists: (socketPath) => socketPath === "/run/user/1000/bus",
+      }),
+    ).resolves.toEqual({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_ASKPASS: "",
+      GCM_INTERACTIVE: "0",
+      SSH_ASKPASS: "",
+      SSH_ASKPASS_REQUIRE: "never",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
     });
   });
 
