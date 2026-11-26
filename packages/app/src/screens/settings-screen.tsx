@@ -85,6 +85,7 @@ import { DesktopNotificationsSection } from "@/desktop/components/desktop-notifi
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import { IntegrationsSection } from "@/desktop/components/integrations-section";
 import { isElectronRuntime } from "@/desktop/host";
+import { useDesktopSettings, type DesktopUpdateMode } from "@/desktop/settings/desktop-settings";
 import { useDesktopAppUpdater } from "@/desktop/updates/use-desktop-app-updater";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -616,25 +617,92 @@ function HostVersionRow({
 
 function getUpdateButtonLabel(
   t: TFunction,
-  isInstalling: boolean,
-  latestVersion: string | null | undefined,
+  input: {
+    isInstalling: boolean;
+    isDownloading: boolean;
+    isActionable: boolean;
+    readyToInstall: boolean;
+    latestVersion: string | null | undefined;
+  },
 ): string {
-  if (isInstalling) return t("settings.about.updates.installing");
-  if (latestVersion) {
+  if (input.isInstalling) {
+    return input.isDownloading
+      ? t("settings.about.updates.downloading")
+      : t("settings.about.updates.installing");
+  }
+  if (input.isActionable && !input.readyToInstall) {
+    if (input.latestVersion) {
+      return t("settings.about.updates.downloadTo", {
+        version: formatVersionWithPrefix(input.latestVersion),
+      });
+    }
+    return t("settings.about.updates.download");
+  }
+  if (input.latestVersion) {
     return t("settings.about.updates.updateTo", {
-      version: formatVersionWithPrefix(latestVersion),
+      version: formatVersionWithPrefix(input.latestVersion),
     });
   }
   return t("settings.about.updates.update");
+}
+
+function getUpdateModeDescription(t: TFunction, mode: DesktopUpdateMode): string {
+  if (mode === "off") return t("settings.about.autoUpdate.descriptions.off");
+  if (mode === "notify") return t("settings.about.autoUpdate.descriptions.notify");
+  return t("settings.about.autoUpdate.descriptions.automatic");
+}
+
+function getUpdateConfirmDialogCopy(t: TFunction, isUpdateReady: boolean) {
+  if (isUpdateReady) {
+    return {
+      title: t("settings.about.updates.installTitle"),
+      message: t("settings.about.updates.installMessage"),
+      confirmLabel: t("settings.about.updates.installConfirm"),
+      cancelLabel: t("common.actions.cancel"),
+    };
+  }
+  return {
+    title: t("settings.about.updates.downloadTitle"),
+    message: t("settings.about.updates.downloadMessage"),
+    confirmLabel: t("settings.about.updates.downloadConfirm"),
+    cancelLabel: t("common.actions.cancel"),
+  };
+}
+
+function DesktopUpdateProgressBar({ percent }: { percent: number }) {
+  const accessibilityValue = useMemo(() => ({ min: 0, max: 100, now: percent }), [percent]);
+  const fillStyle = useMemo(
+    () => [styles.aboutUpdateProgressFill, { width: `${percent}%` as const }],
+    [percent],
+  );
+
+  return (
+    <View
+      style={styles.aboutUpdateProgressTrack}
+      accessibilityRole="progressbar"
+      accessibilityValue={accessibilityValue}
+      testID="settings-about-update-progress"
+    >
+      <View style={fillStyle} />
+    </View>
+  );
 }
 
 function DesktopAppUpdateRow() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useSettings();
   const {
+    settings: desktopSettings,
+    isLoading: isLoadingDesktopSettings,
+    updateSettings: updateDesktopSettings,
+  } = useDesktopSettings();
+  const updateMode = desktopSettings.updates.mode;
+  const {
     isDesktopApp,
+    status,
     statusText,
     availableUpdate,
+    downloadProgress,
     errorMessage,
     isChecking,
     isInstalling,
@@ -644,12 +712,12 @@ function DesktopAppUpdateRow() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!isDesktopApp) {
+      if (!isDesktopApp || isLoadingDesktopSettings || updateMode === "off") {
         return undefined;
       }
       void checkForUpdates({ intent: "automatic", silent: true });
       return undefined;
-    }, [checkForUpdates, isDesktopApp]),
+    }, [checkForUpdates, isDesktopApp, isLoadingDesktopSettings, updateMode]),
   );
 
   const handleCheckForUpdates = useCallback(() => {
@@ -673,17 +741,36 @@ function DesktopAppUpdateRow() {
     [t],
   );
 
+  const handleUpdateModeChange = useCallback(
+    (mode: DesktopUpdateMode) => {
+      void updateDesktopSettings({ updates: { mode } });
+    },
+    [updateDesktopSettings],
+  );
+  const updateModeOptions = useMemo(
+    () => [
+      { value: "automatic" as const, label: t("settings.about.autoUpdate.options.automatic") },
+      { value: "notify" as const, label: t("settings.about.autoUpdate.options.notify") },
+      { value: "off" as const, label: t("settings.about.autoUpdate.options.off") },
+    ],
+    [t],
+  );
+
+  const isUpdateReady = availableUpdate?.readyToInstall === true;
+  const isUpdateActionable = status === "available" && availableUpdate?.hasUpdate === true;
+  const readyUpdateVersion = isUpdateReady ? availableUpdate?.latestVersion : null;
+  const actionableVersion = isUpdateActionable ? availableUpdate?.latestVersion : null;
+  const downloadPercent =
+    (isInstalling || status === "pending") && downloadProgress
+      ? Math.max(0, Math.min(100, Math.round(downloadProgress.percent)))
+      : null;
+
   const handleInstallUpdate = useCallback(() => {
     if (!isDesktopApp) {
       return;
     }
 
-    void confirmDialog({
-      title: t("settings.about.updates.installTitle"),
-      message: t("settings.about.updates.installMessage"),
-      confirmLabel: t("settings.about.updates.installConfirm"),
-      cancelLabel: t("common.actions.cancel"),
-    })
+    void confirmDialog(getUpdateConfirmDialogCopy(t, isUpdateReady))
       .then((confirmed) => {
         if (!confirmed) {
           return;
@@ -698,10 +785,7 @@ function DesktopAppUpdateRow() {
           t("settings.about.updates.alertMessage"),
         );
       });
-  }, [installUpdate, isDesktopApp, t]);
-
-  const isUpdateReady = availableUpdate?.readyToInstall === true;
-  const readyUpdateVersion = isUpdateReady ? availableUpdate?.latestVersion : null;
+  }, [installUpdate, isDesktopApp, isUpdateReady, t]);
 
   if (!isDesktopApp) {
     return null;
@@ -724,6 +808,18 @@ function DesktopAppUpdateRow() {
       </View>
       <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
         <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("settings.about.autoUpdate.label")}</Text>
+          <Text style={settingsStyles.rowHint}>{getUpdateModeDescription(t, updateMode)}</Text>
+        </View>
+        <SegmentedControl
+          value={updateMode}
+          onValueChange={handleUpdateModeChange}
+          options={updateModeOptions}
+          testID="settings-about-update-mode"
+        />
+      </View>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={settingsStyles.rowContent}>
           <Text style={settingsStyles.rowTitle}>{t("settings.about.updates.label")}</Text>
           <Text style={settingsStyles.rowHint}>{statusText}</Text>
           {readyUpdateVersion ? (
@@ -733,6 +829,7 @@ function DesktopAppUpdateRow() {
               })}
             </Text>
           ) : null}
+          {downloadPercent !== null ? <DesktopUpdateProgressBar percent={downloadPercent} /> : null}
           {errorMessage ? <Text style={styles.aboutErrorText}>{errorMessage}</Text> : null}
         </View>
         <View style={styles.aboutUpdateActions}>
@@ -746,9 +843,15 @@ function DesktopAppUpdateRow() {
           <Button
             variant="default"
             onPress={handleInstallUpdate}
-            disabled={isChecking || isInstalling || !isUpdateReady}
+            disabled={isChecking || isInstalling || !isUpdateActionable}
           >
-            {getUpdateButtonLabel(t, isInstalling, readyUpdateVersion)}
+            {getUpdateButtonLabel(t, {
+              isInstalling,
+              isDownloading: isInstalling && downloadProgress != null,
+              isActionable: isUpdateActionable,
+              readyToInstall: isUpdateReady,
+              latestVersion: actionableVersion,
+            })}
           </Button>
         </View>
       </View>
@@ -1639,6 +1742,19 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  aboutUpdateProgressTrack: {
+    marginTop: theme.spacing[2],
+    height: 4,
+    maxWidth: 260,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+    overflow: "hidden",
+  },
+  aboutUpdateProgressFill: {
+    height: "100%",
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
   },
   placeholder: {
     flex: 1,

@@ -1577,6 +1577,8 @@ export const ptBR: TranslationResources = {
       status: {
         checking: "Verificando atualizações do app...",
         installing: "Instalando atualização do app...",
+        downloadingVersionProgress: "Baixando {{version}}... {{percent}}%",
+        downloadingProgress: "Baixando atualização do app... {{percent}}%",
         upToDate: "O app está atualizado.",
         upToDateWithLastChecked: "Atualizado. Última verificação às {{time}}.",
         pending: "Avisaremos quando a atualização estiver pronta.",
@@ -1585,6 +1587,15 @@ export const ptBR: TranslationResources = {
         pendingWithVersion: "Atualização encontrada: {{version}}. Baixando...",
         pendingWithVersionAndLastChecked:
           "Atualização encontrada: {{version}}. Baixando... Última verificação às {{time}}.",
+        pendingWithVersionProgress: "Atualização encontrada: {{version}}. Baixando... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Atualização encontrada: {{version}}. Baixando... {{percent}}% Última verificação às {{time}}.",
+        downloadAvailableWithVersion: "Atualização disponível: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Atualização disponível: {{version}}. Última verificação às {{time}}.",
+        downloadAvailable: "Há uma atualização do app disponível.",
+        downloadAvailableWithLastChecked:
+          "Há uma atualização do app disponível. Última verificação às {{time}}.",
         availableWithVersion: "Atualização pronta: {{version}}",
         availableWithVersionAndLastChecked:
           "Atualização pronta: {{version}}. Última verificação às {{time}}.",
@@ -1597,14 +1608,21 @@ export const ptBR: TranslationResources = {
       },
       installError: "Não foi possível instalar a atualização do app desktop.",
       callout: {
+        downloadingTitle: "Baixando atualização",
         installingTitle: "Instalando atualização",
         failedTitle: "Falha na atualização",
         availableTitle: "Atualização disponível",
         genericError: "Algo deu errado.",
         whatsNew: "Novidades",
+        downloadingAction: "Baixando...",
         installingAction: "Instalando...",
+        downloadAndRestart: "Baixar",
         installAndRestart: "Instalar e reiniciar",
+        downloadingVersionDescription: "Baixando {{version}}... {{percent}}%",
+        downloadingDescription: "Baixando atualização... {{percent}}%",
         installingDescription: "Instalando e reiniciando...",
+        versionAvailable: "{{version}} está disponível para download.",
+        newVersionAvailable: "Uma nova versão está disponível para download.",
         versionReady: "{{version}} está pronta para instalar.",
         newVersionReady: "Uma nova versão está pronta para instalar.",
         restartWarning:
@@ -2680,9 +2698,28 @@ export const ptBR: TranslationResources = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "Atualizações automáticas",
+        options: {
+          automatic: "Auto",
+          notify: "Notificar",
+          off: "Desativado",
+        },
+        descriptions: {
+          automatic: "Verificar e baixar atualizações em segundo plano",
+          notify: "Verificar atualizações, mas baixar apenas quando você escolher",
+          off: "Nunca verificar automaticamente. Verificar apenas ao clicar em Verificar",
+        },
+      },
       updates: {
         label: "Atualizações do app",
         readyToInstall: "Pronta para instalar: {{version}}",
+        downloadTitle: "Baixar atualização desktop",
+        downloadMessage: "Isso baixa e instala a atualização do Paseo neste computador",
+        downloadConfirm: "Baixar e instalar",
+        download: "Baixar",
+        downloadTo: "Baixar {{version}}",
+        downloading: "Baixando...",
         installTitle: "Instalar atualização desktop",
         installMessage: "Isso atualiza o Paseo neste computador",
         installConfirm: "Instalar atualização",

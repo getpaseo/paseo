@@ -1058,10 +1058,18 @@ const quitLifecycle = createQuitLifecycle({
       showShutdownFeedback: showDaemonShutdownDialog,
     }),
   installAppUpdateOnQuit: async (signal) => {
-    const settings = await getDesktopSettingsStore().get();
+    let releaseChannel: "stable" | "beta" = "stable";
+    try {
+      releaseChannel = (await getDesktopSettingsStore().get()).releaseChannel;
+    } catch (error) {
+      log.warn(
+        "[auto-updater] Failed to read desktop settings on quit, defaulting to stable:",
+        error,
+      );
+    }
     return installAppUpdateOnQuit({
       currentVersion: app.getVersion(),
-      releaseChannel: settings.releaseChannel,
+      releaseChannel,
       signal,
     });
   },

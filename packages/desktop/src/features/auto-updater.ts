@@ -1,17 +1,21 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app } from "electron";
+import { app, autoUpdater as electronAutoUpdater, BrowserWindow } from "electron";
 import { UUID } from "builder-util-runtime";
 import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
+import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import {
   createAppUpdateService,
   type AppUpdateCheckResult,
+  type AppUpdateDownloadProgress,
+  type AppUpdateInstallLaunchResult,
   type AppUpdateInstallRequest,
   type AppUpdateInstallResult,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
+  type RuntimeDownloadProgressInfo,
   type RuntimeUpdateCheckResult,
   type RuntimeUpdateInfo,
 } from "./app-update-service.js";
@@ -30,6 +34,7 @@ export {
   type AppReleaseChannel,
   type AppUpdateCheckIntent,
   type AppUpdateCheckResult,
+  type AppUpdateDownloadProgress,
   type AppUpdateInstallResult,
 };
 
@@ -140,11 +145,143 @@ export function shouldInstallAppUpdateOnQuit(input: {
   return !(input.platform === "linux" && input.isAppImage);
 }
 
+const APP_UPDATE_DOWNLOAD_PROGRESS_EVENT = "paseo:event:app-update-download-progress";
+
+function resolveProgressBarValue(progress: AppUpdateDownloadProgress | null): number {
+  if (progress === null) return -1;
+  if (!Number.isFinite(progress.percent)) return 0;
+  return Math.max(0, Math.min(1, progress.percent / 100));
+}
+
+function broadcastDownloadProgress(progress: AppUpdateDownloadProgress | null): void {
+  const normalizedBar = resolveProgressBarValue(progress);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.setProgressBar(normalizedBar);
+    } catch {
+      // Progress bar support is optional across desktop environments.
+    }
+    try {
+      win.webContents.send(APP_UPDATE_DOWNLOAD_PROGRESS_EVENT, progress);
+    } catch {
+      // Window may be tearing down during quitAndInstall.
+    }
+  }
+}
+
+export const MACOS_INSTALL_HANDOFF_TIMEOUT_MS = 2 * 60 * 1000;
+
+export interface QuitAndInstallEventSource {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+function formatLaunchError(error: unknown): string {
+  return error instanceof Error && typeof error.message === "string"
+    ? error.message
+    : String(error);
+}
+
+export function runElectronQuitAndInstall({
+  platform,
+  updater,
+  nativeUpdater,
+  isSilent,
+  isForceRunAfter,
+  timeoutMs = MACOS_INSTALL_HANDOFF_TIMEOUT_MS,
+}: {
+  platform: NodeJS.Platform;
+  updater: QuitAndInstallEventSource & {
+    quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+  };
+  nativeUpdater?: QuitAndInstallEventSource;
+  isSilent: boolean;
+  isForceRunAfter: boolean;
+  timeoutMs?: number;
+}): Promise<AppUpdateInstallLaunchResult> {
+  // Only await macOS Squirrel preparation for explicit Download / Restart Now
+  // installs (isForceRunAfter === true). Quit-time installs (isForceRunAfter === false)
+  // return immediately so quit-lifecycle owns its separate handoff deadline.
+  if (platform !== "darwin" || !isForceRunAfter || typeof nativeUpdater?.on !== "function") {
+    let launchError: unknown = null;
+    const captureLaunchError = (error: unknown) => {
+      launchError ??= error;
+    };
+    updater.on("error", captureLaunchError);
+    try {
+      updater.quitAndInstall(isSilent, isForceRunAfter);
+    } catch (error) {
+      launchError ??= error;
+    } finally {
+      updater.removeListener?.("error", captureLaunchError);
+    }
+    if (launchError !== null) {
+      return Promise.resolve({ started: false, errorMessage: formatLaunchError(launchError) });
+    }
+    return Promise.resolve({ started: true });
+  }
+
+  // With autoInstallOnAppQuit disabled, electron-updater's MacUpdater starts
+  // native Squirrel preparation asynchronously inside quitAndInstall(). Keep
+  // the explicit install promise pending until Squirrel hands off to quit, fails,
+  // or hits the safety timeout.
+  return new Promise<AppUpdateInstallLaunchResult>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      updater.removeListener?.("error", handleError);
+      nativeUpdater.removeListener?.("error", handleError);
+      nativeUpdater.removeListener?.("update-not-available", handleNotAvailable);
+      nativeUpdater.removeListener?.("before-quit-for-update", handleQuitStarted);
+    };
+    const finish = (result: AppUpdateInstallLaunchResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const handleError = (error: unknown) => {
+      finish({ started: false, errorMessage: formatLaunchError(error) });
+    };
+    const handleNotAvailable = () => {
+      finish({ started: false, errorMessage: "Update could not be prepared for installation." });
+    };
+    const handleQuitStarted = () => {
+      finish({ started: true });
+    };
+
+    timer = setTimeout(() => {
+      finish({
+        started: false,
+        errorMessage: "Timed out waiting for the update installer to start.",
+      });
+    }, timeoutMs);
+
+    updater.on("error", handleError);
+    nativeUpdater.on("error", handleError);
+    nativeUpdater.on("update-not-available", handleNotAvailable);
+    nativeUpdater.on("before-quit-for-update", handleQuitStarted);
+
+    try {
+      updater.quitAndInstall(isSilent, isForceRunAfter);
+    } catch (error) {
+      handleError(error);
+    }
+  });
+}
+
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
+  private configuration: AppUpdateRuntimeConfiguration | null = null;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
-    autoUpdater.autoDownload = true;
+    this.configuration = input;
+    autoUpdater.autoDownload = input.autoDownload;
     autoUpdater.autoRunAppAfterInstall = true;
     // Paseo revalidates the current manifest before explicitly installing on quit.
     // Electron's built-in handler would install an older download without checking
@@ -155,7 +292,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     autoUpdater.allowDowngrade = false;
     autoUpdater.isUserWithinRollout = async (info) => {
       try {
-        return await input.shouldAdmitUpdate(info as RuntimeUpdateInfo);
+        return await (this.configuration?.shouldAdmitUpdate(info as RuntimeUpdateInfo) ?? true);
       } catch {
         return true;
       }
@@ -179,17 +316,24 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     autoUpdater.on("update-available", (info) => {
       const updateInfo = info as RuntimeUpdateInfo;
       updateLifecycleLog.updateAvailable(updateInfo.version);
-      input.onUpdateAvailable(updateInfo);
+      this.configuration?.onUpdateAvailable(updateInfo);
+    });
+    autoUpdater.on("download-progress", (progress) => {
+      this.configuration?.onDownloadProgress(progress as RuntimeDownloadProgressInfo);
     });
     autoUpdater.on("update-downloaded", (info) => {
       const updateInfo = info as RuntimeUpdateInfo;
       updateLifecycleLog.updateDownloaded(updateInfo.version);
-      input.onUpdateDownloaded(updateInfo);
+      this.configuration?.onUpdateDownloaded(updateInfo);
     });
     autoUpdater.on("error", (error) => {
       if (isUpdateChannelNotPublished(error)) return;
-      input.onError(error);
+      this.configuration?.onError(error);
     });
+  }
+
+  setAutoDownload(enabled: boolean): void {
+    autoUpdater.autoDownload = enabled;
   }
 
   async checkForUpdates(): Promise<RuntimeUpdateCheckResult | null> {
@@ -211,14 +355,25 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     return autoUpdater.downloadUpdate();
   }
 
-  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
+  quitAndInstall({
+    targetVersion,
+    isSilent,
+    isForceRunAfter,
+  }: AppUpdateInstallRequest): Promise<AppUpdateInstallLaunchResult> {
+    broadcastDownloadProgress(null);
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     updateLifecycleLog.quitAndInstallRequested({
       targetVersion,
       isSilent,
       isForceRunAfter,
     });
-    autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+    return runElectronQuitAndInstall({
+      platform: process.platform,
+      updater: autoUpdater,
+      nativeUpdater: electronAutoUpdater,
+      isSilent,
+      isForceRunAfter,
+    });
   }
 }
 
@@ -227,6 +382,14 @@ const appUpdateService = createAppUpdateService({
   isPackaged: () => app.isPackaged,
   now: () => Date.now(),
   bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
+  updateMode: async () => (await getDesktopSettingsStore().get()).updates.mode,
+  onDownloadProgress: broadcastDownloadProgress,
+  reportSettingsError: (error) => {
+    console.warn(
+      "[auto-updater] Failed to read desktop update mode, defaulting to automatic:",
+      error,
+    );
+  },
   reportCheckError: (error) => {
     console.error("[auto-updater] Failed to check for updates:", error);
   },
@@ -246,16 +409,19 @@ export async function checkForAppUpdate({
   currentVersion,
   releaseChannel,
   intent,
+  autoDownload,
 }: {
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
+  autoDownload?: boolean;
 }): Promise<AppUpdateCheckResult> {
   updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
   const result = await appUpdateService.checkForAppUpdate({
     currentVersion,
     releaseChannel,
     intent,
+    autoDownload,
   });
   updateLifecycleLog.checkCompleted({
     currentVersion,

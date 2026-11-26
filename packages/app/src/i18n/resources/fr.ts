@@ -1580,6 +1580,8 @@ export const fr: TranslationResources = {
       status: {
         checking: "Recherche de mises à jour de l’application…",
         installing: "Installation de la mise à jour de l’application…",
+        downloadingVersionProgress: "Téléchargement de {{version}}… {{percent}} %",
+        downloadingProgress: "Téléchargement de la mise à jour… {{percent}} %",
         upToDate: "L’application est à jour.",
         upToDateWithLastChecked: "À jour. Dernière vérification à {{time}}.",
         pending: "Nous vous préviendrons quand la mise à jour sera prête.",
@@ -1588,6 +1590,16 @@ export const fr: TranslationResources = {
         pendingWithVersion: "Mise à jour trouvée : {{version}}. Téléchargement…",
         pendingWithVersionAndLastChecked:
           "Mise à jour trouvée : {{version}}. Téléchargement… Dernière vérification à {{time}}.",
+        pendingWithVersionProgress:
+          "Mise à jour trouvée : {{version}}. Téléchargement… {{percent}} %",
+        pendingWithVersionProgressAndLastChecked:
+          "Mise à jour trouvée : {{version}}. Téléchargement… {{percent}} % Dernière vérification à {{time}}.",
+        downloadAvailableWithVersion: "Mise à jour disponible : {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Mise à jour disponible : {{version}}. Dernière vérification à {{time}}.",
+        downloadAvailable: "Une mise à jour de l’application est disponible.",
+        downloadAvailableWithLastChecked:
+          "Une mise à jour de l’application est disponible. Dernière vérification à {{time}}.",
         availableWithVersion: "Mise à jour prête : {{version}}",
         availableWithVersionAndLastChecked:
           "Mise à jour prête : {{version}}. Dernière vérification à {{time}}.",
@@ -1600,14 +1612,21 @@ export const fr: TranslationResources = {
       },
       installError: "Impossible d’installer la mise à jour de l’application de bureau.",
       callout: {
+        downloadingTitle: "Téléchargement de la mise à jour",
         installingTitle: "Installation de la mise à jour",
         failedTitle: "Échec de la mise à jour",
         availableTitle: "Mise à jour disponible",
         genericError: "Une erreur s’est produite.",
         whatsNew: "Nouveautés",
+        downloadingAction: "Téléchargement…",
         installingAction: "Installation…",
+        downloadAndRestart: "Télécharger",
         installAndRestart: "Installer et redémarrer",
+        downloadingVersionDescription: "Téléchargement de {{version}}… {{percent}} %",
+        downloadingDescription: "Téléchargement de la mise à jour… {{percent}} %",
         installingDescription: "Installation et redémarrage…",
+        versionAvailable: "La version {{version}} est disponible au téléchargement.",
+        newVersionAvailable: "Une nouvelle version est disponible au téléchargement.",
         versionReady: "La version {{version}} est prête à être installée.",
         newVersionReady: "Une nouvelle version est prête à être installée.",
         restartWarning:
@@ -2697,9 +2716,28 @@ export const fr: TranslationResources = {
         stable: "Stable",
         beta: "Bêta",
       },
+      autoUpdate: {
+        label: "Mises à jour automatiques",
+        options: {
+          automatic: "Auto",
+          notify: "Notifier",
+          off: "Désactivé",
+        },
+        descriptions: {
+          automatic: "Vérifier et télécharger les mises à jour en arrière-plan",
+          notify: "Vérifier les mises à jour, mais ne télécharger que lorsque vous choisissez",
+          off: "Ne jamais vérifier automatiquement. Vérifier uniquement sur clic sur Vérifier",
+        },
+      },
       updates: {
         label: "Mises à jour de l’application",
         readyToInstall: "Prête à installer : {{version}}",
+        downloadTitle: "Télécharger la mise à jour de l’app de bureau",
+        downloadMessage: "La mise à jour de Paseo sera téléchargée et installée sur cet ordinateur",
+        downloadConfirm: "Télécharger et installer",
+        download: "Télécharger",
+        downloadTo: "Télécharger {{version}}",
+        downloading: "Téléchargement…",
         installTitle: "Installer la mise à jour de l’app de bureau",
         installMessage: "Paseo sera mis à jour sur cet ordinateur",
         installConfirm: "Installer la mise à jour",
