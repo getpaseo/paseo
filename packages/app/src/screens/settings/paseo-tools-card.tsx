@@ -5,8 +5,8 @@ import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
-/** The host's "give agents Paseo tools" switch, bound to the host's config. */
-export function PaseoToolsCard({ serverId }: { serverId: string }) {
+/** The host's "give agents Paseo tools" row, bound to the host's config, for composing inside a SettingsCard. */
+export function HostPaseoToolsRow({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
 
@@ -20,11 +20,21 @@ export function PaseoToolsCard({ serverId }: { serverId: string }) {
   if (!isConnected) return null;
 
   return (
+    <PaseoToolsRow
+      value={config?.mcp.injectIntoAgents !== false}
+      onValueChange={handleValueChange}
+    />
+  );
+}
+
+/** The host's "give agents Paseo tools" switch, bound to the host's config. */
+export function PaseoToolsCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  if (!isConnected) return null;
+
+  return (
     <SettingsCard testID="host-page-inject-mcp-card">
-      <PaseoToolsRow
-        value={config?.mcp.injectIntoAgents !== false}
-        onValueChange={handleValueChange}
-      />
+      <HostPaseoToolsRow serverId={serverId} />
     </SettingsCard>
   );
 }

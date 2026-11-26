@@ -49,6 +49,7 @@ interface AppRowExtras {
   leading?: ReactNode;
   /** A page outside the app that helps with this row, drawn under the hint as "Label ↗". */
   link?: Pick<ExternalLinkProps, "href" | "label" | "accessibilityLabel">;
+  errorTestID?: string;
 }
 
 interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint">, AppRowExtras {
@@ -77,6 +78,7 @@ export function SettingsRow({
   hint,
   link,
   error,
+  errorTestID,
   children,
   testID,
 }: AppSettingsRowProps) {
@@ -95,7 +97,7 @@ export function SettingsRow({
           </View>
         ) : null}
         {error ? (
-          <Text accessibilityRole="alert" style={settingsStyles.rowError}>
+          <Text accessibilityRole="alert" style={settingsStyles.rowError} testID={errorTestID}>
             {error}
           </Text>
         ) : null}

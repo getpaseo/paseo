@@ -136,7 +136,7 @@ export async function openAgentSkillsSettings(
   });
   if (options.compact) await goBackInSettings(page);
   await selectSettingsHost(page, sandbox.daemon.serverId);
-  await openHostSection(page, sandbox.daemon.serverId, "agents");
+  await openHostSection(page, sandbox.daemon.serverId, "tools");
   await expect(page.getByTestId("host-agent-skills-card")).toBeVisible();
 }
 

@@ -46,15 +46,15 @@ test.describe("Settings host selection", () => {
 
       await openSettings(page);
 
-      await openSettingsHostSection(page, remoteDaemon.serverId, "connections");
+      await openSettingsHostSection(page, remoteDaemon.serverId, "daemon");
 
       await selectSettingsHost(page, getServerId());
       await openSettingsSection(page, "appearance");
-      await openSettingsHostSection(page, getServerId(), "connections");
+      await openSettingsHostSection(page, getServerId(), "daemon");
 
       await clickSettingsBackToWorkspace(page);
       await openSettings(page);
-      await openSettingsHostSection(page, remoteDaemon.serverId, "connections");
+      await openSettingsHostSection(page, remoteDaemon.serverId, "daemon");
     } finally {
       await remoteWorkspace.cleanup().catch(() => undefined);
       await remoteDaemon.close().catch(() => undefined);

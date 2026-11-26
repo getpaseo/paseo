@@ -25,9 +25,12 @@ const ThemedPanelIcon = withUnistyles(PluginIconView);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 /** Which panel opens each file type, for the types more than one panel claims. */
-export function FilesSection() {
+export function FilesSection({ hideWhenEmpty = false }: { hideWhenEmpty?: boolean } = {}) {
   const { t } = useTranslation();
   const { rows, choose, askAgain } = useFilePanelSettings();
+  if (hideWhenEmpty && rows.length === 0) {
+    return null;
+  }
   return (
     <SettingsSection title={t("settings.files.title")} testID="file-panel-settings">
       {rows.length === 0 ? (
