@@ -165,6 +165,7 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
   const sync = createViewedTimelineSync({
     replaceDemandedAgentIds: () => undefined,
     prepare: async () => undefined,
+    isArchived: () => false,
     canCheckFreshness: () => false,
     applyCurrentTimeline: () => undefined,
     observe: (agentIds) => {
