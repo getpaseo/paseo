@@ -25,6 +25,7 @@ import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
 import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { runProviderRefreshWithDeadline } from "./provider-refresh-deadline.js";
 import {
   isStaleProviderSessionError,
   StaleProviderSessionError,
@@ -2626,6 +2627,140 @@ describe("pending provider responses", () => {
       );
     },
   );
+
+  test.each([
+    { offered: true, cancels: true },
+    { offered: false, cancels: false },
+  ])(
+    "tells the provider to cancel an abandoned catalogue request: offered $offered",
+    async ({ offered, cancels }) => {
+      const controller = new AbortController();
+      const inputs: ProviderInput[] = [];
+      await withObservedProvider(
+        {
+          capabilities: offered ? [...CAPABILITIES, "request.cancel"] : CAPABILITIES,
+          async handleInput(input) {
+            inputs.push(input);
+            if (input.type === "catalog") setImmediate(() => controller.abort(new Error("Late")));
+            return input.type === "catalog" || input.type === "request.cancel";
+          },
+        },
+        async (client) => {
+          await expect(
+            client.fetchCatalog({ scope: "global" }, { signal: controller.signal }),
+          ).rejects.toThrow("Late");
+          await nextTurn();
+        },
+      );
+      const catalog = inputs.find((input) => input.type === "catalog");
+      expect(inputs.filter((input) => input.type === "request.cancel")).toEqual(
+        cancels && catalog && "requestId" in catalog
+          ? [{ type: "request.cancel", requestId: catalog.requestId }]
+          : [],
+      );
+    },
+  );
+});
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function readIfPresent(file: string): Promise<string> {
+  const { readFile } = await import("node:fs/promises");
+  return readFile(file, "utf8").catch(() => "");
+}
+
+describe("timed-out plugin catalogue refresh", () => {
+  test("stops the ACP probe stuck in session/new and keeps the provider's running agent", async () => {
+    const logger = createTestLogger();
+    const home = await mkdtemp(join(tmpdir(), "paseo-acp-refresh-timeout-"));
+    const catalogCwd = join(home, "catalog");
+    const storage = new AgentStorage(join(home, "agents"), logger);
+    const script = join(home, "agent.cjs");
+    const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+    await mkdir(catalogCwd);
+    // The catalogue probe records its PID, never answers session/new, and ignores stdin EOF.
+    await writeFile(
+      script,
+      `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const { createInterface } = require("node:readline");
+      const catalogCwd = ${JSON.stringify(catalogCwd)};
+      const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") {
+          send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+        } else if (msg.method === "session/new" && msg.params.cwd === catalogCwd) {
+          setInterval(() => undefined, 1_000);
+          fs.writeFileSync(path.join(catalogCwd, "probe.pid"), String(process.pid));
+        } else if (msg.method === "session/new") {
+          send({ id: msg.id, result: { sessionId: "live-1", configOptions: [] } });
+        } else if (msg.method === "session/prompt") {
+          send({ method: "session/update", params: { sessionId: "live-1", update: {
+            sessionUpdate: "agent_message_chunk", content: { type: "text", text: "still here" },
+          } } });
+          send({ id: msg.id, result: { stopReason: "end_turn" } });
+        } else if (msg.method === "session/close") {
+          send({ id: msg.id, result: {} });
+        }
+      });
+      `,
+    );
+    const registration = runAcpProvider({
+      id: "hanging-catalog-acp",
+      label: "Hanging Catalog ACP",
+      command: [process.execPath, script],
+    });
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([registration]);
+    const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+    try {
+      const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+        workspaceId: undefined,
+      });
+      const client = plugins.clients()[registration.id]!;
+
+      const refresh = runProviderRefreshWithDeadline({
+        label: registration.label,
+        timeoutMs: 1_000,
+        operation: (context) =>
+          client.fetchCatalog({ scope: "workspace", cwd: catalogCwd }, context),
+      });
+      const pidFile = join(catalogCwd, "probe.pid");
+      await expect.poll(() => readIfPresent(pidFile), { timeout: 5_000 }).not.toBe("");
+      const pid = Number(await readFile(pidFile, "utf8"));
+      await expect(refresh).rejects.toThrow(
+        "Timed out refreshing Hanging Catalog ACP after 1000ms",
+      );
+      await expect.poll(() => isRunning(pid), { timeout: 3_000 }).toBe(false);
+
+      const next = await sendPreparedPromptToAgent({
+        agentManager: manager,
+        agentStorage: storage,
+        agentId: agent.id,
+        prompt: "are you still there?",
+        logger,
+      });
+      expect(next.disposition).toBe("turn_started");
+      if (next.disposition === "turn_started") await next.started;
+      await expect
+        .poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 })
+        .toBe("idle");
+    } finally {
+      await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+      await plugins.shutdown();
+      await storage.flush();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
 });
 
 /** A diagnostic context for a provider that does not report its installation. */

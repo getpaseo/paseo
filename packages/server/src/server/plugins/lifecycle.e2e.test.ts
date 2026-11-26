@@ -892,7 +892,13 @@ const PROVIDER_ID = "shutdown-provider";
 
 async function createProviderPlugin(
   root: string,
-  options: { acknowledgeClose: boolean; hooks?: string; reportOpen?: boolean } = {
+  options: {
+    acknowledgeClose: boolean;
+    hooks?: string;
+    reportOpen?: boolean;
+    /** Catalogues for this cwd never answer; their request.cancel writes `marker`. */
+    hangingCatalog?: { cwd: string; marker: string };
+  } = {
     acknowledgeClose: true,
   },
 ): Promise<string> {
@@ -907,13 +913,16 @@ async function createProviderPlugin(
   );
   await writeFile(
     path.join(directory, "index.server.ts"),
-    `import type {
+    `import { writeFileSync } from "node:fs";
+import type {
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 
-const CAPABILITIES = ["prompt.message", "session.persistence"];
+const CAPABILITIES = ["prompt.message", "session.persistence", "request.cancel"];
+const HANGING_CATALOG = ${JSON.stringify(options.hangingCatalog ?? null)};
+const hungRequests = new Set<string>();
 
 const provider: ProviderRegistration = {
   id: ${JSON.stringify(PROVIDER_ID)},
@@ -926,6 +935,14 @@ const provider: ProviderRegistration = {
       version: 1,
       capabilities: CAPABILITIES,
       async send(input: ProviderInput) {
+        if (input.type === "request.cancel") {
+          if (HANGING_CATALOG && hungRequests.delete(input.requestId)) writeFileSync(HANGING_CATALOG.marker, input.requestId);
+          return;
+        }
+        if (input.type === "catalog" && HANGING_CATALOG && input.cwd === HANGING_CATALOG.cwd) {
+          hungRequests.add(input.requestId);
+          return;
+        }
         if (input.type === "catalog") {
           emit({
             type: "catalog",
@@ -1089,6 +1106,53 @@ test("reloading a plugin leaves a completed plugin-provider agent without an err
   expect(JSON.stringify(timeline.entries)).not.toContain("Provider connection closed");
 
   await client.sendMessage(agent.id, "after reload");
+  expect((await client.waitForFinish(agent.id, 30_000)).status).toBe("idle");
+}, 60_000);
+
+test("a timed-out catalogue refresh cancels its plugin request and keeps the provider's agent running", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-refresh-cancel-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  const workspace = path.join(root, "workspace");
+  const hangingWorkspace = path.join(root, "hanging-workspace");
+  const marker = path.join(root, "canceled-request");
+  await mkdir(workspace, { recursive: true });
+  await mkdir(hangingWorkspace, { recursive: true });
+  const pluginDirectory = await createProviderPlugin(root, {
+    acknowledgeClose: true,
+    hangingCatalog: { cwd: hangingWorkspace, marker },
+  });
+
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: path.join(root, "daemon"),
+    staticDir: path.join(root, "static"),
+    pluginsEnabled: true,
+    providerCatalogRefreshTimeoutMs: 1_000,
+    plugins: {
+      "shutdown-provider-plugin": { source: "directory", path: pluginDirectory, enabled: true },
+    },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.1" });
+  onTestFinished(async () => {
+    await client.close();
+    await daemon.close();
+  });
+  await client.connect();
+  await client.fetchAgents({ subscribe: {} });
+  const agent = await client.createAgent({
+    provider: PROVIDER_ID,
+    model: "shutdown-model",
+    cwd: workspace,
+    title: "Running beside a refresh",
+  });
+  await client.sendMessage(agent.id, "first");
+  await client.waitForFinish(agent.id, 30_000);
+
+  await client.refreshProvidersSnapshot({ cwd: hangingWorkspace, providers: [PROVIDER_ID] });
+  await expect
+    .poll(() => readFile(marker, "utf8").catch(() => ""), { timeout: 10_000 })
+    .not.toBe("");
+
+  await client.sendMessage(agent.id, "second");
   expect((await client.waitForFinish(agent.id, 30_000)).status).toBe("idle");
 }, 60_000);
 

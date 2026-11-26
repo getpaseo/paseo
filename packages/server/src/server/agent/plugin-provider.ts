@@ -447,6 +447,12 @@ class ProviderRuntime {
       pending.reject(
         signal?.reason instanceof Error ? signal.reason : new Error("Provider request aborted"),
       );
+      // Without the cancel, a provider keeps the abandoned work and whatever it spawned (#10734).
+      if (connection.capabilities.includes("request.cancel")) {
+        void connection
+          .send({ type: "request.cancel", requestId: input.requestId })
+          .catch(() => undefined);
+      }
     };
     signal?.addEventListener("abort", abort, { once: true });
     try {
