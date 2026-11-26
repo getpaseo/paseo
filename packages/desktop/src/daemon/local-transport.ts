@@ -6,6 +6,7 @@ import {
   validatePort,
   validateSshHost,
 } from "@getpaseo/protocol/ssh-transport";
+import { stripAppImageRuntimeEnv } from "@getpaseo/server/process";
 import { BrowserWindow } from "electron";
 import { WebSocket, type RawData } from "ws";
 
@@ -193,6 +194,15 @@ export function resolveSshFailureDetail(failure: string | null, stderr: string):
   return failure ?? (stderr.trim() || null);
 }
 
+export function buildSshSpawnEnv(
+  baseEnv: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  stripAppImageRuntimeEnv(env, { platform });
+  return env;
+}
+
 function createSshProxy(target: SshTransportTarget): Promise<TransportEndpoint> {
   let server: Server | null = null;
   let socket: Socket | null = null;
@@ -218,6 +228,7 @@ function createSshProxy(target: SshTransportTarget): Promise<TransportEndpoint> 
       server = null;
 
       child = spawn("ssh", buildSshArgs(target), {
+        env: buildSshSpawnEnv(),
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
