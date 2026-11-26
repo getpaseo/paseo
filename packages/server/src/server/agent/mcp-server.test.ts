@@ -996,6 +996,35 @@ describe("bundled Paseo skill", () => {
       await server.close();
     }
   });
+
+  it.each([
+    [
+      "create_agent",
+      "Hide the agent from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
+    ],
+    [
+      "create_workspace",
+      "Hide the workspace from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
+    ],
+  ])("describes %s background without suggesting when to set it", async (name, description) => {
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      logger: createTestLogger(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const { tools } = await client.listTools();
+      const tool = tools.find((entry) => entry.name === name)!;
+      expect(tool.inputSchema.properties!.background).toMatchObject({ description });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });
 
 describe("Paseo tool timeline presentation", () => {
