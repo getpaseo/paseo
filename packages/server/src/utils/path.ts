@@ -246,7 +246,7 @@ export function looksLikeDefiniteWindowsPath(value: string): boolean {
   );
 }
 
-function normalizePathForComparison(value: string, compareAsWindows: boolean): string {
+export function normalizePathForComparison(value: string, compareAsWindows: boolean): string {
   const normalized = normalizePathPreservingCase(value, compareAsWindows);
   return compareAsWindows ? normalized.toLowerCase() : normalized;
 }

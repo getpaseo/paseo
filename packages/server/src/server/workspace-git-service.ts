@@ -7,6 +7,7 @@ import pLimit from "p-limit";
 import type pino from "pino";
 import type { ForgeWeb, ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import type { CheckoutReadSession } from "../utils/checkout-read-session.js";
 import type { CheckoutContext, UpstreamState } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
@@ -19,6 +20,7 @@ import {
   getCheckoutRefDerivedState,
   getCheckoutSnapshotFacts,
   getCheckoutShortstat,
+  getCheckoutIdentity,
   getCheckoutStatus,
   getCheckoutWorktreeState,
   getPullRequestStatus,
@@ -367,6 +369,7 @@ export type WorkspaceGitSnapshotOptions =
 type WorkspaceGitRefreshOrigin = "demand" | "observation";
 
 export interface WorkspaceGitCheckoutReadOptions {
+  readSession?: CheckoutReadSession;
   /** Git lane for the fresh checkout read; defaults to the caller's ambient lane. */
   priority?: GitProcessPriority;
 }
@@ -417,6 +420,7 @@ interface WorkspaceGitServiceDependencies {
   subscribe: SubscribeToFileChanges;
   getCheckoutSnapshotFacts: typeof getCheckoutSnapshotFacts;
   getCheckoutRefDerivedState: typeof getCheckoutRefDerivedState;
+  getCheckoutIdentity: typeof getCheckoutIdentity;
   getCheckoutStatus: typeof getCheckoutStatus;
   getCheckoutShortstat: typeof getCheckoutShortstat;
   getCheckoutWorktreeState: typeof getCheckoutWorktreeState;
@@ -637,6 +641,7 @@ function buildDefaultWorkspaceGitServiceDeps(
     subscribe,
     getCheckoutSnapshotFacts,
     getCheckoutRefDerivedState,
+    getCheckoutIdentity,
     getCheckoutStatus,
     getCheckoutShortstat,
     getCheckoutWorktreeState,
@@ -875,16 +880,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<ProjectCheckoutLitePayload> {
     this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
-    const status = await this.deps.getCheckoutStatus(normalizedCwd, {
+    const identity = await this.deps.getCheckoutIdentity(normalizedCwd, {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.logger,
+      readSession: options?.readSession,
       ...(options?.priority
         ? { runGitCommand: createRunGitCommand("checkout-read", { priority: options.priority }) }
         : {}),
     });
     const cached = this.getCachedSnapshot(normalizedCwd);
-    if (cached && cached.git.isGit !== status.isGit) {
+    if (cached && cached.git.isGit !== identity.isGit) {
       // A fresh checkout read discovered a repository transition. Keep the
       // shared snapshot current before exposing the new project capability.
       await this.getSnapshot(normalizedCwd, {
@@ -893,7 +899,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         reason: "checkout-classification-changed",
       });
     }
-    if (!status.isGit) {
+    if (!identity.isGit) {
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
         isGit: false,
         currentBranch: null,
@@ -905,11 +911,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     return checkoutLiteFromGitSnapshot(normalizedCwd, {
       isGit: true,
-      currentBranch: status.currentBranch,
-      remoteUrl: status.remoteUrl,
-      repoRoot: status.repoRoot,
-      isPaseoOwnedWorktree: status.isPaseoOwnedWorktree,
-      mainRepoRoot: status.mainRepoRoot,
+      currentBranch: identity.currentBranch,
+      remoteUrl: identity.remoteUrl,
+      repoRoot: identity.repoRoot,
+      isPaseoOwnedWorktree: identity.isPaseoOwnedWorktree,
+      mainRepoRoot: identity.mainRepoRoot,
     });
   }
 

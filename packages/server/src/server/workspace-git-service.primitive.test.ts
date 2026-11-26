@@ -429,7 +429,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
   test("getCheckout surfaces an unexpected Git read failure", async () => {
     const service = createService({
-      getCheckoutStatus: vi.fn(async () => {
+      getCheckoutIdentity: vi.fn(async () => {
         throw new Error("Git read failed");
       }),
     });
