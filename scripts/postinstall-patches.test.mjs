@@ -423,3 +423,20 @@ test("patched @mattermost/react-native-paste-input Android PasteTextInput does n
     );
   }
 });
+
+test("patched react-native-gesture-handler Android root view passes mouse button events to gesture handlers", () => {
+  // Android sends a mouse click's BUTTON_PRESS and BUTTON_RELEASE through dispatchGenericMotionEvent.
+  // Tap ignores the matching DOWN and UP from a mouse, so without these events a click never fires.
+  const gestureHandlerDir =
+    "node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler";
+  const rootView = readFileSync(
+    path.resolve(gestureHandlerDir, "react/RNGestureHandlerRootView.kt"),
+    "utf8",
+  );
+  assert.match(
+    rootView,
+    /dispatchGenericMotionEvent[\s\S]*?ev\.isButtonAction\(\)[\s\S]*?rootHelper!!\.dispatchTouchEvent\(ev\)/,
+  );
+  const extensions = readFileSync(path.resolve(gestureHandlerDir, "react/Extensions.kt"), "utf8");
+  assert.match(extensions, /fun MotionEvent\.isButtonAction\(\)[\s\S]*?ACTION_BUTTON_PRESS/);
+});
