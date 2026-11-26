@@ -636,6 +636,8 @@ Paseo 根据每个调用的 ACP `kind` 生成标准工具卡片：`execute` 显�
 
 如果 Agent 只为当前选中的模型列出 `thought_level` 选项，请设置 `acpOptions.perModelThinkingOptions`。目录发现会依次选中每个模型，并为它记录 Agent 列出的思考选项。没有 `thought_level` 选项的模型不会显示思考选择器。
 
+如果 Agent 启动较慢，且运行中的进程能列出最新的会话，请设置 `acpOptions.keepSessionListProcess`。适配器会保留读取能力时启动的进程，在连接关闭前由它回答所有会话列表请求。列表请求失败或被取消，或者进程退出时，适配器会弃用这个进程，下一次列表请求会启动新进程。
+
 ## 测试与发布 {#test-and-publish}
 
 用真实的 Agent 测试 Provider，而不只是模拟的数据帧：

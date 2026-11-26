@@ -131,6 +131,21 @@ export async function createAcpProviderConnection(
     supportedCapabilities.push("prompt.steer");
   }
   const capabilities = negotiateProviderCapabilities(request.capabilities, supportedCapabilities);
+  let sessionLister: KeptSessionListProcess | undefined;
+  if (options.acpOptions?.keepSessionListProcess && capabilities.includes("session.list")) {
+    // The probe ran with the same launch, cwd, and env that a session list would use.
+    sessionLister = new KeptSessionListProcess(() =>
+      AcpRuntime.start({
+        options,
+        launch: request.launch,
+        clientInfo,
+        boundarySessionId: "sessions",
+        env: {},
+        emit: () => undefined,
+      }),
+    );
+    sessionLister.adopt(probe);
+  }
   const listeners = new Set<(event: ProviderEvent) => void>();
   const sessions = new Map<string, AcpBoundarySession>();
   const inFlight = new Set<Promise<void>>();
@@ -170,9 +185,11 @@ export async function createAcpProviderConnection(
     runtime.rebindRequest(binding);
     return runtime;
   };
-  const warmProbeTimer = setTimeout(discardWarmProbe, WARM_PROBE_IDLE_MS);
-  warmProbeTimer.unref?.();
-  warmProbe = { runtime: probe, timer: warmProbeTimer };
+  if (!sessionLister) {
+    const warmProbeTimer = setTimeout(discardWarmProbe, WARM_PROBE_IDLE_MS);
+    warmProbeTimer.unref?.();
+    warmProbe = { runtime: probe, timer: warmProbeTimer };
+  }
 
   const emit = (event: ProviderEvent) => {
     if (closed) return;
@@ -185,6 +202,7 @@ export async function createAcpProviderConnection(
     clientInfo,
     capabilities,
     sessions,
+    sessionLister,
     emit,
     isClosed: () => closed,
     claimWarmProbe,
@@ -242,6 +260,7 @@ export async function createAcpProviderConnection(
         await Promise.all([
           closingWarmProbe,
           ...active.map(({ runtime }) => runtime.closeSession()),
+          sessionLister?.close(),
         ]);
         listeners.clear();
       })();
@@ -256,6 +275,7 @@ interface AcpConnectionState {
   options: RunAcpProviderOptions;
   capabilities: readonly ProviderCapability[];
   sessions: Map<string, AcpBoundarySession>;
+  sessionLister?: KeptSessionListProcess;
   emit(event: ProviderEvent): void;
   isClosed(): boolean;
   claimWarmProbe(binding: {
@@ -263,6 +283,103 @@ interface AcpConnectionState {
     emit: (event: ProviderEvent) => void;
   }): AcpRuntime | null;
   discardWarmProbe(): void;
+}
+
+interface KeptProcess {
+  ready: Promise<AcpRuntime>;
+  runtime: AcpRuntime | null;
+  active: number;
+  stopped: boolean;
+}
+
+/**
+ * Owns the one ACP process that answers a connection's session lists, for the connection's
+ * lifetime. Lists run concurrently on it. A failed or canceled list, or an exited process, retires
+ * it, so the next list starts a new process instead of reusing one that may be stuck. A retired
+ * process stops once no list is waiting on it.
+ */
+class KeptSessionListProcess {
+  private current: KeptProcess | null = null;
+  private readonly stopping = new Set<Promise<void>>();
+  private closed = false;
+
+  constructor(private readonly start: () => Promise<AcpRuntime>) {}
+
+  adopt(runtime: AcpRuntime): void {
+    this.current = this.track(Promise.resolve(runtime));
+  }
+
+  async run<Value>(
+    operation: (runtime: AcpRuntime) => Promise<Value>,
+    signal: AbortSignal,
+  ): Promise<Value> {
+    signal.throwIfAborted();
+    if (this.closed) throw new Error("ACP provider connection is closed");
+    if (this.current?.runtime && !this.current.runtime.isTransportOpen()) {
+      this.retire(this.current);
+    }
+    const kept = this.current ?? (this.current = this.track(this.start()));
+    kept.active += 1;
+    // Other lists share the process, so a canceled list stops waiting instead of closing it.
+    let cancel!: (reason: unknown) => void;
+    const canceled = new Promise<never>((_resolve, reject) => (cancel = reject));
+    const onAbort = () => cancel(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    const listed = kept.ready.then(operation);
+    listed.catch(() => undefined);
+    try {
+      const result = await Promise.race([listed, canceled]);
+      signal.throwIfAborted();
+      return result;
+    } catch (error) {
+      this.retire(kept);
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      kept.active -= 1;
+      this.stopIfRetired(kept);
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    if (this.current) this.retire(this.current);
+    await Promise.all(this.stopping);
+  }
+
+  private track(ready: Promise<AcpRuntime>): KeptProcess {
+    const kept: KeptProcess = { ready, runtime: null, active: 0, stopped: false };
+    void this.watch(kept);
+    return kept;
+  }
+
+  /** Drops a process that exits while idle, so the next list starts a new one. */
+  private async watch(kept: KeptProcess): Promise<void> {
+    try {
+      kept.runtime = await kept.ready;
+    } catch {
+      return;
+    }
+    await kept.runtime.connection.closed;
+    this.retire(kept);
+  }
+
+  private retire(kept: KeptProcess): void {
+    if (this.current === kept) this.current = null;
+    this.stopIfRetired(kept);
+  }
+
+  private stopIfRetired(kept: KeptProcess): void {
+    if (kept.active > 0 || this.current === kept || kept.stopped) return;
+    kept.stopped = true;
+    const stopping = kept.ready.then(
+      (runtime) => runtime.close(),
+      () => undefined,
+    );
+    const tracked = stopping.catch(() => undefined);
+    this.stopping.add(tracked);
+    void tracked.finally(() => this.stopping.delete(tracked));
+  }
 }
 
 function validateAdmission(
@@ -449,23 +566,24 @@ async function listSessions(
   state: AcpConnectionState,
   signal: AbortSignal,
 ): Promise<void> {
-  await withRequestRuntime(state, {
-    boundarySessionId: "sessions",
-    signal,
-    run: (runtime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit }),
-    publish(selected) {
-      state.emit({
-        type: "sessions",
-        requestId: input.requestId,
-        sessions: selected.map((session) => ({
-          persistence: nativePersistence(session.sessionId),
-          cwd: session.cwd,
-          title: session.title ?? undefined,
-          updatedAt: session.updatedAt ?? undefined,
-        })),
-      });
-    },
-  });
+  const run = (runtime: AcpRuntime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit });
+  const publish = (selected: SessionInfo[]) => {
+    state.emit({
+      type: "sessions",
+      requestId: input.requestId,
+      sessions: selected.map((session) => ({
+        persistence: nativePersistence(session.sessionId),
+        cwd: session.cwd,
+        title: session.title ?? undefined,
+        updatedAt: session.updatedAt ?? undefined,
+      })),
+    });
+  };
+  if (state.sessionLister) {
+    publish(await state.sessionLister.run(run, signal));
+    return;
+  }
+  await withRequestRuntime(state, { boundarySessionId: "sessions", signal, run, publish });
 }
 
 function retireSession(state: AcpConnectionState, sessionId: string): void {
@@ -1107,6 +1225,10 @@ class AcpRuntime {
     }
     this.finalizeDeferredTurn(deferredTurnId, false);
     return true;
+  }
+
+  isTransportOpen(): boolean {
+    return !this.closing && !this.processFailed && !this.connection.signal.aborted;
   }
 
   /** Follows `nextCursor` until `limit` sessions, the last page, or the scan cap. */

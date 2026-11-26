@@ -51,6 +51,11 @@ export type AcpConnector = () => AcpStream | Promise<AcpStream>;
 export interface AcpOptions {
   protocol?: "auto" | "v1";
   startupTimeoutMs?: number;
+  /**
+   * Keep the capability probe running for the connection's lifetime and answer session lists from
+   * it, so repeated imports do not start the agent again. Otherwise every list starts a process.
+   */
+  keepSessionListProcess?: boolean;
   /** Global discovery returns an empty catalog without spawning a process or opening a session. */
   workspaceOnlyCatalog?: boolean;
   /**
