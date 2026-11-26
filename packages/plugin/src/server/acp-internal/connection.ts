@@ -467,6 +467,7 @@ interface ActivePrompt {
   cancelling: boolean;
   wirePromptsInFlight: number;
   wirePromptLane: Promise<void>;
+  diagnostic?: string;
   lastPromptResponseWireSeq: number | null;
   crossedEndTurn: boolean;
   replyState: DeferredReplyState;
@@ -901,9 +902,15 @@ class AcpRuntime {
           });
         }
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
-        if (response.stopReason === "end_turn" && this.shouldDeferTurn(activePrompt)) {
-          await this.settleDeferredPrompt(activePrompt);
-          return undefined;
+        if (response.stopReason === "end_turn") {
+          if (activePrompt.diagnostic) {
+            this.finishPromptTurn(turnId, "failed", { message: activePrompt.diagnostic });
+            return undefined;
+          }
+          if (this.shouldDeferTurn(activePrompt)) {
+            await this.settleDeferredPrompt(activePrompt);
+            return undefined;
+          }
         }
         this.finishPromptTurn(turnId, state);
         return undefined;
@@ -1457,7 +1464,26 @@ class AcpRuntime {
       this.reduceUserMessageChunk(notification.update);
       return;
     }
+    this.trackPromptDiagnostic(notification.update);
     this.reduceUpdate(notification.update, wireSeq);
+  }
+
+  private trackPromptDiagnostic(update: SessionUpdate): void {
+    const detect = this.options.options.acpOptions?.promptDiagnostic;
+    const active = this.activePrompt;
+    if (!detect || !active || this.replayWindow !== null) return;
+    switch (update.sessionUpdate) {
+      case "agent_message_chunk":
+        active.diagnostic =
+          update.content.type === "text" ? detect(update.content.text) : undefined;
+        break;
+      case "agent_thought_chunk":
+      case "tool_call":
+      case "tool_call_update":
+      case "plan":
+        active.diagnostic = undefined;
+        break;
+    }
   }
 
   private reduceUpdate(update: SessionUpdate, wireSeq: number): void {
@@ -1894,6 +1920,7 @@ class AcpRuntime {
         }
         this.fallbackChunkIds.clear();
         active.lastPromptResponseWireSeq = null;
+        active.diagnostic = undefined;
         if (active.replyState === "settled_with_open_tools") active.replyState = "idle";
         const response = await this.call(
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
@@ -1914,13 +1941,7 @@ class AcpRuntime {
             usage: this.lastUsage,
           });
         }
-        if (response.stopReason === "cancelled") {
-          this.finishDeferredTurn(active, { type: "cancel" });
-          return;
-        }
-        if (response.stopReason !== "end_turn" && active.wirePromptsInFlight === 1) {
-          this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
-        }
+        this.settleSteer(active, response.stopReason);
       } catch (error) {
         await this.drainNotifications();
         if (this.closing || this.deferredRetirement || active.deferred !== deferred) return;
@@ -1950,6 +1971,22 @@ class AcpRuntime {
       }
     };
     active.wirePromptLane = active.wirePromptLane.then(runSteer);
+  }
+
+  private settleSteer(active: ActivePrompt, stopReason: string): void {
+    if (stopReason === "cancelled") {
+      this.finishDeferredTurn(active, { type: "cancel" });
+      return;
+    }
+    if (stopReason === "end_turn" && active.diagnostic) {
+      // Keep delivering already accepted steers. The catch path reports this reply's failure.
+      if (active.wirePromptsInFlight > 1) throw new Error(active.diagnostic);
+      this.finishDeferredTurn(active, { type: "fail", error: { message: active.diagnostic } });
+      return;
+    }
+    if (stopReason !== "end_turn" && active.wirePromptsInFlight === 1) {
+      this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
+    }
   }
 
   private async settleDeferredPrompt(active: ActivePrompt): Promise<void> {
@@ -2080,6 +2117,10 @@ class AcpRuntime {
       deferred.timer !== null ||
       this.hasDeferredBlockers()
     ) {
+      return;
+    }
+    if (active.diagnostic) {
+      this.finishDeferredTurn(active, { type: "fail", error: { message: active.diagnostic } });
       return;
     }
     this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
