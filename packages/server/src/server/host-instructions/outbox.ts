@@ -147,11 +147,22 @@ export class HostInstructionOutbox {
         const parsed = HostInstructionReceiptSchema.safeParse(receipt);
         if (!parsed.success || parsed.data.id !== id) continue;
         const confirmed = parsed.data;
-        const cancellationPending =
-          this.requireRequest(id).cancellationPending &&
-          !terminal(confirmed.state) &&
-          confirmed.state !== "running";
-        await this.update(id, { receipt: confirmed, cancellationPending });
+        await this.writer.readSettled(() => {
+          const saved = this.requireRequest(id);
+          const cancellationPending =
+            saved.cancellationPending &&
+            !terminal(confirmed.state) &&
+            confirmed.state !== "running";
+          if (
+            saved.receipt?.id === confirmed.id &&
+            saved.receipt.state === confirmed.state &&
+            saved.receipt.reply === confirmed.reply &&
+            saved.cancellationPending === cancellationPending
+          ) {
+            return;
+          }
+          return this.update(id, { receipt: confirmed, cancellationPending });
+        });
       }
     }
   }

@@ -91,6 +91,37 @@ describe("host instruction outbox", () => {
     expect((await outbox.status(pending.id)).state).toBe("awaiting_approval");
   });
 
+  it("writes receipts only when the returned state or reply changes", async () => {
+    const { id } = await outbox.submit(registration, request);
+    online = true;
+    await outbox.flush(registration);
+    expect((await outbox.status(id)).state).toBe("awaiting_approval");
+
+    const poll = vi.spyOn(transport, "status");
+    const persist = vi.spyOn(privateFiles, "writePrivateFileAtomic");
+    try {
+      await outbox.flush(registration);
+      await outbox.flush(registration);
+      expect(poll).toHaveBeenCalledTimes(2);
+      expect(persist).not.toHaveBeenCalled();
+
+      poll.mockResolvedValue({ id, state: "running" });
+      await outbox.flush(registration);
+      expect(persist).toHaveBeenCalledTimes(1);
+
+      poll.mockResolvedValue({ id, state: "running", reply: "Build passed" });
+      await outbox.flush(registration);
+      await outbox.flush(registration);
+      expect(persist).toHaveBeenCalledTimes(2);
+    } finally {
+      persist.mockRestore();
+      poll.mockRestore();
+    }
+
+    outbox = await HostInstructionOutbox.open(path.join(home, "source"), transport, now);
+    expect(await outbox.status(id)).toMatchObject({ state: "running", reply: "Build passed" });
+  });
+
   it("keeps delivering later requests after a rejected exchange", async () => {
     online = true;
     const rejected = await outbox.submit(registration, {
