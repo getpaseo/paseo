@@ -234,6 +234,45 @@ test.each([{ title: "Changed" }, { labels: { changed: "true" } }, { background: 
   },
 );
 
+test("a helper's kind and workspace are read-only, and survive a hook that omits them", async () => {
+  const helperRequest = {
+    agentId: "agent",
+    workspaceId: null,
+    provider: "codex",
+    cwd: "/project",
+    title: null,
+    background: false,
+    labels: {},
+    metadata: {},
+    helper: { kind: "commit-message" as const, workspaceId: "wks_1" },
+    tools: [],
+    mcpServers: {},
+    env: {},
+    reason: "create" as const,
+    purpose: "interactive" as const,
+  };
+  const omitting = new PluginHookHandlers(() => {});
+  omitting.addHook("agent.open.before", async ({ request }) => {
+    const { helper: _helper, ...rest } = request;
+    return { ...rest, env: { HOOK: "1" } };
+  });
+  await expect(
+    omitting.invoke("operation", "agent.open.before", helperRequest, paseo),
+  ).resolves.toMatchObject({
+    env: { HOOK: "1" },
+    helper: { kind: "commit-message", workspaceId: "wks_1" },
+  });
+
+  const changing = new PluginHookHandlers(() => {});
+  changing.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    helper: { kind: "pull-request", workspaceId: "wks_2" },
+  }));
+  await expect(
+    changing.invoke("operation", "agent.open.before", helperRequest, paseo),
+  ).rejects.toThrow("agent.open.before hooks can only change env");
+});
+
 test("new request-changing registrations compose with legacy registrations in registration order", async () => {
   const hooks = new PluginHookHandlers(() => {});
   hooks.before("workspace.create", ({ request }) => ({ ...request, title: "legacy" }));

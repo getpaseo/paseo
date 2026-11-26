@@ -105,6 +105,8 @@ interface RecordedGitMutationCalls {
 interface RecordedGeneratorCalls {
   generateCommitMessage: string[];
   generatePullRequestText: Array<{ cwd: string; baseRef?: string }>;
+  /** The workspace each request named, in call order. */
+  workspaceIds: Array<string | undefined>;
 }
 
 function makeCheckoutSession(options?: {
@@ -129,6 +131,7 @@ function makeCheckoutSession(options?: {
   const generatorCalls: RecordedGeneratorCalls = {
     generateCommitMessage: [],
     generatePullRequestText: [],
+    workspaceIds: [],
   };
   const host: CheckoutSessionHost = {
     emit: (msg) => emitted.push(msg),
@@ -155,12 +158,14 @@ function makeCheckoutSession(options?: {
     ...options?.gitMutation,
   };
   const gitMetadataGenerator: GitMetadataGenerator = {
-    generateCommitMessage: async (cwd) => {
+    generateCommitMessage: async (cwd, context) => {
       generatorCalls.generateCommitMessage.push(cwd);
+      generatorCalls.workspaceIds.push(context?.workspaceId);
       return "";
     },
-    generatePullRequestText: async (cwd, baseRef) => {
+    generatePullRequestText: async (cwd, baseRef, context) => {
       generatorCalls.generatePullRequestText.push({ cwd, baseRef });
+      generatorCalls.workspaceIds.push(context?.workspaceId);
       return { title: "", body: "" };
     },
     ...options?.gitMetadataGenerator,
@@ -814,12 +819,15 @@ describe("CheckoutSession", () => {
       await checkout.handleCheckoutCommitRequest({
         type: "checkout_commit_request",
         cwd: "/repo",
+        workspaceId: "wks_1",
         message: "",
         addAll: true,
         requestId: "c1",
       });
 
       expect(generatorCalls.generateCommitMessage).toEqual(["/repo"]);
+      // The commit-message helper is told the workspace the commit comes from.
+      expect(generatorCalls.workspaceIds).toEqual(["wks_1"]);
       expect(emitted).toEqual([
         {
           type: "checkout_commit_response",

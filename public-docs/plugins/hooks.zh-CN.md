@@ -300,14 +300,15 @@ setup 在工作区注册并发出 `workspace.create.after` 之后开始，与第
 
 **`agent.create.before.config`** 使用 `AgentSessionConfig`：
 
-| 字段                         | 约束                                                     |
-| ---------------------------- | -------------------------------------------------------- |
-| `provider`, `model`          | 独立的字段；修改 Provider 可能需要同时修改模型/模式/选项 |
-| `modeId`, `thinkingOptionId` | 特定于 Provider 的选择                                   |
-| `title`, `systemPrompt`      | Agent 配置                                               |
-| `providerOptions`            | Provider 选项，包括速度和自动批准的选择                  |
-| `mcpServers`, `toolPolicy`   | MCP 配置和精确的工具预批准                               |
-| `cwd`                        | 不能修改                                                 |
+| 字段                         | 约束                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `provider`, `model`          | 独立的字段；修改 Provider 可能需要同时修改模型/模式/选项                                                              |
+| `modeId`, `thinkingOptionId` | 特定于 Provider 的选择                                                                                                |
+| `title`, `systemPrompt`      | Agent 配置                                                                                                            |
+| `providerOptions`            | Provider 选项，包括速度和自动批准的选择                                                                               |
+| `mcpServers`, `toolPolicy`   | MCP 配置和精确的工具预批准                                                                                            |
+| `paseoTools`                 | 为此 Agent 收窄 Provider 的 [Paseo 工具策略](/docs/mcp#limit-paseo-tools-by-provider)；需要宿主声明 `agentPaseoTools` |
+| `cwd`                        | 不能修改                                                                                                              |
 
 ### 修改已保存的配置 {#change-saved-configuration}
 
@@ -392,6 +393,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | `background`  | 只读；[后台 Agent](#background-agents) 为 `true`。在创建时确定。                                                           |
 | `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                                       |
 | `metadata`    | 只读的 JSON 映射；Agent 上已保存的[元数据](#metadata)。                                                                    |
+| `helper`      | 只读的 `{ kind, workspaceId }`，只出现在 Paseo 自己的辅助 Agent 上。参阅 [Paseo 的辅助 Agent](#helper-agents)。            |
 | `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。                   |
 | `mcpServers`  | 可编辑的服务器映射，仅用于启动且仅包含本插件的条目。参阅[注入 MCP 服务器](#inject-mcp-servers)。                           |
 | `reason`      | `create`、`resume`、`refresh`、`import`                                                                                    |
@@ -416,6 +418,20 @@ server.addHook("agent.open.before", async ({ request }) => ({
 - harness 不一定在 Agent 的目录中启动。Codex 在 daemon 的目录中启动它，OpenCode 在 Paseo 主目录下的 `opencode-home` 目录中启动其服务器。两者都通过各自的协议发送会话目录。如果启动器需要该目录，把 `request.cwd` 放进包装的参数中。
 - 在包装内保持系统临时目录可见。Paseo 在启动 Pi 之前把 Pi 扩展写入该目录，Claude Code 也把工具输出写入该目录。如果启动器用一个空的私有目录遮住它，这些会话就会失败。
 - 包装覆盖 Paseo 为会话启动的进程：harness、Paseo 为 Agent 托管的 stdio MCP 服务器，以及 ACP Agent 请求 Paseo 运行的终端。Paseo 的主机终端工具、Provider 可用性和目录探测以及草稿发现都在包装之外运行。
+
+### Paseo 的辅助 Agent {#helper-agents}
+
+Paseo 会启动短暂运行的辅助 Agent，用来撰写提交信息（`commit-message`）、拉取请求的标题和正文（`pull-request`），以及新工作区的标题和分支名（`workspace-name`）。它们不经过 `agent.create.before`，也不属于任何工作区，所以 `workspaceId` 为 `null`。`helper.workspaceId` 指出辅助 Agent 读取的是哪个工作区的内容。Paseo 不知道时它为 `null`，例如提交或拉取请求不是从某个工作区发起的，或者来自多个工作区共用的检出。
+
+辅助 Agent 运行时关闭 Paseo 的工具。要让工作区的辅助 Agent 在该工作区的 Agent 运行的地方运行，就按 `helper.workspaceId` 包装它们：
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => {
+  const workspaceId = request.workspaceId ?? request.helper?.workspaceId ?? null;
+  if (!workspaceId || !isSandboxed(workspaceId)) return undefined;
+  return { ...request, wrap: sandboxWrap(workspaceId, request.cwd) };
+});
+```
 
 ### 在每次打开会话时追加指令 {#append-instructions-on-every-session-opening}
 

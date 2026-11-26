@@ -122,6 +122,14 @@ const beforeSchemas = {
       labels: z.record(z.string(), z.string()),
       // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
       metadata: z.record(z.string(), z.custom<JsonValue>()).optional(),
+      // Read-only, and only on Paseo's own helpers; omitted means unchanged.
+      helper: z
+        .object({
+          kind: z.enum(["commit-message", "pull-request", "workspace-name"]),
+          workspaceId: z.string().nullable(),
+        })
+        .strict()
+        .optional(),
       appendSystemPrompt: z.array(z.string()).optional(),
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
@@ -312,7 +320,8 @@ function changesSessionOpenTarget(previous: SessionOpenRequest, next: SessionOpe
     previous.title !== next.title ||
     (next.background !== undefined && previous.background !== next.background) ||
     !isDeepStrictEqual(previous.labels, next.labels) ||
-    (next.metadata !== undefined && !isDeepStrictEqual(previous.metadata, next.metadata))
+    (next.metadata !== undefined && !isDeepStrictEqual(previous.metadata, next.metadata)) ||
+    (next.helper !== undefined && !isDeepStrictEqual(previous.helper, next.helper))
   );
 }
 
@@ -356,6 +365,7 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
       ...withWrap(result, keepSelectedWrap(name, previous.wrap, next.wrap)),
       background: previous.background,
       metadata: previous.metadata,
+      ...(previous.helper ? { helper: previous.helper } : {}),
       ...(next.appendSystemPrompt === undefined && previous.appendSystemPrompt !== undefined
         ? { appendSystemPrompt: previous.appendSystemPrompt }
         : {}),

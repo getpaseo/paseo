@@ -60,6 +60,8 @@ nav: MCP 参考
 
 省略 `paseoTools` 会启用完整的工具目录。把 `enabled` 设为 `false` 会移除整个目录，在 `disabledTools` 中列出确切的工具 ID 则只移除所选的工具。自定义配置不会从 `extends` 继承这一策略；请为每个自定义 Provider ID 分别配置。
 
+Agent 可以用自己的 `paseoTools` 收窄其 Provider 的策略，它在创建 Agent 时设置，例如由插件的 [`agent.create.before`](/docs/plugins/hooks#agentcreatebefore) hook 设置。字段相同。任一策略都可以移除整个目录，两者的 `disabledTools` 会合并，所以 Agent 永远不会得到其 Provider 已移除的工具。Paseo 自己的辅助 Agent（撰写提交信息、拉取请求文本和工作区名称）运行时会移除整个目录。
+
 浏览器工具仍然需要启用浏览器工具并连接一个浏览器主机。仅用于语音的 `speak` 工具不受此策略控制。
 
 这项设置限制的是呈现给 Agent 的工具目录。对于可以通过 shell 访问主机的 Agent，它不是安全边界。

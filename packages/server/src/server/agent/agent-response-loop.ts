@@ -1,7 +1,7 @@
 import { z } from "zod";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
 import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
-import type { AgentManager } from "./agent-manager.js";
+import type { AgentManager, CreateAgentOptions } from "./agent-manager.js";
 
 export interface StructuredGenerationLogger {
   info: (obj: object, msg?: string) => void;
@@ -78,6 +78,8 @@ export interface StructuredAgentGenerationOptions<T> {
   schema: z.ZodType<T> | JsonSchema;
   maxRetries?: number;
   schemaName?: string;
+  /** Which of Paseo's helpers this is, and the workspace it works for; plugins see it on open. */
+  helper?: CreateAgentOptions["helper"];
 }
 
 export interface StructuredAgentGenerationWithFallbackOptions<T> {
@@ -95,6 +97,7 @@ export interface StructuredAgentGenerationWithFallbackOptions<T> {
   schemaName?: string;
   logger?: StructuredGenerationLogger;
   runner?: <TResult>(options: StructuredAgentGenerationOptions<TResult>) => Promise<TResult>;
+  helper?: CreateAgentOptions["helper"];
 }
 
 // Re-export from the legacy module path so existing server consumers keep working.
@@ -356,10 +359,17 @@ export async function generateStructuredAgentResponse<T>(
 ): Promise<T> {
   const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
     options;
-  const agent = await manager.createAgent(agentConfig, agentId, {
-    persistSession,
-    workspaceId: undefined,
-  });
+  // A structured response needs no Paseo tools, and they would reach other agents and workspaces
+  // from text the helper only summarizes.
+  const agent = await manager.createAgent(
+    { ...agentConfig, paseoTools: { enabled: false } },
+    agentId,
+    {
+      persistSession,
+      workspaceId: undefined,
+      ...(options.helper ? { helper: options.helper } : {}),
+    },
+  );
   try {
     const caller: AgentCaller = async (nextPrompt) => {
       const result = await manager.runAgent(agent.id, nextPrompt);
@@ -410,6 +420,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     schemaName,
     logger,
     runner,
+    helper,
   } = options;
 
   if (providers.length === 0) {
@@ -446,6 +457,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
         maxRetries,
         schemaName,
         persistSession,
+        ...(helper ? { helper } : {}),
         agentConfig: {
           ...agentConfigOverrides,
           provider: candidate.provider,

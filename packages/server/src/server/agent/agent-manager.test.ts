@@ -1,4 +1,8 @@
-import type { AttachedAgentTool, PluginSessionsRuntime } from "../plugins/agent-tools.js";
+import type {
+  AttachedAgentTool,
+  PluginSessionsRuntime,
+  SessionOpenWireRequest,
+} from "../plugins/agent-tools.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -4167,6 +4171,47 @@ test("reloadAgentSession preserves the live session when its replacement cannot 
     expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
     expect(manager.getPaseoToolPolicy(created.id)).toEqual({
       disabledTools: ["list_agents"],
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an agent's own Paseo tools policy narrows its provider's and is saved with it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const opened: Array<Pick<SessionOpenWireRequest, "helper" | "workspaceId">> = [];
+  const sessions = instructionPluginSessions(() => []);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    resolvePaseoToolPolicy: () => ({ disabledTools: ["list_agents"] }),
+    pluginSessions: {
+      ...sessions,
+      openSession: async (request) => {
+        opened.push({ helper: request.helper, workspaceId: request.workspaceId });
+        return sessions.openSession(request);
+      },
+    },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, paseoTools: { disabledTools: ["create_agent"] } },
+      undefined,
+      { workspaceId: undefined, helper: { kind: "commit-message", workspaceId: "wks_1" } },
+    );
+    expect(manager.getPaseoToolPolicy(agent.id)).toEqual({
+      enabled: true,
+      disabledTools: ["list_agents", "create_agent"],
+    });
+    // A helper stays out of the workspace it works for.
+    expect(opened).toEqual([
+      { helper: { kind: "commit-message", workspaceId: "wks_1" }, workspaceId: null },
+    ]);
+    await manager.flush();
+    expect((await storage.get(agent.id))?.config?.paseoTools).toEqual({
+      disabledTools: ["create_agent"],
     });
   } finally {
     rmSync(workdir, { recursive: true, force: true });

@@ -776,7 +776,10 @@ export class CheckoutSession {
     try {
       let message = msg.message?.trim() ?? "";
       if (!message) {
-        message = await this.gitMetadataGenerator.generateCommitMessage(cwd);
+        message = await this.gitMetadataGenerator.generateCommitMessage(
+          cwd,
+          msg.workspaceId ? { workspaceId: msg.workspaceId } : {},
+        );
       }
       if (!message) {
         throw new Error("Commit message is required");
@@ -993,7 +996,11 @@ export class CheckoutSession {
       let body = msg.body?.trim() ?? "";
 
       if (!title || !body) {
-        const generated = await this.gitMetadataGenerator.generatePullRequestText(cwd, msg.baseRef);
+        const generated = await this.gitMetadataGenerator.generatePullRequestText(
+          cwd,
+          msg.baseRef,
+          msg.workspaceId ? { workspaceId: msg.workspaceId } : {},
+        );
         if (!title) title = generated.title;
         if (!body) body = generated.body;
       }

@@ -5,7 +5,7 @@ import {
   generateStructuredAgentResponseWithFallback,
   type StructuredGenerationLogger,
 } from "../../agent/agent-response-loop.js";
-import type { AgentManager } from "../../agent/agent-manager.js";
+import type { AgentManager, CreateAgentOptions } from "../../agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "../../agent/provider-snapshot-manager.js";
 import {
   resolveStructuredGenerationProviders,
@@ -28,9 +28,18 @@ export interface PullRequestText {
  * via the agent LLM. The checkout subsystem is the only consumer; it owns the
  * commit/PR commands and asks this for the wording when the user left it blank.
  */
+/** The workspace a request comes from; a checkout can back several. */
+export interface GitMetadataRequestContext {
+  workspaceId?: string;
+}
+
 export interface GitMetadataGenerator {
-  generateCommitMessage(cwd: string): Promise<string>;
-  generatePullRequestText(cwd: string, baseRef?: string): Promise<PullRequestText>;
+  generateCommitMessage(cwd: string, context?: GitMetadataRequestContext): Promise<string>;
+  generatePullRequestText(
+    cwd: string,
+    baseRef?: string,
+    context?: GitMetadataRequestContext,
+  ): Promise<PullRequestText>;
 }
 
 /**
@@ -50,6 +59,7 @@ export interface StructuredTextGenerationRequest<T> {
   schema: z.ZodType<T>;
   schemaName: string;
   agentTitle: string;
+  helper: NonNullable<CreateAgentOptions["helper"]>;
 }
 
 interface GitMetadataLogger {
@@ -142,7 +152,7 @@ export function createGitMetadataGenerator(deps: {
   }
 
   return {
-    async generateCommitMessage(cwd) {
+    async generateCommitMessage(cwd, context) {
       const prompt = await buildPromptForDiff({
         cwd,
         diffOptions: { mode: "uncommitted", includeStructured: true },
@@ -159,13 +169,14 @@ export function createGitMetadataGenerator(deps: {
           schema: COMMIT_MESSAGE_SCHEMA,
           schemaName: "CommitMessage",
           agentTitle: "Commit generator",
+          helper: { kind: "commit-message", workspaceId: context?.workspaceId ?? null },
         },
         { message: COMMIT_MESSAGE_FALLBACK },
       );
       return result.message;
     },
 
-    async generatePullRequestText(cwd, baseRef) {
+    async generatePullRequestText(cwd, baseRef, context) {
       const prompt = await buildPromptForDiff({
         cwd,
         diffOptions: { mode: "base", baseRef, includeStructured: true },
@@ -182,6 +193,7 @@ export function createGitMetadataGenerator(deps: {
           schema: PULL_REQUEST_SCHEMA,
           schemaName: "PullRequest",
           agentTitle: "PR generator",
+          helper: { kind: "pull-request", workspaceId: context?.workspaceId ?? null },
         },
         PULL_REQUEST_FALLBACK,
       );
@@ -204,7 +216,7 @@ export function createAgentStructuredTextGeneration(deps: {
   logger: StructuredGenerationLogger;
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+    async generate({ cwd, prompt, schema, schemaName, agentTitle, helper }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
@@ -221,6 +233,7 @@ export function createAgentStructuredTextGeneration(deps: {
         providers,
         persistSession: false,
         logger: deps.logger,
+        helper,
         agentConfigOverrides: {
           title: agentTitle,
           internal: true,

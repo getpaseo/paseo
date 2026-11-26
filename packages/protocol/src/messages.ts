@@ -546,6 +546,8 @@ const AgentSessionConfigSchema = z.object({
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   providerOptions: ProviderOptionsSchema.optional(),
   toolPolicy: ToolPolicySchema.optional(),
+  // Narrows the provider's Paseo tools policy for this agent; see AgentSessionConfig.paseoTools.
+  paseoTools: ProviderPaseoToolsPolicySchema.optional(),
   systemPrompt: z.string().optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
 });
@@ -2564,6 +2566,9 @@ export const UnsubscribeCheckoutDiffRequestSchema = z.object({
 export const CheckoutCommitRequestSchema = z.object({
   type: z.literal("checkout_commit_request"),
   cwd: z.string(),
+  // The workspace the commit is made from, which the commit-message helper works for. A checkout
+  // can back several workspaces.
+  workspaceId: z.string().optional(),
   message: z.string().optional(),
   addAll: z.boolean().optional(),
   requestId: z.string(),
@@ -2614,6 +2619,8 @@ export const CheckoutDiscardChangesRequestSchema = z.object({
 export const CheckoutPrCreateRequestSchema = z.object({
   type: z.literal("checkout_pr_create_request"),
   cwd: z.string(),
+  // The workspace the pull request is created from, which the PR-text helper works for.
+  workspaceId: z.string().optional(),
   title: z.string().optional(),
   body: z.string().optional(),
   baseRef: z.string().optional(),
@@ -4233,6 +4240,10 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(agentPaseoTools): added after v0.17.5, remove gate after 2027-05-26.
+        // An older daemon drops an agent's config.paseoTools, which would leave Paseo's tools on, so
+        // clients refuse to send it without this.
+        agentPaseoTools: z.boolean().optional(),
       })
       .optional(),
   })

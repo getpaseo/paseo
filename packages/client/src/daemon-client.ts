@@ -3492,6 +3492,14 @@ export class DaemonClient {
     }
   }
 
+  // An older host drops an agent's own Paseo tools policy, which would leave the tools on.
+  private requireAgentPaseoTools(config: { paseoTools?: unknown } | undefined): void {
+    if (config?.paseoTools === undefined) return;
+    if (this.lastServerInfoMessage?.features?.agentPaseoTools !== true) {
+      throw new Error("Update the host to set an agent's Paseo tools.");
+    }
+  }
+
   // Background workspaces are gated once at the transport boundary.
   private requireBackgroundWorkspaces(): void {
     if (this.lastServerInfoMessage?.features?.backgroundWorkspaces !== true) {
@@ -3523,6 +3531,7 @@ export class DaemonClient {
     if (options.background !== undefined) this.requireBackgroundCreation(options);
     if (options.metadata !== undefined) this.requireEntityMetadata();
     const config = resolveAgentConfig(options);
+    this.requireAgentPaseoTools(config);
     const result = await this.creations.createAgent({
       ...options,
       config: this.carriesLegacyOptions(config)
@@ -5102,7 +5111,7 @@ export class DaemonClient {
 
   async checkoutCommit(
     cwd: string,
-    input: { message?: string; addAll?: boolean },
+    input: { message?: string; addAll?: boolean; workspaceId?: string },
     requestId?: string,
   ): Promise<CheckoutCommitPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -5110,6 +5119,7 @@ export class DaemonClient {
       message: {
         type: "checkout_commit_request",
         cwd,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         message: input.message,
         addAll: input.addAll,
       },
@@ -5246,7 +5256,7 @@ export class DaemonClient {
 
   async checkoutPrCreate(
     cwd: string,
-    input: { title?: string; body?: string; baseRef?: string },
+    input: { title?: string; body?: string; baseRef?: string; workspaceId?: string },
     requestId?: string,
   ): Promise<CheckoutPrCreatePayload> {
     return this.sendCorrelatedSessionRequest({
@@ -5254,6 +5264,7 @@ export class DaemonClient {
       message: {
         type: "checkout_pr_create_request",
         cwd,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
         title: input.title,
         body: input.body,
         baseRef: input.baseRef,
@@ -5544,6 +5555,7 @@ export class DaemonClient {
     if (input.metadata !== undefined || input.agent?.metadata !== undefined)
       this.requireEntityMetadata();
     let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+    this.requireAgentPaseoTools(agentConfig);
     if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
       agentConfig = await this.routeLegacyCreateConfig(agentConfig);
     }

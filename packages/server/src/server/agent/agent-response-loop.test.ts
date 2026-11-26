@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import {
   getStructuredAgentResponse,
+  generateStructuredAgentResponse,
   generateStructuredAgentResponseWithFallback,
   StructuredAgentFallbackError,
   StructuredAgentResponseError,
@@ -328,5 +329,46 @@ describe("generateStructuredAgentResponseWithFallback", () => {
         },
       }),
     ).rejects.toBeInstanceOf(StructuredAgentFallbackError);
+  });
+});
+
+describe("generateStructuredAgentResponse", () => {
+  it("runs the helper with Paseo's tools off and tells plugins what it is for", async () => {
+    const created: unknown[][] = [];
+    const manager = {
+      createAgent: async (...args: unknown[]) => {
+        created.push(args);
+        return { id: "helper-1" };
+      },
+      runAgent: async () => ({ finalText: '{"message":"Add tests"}', timeline: [] }),
+      closeAgent: async () => undefined,
+      deleteAgentState: async () => undefined,
+    } as unknown as AgentManager;
+
+    const result = await generateStructuredAgentResponse({
+      manager,
+      agentConfig: { provider: "claude", cwd: "/project", internal: true },
+      prompt: "Write a commit message",
+      schema: z.object({ message: z.string() }),
+      helper: { kind: "commit-message", workspaceId: "wks_1" },
+    });
+
+    expect(result).toEqual({ message: "Add tests" });
+    expect(created).toEqual([
+      [
+        {
+          provider: "claude",
+          cwd: "/project",
+          internal: true,
+          paseoTools: { enabled: false },
+        },
+        undefined,
+        {
+          persistSession: undefined,
+          workspaceId: undefined,
+          helper: { kind: "commit-message", workspaceId: "wks_1" },
+        },
+      ],
+    ]);
   });
 });

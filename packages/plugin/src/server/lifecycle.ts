@@ -124,6 +124,19 @@ export interface PluginHookAgent {
   metadata: Record<string, JsonValue>;
 }
 
+/**
+ * One of Paseo's own helper agents, which write text from a workspace's content: commit messages,
+ * pull request titles and bodies, and a new workspace's title and branch name.
+ */
+export interface PluginAgentHelper {
+  readonly kind: "commit-message" | "pull-request" | "workspace-name";
+  /**
+   * The workspace the helper works for, or `null` when Paseo doesn't know it. The helper itself
+   * belongs to no workspace, so the request's own `workspaceId` stays `null`.
+   */
+  readonly workspaceId: string | null;
+}
+
 export interface PluginSessionOpenRequest {
   agentId: string;
   workspaceId: string | null;
@@ -136,6 +149,8 @@ export interface PluginSessionOpenRequest {
   readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
+  /** Set when the agent is one of Paseo's helpers. Paseo's tools are off for helpers. */
+  readonly helper?: PluginAgentHelper;
   /** Instructions appended for this open; not saved on the agent. */
   appendSystemPrompt?: string[];
   tools: AgentToolDefinition[];

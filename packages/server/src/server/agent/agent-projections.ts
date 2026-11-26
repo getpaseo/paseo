@@ -458,6 +458,14 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
       preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })),
     };
   }
+  if (config.paseoTools) {
+    serializable.paseoTools = {
+      ...config.paseoTools,
+      ...(config.paseoTools.disabledTools
+        ? { disabledTools: [...config.paseoTools.disabledTools] }
+        : {}),
+    };
+  }
   if (config.systemPrompt) {
     serializable.systemPrompt = config.systemPrompt;
   }

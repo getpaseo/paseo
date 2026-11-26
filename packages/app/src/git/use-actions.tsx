@@ -37,6 +37,7 @@ import { type WorktreeArchiveWarningLabels } from "@/git/worktree-archive-warnin
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { readValidatedString } from "@/storage/validated-storage";
+import { resolveCheckoutWorkspaceId } from "@/git/checkout-workspace";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -455,6 +456,16 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     s.getStatus({ serverId, cwd, actionId: "merge-from-base" }),
   );
 
+  const sessionWorkspaces = useSessionStore((state) => state.sessions[serverId]?.workspaces);
+  const workspaceId = useMemo(
+    () =>
+      resolveCheckoutWorkspaceId({
+        workspaces: sessionWorkspaces,
+        activeWorkspaceSelection,
+        cwd,
+      }),
+    [activeWorkspaceSelection, cwd, sessionWorkspaces],
+  );
   const runCommit = useCheckoutGitActionsStore((s) => s.commit);
   const runPull = useCheckoutGitActionsStore((s) => s.pull);
   const runPush = useCheckoutGitActionsStore((s) => s.push);
@@ -488,7 +499,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
 
   // Handlers
   const handleCommit = useCallback(() => {
-    void runCommit({ serverId, cwd })
+    void runCommit({ serverId, cwd, workspaceId })
       .then(() => {
         toastActionSuccess(t("workspace.git.actions.commit.success"));
         return;
@@ -496,7 +507,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       .catch((err) => {
         toastActionError(err, t("workspace.git.actions.toasts.failedCommit"));
       });
-  }, [cwd, runCommit, serverId, t, toastActionError, toastActionSuccess]);
+  }, [cwd, runCommit, serverId, t, toastActionError, toastActionSuccess, workspaceId]);
 
   const handlePull = useCallback(() => {
     void runPull({ serverId, cwd })
@@ -533,7 +544,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
 
   const handleCreatePr = useCallback(() => {
     void persistShipDefault("pr");
-    void runCreatePr({ serverId, cwd })
+    void runCreatePr({ serverId, cwd, workspaceId })
       .then(() => {
         toastActionSuccess(t("workspace.git.actions.createPr.success", forgeVocabulary(forge)));
         return;
@@ -550,6 +561,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     t,
     toastActionError,
     toastActionSuccess,
+    workspaceId,
   ]);
 
   const handleMergePr = useCallback(

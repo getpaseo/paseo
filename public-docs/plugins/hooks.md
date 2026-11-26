@@ -303,14 +303,15 @@ Receives `{ request: { config, env?, metadata, workspaceId } }`. Config and `met
 
 **`agent.create.before.config`** uses `AgentSessionConfig`:
 
-| Fields                       | Constraint                                                                 |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `provider`, `model`          | Separate fields; changing provider may require changing model/mode/options |
-| `modeId`, `thinkingOptionId` | Provider-specific selections                                               |
-| `title`, `systemPrompt`      | Agent configuration                                                        |
-| `providerOptions`            | Provider options, including speed and auto-accept selections               |
-| `mcpServers`, `toolPolicy`   | MCP configuration and exact-tool preapprovals                              |
-| `cwd`                        | Cannot change                                                              |
+| Fields                       | Constraint                                                                                                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`, `model`          | Separate fields; changing provider may require changing model/mode/options                                                                          |
+| `modeId`, `thinkingOptionId` | Provider-specific selections                                                                                                                        |
+| `title`, `systemPrompt`      | Agent configuration                                                                                                                                 |
+| `providerOptions`            | Provider options, including speed and auto-accept selections                                                                                        |
+| `mcpServers`, `toolPolicy`   | MCP configuration and exact-tool preapprovals                                                                                                       |
+| `paseoTools`                 | Narrows the provider's [Paseo tools policy](/docs/mcp#limit-paseo-tools-by-provider) for this agent; needs a host that advertises `agentPaseoTools` |
+| `cwd`                        | Cannot change                                                                                                                                       |
 
 ### Change saved configuration
 
@@ -396,6 +397,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                                                     |
 | `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                                                             |
 | `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                                                    |
+| `helper`      | Read-only `{ kind, workspaceId }`, only on Paseo's own helper agents. See [Paseo's helper agents](#helper-agents).                                    |
 | `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).                                        |
 | `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                                                 |
 | `reason`      | `create`, `resume`, `refresh`, `import`                                                                                                               |
@@ -420,6 +422,20 @@ server.addHook("agent.open.before", async ({ request }) => ({
 - The harness does not always start in the agent's directory. Codex starts it in the daemon's directory, and OpenCode starts its server in the `opencode-home` directory under the Paseo home. Both send the session directory over their protocol. If your launcher needs the directory, put `request.cwd` in the wrap's arguments.
 - Keep the system temp directory visible inside the wrap. Paseo writes the Pi extension there before it starts Pi, and Claude Code writes its tool output there. A launcher that hides it behind an empty private directory breaks those sessions.
 - The wrap covers the processes that Paseo starts for the session: the harness, the stdio MCP servers that Paseo hosts for the agent, and the terminals that an ACP agent asks Paseo to run. Paseo's host terminal tools, provider availability and catalog probes, and draft discovery run outside it.
+
+### Paseo's helper agents {#helper-agents}
+
+Paseo starts short-lived helper agents to write commit messages (`commit-message`), pull request titles and bodies (`pull-request`), and a new workspace's title and branch name (`workspace-name`). They skip `agent.create.before` and belong to no workspace, so `workspaceId` is `null`. `helper.workspaceId` names the workspace whose content the helper reads. It is `null` when Paseo doesn't know it, for a commit or pull request made outside a workspace or from a checkout that several workspaces share.
+
+Helpers run with Paseo's tools off. To run a workspace's helpers where its agents run, wrap them by `helper.workspaceId`:
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => {
+  const workspaceId = request.workspaceId ?? request.helper?.workspaceId ?? null;
+  if (!workspaceId || !isSandboxed(workspaceId)) return undefined;
+  return { ...request, wrap: sandboxWrap(workspaceId, request.cwd) };
+});
+```
 
 ### Append instructions on every session opening
 

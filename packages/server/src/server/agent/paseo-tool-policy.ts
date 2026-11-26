@@ -27,3 +27,21 @@ export function isPaseoToolEnabled(
 export function isPaseoToolPolicyEnabled(policy: ProviderPaseoToolsPolicy | undefined): boolean {
   return policy?.enabled !== false;
 }
+
+/**
+ * An agent's own `paseoTools` over its provider's. Either can turn Paseo's tools off and their
+ * disabled tools add up, so an agent can only narrow what its provider allows.
+ */
+export function narrowPaseoToolPolicy(
+  provider: ProviderPaseoToolsPolicy | undefined,
+  agent: ProviderPaseoToolsPolicy | undefined,
+): ProviderPaseoToolsPolicy | undefined {
+  if (!agent) return provider;
+  const disabledTools = [
+    ...new Set([...(provider?.disabledTools ?? []), ...(agent.disabledTools ?? [])]),
+  ];
+  return {
+    enabled: isPaseoToolPolicyEnabled(provider) && isPaseoToolPolicyEnabled(agent),
+    ...(disabledTools.length > 0 ? { disabledTools } : {}),
+  };
+}

@@ -27,6 +27,7 @@ export type {
   PluginTerminalCreateRequest,
   PluginCommandRunRequest,
   PluginHookAgent,
+  PluginAgentHelper,
   PluginSessionOpenRequest,
   PluginTurnOutcome,
   PluginLifecycleEvents,

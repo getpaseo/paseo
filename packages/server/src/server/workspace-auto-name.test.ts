@@ -27,6 +27,7 @@ test("auto-name preserves workspace archival that lands during its metadata writ
   const mutationStarted = deferred();
   const allowMutation = deferred();
   const updateEmitted = deferred();
+  const namedFor: Array<string | undefined> = [];
   const workspaceRegistry = {
     update: async (_workspaceId, updater) => {
       mutationStarted.resolve();
@@ -45,7 +46,10 @@ test("auto-name preserves workspace archival that lands during its metadata writ
     emitWorkspaceUpdateForCwd: async () => {},
     emitWorkspaceUpdateForWorkspaceId: async () => updateEmitted.resolve(),
     logger: pino({ level: "silent" }),
-    generateWorkspaceName: async () => ({ title: "generated", branch: null }),
+    generateWorkspaceName: async (options) => {
+      namedFor.push(options.workspaceId);
+      return { title: "generated", branch: null };
+    },
   });
 
   autoName.scheduleForDirectory({
@@ -63,4 +67,6 @@ test("auto-name preserves workspace archival that lands during its metadata writ
     title: "generated",
     archivedAt,
   });
+  // The naming helper is told which workspace it works for.
+  expect(namedFor).toEqual([workspace.workspaceId]);
 });

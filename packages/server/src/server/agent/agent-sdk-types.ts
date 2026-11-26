@@ -1,3 +1,4 @@
+import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import type {
   AgentMetric,
   AgentOptionControl,
@@ -662,6 +663,8 @@ export interface AgentSessionConfig {
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
+  /** Narrows the provider's Paseo tools policy for this agent; see narrowPaseoToolPolicy. */
+  paseoTools?: ProviderPaseoToolsPolicy;
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.

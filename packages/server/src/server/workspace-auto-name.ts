@@ -115,6 +115,7 @@ export class WorkspaceAutoName {
       firstAgentContext: input.firstAgentContext,
       generateBranchNameFromContext: ({ firstAgentContext }) => {
         return this.generateFromContext({
+          workspaceId: input.workspace.workspaceId,
           cwd: input.workspace.cwd,
           firstAgentContext,
           currentSelection: input.currentSelection,
@@ -127,6 +128,7 @@ export class WorkspaceAutoName {
 
     if (!generated) {
       generated = await this.generateFromContext({
+        workspaceId: input.workspace.workspaceId,
         cwd: input.workspace.cwd,
         firstAgentContext: input.firstAgentContext,
         currentSelection: input.currentSelection,
@@ -159,6 +161,7 @@ export class WorkspaceAutoName {
     currentSelection: CurrentSelection;
   }): Promise<void> {
     const generated = await this.generateFromContext({
+      workspaceId: input.workspaceId,
       cwd: input.cwd,
       firstAgentContext: input.firstAgentContext,
       currentSelection: input.currentSelection,
@@ -195,12 +198,14 @@ export class WorkspaceAutoName {
   }
 
   private generateFromContext(input: {
+    workspaceId: string;
     cwd: string;
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
   }): Promise<GeneratedWorkspaceName | null> {
     return this.generateWorkspaceName({
       agentManager: this.agentManager,
+      workspaceId: input.workspaceId,
       cwd: input.cwd,
       workspaceGitService: this.workspaceGitService,
       providerSnapshotManager: this.providerSnapshotManager,
