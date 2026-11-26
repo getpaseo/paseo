@@ -1645,6 +1645,11 @@ export class VoiceAssistantWebSocketServer {
     return connection;
   }
 
+  /** Admitted by a device credential or a pairing token, as opposed to the password owner. */
+  private isDeviceSocket(source: object): boolean {
+    return this.socketCredentials.has(source) || this.pairingTokenSockets.has(source);
+  }
+
   private credentialAuthority(source: object): CredentialAuthority {
     for (const [socket, connection] of this.sessions) {
       if (socket === source)
@@ -1681,17 +1686,26 @@ export class VoiceAssistantWebSocketServer {
                 this.issuingSockets.delete(source);
               }
             },
-            list: (source) =>
-              isFullOwner(this.credentialAuthority(source))
-                ? this.deviceCredentials!.list(this.socketCredentials.get(source))
-                : [],
+            list: (source) => {
+              if (!isFullOwner(this.credentialAuthority(source))) return [];
+              const own = this.socketCredentials.get(source);
+              const all = this.deviceCredentials!.list(own);
+              // A device sees only itself; the inventory belongs to the password owner.
+              return this.isDeviceSocket(source) ? all.filter((entry) => entry.current) : all;
+            },
             mintToken: (source) =>
-              this.deviceCredentials!.mintToken(
-                this.credentialAuthority(source),
-                !!this.passwordHash,
-              ),
+              // A device minting tokens could pair a successor that outlives its own revocation.
+              this.isDeviceSocket(source)
+                ? undefined
+                : this.deviceCredentials!.mintToken(
+                    this.credentialAuthority(source),
+                    !!this.passwordHash,
+                  ),
             revoke: async (source, id) => {
               if (!isFullOwner(this.credentialAuthority(source))) return false;
+              // A device may sign itself out but never revoke other devices or "*".
+              if (this.isDeviceSocket(source) && id !== this.socketCredentials.get(source))
+                return false;
               const removed = await this.deviceCredentials!.revoke(id);
               return removed.length > 0;
             },

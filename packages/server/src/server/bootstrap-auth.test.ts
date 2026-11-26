@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 import { DaemonAuthenticationError, DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { readLocalCredentialForTarget } from "./local-credential.js";
+import { parseConnectionOfferFromUrl } from "@getpaseo/protocol/connection-offer";
 
 const originalEnv = { ...process.env };
 const CORRECT_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
@@ -55,7 +56,12 @@ describe("daemon bearer auth", () => {
   });
 
   test("issues a device credential, admits it and revokes only its sockets", async () => {
-    const handle = await createTestPaseoDaemon({ auth: { password: CORRECT_PASSWORD_HASH } });
+    const handle = await createTestPaseoDaemon({
+      auth: { password: CORRECT_PASSWORD_HASH },
+      // Relay on (pointed at a closed local port) so pairing offers carry minted tokens.
+      relayEnabled: true,
+      relayEndpoint: "127.0.0.1:9",
+    });
     const sockets: WebSocket[] = [];
     function receive(ws: WebSocket, matches: (frame: unknown) => boolean): Promise<unknown> {
       return new Promise((resolve, reject) => {
@@ -109,7 +115,7 @@ describe("daemon bearer auth", () => {
       });
       return ws;
     }
-    async function request(ws: WebSocket, message: Record<string, string>) {
+    async function request(ws: WebSocket, message: Record<string, string | boolean>) {
       const response = receive(ws, (frame) => {
         const parsed = z
           .object({ message: z.object({ payload: z.object({ requestId: z.string() }) }) })
@@ -151,6 +157,47 @@ describe("daemon bearer auth", () => {
           requestId: "list",
         }),
       ).toMatchObject({ message: { payload: { credentials: [{ id, current: true }] } } });
+      const other = z
+        .object({
+          message: z.object({
+            payload: z.object({ credential: z.object({ id: z.string(), secret: z.string() }) }),
+          }),
+        })
+        .parse(
+          await request(owner, {
+            type: "access.device_credentials.issue.request",
+            requestId: "issue-other",
+            label: "Synthetic second phone",
+          }),
+        ).message.payload.credential;
+      for (const target of [other.id, "*"])
+        expect(
+          await request(device, {
+            type: "access.device_credentials.revoke.request",
+            requestId: `device-revoke-${target}`,
+            id: target,
+          }),
+        ).toMatchObject({ message: { payload: { revoked: false } } });
+      expect(
+        await request(device, {
+          type: "access.device_credentials.list.request",
+          requestId: "device-list-scoped",
+        }),
+      ).toMatchObject({ message: { payload: { credentials: [{ id, current: true }] } } });
+      async function offerToken(ws: WebSocket, requestId: string) {
+        const response = z
+          .object({ message: z.object({ payload: z.object({ url: z.string() }) }) })
+          .parse(
+            await request(ws, {
+              type: "daemon.get_pairing_offer.request",
+              requestId,
+              includePairingToken: true,
+            }),
+          );
+        return parseConnectionOfferFromUrl(response.message.payload.url)?.pairingToken;
+      }
+      expect(await offerToken(owner, "owner-offer")).toEqual(expect.any(String));
+      expect(await offerToken(device, "device-offer")).toBeUndefined();
       const password = { kind: "password", password: "correct-password" };
       const routed = await hello("routed-session", password, { routed: true });
       expect(
@@ -194,7 +241,21 @@ describe("daemon bearer auth", () => {
           type: "access.device_credentials.list.request",
           requestId: "after",
         }),
-      ).toMatchObject({ message: { payload: { credentials: [] } } });
+      ).toMatchObject({ message: { payload: { credentials: [{ id: other.id }] } } });
+      const second = await hello("second-device", {
+        kind: "deviceCredential",
+        id: other.id,
+        secret: other.secret,
+      });
+      const signedOut = new Promise<number>((resolve) => second.once("close", resolve));
+      expect(
+        await request(second, {
+          type: "access.device_credentials.revoke.request",
+          requestId: "self-revoke",
+          id: other.id,
+        }),
+      ).toMatchObject({ message: { payload: { revoked: true } } });
+      await expect(signedOut).resolves.toBe(4401);
       await expectWebSocketCloses({
         port: handle.port,
         code: 4401,
