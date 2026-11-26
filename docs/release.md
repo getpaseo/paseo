@@ -462,7 +462,9 @@ and set `rollout_hours` to your chosen duration.
 
 If you ship N+1 while N is still ramping, N+1 starts a new rollout from its own publish time, and the rollout of N ends because installs no longer see its manifests.
 
-An install that holds N as a staged update keeps N when N+1 is a paced release, and installs N when the app quits. It then waits out its cooldown before it takes a later paced release. The hold covers only paced releases that the install saw one after the other. If the install missed a release, it evaluates the newest release instead: it replaces N when it is admitted, and drops N when it is not.
+An install that holds N as a staged update keeps N when N+1 is a paced release, and installs N when the app quits. It then waits out its cooldown before it takes a later paced release. The hold covers only paced patch releases that the install saw one after the other. If the install missed a release, it evaluates the newest release instead: it replaces N when it is admitted, and drops N when it is not.
+
+A minor or major release always ends the hold. The version numbers do not show whether a fix shipped between `0.17.4` and `0.18.0`, so the install treats `0.18.0` as if it missed a release.
 
 Before an install at quit, the app asks GitHub for the latest release for up to five seconds. If that check does not finish in time, the app exits without installing the staged update.
 

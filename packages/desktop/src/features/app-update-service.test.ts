@@ -1861,6 +1861,19 @@ describe("staged update", () => {
     });
   });
 
+  it("is not held against a minor release, which may follow a patch this install never saw", async () => {
+    const app = startApp("1.2.3", { bucket: async (version) => (version === "1.2.4" ? 0 : 0.99) });
+    await app.stage(pacedRelease("1.2.4"));
+
+    // 1.2.5 may have shipped as the fix for a bad 1.2.4 before 1.3.0.
+    app.publish(newPacedRelease("1.3.0", START));
+    expect(await app.check()).toMatchObject(noUpdate);
+
+    app.publish(newPacedRelease("1.3.0", START));
+    expect(await app.quit()).toBe(false);
+    expect(app.runtime.installedVersions).toEqual([]);
+  });
+
   it("does not hold a download that finished after a newer release was admitted", async () => {
     const app = startApp("1.2.3");
     const first = pacedRelease("1.2.4");
