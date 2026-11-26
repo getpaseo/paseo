@@ -6,6 +6,7 @@ import {
   resolveSidebarResizeHandleGeometry,
   type SidebarResizeEdge,
 } from "@/components/sidebar-resize-handle-layout";
+import { WINDOW_NO_DRAG_DATASET } from "@/components/desktop/titlebar-drag-region";
 import { isWeb } from "@/constants/platform";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 
@@ -76,6 +77,10 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
         style={hitAreaStyle}
         onHoverIn={handleHoverIn}
         onHoverOut={handleHoverOut}
+        // The handle runs the full panel height, so its top overlaps the panel's
+        // drag strip while mounted outside the drag host; subtract it from the
+        // drag region (see WINDOW_NO_DRAG_DATASET).
+        dataSet={WINDOW_NO_DRAG_DATASET}
       >
         {highlighted ? (
           <View pointerEvents="none" testID={`${testID}-highlight`} style={styles.highlight} />
@@ -113,6 +118,7 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
           aria-orientation="vertical"
           collapsable={false}
           style={targetStyle}
+          dataSet={WINDOW_NO_DRAG_DATASET}
         >
           <View pointerEvents="none" testID={`${testID}-grip`} style={gripStyle} />
         </View>

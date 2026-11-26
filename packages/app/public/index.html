@@ -56,7 +56,9 @@
          overlaps a drag surface has to subtract itself. The backstop is scoped
          to drag surfaces (hosts marked by TitlebarDragRegion) and to overlay
          portals, which can float above a drag surface without being inside one.
-         Keep it scoped: a document-wide rule puts thousands of elements into the
+         This template also ships to browser web, where the rule is inert (a
+         browser tab has no window drag region) but still parsed, so it stays
+         scoped: a document-wide rule puts thousands of elements into the
          per-frame draggable-region collection, which showed up as ~3 ms of
          Blink.Paint.UpdateTime per frame in the Electron renderer.
          :where() keeps specificity at the unscoped level so the

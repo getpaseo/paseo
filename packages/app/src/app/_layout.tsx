@@ -50,8 +50,9 @@ import { OnboardingHost, useIsSetupDecisionPending } from "@/onboarding";
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { LeftSidebar } from "@/components/left-sidebar";
-import { WindowSidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
+import { WINDOW_NO_DRAG_DATASET } from "@/components/desktop/titlebar-drag-region";
 import { DesktopWindowControls } from "@/components/desktop/window-controls";
+import { WindowSidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { WorkspaceArchiveShortcutHandler } from "@/components/workspace-archive-shortcut-handler";
@@ -547,6 +548,10 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
               horizontalPadding={WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING}
               pointerEvents="box-none"
               style={layoutStyles.windowSidebarToggle}
+              // The window-owned toggle floats over the sidebar's drag strip without
+              // being inside a drag host, so it has to subtract itself from the drag
+              // region (see WINDOW_NO_DRAG_DATASET).
+              dataSet={WINDOW_NO_DRAG_DATASET}
             >
               <WindowSidebarMenuToggle />
             </WindowChromeSafeArea>
