@@ -25,7 +25,6 @@ import {
 } from "react-native";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -78,7 +77,7 @@ const FOCUSED_COMBOBOX_ACTION_SELECTOR =
   '[data-combobox-trailing-action] button, [data-combobox-trailing-action] [role="button"], [data-combobox-footer] button, [data-combobox-footer] [role="button"]';
 
 export type ComboboxOption = ComboboxOptionModel;
-export type ComboboxDesktopPlacement = "top-start" | "bottom-start";
+export type ComboboxDesktopPlacement = "top-start" | "bottom-start" | "bottom-end";
 
 export interface ComboboxProps {
   options: ComboboxOption[];
@@ -94,6 +93,11 @@ export interface ComboboxProps {
   searchable?: boolean;
   /** The caller answers the search query itself, so the options are shown as given. */
   remoteSearch?: boolean;
+  /**
+   * With `remoteSearch`, the options still answer an earlier query. No option is picked until
+   * the user moves to one, so Enter cannot confirm a row the new query may not match.
+   */
+  remoteSearchPending?: boolean;
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
@@ -141,6 +145,8 @@ export interface ComboboxProps {
   /** When true, selecting an option does not close the picker (multi-select mode). */
   keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
+  /** Where focus goes when the picker closes. Defaults to whatever had focus when it opened. */
+  restoreFocusRef?: React.RefObject<unknown>;
   children?: ReactNode;
 }
 
@@ -610,6 +616,7 @@ interface DesktopKeyHandlerInput {
   isOpen: boolean;
   orderedVisibleOptions: ComboboxOption[];
   activeIndex: number;
+  remoteSearchPending: boolean;
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
   handleSelect: (id: string) => void;
   handleClose: () => void;
@@ -622,7 +629,9 @@ function handleDesktopArrowKey(input: DesktopKeyHandlerInput, key: "ArrowDown" |
 function handleDesktopEnterKey(input: DesktopKeyHandlerInput) {
   if (input.orderedVisibleOptions.length === 0) return;
   const { activeIndex, orderedVisibleOptions } = input;
-  const index = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length ? activeIndex : 0;
+  const picked = activeIndex >= 0 && activeIndex < orderedVisibleOptions.length;
+  if (!picked && input.remoteSearchPending) return;
+  const index = picked ? activeIndex : 0;
   input.handleSelect(orderedVisibleOptions[index].id);
 }
 
@@ -678,18 +687,21 @@ function useActiveIndexSync(
   effectiveOptionsPosition: "below-search" | "above-search",
   normalizedSearch: string,
   value: string,
+  remoteSearchPending: boolean,
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>,
 ) {
   useEffect(() => {
     if (!isOpen) return;
     if (!IS_WEB && isMobile) return;
     setActiveIndex(
-      resolveInitialActiveIndex(
-        orderedVisibleOptions,
-        effectiveOptionsPosition,
-        normalizedSearch,
-        value,
-      ),
+      remoteSearchPending
+        ? -1
+        : resolveInitialActiveIndex(
+            orderedVisibleOptions,
+            effectiveOptionsPosition,
+            normalizedSearch,
+            value,
+          ),
     );
   }, [
     effectiveOptionsPosition,
@@ -698,6 +710,7 @@ function useActiveIndexSync(
     normalizedSearch,
     value,
     orderedVisibleOptions,
+    remoteSearchPending,
     setActiveIndex,
   ]);
 }
@@ -1126,31 +1139,22 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
 }
 
 /**
- * Rendered on the far side of the sheet's portal so it clears the screen's bottom inset, not the
- * one left where the combobox was opened: inside a sheet tab, none is.
+ * Rendered on the far side of the sheet's portal so `SheetVisibleFrame` clears the screen's
+ * bottom inset in lockstep with the keyboard, not the inset left where the combobox was opened.
  */
 function ComboboxSheetFrame({ footer, children }: { footer?: ReactNode; children: ReactNode }) {
-  const { bottom: safeAreaBottom } = useSafeAreaInsets();
-  const frameStyle = useMemo(
-    () => [styles.mobileSheetFrame, { paddingBottom: footer ? 0 : safeAreaBottom }],
-    [footer, safeAreaBottom],
-  );
-  const footerStyle = useMemo(
-    () => [styles.footer, { paddingBottom: safeAreaBottom }],
-    [safeAreaBottom],
-  );
   const footerView = useMemo(
     () =>
       footer ? (
-        <View style={footerStyle} dataSet={FOOTER_DATASET}>
+        <View style={styles.footer} dataSet={FOOTER_DATASET}>
           {footer}
         </View>
       ) : undefined,
-    [footer, footerStyle],
+    [footer],
   );
   return (
-    <SheetVisibleFrame footer={footerView}>
-      <View style={frameStyle}>{children}</View>
+    <SheetVisibleFrame footer={footerView} safeAreaInset="frame">
+      <View style={styles.mobileSheetFrame}>{children}</View>
     </SheetVisibleFrame>
   );
 }
@@ -1398,6 +1402,7 @@ export function Combobox({
   onSearchQueryChange,
   searchable = true,
   remoteSearch,
+  remoteSearchPending,
   placeholder,
   searchPlaceholder,
   emptyText,
@@ -1424,6 +1429,7 @@ export function Combobox({
   footer,
   keepOpenOnSelect = false,
   anchorRef,
+  restoreFocusRef,
   children,
 }: ComboboxProps): ReactElement | null {
   const { t } = useTranslation();
@@ -1616,6 +1622,7 @@ export function Combobox({
     effectiveOptionsPosition,
     normalizedSearch,
     value,
+    remoteSearchPending === true,
     setActiveIndex,
   );
 
@@ -1663,6 +1670,7 @@ export function Combobox({
           isOpen,
           orderedVisibleOptions,
           activeIndex,
+          remoteSearchPending: remoteSearchPending === true,
           setActiveIndex,
           handleSelect,
           handleClose,
@@ -1671,7 +1679,7 @@ export function Combobox({
         event,
       );
     },
-    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions],
+    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions, remoteSearchPending],
   );
 
   useDismissKeyboardOnOpen(isOpen, isMobile);
@@ -1713,6 +1721,7 @@ export function Combobox({
     layer: floatingLayer,
     keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
     onKeyDown: (event) => (isDesktopKey(event.key) ? handleDesktopKey(event.key, event) : false),
+    restoreFocusRef,
   });
 
   const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;

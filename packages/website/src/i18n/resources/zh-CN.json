@@ -410,7 +410,7 @@
     },
     "plugins": {
       "title": "让 Paseo 修改 Paseo",
-      "description": "Paseo 里的 Agent 可以修改整个界面，无需重启，在移动端也一样。",
+      "description": "插件只需在你的服务器上构建或安装一次，即可在 <desktop>桌面端</desktop>、<web>Web 端</web>和 <mobile>原生移动端</mobile>运行，无需重启。",
       "request": "在侧边栏加一个面板，列出等待我审查的 PR。",
       "plan": "我会把它做成本地插件并安装。",
       "done": "审查队列已出现在你的侧边栏。",
@@ -457,6 +457,12 @@
       "chatLabel": "Paseo Agent 对话",
       "diffLabel": "Paseo diff 视图"
     },
+    "trustStrip": {
+      "noTelemetry": "无遥测",
+      "e2eeRelay": "内置端到端加密中继",
+      "openSource": "开源",
+      "independent": "独立项目"
+    },
     "faq": {
       "title": "常见问题",
       "freeQuestion": "Paseo 免费吗？",
@@ -472,7 +478,7 @@
       "voiceQuestion": "语音功能如何工作？",
       "voiceAnswer": "语音默认在你的设备本地运行。你说话，应用转写后以文本形式发送给 Agent。你也可以配置 OpenAI 语音服务，获得更高质量的转写和语音合成。详见<voice>语音文档</voice>。",
       "networkQuestion": "可以从外部网络连接吗？",
-      "networkAnswer": "可以。你可以使用托管中继（端到端加密，Paseo 无法读取你的流量），搭建自己的隧道（Tailscale、Cloudflare Tunnel 等），或直接暴露 daemon 端口。详见<configuration>配置</configuration>。",
+      "networkAnswer": "可以。你可以使用托管中继（端到端加密，Paseo 无法读取你的流量），搭建自己的隧道（Tailscale、Cloudflare Tunnel 等），或直接暴露 daemon 端口。详见<connectivity>连接</connectivity>。",
       "gitQuestion": "我需要 git 或 GitHub 吗？",
       "gitAnswer": "不需要。Paseo 可在任意目录中工作。worktree 是可选的，只在使用 git 时才相关。你可以在平常工作的任何地方运行 Agent。",
       "banQuestion": "使用 Paseo 会被封号吗？",

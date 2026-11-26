@@ -25,6 +25,7 @@ const workspace: PluginWorkspaceSnapshot = {
   createdAt: null,
   lastPromptAt: null,
   parentAgent: null,
+  parentWorkspace: null,
   indicator: "running",
   indicatorLabel: "Running",
   id: "workspace-1",

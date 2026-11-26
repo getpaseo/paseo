@@ -194,6 +194,9 @@ static void appendListMarkdown(MarkdownASTNode *node, NSMutableString *buffer, B
     NSString *indent = [@"" stringByPaddingToLength:prefix.length withString:@" " startingAtIndex:0];
     for (NSUInteger l = 0; l < lines.count; l++) {
       [buffer appendString:(l == 0) ? prefix : indent];
+      if (l == 0 && [item.attributes[@"isTask"] isEqualToString:@"true"]) {
+        [buffer appendString:[item.attributes[@"taskChecked"] isEqualToString:@"true"] ? @"[x] " : @"[ ] "];
+      }
       [buffer appendString:lines[l]];
       [buffer appendString:@"\n"];
     }
@@ -327,6 +330,16 @@ NSString *markdownFromASTNodeChildren(MarkdownASTNode *node)
   return [buffer copy];
 }
 
+NSString *markdownFromBlockquoteBody(MarkdownASTNode *node)
+{
+  if (!node)
+    return @"";
+
+  NSMutableString *body = [NSMutableString string];
+  serializeBlockChildren(node, body);
+  return [body stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+}
+
 NSString *markdownFromBlockquoteNode(MarkdownASTNode *node)
 {
   if (!node)
@@ -342,11 +355,7 @@ NSString *markdownFromBlockquoteNode(MarkdownASTNode *node)
     [result appendFormat:@"> [!%@]\n", [type uppercaseString]];
   }
 
-  NSMutableString *body = [NSMutableString string];
-  serializeBlockChildren(node, body);
-
-  NSString *trimmed = [body stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-  NSArray<NSString *> *lines = [trimmed componentsSeparatedByString:@"\n"];
+  NSArray<NSString *> *lines = [markdownFromBlockquoteBody(node) componentsSeparatedByString:@"\n"];
   for (NSString *line in lines) {
     [result appendString:@"> "];
     [result appendString:line];

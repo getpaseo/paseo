@@ -1,0 +1,170 @@
+diff --git a/node_modules/react-dom/cjs/react-dom-client.development.js b/node_modules/react-dom/cjs/react-dom-client.development.js
+index 771ecad..3d9bf72 100644
+--- a/node_modules/react-dom/cjs/react-dom-client.development.js
++++ b/node_modules/react-dom/cjs/react-dom-client.development.js
+@@ -4073,6 +4073,8 @@
+                   ? "Idle"
+                   : "Other";
+     }
++    // Paseo backport of React 19.3.0: clear each measure once it is reported. The browser keeps
++    // every measure for the life of the page, so a long development session held millions.
+     function logComponentTrigger(fiber, startTime, endTime, trigger) {
+       supportsUserTiming &&
+         ((reusableComponentOptions.start = startTime),
+@@ -4088,7 +4090,7 @@
+                 reusableComponentOptions
+               )
+             )
+-          : performance.measure(trigger, reusableComponentOptions));
++          : performance.measure(trigger, reusableComponentOptions), performance.clearMeasures(trigger));
+     }
+     function logComponentReappeared(fiber, startTime, endTime) {
+       logComponentTrigger(fiber, startTime, endTime, "Reconnect");
+@@ -4159,7 +4161,7 @@
+                 : performance.measure(
+                     "\u200b" + name,
+                     reusableComponentOptions
+-                  )))
++                  ), performance.clearMeasures("\u200b" + name)))
+           : null != selfTime
+             ? selfTime.run(
+                 console.timeStamp.bind(
+@@ -4229,7 +4231,7 @@
+             ? debugTask.run(
+                 performance.measure.bind(performance, "\u200b" + name, fiber)
+               )
+-            : performance.measure("\u200b" + name, fiber);
++            : performance.measure("\u200b" + name, fiber), performance.clearMeasures("\u200b" + name);
+         }
+       }
+     }
+@@ -4274,7 +4276,7 @@
+                     startTime
+                   )
+                 )
+-              : performance.measure("\u200b" + name, startTime);
++              : performance.measure("\u200b" + name, startTime), performance.clearMeasures("\u200b" + name);
+           }
+         }
+       } else
+@@ -4434,7 +4436,7 @@
+           ? debugTask.run(
+               performance.measure.bind(performance, "Recovered", startTime)
+             )
+-          : performance.measure("Recovered", startTime);
++          : performance.measure("Recovered", startTime), performance.clearMeasures("Recovered");
+       }
+     }
+     function logErroredRenderPhase(startTime, endTime, lanes, debugTask) {
+@@ -4517,7 +4519,7 @@
+           ? debugTask.run(
+               performance.measure.bind(performance, "Errored", startTime)
+             )
+-          : performance.measure("Errored", startTime);
++          : performance.measure("Errored", startTime), performance.clearMeasures("Errored");
+       }
+     }
+     function logAnimatingPhase(startTime, endTime, debugTask) {
+@@ -17111,7 +17113,7 @@
+                     previousRenderStartTime
+                   )
+                 )
+-              : performance.measure(isSpawnedUpdate, previousRenderStartTime));
++              : performance.measure(isSpawnedUpdate, previousRenderStartTime), performance.clearMeasures(isSpawnedUpdate));
+         }
+         blockingUpdateTime = -1.1;
+         blockingUpdateType = 0;
+@@ -17248,7 +17250,7 @@
+                     previousRenderStartTime
+                   )
+                 )
+-              : performance.measure(debugTask, previousRenderStartTime))),
++              : performance.measure(debugTask, previousRenderStartTime), performance.clearMeasures(debugTask))),
+         (transitionUpdateTime = transitionStartTime = -1.1),
+         (transitionUpdateType = 0),
+         (transitionSuspendedTime = -1.1),
+diff --git a/node_modules/react-dom/cjs/react-dom-profiling.development.js b/node_modules/react-dom/cjs/react-dom-profiling.development.js
+index c8b583c..7fd2231 100644
+--- a/node_modules/react-dom/cjs/react-dom-profiling.development.js
++++ b/node_modules/react-dom/cjs/react-dom-profiling.development.js
+@@ -4081,6 +4081,8 @@
+                   ? "Idle"
+                   : "Other";
+     }
++    // Paseo backport of React 19.3.0: clear each measure once it is reported. The browser keeps
++    // every measure for the life of the page, so a long development session held millions.
+     function logComponentTrigger(fiber, startTime, endTime, trigger) {
+       supportsUserTiming &&
+         ((reusableComponentOptions.start = startTime),
+@@ -4096,7 +4098,7 @@
+                 reusableComponentOptions
+               )
+             )
+-          : performance.measure(trigger, reusableComponentOptions));
++          : performance.measure(trigger, reusableComponentOptions), performance.clearMeasures(trigger));
+     }
+     function logComponentReappeared(fiber, startTime, endTime) {
+       logComponentTrigger(fiber, startTime, endTime, "Reconnect");
+@@ -4167,7 +4169,7 @@
+                 : performance.measure(
+                     "\u200b" + name,
+                     reusableComponentOptions
+-                  )))
++                  ), performance.clearMeasures("\u200b" + name)))
+           : null != selfTime
+             ? selfTime.run(
+                 console.timeStamp.bind(
+@@ -4237,7 +4239,7 @@
+             ? debugTask.run(
+                 performance.measure.bind(performance, "\u200b" + name, fiber)
+               )
+-            : performance.measure("\u200b" + name, fiber);
++            : performance.measure("\u200b" + name, fiber), performance.clearMeasures("\u200b" + name);
+         }
+       }
+     }
+@@ -4282,7 +4284,7 @@
+                     startTime
+                   )
+                 )
+-              : performance.measure("\u200b" + name, startTime);
++              : performance.measure("\u200b" + name, startTime), performance.clearMeasures("\u200b" + name);
+           }
+         }
+       } else
+@@ -4442,7 +4444,7 @@
+           ? debugTask.run(
+               performance.measure.bind(performance, "Recovered", startTime)
+             )
+-          : performance.measure("Recovered", startTime);
++          : performance.measure("Recovered", startTime), performance.clearMeasures("Recovered");
+       }
+     }
+     function logErroredRenderPhase(startTime, endTime, lanes, debugTask) {
+@@ -4525,7 +4527,7 @@
+           ? debugTask.run(
+               performance.measure.bind(performance, "Errored", startTime)
+             )
+-          : performance.measure("Errored", startTime);
++          : performance.measure("Errored", startTime), performance.clearMeasures("Errored");
+       }
+     }
+     function logAnimatingPhase(startTime, endTime, debugTask) {
+@@ -17119,7 +17121,7 @@
+                     previousRenderStartTime
+                   )
+                 )
+-              : performance.measure(isSpawnedUpdate, previousRenderStartTime));
++              : performance.measure(isSpawnedUpdate, previousRenderStartTime), performance.clearMeasures(isSpawnedUpdate));
+         }
+         blockingUpdateTime = -1.1;
+         blockingUpdateType = 0;
+@@ -17256,7 +17258,7 @@
+                     previousRenderStartTime
+                   )
+                 )
+-              : performance.measure(debugTask, previousRenderStartTime))),
++              : performance.measure(debugTask, previousRenderStartTime), performance.clearMeasures(debugTask))),
+         (transitionUpdateTime = transitionStartTime = -1.1),
+         (transitionUpdateType = 0),
+         (transitionSuspendedTime = -1.1),

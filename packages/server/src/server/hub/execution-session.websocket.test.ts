@@ -93,6 +93,27 @@ test("Hub execute can list daemon projects but cannot rename them", async () => 
   });
 });
 
+test("Hub execute can list provider controls", async () => {
+  const hub = await launchRelationship();
+  expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
+
+  expect(
+    await hub.requestOrdinary({
+      type: "provider.controls.list.request",
+      requestId: "list-provider-controls",
+      draftConfig: { provider: "codex", cwd: hub.repoRoot() },
+    }),
+  ).toMatchObject({
+    type: "provider.controls.list.response",
+    payload: {
+      requestId: "list-provider-controls",
+      provider: "codex",
+      controls: expect.any(Array),
+      error: null,
+    },
+  });
+});
+
 test("Hub execute can title the workspace created with an agent", async () => {
   const hub = await launchRelationship();
   const created = await hub.requestOrdinary({

@@ -1,4 +1,4 @@
-import { AddProjectFlow } from "@/components/add-project-flow";
+import { AddProjectFlow } from "@/add-project-flow";
 import { useAddProjectFlowStore } from "@/stores/add-project-flow-store";
 
 export function AddProjectFlowHost() {

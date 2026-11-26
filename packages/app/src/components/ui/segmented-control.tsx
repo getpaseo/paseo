@@ -29,6 +29,8 @@ interface SegmentedControlProps<T extends string> {
   onValueChange: (value: T) => void;
   size?: ControlSize;
   hideLabels?: boolean;
+  /** Share the container's width equally between the segments, for a control that heads a surface. */
+  fill?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
@@ -54,6 +56,7 @@ export function SegmentedControl<T extends string>({
   onValueChange,
   size: sizeProp,
   hideLabels = false,
+  fill = false,
   style,
   testID,
 }: SegmentedControlProps<T>) {
@@ -85,6 +88,7 @@ export function SegmentedControl<T extends string>({
             isSelected={isSelected}
             iconSize={iconSize}
             hideLabels={hideLabels}
+            fill={fill}
             segmentSizeStyle={segmentSizeStyle}
             labelSizeStyle={labelSizeStyle}
             currentValue={value}
@@ -101,6 +105,7 @@ function SegmentItem<T extends string>({
   isSelected,
   iconSize,
   hideLabels,
+  fill,
   segmentSizeStyle,
   labelSizeStyle,
   currentValue,
@@ -110,6 +115,7 @@ function SegmentItem<T extends string>({
   isSelected: boolean;
   iconSize: number;
   hideLabels: boolean;
+  fill: boolean;
   segmentSizeStyle: StyleProp<ViewStyle>;
   labelSizeStyle: StyleProp<TextStyle>;
   currentValue: T | null;
@@ -128,12 +134,13 @@ function SegmentItem<T extends string>({
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.segment,
       segmentSizeStyle,
+      fill && styles.segmentFill,
       isSelected && styles.segmentSelected,
       Boolean(hovered) && !isSelected && styles.segmentHover,
       pressed && !isSelected && styles.segmentPressed,
       option.disabled && styles.segmentDisabled,
     ],
-    [isSelected, option.disabled, segmentSizeStyle],
+    [fill, isSelected, option.disabled, segmentSizeStyle],
   );
   const accessibilityState = useMemo(
     () => ({ selected: isSelected, disabled: option.disabled }),
@@ -202,6 +209,12 @@ const styles = StyleSheet.create((theme) => {
     },
     segmentMd: {
       ...geometry.segmentedSegmentMd,
+    },
+    segmentFill: {
+      flexGrow: 1,
+      flexBasis: 0,
+      flexShrink: 1,
+      minWidth: 0,
     },
     segmentSelected: {
       backgroundColor: theme.colors.surface3,

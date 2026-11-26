@@ -4,6 +4,7 @@ import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { OpenCodeBridge } from "../agent/providers/opencode/bridge.js";
 import { OpenCodeV2AgentClient } from "../agent/providers/opencode/v2/agent.js";
 import { V2Harness } from "../agent/providers/opencode/test-utils/v2-harness.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -27,10 +28,20 @@ async function createWorkingRecipient(options: { olderClient?: boolean } = {}) {
     runtime.prompts.push(input.text);
     if (runtime.prompts.length === 1) runtime.startExecution();
   };
+  // The daemon always runs the bridge, which gives OpenCode agents their Paseo tools.
+  const bridge = new OpenCodeBridge({
+    paseoHome: path.join(root, "bridge"),
+    logger: createTestLogger(),
+  });
+  await bridge.start();
   const daemon = await createTestPaseoDaemon({
     agentClients: {
       ...createTestAgentClients(),
-      opencode: new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime: runtime.runtime }),
+      opencode: new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: runtime.runtime,
+        bridge,
+      }),
     },
     paseoHomeRoot: path.join(root, "daemon"),
     staticDir: path.join(root, "static"),
@@ -46,6 +57,7 @@ async function createWorkingRecipient(options: { olderClient?: boolean } = {}) {
   const close = async () => {
     await client.close();
     await daemon.close();
+    await bridge.close();
     await rm(root, { recursive: true, force: true });
   };
   try {

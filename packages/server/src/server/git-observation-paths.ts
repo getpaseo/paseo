@@ -3,7 +3,11 @@ import { readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import pLimit from "p-limit";
 import { dirname, resolve as resolvePath, sep } from "node:path";
-import { looksLikeDefiniteWindowsPath, normalizePathPreservingCase } from "../utils/path.js";
+import {
+  createPathContainmentMatcher,
+  looksLikeDefiniteWindowsPath,
+  normalizePathPreservingCase,
+} from "../utils/path.js";
 
 const nativeRealpath = promisify(realpath.native);
 const jsRealpath = promisify(realpath);
@@ -13,6 +17,7 @@ const identityIo = pLimit(2);
 export class GitObservationPaths {
   private constructor(
     private readonly root: string,
+    readonly identity: string,
     private readonly aliases: string[],
     private readonly windows: boolean,
   ) {}
@@ -23,11 +28,15 @@ export class GitObservationPaths {
       windows
         ? normalizePathPreservingCase(value, true).replaceAll("\\", "/").toLowerCase()
         : normalizePathPreservingCase(value, false);
-    const aliases = new Set([normalizePath(root)]);
+    const lexicalRoot = normalizePath(root);
+    const aliases = new Set([lexicalRoot]);
+    let identity: string | undefined;
     // Sequential: foreign paths must not fan out into the shared libuv pool.
     for (const resolve of [nativeRealpath, jsRealpath]) {
       try {
-        aliases.add(normalizePath(await identityIo(() => resolve(root))));
+        const alias = normalizePath(await identityIo(() => resolve(root)));
+        identity ??= alias;
+        aliases.add(alias);
       } catch {
         /* Missing roots retain lexical identity. */
       }
@@ -48,7 +57,7 @@ export class GitObservationPaths {
         break;
       }
     }
-    return new GitObservationPaths(root, [...aliases], windows);
+    return new GitObservationPaths(root, identity ?? lexicalRoot, [...aliases], windows);
   }
 
   relative(candidate: string): string | null {
@@ -77,15 +86,15 @@ export class GitObservationPaths {
         excluded.push(this.windows ? subtree.toLowerCase() : subtree);
       }
     }
-    const prefixes = excluded.map((root) => `${root}/`);
+    const excludedMatcher = createPathContainmentMatcher({
+      roots: excluded,
+      compareAsWindows: this.windows,
+    });
     return (candidate) => {
       const normalized = this.normalizeEventPath(candidate);
       const comparable = this.windows ? normalized.toLowerCase() : normalized;
       if (this.aliases.includes(comparable)) return false;
-      for (let i = 0; i < excluded.length; i++) {
-        if (comparable === excluded[i] || comparable.startsWith(prefixes[i])) return false;
-      }
-      return true;
+      return !excludedMatcher.matches(comparable);
     };
   }
 

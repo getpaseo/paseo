@@ -1,117 +1,92 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { quoteWindowsArgument, quoteWindowsCommand } from "./windows-command.js";
+import { findWindowsCommand, quoteWindowsCommand, windowsCommandLine } from "./windows-command.js";
+
+const program = { commandScript: false } as const;
+const script = { commandScript: true } as const;
 
 describe("quoteWindowsCommand", () => {
-  const originalPlatform = process.platform;
-
-  function setPlatform(value: string) {
-    Object.defineProperty(process, "platform", { value, writable: true });
-  }
-
-  afterEach(() => {
-    setPlatform(originalPlatform);
-  });
-
-  test("quotes a Windows path with spaces", () => {
-    setPlatform("win32");
+  test("quotes a path with spaces and keeps cmd.exe syntax in it as text", () => {
     expect(quoteWindowsCommand("C:\\Program Files\\Anthropic\\claude.exe")).toBe(
       '"C:\\Program Files\\Anthropic\\claude.exe"',
     );
-  });
-
-  test("does not double-quote an already-quoted path", () => {
-    setPlatform("win32");
-    expect(quoteWindowsCommand('"C:\\Program Files\\Anthropic\\claude.exe"')).toBe(
-      '"C:\\Program Files\\Anthropic\\claude.exe"',
+    expect(quoteWindowsCommand("C:\\Program Files (x86)\\Tool & Co\\run.cmd")).toBe(
+      '"C:\\Program Files (x86)\\Tool & Co\\run.cmd"',
     );
   });
 
-  test("returns the command unchanged when there are no spaces", () => {
-    setPlatform("win32");
+  test("leaves a plain or already quoted path as given", () => {
     expect(quoteWindowsCommand("C:\\nvm4w\\nodejs\\codex")).toBe("C:\\nvm4w\\nodejs\\codex");
-  });
-
-  test("escapes ampersands", () => {
-    setPlatform("win32");
-    expect(quoteWindowsCommand("feature&bugfix")).toBe("feature^&bugfix");
-  });
-
-  test("escapes pipes", () => {
-    setPlatform("win32");
-    expect(quoteWindowsCommand("feature|bugfix")).toBe("feature^|bugfix");
-  });
-
-  test("does not double percent signs", () => {
-    setPlatform("win32");
-    // cmd.exe only collapses %% → % inside batch files; on the command line
-    // it stays literal, which corrupts git --format atoms etc.
-    expect(quoteWindowsCommand("100%")).toBe("100%");
-  });
-
-  test("preserves git --format atoms verbatim", () => {
-    setPlatform("win32");
-    expect(quoteWindowsCommand("--format=%(refname)%09%(committerdate:unix)")).toBe(
-      "--format=%^(refname^)%09%^(committerdate:unix^)",
-    );
-  });
-
-  test("escapes carets", () => {
-    setPlatform("win32");
-    expect(quoteWindowsCommand("feature^bugfix")).toBe("feature^^bugfix");
-  });
-
-  test("escapes multiple metacharacters", () => {
-    setPlatform("win32");
-    expect(quoteWindowsCommand("build&(test|deploy)!<output>")).toBe(
-      "build^&^(test^|deploy^)^!^<output^>",
-    );
-  });
-
-  test("quotes commands with spaces after escaping metacharacters", () => {
-    setPlatform("win32");
-    expect(quoteWindowsCommand("C:\\Program Files\\My Tool&Stuff\\run 100%.cmd")).toBe(
-      '"C:\\Program Files\\My Tool^&Stuff\\run 100%.cmd"',
-    );
-  });
-
-  test("returns the command unchanged on non-Windows platforms", () => {
-    setPlatform("darwin");
-    expect(quoteWindowsCommand("/usr/local/bin/claude code")).toBe("/usr/local/bin/claude code");
+    expect(quoteWindowsCommand('"C:\\Program Files\\x.exe"')).toBe('"C:\\Program Files\\x.exe"');
   });
 });
 
-describe("quoteWindowsArgument", () => {
-  const originalPlatform = process.platform;
-
-  function setPlatform(value: string) {
-    Object.defineProperty(process, "platform", { value, writable: true });
-  }
-
-  afterEach(() => {
-    setPlatform(originalPlatform);
-  });
-
-  test("quotes a Windows argument with spaces", () => {
-    setPlatform("win32");
-    expect(quoteWindowsArgument("C:\\Program Files\\Anthropic\\cli.js")).toBe(
-      '"C:\\Program Files\\Anthropic\\cli.js"',
+describe("windowsCommandLine", () => {
+  test("passes an argument without a cmd.exe metacharacter as given", () => {
+    expect(windowsCommandLine("echo", ["hello", "--flag", "feature/x", "C:\\dir"], program)).toBe(
+      '"echo hello --flag feature/x C:\\dir"',
     );
   });
 
-  test("does not double-quote an already-quoted argument", () => {
-    setPlatform("win32");
-    expect(quoteWindowsArgument('"C:\\Program Files\\Anthropic\\cli.js"')).toBe(
-      '"C:\\Program Files\\Anthropic\\cli.js"',
+  test("quotes and caret-escapes every other argument once, the qntm way", () => {
+    expect(windowsCommandLine("node", ["feature&bugfix", "work profile", ""], program)).toBe(
+      '"node ^"feature^&bugfix^" ^"work^ profile^" ^"^""',
+    );
+    // A caret before each `%` keeps cmd.exe from reading a variable name, inside the quotes too.
+    expect(windowsCommandLine("node", ["%PATH%", "100% of %PATH%"], program)).toBe(
+      '"node ^"^%PATH^%^" ^"100^%^ of^ ^%PATH^%^""',
+    );
+    // Backslashes before the closing quote double, as the program's argv parser expects.
+    expect(windowsCommandLine("node", ["C:\\path with space\\"], program)).toBe(
+      '"node ^"C:\\path^ with^ space\\\\^""',
     );
   });
 
-  test("returns the argument unchanged when there are no spaces", () => {
-    setPlatform("win32");
-    expect(quoteWindowsArgument("--version")).toBe("--version");
+  test("quotes =, comma and semicolon, where a batch script splits its arguments", () => {
+    expect(windowsCommandLine("run.cmd", ["--profile=restricted", "a,b;c"], script)).toBe(
+      '"run.cmd ^"--profile=restricted^" ^"a^,b^;c^""',
+    );
   });
 
-  test("returns the argument unchanged on non-Windows platforms", () => {
-    setPlatform("darwin");
-    expect(quoteWindowsArgument("/usr/local/bin/claude code")).toBe("/usr/local/bin/claude code");
+  test("escapes an argument with a quote twice for a batch script, which reads it again", () => {
+    expect(windowsCommandLine("node", ['say "hi"'], program)).toBe('"node ^"say^ \\^"hi\\^"^""');
+    expect(windowsCommandLine("run.cmd", ['say "hi"', "a & b"], script)).toBe(
+      '"run.cmd ^^^"say^^^ \\^^^"hi\\^^^"^^^" ^"a^ ^&^ b^""',
+    );
+  });
+
+  test("quotes the command path at the start of the line", () => {
+    expect(windowsCommandLine("C:\\Program Files (x86)\\run.cmd", ["acp"], script)).toBe(
+      '""C:\\Program Files (x86)\\run.cmd" acp"',
+    );
+  });
+
+  test("refuses a line break, which ends a cmd.exe command whatever the quoting", () => {
+    for (const argument of ["line one\nline two", "line one\r\n& calc"]) {
+      expect(() => windowsCommandLine("run.cmd", ["--", argument], script)).toThrow(
+        "cmd.exe cannot pass an argument with a line break to run.cmd",
+      );
+    }
+  });
+});
+
+describe("findWindowsCommand", () => {
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test("finds a bare name on PATH with each PATHEXT extension, whatever the env key case", async () => {
+    const empty = await mkdtemp(path.join(os.tmpdir(), "windows-command-empty-"));
+    const tools = await mkdtemp(path.join(os.tmpdir(), "windows-command-tools-"));
+    roots.push(empty, tools);
+    await writeFile(path.join(tools, "agent.CMD"), "");
+    const env = { Path: `${empty};${tools}`, PathExt: ".EXE;.CMD" };
+    expect(findWindowsCommand("agent", env)).toBe(path.join(tools, "agent.CMD"));
+    expect(findWindowsCommand("echo", env)).toBeUndefined();
+    expect(findWindowsCommand("agent.cmd", env)).toBeUndefined();
+    expect(findWindowsCommand(path.join(tools, "agent"), env)).toBeUndefined();
   });
 });
