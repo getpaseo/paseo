@@ -127,9 +127,14 @@ interface CachedCheckoutRead {
   checkout: Promise<ProjectCheckoutLitePayload>;
 }
 
+interface ResolvedPath {
+  path: string;
+  missing: boolean;
+}
+
 interface CheckoutDirectory {
   path: string;
-  repository: { root: string; commonDir: string } | null;
+  repository: { root: string; commonDir: ResolvedPath } | null;
 }
 
 type DirectoryInspection = DirectoryState | CheckoutDirectory;
@@ -748,13 +753,16 @@ async function findAffectedCheckoutDirectories(
   candidates: string[],
   inspect: (path: string, read: () => Promise<CheckoutDirectory>) => Promise<DirectoryInspection>,
 ): Promise<Set<string>> {
-  const resolved = new Map<string, Promise<string>>();
+  const resolved = new Map<string, Promise<ResolvedPath>>();
   const resolvePath = (path: string) => {
     let result = resolved.get(path);
     if (!result) {
       result = resolveRealpath(path)
         .catch(() => resolveNativeRealpath(path))
-        .catch(() => path);
+        .then(
+          (path) => ({ path, missing: false }),
+          (error) => ({ path, missing: isMissingPathError(error) }),
+        );
       resolved.set(path, result);
     }
     return result;
@@ -775,7 +783,7 @@ async function findAffectedCheckoutDirectories(
 
   const inspectCheckoutDirectory = (directory: string) =>
     inspect(directory, async () => {
-      const path = await resolvePath(directory);
+      const { path } = await resolvePath(directory);
       return { path, repository: await findRepository(path) };
     });
   const dirty = await mapBounded(changedRoots, inspectCheckoutDirectory);
@@ -787,16 +795,10 @@ async function findAffectedCheckoutDirectories(
     compareAsWindows: process.platform === "win32",
   });
   const commonDirs = dirty.flatMap((entry) =>
-    typeof entry !== "string" && entry.repository ? [entry.repository.commonDir] : [],
+    typeof entry !== "string" && entry.repository ? [entry.repository.commonDir.path] : [],
   );
-  // A checkout can still point into a missing .git directory. For intact
-  // repositories, match common directories exactly so submodules stay independent.
-  const missingGitDirectories = createPathContainmentMatcher({
-    roots: dirty.flatMap((entry) =>
-      typeof entry !== "string" && entry.repository?.root !== entry.path
-        ? [join(entry.path, ".git")]
-        : [],
-    ),
+  const gitEntries = createPathContainmentMatcher({
+    roots: roots.map((root) => join(root, ".git")),
     compareAsWindows: process.platform === "win32",
   });
   const repositories = createPathContainmentMatcher({
@@ -808,10 +810,13 @@ async function findAffectedCheckoutDirectories(
     const entry = await inspectCheckoutDirectory(candidate);
     const path = typeof entry === "string" ? candidate : entry.path;
     const repository = typeof entry === "string" ? null : entry.repository;
+    const commonDir = repository?.commonDir;
+    // A broken checkout can still point beneath the changed .git entry after
+    // removal or replacement. Existing submodule metadata has its own identity.
     const sharesMetadata =
-      repository &&
-      (repositories.matchesExact(repository.commonDir) ||
-        missingGitDirectories.matches(repository.commonDir));
+      commonDir &&
+      (repositories.matchesExact(commonDir.path) ||
+        (commonDir.missing && gitEntries.matches(commonDir.path)));
     // A surviving nested repository provides its own metadata even if its
     // parent gains or loses a .git entry.
     const hasIndependentNestedRepository =

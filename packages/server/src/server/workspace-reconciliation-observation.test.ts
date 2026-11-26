@@ -600,70 +600,74 @@ describe("observed workspace placement", () => {
     }
   });
 
-  test("reads a separately registered linked worktree alongside its main checkout and skips unrelated Git repos", async () => {
-    const observed = new ObservedPlacements(
-      [
-        { id: "repo", root: "repo", workspaces: [{ id: "main-ws", cwd: "repo" }] },
-        {
-          id: "unrelated",
-          root: "repo-other",
-          workspaces: [{ id: "other-ws", cwd: "repo-other" }],
-        },
-      ],
-      true,
-    );
-    try {
-      await observed.start();
-      observed.git("repo", "init", "-b", "main");
-      observed.git(
-        "repo",
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.com",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "initial",
+  test.each(["removal", "replacement"])(
+    "updates a separately registered linked worktree after updates and metadata %s",
+    async (change) => {
+      const observed = new ObservedPlacements(
+        [
+          { id: "repo", root: "repo", workspaces: [{ id: "main-ws", cwd: "repo" }] },
+          {
+            id: "unrelated",
+            root: "repo-other",
+            workspaces: [{ id: "other-ws", cwd: "repo-other" }],
+          },
+        ],
+        true,
       );
-      observed.git("repo", "remote", "add", "origin", "https://github.com/acme/old.git");
-      observed.git("repo", "worktree", "add", "-b", "feature", "../linked");
-      await observed.add({
-        id: "linked",
-        root: "linked",
-        workspaces: [{ id: "linked-ws", cwd: "linked" }],
-      });
-      observed.git("repo-other", "init", "-b", "main");
-      observed.change("linked", ".git");
-      await observed.advanceBy(DEBOUNCE_MS);
-      expect(await observed.placement("linked-ws")).toMatchObject({ branch: "feature" });
-      const oldKey = (await observed.project("linked"))?.projectKey;
-      observed.takeCheckoutReads();
+      try {
+        await observed.start();
+        observed.git("repo", "init", "-b", "main");
+        observed.git(
+          "repo",
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial",
+        );
+        observed.git("repo", "remote", "add", "origin", "https://github.com/acme/old.git");
+        observed.git("repo", "worktree", "add", "-b", "feature", "../linked");
+        await observed.add({
+          id: "linked",
+          root: "linked",
+          workspaces: [{ id: "linked-ws", cwd: "linked" }],
+        });
+        observed.git("repo-other", "init", "-b", "main");
+        observed.change("linked", ".git");
+        await observed.advanceBy(DEBOUNCE_MS);
+        expect(await observed.placement("linked-ws")).toMatchObject({ branch: "feature" });
+        const oldKey = (await observed.project("linked"))?.projectKey;
+        observed.takeCheckoutReads();
 
-      observed.git("repo", "remote", "set-url", "origin", "https://github.com/acme/new.git");
-      observed.git("repo", "branch", "-m", "feature", "renamed");
-      observed.change("repo", ".git");
-      await observed.advanceBy(DEBOUNCE_MS);
+        observed.git("repo", "remote", "set-url", "origin", "https://github.com/acme/new.git");
+        observed.git("repo", "branch", "-m", "feature", "renamed");
+        observed.change("repo", ".git");
+        await observed.advanceBy(DEBOUNCE_MS);
 
-      expect(await observed.placement("linked-ws")).toMatchObject({ branch: "renamed" });
-      const linkedProject = await observed.project("linked");
-      expect(linkedProject?.projectKey).toEqual((await observed.project("repo"))?.projectKey);
-      expect(linkedProject?.projectKey).not.toEqual(oldKey);
-      expect(observed.takeCheckoutReads()).toEqual(["linked", "repo"]);
-      expect(await observed.project("unrelated")).toMatchObject({ kind: "non_git" });
-      expect(await observed.placement("other-ws")).toMatchObject({ kind: "directory" });
+        expect(await observed.placement("linked-ws")).toMatchObject({ branch: "renamed" });
+        const linkedProject = await observed.project("linked");
+        expect(linkedProject?.projectKey).toEqual((await observed.project("repo"))?.projectKey);
+        expect(linkedProject?.projectKey).not.toEqual(oldKey);
+        expect(observed.takeCheckoutReads()).toEqual(["linked", "repo"]);
+        expect(await observed.project("unrelated")).toMatchObject({ kind: "non_git" });
+        expect(await observed.placement("other-ws")).toMatchObject({ kind: "directory" });
 
-      observed.rename("repo/.git", "repo/.git-backup");
-      observed.change("repo", ".git");
-      await observed.advanceBy(DEBOUNCE_MS);
+        observed.rename("repo/.git", "repo/.git-backup");
+        if (change === "replacement") observed.git("repo", "init", "-b", "main");
+        observed.change("repo", ".git");
+        await observed.advanceBy(DEBOUNCE_MS);
 
-      expect(await observed.project("linked")).toMatchObject({ kind: "non_git" });
-      expect(await observed.placement("linked-ws")).toMatchObject({ kind: "directory" });
-      expect(observed.takeCheckoutReads()).toEqual(["linked", "repo"]);
-    } finally {
-      await observed.disposeGit();
-    }
-  });
+        expect(await observed.project("linked")).toMatchObject({ kind: "non_git" });
+        expect(await observed.placement("linked-ws")).toMatchObject({ kind: "directory" });
+        expect(observed.takeCheckoutReads()).toEqual(["linked", "repo"]);
+      } finally {
+        await observed.disposeGit();
+      }
+    },
+  );
 
   test("skips independent nested repositories and workspaces attached from other repositories", async () => {
     const observed = new ObservedPlacements(
