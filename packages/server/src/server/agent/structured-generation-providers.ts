@@ -3,6 +3,7 @@ import type {
   AgentProvider,
   ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
+import type { MetadataTitleLanguage } from "@getpaseo/protocol/messages";
 import type { StructuredGenerationProvider } from "./agent-response-loop.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 
@@ -13,6 +14,7 @@ export interface StructuredGenerationDaemonConfig {
       model?: string;
       thinkingOptionId?: string;
     }>;
+    titleLanguage?: MetadataTitleLanguage;
   };
 }
 

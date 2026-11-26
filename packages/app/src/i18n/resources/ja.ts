@@ -2452,6 +2452,8 @@ export const ja: TranslationResources = {
       preferredHint: "Paseo が使用するモデルを選択します",
       model: "モデル",
       modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
+      titleLanguage: "タイトルの言語",
+      titleLanguageHint: "生成されるワークスペースタイトルの言語。ブランチ名は英語のままです",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
     },

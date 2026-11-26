@@ -42,6 +42,12 @@ Every failure is written to `$PASEO_HOME/daemon.log` (`~/.paseo/daemon.log` by d
 
 Open **Settings → Host → Metadata** and select **Automatic** or **Manual**. In Manual mode, pick the model Paseo uses. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list. Switching back to Automatic clears the list.
 
+## Choose the title language
+
+On the same **Metadata** page, choose **Title language**. English is the default so existing hosts keep their current behavior. Selecting another supported language asks the model to write workspace titles in that language while keeping branch names as lowercase git slugs.
+
+The language is stored as `agents.metadataGeneration.titleLanguage` in `~/.paseo/config.json`. It applies to workspaces created after the change and works for directory workspaces as well as git repositories. A project's `metadataGeneration.title.instructions` still replaces the title style for that repository, so project rules remain authoritative where present.
+
 ## Configure a custom fallback order
 
 To use more than one model in Manual mode, list them in `agents.metadataGeneration.providers` in `~/.paseo/config.json`. Paseo tries your entries in order and nothing else. An empty list means Automatic.

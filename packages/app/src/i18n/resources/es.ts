@@ -2478,6 +2478,8 @@ export const es: TranslationResources = {
       preferredHint: "Elige el modelo que usa Paseo",
       model: "Modelo",
       modelHint: "Solo se usa este modelo. Si falla, Paseo no prueba otro modelo",
+      titleLanguage: "Idioma del título",
+      titleLanguageHint: "Idioma de los títulos de espacios de trabajo. Las ramas siguen en inglés",
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
     },

@@ -111,3 +111,50 @@ test("replaces only the first configured metadata model", async ({ page }) => {
     }
   }
 });
+
+test("persists Simplified Chinese workspace title language without clearing metadata models", async ({
+  page,
+}, testInfo) => {
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previousConfig = await client.getDaemonConfig();
+
+  try {
+    await client.patchDaemonConfig({
+      metadataGeneration: {
+        providers: [{ provider: "mock", model: "ten-second-stream" }],
+      },
+    });
+    await openMetadataGenerationSettings(page);
+
+    await page.getByRole("button", { name: "Title language", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "简体中文 - Simplified Chinese", exact: true })
+      .click();
+
+    await expect
+      .poll(async () => (await client.getDaemonConfig()).config.metadataGeneration)
+      .toEqual({
+        providers: [{ provider: "mock", model: "ten-second-stream" }],
+        titleLanguage: "zh-CN",
+      });
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Title language", exact: true })).toContainText(
+      "简体中文 - Simplified Chinese",
+    );
+    await page.screenshot({
+      path: testInfo.outputPath("metadata-title-language.png"),
+      fullPage: true,
+    });
+  } finally {
+    try {
+      await client.patchDaemonConfig({
+        metadataGeneration: {
+          providers: previousConfig.config.metadataGeneration.providers,
+          titleLanguage: previousConfig.config.metadataGeneration.titleLanguage,
+        },
+      });
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }
+});

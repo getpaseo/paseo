@@ -2560,6 +2560,8 @@ export const en = {
       preferredHint: "Choose the model Paseo uses",
       model: "Model",
       modelHint: "Only this model is used. If it fails, Paseo does not try another model",
+      titleLanguage: "Title language",
+      titleLanguageHint: "Language for generated workspace titles. Branch names stay in English",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
     },
