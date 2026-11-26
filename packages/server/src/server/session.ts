@@ -2437,7 +2437,6 @@ export class Session {
     }
     const title = storedRecord?.title ?? null;
     const payload = toAgentPayload(agent, { title });
-    payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(agent.id);
     const storedUpdatedAt = storedRecord ? resolveStoredAgentUpdatedAt(storedRecord) : null;
     if (storedUpdatedAt) {
       const liveUpdatedAt = Date.parse(payload.updatedAt);
@@ -2447,6 +2446,9 @@ export class Session {
       }
     }
     payload.archivedAt = storedRecord?.archivedAt ?? null;
+    if (!payload.internal && !storedRecord?.internal && !payload.archivedAt) {
+      payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(agent.id);
+    }
     return payload;
   }
 

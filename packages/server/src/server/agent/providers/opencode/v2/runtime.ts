@@ -62,7 +62,7 @@ export interface V2RuntimeOptions {
 
 /** A server started for one caller alone, behind its wrap and with its launch environment. */
 export interface V2DedicatedLaunch {
-  wrap?: LaunchWrap;
+  wrap: LaunchWrap;
   env: Record<string, string> | undefined;
 }
 

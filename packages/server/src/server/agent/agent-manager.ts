@@ -7007,9 +7007,13 @@ export class AgentManager {
     request: PluginWireBeforeRequests["agent.open.before"],
     storedEnv?: Record<string, string>,
   ): Promise<Pick<AgentLaunchContext, "env" | "wrap">> {
-    if (!this.pluginSessions) return storedEnv ? { env: storedEnv } : {};
+    if (!this.pluginSessions)
+      return storedEnv && Object.keys(storedEnv).length ? { env: storedEnv } : {};
     const { env, wrap } = await this.pluginSessions.openSession(request);
-    return wrap ? { env, wrap } : { env };
+    return {
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+      ...(wrap ? { wrap } : {}),
+    };
   }
 
   private async buildLaunchContext(

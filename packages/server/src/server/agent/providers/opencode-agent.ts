@@ -1666,13 +1666,18 @@ export class OpenCodeAgentClient implements AgentClient {
     }
 
     const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
-    const registeredAcquisition = registeredServerUrl
-      ? this.serverManager.acquireExisting(registeredServerUrl)
-      : null;
+    const registeredAcquisition =
+      !context?.wrap && registeredServerUrl
+        ? this.serverManager.acquireExisting(registeredServerUrl)
+        : null;
+    const hasEnvironment = context?.env && Object.keys(context.env).length > 0;
     const acquisition =
       registeredAcquisition ??
-      (context?.env || context?.wrap
-        ? await this.serverManager.acquireDedicated({ env: context.env ?? {}, wrap: context.wrap })
+      (hasEnvironment || context?.wrap
+        ? await this.serverManager.acquireDedicated({
+            env: context?.env ?? {},
+            wrap: context?.wrap,
+          })
         : await this.serverManager.acquireCurrent());
     try {
       const client = this.createOpenCodeClient({

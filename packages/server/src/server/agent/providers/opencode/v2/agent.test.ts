@@ -104,6 +104,35 @@ function createChildHistoryHarness(failure?: "children" | "messages" | "status")
 }
 
 describe("OpenCode v2 dedicated history", () => {
+  test("keeps ordinary history on the configured service and honors an explicit wrap", async () => {
+    const shared = new V2Harness();
+    const wrapped = new V2Harness();
+    const requests: V2RuntimeAcquireOptions["dedicated"][] = [];
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: {
+        acquire: async (input?: V2RuntimeAcquireOptions) => {
+          requests.push(input?.dedicated);
+          return input?.dedicated ? wrapped.connection : shared.connection;
+        },
+        shutdown: async () => undefined,
+      },
+    });
+    const cwd = "/tmp/project";
+    const handle = { provider: "opencode", sessionId: "session", metadata: { cwd } };
+    await client.readSessionHistory(handle, { cwd, env: {} });
+    expect(requests).toEqual([undefined]);
+
+    const live = await client.createSession({ provider: "opencode", cwd });
+    try {
+      const wrap = ["/opt/sandbox/bin/run"] as const;
+      await client.readSessionHistory(handle, { cwd, wrap });
+      expect(requests).toEqual([undefined, undefined, { wrap, env: undefined }]);
+    } finally {
+      await live.close();
+    }
+  });
+
   test("reads paginated children and nested timelines without interactive setup", async () => {
     const { harness, lists, read } = createChildHistoryHarness();
 
