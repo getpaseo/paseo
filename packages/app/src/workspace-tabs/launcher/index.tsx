@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { Globe, SquarePen, SquareTerminal } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useTerminalProfiles } from "@/hooks/use-terminal-profiles";
 import { pluginIconComponent } from "@/plugins/icons";
 import { useInstalledPlugins } from "@/plugins/registry";
 import { pluginPanelSupportsLocation } from "@/plugins/workspace-panels/locations";
@@ -25,10 +25,7 @@ import {
   type PanelIconProps,
   type PanelPresentation,
 } from "@/panels/panel-registry";
-import {
-  getTerminalProfileIcon,
-  resolveTerminalProfiles,
-} from "@getpaseo/protocol/terminal-profiles";
+import { getTerminalProfileIcon } from "@getpaseo/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
@@ -105,7 +102,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
   const router = useRouter();
   const launcher = useContext(NewTabLauncherContext);
   invariant(launcher, "NewTabLauncherProvider is required");
-  const { config } = useDaemonConfig(serverId);
+  const profiles = useTerminalProfiles(serverId);
   const plugins = useInstalledPlugins();
   const isCompact = useIsCompactFormFactor();
 
@@ -219,7 +216,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
       }
     }
 
-    const profiles = resolveTerminalProfiles(config?.terminalProfiles);
     const groups: WorkspaceTabLaunchGroup[] = [{ id: "tabs", label: null, items: tabItems }];
     if (pluginItems.length > 0) {
       groups.push({ id: "plugin-panels", label: null, items: pluginItems });
@@ -251,12 +247,12 @@ export function useWorkspaceTabLaunchCatalog(input: {
       return items.length > 0 ? [{ ...group, items }] : [];
     });
   }, [
-    config?.terminalProfiles,
     editTerminalProfiles,
     isCompact,
     launchSelection,
     launcher,
     plugins,
+    profiles,
     purpose,
     host,
     surface,
