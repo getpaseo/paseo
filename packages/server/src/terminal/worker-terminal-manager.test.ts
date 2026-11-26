@@ -2530,7 +2530,13 @@ it.each([3000, 12050])(
               watcher.close();process.stdout.write("\\r\\nROWS-COMPLETE");
             }
           });
-          for(let i=0;i<${count};i++) process.stdout.write("\\x1b[31mrow-"+String(i).padStart(5,"0")+" 界é🙂\\x1b[0m"+(i===${count}-1?"":"\\r\\n"));
+          // Batch writes so Windows ConPTY does not spend 15s on 12,050 individual TTY writes.
+          for(let start=0;start<${count};start+=256){
+            let chunk="";
+            const end=Math.min(${count},start+256);
+            for(let i=start;i<end;i++) chunk+="\\x1b[31mrow-"+String(i).padStart(5,"0")+" 界é🙂\\x1b[0m"+(i===${count}-1?"":"\\r\\n");
+            process.stdout.write(chunk);
+          }
           setInterval(()=>{},1000)`,
         ),
       }),

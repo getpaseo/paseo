@@ -99,35 +99,50 @@ export function createExtraListeners(http: HttpServer, retryMs = 2_000) {
     const { port, host } = parseExtra(address);
     const sockets = new Set<Socket>();
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let pending: Promise<void> | null = null;
     let stopped = false;
     const server = createServer((socket) => {
       sockets.add(socket);
       socket.once("close", () => sockets.delete(socket));
       http.emit("connection", socket);
     });
-    function listen() {
-      return new Promise<void>((resolve) => {
+    function listen(): Promise<void> {
+      if (pending) return pending;
+      if (stopped || server.listening) return Promise.resolve();
+      clearTimeout(retry);
+      retry = undefined;
+      pending = new Promise<void>((resolve) => {
         const settled = () => {
-          server.off("listening", settled);
+          server.off("listening", onListening);
           server.off("error", settled);
           server.off("close", settled);
+          pending = null;
           resolve();
         };
-        server.once("listening", settled);
+        const onListening = () => {
+          settled();
+          if (stopped) server.close();
+        };
+        server.once("listening", onListening);
         server.once("error", settled);
         server.once("close", settled);
         server.listen(port, host);
       });
+      return pending;
     }
     server.on("error", () => {
-      if (!stopped) retry = setTimeout(() => void listen(), retryMs).unref();
+      if (stopped) return;
+      clearTimeout(retry);
+      retry = setTimeout(() => void listen(), retryMs).unref();
     });
     return {
       ready: listen(),
+      retry: listen,
       state: () => (server.listening ? ("listening" as const) : ("waiting" as const)),
       close() {
         stopped = true;
         clearTimeout(retry);
+        retry = undefined;
         server.close();
         // Let the request that removed this listener queue its response first.
         setImmediate(() => {
@@ -148,6 +163,13 @@ export function createExtraListeners(http: HttpServer, retryMs = 2_000) {
         if (!active.has(address)) active.set(address, open(address));
       }
       await Promise.all(Array.from(active.values(), (listener) => listener.ready));
+    },
+    async retryWaiting() {
+      const waiting = Array.from(active.values()).filter(
+        (listener) => listener.state() === "waiting",
+      );
+      if (waiting.length === 0) return;
+      await Promise.all(waiting.map((listener) => listener.retry()));
     },
     status() {
       return Array.from(active, ([address, listener]) => ({ address, state: listener.state() }));
@@ -205,6 +227,7 @@ export function createDaemonListeners(options: {
   http: HttpServer;
   listen: string;
   overridden: boolean;
+  retryMs?: number;
   getMain: () => ListenTarget | null;
   getTailscaleNetwork?: () => TailscaleNetwork;
 }) {
@@ -212,11 +235,12 @@ export function createDaemonListeners(options: {
     http,
     listen,
     overridden,
+    retryMs,
     getMain,
     getTailscaleNetwork = inspectTailscaleNetwork,
   } = options;
   const [startupMain] = splitListen(listen);
-  const extras = createExtraListeners(http);
+  const extras = createExtraListeners(http, retryMs);
   let stopped = false;
 
   async function applyLive(addresses: readonly string[]) {
@@ -261,16 +285,22 @@ export function createDaemonListeners(options: {
     };
   }
 
+  function status(localEndpoint?: string) {
+    const { tailscale, configured, extraListeners } = describeTailscale();
+    const disconnectsCurrentConnection =
+      !tailscale.lockedBy &&
+      configured.some(({ target }) => formatListenTarget(target) === localEndpoint);
+    return {
+      tailscale: { ...tailscale, disconnectsCurrentConnection },
+      extraListeners,
+    };
+  }
+
   return {
-    status(localEndpoint?: string) {
-      const { tailscale, configured, extraListeners } = describeTailscale();
-      const disconnectsCurrentConnection =
-        !tailscale.lockedBy &&
-        configured.some(({ target }) => formatListenTarget(target) === localEndpoint);
-      return {
-        tailscale: { ...tailscale, disconnectsCurrentConnection },
-        extraListeners,
-      };
+    status,
+    async refreshStatus(localEndpoint?: string) {
+      if (!stopped) await extras.retryWaiting();
+      return status(localEndpoint);
     },
     async apply(persisted: string | undefined) {
       const [main, ...addresses] = splitListen(overridden ? listen : (persisted ?? listen));

@@ -1,7 +1,18 @@
 import { useCallback, useMemo } from "react";
+import { Text, View } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { RotateCw } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { SettingsAction, SettingsRowChildren, SettingsSwitch } from "@/components/settings";
+import { StyleSheet } from "react-native-unistyles";
+import {
+  SettingsAction,
+  SettingsRow,
+  SettingsRowChildren,
+  SettingsSwitch,
+} from "@/components/settings";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
@@ -9,6 +20,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { describeTailscale } from "./tailscale-hint";
+import { resolveTailscaleControlState } from "./tailscale-state";
 
 const UPDATES_DOCS_URL = "https://paseo.sh/docs/updates";
 const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
@@ -65,18 +77,53 @@ function TailscaleControl({ serverId, client }: { serverId: string; client: Host
     () => ({ href: TAILSCALE_DOWNLOAD_URL, label: t("devices.tailscale.install") }),
     [t],
   );
+  const refreshLabel = t(
+    tailscale.refreshing ? "devices.tailscale.refreshing" : "devices.tailscale.refresh",
+  );
+  const refreshButton = tailscale.showRefresh ? (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <Button
+          variant="outline"
+          leftIcon={RotateCw}
+          onPress={tailscale.refresh}
+          loading={tailscale.refreshing}
+          disabled={tailscale.refreshDisabled}
+          accessibilityLabel={refreshLabel}
+          testID="devices-tailscale-refresh"
+        />
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={6}>
+        <Text style={styles.tooltipText}>{refreshLabel}</Text>
+      </TooltipContent>
+    </Tooltip>
+  ) : null;
+  const switchControl = tailscale.showSwitch ? (
+    <Switch
+      value={tailscale.value}
+      onValueChange={tailscale.setEnabled}
+      disabled={tailscale.switchDisabled}
+      accessibilityLabel={LABEL}
+    />
+  ) : null;
 
   return (
     <>
-      <SettingsSwitch
+      <SettingsRow
         label={LABEL}
         hint={status ? describeTailscale(status, t) : t("devices.tailscale.hint")}
-        link={status?.state === "unavailable" ? installLink : undefined}
+        link={tailscale.showInstallLink ? installLink : undefined}
         error={tailscale.error}
-        value={tailscale.value}
-        disabled={!status || status.state === "unavailable" || Boolean(status.lockedBy)}
-        onValueChange={tailscale.setEnabled}
-      />
+      >
+        {refreshButton && switchControl ? (
+          <View style={styles.controls}>
+            {refreshButton}
+            {switchControl}
+          </View>
+        ) : (
+          (refreshButton ?? switchControl)
+        )}
+      </SettingsRow>
       {tailscale.address ? <TailscaleAddress address={tailscale.address} /> : null}
     </>
   );
@@ -118,16 +165,18 @@ function useTailscale(serverId: string, client: HostClient) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => ["tailscale-status", serverId], [serverId]);
+  const fetchStatus = useCallback(async () => {
+    const { tailscale } = await client.getDaemonStatus({ includeProviders: false });
+    if (!tailscale) throw new Error("Host did not report Tailscale status");
+    return tailscale;
+  }, [client]);
 
   const query = useFetchQuery({
     queryKey,
-    queryFn: async () => {
-      const { tailscale } = await client.getDaemonStatus({ includeProviders: false });
-      if (!tailscale) throw new Error("Host did not report Tailscale status");
-      return tailscale;
-    },
-    // Tailscale can come up after the host does; polling moves "waiting" to "on" on its own.
+    queryFn: fetchStatus,
+    // Tailscale can come up after the host does; polling and returning to the window pick it up.
     refetchInterval: 2_000,
+    refetchOnWindowFocus: true,
     staleTimeMs: 0,
     dataShape: "value",
   });
@@ -140,13 +189,30 @@ function useTailscale(serverId: string, client: HostClient) {
     onSuccess: (result) => queryClient.setQueryData(queryKey, result.tailscale),
   });
 
-  const status = query.data;
-  const pending = change.isPending ? change.variables.enabled : undefined;
-  const on = status?.state === "on" || status?.state === "waiting";
-  // Not known until the host first answers.
-  const value = pending ?? (status ? on : null);
+  const refreshMutation = useMutation({
+    mutationFn: async () => {
+      await queryClient.cancelQueries({ queryKey });
+      return fetchStatus();
+    },
+    onSuccess: (tailscale) => queryClient.setQueryData(queryKey, tailscale),
+  });
 
-  const { mutate } = change;
+  const status = query.data;
+  const control = resolveTailscaleControlState({
+    status,
+    statusUpdatedAt: query.dataUpdatedAt,
+    statusError: query.isError,
+    changePending: change.isPending,
+    changePendingEnabled: change.variables?.enabled,
+    changeError: change.isError,
+    changeErrorEnabled: change.variables?.enabled,
+    refreshPending: refreshMutation.isPending,
+    refreshError: refreshMutation.isError,
+    refreshSubmittedAt: refreshMutation.submittedAt,
+  });
+
+  const { mutate, reset: resetChange } = change;
+  const { mutate: runRefresh, reset: resetRefresh } = refreshMutation;
   const confirmTurnOff = useCallback(
     () =>
       confirmDialog({
@@ -159,8 +225,11 @@ function useTailscale(serverId: string, client: HostClient) {
     [t],
   );
   const turnOffConfirmed = useCallback(async () => {
-    if (await confirmTurnOff()) mutate({ enabled: false, confirmed: true });
-  }, [confirmTurnOff, mutate]);
+    if (await confirmTurnOff()) {
+      resetRefresh();
+      mutate({ enabled: false, confirmed: true });
+    }
+  }, [confirmTurnOff, mutate, resetRefresh]);
   const disconnects = status?.disconnectsCurrentConnection === true;
   const setEnabled = useCallback(
     (enabled: boolean) => {
@@ -168,6 +237,7 @@ function useTailscale(serverId: string, client: HostClient) {
         void turnOffConfirmed();
         return;
       }
+      resetRefresh();
       mutate(
         { enabled, confirmed: false },
         {
@@ -179,24 +249,38 @@ function useTailscale(serverId: string, client: HostClient) {
         },
       );
     },
-    [disconnects, mutate, turnOffConfirmed],
+    [disconnects, mutate, resetRefresh, turnOffConfirmed],
   );
-
-  let error: string | undefined;
-  if (change.isError) {
-    error = t(
-      change.variables.enabled ? "devices.tailscale.turnOnError" : "devices.tailscale.turnOffError",
-    );
-  } else if (query.isError && !status) {
-    error = t("devices.tailscale.statusError");
-  }
+  const refresh = useCallback(() => {
+    resetChange();
+    runRefresh();
+  }, [resetChange, runRefresh]);
 
   return {
     status,
-    value,
-    error,
+    value: control.value,
+    showSwitch: control.showSwitch,
+    switchDisabled: control.switchDisabled,
+    showRefresh: control.showRefresh,
+    refreshing: control.refreshing,
+    refreshDisabled: control.refreshDisabled,
+    showInstallLink: control.showInstallLink,
+    error: control.errorKey ? t(control.errorKey) : undefined,
     // A tap is ignored until the host answers the one before it.
-    setEnabled: change.isPending ? undefined : setEnabled,
-    address: status?.state === "on" && value ? status.address : null,
+    setEnabled: control.switchDisabled ? undefined : setEnabled,
+    refresh: control.refreshDisabled ? undefined : refresh,
+    address: control.address,
   };
 }
+
+const styles = StyleSheet.create((theme) => ({
+  controls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  tooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+}));
