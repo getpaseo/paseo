@@ -583,6 +583,27 @@ async function checkout({
   }
 }
 
+async function backfillCredentialedObjects(options: {
+  cwd: string;
+  envOverlay: Record<string, string>;
+  timeout: number;
+}): Promise<void> {
+  const promisor = await runGitCommand(["config", "--get", "remote.origin.promisor"], {
+    ...options,
+    acceptExitCodes: [0, 1],
+  });
+  if (promisor.exitCode !== 0) return;
+  await runGitCommand(["config", "--unset-all", "remote.origin.partialclonefilter"], {
+    ...options,
+    acceptExitCodes: [0, 5],
+  });
+  await runGitCommand(["config", "--unset-all", "remote.origin.promisor"], {
+    ...options,
+    acceptExitCodes: [0, 5],
+  });
+  await runGitCommand(["fetch", "--refetch", "--no-tags", "origin"], options);
+}
+
 async function configureGitFiles({
   checkoutRoot,
   commit,
@@ -594,7 +615,7 @@ async function configureGitFiles({
   pluginPath: string;
   remote: string;
 }): Promise<void> {
-  const { envOverlay } = gitRemote(remote);
+  const { cloneRemote, envOverlay } = gitRemote(remote);
   const relativePlugin = pluginPath.split(path.sep).join("/");
   const manifestPath = path.posix.join(relativePlugin, "paseo-plugin.json");
   const options = { cwd: checkoutRoot, envOverlay, timeout: GIT_TIMEOUT_MS };
@@ -604,10 +625,18 @@ async function configureGitFiles({
       options,
     );
     // Symlinked manifests and manifests inside submodules need the normal checkout first.
-    if (!/^100(?:644|755) blob /.test(manifestEntry.stdout)) return;
+    if (!/^100(?:644|755) blob /.test(manifestEntry.stdout)) {
+      if (cloneRemote !== remote) await backfillCredentialedObjects(options);
+      return;
+    }
     const { stdout } = await runGitCommand(["show", `${commit}:${manifestPath}`], options);
     const manifest = parsePluginManifest(stdout);
-    if (!manifest.gitFiles) return;
+    if (!manifest.gitFiles) {
+      // Credentialed checkouts record https://paseo.invalid/plugin.git as origin, so builds
+      // running `git log -p` cannot fetch historical blobs lazily when gitFiles is unset.
+      if (cloneRemote !== remote) await backfillCredentialedObjects(options);
+      return;
+    }
     const paths = manifest.gitFiles.map((entry) => path.posix.join(relativePlugin, entry));
     if (paths.some((entry) => /[\r\n]/.test(entry)))
       throw new Error("Git plugin installation paths cannot contain newlines");

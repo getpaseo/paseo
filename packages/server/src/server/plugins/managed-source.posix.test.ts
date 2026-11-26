@@ -470,9 +470,10 @@ describe("managed Git plugin sources", () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-plugin-transfer-"));
     roots.push(root);
     await runGitCommand(["clone", "--bare", repository, "plugin.git"], { cwd: root });
-    await runGitCommand(["config", "uploadpack.allowFilter", "true"], {
-      cwd: path.join(root, "plugin.git"),
-    });
+    await runGitCommand(
+      ["--git-dir", path.join(root, "plugin.git"), "config", "uploadpack.allowFilter", "true"],
+      { cwd: root },
+    );
     const traffic = { bytes: 0 };
     const server = createGitFixtureServer({ root, posts: [], traffic });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -515,7 +516,9 @@ describe("managed Git plugin sources", () => {
     roots.push(root);
     await runGitCommand(["clone", "--bare", repository, "plugin.git"], { cwd: root });
     const bare = path.join(root, "plugin.git");
-    await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: bare });
+    await runGitCommand(["--git-dir", bare, "config", "uploadpack.allowFilter", "true"], {
+      cwd: bare,
+    });
     const posts: string[] = [];
     const server = createGitFixtureServer({ root, posts });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -558,6 +561,52 @@ describe("managed Git plugin sources", () => {
         "updated",
       );
       expect(posts.length - installFetches).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+      else process.env.GIT_CONFIG_PARAMETERS = previous;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 30_000);
+
+  it("retains full history objects for credentialed installs without gitFiles so builds can run git log -p", async () => {
+    const repository = await createRepository();
+    await writeFile(path.join(repository, "changelog-source.txt"), "first entry\n");
+    await commitAll(repository, "add history entry");
+    await writeFile(path.join(repository, "changelog-source.txt"), "second entry\n");
+    await commitAll(repository, "update history entry");
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-plugin-credential-history-"));
+    roots.push(root);
+    await runGitCommand(["clone", "--bare", repository, "plugin.git"], { cwd: root });
+    const bare = path.join(root, "plugin.git");
+    await runGitCommand(["--git-dir", bare, "config", "uploadpack.allowFilter", "true"], {
+      cwd: bare,
+    });
+    const posts: string[] = [];
+    const server = createGitFixtureServer({ root, posts });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected HTTP port");
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-credential-history-home-"));
+    roots.push(home);
+    const previous = process.env.GIT_CONFIG_PARAMETERS;
+    process.env.GIT_CONFIG_PARAMETERS = [previous, "'credential.helper='"]
+      .filter(Boolean)
+      .join(" ");
+    try {
+      const remote = `http://fixture:fake-secret@127.0.0.1:${address.port}/plugin.git`;
+      const sources = new ManagedPluginSources(home);
+      let candidate = await sources.prepareInstall({ source: remote });
+      candidate = await sources.place("managed-example", candidate);
+      sources.commit("managed-example", candidate.record);
+
+      const log = await runGitCommand(["log", "-p", "--", "changelog-source.txt"], {
+        cwd: candidate.directory,
+      });
+      expect(log.stdout).toContain("first entry");
+      expect(log.stdout).toContain("second entry");
+      const config = await readFile(path.join(candidate.directory, ".git", "config"), "utf8");
+      expect(config).not.toContain("partialclonefilter");
     } finally {
       if (previous === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
       else process.env.GIT_CONFIG_PARAMETERS = previous;
