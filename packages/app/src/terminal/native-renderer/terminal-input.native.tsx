@@ -69,6 +69,11 @@ function isPrintableKey(key: string): boolean {
   return key.length === 1 && key >= " " && key <= "~";
 }
 
+// A pinyin keyboard re-segments the reading it is composing as it grows
+// (`nihao` -> `ni hao`), moving spaces or apostrophes without adding a letter.
+const READING_SEGMENT_SEPARATORS = /[ '\u2019]/g;
+const READING_SEGMENT_EDIT_PATTERN = /^[A-Za-z '\u2019]+$/;
+
 function getCommonPrefixLength(left: string[], right: string[]): number {
   const limit = Math.min(left.length, right.length);
   let index = 0;
@@ -86,7 +91,8 @@ function getCommonPrefixLength(left: string[], right: string[]): number {
  * a multi-character reading (`nihao` -> `你好`, `にほんご` -> `日本語`). None of
  * those are appends, so rub out the rewritten suffix and send the replacement.
  *
- * The inserted suffix must contain a CJK script. Ordinary autocorrect and
+ * The inserted suffix must contain a CJK script, or only re-segment the Latin
+ * reading (`nihao` -> `ni hao`). Ordinary autocorrect and
  * suggestion replacements stay swallowed: the hidden input can edit text the
  * terminal has already committed, and the terminal cannot take it back.
  */
@@ -99,10 +105,28 @@ function resolveCompositionEdit(previousText: string, text: string): string {
   if (removed.length === 0 || inserted.length === 0) {
     return "";
   }
-  if (!CJK_COMPOSITION_PATTERN.test(inserted)) {
+  if (
+    !CJK_COMPOSITION_PATTERN.test(inserted) &&
+    !isReadingResegmentation(removed.join(""), inserted)
+  ) {
     return "";
   }
   return `${"\x7f".repeat(removed.length)}${inserted}`;
+}
+
+/**
+ * True when the rewritten suffix only moves spaces or apostrophes inside a Latin reading.
+ * The keyboard is still composing, so the terminal can follow the rewrite. Treating it as
+ * autocorrect would swallow the committed Han text and leave the reading on the line.
+ */
+function isReadingResegmentation(removed: string, inserted: string): boolean {
+  if (!READING_SEGMENT_EDIT_PATTERN.test(removed) || !READING_SEGMENT_EDIT_PATTERN.test(inserted)) {
+    return false;
+  }
+  return (
+    removed.replace(READING_SEGMENT_SEPARATORS, "") ===
+    inserted.replace(READING_SEGMENT_SEPARATORS, "")
+  );
 }
 
 export function resolveTerminalInputFocusRequest(input: {

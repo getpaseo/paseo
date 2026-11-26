@@ -295,6 +295,58 @@ describe("native terminal typed input", () => {
     expect(input.receiveTextChange("하")).toEqual({ data: "\x7f하", shouldClear: false });
   });
 
+  it("follows a pinyin reading that the keyboard re-segments, then commits the Han text", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("nihao")).toEqual({ data: "nihao", shouldClear: false });
+    // The keyboard inserts a syllable break while composing.
+    expect(input.receiveTextChange("ni hao")).toEqual({
+      data: "\x7f\x7f\x7f hao",
+      shouldClear: false,
+    });
+    expect(input.receiveTextChange("你好")).toEqual({
+      data: "\x7f\x7f\x7f\x7f\x7f\x7f你好",
+      shouldClear: false,
+    });
+  });
+
+  it("commits a multi-syllable reading typed through keypresses and re-segmented", () => {
+    const input = createTerminalTextInputState();
+
+    for (const key of "haohahaha") {
+      expect(input.receiveKeyPress(key)).toEqual({ data: key, shouldClear: false });
+    }
+    expect(input.receiveTextChange("hao ha ha ha")).toEqual({
+      data: `${"\x7f".repeat(6)} ha ha ha`,
+      shouldClear: false,
+    });
+    expect(input.receiveTextChange("好哈哈哈")).toEqual({
+      data: `${"\x7f".repeat(12)}好哈哈哈`,
+      shouldClear: false,
+    });
+  });
+
+  it("keeps composing across an apostrophe segmentation", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("xian")).toEqual({ data: "xian", shouldClear: false });
+    expect(input.receiveTextChange("xi'an")).toEqual({
+      data: "\x7f\x7f'an",
+      shouldClear: false,
+    });
+    expect(input.receiveTextChange("西安")).toEqual({
+      data: `${"\x7f".repeat(5)}西安`,
+      shouldClear: false,
+    });
+  });
+
+  it("does not treat a letter change as re-segmentation", () => {
+    const input = createTerminalTextInputState();
+
+    expect(input.receiveTextChange("teh cat")).toEqual({ data: "teh cat", shouldClear: false });
+    expect(input.receiveTextChange("the cat")).toEqual({ data: "", shouldClear: false });
+  });
+
   it("still swallows non-CJK replacement edits", () => {
     const input = createTerminalTextInputState();
 
