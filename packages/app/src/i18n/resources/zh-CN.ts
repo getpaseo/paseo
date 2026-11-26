@@ -1273,6 +1273,9 @@ export const zhCN: TranslationResources = {
     pinned: {
       title: "已置顶",
     },
+    workspaces: {
+      title: "工作区",
+    },
     host: {
       noHost: "没有 Host",
       switchTitle: "切换 Host",

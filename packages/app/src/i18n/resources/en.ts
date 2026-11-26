@@ -1292,6 +1292,9 @@ export const en = {
     pinned: {
       title: "Pinned",
     },
+    workspaces: {
+      title: "Workspaces",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",

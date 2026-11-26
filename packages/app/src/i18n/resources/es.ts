@@ -1318,6 +1318,9 @@ export const es: TranslationResources = {
     pinned: {
       title: "Anclados",
     },
+    workspaces: {
+      title: "Espacios de trabajo",
+    },
     host: {
       noHost: "Sin anfitrión",
       switchTitle: "Cambiar de anfitrión",

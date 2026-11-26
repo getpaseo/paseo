@@ -131,6 +131,15 @@ export const pluginSettings = {
   },
   fr: {
     ...shared,
+    logs: {
+      action: "Journaux",
+      title: "Journaux : {{name}}",
+      loading: "Chargement des journaux…",
+      refresh: "Actualiser",
+      refreshing: "Actualisation…",
+      errorTitle: "Impossible de charger les journaux du plugin",
+      empty: "Aucune sortie du plugin pour l’instant",
+    },
     gallery: pluginGallery.fr,
     screens: {
       open: "Ouvrir",
