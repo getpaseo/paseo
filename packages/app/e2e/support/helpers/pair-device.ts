@@ -358,6 +358,88 @@ export async function expectTailscaleUpdateRequired(page: Page): Promise<void> {
   await expect(page.getByRole("link", { name: "How to update", exact: true })).toBeVisible();
 }
 
+export async function expectTailscaleUnavailable(page: Page): Promise<void> {
+  await expect(page.getByRole("switch", { name: "Tailscale", exact: true })).toBeDisabled();
+  await expect(
+    page.getByText("Tailscale is not running on this host", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Get Tailscale", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+}
+
+export async function refreshTailscaleAvailability(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+}
+
+export async function expectTailscaleAvailable(
+  page: Page,
+  options?: { timeout?: number },
+): Promise<void> {
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0, options);
+  const toggle = page.getByRole("switch", { name: "Tailscale", exact: true });
+  await expect(toggle).toBeEnabled(options);
+  await expect(toggle).not.toBeChecked(options);
+  await expect(
+    page.getByText("Direct over your tailnet, enter an address", { exact: true }),
+  ).toBeVisible(options);
+}
+
+/**
+ * Tracks `daemon.get_status` frames on the host socket so Refresh tests can align right after a
+ * 2-second poll and verify the button click itself sent a fresh status request.
+ */
+export function observeDaemonStatusPolling(page: Page, port: number) {
+  let lastResponseAt = 0;
+  let waitingForResponse: (() => void) | null = null;
+  let waitingForRequest: (() => void) | null = null;
+  page.on("websocket", (socket) => {
+    if (!socket.url().includes(`:${port}`)) return;
+    socket.on("framesent", ({ payload }) => {
+      const message = typeof payload === "string" ? payload : payload.toString();
+      if (message.includes('"type":"daemon.get_status.request"')) {
+        waitingForRequest?.();
+        waitingForRequest = null;
+      }
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const message = typeof payload === "string" ? payload : payload.toString();
+      if (message.includes('"type":"daemon.get_status.response"')) {
+        lastResponseAt = Date.now();
+        waitingForResponse?.();
+        waitingForResponse = null;
+      }
+    });
+  });
+
+  return {
+    async waitForFreshPollWindow(): Promise<void> {
+      if (Date.now() - lastResponseAt < 250) return;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          waitingForResponse = null;
+          reject(new Error("Timed out waiting for daemon status poll"));
+        }, 5_000);
+        waitingForResponse = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+    },
+    waitForStatusRequest(timeoutMs = 1_000): Promise<void> {
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          waitingForRequest = null;
+          reject(new Error("Refresh did not send daemon.get_status.request"));
+        }, timeoutMs);
+        waitingForRequest = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+    },
+  };
+}
+
 export async function openPairDeviceModal(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Relay", exact: true }).click();
   await expect(page.getByTestId("devices-relay-pairing")).toBeVisible();

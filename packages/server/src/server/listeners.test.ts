@@ -172,3 +172,42 @@ test("does not count an extra listener on a non-Tailscale interface in the share
     await listeners.stop();
   }
 });
+
+test("re-probes a waiting Tailscale listener immediately on refreshStatus", async () => {
+  const blocker = createTcpServer().listen(0, "127.0.0.2");
+  await once(blocker, "listening");
+  const bound = blocker.address();
+  if (!bound || typeof bound === "string") throw new Error("Expected TCP");
+  const address = `127.0.0.2:${bound.port}`;
+  const listen = `127.0.0.1:${bound.port},${address}`;
+  const http = createServer((_req, res) => res.end("ok"));
+  const listeners = createDaemonListeners({
+    http,
+    listen,
+    overridden: false,
+    retryMs: 60_000,
+    getMain: () => ({ type: "tcp", host: "127.0.0.1", port: bound.port }),
+    getTailscaleNetwork: () => ({
+      addresses: ["127.0.0.2"],
+      otherAddresses: new Set(),
+    }),
+  });
+  try {
+    await listeners.apply(listen);
+    expect(listeners.status()).toMatchObject({
+      tailscale: { ip: "127.0.0.2", address, state: "waiting" },
+      extraListeners: [{ address, state: "waiting" }],
+    });
+
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
+
+    expect(await listeners.refreshStatus()).toMatchObject({
+      tailscale: { ip: "127.0.0.2", address, state: "on" },
+      extraListeners: [{ address, state: "listening" }],
+    });
+    expect(await (await fetch(`http://${address}`)).text()).toBe("ok");
+  } finally {
+    await listeners.stop();
+    blocker.close();
+  }
+});

@@ -220,7 +220,7 @@ test("the plugins scene installs the panel, then changes it on request", async (
 test("the code review scene comments on a line and sends the feedback to an agent", async ({
   page,
 }) => {
-  await openHomepage(page);
+  await openHomepageWithSceneClock(page);
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const comment = mockup.getByText("Add “write”. The agent edits files too.", { exact: true });
   const sendFeedback = mockup.getByText("Send feedback (1)", { exact: true });
@@ -232,18 +232,17 @@ test("the code review scene comments on a line and sends the feedback to an agen
   await expect(comment).toHaveCount(0);
 
   // The pointer opens the editor on a line, and the typed comment is saved under that line.
-  await expect(sendFeedback).toBeVisible({ timeout: 10_000 });
+  await page.clock.runFor(3500);
+  await expect(sendFeedback).toBeVisible();
   await expect(comment).toBeVisible();
 
   // Send feedback asks which agent, and the sent comment leaves the diff.
-  await expect(mockup.getByText("Claude Code", { exact: true })).toHaveCount(2, {
-    timeout: 10_000,
-  });
-  await expect(mockup.getByText("Feedback sent to Codex", { exact: true })).toBeVisible({
-    timeout: 10_000,
-  });
-  await expect(sendFeedback).toHaveCount(0);
-  await expect(comment).toHaveCount(0);
+  await page.clock.runFor(1300);
+  await expect(mockup.getByText("Claude Code", { exact: true })).toHaveCount(2);
+  await page.clock.runFor(1500);
+  await expect(mockup.getByText("Feedback sent to Codex", { exact: true })).toBeVisible();
+  await finishPanelSwap(page, mockup, sendFeedback);
+  await finishPanelSwap(page, mockup, comment);
 });
 
 test("picking a scene brings the pills and the whole mockup on screen", async ({ page }) => {

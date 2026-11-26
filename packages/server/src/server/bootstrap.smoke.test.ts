@@ -6,6 +6,7 @@ import type { ChildProcess } from "node:child_process";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAgentClient } from "./agent/providers/claude/agent.js";
 import http from "node:http";
+import { createServer as createNetServer } from "node:net";
 import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
@@ -188,6 +189,44 @@ describe("paseo daemon bootstrap", () => {
       }
     },
   );
+
+  test("re-probes a waiting Tailscale listener immediately on getDaemonStatus", async () => {
+    const blocker = createNetServer().listen(0, "127.0.0.2");
+    await once(blocker, "listening");
+    const bound = blocker.address();
+    if (!bound || typeof bound === "string") throw new Error("Expected TCP");
+    const address = `127.0.0.2:${bound.port}`;
+    const daemon = await createTestPaseoDaemon({
+      relayEnabled: false,
+      listenPort: bound.port,
+      getTailscaleNetwork: () => ({ addresses: ["127.0.0.2"], otherAddresses: new Set() }),
+    });
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+
+    try {
+      const configPath = path.join(daemon.paseoHome, "config.json");
+      await writeFile(
+        configPath,
+        JSON.stringify({ version: 1, daemon: { listen: daemon.config.listen } }),
+      );
+      await client.connect();
+      expect(await client.setTailscaleEnabled(true)).toMatchObject({
+        tailscale: { address, state: "waiting" },
+        extraListeners: [{ address, state: "waiting" }],
+      });
+
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+      expect(await client.getDaemonStatus({ includeProviders: false })).toMatchObject({
+        tailscale: { address, state: "on" },
+        extraListeners: [{ address, state: "listening" }],
+      });
+      expect((await fetch(`http://${address}/api/health`)).ok).toBe(true);
+    } finally {
+      await client.close();
+      await daemon.close();
+      blocker.close();
+    }
+  });
 
   test("keeps Tailscale on its original port across a main port change", async () => {
     const tailscaleIp = "127.0.0.2";

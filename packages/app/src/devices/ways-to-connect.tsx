@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsCard, SettingsDetailRow, SettingsSection } from "@/components/settings";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { PairDeviceModal } from "./pair-device-modal";
 import { CONNECTIVITY_DOCS_URL } from "./pair-device-section";
 import { TailscaleRow } from "./tailscale-row";
@@ -15,10 +14,6 @@ export function WaysToConnect({ serverId }: { serverId: string }) {
   const [pairing, setPairing] = useState(false);
   const openPairing = useCallback(() => setPairing(true), []);
   const closePairing = useCallback(() => setPairing(false), []);
-  const recommended = useMemo(
-    () => <StatusBadge size="xs" variant="success" label={t("devices.recommended")} />,
-    [t],
-  );
   const docsLink = useMemo(
     () => ({
       href: CONNECTIVITY_DOCS_URL,
@@ -33,7 +28,6 @@ export function WaysToConnect({ serverId }: { serverId: string }) {
       <SettingsCard>
         <SettingsDetailRow
           label={t("devices.relay.title")}
-          labelAccessory={recommended}
           hint={t("devices.relay.hint")}
           onPress={openPairing}
           testID="devices-relay"
