@@ -229,7 +229,9 @@ describe.each(
       seq: 1,
       size: 1,
       retirementCount: 0,
+      activeSegmentStartSeq: 0,
       rewind: null,
+      providerSwitch: null,
     });
     await expect(timeline.readRows(child)).rejects.toBeInstanceOf(UnknownTimelineError);
   });
@@ -809,7 +811,9 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)(
         seq: 8,
         size: 4,
         retirementCount: 1,
+        activeSegmentStartSeq: 0,
         rewind: null,
+        providerSwitch: null,
       });
       const tail = await timeline.fetch(scope);
       expect(texts(tail.rows)).toEqual(["a", "A", "c", "C"]);

@@ -45,6 +45,26 @@ const PROFILE = {
 
 const PROFILE_SUMMARY = "Mock Load Test · One minute stream · Approval test";
 
+// Isolate this suite to the sole mock provider so it tests single-provider picker
+// behavior deterministically regardless of which CLIs are installed on the host.
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      providers: {
+        claude: { enabled: false },
+        codex: { enabled: false },
+        copilot: { enabled: false },
+        opencode: { enabled: false },
+        pi: { enabled: false },
+        omp: { enabled: false },
+        antigravity: { enabled: false },
+        hoplite: { enabled: false },
+      },
+    },
+  },
+});
+
 test.describe("Agent profiles in the model picker", () => {
   test("an empty host still exposes agent profile settings from the picker", async ({ page }) => {
     const seed = await seedAgentProfiles([]);
@@ -69,8 +89,8 @@ test.describe("Agent profiles in the model picker", () => {
     page,
   }) => {
     const seed = await seedAgentProfiles([PROFILE]);
-    // A live agent is one provider's process, so the profile has to name that
-    // same provider or the picker will not offer it at all.
+    // With only the mock provider enabled on this host, the picker opens
+    // directly into its models and shows its pinned profile.
     const workspace = await seedMockAgentWorkspace({
       repoPrefix: "agent-profiles-picker-",
       title: "Agent profiles picker",

@@ -28,6 +28,8 @@ export interface TimelineProjectionEntry {
   provider?: AgentProvider;
   turnId?: string;
   providerMessageId?: string;
+  providerPromptText?: string;
+  rejected?: boolean;
   turnMetrics?: AgentMetric[];
   timestamp: string;
   seqStart: number;
@@ -144,6 +146,10 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
       ...(row.provider ? { provider: row.provider } : {}),
       ...(row.turnId ? { turnId: row.turnId } : {}),
       ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
+      ...(row.providerPromptText !== undefined
+        ? { providerPromptText: row.providerPromptText }
+        : {}),
+      ...(row.rejected ? { rejected: true } : {}),
       ...(row.turnMetrics ? { turnMetrics: row.turnMetrics } : {}),
       seqStart: row.seq,
       seqEnd: row.seq,
@@ -416,6 +422,7 @@ export class TimelineProjection {
   private readonly retirements: TimelineRetirement[] = [];
   private readonly retiredIdentities = new Set<string>();
   private readonly retiredTurnIds = new Set<string>();
+  private activeSegmentStartSeq = 0;
 
   constructor(rows: readonly AgentTimelineRow[] = []) {
     for (const row of rows) this.appendProjected(row);
@@ -455,6 +462,9 @@ export class TimelineProjection {
       return this.rows.length - 1;
     }
     const entry = fold.row;
+    if (entry.item.type === "provider_switch") {
+      this.resetProviderSegment(entry.seqStart);
+    }
     if (identity !== null) this.identities.set(identity, this.rows.length);
     this.rows.push(entry);
     const last = this.spans.at(-1);
@@ -506,13 +516,34 @@ export class TimelineProjection {
   }
 
   /**
+   * Starts a fresh provider segment at `markerSeq`. Tool-call live identities and retired keys from
+   * the closed previous provider session are cleared so IDs in the new session cannot collide.
+   */
+  private resetProviderSegment(markerSeq: number): void {
+    this.activeSegmentStartSeq = markerSeq;
+    for (const [identity, rowIndex] of this.identities) {
+      if (this.rows[rowIndex]?.item.type === "tool_call") {
+        this.identities.delete(identity);
+      }
+    }
+    this.retiredIdentities.clear();
+    this.retiredTurnIds.clear();
+  }
+
+  getActiveSegmentStartSeq(): number {
+    return this.activeSegmentStartSeq;
+  }
+
+  /**
    * Retires the active rows anchored at or after `retireFromSeq`. Rows are in anchor order, so they
    * form the display suffix. Their source seqs and the retirement's own seq stay covered.
    */
   retire(retirement: TimelineRetirement): ProjectedTimelineRow[] {
     const cut = this.firstRowAnchoredAtOrAfter(retirement.retireFromSeq);
     const retired = this.rows.splice(cut);
-    const activeTurnIds = new Set(this.rows.map((row) => row.turnId));
+    const activeTurnIds = new Set(
+      this.rows.filter((row) => row.seqStart > this.activeSegmentStartSeq).map((row) => row.turnId),
+    );
     for (const row of retired) {
       if (row.item.type === "tool_call") {
         const identity = timelineItemIdentity(row.item);
@@ -782,12 +813,19 @@ export class TimelineProjection {
   enrichSubmittedUserMessage(
     clientMessageId: string,
     providerMessageId: string,
+    options?: { providerPromptText?: string },
   ): ProjectedTimelineRow | null {
     const index = this.rows.findIndex(
       (row) => row.item.type === "user_message" && row.item.clientMessageId === clientMessageId,
     );
     if (index < 0) return null;
-    this.rows[index] = { ...this.rows[index], providerMessageId };
+    this.rows[index] = {
+      ...this.rows[index],
+      providerMessageId,
+      ...(options?.providerPromptText !== undefined
+        ? { providerPromptText: options.providerPromptText }
+        : {}),
+    };
     return { ...this.rows[index] };
   }
 
@@ -818,11 +856,16 @@ export class TimelineProjection {
     const tail = this.rows.length - 1;
     if (tail < 0) return null;
     if (turnId === undefined) return tail;
-    const index = this.rows.findLastIndex((row) => row.turnId === turnId);
+    const index = this.rows.findLastIndex(
+      (row) => row.seqStart > this.activeSegmentStartSeq && row.turnId === turnId,
+    );
     if (index >= 0) return index;
     // Rows replayed from provider history carry no turn id, so the turn is the
     // trailing one. A tail owned by another turn means this turn wrote no rows.
-    return this.rows[tail].turnId === undefined ? tail : null;
+    return this.rows[tail].seqStart > this.activeSegmentStartSeq &&
+      this.rows[tail].turnId === undefined
+      ? tail
+      : null;
   }
 }
 

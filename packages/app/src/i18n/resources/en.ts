@@ -203,6 +203,10 @@ export const en = {
       pasteImageFailed: "Failed to paste image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
+    providerSwitch: {
+      switchingNextMessage: "Switching to {{provider}} on next message",
+      switchingAfterTurn: "Will switch to {{provider}} after this turn",
+    },
     clientCommands: {
       archiveAgent: "Archive the current agent",
       freshDraft: "Archive this agent and start a fresh draft",
@@ -434,6 +438,13 @@ export const en = {
     },
     turnFooter: {
       workedFor: "Worked for {{duration}}",
+    },
+    providerSwitch: {
+      switched: "Switched from {{from}} to {{to}}",
+      contextSummary: "{{count}} items transferred ({{chars}} / {{budget}} chars)",
+      trimmed: "Trimmed: {{reasons}}",
+      reasonTailWindow: "older history beyond window",
+      reasonCharBudget: "character budget",
     },
     compaction: {
       loading: "Compacting...",

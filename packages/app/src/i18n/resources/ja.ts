@@ -207,6 +207,10 @@ export const ja: TranslationResources = {
       pasteImageFailed: "画像を貼り付けられませんでした",
       fileTooLarge: "{{fileName}}が大きすぎます（最大{{size}}）",
     },
+    providerSwitch: {
+      switchingNextMessage: "次のメッセージで {{provider}} に切り替えます",
+      switchingAfterTurn: "このターン終了後に {{provider}} に切り替えます",
+    },
     clientCommands: {
       archiveAgent: "現在のエージェントをアーカイブ",
       freshDraft: "このエージェントをアーカイブして新しい下書きを開始",
@@ -440,6 +444,13 @@ export const ja: TranslationResources = {
     },
     turnFooter: {
       workedFor: "作業時間 {{duration}}",
+    },
+    providerSwitch: {
+      switched: "{{from}} から {{to}} に切り替えました",
+      contextSummary: "{{count}} 件を引き継ぎました ({{chars}} / {{budget}} 文字)",
+      trimmed: "省略: {{reasons}}",
+      reasonTailWindow: "ウィンドウ外の古い履歴",
+      reasonCharBudget: "文字数上限",
     },
     compaction: {
       loading: "コンテキストを圧縮中...",

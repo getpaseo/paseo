@@ -1,9 +1,12 @@
 import type {
   AgentMetric,
+  AgentPersistenceHandle,
   AgentProvider,
   AgentTimelineItem,
   ConversationRewindCut,
+  ProviderSwitchContextSummary,
 } from "../../agent-sdk-types.js";
+import type { SerializableAgentConfig } from "../../agent-storage.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
@@ -25,6 +28,8 @@ export interface TimelineEntry {
   timestamp?: string;
   turnId?: string;
   providerMessageId?: string;
+  providerPromptText?: string;
+  rejected?: boolean;
   turnMetrics?: AgentMetric[];
 }
 
@@ -45,8 +50,33 @@ export interface TimelineHead {
   size: number;
   /** Rewinds applied since the history was created. */
   retirementCount: number;
+  /** Seq of the latest active provider_switch marker, or 0 if never switched. */
+  activeSegmentStartSeq: number;
   /** The rewind in progress, or one whose provider outcome is not settled yet. */
   rewind: TimelineRewindIntent | null;
+  /** The provider switch in progress, or one whose record update is not settled yet. */
+  providerSwitch: TimelineProviderSwitchIntent | null;
+}
+
+/**
+ * A provider switch between its preparation start and final settlement.
+ * - `preparing`: target session is being swapped in; no marker is committed yet.
+ * - `marker_committed`: the `provider_switch` marker is committed in SQLite and `StoredAgentRecord`
+ *   must reflect the target provider/config/persistence before the intent closes.
+ */
+export interface TimelineProviderSwitchIntent {
+  id: string;
+  /** The clientMessageId of the prompt that triggered this switch. */
+  messageId: string;
+  fromProvider: AgentProvider;
+  fromPersistence: AgentPersistenceHandle | null;
+  fromModel?: string | null;
+  toProvider: AgentProvider;
+  toConfig: SerializableAgentConfig;
+  targetPersistence?: AgentPersistenceHandle | null;
+  context: ProviderSwitchContextSummary;
+  phase: "preparing" | "marker_committed";
+  markerSeq?: number;
 }
 
 /**
@@ -103,6 +133,11 @@ export interface TimelineBackendRetireResult {
   head: TimelineHead;
 }
 
+export interface TimelineBackendCommitProviderSwitchResult {
+  row: AgentTimelineRow;
+  head: TimelineHead;
+}
+
 export type MaybePromise<T> = T | Promise<T>;
 
 /**
@@ -126,6 +161,21 @@ export interface AgentTimelineBackend {
   /** Active user prompt rows in display order, read without the rest of the history. */
   promptRows(scope: TimelineScope): MaybePromise<ProjectedTimelineRow[]>;
   setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): MaybePromise<TimelineHead>;
+  setProviderSwitch(
+    scope: TimelineScope,
+    providerSwitch: TimelineProviderSwitchIntent | null,
+  ): MaybePromise<TimelineHead>;
+  /**
+   * Atomically appends the `provider_switch` marker, advances `activeSegmentStartSeq`, clears
+   * live tool-call identities and retired keys for the scope, and updates the switch intent.
+   */
+  commitProviderSwitch(
+    scope: TimelineScope,
+    input: {
+      markerEntry: TimelineEntry;
+      nextIntent: TimelineProviderSwitchIntent | null;
+    },
+  ): MaybePromise<TimelineBackendCommitProviderSwitchResult>;
   /**
    * Allocates the next sequence number for a retirement of the active rows anchored at or after
    * `retireFromSeq`, marks the children `selectChildren` picks retired, and clears the rewind
@@ -145,6 +195,7 @@ export interface AgentTimelineBackend {
     scope: TimelineScope,
     clientMessageId: string,
     providerMessageId: string,
+    options?: { providerPromptText?: string },
   ): MaybePromise<AgentTimelineRow | null>;
   /** Records a completed turn's metrics on its footer row. Null when the turn has none. */
   stampTurnMetrics(

@@ -16,6 +16,7 @@ export interface TimelinePageHistory {
   minSeq: number;
   nextSeq: number;
   retirementCount: number;
+  activeSegmentStartSeq: number;
 }
 
 /**
@@ -74,5 +75,6 @@ export function fetchTimelinePage(input: {
     ),
     retirements: page.retirements,
     retirementCount: history.retirementCount,
+    activeSegmentStartSeq: history.activeSegmentStartSeq,
   };
 }

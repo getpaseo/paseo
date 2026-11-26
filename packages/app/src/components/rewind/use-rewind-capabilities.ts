@@ -26,6 +26,20 @@ export function isRewindableMessage(messageId: string | undefined, text: string)
   return Boolean(messageId) && text.trim().length > 0;
 }
 
+/**
+ * Whether a user prompt belongs to the active provider segment (after the latest provider switch).
+ * Prompts from earlier provider segments cannot be rewound.
+ */
+export function isPromptInActiveSegment(
+  timelineCursor: { anchorSeq?: number; seq?: number } | undefined,
+  activeSegmentStartSeq: number | undefined,
+): boolean {
+  if (!activeSegmentStartSeq || activeSegmentStartSeq <= 0) return true;
+  const anchor = timelineCursor?.anchorSeq ?? timelineCursor?.seq;
+  if (anchor === undefined) return true;
+  return anchor > activeSegmentStartSeq;
+}
+
 export function resolveRewindMenuItems(
   capabilities:
     | Pick<

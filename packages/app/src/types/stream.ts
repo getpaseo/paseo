@@ -4,6 +4,7 @@ import type {
   AgentProvider,
   AgentTimelineItem,
   JsonValue,
+  ProviderSwitchContextSummary,
   ToolCallDetail,
 } from "@getpaseo/protocol/agent-types";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
@@ -89,8 +90,24 @@ export type StreamItem =
   | TodoListItem
   | NotificationItem
   | CompactionItem
+  | ProviderSwitchItem
   | PluginTimelineStreamItem
   | TurnSummaryItem;
+
+export interface ProviderSwitchItem {
+  kind: "provider_switch";
+  id: string;
+  timelineCursor?: TimelinePosition;
+  turnId?: string;
+  timestamp: Date;
+  fromProvider: AgentProvider;
+  toProvider: AgentProvider;
+  fromModel?: string | null;
+  toModel?: string | null;
+  fromSessionId?: string | null;
+  toSessionId?: string | null;
+  context: ProviderSwitchContextSummary;
+}
 
 export type UserMessageImageAttachment = AttachmentMetadata;
 
@@ -1580,6 +1597,40 @@ function reduceTimelineCompaction(
   return [...state, compaction];
 }
 
+function reduceTimelineProviderSwitch(
+  state: StreamItem[],
+  item: Extract<AgentTimelineItem, { type: "provider_switch" }>,
+  timestamp: Date,
+  timelineCursor?: TimelinePosition,
+): StreamItem[] {
+  const switchId =
+    timelineCursor !== undefined
+      ? `provider_switch:${timelineCursor.epoch}:${timelineCursor.anchorSeq}`
+      : createUniqueTimelineId(
+          state,
+          "provider_switch",
+          `${item.fromProvider}->${item.toProvider}`,
+          timestamp,
+        );
+  if (state.some((existing) => existing.kind === "provider_switch" && existing.id === switchId)) {
+    return state;
+  }
+  const marker: ProviderSwitchItem = {
+    kind: "provider_switch",
+    id: switchId,
+    ...(timelineCursor ? { timelineCursor } : {}),
+    timestamp,
+    fromProvider: item.fromProvider,
+    toProvider: item.toProvider,
+    ...(item.fromModel !== undefined ? { fromModel: item.fromModel } : {}),
+    ...(item.toModel !== undefined ? { toModel: item.toModel } : {}),
+    ...(item.fromSessionId !== undefined ? { fromSessionId: item.fromSessionId } : {}),
+    ...(item.toSessionId !== undefined ? { toSessionId: item.toSessionId } : {}),
+    context: item.context,
+  };
+  return [...state, marker];
+}
+
 function reduceTimelineEvent(
   state: StreamItem[],
   event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
@@ -1651,6 +1702,8 @@ function reduceTimelineEvent(
     }
     case "compaction":
       return reduceTimelineCompaction(state, item, timestamp, timelineCursor);
+    case "provider_switch":
+      return reduceTimelineProviderSwitch(state, item, timestamp, timelineCursor);
     case "plugin":
       return appendPluginTimelineItem(state, item, timestamp, timelineCursor);
     default:

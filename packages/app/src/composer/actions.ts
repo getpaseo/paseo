@@ -1,7 +1,13 @@
 import type { SelectedFile } from "@/attachments/selected-file";
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
-import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import type { AgentProvider, ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type {
+  ActiveTurnBehavior,
+  AgentSnapshotPayload,
+  ForgeSearchItem,
+} from "@getpaseo/protocol/messages";
+import { AgentProviderSwitchError } from "@getpaseo/client/internal/daemon-client";
+import type { StagedProviderSwitch } from "@/composer/provider-switch";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
@@ -56,6 +62,20 @@ export interface ComposerSendClient {
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
   ) => Promise<unknown>;
+  switchAgentProvider?: (
+    agentId: string,
+    options: {
+      provider: AgentProvider;
+      model?: string | null;
+      modeId?: string | null;
+      thinkingOptionId?: string | null;
+      providerOptions?: ProviderOptions;
+      text: string;
+      messageId: string;
+      images?: Array<{ data: string; mimeType: string }>;
+      attachments?: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
+    },
+  ) => Promise<{ agent?: AgentSnapshotPayload }>;
   uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
     requestId: string;
     file: {
@@ -197,6 +217,8 @@ export interface DispatchComposerAgentMessageInput {
   submission: MessageSubmissionWriter;
   activeTurnBehavior?: ActiveTurnBehavior;
   activeTurnId?: string;
+  stagedProviderSwitch?: StagedProviderSwitch | null;
+  onProviderSwitchCommitted?: (agent: AgentSnapshotPayload | undefined) => void | Promise<void>;
 }
 
 export async function dispatchComposerAgentMessage(
@@ -212,13 +234,29 @@ export async function dispatchComposerAgentMessage(
     timestamp: new Date(),
     images: wirePayload.images,
     attachments: wirePayload.attachments,
-    ...(input.activeTurnBehavior === "steer" && input.activeTurnId
+    ...(input.activeTurnBehavior === "steer" && input.activeTurnId && !input.stagedProviderSwitch
       ? { turnId: input.activeTurnId }
       : {}),
   });
   input.submission.begin(input.agentId, userMessage);
   try {
     const imagesData = await input.encodeImages(wirePayload.images);
+    if (input.stagedProviderSwitch && input.client.switchAgentProvider) {
+      const result = await input.client.switchAgentProvider(input.agentId, {
+        provider: input.stagedProviderSwitch.provider,
+        model: input.stagedProviderSwitch.model,
+        modeId: input.stagedProviderSwitch.modeId,
+        thinkingOptionId: input.stagedProviderSwitch.thinkingOptionId,
+        providerOptions: input.stagedProviderSwitch.providerOptions,
+        text: input.text,
+        messageId: clientMessageId,
+        images: imagesData ?? [],
+        attachments: wirePayload.attachments,
+      });
+      input.submission.accept(input.agentId, clientMessageId);
+      await input.onProviderSwitchCommitted?.(result.agent);
+      return;
+    }
     await input.client.sendAgentMessage(input.agentId, input.text, {
       messageId: clientMessageId,
       ...(input.activeTurnBehavior ? { activeTurnBehavior: input.activeTurnBehavior } : {}),
@@ -228,6 +266,9 @@ export async function dispatchComposerAgentMessage(
     input.submission.accept(input.agentId, clientMessageId);
   } catch (error) {
     input.submission.reject(input.agentId, clientMessageId);
+    if (error instanceof AgentProviderSwitchError && error.agent) {
+      await input.onProviderSwitchCommitted?.(error.agent);
+    }
     throw error;
   }
 }

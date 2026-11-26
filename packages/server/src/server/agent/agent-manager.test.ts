@@ -16771,8 +16771,8 @@ class LaunchWrapRecordingClient extends TestAgentClient {
   readonly launchContexts: Array<AgentLaunchContext | undefined> = [];
   calls = { create: 0, resume: 0, import: 0 };
 
-  constructor(supportsLaunchWrap: boolean) {
-    super("codex");
+  constructor(supportsLaunchWrap: boolean, provider: AgentProvider = "codex") {
+    super(provider);
     if (supportsLaunchWrap) this.supportsLaunchWrap = true;
   }
 
@@ -16874,13 +16874,16 @@ function createLaunchWrapManager(client: LaunchWrapRecordingClient) {
 
 test("a wrapped open rejects on every path for a provider that does not apply wraps", async () => {
   const client = new LaunchWrapRecordingClient(false);
+  const switchTarget = new LaunchWrapRecordingClient(false, "claude");
   const { manager, storage, workdir, failedLaunches, hook } = createLaunchWrapManager(client);
+  manager.registerClient("claude", switchTarget);
   const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
   const existing = client.sessions[0]!;
   hook.wrap = ["/opt/sandbox/bin/run", "--profile", "a b"];
   const calls = { ...client.calls };
+  const targetCalls = { ...switchTarget.calls };
   const unsupported = { code: "launch_wrap_unsupported", provider: "codex" };
 
   await expect(
@@ -16898,12 +16901,20 @@ test("a wrapped open rejects on every path for a provider that does not apply wr
     }),
   ).rejects.toMatchObject(unsupported);
   await expect(manager.reloadAgentSession(created.id)).rejects.toMatchObject(unsupported);
+  await expect(
+    manager.switchAgentProvider(created.id, {
+      toProvider: "claude",
+      prompt: "Switch to Claude",
+      messageId: "msg-switch-wrap",
+    }),
+  ).rejects.toMatchObject({ code: "launch_wrap_unsupported", provider: "claude" });
 
   expect(client.calls).toEqual(calls);
+  expect(switchTarget.calls).toEqual(targetCalls);
   expect(existing.closed).toBe(false);
   expect(manager.getAgent(created.id)?.session).toBe(existing);
   // Each refused open is discarded, so the running session keeps the tools it launched with.
-  expect(failedLaunches).toHaveLength(4);
+  expect(failedLaunches).toHaveLength(5);
   expect(failedLaunches.at(-1)).toBe(created.id);
   expect(manager.getPluginTools(created.id)).toEqual([]);
   await manager.flush();

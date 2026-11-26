@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentMetric,
+  AgentPersistenceHandle,
   AgentTimelineItem,
   ConversationRewindCut,
 } from "../../agent-sdk-types.js";
@@ -18,6 +19,7 @@ import type {
   TimelineEntry,
   TimelineHead,
   TimelinePrompt,
+  TimelineProviderSwitchIntent,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -30,6 +32,7 @@ export type {
   TimelineChild,
   TimelineEntry,
   TimelineHead,
+  TimelineProviderSwitchIntent,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -65,6 +68,13 @@ export type TimelineRewindCompletion =
   /** No rewind with this id is open: it completed or was abandoned. Nothing changed. */
   | { kind: "absent" };
 
+export type TimelineProviderSwitchCommit =
+  | ({ kind: "committed"; activeSegmentStartSeq: number } & TimelineCommit)
+  /** Committed, but `publish` threw; see `TimelineIngestResult`. */
+  | ({ kind: "unpublished"; activeSegmentStartSeq: number; error: unknown } & TimelineCommit)
+  /** No switch with this id is open: it completed or was abandoned. Nothing changed. */
+  | { kind: "absent" };
+
 /**
  * What the provider's own history says about an open rewind, judged against the active prompts.
  * `unknown` carries the reason the evidence does not decide it.
@@ -92,11 +102,26 @@ export class TimelineRewindPendingError extends Error {
   }
 }
 
+export class TimelineProviderSwitchPendingError extends Error {
+  constructor(readonly intent: TimelineProviderSwitchIntent) {
+    super("Another provider switch of this conversation has not settled");
+    this.name = "TimelineProviderSwitchPendingError";
+  }
+}
+
 /** The rewind target is not an active prompt: it never existed or a rewind already retired it. */
 export class TimelineRewindTargetError extends Error {
   constructor(readonly messageId: string) {
     super("The message to rewind to is no longer in the conversation");
     this.name = "TimelineRewindTargetError";
+  }
+}
+
+/** The rewind target belongs to a provider segment before the latest provider switch. */
+export class TimelineRewindSegmentBoundaryError extends Error {
+  constructor(readonly messageId: string) {
+    super("Cannot rewind to a message from a previous provider segment");
+    this.name = "TimelineRewindSegmentBoundaryError";
   }
 }
 
@@ -140,7 +165,9 @@ export type TimelineReconcileResult =
   /** The provider's history disagrees with the owned history, which is kept unchanged. */
   | { kind: "diverged"; reason: string }
   /** A rewind is open; it settles first. Nothing changed. */
-  | { kind: "rewind_open" };
+  | { kind: "rewind_open" }
+  /** A provider switch is open; it settles first. Nothing changed. */
+  | { kind: "provider_switch_open" };
 
 export interface TimelineIngestOptions {
   /**
@@ -242,10 +269,12 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const head = await this.requireHead(scope);
       if (head.rewind) return { kind: "rewind_open" };
+      if (head.providerSwitch) return { kind: "provider_switch_open" };
       const plan = planProviderHistory({
         rows: await this.backendFor(scope).readRows(scope),
         prompts: await this.prompts(scope),
         provider: entries.map(providerHistoryEntry),
+        activeSegmentStartSeq: head.activeSegmentStartSeq,
       });
       if (plan.kind !== "append") return plan;
       const commits = await this.commit(scope, plan.entries);
@@ -364,9 +393,15 @@ export class AgentTimeline {
     scope: TimelineScope,
     clientMessageId: string,
     providerMessageId: string,
+    options?: { providerPromptText?: string },
   ): Promise<AgentTimelineRow | null> {
     return this.run(scope, () =>
-      this.backendFor(scope).attachProviderMessageId(scope, clientMessageId, providerMessageId),
+      this.backendFor(scope).attachProviderMessageId(
+        scope,
+        clientMessageId,
+        providerMessageId,
+        options,
+      ),
     );
   }
 
@@ -421,6 +456,97 @@ export class AgentTimeline {
   }
 
   /**
+   * Opens a durable provider-switch intent. Refused while a rewind or another switch is open.
+   */
+  beginProviderSwitch(
+    scope: TimelineScope,
+    input: Omit<TimelineProviderSwitchIntent, "id" | "phase" | "markerSeq">,
+  ): Promise<TimelineProviderSwitchIntent> {
+    return this.run(scope, async () => {
+      const head = await this.requireHead(scope);
+      if (head.rewind) throw new TimelineRewindPendingError(head.rewind);
+      if (head.providerSwitch) throw new TimelineProviderSwitchPendingError(head.providerSwitch);
+      const intent: TimelineProviderSwitchIntent = {
+        ...input,
+        id: randomUUID(),
+        phase: "preparing",
+      };
+      await this.backendFor(scope).setProviderSwitch(scope, intent);
+      return intent;
+    });
+  }
+
+  /**
+   * Atomically appends the `provider_switch` marker, advances `activeSegmentStartSeq`, clears
+   * live tool-call identities and retired keys, and moves the intent to `marker_committed`.
+   */
+  commitProviderSwitch(
+    scope: TimelineScope,
+    intentId: string,
+    options: {
+      markerEntry: TimelineEntry;
+      targetPersistence?: AgentPersistenceHandle | null;
+      publish?: (commit: TimelineCommit) => void;
+    },
+  ): Promise<TimelineProviderSwitchCommit> {
+    return this.run(scope, async () => {
+      const head = await this.requireHead(scope);
+      const intent = head.providerSwitch;
+      if (intent?.id !== intentId) return { kind: "absent" };
+      const nextIntent: TimelineProviderSwitchIntent = {
+        ...intent,
+        phase: "marker_committed",
+        ...(options.targetPersistence !== undefined
+          ? { targetPersistence: options.targetPersistence }
+          : {}),
+      };
+      const result = await this.backendFor(scope).commitProviderSwitch(scope, {
+        markerEntry: boundEntry(options.markerEntry),
+        nextIntent,
+      });
+      this.track(scope, result.head);
+      const commit: TimelineCommit = {
+        row: result.row,
+        epoch: result.head.epoch,
+        retirementCount: result.head.retirementCount,
+      };
+      const failure = publishCommitted(options.publish, commit);
+      return failure
+        ? {
+            kind: "unpublished",
+            error: failure.error,
+            activeSegmentStartSeq: result.head.activeSegmentStartSeq,
+            ...commit,
+          }
+        : {
+            kind: "committed",
+            activeSegmentStartSeq: result.head.activeSegmentStartSeq,
+            ...commit,
+          };
+    });
+  }
+
+  /** Closes a committed provider switch once `StoredAgentRecord` has been updated. */
+  completeProviderSwitch(scope: TimelineScope, intentId: string): Promise<void> {
+    return this.run(scope, async () => {
+      const head = await this.requireHead(scope);
+      if (head.providerSwitch?.id === intentId) {
+        await this.backendFor(scope).setProviderSwitch(scope, null);
+      }
+    });
+  }
+
+  /** Closes an uncommitted (`preparing`) provider switch. History is unchanged. */
+  abandonProviderSwitch(scope: TimelineScope, intentId: string): Promise<void> {
+    return this.run(scope, async () => {
+      const head = await this.requireHead(scope);
+      if (head.providerSwitch?.id === intentId && head.providerSwitch.phase === "preparing") {
+        await this.backendFor(scope).setProviderSwitch(scope, null);
+      }
+    });
+  }
+
+  /**
    * Opens a rewind to before the active prompt `messageId`. While it is open, `describe` reports it,
    * and a second rewind is refused until this one completes or is abandoned.
    */
@@ -428,8 +554,12 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const head = await this.requireHead(scope);
       if (head.rewind) throw new TimelineRewindPendingError(head.rewind);
+      if (head.providerSwitch) throw new TimelineProviderSwitchPendingError(head.providerSwitch);
       const target = (await this.prompts(scope)).find((prompt) => prompt.messageId === messageId);
       if (!target) throw new TimelineRewindTargetError(messageId);
+      if (target.seqStart <= head.activeSegmentStartSeq) {
+        throw new TimelineRewindSegmentBoundaryError(messageId);
+      }
       const intent: TimelineRewindIntent = {
         id: randomUUID(),
         messageId,
@@ -473,9 +603,14 @@ export class AgentTimeline {
     providerPromptIds: readonly string[],
   ): Promise<TimelineRewindVerdict> {
     return this.run(scope, async () => {
-      const intent = (await this.requireHead(scope)).rewind;
+      const head = await this.requireHead(scope);
+      const intent = head.rewind;
       if (intent?.id !== intentId) return { kind: "absent" };
-      return judgeRewindEvidence(intent, await this.prompts(scope), providerPromptIds);
+      const segmentPrompts = activeSegmentPrompts(
+        await this.prompts(scope),
+        head.activeSegmentStartSeq,
+      );
+      return judgeRewindEvidence(intent, segmentPrompts, providerPromptIds);
     });
   }
 
@@ -493,8 +628,14 @@ export class AgentTimeline {
       const intent = head.rewind;
       if (intent?.id !== intentId) return { kind: "absent" };
       if (!intent.cut) throw new Error("Cannot complete a rewind before its provider outcome");
-      const retireFromSeq = resolveRetireFromSeq(intent, await this.prompts(scope));
-      if (retireFromSeq === null) throw new TimelineRewindBoundaryError(intent);
+      const segmentPrompts = activeSegmentPrompts(
+        await this.prompts(scope),
+        head.activeSegmentStartSeq,
+      );
+      const retireFromSeq = resolveRetireFromSeq(intent, segmentPrompts);
+      if (retireFromSeq === null || retireFromSeq <= head.activeSegmentStartSeq) {
+        throw new TimelineRewindBoundaryError(intent);
+      }
       const result = await this.backendFor(scope).retire(scope, {
         retireFromSeq,
         selectChildren: childrenSpawnedBy,
@@ -677,20 +818,41 @@ function judgeRewindEvidence(
   };
 }
 
+/** The active prompts belonging to the current provider segment. */
+function activeSegmentPrompts(
+  prompts: readonly TimelinePrompt[],
+  activeSegmentStartSeq: number,
+): TimelinePrompt[] {
+  return activeSegmentStartSeq > 0
+    ? prompts.filter((prompt) => prompt.seqStart > activeSegmentStartSeq)
+    : [...prompts];
+}
+
 /** The listed children that retired tool calls spawned, and their descendants. */
 function childrenSpawnedBy(
   retiredRows: readonly ProjectedTimelineRow[],
   children: readonly TimelineChild[],
 ): string[] {
-  const toolCallIds = new Set(
-    retiredRows.flatMap((row) => (row.item.type === "tool_call" ? [row.item.callId] : [])),
-  );
+  const retiredToolCalls: Array<{ callId: string; provider: string | undefined }> = [];
+  for (const row of retiredRows) {
+    if (row.item.type === "tool_call") {
+      retiredToolCalls.push({ callId: row.item.callId, provider: row.provider });
+    }
+  }
   const listed = children.flatMap((child) =>
     !child.retired && child.descriptor ? [child.descriptor] : [],
   );
   const retired = new Set(
     listed
-      .filter((child) => child.toolCallId !== null && toolCallIds.has(child.toolCallId))
+      .filter(
+        (child) =>
+          child.toolCallId !== null &&
+          retiredToolCalls.some(
+            (call) =>
+              call.callId === child.toolCallId &&
+              (call.provider === undefined || call.provider === child.provider),
+          ),
+      )
       .map((child) => child.id),
   );
   let grew = retired.size > 0;

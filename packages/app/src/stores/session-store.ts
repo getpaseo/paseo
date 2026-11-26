@@ -317,6 +317,7 @@ export interface AgentTimelineCursorState {
   epoch: string;
   startSeq: number;
   endSeq: number;
+  activeSegmentStartSeq?: number;
   retainedRanges?: Array<{
     startSeq: number;
     endSeq: number;
@@ -535,6 +536,7 @@ export interface SessionState {
     string,
     Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
   >;
+  queuedSendErrors: Map<string, string>;
 }
 
 // Global store state
@@ -726,6 +728,7 @@ interface SessionStoreActions {
           prev: Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>,
         ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
   ) => void;
+  setQueuedSendError: (serverId: string, agentId: string, error: string | null) => void;
 
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
@@ -781,6 +784,7 @@ function createInitialSessionState(
     pendingPermissions: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
+    queuedSendErrors: new Map(),
   };
 }
 
@@ -1971,6 +1975,32 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, queuedMessages: nextValue },
+            },
+          };
+        });
+      },
+
+      setQueuedSendError: (serverId, agentId, error) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const existing = session.queuedSendErrors.get(agentId) ?? null;
+          if (existing === error) {
+            return prev;
+          }
+          const next = new Map(session.queuedSendErrors);
+          if (error === null) {
+            next.delete(agentId);
+          } else {
+            next.set(agentId, error);
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, queuedSendErrors: next },
             },
           };
         });

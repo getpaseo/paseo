@@ -40,6 +40,7 @@ export interface TimelineCursor {
   epoch: string;
   startSeq: number;
   endSeq: number;
+  activeSegmentStartSeq?: number;
   retainedRanges?: TimelineLoadedRange[];
 }
 
@@ -164,6 +165,9 @@ function mergeTimelineCoverage(
     epoch: current.epoch,
     startSeq: contiguous.startSeq,
     endSeq: contiguous.endSeq,
+    ...(current.activeSegmentStartSeq !== undefined
+      ? { activeSegmentStartSeq: current.activeSegmentStartSeq }
+      : {}),
     ...(retainedRanges.length > 0 ? { retainedRanges } : {}),
   };
 }
@@ -172,7 +176,8 @@ function timelineCursorEquals(left: TimelineCursor, right: TimelineCursor): bool
   if (
     left.epoch !== right.epoch ||
     left.startSeq !== right.startSeq ||
-    left.endSeq !== right.endSeq
+    left.endSeq !== right.endSeq ||
+    (left.activeSegmentStartSeq ?? 0) !== (right.activeSegmentStartSeq ?? 0)
   ) {
     return false;
   }
@@ -217,6 +222,7 @@ export interface ProcessTimelineResponseInput {
     hasOlder: boolean;
     mergeWindow?: boolean;
     retirements?: TimelineRetirement[];
+    activeSegmentStartSeq?: number;
   };
   currentTail: StreamItem[];
   currentHead: StreamItem[];
@@ -1304,6 +1310,57 @@ function applyTimelineIncrementalPath(args: {
   };
 }
 
+function mergeResponseActiveSegmentCursor(
+  cursor: TimelineCursor | null | undefined,
+  cursorChanged: boolean,
+  currentCursor: TimelineCursor | undefined,
+  incomingActiveSegmentStartSeq: number | undefined,
+): { cursor: TimelineCursor | null | undefined; cursorChanged: boolean } {
+  if (!cursor) {
+    return { cursor, cursorChanged };
+  }
+  const prevSegment =
+    currentCursor?.epoch === cursor.epoch ? (currentCursor.activeSegmentStartSeq ?? 0) : 0;
+  const incomingSegment = incomingActiveSegmentStartSeq ?? cursor.activeSegmentStartSeq ?? 0;
+  const mergedSegment = Math.max(prevSegment, incomingSegment);
+  if (mergedSegment > 0 && cursor.activeSegmentStartSeq !== mergedSegment) {
+    return { cursor: { ...cursor, activeSegmentStartSeq: mergedSegment }, cursorChanged: true };
+  }
+  return { cursor, cursorChanged };
+}
+
+function advanceLiveActiveSegmentCursor(input: {
+  shouldApply: boolean;
+  event: AgentStreamEventPayload;
+  seq: number | undefined;
+  epoch: string | undefined;
+  nextCursor: TimelineCursor | null;
+  cursorChanged: boolean;
+  currentCursor: TimelineCursor | undefined;
+}): { cursor: TimelineCursor | null; cursorChanged: boolean } {
+  const { shouldApply, event, seq, epoch, nextCursor, cursorChanged, currentCursor } = input;
+  if (
+    !shouldApply ||
+    event.type !== "timeline" ||
+    event.item.type !== "provider_switch" ||
+    typeof seq !== "number" ||
+    typeof epoch !== "string"
+  ) {
+    return { cursor: nextCursor, cursorChanged };
+  }
+  const baseCursor =
+    nextCursor ??
+    (currentCursor?.epoch === epoch ? currentCursor : { epoch, startSeq: seq, endSeq: seq });
+  const nextActiveSegment = Math.max(baseCursor.activeSegmentStartSeq ?? 0, seq);
+  if (baseCursor.activeSegmentStartSeq !== nextActiveSegment || nextCursor === null) {
+    return {
+      cursor: { ...baseCursor, activeSegmentStartSeq: nextActiveSegment },
+      cursorChanged: true,
+    };
+  }
+  return { cursor: nextCursor, cursorChanged };
+}
+
 export function processTimelineResponse(
   input: ProcessTimelineResponseInput,
 ): ProcessTimelineResponseOutput {
@@ -1459,8 +1516,12 @@ export function processTimelineResponse(
 
   const nextTail = stampTimelineTurnMetrics(timelineResult.tail, payload.epoch, pageEntries);
   const nextHead = stampTimelineTurnMetrics(timelineResult.head, payload.epoch, pageEntries);
-  const nextCursor = timelineResult.cursor;
-  const cursorChanged = timelineResult.cursorChanged;
+  const { cursor: nextCursor, cursorChanged } = mergeResponseActiveSegmentCursor(
+    timelineResult.cursor,
+    timelineResult.cursorChanged,
+    currentCursor,
+    payload.activeSegmentStartSeq,
+  );
   sideEffects.push(...timelineResult.sideEffects);
 
   // ------------------------------------------------------------------
@@ -1779,14 +1840,23 @@ export function processAgentStreamEvent(
     });
   }
   const { tail, head, changedTail, changedHead } = streamResult;
+  const { cursor: nextTimelineCursor, cursorChanged } = advanceLiveActiveSegmentCursor({
+    shouldApply: sequencing.shouldApplyStreamEvent,
+    event,
+    seq,
+    epoch,
+    nextCursor: sequencing.nextTimelineCursor,
+    cursorChanged: sequencing.cursorChanged,
+    currentCursor,
+  });
 
   return {
     tail,
     head,
     changedTail,
     changedHead,
-    cursor: sequencing.nextTimelineCursor,
-    cursorChanged: sequencing.cursorChanged,
+    cursor: nextTimelineCursor,
+    cursorChanged,
     acknowledgedClientMessageIds: streamResult.acknowledgedClientMessageIds ?? [],
     ...(sequencing.shouldApplyStreamEvent && event.type === "timeline" && event.item.type === "todo"
       ? { taskSnapshot: event.item.items }

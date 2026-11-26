@@ -5792,6 +5792,8 @@ describe("agent config setters", () => {
     return {
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
       getAgent: vi.fn(() => ({ id: "agent-1" })),
+      assertSettingsMutationAllowedDuringSwitch: vi.fn(),
+      waitForProviderSwitchUnlessAborted: vi.fn(async () => undefined),
       ...overrides,
     };
   }

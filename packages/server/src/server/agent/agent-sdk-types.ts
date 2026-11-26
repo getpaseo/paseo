@@ -7,6 +7,8 @@ import type {
   AgentTaskItem,
   JsonValue,
   ProviderOptions,
+  ProviderSwitchContextSummary,
+  ProviderSwitchTimelineItem,
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
@@ -26,6 +28,8 @@ export type {
   AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
+  ProviderSwitchContextSummary,
+  ProviderSwitchTimelineItem,
 };
 
 export type AgentProvider = string;
@@ -421,7 +425,8 @@ export type AgentTimelineItem =
       message: string;
     }
   | CompactionTimelineItem
-  | PluginTimelineItem;
+  | PluginTimelineItem
+  | ProviderSwitchTimelineItem;
 
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }

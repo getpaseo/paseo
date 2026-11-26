@@ -205,6 +205,10 @@ export const zhCN: TranslationResources = {
       pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
+    providerSwitch: {
+      switchingNextMessage: "下一条消息将切换到 {{provider}}",
+      switchingAfterTurn: "本轮结束后将切换到 {{provider}}",
+    },
     clientCommands: {
       archiveAgent: "归档当前 Agent",
       freshDraft: "归档此 Agent 并开始新的草稿",
@@ -435,6 +439,13 @@ export const zhCN: TranslationResources = {
     },
     turnFooter: {
       workedFor: "工作了 {{duration}}",
+    },
+    providerSwitch: {
+      switched: "已从 {{from}} 切换到 {{to}}",
+      contextSummary: "已传递 {{count}} 项上下文（{{chars}} / {{budget}} 字符）",
+      trimmed: "已裁剪：{{reasons}}",
+      reasonTailWindow: "超出窗口的早期历史",
+      reasonCharBudget: "字符预算限制",
     },
     compaction: {
       loading: "正在压缩...",

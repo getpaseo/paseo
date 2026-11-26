@@ -282,7 +282,7 @@ export function useLiveAgentModeControl(
         console.warn("[AgentModeControl] persist mode preference failed", error);
       });
       void client
-        .setAgentMode(agentId, modeId)
+        .setAgentMode(agentId, modeId, { expectedProvider: slice.provider })
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
           console.warn("[AgentModeControl] setAgentMode failed", error);

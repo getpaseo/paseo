@@ -24,7 +24,7 @@ export type AgentLoaderManager = Pick<
   AgentManager,
   "createAgentFromRecord" | "getAgent" | "getRegisteredProviderIds" | "resumeAgentFromPersistence"
 > &
-  Partial<Pick<AgentManager, "waitForAgentClose">>;
+  Partial<Pick<AgentManager, "waitForAgentClose" | "reconcilePendingProviderSwitch">>;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
@@ -55,6 +55,7 @@ export async function loadAgentHistory(
 ): Promise<AgentHistorySource> {
   const live = deps.agentManager.getAgent(agentId);
   if (live) return { kind: "live", agent: live };
+  await deps.agentManager.reconcilePendingProviderSwitch?.(agentId);
   const record = await deps.agentStorage.get(agentId);
   if (!record) throw new AgentNotFoundError(agentId);
   if (await deps.agentManager.hasStoredHistory(agentId)) {
@@ -128,6 +129,7 @@ export async function ensureAgentLoaded(
   }
 
   const initPromise = (async () => {
+    await deps.agentManager.reconcilePendingProviderSwitch?.(agentId);
     const record = await requireLoadableRecord(agentId, deps);
     const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
     const handle = toAgentPersistenceHandle(validProviders, record.persistence);

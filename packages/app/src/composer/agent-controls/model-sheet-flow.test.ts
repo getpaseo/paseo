@@ -13,17 +13,17 @@ describe("model sheet opening", () => {
   it("starts drafts at providers even when only one provider is available", () => {
     expect(
       resolveModelSheetOpening({
-        canSwitchProvider: true,
+        openAtProviders: true,
         providers: [codex],
         selectedProvider: "codex",
       }),
     ).toEqual({ kind: "all" });
   });
 
-  it("opens a running agent directly at its fixed provider", () => {
+  it("opens a running agent directly at its current provider even when other providers are available", () => {
     expect(
       resolveModelSheetOpening({
-        canSwitchProvider: false,
+        openAtProviders: false,
         providers: [claude, codex],
         selectedProvider: "codex",
       }),
@@ -33,7 +33,7 @@ describe("model sheet opening", () => {
   it("falls back to the only provider while live state catches up", () => {
     expect(
       resolveModelSheetOpening({
-        canSwitchProvider: false,
+        openAtProviders: false,
         providers: [codex],
         selectedProvider: "",
       }),

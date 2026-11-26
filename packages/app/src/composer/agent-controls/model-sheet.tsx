@@ -68,6 +68,8 @@ interface CompactModelSheetProps {
   /** False when the toolbar is too narrow for labels: the trigger shows the provider glyph only. */
   showLabels: boolean;
   canSwitchProvider: boolean;
+  /** Drafts open the model browser at the all-providers list; live agents open at their active provider. */
+  openModelBrowserAtProviders?: boolean;
   /** Carries the composer's contexts into the sheets, which draw away from it. */
   contextBridge?: ContextBridge | null;
   children: ReactNode;
@@ -160,6 +162,7 @@ export function CompactModelSheet({
   glyphs,
   showLabels,
   canSwitchProvider,
+  openModelBrowserAtProviders = false,
   contextBridge = null,
   children,
 }: CompactModelSheetProps) {
@@ -239,7 +242,7 @@ export function CompactModelSheet({
   const openModelBrowser = useCallback(() => {
     Keyboard.dismiss();
     const destination = resolveModelSheetOpening({
-      canSwitchProvider,
+      openAtProviders: openModelBrowserAtProviders,
       providers: availableProviders,
       selectedProvider,
     });
@@ -249,7 +252,7 @@ export function CompactModelSheet({
       modelBrowser.drillDown(destination.providerId, destination.providerLabel);
     }
     setIsModelBrowserOpen(true);
-  }, [availableProviders, canSwitchProvider, modelBrowser, selectedProvider]);
+  }, [availableProviders, modelBrowser, openModelBrowserAtProviders, selectedProvider]);
 
   const closeModelBrowser = useCallback(() => {
     setIsModelBrowserOpen(false);

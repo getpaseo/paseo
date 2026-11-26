@@ -16,10 +16,12 @@ import type {
   MaybePromise,
   RetiredChildSelector,
   TimelineBackendAppendResult,
+  TimelineBackendCommitProviderSwitchResult,
   TimelineBackendRetireResult,
   TimelineChild,
   TimelineEntry,
   TimelineHead,
+  TimelineProviderSwitchIntent,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
@@ -114,6 +116,21 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
   setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): Promise<TimelineHead> {
     return this.defer(() => this.inner.setRewind(scope, rewind));
   }
+  setProviderSwitch(
+    scope: TimelineScope,
+    providerSwitch: TimelineProviderSwitchIntent | null,
+  ): Promise<TimelineHead> {
+    return this.defer(() => this.inner.setProviderSwitch(scope, providerSwitch));
+  }
+  commitProviderSwitch(
+    scope: TimelineScope,
+    input: {
+      markerEntry: TimelineEntry;
+      nextIntent: TimelineProviderSwitchIntent | null;
+    },
+  ): Promise<TimelineBackendCommitProviderSwitchResult> {
+    return this.defer(() => this.inner.commitProviderSwitch(scope, input));
+  }
   children(agentId: string): Promise<TimelineChild[]> {
     return this.defer(() => this.inner.children(agentId));
   }
@@ -143,9 +160,10 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
     scope: TimelineScope,
     clientMessageId: string,
     providerMessageId: string,
+    options?: { providerPromptText?: string },
   ): Promise<AgentTimelineRow | null> {
     return this.defer(() =>
-      this.inner.attachProviderMessageId(scope, clientMessageId, providerMessageId),
+      this.inner.attachProviderMessageId(scope, clientMessageId, providerMessageId, options),
     );
   }
   stampTurnMetrics(
