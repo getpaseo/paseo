@@ -537,8 +537,8 @@ describe("VoiceAssistantWebSocketServer terminal attention notifications", () =>
           deliveries.push({ tokens, title: payload.title });
         },
       });
-      // Default token: terminalNeedsInput: true, terminalFinished: false
-      realPush.renew("ExponentPushToken[phone-default]");
+      // Token with explicit default preferences: terminalNeedsInput: true, terminalFinished: false
+      realPush.renew("ExponentPushToken[phone-default]", DEFAULT_NOTIFICATION_PREFERENCES);
       // Token with terminalFinished: true, terminalNeedsInput: false
       realPush.renew("ExponentPushToken[phone-terminal-finished]", {
         ...DEFAULT_NOTIFICATION_PREFERENCES,

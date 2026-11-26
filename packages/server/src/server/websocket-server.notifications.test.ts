@@ -414,8 +414,8 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
           deliveries.push({ tokens, payload });
         },
       });
-      // Phone A: default preferences (permission: true, error: true, finished: false)
-      realPush.renew("ExponentPushToken[phone-default]");
+      // Phone A: explicit default preferences (permission: true, error: true, finished: false)
+      realPush.renew("ExponentPushToken[phone-default]", DEFAULT_NOTIFICATION_PREFERENCES);
       // Phone B: finished enabled, error disabled
       realPush.renew("ExponentPushToken[phone-finished-only]", {
         ...DEFAULT_NOTIFICATION_PREFERENCES,
