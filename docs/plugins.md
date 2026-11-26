@@ -655,6 +655,14 @@ only the supplied per-session env for sessions. The direct and ACP examples live
 `plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.
 
+The plugin ACP runtime keeps the last 8,192 characters of each subprocess's stderr for
+initialization failures and unexpected-exit diagnostics. This is separate from the older server
+ACP adapter's diagnostics ([#4761](https://github.com/getpaseo/paseo/pull/4761),
+[#8384](https://github.com/getpaseo/paseo/pull/8384)). Stderr is not forwarded as routine log output
+or included in successful responses and normal timeline items. Recognized credential forms use
+the daemon diagnostic redaction rules, but arbitrary stderr may still contain sensitive information.
+Review diagnostics before sharing them.
+
 Provider-emitted plugin timeline items use the same renderer registration as transformed and
 daemon-appended plugin items. The direct example includes both sides. The renderer-only
 `plugin-examples/inline-thinking` example shows that timeline presentation remains independent of a
