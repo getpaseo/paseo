@@ -287,4 +287,34 @@ describe("host instruction inbox", () => {
       reply: "Result",
     });
   });
+
+  it("rejects both concurrent reply acknowledgments if their write fails", async () => {
+    const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
+    await inbox.submit(grant, instruction);
+    await inbox.claim(grant.sourceId, instruction.id, instruction.target);
+    await inbox.markRunning(grant.sourceId, instruction.id, "recipient");
+
+    const write = Promise.withResolvers<void>();
+    const persist = vi
+      .spyOn(privateFiles, "writePrivateFileAtomic")
+      .mockReturnValueOnce(write.promise);
+    try {
+      const sendReply = () => inbox.reply(grant.sourceId, instruction.id, "recipient", "Result");
+      const acknowledgments = Promise.allSettled([sendReply(), sendReply()]);
+      await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce());
+      write.reject(new Error("Could not persist reply"));
+      expect((await acknowledgments).map((result) => result.status)).toEqual([
+        "rejected",
+        "rejected",
+      ]);
+      const restarted = await HostInstructionInbox.open(home, () => now);
+      expect(await restarted.status(grant, instruction.id)).toEqual({
+        id: instruction.id,
+        state: "outcome_unknown",
+        reply: undefined,
+      });
+    } finally {
+      persist.mockRestore();
+    }
+  });
 });

@@ -464,7 +464,8 @@ export class HostInstructionInbox {
       throw new Error("Reply is outside the originating execution");
     }
     const reply = HostInstructionSchema.shape.prompt.parse(text);
-    if (request.reply === reply) return;
+    // The selected reply and its writer tail are read without yielding.
+    if (request.reply === reply) return this.writer.settled();
     if (request.reply !== undefined) throw new Error("Instruction already has a reply");
     await this.update(request, { reply });
   }

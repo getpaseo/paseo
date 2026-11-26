@@ -2034,6 +2034,7 @@ export async function createPaseoDaemon(
       // model loading doesn't block the server from accepting connections.
       speechService.start();
       scriptHealthMonitor.start();
+      hostInstructions.start();
     } catch (error) {
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);

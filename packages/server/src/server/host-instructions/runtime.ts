@@ -99,7 +99,7 @@ export class HostInstructionsRuntime {
   private relay: RelayRuntime | undefined;
   private relayOffer: Promise<string> | undefined;
   private credentialKey: Promise<string> | undefined;
-  private readonly timer: ReturnType<typeof setInterval>;
+  private timer: ReturnType<typeof setInterval> | undefined;
   private readonly active = new Map<string, ActiveInstruction>();
   private readonly discoveredTargets = new Map<string, ConversationTarget[]>();
   private busy = false;
@@ -113,9 +113,12 @@ export class HostInstructionsRuntime {
     private readonly registrationWriter: InstructionFileWriter,
     readonly outbox: HostInstructionOutbox,
     private relayId: string | null,
-  ) {
+  ) {}
+
+  start(): void {
+    if (this.stopped || this.timer) return;
     this.timer = setInterval(() => {
-      void this.tick().catch(() => options.logger.warn("host_instruction_tick_failed"));
+      void this.tick().catch(() => this.options.logger.warn("host_instruction_tick_failed"));
     }, 3000);
     this.timer.unref();
   }
