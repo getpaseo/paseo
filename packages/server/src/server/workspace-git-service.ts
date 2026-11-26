@@ -3472,6 +3472,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
       this.stopForgePrStatusPollForTarget(target);
       target.latestForge = buildForgeUnavailableSnapshot();
+      target.latestForgeWeb = null;
       target.latestForgeLoadedAtMs = this.deps.now().getTime();
       if (target.latestGit) {
         this.rememberSnapshot(target, this.combineSnapshot(target), {
