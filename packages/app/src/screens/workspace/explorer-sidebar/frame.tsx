@@ -9,7 +9,7 @@ import { useIsMobilePanelActive } from "@/mobile-panels/provider";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
-import { useSettings } from "@/hooks/use-settings";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useExplorerGeometry } from "./geometry";
 import type { ExplorerFrameProps } from "./frame-props";
@@ -35,7 +35,7 @@ function ExplorerFrameBase({
   const storedWidth = useWorkspaceLayoutStore(
     (state) => state.explorerSidebarWidthByWorkspace[persistenceKey],
   );
-  const defaultWidth = useSettings((settings) => settings.explorerSidebarWidth);
+  const defaultWidth = useAppSettings().settings.explorerSidebarWidth;
   const resize = useWorkspaceLayoutStore((state) => state.resizeExplorerSidebar);
   const onResize = useCallback(
     (width: number) => resize(persistenceKey, width),

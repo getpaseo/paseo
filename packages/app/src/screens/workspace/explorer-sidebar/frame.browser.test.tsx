@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { View } from "react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { expect, it } from "vitest";
 import { MobilePanelsProvider } from "@/mobile-panels/provider";
 import { ExplorerFrame } from "./frame";
@@ -36,9 +37,11 @@ it("measures dock allocation independently of the workspace owner", async () => 
   try {
     await act(async () => {
       root.render(
-        <MobilePanelsProvider>
-          <Workspace />
-        </MobilePanelsProvider>,
+        <QueryClientProvider client={new QueryClient()}>
+          <MobilePanelsProvider>
+            <Workspace />
+          </MobilePanelsProvider>
+        </QueryClientProvider>,
       );
     });
     await expect.poll(dockWidth).toBe(320);
