@@ -81,6 +81,7 @@ interface AgentAttentionNotificationInput {
   reason: AgentAttentionReason;
   serverId: string;
   workspaceId: string | undefined;
+  workspaceName: string | undefined;
   agentId: string;
   assistantMessage: string | null;
   permissionRequest: NotificationPermissionRequest | null;
@@ -99,10 +100,20 @@ export function resolveAgentAttentionNotification(
     reason: input.reason,
     serverId: input.serverId,
     workspaceId: input.workspaceId,
+    workspaceName: input.workspaceName,
     agentId: input.agentId,
     assistantMessage: input.reason === "finished" ? input.assistantMessage : null,
     permissionRequest: input.reason === "permission" ? input.permissionRequest : null,
   });
+}
+
+function resolveAgentWorkspace(
+  session: SessionState | undefined,
+  agentId: string,
+): { workspaceId: string | undefined; workspaceName: string | undefined } {
+  const workspaceId = session?.agents?.get(agentId)?.workspaceId;
+  if (!workspaceId) return { workspaceId, workspaceName: undefined };
+  return { workspaceId, workspaceName: session?.workspaces.get(workspaceId)?.name };
 }
 
 export function deliverAgentAttentionOsNotification(input: {
@@ -149,13 +160,14 @@ export function deliverAgentAttentionOsNotification(input: {
   const assistantMessage =
     findLatestAssistantMessageText(head) ?? findLatestAssistantMessageText(tail);
   const permissionRequest = getLatestPermissionRequest(input.session, input.params.agentId);
-  const workspaceId = input.session?.agents?.get(input.params.agentId)?.workspaceId;
+  const { workspaceId, workspaceName } = resolveAgentWorkspace(input.session, input.params.agentId);
 
   const notification = resolveAgentAttentionNotification({
     notification: input.params.notification,
     reason: input.params.reason,
     serverId: input.serverId,
     workspaceId,
+    workspaceName,
     agentId: input.params.agentId,
     assistantMessage,
     permissionRequest,

@@ -21,6 +21,7 @@ interface BuildAgentAttentionNotificationPayloadInput {
   serverId: string;
   workspaceId: string;
   agentId: string;
+  workspaceName?: string | null;
   assistantMessage?: string | null;
   permissionRequest?: NotificationPermissionRequest | null;
 }
@@ -174,7 +175,21 @@ export function findLatestPermissionRequest(
   return latest;
 }
 
-function resolveAgentAttentionTitle(reason: AgentAttentionReason): string {
+// Notification titles are truncated on most platforms, so the workspace name gets
+// the space and a symbol carries the reason. Without a name, the reason is all the
+// title can say.
+const AGENT_ATTENTION_SYMBOLS: Record<AgentAttentionReason, string> = {
+  finished: "✅",
+  permission: "❓",
+  error: "⚠️",
+};
+
+function resolveAgentAttentionTitle(
+  reason: AgentAttentionReason,
+  workspaceName: string | null | undefined,
+): string {
+  const name = workspaceName ? normalizeNotificationText(workspaceName) : "";
+  if (name) return `${AGENT_ATTENTION_SYMBOLS[reason]} ${name}`;
   if (reason === "permission") return "Agent needs permission";
   if (reason === "error") return "Agent needs attention";
   return "Agent finished";
@@ -201,7 +216,7 @@ function resolveAgentAttentionFallbackBody(reason: AgentAttentionReason): string
 export function buildAgentAttentionNotificationPayload(
   input: BuildAgentAttentionNotificationPayloadInput,
 ): AgentAttentionNotificationPayload {
-  const title = resolveAgentAttentionTitle(input.reason);
+  const title = resolveAgentAttentionTitle(input.reason, input.workspaceName);
   const preview = resolveAgentAttentionPreview(input);
   const body = preview ?? resolveAgentAttentionFallbackBody(input.reason);
 

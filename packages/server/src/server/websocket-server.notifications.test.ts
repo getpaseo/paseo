@@ -24,6 +24,7 @@ import {
   type PushPayload,
 } from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { createPersistedWorkspaceRecord, type WorkspaceRegistry } from "./workspace-registry.js";
 
 const WORKSPACE_ID = "workspace-1";
 
@@ -99,6 +100,7 @@ class RecordingPushNotificationSender implements PushNotificationSender {
 function createServer(
   agentManagerOverrides?: Record<string, unknown>,
   customPushSender?: PushNotificationSender,
+  workspaceRegistry?: WorkspaceRegistry,
 ) {
   const pushNotifications = new RecordingPushNotificationSender();
   const sender = customPushSender ?? pushNotifications;
@@ -144,7 +146,7 @@ function createServer(
     "1.2.3-test",
     undefined,
     undefined,
-    undefined,
+    workspaceRegistry,
     createStub<ScheduleService>({}),
     createStub<CheckoutDiffManager>({
       subscribe: vi.fn(),
@@ -305,6 +307,35 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       },
     ]);
     expect(getLastAssistantMessage).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("titles push notifications with the workspace name and a reason symbol", async () => {
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: WORKSPACE_ID,
+      projectId: "project-1",
+      cwd: "/tmp/worktree",
+      kind: "worktree",
+      displayName: "gentle-otter",
+      title: "Fix login redirect",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const { server, pushNotifications } = createServer(
+      { getLastAssistantMessage: vi.fn(async () => "Done.") },
+      undefined,
+      createStub<WorkspaceRegistry>({ get: vi.fn(async () => workspace) }),
+    );
+
+    await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+      agentId: "agent-1",
+      provider: "claude",
+      reason: "finished",
+      attentionTimestamp: new Date(),
+    });
+
+    expect(pushNotifications.sent.map((payload) => payload.title)).toEqual([
+      "✅ Fix login redirect",
+    ]);
   });
 
   it("sends push notifications regardless of UI label presence", async () => {

@@ -111,6 +111,36 @@ describe("buildAgentAttentionNotificationPayload", () => {
   });
 });
 
+describe("agent attention notification titles", () => {
+  const build = (
+    reason: "finished" | "error" | "permission",
+    workspaceName: string | null | undefined,
+  ) =>
+    buildAgentAttentionNotificationPayload({
+      reason,
+      serverId: "srv-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      workspaceName,
+    }).title;
+
+  it("names the workspace and marks the reason with a symbol", () => {
+    expect(build("finished", "Fix login redirect")).toBe("✅ Fix login redirect");
+    expect(build("permission", "Fix login redirect")).toBe("❓ Fix login redirect");
+    expect(build("error", "Fix login redirect")).toBe("⚠️ Fix login redirect");
+  });
+
+  it("collapses whitespace in the workspace name", () => {
+    expect(build("finished", "  Fix\n  login   redirect ")).toBe("✅ Fix login redirect");
+  });
+
+  it("falls back to the reason text without a usable workspace name", () => {
+    expect(build("finished", undefined)).toBe("Agent finished");
+    expect(build("permission", null)).toBe("Agent needs permission");
+    expect(build("error", "   ")).toBe("Agent needs attention");
+  });
+});
+
 describe("findLatestAssistantMessageFromTimeline", () => {
   it("joins the latest contiguous assistant chunks", () => {
     expect(

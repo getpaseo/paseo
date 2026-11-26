@@ -10,6 +10,7 @@ import {
   deliverPluginOsNotification,
   deliverTerminalAttentionOsNotification,
   getCurrentNotificationPreferences,
+  resolveAgentAttentionNotification,
 } from "./session-notifications";
 
 function createNotificationRecorder() {
@@ -372,5 +373,21 @@ describe("session OS notification filtering", () => {
         },
       },
     ]);
+  });
+});
+
+describe("resolveAgentAttentionNotification", () => {
+  it("titles a locally built notification with the workspace name", () => {
+    const notification = resolveAgentAttentionNotification({
+      reason: "finished",
+      serverId: "srv-1",
+      workspaceId: "ws-1",
+      workspaceName: "Fix login redirect",
+      agentId: "agent-1",
+      assistantMessage: "Done.",
+      permissionRequest: null,
+    });
+
+    expect(notification?.title).toBe("✅ Fix login redirect");
   });
 });
