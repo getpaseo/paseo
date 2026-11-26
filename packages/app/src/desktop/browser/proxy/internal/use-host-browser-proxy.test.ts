@@ -127,6 +127,33 @@ describe("resolveBrowserProxyPaneState", () => {
       proxyStatus: "error",
     });
 
+    // Once the live snapshot recovers to ready, a stale hook-local ensureError
+    // must not pin the prepared pill dot to error.
+    expect(
+      resolveBrowserProxyPaneState({
+        routing: supportedRouting,
+        effectiveRoutingMode: "host",
+        localPartition: "persist:paseo-browser",
+        hostLabel: "devbox",
+        proxyStatusSnapshot: {
+          serverId: "srv-remote",
+          partition: "persist:paseo-browser-host-0123456789abcdef",
+          status: "ready",
+          error: null,
+          socksPort: 41234,
+        },
+        ensureError: "Unable to create ticket",
+        onRetry: noop,
+      }),
+    ).toEqual({
+      kind: "ready",
+      partition: "persist:paseo-browser-host-0123456789abcdef",
+      isRemoteHost: true,
+      effectiveRoutingMode: "host",
+      hostLabel: "devbox",
+      proxyStatus: "ready",
+    });
+
     // Unprepared partition (socksPort === null) still fails closed with proxy_error.
     expect(
       resolveBrowserProxyPaneState({

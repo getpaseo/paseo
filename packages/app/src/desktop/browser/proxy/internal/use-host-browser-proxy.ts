@@ -107,13 +107,9 @@ function resolveRemoteUnavailablePaneState(
 
 function resolvePreparedHostPaneStatus(
   status: DesktopBrowserProxyStatus,
-  ensureError: string | null,
 ): DesktopBrowserProxyStatus {
-  if (ensureError || status === "error") {
-    return "error";
-  }
-  if (status === "ready") {
-    return "ready";
+  if (status === "ready" || status === "error") {
+    return status;
   }
   return "reconnecting";
 }
@@ -162,7 +158,7 @@ export function resolveBrowserProxyPaneState(input: {
       isRemoteHost: true,
       effectiveRoutingMode: "host",
       hostLabel,
-      proxyStatus: resolvePreparedHostPaneStatus(proxyStatusSnapshot.status, ensureError),
+      proxyStatus: resolvePreparedHostPaneStatus(proxyStatusSnapshot.status),
     };
   }
 
