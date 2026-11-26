@@ -25,7 +25,6 @@ import {
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
-  type ViewToken,
 } from "react-native";
 import {
   FlatList as SheetFlatList,
@@ -57,13 +56,13 @@ import {
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useRevealActiveItem } from "@/components/ui/scroll-reveal";
+import { useRevealActiveFlatListRow, useRevealActiveItem } from "@/components/ui/scroll-reveal";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
-import type { KeyboardInputEvent } from "@/keyboard";
+import { useHardwareKeyboardPresent, type KeyboardInputEvent } from "@/keyboard";
 import {
   buildProviderQualifiedDescription,
   buildSelectedTriggerLabel,
@@ -96,7 +95,6 @@ import {
 
 const ROW_DATASET = { modelBrowserRow: "true" };
 const ACTIVE_ROW_DATASET = { modelBrowserRow: "true", active: "true" };
-const FULLY_VISIBLE_VIEWABILITY = { itemVisiblePercentThreshold: 100 };
 
 const DESKTOP_PROVIDER_VIEW_MIN_HEIGHT = 220;
 const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 400;
@@ -1370,6 +1368,20 @@ function IndependentScrollBoundary({ children }: { children: React.ReactElement 
   );
 }
 
+function resolveModelListRevealTarget({
+  shouldRevealActive,
+  hasActiveHeaderItem,
+  activeModelIndex,
+}: {
+  shouldRevealActive: boolean;
+  hasActiveHeaderItem: boolean;
+  activeModelIndex: number;
+}): number | "top" | null {
+  if (!shouldRevealActive) return null;
+  if (hasActiveHeaderItem) return "top";
+  return activeModelIndex >= 0 ? activeModelIndex : null;
+}
+
 function IndependentModelList({
   rows,
   renderItem,
@@ -1388,89 +1400,19 @@ function IndependentModelList({
   shouldRevealActive: boolean;
 }) {
   const listRef = useRef<FlatList<ProviderSelectionModelRow>>(null);
-  const fullyVisibleRows = useRef<{ first: number; last: number } | null>(null);
-  const pendingReveal = useRef<number | null>(null);
-  const isPendingRowMeasured = useRef(true);
-  const rowsLengthRef = useRef(rows.length);
-  rowsLengthRef.current = rows.length;
-  const hasHeader = Boolean(header);
-  const hasHeaderRef = useRef(hasHeader);
-  hasHeaderRef.current = hasHeader;
-
-  const revealPendingRow = useCallback(() => {
-    const list = listRef.current;
-    const row = pendingReveal.current;
-    if (!list || row === null || row < 0 || row >= rowsLengthRef.current) return;
-    const visible = fullyVisibleRows.current;
-    if (visible && row >= visible.first && row <= visible.last) {
-      pendingReveal.current = null;
-      return;
-    }
-    if (row === 0 && !hasHeaderRef.current) {
-      list.scrollToOffset({ offset: 0, animated: false });
-      pendingReveal.current = null;
-      if (visible) {
-        fullyVisibleRows.current = { first: 0, last: visible.last - visible.first };
-      }
-      return;
-    }
-    const isNearer = visible ? row < visible.first : false;
-    let viewPosition = 0.5;
-    if (visible) {
-      viewPosition = isNearer ? 0 : 1;
-    }
-    isPendingRowMeasured.current = true;
-    list.scrollToIndex({ index: row, viewPosition, animated: false });
-    if (!isPendingRowMeasured.current) return;
-    pendingReveal.current = null;
-    if (visible) {
-      const span = visible.last - visible.first;
-      fullyVisibleRows.current = isNearer
-        ? { first: row, last: row + span }
-        : { first: row - span, last: row };
-    }
-  }, []);
-
-  const handleScrollToIndexFailed = useCallback(
-    (info: { index: number; averageItemLength: number }) => {
-      isPendingRowMeasured.current = false;
-      if (info.index >= rowsLengthRef.current - 1) {
-        listRef.current?.scrollToEnd({ animated: false });
-        return;
-      }
-      listRef.current?.scrollToOffset({
-        offset: info.index * info.averageItemLength,
-        animated: false,
-      });
-    },
-    [],
-  );
-
-  const handleViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken<ProviderSelectionModelRow>[] }) => {
-      const indexes = viewableItems.flatMap((token) => (token.index === null ? [] : [token.index]));
-      if (indexes.length === 0) return;
-      fullyVisibleRows.current = { first: Math.min(...indexes), last: Math.max(...indexes) };
-      revealPendingRow();
-    },
-    [revealPendingRow],
-  );
-
-  useEffect(() => {
-    // Only scroll-reveal after explicit keyboard navigation so initial open rests at the top
-    // and keeps the pinned Profiles header and its actions unclipped.
-    if (!shouldRevealActive) {
-      pendingReveal.current = null;
-      return;
-    }
-    if (hasActiveHeaderItem) {
-      pendingReveal.current = null;
-      listRef.current?.scrollToOffset({ offset: 0, animated: false });
-      return;
-    }
-    pendingReveal.current = activeModelIndex >= 0 ? activeModelIndex : null;
-    revealPendingRow();
-  }, [activeModelIndex, hasActiveHeaderItem, revealPendingRow, rows, shouldRevealActive]);
+  // Only scroll-reveal after explicit keyboard navigation so initial open rests at the top
+  // and keeps the pinned Profiles header and its actions unclipped.
+  const reveal = useRevealActiveFlatListRow({
+    listRef,
+    itemCount: rows.length,
+    activeIndex: resolveModelListRevealTarget({
+      shouldRevealActive,
+      hasActiveHeaderItem,
+      activeModelIndex,
+    }),
+    hasHeader: Boolean(header),
+    listKey: rows,
+  });
 
   return (
     <IndependentScrollBoundary>
@@ -1481,9 +1423,9 @@ function IndependentModelList({
         renderItem={renderItem}
         ListHeaderComponent={header}
         keyExtractor={getModelRowKey}
-        onScrollToIndexFailed={handleScrollToIndexFailed}
-        onViewableItemsChanged={handleViewableItemsChanged}
-        viewabilityConfig={FULLY_VISIBLE_VIEWABILITY}
+        onScrollToIndexFailed={reveal.onScrollToIndexFailed}
+        onViewableItemsChanged={reveal.onViewableItemsChanged}
+        viewabilityConfig={reveal.viewabilityConfig}
         style={styles.virtualizedModelList}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -1878,6 +1820,7 @@ function ModelBrowserContent({
   showProfilesSection = true,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
+  const hasHardwareKeyboard = useHardwareKeyboardPresent();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
   const profiledLookup = useMemo(
     () => groupProfilesByProviderModel(profiles?.rows ?? []),
@@ -1918,10 +1861,11 @@ function ModelBrowserContent({
         selectedProvider,
         selectedModel,
         preferredKey: preferredActiveKey,
-        suppressInitialActive: isNative,
+        suppressInitialActive: isNative && !hasHardwareKeyboard,
       }),
     [
       explicitActiveKey,
+      hasHardwareKeyboard,
       navItems,
       normalizedQuery,
       preferredActiveKey,
