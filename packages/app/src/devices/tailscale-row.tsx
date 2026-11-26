@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { RotateCw } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -12,6 +12,7 @@ import {
 } from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
@@ -76,17 +77,26 @@ function TailscaleControl({ serverId, client }: { serverId: string; client: Host
     () => ({ href: TAILSCALE_DOWNLOAD_URL, label: t("devices.tailscale.install") }),
     [t],
   );
+  const refreshLabel = t(
+    tailscale.refreshing ? "devices.tailscale.refreshing" : "devices.tailscale.refresh",
+  );
   const refreshButton = tailscale.showRefresh ? (
-    <Button
-      variant="outline"
-      leftIcon={RotateCw}
-      onPress={tailscale.refresh}
-      loading={tailscale.refreshing}
-      disabled={tailscale.refreshDisabled}
-      testID="devices-tailscale-refresh"
-    >
-      {t(tailscale.refreshing ? "devices.tailscale.refreshing" : "devices.tailscale.refresh")}
-    </Button>
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <Button
+          variant="outline"
+          leftIcon={RotateCw}
+          onPress={tailscale.refresh}
+          loading={tailscale.refreshing}
+          disabled={tailscale.refreshDisabled}
+          accessibilityLabel={refreshLabel}
+          testID="devices-tailscale-refresh"
+        />
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={6}>
+        <Text style={styles.tooltipText}>{refreshLabel}</Text>
+      </TooltipContent>
+    </Tooltip>
   ) : null;
   const switchControl = tailscale.showSwitch ? (
     <Switch
@@ -267,6 +277,10 @@ const styles = StyleSheet.create((theme) => ({
   controls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: theme.spacing[3],
+    gap: theme.spacing[2],
+  },
+  tooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
 }));
