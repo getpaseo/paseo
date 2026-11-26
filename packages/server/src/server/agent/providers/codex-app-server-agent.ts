@@ -19,6 +19,7 @@ import {
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPermissionResult,
+  type AgentPermissionResolutionOptions,
   type AgentProviderNotice,
   type AgentPromptContentBlock,
   type AgentPromptInput,
@@ -5246,6 +5247,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   async respondToPermission(
     requestId: string,
     response: AgentPermissionResponse,
+    options?: AgentPermissionResolutionOptions,
   ): Promise<AgentPermissionResult | void> {
     if (this.asyncQuestions.hasPending(requestId)) {
       return this.respondToAsyncQuestion(requestId, response);
@@ -5257,7 +5259,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
 
     if (pending.kind === "plan") {
-      return this.handlePlanPermissionResponse({ requestId, response, pending, pendingRequest });
+      return this.handlePlanPermissionResponse({
+        requestId,
+        response,
+        pending,
+        pendingRequest,
+        options,
+      });
     }
 
     this.pendingPermissionHandlers.delete(requestId);
@@ -5375,8 +5383,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     response: AgentPermissionResponse;
     pending: CodexPendingPermissionHandler;
     pendingRequest: AgentPermissionRequest | null;
+    options?: AgentPermissionResolutionOptions;
   }): AgentPermissionResult | void {
-    const { requestId, response, pending, pendingRequest } = params;
+    const { requestId, response, pending, pendingRequest, options } = params;
     let followUpPrompt: string | undefined;
     if (response.behavior === "allow") {
       followUpPrompt = this.preparePlanImplementation({
@@ -5384,7 +5393,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       });
     }
 
-    this.resolvePlanPermission(requestId, response);
+    this.resolvePlanPermission(
+      requestId,
+      options?.planApproval
+        ? { behavior: "allow", selectedActionId: options.planApproval }
+        : response,
+    );
     if (followUpPrompt) {
       return { followUpPrompt };
     }

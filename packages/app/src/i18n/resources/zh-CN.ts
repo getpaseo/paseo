@@ -267,6 +267,11 @@ export const zhCN: TranslationResources = {
       implement: "实施",
       question: "你想如何继续？",
       proposedPlan: "建议计划",
+      requestChanges: "请求修改",
+      implementWithNotes: "按备注实施",
+      feedbackPlaceholder: "提供对计划的反馈",
+      stalePlan: "此计划已不再等待审核。",
+      planReviewFailed: "无法发送计划反馈。",
     },
   },
   agentPanel: {

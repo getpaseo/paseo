@@ -53,6 +53,9 @@ import type {
   AgentOptionControl,
   AgentLaunchContext,
   AgentMetric,
+  AgentPermissionRequest,
+  AgentPermissionResolutionOptions,
+  AgentPermissionResponse,
   AgentPromptInput,
   AgentProvider,
   AgentPersistenceHandle,
@@ -509,7 +512,7 @@ class TestAgentSession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
 
-  async getRuntimeInfo() {
+  async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     return {
       provider: this.provider,
       sessionId: this.id,
@@ -522,13 +525,13 @@ class TestAgentSession implements AgentSession {
     return [];
   }
 
-  async getCurrentMode() {
+  async getCurrentMode(): Promise<string | null> {
     return null;
   }
 
   async setMode(): Promise<void> {}
 
-  getPendingPermissions() {
+  getPendingPermissions(): AgentPermissionRequest[] {
     return [];
   }
 
@@ -11763,6 +11766,138 @@ test("permission request notifies once without forcing unread attention state", 
 
   expect(attentionReasons).toContain("permission");
 });
+
+test.each(["claude", "codex"] as const)(
+  "plan review for %s consumes the proposal once and delivers notes before implementation",
+  async (provider) => {
+    const releasePlanningTurn = deferred<void>();
+    const permissionAnswered = deferred<void>();
+    const calls: string[] = [];
+    let mode = "plan";
+    let request: AgentPermissionRequest | undefined = {
+      id: "plan-request",
+      provider,
+      kind: "plan",
+      name: provider === "claude" ? "ExitPlanMode" : "CodexPlanApproval",
+      input: { plan: "Add the original text." },
+    };
+
+    class ReviewSession extends TestAgentSession {
+      override getPendingPermissions() {
+        return request ? [request] : [];
+      }
+
+      override async getCurrentMode() {
+        return mode;
+      }
+
+      override async getRuntimeInfo() {
+        return { provider, sessionId: this.id, model: null, modeId: mode };
+      }
+
+      override async setMode(modeId = "acceptEdits") {
+        mode = modeId;
+        calls.push(`mode:${mode}`);
+      }
+
+      async applyOptions(options: ProviderOptions) {
+        calls.push(`plan-mode:${options.plan_mode}`);
+      }
+
+      override async startTurn(prompt?: AgentPromptInput) {
+        if (prompt === "prepare") {
+          if (request) this.pushEvent({ type: "permission_requested", provider, request });
+          void (async () => {
+            await releasePlanningTurn.promise;
+            this.pushEvent({ type: "turn_completed", provider, turnId: "planning" });
+          })();
+          return { turnId: "planning" };
+        }
+        calls.push(String(prompt));
+        this.pushEvent({ type: "turn_completed", provider, turnId: "implement" });
+        return { turnId: "implement" };
+      }
+
+      override async respondToPermission(
+        _requestId?: string,
+        response?: AgentPermissionResponse,
+        options?: AgentPermissionResolutionOptions,
+      ) {
+        if (!request || !response) throw new Error("No permission response available");
+        expect(response).toMatchObject({ behavior: "deny", interrupt: provider === "claude" });
+        expect(options?.planApproval).toBe("implement_with_notes");
+        this.pushEvent({
+          type: "permission_resolved",
+          provider,
+          requestId: request.id,
+          resolution: response,
+        });
+        request = undefined;
+        permissionAnswered.resolve();
+      }
+    }
+
+    class ReviewClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig) {
+        return new ReviewSession(config);
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: { [provider]: new ReviewClient(provider) },
+      logger,
+    });
+    const agent = await manager.createAgent(
+      {
+        provider,
+        cwd: process.cwd(),
+        modeId: "plan",
+        providerOptions: provider === "codex" ? { plan_mode: true } : undefined,
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const planning = manager.runAgent(agent.id, "prepare");
+    try {
+      await vi.waitFor(() => expect(agent.pendingPermissions.has("plan-request")).toBe(true));
+      if (provider === "codex") {
+        releasePlanningTurn.resolve();
+        await planning;
+      }
+      const input = {
+        agentId: agent.id,
+        permissionRequestId: "plan-request",
+        action: "implement_with_notes" as const,
+        text: "Use the replacement text.",
+      };
+      await expect(manager.reviewPlan({ ...input, text: "  " })).rejects.toThrow("Enter feedback");
+      const review = manager.reviewPlan(input);
+      const duplicate = expect(manager.reviewPlan(input)).rejects.toThrow(
+        "no longer awaiting review",
+      );
+      await permissionAnswered.promise;
+      if (provider === "claude") {
+        expect(calls).toEqual([]);
+        releasePlanningTurn.resolve();
+        await planning;
+      }
+      await review;
+      await duplicate;
+      expect(calls).toEqual([
+        provider === "claude" ? "mode:acceptEdits" : "plan-mode:false",
+        expect.stringContaining("Add the original text."),
+      ]);
+      expect(calls[1]).toContain("Use the replacement text.");
+      expect(manager.getTimeline(agent.id)).toContainEqual(
+        expect.objectContaining({ type: "user_message", text: calls[1] }),
+      );
+    } finally {
+      releasePlanningTurn.resolve();
+      await planning.catch(() => undefined);
+      await manager.closeAgent(agent.id);
+    }
+  },
+);
 
 test("respondToPermission updates currentModeId after plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));

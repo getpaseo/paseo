@@ -94,6 +94,8 @@ export function buildToolCallPresentation(
 }
 
 function resolvePlanOutcome(input: BuildToolCallPresentationInput): PlanOutcome | undefined {
+  // The provider's interrupted tool result follows Paseo's approval for a separate turn.
+  if (input.metadata?.actionId === "implement_with_notes") return "approved";
   if (input.status === "canceled") return "canceled";
   if (input.metadata?.approved === false) return "rejected";
   if (input.metadata?.approved === true) return "approved";

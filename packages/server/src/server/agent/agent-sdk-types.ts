@@ -719,6 +719,11 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface AgentPermissionResolutionOptions {
+  /** Record approval while closing the provider's pending request for a separate turn. */
+  planApproval?: "implement_with_notes";
+}
+
 export interface AgentUsageSession {
   launch?: import("@getpaseo/plugin/server/provider").ProviderLaunch;
   provider: string;
@@ -759,6 +764,7 @@ export interface AgentSession {
   respondToPermission(
     requestId: string,
     response: AgentPermissionResponse,
+    options?: AgentPermissionResolutionOptions,
   ): Promise<AgentPermissionResult | void>;
   /** Null until a new provider process could resume this session; see docs/providers.md. */
   describePersistence(): AgentPersistenceHandle | null;

@@ -138,6 +138,7 @@ import {
   type AgentPermissionRequest,
   type AgentPermissionRequestKind,
   type AgentPermissionResponse,
+  type AgentPermissionResolutionOptions,
   type AgentPermissionUpdate,
   type AgentPersistenceHandle,
   type AgentProviderNotice,
@@ -3216,16 +3217,34 @@ class ClaudeAgentSession implements AgentSession {
       : request.id;
   }
 
+  private recordApprovedPlan(request: AgentPermissionRequest, actionId: string): void {
+    this.pushToolCall(
+      mapClaudeCompletedToolCall({
+        name: "ExitPlanMode",
+        callId: this.planToolCallId(request),
+        input: request.input ?? null,
+        output: { approved: true, actionId },
+        metadata: { actionId },
+      }),
+    );
+  }
+
   private resolveDeniedPermission(
     request: AgentPermissionRequest,
     response: Extract<AgentPermissionResponse, { behavior: "deny" }>,
+    options?: AgentPermissionResolutionOptions,
   ): PermissionResult {
-    this.recordDeniedPermissionTimeline(request, response);
+    const planApproval = request.kind === "plan" ? options?.planApproval : undefined;
+    if (planApproval) {
+      this.recordApprovedPlan(request, planApproval);
+    } else {
+      this.recordDeniedPermissionTimeline(request, response);
+    }
     this.pushEvent({
       type: "permission_resolved",
       provider: "claude",
       requestId: request.id,
-      resolution: response,
+      resolution: planApproval ? { behavior: "allow", selectedActionId: planApproval } : response,
     });
     return {
       behavior: "deny",
@@ -3247,7 +3266,11 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+  async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+    options?: AgentPermissionResolutionOptions,
+  ): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
@@ -3270,17 +3293,7 @@ class ClaudeAgentSession implements AgentSession {
           (resumeMode === "bypassPermissions" || resumeMode === "auto");
         const targetMode: PermissionMode = shouldResumePriorMode ? resumeMode : "acceptEdits";
         await this.setMode(targetMode);
-        this.pushToolCall(
-          mapClaudeCompletedToolCall({
-            name: "ExitPlanMode",
-            callId: this.planToolCallId(pending.request),
-            input: pending.request.input ?? null,
-            output: {
-              approved: true,
-              actionId: selectedActionId ?? "implement",
-            },
-          }),
-        );
+        this.recordApprovedPlan(pending.request, selectedActionId ?? "implement");
       }
       const updatedInput =
         pending.request.kind === "question"
@@ -3296,7 +3309,7 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
     } else {
-      pending.resolve(this.resolveDeniedPermission(pending.request, response));
+      pending.resolve(this.resolveDeniedPermission(pending.request, response, options));
       return;
     }
 
