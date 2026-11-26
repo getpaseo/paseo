@@ -45,3 +45,19 @@ export function isControlActive(control: AgentOptionControl, options: ProviderOp
 export function getControlTooltip(control: Pick<AgentOptionControl, "label" | "tooltip">): string {
   return control.tooltip ?? control.label;
 }
+
+/**
+ * The next options record with one option set. The composer applies this optimistically
+ * when a control is pressed: the rendered value reads the agent's `options`, and the
+ * daemon's delta for the apply is not guaranteed to reach this composer's subscription
+ * before the next paint — a stale toggle reads "off" while the applied state is "on"
+ * (the Agent Teams toggle defect, 2026-11-18 repro). The daemon's own delta still
+ * corrects the record when it arrives.
+ */
+export function mergeOptionValue(
+  options: ProviderOptions | undefined,
+  key: string,
+  value: unknown,
+): ProviderOptions {
+  return { ...options, [key]: value };
+}
