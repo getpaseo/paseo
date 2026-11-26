@@ -53,6 +53,7 @@ import {
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
+import { kiroCompactCommand, parseKiroContextUsage } from "./kiro-v3-extensions.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type {
   AgentCapabilityFlags,
@@ -103,8 +104,11 @@ interface ACPSessionInternals {
   sessionId: string | null;
   connection: {
     prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    extMethod?: (method: string, params: Record<string, unknown>) => Promise<unknown>;
     signal: AbortSignal;
   };
+  agentCapabilities: { _meta?: Record<string, unknown> } | null;
+  replayingHistory: boolean;
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
@@ -274,6 +278,8 @@ function createKiroSession(
         supportsToolInvocations: true,
       },
       extensionCommandsParser: parseKiroExtensionCommands,
+      sessionInfoUsageParser: parseKiroContextUsage,
+      extensionCommands: [kiroCompactCommand],
       waitForInitialCommands: options.waitForInitialCommands ?? false,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
     },
@@ -950,6 +956,342 @@ describe("ACP context-window usage", () => {
     await expect(
       emitUsageUpdate({ used: 13_759, size: 0 }).then((result) => result.events),
     ).resolves.toEqual([]);
+  });
+});
+
+const COMPACT_ADVERTISED = {
+  _meta: { kiro: { extensionMethods: ["_kiro/mcp/status", "_kiro/session/compact"] } },
+};
+const COMPACT_NOT_ADVERTISED = { _meta: { kiro: { extensionMethods: ["_kiro/mcp/status"] } } };
+
+type ExtMethod = NonNullable<ACPSessionInternals["connection"]["extMethod"]>;
+
+// A wrapper launcher or custom provider extends the generic ACP client, so its id is not "kiro"; the hooks
+// are the generic defaults and key on the protocol alone.
+function createV3Session(
+  agentCapabilities: ACPSessionInternals["agentCapabilities"],
+  options: { subscribe?: boolean } = {},
+) {
+  const session = new ACPAgentSession(
+    { provider: "custom-kiro", cwd: "/tmp/paseo-acp-test" },
+    {
+      provider: "custom-kiro",
+      logger: createTestLogger(),
+      defaultCommand: ["kiro-cli", "acp", "--agent-engine=v3"],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      sessionInfoUsageParser: parseKiroContextUsage,
+      extensionCommands: [kiroCompactCommand],
+    },
+  );
+  const internals = asInternals<ACPSessionInternals>(session);
+  internals.sessionId = "session-1";
+  internals.agentCapabilities = agentCapabilities;
+  const events: AgentStreamEvent[] = [];
+  if (options.subscribe !== false) {
+    session.subscribe((event) => events.push(event));
+    // Subscribing replays thread_started; the tests care about what happens after.
+    events.length = 0;
+  }
+  return { session, internals, events };
+}
+
+function connectWith(
+  internals: ACPSessionInternals,
+  handlers: { prompt?: (...args: unknown[]) => Promise<unknown>; extMethod?: ExtMethod },
+) {
+  const prompt = vi.fn(handlers.prompt ?? (async () => ({ stopReason: "end_turn" })));
+  const extMethod = vi.fn(handlers.extMethod ?? (async () => ({})));
+  internals.connection = {
+    prompt: prompt as ACPSessionInternals["connection"]["prompt"],
+    extMethod,
+    signal: new AbortController().signal,
+  };
+  return { prompt, extMethod };
+}
+
+function contextUsageUpdate(
+  usagePercentage: unknown,
+  kiro: Record<string, unknown> = {},
+): SessionUpdate {
+  return {
+    sessionUpdate: "session_info_update",
+    _meta: { kiro: { kind: "context_usage", usagePercentage, ...kiro } },
+  };
+}
+
+function usageEvents(events: AgentStreamEvent[]) {
+  return events.filter(
+    (event): event is Extract<AgentStreamEvent, { type: "usage_updated" }> =>
+      event.type === "usage_updated",
+  );
+}
+
+describe("Kiro CLI V3 context usage", () => {
+  test("forwards the percentage Kiro reports while idle, without inventing tokens", async () => {
+    const { session, events } = createV3Session(COMPACT_ADVERTISED);
+
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate(42.5) });
+
+    expect(usageEvents(events)).toEqual([
+      {
+        type: "usage_updated",
+        provider: "custom-kiro",
+        usage: { contextWindowUsagePercentage: 42.5 },
+      },
+    ]);
+  });
+
+  test("replaces the percentage when compaction lowers it", async () => {
+    const { session, events } = createV3Session(COMPACT_ADVERTISED);
+
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate(91) });
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate(12) });
+
+    expect(usageEvents(events).map((event) => event.usage.contextWindowUsagePercentage)).toEqual([
+      91, 12,
+    ]);
+  });
+
+  test("ignores other update kinds, unusable percentages and other sessions", async () => {
+    const { session, events } = createV3Session(COMPACT_ADVERTISED);
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "session_info_update",
+        _meta: { kiro: { kind: "turn_completion", usagePercentage: 30 } },
+      },
+    });
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate("30") });
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate(-1) });
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate(null) });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "session_info_update", title: "Renamed" },
+    });
+    await session.sessionUpdate({ sessionId: "other-session", update: contextUsageUpdate(80) });
+
+    expect(usageEvents(events)).toEqual([]);
+  });
+
+  test("hands the latest current usage to a subscriber that attaches later", async () => {
+    const { session, internals } = createV3Session(COMPACT_ADVERTISED, { subscribe: false });
+
+    // Opening a session replays history before anyone listens. Replay-marked updates are past
+    // state; an unmarked one is current state even though session/load is still running.
+    internals.replayingHistory = true;
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate(30) });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: contextUsageUpdate(77, { replay: true }),
+    });
+    internals.replayingHistory = false;
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    expect(usageEvents(events)).toEqual([
+      {
+        type: "usage_updated",
+        provider: "custom-kiro",
+        usage: { contextWindowUsagePercentage: 30 },
+      },
+    ]);
+  });
+
+  test("ignores replay-marked context usage for a subscriber that is listening", async () => {
+    const { session, events } = createV3Session(COMPACT_ADVERTISED);
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: contextUsageUpdate(77, { replay: true }),
+    });
+
+    expect(usageEvents(events)).toEqual([]);
+  });
+
+  test("keeps the turn's token usage next to the percentage", async () => {
+    const { session, internals, events } = createV3Session(COMPACT_ADVERTISED);
+    connectWith(internals, {
+      prompt: async () => ({
+        stopReason: "end_turn",
+        usage: { inputTokens: 9, outputTokens: 4 },
+      }),
+    });
+
+    await session.startTurn("hello");
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(1));
+    await session.sessionUpdate({ sessionId: "session-1", update: contextUsageUpdate(20) });
+
+    expect(usageEvents(events)).toEqual([
+      {
+        type: "usage_updated",
+        provider: "custom-kiro",
+        usage: { inputTokens: 9, outputTokens: 4, contextWindowUsagePercentage: 20 },
+      },
+    ]);
+  });
+});
+
+describe("Kiro CLI V3 /compact", () => {
+  test("is offered only while the agent advertises _kiro/session/compact", async () => {
+    const advertised = createV3Session(COMPACT_ADVERTISED);
+    const notAdvertised = createV3Session(COMPACT_NOT_ADVERTISED);
+    const kiroV2 = createV3Session({});
+
+    expect(await advertised.session.listCommands()).toEqual([
+      {
+        name: "compact",
+        description: "Summarize the conversation to free up context",
+        argumentHint: "",
+        kind: "command",
+      },
+    ]);
+    expect(await notAdvertised.session.listCommands()).toEqual([]);
+    expect(await kiroV2.session.listCommands()).toEqual([]);
+  });
+
+  test("does not list compact twice when the agent already lists it", async () => {
+    const { session } = createV3Session(COMPACT_ADVERTISED);
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "compact", description: "Agent's own" }],
+      },
+    });
+
+    expect(await session.listCommands()).toEqual([
+      { name: "compact", description: "Agent's own", argumentHint: "", kind: "command" },
+    ]);
+  });
+
+  test("hides a compact the agent lists when a V3 agent does not advertise the route", async () => {
+    const own = {
+      sessionUpdate: "available_commands_update" as const,
+      availableCommands: [
+        { name: "compact", description: "Agent's own" },
+        { name: "help", description: "Show help" },
+      ],
+    };
+    const v3 = createV3Session(COMPACT_NOT_ADVERTISED);
+    const legacy = createV3Session({});
+    await v3.session.sessionUpdate({ sessionId: "session-1", update: own });
+    await legacy.session.sessionUpdate({ sessionId: "session-1", update: own });
+
+    expect((await v3.session.listCommands()).map((command) => command.name)).toEqual(["help"]);
+    expect((await legacy.session.listCommands()).map((command) => command.name)).toEqual([
+      "compact",
+      "help",
+    ]);
+  });
+
+  test("runs the typed request on the current session instead of prompting", async () => {
+    const { session, internals, events } = createV3Session(COMPACT_ADVERTISED);
+    const { prompt, extMethod } = connectWith(internals, {});
+
+    const { turnId } = await session.startTurn("/compact", { clientMessageId: "message-1" });
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(1));
+
+    expect(extMethod).toHaveBeenCalledExactlyOnceWith("_kiro/session/compact", {
+      sessionId: "session-1",
+    });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(
+      events.map((event) => ({
+        type: event.type,
+        item: event.type === "timeline" ? event.item.type : undefined,
+      })),
+    ).toEqual([
+      { type: "turn_started", item: undefined },
+      { type: "timeline", item: "user_message" },
+      { type: "timeline", item: "assistant_message" },
+      { type: "turn_completed", item: undefined },
+    ]);
+    expect(terminalEvents(events)).toEqual([
+      { type: "turn_completed", provider: "custom-kiro", turnId },
+    ]);
+    expect(internals.activeForegroundTurnId).toBeNull();
+  });
+
+  test("reports the request's error as a failed turn and can be retried", async () => {
+    const { session, internals, events } = createV3Session(COMPACT_ADVERTISED);
+    let attempts = 0;
+    const { extMethod } = connectWith(internals, {
+      extMethod: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("Nothing to compact");
+        return {};
+      },
+    });
+
+    await session.startTurn("/compact");
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(1));
+    expect(terminalEvents(events)).toEqual([
+      expect.objectContaining({ type: "turn_failed", error: "Nothing to compact" }),
+    ]);
+    expect(internals.activeForegroundTurnId).toBeNull();
+
+    await session.startTurn("/compact");
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(2));
+
+    expect(extMethod).toHaveBeenCalledTimes(2);
+    expect(terminalEvents(events)[1]).toMatchObject({ type: "turn_completed" });
+  });
+
+  test("keeps the conversation going: the next prompt goes to the same session", async () => {
+    const { session, internals, events } = createV3Session(COMPACT_ADVERTISED);
+    const { prompt } = connectWith(internals, {});
+
+    await session.startTurn("/compact");
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(1));
+    await session.startTurn("keep going");
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(2));
+
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "keep going" }],
+      }),
+    );
+  });
+
+  test.each([
+    ["compaction is not advertised", COMPACT_NOT_ADVERTISED, "/compact"],
+    ["the agent is not a V3 agent", {}, "/compact"],
+    ["it carries arguments", COMPACT_ADVERTISED, "/compact focus on tests"],
+    ["it is another command", COMPACT_ADVERTISED, "/compacted"],
+    ["it is ordinary text", COMPACT_ADVERTISED, "please /compact"],
+  ])("sends the text to the agent as a prompt when %s", async (_name, capabilities, text) => {
+    const { session, internals, events } = createV3Session(capabilities);
+    const { prompt, extMethod } = connectWith(internals, {});
+
+    await session.startTurn(text);
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(1));
+
+    expect(extMethod).not.toHaveBeenCalled();
+    expect(prompt).toHaveBeenCalledOnce();
+  });
+
+  test("sends /compact with an image to the agent as a prompt", async () => {
+    const { session, internals, events } = createV3Session(COMPACT_ADVERTISED);
+    const { prompt, extMethod } = connectWith(internals, {});
+
+    await session.startTurn([
+      { type: "text", text: "/compact" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+    ]);
+    await vi.waitFor(() => expect(terminalEvents(events)).toHaveLength(1));
+
+    expect(extMethod).not.toHaveBeenCalled();
+    expect(prompt).toHaveBeenCalledOnce();
   });
 });
 
@@ -3520,6 +3862,87 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           },
         ]);
         expect(await session.listCommands!()).toEqual(commands);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("serves Kiro V3 context usage and /compact through the generic ACP client", async () => {
+    const artifacts = path.resolve(".artifacts");
+    await mkdir(artifacts, { recursive: true });
+    const directory = await mkdtemp(path.join(artifacts, "acp-kiro-v3-"));
+    const script = path.join(directory, "agent.mjs");
+    await writeFile(
+      script,
+      `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const usage = (usagePercentage, extra = {}) => send({
+  jsonrpc: "2.0", method: "session/update", params: {
+    sessionId: "kiro-session", update: {
+      sessionUpdate: "session_info_update",
+      _meta: { kiro: { kind: "context_usage", usagePercentage, ...extra } },
+    },
+  },
+});
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    send({ jsonrpc: "2.0", id: request.id, result: {
+      protocolVersion: 1,
+      agentCapabilities: { _meta: { kiro: { extensionMethods: ["_kiro/session/compact"] } } },
+    } });
+  } else if (request.method === "session/new") {
+    // Before the response nobody can listen: one replayed update and one current one.
+    usage(11.5, { replay: true });
+    usage(37.25);
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: "kiro-session" } });
+  } else if (request.method === "_kiro/session/compact") {
+    if (request.params.sessionId !== "kiro-session") {
+      send({ jsonrpc: "2.0", id: request.id, error: { code: -32602, message: "Unknown session" } });
+    } else {
+      usage(8.5);
+      send({ jsonrpc: "2.0", id: request.id, result: {} });
+    }
+  } else if (request.method === "session/prompt") {
+    send({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } });
+  } else if (request.id !== undefined) {
+    send({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } });
+  }
+});
+`,
+    );
+    // A wrapper launcher or custom provider is a generic ACP client; nothing here names Kiro.
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      command: [process.execPath, script],
+      providerId: "custom-kiro",
+      initialCommandsWaitTimeoutMs: 200,
+    });
+    try {
+      const session = await client.createSession({ provider: "acp", cwd: directory });
+      try {
+        const events: AgentStreamEvent[] = [];
+        session.subscribe((event) => events.push(event));
+        const percentages = () =>
+          events.flatMap((event) =>
+            event.type === "usage_updated" ? [event.usage.contextWindowUsagePercentage] : [],
+          );
+        const completedTurns = () => events.filter((event) => event.type === "turn_completed");
+
+        expect(percentages()).toEqual([37.25]);
+        expect((await session.listCommands!()).map((command) => command.name)).toEqual(["compact"]);
+
+        await session.startTurn("/compact");
+        await vi.waitFor(() => expect(completedTurns()).toHaveLength(1));
+        expect(percentages()).toEqual([37.25, 8.5]);
+        expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+
+        await session.startTurn("keep going");
+        await vi.waitFor(() => expect(completedTurns()).toHaveLength(2));
       } finally {
         await session.close();
       }

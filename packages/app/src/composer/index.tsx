@@ -17,6 +17,7 @@ import {
   type PressableStateCallbackType,
 } from "react-native";
 import type { TFunction } from "i18next";
+import type { AgentUsage } from "@getpaseo/protocol/agent-types";
 import {
   useState,
   useEffect,
@@ -298,14 +299,21 @@ function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: bo
 
 const EMPTY_METRICS: AgentMetric[] = [];
 
+function selectUsageState(usage: AgentUsage | undefined) {
+  return {
+    contextWindowMaxTokens: usage?.contextWindowMaxTokens ?? null,
+    contextWindowUsedTokens: usage?.contextWindowUsedTokens ?? null,
+    contextWindowUsagePercentage: usage?.contextWindowUsagePercentage ?? null,
+    totalCostUsd: usage?.totalCostUsd ?? null,
+  };
+}
+
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
     return {
       status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      ...selectUsageState(agent?.lastUsage),
       sessionMetrics: agent?.sessionMetrics ?? EMPTY_METRICS,
       model: agent?.model ?? null,
     };
@@ -2228,6 +2236,7 @@ function ComposerContentImpl({
             agentId={agentId}
             maxTokens={agentState.contextWindowMaxTokens}
             usedTokens={agentState.contextWindowUsedTokens}
+            reportedPercentage={agentState.contextWindowUsagePercentage}
             totalCostUsd={agentState.totalCostUsd}
             sessionMetrics={agentState.sessionMetrics}
             toolbarRing={TOOLBAR_RINGS[controlSizing]}
@@ -2240,6 +2249,7 @@ function ComposerContentImpl({
       agentId,
       agentState.contextWindowMaxTokens,
       agentState.contextWindowUsedTokens,
+      agentState.contextWindowUsagePercentage,
       agentState.totalCostUsd,
       agentState.sessionMetrics,
       controlSizing,

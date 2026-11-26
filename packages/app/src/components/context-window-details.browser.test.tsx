@@ -27,14 +27,20 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderDetails(sessionMetrics: AgentMetric[]): void {
+interface DetailsContext {
+  percentage: number;
+  usedTokens: number | null;
+  maxTokens: number | null;
+}
+
+function renderDetails(sessionMetrics: AgentMetric[], context: DetailsContext = CONTEXT): void {
   act(() =>
     root.render(
       <QueryClientProvider client={new QueryClient()}>
         <ContextWindowDetails
           serverId="server"
           agentId="agent"
-          context={CONTEXT}
+          context={context}
           sessionCost="$1.20"
           sessionMetrics={sessionMetrics}
           showTitle
@@ -62,4 +68,11 @@ it("leaves the cost to the provider when it reports one", async () => {
 
   await expect.element(page.getByText("$1.25")).toBeVisible();
   expect(page.getByText("Session cost $1.20").elements()).toHaveLength(0);
+});
+
+it("shows a reported percentage with its fraction and no token counts", async () => {
+  renderDetails([], { percentage: 42.5, usedTokens: null, maxTokens: null });
+
+  await expect.element(page.getByText("42.5% used")).toBeVisible();
+  expect(page.getByText("tokens", { exact: false }).elements()).toHaveLength(0);
 });

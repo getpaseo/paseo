@@ -63,6 +63,9 @@ describe("GenericACPAgentClient", () => {
           supportsRewindBoth: false,
         },
         waitForInitialCommands: true,
+        // Kiro V3 behavior is a default of every generic ACP client; it is inert for other agents.
+        sessionInfoUsageParser: expect.any(Function),
+        extensionCommands: [expect.objectContaining({ name: "compact" })],
       },
     ]);
   });

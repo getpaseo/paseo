@@ -625,6 +625,7 @@ function sanitizeUsage(value: unknown): AgentUsage | undefined {
     "totalCostUsd",
     "contextWindowMaxTokens",
     "contextWindowUsedTokens",
+    "contextWindowUsagePercentage",
   ];
   for (const field of fields) {
     if (!assignFiniteNumber(sanitized, result, field)) {

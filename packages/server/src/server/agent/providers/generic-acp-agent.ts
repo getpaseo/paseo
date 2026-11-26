@@ -8,6 +8,8 @@ import {
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type ACPExtensionCommand,
+  type ACPSessionInfoUsageParser,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -15,6 +17,7 @@ import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import { kiroCompactCommand, parseKiroContextUsage } from "./kiro-v3-extensions.js";
 
 interface GenericACPAgentClientOptions {
   logger: Logger;
@@ -29,6 +32,8 @@ interface GenericACPAgentClientOptions {
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionInfoUsageParser?: ACPSessionInfoUsageParser;
+  extensionCommands?: ACPExtensionCommand[];
   catalogModelResolver?: ACPCatalogModelResolver;
   now?: () => number;
 }
@@ -56,6 +61,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
+      sessionInfoUsageParser: options.sessionInfoUsageParser ?? parseKiroContextUsage,
+      extensionCommands: options.extensionCommands ?? [kiroCompactCommand],
       catalogModelResolver: options.catalogModelResolver,
       now: options.now,
     });

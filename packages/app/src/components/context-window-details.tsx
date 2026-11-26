@@ -11,8 +11,8 @@ interface ContextWindowDetailsProps {
   agentId: string;
   context: {
     percentage: number;
-    usedTokens: number;
-    maxTokens: number;
+    usedTokens: number | null;
+    maxTokens: number | null;
   } | null;
   sessionCost: string | null;
   /** What the provider reports about the session. A reported cost replaces `sessionCost`. */
@@ -49,12 +49,14 @@ export function ContextWindowDetails({
             <Text style={styles.text}>
               {t("contextWindow.used", { percentage: context.percentage })}
             </Text>
-            <Text style={styles.detail}>
-              {t("contextWindow.tokens", {
-                used: formatTokenCount(context.usedTokens),
-                max: formatTokenCount(context.maxTokens),
-              })}
-            </Text>
+            {context.usedTokens !== null && context.maxTokens !== null ? (
+              <Text style={styles.detail}>
+                {t("contextWindow.tokens", {
+                  used: formatTokenCount(context.usedTokens),
+                  max: formatTokenCount(context.maxTokens),
+                })}
+              </Text>
+            ) : null}
           </>
         ) : (
           <Text style={styles.detail}>{t("contextWindow.noData")}</Text>

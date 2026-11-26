@@ -19,13 +19,15 @@ import type { Theme } from "@/styles/theme";
 import { TOOLBAR_DISC_SIZE, type ToolbarRing } from "@/components/ui/control-geometry";
 import { ContextWindowDetails } from "./context-window-details";
 import { DetailsSheet } from "./details-sheet";
-import { formatContextPercentage } from "./context-window-meter.utils";
+import { formatContextPercentage, resolveContextUsage } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
   serverId: string;
   agentId: string;
   maxTokens: number | null;
   usedTokens: number | null;
+  /** Occupancy (0-100) a provider reports; it wins over the share derived from token counts. */
+  reportedPercentage?: number | null;
   totalCostUsd?: number | null;
   /** What the provider reports about the session, shown in the details. */
   sessionMetrics?: AgentMetric[];
@@ -41,21 +43,6 @@ const COMPACT_SVG_SIZE = 12;
 const COMPACT_RADIUS = 5;
 const STROKE_WIDTH = 2;
 const COMPACT_STROKE_WIDTH = 1.75;
-
-function isValidMaxTokens(value: number): boolean {
-  return Number.isFinite(value) && value > 0;
-}
-
-function isValidUsedTokens(value: number): boolean {
-  return Number.isFinite(value) && value >= 0;
-}
-
-function getUsagePercentage(maxTokens: number, usedTokens: number): number | null {
-  if (!isValidMaxTokens(maxTokens) || !isValidUsedTokens(usedTokens)) {
-    return null;
-  }
-  return (usedTokens / maxTokens) * 100;
-}
 
 function clampPercentage(value: number): number {
   return Math.max(0, Math.min(100, value));
@@ -159,6 +146,7 @@ export function ContextWindowMeter({
   agentId,
   maxTokens,
   usedTokens,
+  reportedPercentage = null,
   totalCostUsd,
   sessionMetrics = EMPTY_METRICS,
   showPercentage = false,
@@ -176,17 +164,12 @@ export function ContextWindowMeter({
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const openSheet = useCallback(() => setIsSheetOpen(true), []);
   const closeSheet = useCallback(() => setIsSheetOpen(false), []);
-  const percentage =
-    maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
-  const geometry = getMeterGeometry(showPercentage, toolbarRing);
-
   const context = useMemo(
-    () =>
-      percentage !== null && maxTokens !== null && usedTokens !== null
-        ? { percentage: Math.round(percentage), maxTokens, usedTokens }
-        : null,
-    [percentage, maxTokens, usedTokens],
+    () => resolveContextUsage({ maxTokens, usedTokens, reportedPercentage }),
+    [maxTokens, usedTokens, reportedPercentage],
   );
+  const percentage = context?.ringPercentage ?? null;
+  const geometry = getMeterGeometry(showPercentage, toolbarRing);
   const meterColors = useCallback(
     (theme: Theme) => ({
       progressColor: getProgressColor(percentage ?? 0, theme),
@@ -213,7 +196,7 @@ export function ContextWindowMeter({
   const percentageLabel =
     showPercentage && context ? (
       <Text style={styles.percentageLabel}>
-        {formatContextPercentage(context.percentage, i18n.resolvedLanguage)}
+        {formatContextPercentage(context.percentage, i18n.resolvedLanguage, 2)}
       </Text>
     ) : null;
   const accessibilityLabel = context

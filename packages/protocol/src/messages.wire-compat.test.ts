@@ -800,3 +800,80 @@ describe("provider metrics", () => {
     ).toBe(false);
   });
 });
+
+describe("provider context usage percentage", () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "kiro",
+    cwd: "/tmp/project",
+    model: null,
+    thinkingOptionId: null,
+    effectiveThinkingOptionId: null,
+    createdAt: "2026-11-22T00:00:00.000Z",
+    updatedAt: "2026-11-22T00:00:00.000Z",
+    lastUserMessageAt: null,
+    status: "idle",
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    labels: {},
+  };
+  const tokenUsage = {
+    inputTokens: 10,
+    contextWindowMaxTokens: 200_000,
+    contextWindowUsedTokens: 42_000,
+  };
+  const percentageUsage = { contextWindowUsagePercentage: 42.5 };
+  // The usage schema as apps released before the percentage declared it.
+  const LegacyUsageSchema = z.object({
+    inputTokens: z.number().optional(),
+    cachedInputTokens: z.number().optional(),
+    outputTokens: z.number().optional(),
+    totalCostUsd: z.number().optional(),
+    contextWindowMaxTokens: z.number().optional(),
+    contextWindowUsedTokens: z.number().optional(),
+  });
+
+  test("new apps read the percentage from a new daemon, in the snapshot and on turn completion", () => {
+    expect(
+      AgentSnapshotPayloadSchema.parse({ ...snapshot, lastUsage: percentageUsage }).lastUsage,
+    ).toEqual(percentageUsage);
+    const turnCompleted = {
+      type: "turn_completed",
+      provider: "kiro",
+      turnId: "turn-1",
+      usage: percentageUsage,
+    };
+    expect(AgentStreamEventPayloadSchema.parse(turnCompleted)).toEqual(turnCompleted);
+  });
+
+  test("new apps accept usage from daemons that send no percentage", () => {
+    expect(
+      AgentSnapshotPayloadSchema.parse({ ...snapshot, lastUsage: tokenUsage }).lastUsage,
+    ).toEqual(tokenUsage);
+  });
+
+  test("apps released before the percentage drop it and keep the usage they know", () => {
+    const LegacySnapshotSchema = AgentSnapshotPayloadSchema.extend({
+      lastUsage: LegacyUsageSchema.optional(),
+    });
+
+    expect(
+      LegacySnapshotSchema.parse({ ...snapshot, lastUsage: { ...tokenUsage, ...percentageUsage } })
+        .lastUsage,
+    ).toEqual(tokenUsage);
+    expect(
+      LegacySnapshotSchema.parse({ ...snapshot, lastUsage: percentageUsage }).lastUsage,
+    ).toEqual({});
+  });
+});

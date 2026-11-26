@@ -236,6 +236,8 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  /** Context occupancy as the provider reports it (0-100), for providers that report no token counts. */
+  contextWindowUsagePercentage?: number;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

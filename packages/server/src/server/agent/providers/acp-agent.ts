@@ -458,6 +458,32 @@ export type ACPExtensionCommandsParser = (
 ) => AgentSlashCommand[] | null;
 
 /**
+ * Reads provider-specific context occupancy from a `session_info_update`. Return the usage fields
+ * the update reports, or null when it carries none (or is a replay of past state).
+ */
+export type ACPSessionInfoUsageParser = (update: SessionInfoUpdate) => AgentUsage | null;
+
+export type ACPExtensionCommandAvailability = "available" | "unavailable" | "unknown";
+
+/**
+ * A slash command Paseo runs against a vendor ACP extension request instead of sending the text
+ * as a prompt. `availability` reads the agent's initialize result: "available" lists and
+ * intercepts the command, "unavailable" means the agent is known to lack the route, so a command
+ * of that name in its own catalog is hidden, and "unknown" leaves the agent's behavior alone.
+ */
+export interface ACPExtensionCommand {
+  /** Name without the leading slash. The prompt must be exactly `/<name>` to run it. */
+  name: string;
+  description: string;
+  availability: (agentCapabilities: ACPAgentCapabilities | null) => ACPExtensionCommandAvailability;
+  /** Resolves with the text to show for success; rejects to fail the turn. */
+  run: (context: {
+    connection: Pick<ClientSideConnection, "extMethod">;
+    sessionId: string;
+  }) => Promise<string>;
+}
+
+/**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
  * (e.g. switch through each model to read back per-model options) without re-implementing
@@ -511,6 +537,8 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionInfoUsageParser?: ACPSessionInfoUsageParser;
+  extensionCommands?: ACPExtensionCommand[];
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -543,6 +571,8 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  sessionInfoUsageParser?: ACPSessionInfoUsageParser;
+  extensionCommands?: ACPExtensionCommand[];
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
   configuredModelIds?: readonly string[];
@@ -1085,6 +1115,8 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly sessionInfoUsageParser?: ACPSessionInfoUsageParser;
+  private readonly extensionCommands: ACPExtensionCommand[];
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
@@ -1116,6 +1148,8 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.sessionInfoUsageParser = options.sessionInfoUsageParser;
+    this.extensionCommands = options.extensionCommands ?? [];
     this.now = options.now ?? Date.now;
   }
 
@@ -1156,6 +1190,8 @@ export class ACPAgentClient implements AgentClient {
         launchEnv: launchContext?.env,
         wrap: launchContext?.wrap,
         extensionCommandsParser: this.extensionCommandsParser,
+        sessionInfoUsageParser: this.sessionInfoUsageParser,
+        extensionCommands: this.extensionCommands,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -1217,6 +1253,8 @@ export class ACPAgentClient implements AgentClient {
       launchEnv: launchContext?.env,
       wrap: launchContext?.wrap,
       extensionCommandsParser: this.extensionCommandsParser,
+      sessionInfoUsageParser: this.sessionInfoUsageParser,
+      extensionCommands: this.extensionCommands,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1995,7 +2033,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly sessionInfoUsageParser?: ACPSessionInfoUsageParser;
+  private readonly extensionCommands: ACPExtensionCommand[];
   private currentTurnUsage: AgentUsage | undefined;
+  // Latest context usage the agent reported as current. Nobody listens while a session opens, so
+  // new subscribers receive it on subscribe.
+  private contextUsageSnapshot: AgentUsage | null = null;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
@@ -2044,6 +2087,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.sessionInfoUsageParser = options.sessionInfoUsageParser;
+    this.extensionCommands = options.extensionCommands ?? [];
   }
 
   get id(): string | null {
@@ -2224,18 +2269,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const connection = this.connection;
     const child = this.child;
+    const sessionId = this.sessionId;
+    const extensionCommand = this.findExtensionCommand(prompt);
     const failOnDisconnect = () => void this.failDisconnectedTurn(turnId, child);
     connection.signal.addEventListener("abort", failOnDisconnect, { once: true });
-    void connection
-      .prompt({
-        sessionId: this.sessionId,
-        messageId,
-        prompt: toACPContentBlocks(prompt),
-      })
-      .then((response) => {
-        this.handlePromptResponse(response, turnId);
-        return;
-      })
+    const request = extensionCommand
+      ? this.runExtensionCommand({ command: extensionCommand, connection, sessionId, turnId })
+      : connection
+          .prompt({
+            sessionId,
+            messageId,
+            prompt: toACPContentBlocks(prompt),
+          })
+          .then((response) => {
+            this.handlePromptResponse(response, turnId);
+            return;
+          });
+    void request
       .catch((error) => {
         const summary = summarizeACPRequestError(error);
         this.finishTurn({
@@ -2282,6 +2332,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         type: "thread_started",
         provider: this.provider,
         sessionId: this.sessionId,
+      });
+    }
+    if (this.contextUsageSnapshot) {
+      callback({
+        type: "usage_updated",
+        provider: this.provider,
+        usage: { ...this.currentTurnUsage, ...this.contextUsageSnapshot },
       });
     }
     return () => {
@@ -2349,12 +2406,88 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   async listCommands(): Promise<AgentSlashCommand[]> {
     if (this.commandsReadySettled || this.closed || !this.waitForInitialCommands) {
-      return this.cachedCommands;
+      return this.withExtensionCommands();
     }
 
     await this.waitForCommandsToSettle();
     this.settleCommandsReady();
-    return this.cachedCommands;
+    return this.withExtensionCommands();
+  }
+
+  // Extension commands are listed only while the agent advertises their route, so the composer
+  // never offers a command Paseo cannot run. They are computed here because command batches
+  // from the agent replace the cache wholesale.
+  private withExtensionCommands(): AgentSlashCommand[] {
+    const hidden = new Set(
+      this.extensionCommands
+        .filter((command) => command.availability(this.agentCapabilities) === "unavailable")
+        .map((command) => command.name),
+    );
+    const own = this.cachedCommands.filter((command) => !hidden.has(command.name));
+    const listed = new Set(own.map((command) => command.name));
+    const added = this.extensionCommands
+      .filter(
+        (command) =>
+          !listed.has(command.name) && command.availability(this.agentCapabilities) === "available",
+      )
+      .map(
+        (command): AgentSlashCommand => ({
+          name: command.name,
+          description: command.description,
+          argumentHint: "",
+          kind: "command",
+        }),
+      );
+    return added.length > 0 || own.length !== this.cachedCommands.length
+      ? [...own, ...added]
+      : this.cachedCommands;
+  }
+
+  private findExtensionCommand(prompt: AgentPromptInput): ACPExtensionCommand | null {
+    if (typeof prompt !== "string" && prompt.some((block) => block.type !== "text")) {
+      return null;
+    }
+    const text = extractPromptText(prompt).trim();
+    if (!text.startsWith("/")) {
+      return null;
+    }
+    const name = text.slice(1);
+    return (
+      this.extensionCommands.find(
+        (command) =>
+          command.name === name && command.availability(this.agentCapabilities) === "available",
+      ) ?? null
+    );
+  }
+
+  // The turn mirrors the extension request: it completes when the request succeeds and fails with
+  // the request's error, so a failed command can be sent again.
+  private async runExtensionCommand(params: {
+    command: ACPExtensionCommand;
+    connection: ClientSideConnection;
+    sessionId: string;
+    turnId: string;
+  }): Promise<void> {
+    const { command, connection, sessionId, turnId } = params;
+    let text: string;
+    try {
+      text = await command.run({ connection, sessionId });
+    } catch (error) {
+      if (this.activeForegroundTurnId !== turnId) return;
+      const summary = summarizeACPRequestError(error);
+      this.finishTurn({
+        type: "turn_failed",
+        provider: this.provider,
+        error: summary.message,
+        code: summary.code,
+        diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
+        turnId,
+      });
+      return;
+    }
+    if (this.activeForegroundTurnId !== turnId) return;
+    this.pushEvent(this.wrapTimeline({ type: "assistant_message", text, messageId: randomUUID() }));
+    this.finishTurn({ type: "turn_completed", provider: this.provider, turnId });
   }
 
   async setMode(modeId: string): Promise<void> {
@@ -3671,6 +3804,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if ("updatedAt" in update) {
       this.lastActivityAt = update.updatedAt ?? null;
     }
+    // Updates the agent marks as replayed are dropped by the parser. An unmarked one is current
+    // state wherever it arrives: while idle, during session/load, or before the first subscriber.
+    const usage = this.sessionInfoUsageParser?.(update);
+    if (usage) {
+      this.contextUsageSnapshot = usage;
+      this.emitContextUsage(usage);
+    }
   }
 
   // ACP reports context occupancy out of band from the prompt response, so the
@@ -3686,14 +3826,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (contextWindowMaxTokens === undefined || contextWindowUsedTokens === undefined) {
       return;
     }
+    this.emitContextUsage({ contextWindowMaxTokens, contextWindowUsedTokens });
+  }
+
+  private emitContextUsage(contextUsage: AgentUsage): void {
     this.pushEvent({
       type: "usage_updated",
       provider: this.provider,
-      usage: {
-        ...this.currentTurnUsage,
-        contextWindowMaxTokens,
-        contextWindowUsedTokens,
-      },
+      usage: { ...this.currentTurnUsage, ...contextUsage },
       turnId: this.activeForegroundTurnId ?? undefined,
     });
   }

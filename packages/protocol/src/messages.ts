@@ -495,6 +495,7 @@ const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   totalCostUsd: z.number().optional(),
   contextWindowMaxTokens: z.number().optional(),
   contextWindowUsedTokens: z.number().optional(),
+  contextWindowUsagePercentage: z.number().optional(),
 });
 
 export const AgentMetricSchema: z.ZodType<AgentMetric> = z.object({

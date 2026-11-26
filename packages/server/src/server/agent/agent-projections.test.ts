@@ -292,6 +292,7 @@ describe("toAgentPayload", () => {
       "totalCostUsd",
       "contextWindowMaxTokens",
       "contextWindowUsedTokens",
+      "contextWindowUsagePercentage",
     ] as const;
 
     for (const field of fields) {
@@ -303,6 +304,7 @@ describe("toAgentPayload", () => {
           totalCostUsd: 0.5,
           contextWindowMaxTokens: 200_000,
           contextWindowUsedTokens: 100_000,
+          contextWindowUsagePercentage: 50,
           [field]: Number.NaN,
         },
       });
@@ -550,6 +552,12 @@ describe("toAgentPayload", () => {
       contextWindowMaxTokens: 200_000,
       contextWindowUsedTokens: 42_000,
     });
+  });
+
+  it("preserves a provider-reported context percentage that has no token counts", () => {
+    const agent = createManagedAgent({ lastUsage: { contextWindowUsagePercentage: 42.5 } });
+
+    expect(toAgentPayload(agent).lastUsage).toEqual({ contextWindowUsagePercentage: 42.5 });
   });
 
   it("omits lastUsage when context window usage fields are invalid", () => {
