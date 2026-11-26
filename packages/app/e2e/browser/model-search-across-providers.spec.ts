@@ -154,6 +154,126 @@ test.describe("Cross-provider model search", () => {
         await expectModelPickerHeight(page, restingHeight);
         await expectModelPickerWidth(page, restingWidth);
       });
+
+      await test.step("ArrowUp wraps to the end of a virtualized catalog and Enter selects it", async () => {
+        await searchAllModels(page, "bulk model");
+        await page.keyboard.press("ArrowUp");
+        // Tie-broken lexicographically by modelLabel, so "Bulk model 99" sits at the bottom.
+        const lastRow = page
+          .getByTestId("combobox-desktop-container")
+          .getByTestId(`model-row-${LARGE_CATALOG.id}-bulk-99`);
+        await expect(lastRow).toBeVisible();
+        await expect(lastRow).toHaveAttribute("data-active", "true");
+        await page.keyboard.press("Enter");
+        await expect(page.getByTestId("combobox-desktop-container")).toHaveCount(0);
+        await expect(
+          page.getByTestId("combined-model-selector").filter({ visible: true }).first(),
+        ).toContainText("Bulk model 99");
+      });
+    } finally {
+      await workspace.cleanup();
+      await profile.restore();
+      await provider.restore();
+    }
+  });
+
+  test("arrow keys navigate profiles, providers, models, and search results in the composer", async ({
+    page,
+  }) => {
+    const provider = await seedModelProvider(STUDIO);
+    const profile = await seedAgentProfiles([
+      {
+        id: "agent_profile_e2e_arrows",
+        name: "Arrow Profile",
+        provider: STUDIO.id,
+        modelId: "studio-fast",
+      },
+    ]);
+    const workspace = await seedWorkspace({ repoPrefix: "model-picker-arrows-" });
+
+    try {
+      await test.step("open the composer model picker on the root view", async () => {
+        await gotoWorkspace(page, workspace.workspaceId);
+        await clickNewChat(page);
+        await expectComposerVisible(page);
+        await openModelPicker(page);
+      });
+
+      const viewport = page.getByTestId("combobox-desktop-container");
+      const trigger = page.getByTestId("combined-model-selector").filter({ visible: true }).first();
+      const profileRow = viewport.getByTestId("model-profile-row-agent_profile_e2e_arrows");
+      const studioProviderRow = viewport.getByTestId(`model-provider-${STUDIO.id}`);
+
+      await test.step("move from profiles to providers, drill in with ArrowRight, and go back with ArrowLeft", async () => {
+        await expect(profileRow).toHaveAttribute("data-active", "true");
+        // Root view keeps aria-selected absent while keyboard-active uses data-active.
+        await expect(viewport.locator("[aria-selected]")).toHaveCount(0);
+
+        // Step down until Mock Studio is active (provider order can vary across environments).
+        for (let step = 0; step < 10; step += 1) {
+          if ((await studioProviderRow.getAttribute("data-active")) === "true") break;
+          await page.keyboard.press("ArrowDown");
+        }
+        await expect(studioProviderRow).toHaveAttribute("data-active", "true");
+
+        await page.keyboard.press("ArrowRight");
+        await expect(viewport.getByTestId(`model-row-${STUDIO.id}-studio-fast`)).toBeVisible();
+
+        await page.keyboard.press("ArrowLeft");
+        await expect(studioProviderRow).toHaveAttribute("data-active", "true");
+      });
+
+      await test.step("Enter drills into the active provider and ArrowDown + Enter selects a model", async () => {
+        await page.keyboard.press("Enter");
+        const deepRow = viewport.getByTestId(`model-row-${STUDIO.id}-studio-deep`);
+        await expect(deepRow).toBeVisible();
+
+        for (let step = 0; step < 5; step += 1) {
+          if ((await deepRow.getAttribute("data-active")) === "true") break;
+          await page.keyboard.press("ArrowDown");
+        }
+        await expect(deepRow).toHaveAttribute("data-active", "true");
+
+        await page.keyboard.press("Enter");
+        await expect(viewport).toHaveCount(0);
+        await expect(trigger).toContainText("Studio deep think");
+      });
+
+      await test.step("typing filters results while arrow keys select across search matches", async () => {
+        await openModelPicker(page);
+        await searchAllModels(page, "ten second stream");
+        const studioFast = viewport.getByTestId(`model-row-${STUDIO.id}-studio-fast`);
+        const mockFast = viewport.getByTestId("model-row-mock-ten-second-stream");
+        await expect(studioFast).toBeVisible();
+        await expect(mockFast).toBeVisible();
+
+        // Advance to the second match and confirm with Enter.
+        const initialMockActive = (await mockFast.getAttribute("data-active")) === "true";
+        await page.keyboard.press("ArrowDown");
+        const targetRow = initialMockActive ? studioFast : mockFast;
+        await expect(targetRow).toHaveAttribute("data-active", "true");
+        await page.keyboard.press("Enter");
+        await expect(viewport).toHaveCount(0);
+        await expect(trigger).toContainText("Ten second stream");
+      });
+
+      await test.step("Enter on the active profile row applies it", async () => {
+        await openModelPicker(page);
+        await expect(profileRow).toHaveAttribute("data-active", "true");
+        await page.keyboard.press("Enter");
+        await expect(viewport).toHaveCount(0);
+        await expect(trigger).toContainText("Ten second stream");
+      });
+
+      await test.step("folded compact sheet also supports Enter on the active profile row", async () => {
+        await page.setViewportSize({ width: 390, height: 800 });
+        await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
+        const sheetProfileRow = page.getByTestId("model-profile-row-agent_profile_e2e_arrows");
+        await expect(sheetProfileRow).toBeVisible();
+        await expect(sheetProfileRow).toHaveAttribute("data-active", "true");
+        await page.keyboard.press("Enter");
+        await expect(sheetProfileRow).toHaveCount(0);
+      });
     } finally {
       await workspace.cleanup();
       await profile.restore();

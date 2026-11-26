@@ -59,6 +59,7 @@ import {
   InlineHeaderView,
   SheetHeaderView,
   type SheetHeader,
+  type SheetKeyboard,
 } from "@/components/adaptive-modal-sheet";
 import { FloatingSurface } from "@/components/ui/floating";
 import { useDismissKeyboardOnOpen } from "@/components/ui/keyboard-dismiss";
@@ -147,6 +148,11 @@ export interface ComboboxProps {
   anchorRef: React.RefObject<View | null>;
   /** Where focus goes when the picker closes. Defaults to whatever had focus when it opened. */
   restoreFocusRef?: React.RefObject<unknown>;
+  /**
+   * Keys custom `children` handle while the combobox is the top overlay. Escape always
+   * closes the combobox. Return true from `onKeyDown` to claim the key.
+   */
+  keyboard?: SheetKeyboard;
   children?: ReactNode;
 }
 
@@ -1295,12 +1301,16 @@ function DesktopComboboxOptionsBody(props: {
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
   const active = useRetainedPanelActive();
   const setOverlayScope = props.setOverlayScope;
+  // Floating UI allocates a fresh `refs` object per render; keep the callback ref stable so
+  // React does not detach and re-register the overlay focus scope on every state update.
+  const setFloatingFnRef = useRef(props.refs.setFloating);
+  setFloatingFnRef.current = props.refs.setFloating;
   const setFloatingRef = useCallback(
     (node: View | null) => {
-      props.refs.setFloating(node);
+      setFloatingFnRef.current(node);
       setOverlayScope(node);
     },
-    [props.refs, setOverlayScope],
+    [setOverlayScope],
   );
 
   // Remove the portal before a retained chat can freeze its closing update.
@@ -1430,6 +1440,7 @@ export function Combobox({
   keepOpenOnSelect = false,
   anchorRef,
   restoreFocusRef,
+  keyboard,
   children,
 }: ComboboxProps): ReactElement | null {
   const { t } = useTranslation();
@@ -1716,16 +1727,42 @@ export function Combobox({
     [],
   );
 
+  const hasChildren = Boolean(children);
+  const overlayKeys = useMemo<readonly string[]>(() => {
+    if (keyboard) return ["Escape", ...keyboard.keys];
+    return hasChildren ? ["Escape"] : ["Escape", "Enter", "ArrowUp", "ArrowDown"];
+  }, [hasChildren, keyboard]);
+  const handleOverlayKeyDown = useCallback(
+    (event: KeyboardInputEvent) => {
+      if (keyboard) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          handleClose();
+          return true;
+        }
+        if (!keyboard.onKeyDown(event)) return false;
+        event.preventDefault();
+        return true;
+      }
+      if (hasChildren) {
+        if (event.key !== "Escape") return false;
+        event.preventDefault();
+        handleClose();
+        return true;
+      }
+      return isDesktopKey(event.key) ? handleDesktopKey(event.key, event) : false;
+    },
+    [handleClose, handleDesktopKey, hasChildren, keyboard],
+  );
   const setOverlayScope = useOverlayRegistration({
     active: isOpen,
     layer: floatingLayer,
-    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
-    onKeyDown: (event) => (isDesktopKey(event.key) ? handleDesktopKey(event.key, event) : false),
+    keys: overlayKeys,
+    onKeyDown: handleOverlayKeyDown,
     restoreFocusRef,
   });
 
   const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;
-  const hasChildren = Boolean(children);
 
   if (isMobile) {
     return (
