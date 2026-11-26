@@ -15,7 +15,7 @@ Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idl
 ## Daemon restart recovery
 
 Restart recovery is off by default. Enable `agents.resumeOnStartup` in host config or
-Host settings → Agents to resume interrupted agents after graceful shutdown or a crash. The daemon
+Settings → Host → Daemon to resume interrupted agents after graceful shutdown or a crash. The daemon
 reopens the saved provider conversation and settings, then sends `Resume working.`. Customize
 the prompt with `agents.resumePrompt` or the same settings page.
 Disabling recovery consumes pending intent; enabling it later does not revive old work.
@@ -183,7 +183,7 @@ caller, child, and host into one watch.
 
 Bootstrap restores these watches after repairing stale running records to `closed` and before opening
 ingress. Reading a closed child's result does not load its provider. A finish notification reports that
-the child's run has settled; the parent decides whether its task is complete. A child chosen for restart
+the child has settled (see below); the parent decides whether its task is complete. A child chosen for restart
 recovery is observed only after its resume was sent, so the parent never hears that it was closed
 in between. Archived or deleted parents suppress delivery;
 parent-owned creation watches also stop
@@ -195,6 +195,18 @@ follows the [connected-host observation policy](connected-hosts.md#delegating-ag
 outstanding intent. A crash after successful dispatch but before removal commits can repeat the
 notification. Clean shutdown can also flush an already queued callback while retaining its intent,
 so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
+
+A turn end is not always a settled child. When the child ends its turn with work that will start its
+next turn by itself, the caller gets one `message` notice ("ended its turn but is still working") and
+the subscription keeps following the child. That work is a running turn, queued messages, a pending
+provider wake-up (`AgentSession.hasPendingWakeup`: Claude background tasks, task notifications, and
+one-shot wake-ups), or the child's own outstanding finish subscriptions as a caller. Heartbeats,
+recurring crons, change-request watches, and other daemon background items never count: they are
+external triggers, not work the caller is waiting for. While following, turn ends and work changes stay
+silent until nothing is pending, which sends `finished` and removes the subscription. `followingSince`
+is stored before the notice is sent, so restarts resume following without repeating it, and following
+ends after 24 hours with an "is still working" notice. Remote children and providers without the probe
+report their first turn end as `finished`.
 
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.

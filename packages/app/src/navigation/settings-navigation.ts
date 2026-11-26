@@ -4,12 +4,14 @@ import {
   navigateToLastWorkspace,
 } from "@/stores/navigation-active-workspace-store";
 import {
+  buildClientHostSettingsRoute,
   buildOpenProjectRoute,
   buildProjectSettingsRoute,
   buildProjectsSettingsRoute,
   buildProviderSettingsRoute,
   buildSettingsHostSectionRoute,
   buildSettingsRoute,
+  buildSettingsSectionRoute,
   type HostSectionSlug,
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
@@ -40,12 +42,17 @@ export type SettingsView =
   | { kind: "pluginListing"; serverId: string; listingId: string }
   | { kind: "root" }
   | { kind: "section"; section: SettingsSectionSlug }
+  | { kind: "clientHost"; serverId: string }
   | { kind: "host"; serverId: string; section: HostSectionSlug }
   | { kind: "project"; serverId: string; projectId: string }
   | { kind: "provider"; serverId: string; providerId: string };
 
 export function openHostOverview(serverId: string): void {
-  router.push(buildSettingsHostSectionRoute(serverId, "host"));
+  router.push(buildSettingsHostSectionRoute(serverId, "daemon"));
+}
+
+export function openClientHostSettings(serverId: string): void {
+  router.push(buildClientHostSettingsRoute(serverId));
 }
 
 export function openProjectSettings(serverId: string, projectId: string): void {
@@ -77,6 +84,7 @@ export function returnFromSettings(view: SettingsView): void {
   }
 
   let parent: Href = buildSettingsRoute();
+  if (view.kind === "clientHost") parent = buildSettingsSectionRoute("hosts");
   if (view.kind === "plugin" || view.kind === "pluginListing")
     parent = buildSettingsHostSectionRoute(view.serverId, "plugins");
   if (view.kind === "project") parent = buildProjectsSettingsRoute(view.serverId);

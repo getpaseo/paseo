@@ -1,6 +1,6 @@
 {
   "name": "react-native-enriched-markdown",
-  "version": "0.17.4",
+  "version": "0.17.5",
   "private": true,
   "description": "Markdown-based Rich Text solution for React Native",
   "main": "./lib/module/index",

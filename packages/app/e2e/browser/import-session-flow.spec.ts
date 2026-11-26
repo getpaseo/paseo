@@ -4,10 +4,15 @@ import { copyFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
+import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
 import { expect, test, type Page } from "../support/fixtures";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { ImportSessionFlow } from "../support/helpers/import-session";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import {
   connectNewWorkspaceDaemonClient,
+  loadSessionMessageReaders,
   openProjectViaDaemon,
   type OpenedProject,
 } from "../support/helpers/new-workspace";
@@ -20,16 +25,22 @@ const SCREENSHOT_DIRECTORY = path.join(
 const claudeConfigDirectory = mkdtempSync(path.join(tmpdir(), "paseo-import-flow-claude-"));
 const brokenProvider = "broken-acp";
 
+const disabledProviders = {
+  codex: { enabled: false },
+  copilot: { enabled: false },
+  omp: { enabled: false },
+  opencode: { enabled: false },
+  pi: { enabled: false },
+  antigravity: { enabled: false },
+  muse: { enabled: false },
+};
+
 test.use({
   e2eDaemonConfig: {
     version: 1,
     agents: {
       providers: {
-        codex: { enabled: false },
-        copilot: { enabled: false },
-        omp: { enabled: false },
-        opencode: { enabled: false },
-        pi: { enabled: false },
+        ...disabledProviders,
         [brokenProvider]: {
           extends: "acp",
           label: "Broken ACP",
@@ -134,6 +145,120 @@ test("an open Import Session row keeps its age current", async ({ page }) => {
   await expect(row).toContainText("1m ago");
   await page.clock.fastForward("03:00");
   await expect(row).toContainText("4m ago");
+});
+
+test("shows listing failure details beside healthy sessions and retries the failed provider", async ({
+  page,
+}, testInfo) => {
+  const frames = await loadSessionMessageReaders();
+  const requests: FetchRecentProviderSessionsRequestMessage[] = [];
+  const completed = new Set<string>();
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const request = frames.client(payload);
+      if (request?.type === "fetch_recent_provider_sessions_request") {
+        requests.push(request);
+      }
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const response = frames.server(payload);
+      if (response?.type === "fetch_recent_provider_sessions_response") {
+        completed.add(response.payload.requestId);
+      }
+    });
+  });
+  const flow = new ImportSessionFlow(page);
+  for (const width of [1280, 390]) {
+    await flow.openWorkspace(scenario.project.workspaceId, { width, height: 844 });
+    await flow.openGlobally();
+    await flow.expectProviderError("Broken ACP");
+    const healthySession = page.getByTestId(
+      `import-session-session-claude-${scenario.importSessionId}`,
+    );
+    await expect(healthySession).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`listing-failure-${width}.png`) });
+    await expect(page.getByTestId("import-session-provider-errors")).toContainText(
+      "missing-agent-command",
+    );
+
+    const requestOffset = requests.length;
+    await flow.retryProvider(brokenProvider, "Broken ACP");
+    await expect
+      .poll(() => requests.slice(requestOffset).map((request) => request.providers))
+      .toEqual([[brokenProvider]]);
+    const retriedRequest = requests[requestOffset];
+    if (!retriedRequest) throw new Error("Retry did not send a provider listing request");
+    await expect.poll(() => completed.has(retriedRequest.requestId)).toBe(true);
+    await expect(page.getByTestId(`import-session-retry-${brokenProvider}`)).toBeEnabled();
+    await expect(page.getByTestId("import-session-provider-errors")).toContainText(
+      "missing-agent-command",
+    );
+    await expect(healthySession).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`listing-failure-retry-${width}.png`) });
+    await flow.close();
+  }
+});
+
+test("Import Session keeps listings tied to their host during a switch and a pending import", async ({
+  page,
+}) => {
+  const secondaryHost = await startIsolatedHostDaemon("import-session-secondary", {
+    config: {
+      agents: {
+        providers: {
+          ...disabledProviders,
+          claude: { enabled: false },
+          [brokenProvider]: {
+            extends: "acp",
+            label: "Broken ACP",
+            command: ["missing-secondary-command", "acp"],
+          },
+        },
+      },
+    },
+  });
+  try {
+    const gate = await installDaemonWebSocketGate(page);
+    const flow = new ImportSessionFlow(page);
+    await flow.openWorkspace(scenario.project.workspaceId, { width: 1280, height: 844 });
+    await addConnectedHostAndReload(page, {
+      serverId: secondaryHost.serverId,
+      port: secondaryHost.port,
+      label: "Second import host",
+      primaryLabel: "First import host",
+    });
+
+    await flow.chooseHostForImport("First import host");
+    await expect(page.getByText(/missing-agent-command/)).toBeVisible();
+    await flow.close();
+
+    await flow.chooseHostForImport("Second import host");
+    await expect(page.getByText(/missing-secondary-command/)).toBeVisible();
+    await expect(page.getByText(/missing-agent-command/)).toHaveCount(0);
+    await flow.close();
+
+    await test.step("returning to the original host omits the session imported during the switch", async () => {
+      const sessionId = "fixture-root-04";
+      await flow.chooseHostForImport("First import host");
+      gate.holdNextClientRequest("import_agent_request");
+      await flow.startImport(sessionId);
+      await gate.waitForHeldClientRequest();
+
+      await flow.close();
+      await flow.chooseHostForImport("Second import host");
+      await flow.expectProviderError("Broken ACP");
+      gate.releaseHeldClientRequest();
+      await flow.expectClosed();
+
+      await flow.chooseHostForImport("First import host");
+      await flow.revealSession("fixture-worktree");
+      await flow.expectSessionUnavailable(sessionId);
+      await flow.close();
+      await flow.expectTranscript("Review fixture item 4", "Fixture response 4");
+    });
+  } finally {
+    await secondaryHost.close();
+  }
 });
 
 test("captures the compact import-session journey", async ({ page }, testInfo) => {
@@ -378,7 +503,13 @@ async function seedClaudeSessions(input: {
   unrelatedDirectory: string;
   importSessionId: string;
 }): Promise<number> {
-  const sessions = [
+  const sessions: {
+    cwd: string;
+    id: string;
+    title: string;
+    prompt: string;
+    answer?: string;
+  }[] = [
     {
       cwd: input.projectRoot,
       id: input.importSessionId,
@@ -403,6 +534,7 @@ async function seedClaudeSessions(input: {
       id: `fixture-root-${String(index + 1).padStart(2, "0")}`,
       title: `Root session ${String(index + 1).padStart(2, "0")}`,
       prompt: index === 7 ? "Investigate invoice rendering" : `Review fixture item ${index + 1}`,
+      ...(index === 3 ? { answer: "Fixture response 4" } : {}),
     })),
   ];
   const newest = Date.now() - 60_000;

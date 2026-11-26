@@ -11,6 +11,7 @@ import {
   useSessionStore,
   type AgentTimelineCursorState,
   type AgentTimelineState,
+  type SessionState,
 } from "@/stores/session-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
@@ -102,6 +103,8 @@ export interface TimelineReplica {
   timelineUpdated(agentId: string): void;
   catchUpOwed(agentId: string): void;
   catchUpSettled(agentId: string): void;
+  /** Forgets a released chat's cached range, so showing it again reads the cache afresh. */
+  release(agentId: string): void;
 }
 
 class TimelineReplicaOwner implements TimelineReplica {
@@ -186,6 +189,10 @@ class TimelineReplicaOwner implements TimelineReplica {
   catchUpSettled(agentId: string): void {
     if (this.preparations.has(agentId)) this.settledDuringPreparation.add(agentId);
     useSessionStore.getState().setAgentTimelineUnsettledTurn(this.serverId, agentId, null);
+  }
+
+  release(agentId: string): void {
+    this.cachedRanges.delete(agentId);
   }
 }
 
@@ -375,6 +382,11 @@ function buildCurrentTimelinePage(
 
 export interface ViewedTimelineSyncPorts {
   prepare(agentId: string): Promise<void>;
+  /**
+   * Whether the agent left the active list: it, or its workspace, is archived. A hidden chat
+   * of an archived agent leaves the opened chats, so showing it again reads it afresh.
+   */
+  isArchived(agentId: string): boolean;
   replaceDemandedAgentIds(agentIds: string[]): void;
   /** Whether the daemon answers with each cursor's freshness in the subscribe response. */
   canCheckFreshness(): boolean;
@@ -447,9 +459,17 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
   dispose(): void;
 }
 
+/** What the timeline owner needs from membership beyond the UI-facing surface. */
+export interface ViewedTimelineMembership extends ViewedTimelineSync {
+  isVisible(agentId: string): boolean;
+  /** Re-reads `isArchived` for the opened chats, after the active list changed. */
+  archiveChanged(): void;
+}
+
 export type ViewedTimelineOwnerPorts = Omit<
   ViewedTimelineSyncPorts,
   | "prepare"
+  | "isArchived"
   | "replaceDemandedAgentIds"
   | "onCatchUpEnded"
   | "onCatchUpOwed"
@@ -477,8 +497,14 @@ export function createViewedTimelineOwner(input: {
   ports: ViewedTimelineOwnerPorts;
 }): ViewedTimelineOwner {
   const forcedTailReplacements = new Set<string>();
+  const isArchived = (agentId: string) =>
+    isAgentArchived(useSessionStore.getState().sessions[input.serverId], agentId);
+  // Active chats stay resident while hidden so switching back needs no fetch. An archived
+  // chat is resident only while it is shown, as when it is open from History.
+  const isResident = (agentId: string) => sync.isVisible(agentId) || !isArchived(agentId);
   const sync = createViewedTimelineSync({
     ...input.ports,
+    isArchived,
     fetchLatestTail: async (agentId) => {
       forcedTailReplacements.add(agentId);
       try {
@@ -487,7 +513,11 @@ export function createViewedTimelineOwner(input: {
         forcedTailReplacements.delete(agentId);
       }
     },
-    prepare: (agentId) => input.replica.prepare(agentId),
+    prepare: async (agentId) => {
+      await input.replica.prepare(agentId);
+      // A cache read that lands after its archived chat was left paints a chat nobody shows.
+      releaseHiddenArchivedTimelines();
+    },
     readCursor: (agentId) => input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId),
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
     applyCurrentTimeline: (agentId) => {
@@ -514,9 +544,40 @@ export function createViewedTimelineOwner(input: {
     recoverTimelineGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
     onCommitted: (agentId) => input.replica.timelineUpdated(agentId),
   });
+  const releaseHiddenArchivedTimelines = () => {
+    const session = useSessionStore.getState().sessions[input.serverId];
+    if (!session) return;
+    for (const agentId of selectResidentTimelineAgentIds(session)) {
+      if (isResident(agentId)) continue;
+      streamQueue.flushAgent(agentId);
+      input.replica.release(agentId);
+      useSessionStore.getState().releaseAgentTimeline(input.serverId, agentId);
+    }
+  };
+  // Archiving an agent or its workspace reaches this host as the agent leaving the active list.
+  let observedSession = useSessionStore.getState().sessions[input.serverId];
+  const stopObservingArchive = useSessionStore.subscribe((state) => {
+    const session = state.sessions[input.serverId];
+    const changed =
+      session?.agents !== observedSession?.agents ||
+      session?.agentDetails !== observedSession?.agentDetails ||
+      session?.hasHydratedAgents !== observedSession?.hasHydratedAgents ||
+      session?.workspaces !== observedSession?.workspaces ||
+      session?.hasHydratedWorkspaces !== observedSession?.hasHydratedWorkspaces;
+    observedSession = session;
+    if (!changed) return;
+    sync.archiveChanged();
+    releaseHiddenArchivedTimelines();
+  });
   return {
     ...sync,
+    replaceVisibleAgentIds(sourceId, agentIds) {
+      sync.replaceVisibleAgentIds(sourceId, agentIds);
+      releaseHiddenArchivedTimelines();
+    },
     applyTimelineResponse(receivedPayload) {
+      // A read that answers after its archived chat was released must not bring it back.
+      if (!isResident(receivedPayload.agentId)) return;
       const payload = consumeForcedTimelineTailReplacement(receivedPayload, forcedTailReplacements);
       const accepted = applyAuthoritativeTimelineResponse({
         serverId: input.serverId,
@@ -528,6 +589,7 @@ export function createViewedTimelineOwner(input: {
       if (accepted) input.replica.timelineUpdated(payload.agentId);
     },
     applyStreamEvent(agentId, event) {
+      if (!isResident(agentId)) return;
       streamQueue.enqueue(agentId, event);
       const turnLiveness = deriveAgentStreamTurnLiveness([event]);
       if (turnLiveness.length === 0) return;
@@ -539,10 +601,36 @@ export function createViewedTimelineOwner(input: {
       streamQueue.flushAgent(agentId);
     },
     dispose() {
+      stopObservingArchive();
       streamQueue.dispose({ flush: true });
       sync.dispose();
     },
   };
+}
+
+/**
+ * An agent is archived once the hydrated active list lacks it, its row carries an archive
+ * timestamp, or the hydrated workspace list lacks its workspace. Workspace archive can leave
+ * an agent row without a timestamp. Until a list hydrates, it rules nothing out.
+ */
+function isAgentArchived(session: SessionState | undefined, agentId: string): boolean {
+  if (!session?.hasHydratedAgents) return false;
+  const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
+  if (!agent || agent.archivedAt != null) return true;
+  return (
+    session.hasHydratedWorkspaces &&
+    agent.workspaceId !== undefined &&
+    !session.workspaces.has(agent.workspaceId)
+  );
+}
+
+function selectResidentTimelineAgentIds(session: SessionState): Set<string> {
+  return new Set([
+    ...session.agentStreamTail.keys(),
+    ...session.agentStreamHead.keys(),
+    ...session.agentTimelineCursor.keys(),
+    ...session.agentAuthoritativeHistoryApplied.keys(),
+  ]);
 }
 
 const MAX_HIDDEN_CATCH_UPS = 2;
@@ -608,7 +696,7 @@ function sameAgentIds(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((agentId, index) => agentId === right[index]);
 }
 
-export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): ViewedTimelineSync {
+export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): ViewedTimelineMembership {
   const sources = new Map<string, string[]>();
   const catchUps = new Map<string, CatchUpState>();
   const catchUpGenerations = new Map<string, number>();
@@ -788,10 +876,12 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
 
   const ensureCacheLoaded = (agentId: string): void => {
     if (loadedCache.has(agentId) || cacheLoads.has(agentId)) return;
-    const load = ports
+    const load: Promise<void> = ports
       .prepare(agentId)
       .catch((error) => ports.reportError(error))
       .finally(() => {
+        // A released chat forgot this load; showing it again starts its own.
+        if (cacheLoads.get(agentId) !== load) return;
         cacheLoads.delete(agentId);
         loadedCache.add(agentId);
         const pending = pendingCatchUps.get(agentId);
@@ -1079,10 +1169,29 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   };
 
   const publishVisibleMembership = () => {
-    commitDesiredMembership(normalizeAgentIds([...openedAgentIds, ...visibleAgentIds()]));
+    const visible = visibleAgentIds();
+    const kept = openedAgentIds.filter(
+      (agentId) => visible.includes(agentId) || !ports.isArchived(agentId),
+    );
+    if (kept.length !== openedAgentIds.length) {
+      for (const agentId of openedAgentIds) {
+        if (kept.includes(agentId)) continue;
+        loadedCache.delete(agentId);
+        cacheLoads.delete(agentId);
+      }
+      openedAgentIds = kept;
+    }
+    commitDesiredMembership(normalizeAgentIds([...openedAgentIds, ...visible]));
   };
 
   return {
+    isVisible(agentId) {
+      for (const agentIds of sources.values()) if (agentIds.includes(agentId)) return true;
+      return false;
+    },
+    archiveChanged() {
+      publishVisibleMembership();
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

@@ -1,73 +1,61 @@
+import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 
-export type AddProjectFlowPage =
-  | "host"
-  | "method"
-  | "directory-search"
-  | "github-search"
-  | "github-location"
-  | "new-directory-parent"
-  | "new-directory-name";
-
-export type AddProjectMethod = "directory-search" | "browse" | "github" | "new-directory";
-
-const METHOD_DESTINATIONS: Record<Exclude<AddProjectMethod, "browse">, AddProjectFlowPage> = {
-  "directory-search": "directory-search",
-  github: "github-search",
-  "new-directory": "new-directory-parent",
-};
+export type AddProjectTab = "existing" | "clone" | "new-folder";
 
 export function addProjectFlow(page: Page): Locator {
   return page.getByTestId("add-project-flow");
 }
 
+/** The current tab's search or name field. */
 export function addProjectFlowInput(page: Page): Locator {
   return page.getByTestId("add-project-flow-input");
 }
 
-export function addProjectFlowBack(page: Page): Locator {
-  return page.getByTestId("add-project-flow-back");
+export function addProjectFlowTab(page: Page, tab: AddProjectTab): Locator {
+  return page.getByTestId(`add-project-flow-tab-${tab}`);
 }
 
-export function addProjectFlowHost(page: Page, serverId: string): Locator {
-  return page.getByTestId(`add-project-flow-host-${serverId}`);
+export function addProjectFlowSubmit(page: Page): Locator {
+  return page.getByTestId("add-project-flow-submit");
 }
 
-export function addProjectFlowMethod(page: Page, method: AddProjectMethod): Locator {
-  return page.getByTestId(`add-project-flow-method-${method}`);
+export function addProjectFlowHostTrigger(page: Page): Locator {
+  return page.getByTestId("add-project-flow-host-trigger");
 }
 
-export async function expectAddProjectPage(page: Page, kind: AddProjectFlowPage): Promise<Locator> {
-  const currentPage = page.getByTestId(`add-project-flow-page-${kind}`);
-  await expect(currentPage).toBeVisible({ timeout: 30_000 });
-  return currentPage;
+export async function expectAddProjectTab(page: Page, tab: AddProjectTab): Promise<void> {
+  await expect(addProjectFlowTab(page, tab)).toHaveAttribute("aria-selected", "true", {
+    timeout: 30_000,
+  });
 }
 
-async function openAddProjectFlowSurface(
-  page: Page,
-  expectedPage: "host" | "method",
-): Promise<void> {
+/** Opens Add project from the sidebar; it starts on Existing with the search focused. */
+export async function openAddProjectFlow(page: Page): Promise<void> {
   await page.locator('[data-testid="sidebar-add-project"]:visible').click();
   await expect(addProjectFlow(page)).toBeVisible({ timeout: 30_000 });
-  await expectAddProjectPage(page, expectedPage);
-}
-
-export async function openAddProjectFlow(page: Page): Promise<void> {
-  await openAddProjectFlowSurface(page, "method");
-}
-
-export async function openAddProjectHostSelection(page: Page): Promise<void> {
-  await openAddProjectFlowSurface(page, "host");
+  await expectAddProjectTab(page, "existing");
   await expect(addProjectFlowInput(page)).toBeFocused();
 }
 
-export async function chooseAddProjectMethod(page: Page, method: AddProjectMethod): Promise<void> {
-  const option = addProjectFlowMethod(page, method);
-  await expect(option).toBeVisible();
-  await option.click();
-  if (method !== "browse") {
-    await expectAddProjectPage(page, METHOD_DESTINATIONS[method]);
-  }
+export async function chooseAddProjectTab(page: Page, tab: AddProjectTab): Promise<void> {
+  await addProjectFlowTab(page, tab).click();
+  await expectAddProjectTab(page, tab);
+}
+
+export async function chooseAddProjectHost(page: Page, serverId: string): Promise<void> {
+  await addProjectFlowHostTrigger(page).click();
+  await page.getByTestId(`add-project-flow-host-${serverId}`).click();
+}
+
+/** Types a parent directory into the Location picker and uses it as typed. */
+export async function chooseAddProjectLocation(page: Page, location: string): Promise<void> {
+  await page.getByTestId("add-project-flow-location").click();
+  await page.getByPlaceholder("Search folders or enter a path").last().fill(location);
+  await page.getByText("Use this folder", { exact: true }).click();
+  await expect(page.getByTestId("add-project-flow-location")).toContainText(
+    path.basename(location),
+  );
 }
 
 export async function expectNewWorkspaceForAddedProject(
@@ -114,8 +102,10 @@ export async function expectAddProjectResultVisible(page: Page, text: string): P
     .toBe(true);
 }
 
+/** Presses Enter on the focused Add host button, which the sheet's own Enter must not swallow. */
 export async function chooseAddHostFromProjectFlow(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /Add host.*No connected hosts/ }).click();
+  await addProjectFlow(page).getByRole("button", { name: "Add host", exact: true }).focus();
+  await page.keyboard.press("Enter");
 }
 
 export async function navigateAndDismissAddProject(page: Page): Promise<void> {

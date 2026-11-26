@@ -903,35 +903,42 @@ async function createAgentMcpServer(
   options: Parameters<typeof createAgentMcpServerWithDependencies>[0],
   subscriptionStore?: FinishSubscriptionStore,
   schedule?: (delayMs: number, callback: () => void) => () => void,
+  /** Another caller's server on the same daemon: shares its message delivery and subscriptions. */
+  daemonOf?: object,
 ) {
-  const messages = createTestAgentMessages({ ...options, schedule });
+  const messages =
+    (daemonOf && serverDeliveries.get(daemonOf)) ||
+    createTestAgentMessages({ ...options, schedule });
   const records = new Map<string, FinishSubscription>();
-  const subscriptions = createFinishSubscriptions({
-    store: subscriptionStore ?? {
-      list: async () => [...records.values()],
-      put: async (record) => {
-        records.set(record.id, record);
+  const existingSubscriptions = daemonOf && serverSubscriptions.get(daemonOf);
+  const subscriptions =
+    existingSubscriptions ||
+    createFinishSubscriptions({
+      store: subscriptionStore ?? {
+        list: async () => [...records.values()],
+        put: async (record) => {
+          records.set(record.id, record);
+        },
+        remove: async (id) => {
+          records.delete(id);
+        },
       },
-      remove: async (id) => {
-        records.delete(id);
-      },
-    },
-    messages: () => messages,
-    callerIsActive: async (id) => !(await options.agentStorage.get(id))?.archivedAt,
-    serverId: options.serverId ?? "self",
-    logger: options.logger,
-    ...createFinishObservation({
-      ...options,
-      waitForResume: async () => {},
       messages: () => messages,
+      callerIsActive: async (id) => !(await options.agentStorage.get(id))?.archivedAt,
       serverId: options.serverId ?? "self",
-      hosts: () => {
-        if (!options.hosts) throw new Error("No hosts");
-        return options.hosts();
-      },
-    }),
-  });
-  subscriptionServices.push(subscriptions);
+      logger: options.logger,
+      ...createFinishObservation({
+        ...options,
+        waitForResume: async () => {},
+        messages: () => messages,
+        serverId: options.serverId ?? "self",
+        hosts: () => {
+          if (!options.hosts) throw new Error("No hosts");
+          return options.hosts();
+        },
+      }),
+    });
+  if (!existingSubscriptions) subscriptionServices.push(subscriptions);
   const server = await createAgentMcpServerWithDependencies({
     agentMessages: () => messages,
     finishSubscriptions: () => subscriptions,
@@ -984,6 +991,35 @@ describe("bundled Paseo skill", () => {
         ),
       ]);
       expect(documentedInputs.filter((name) => !advertisedNamesAndValues.has(name))).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it.each([
+    [
+      "create_agent",
+      "Hide the agent from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
+    ],
+    [
+      "create_workspace",
+      "Hide the workspace from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
+    ],
+  ])("describes %s background without suggesting when to set it", async (name, description) => {
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      logger: createTestLogger(),
+    });
+    const client = await connectInMemoryMcpClient(server);
+
+    try {
+      const { tools } = await client.listTools();
+      const tool = tools.find((entry) => entry.name === name)!;
+      expect(tool.inputSchema.properties!.background).toMatchObject({ description });
     } finally {
       await client.close();
       await server.close();
@@ -3628,6 +3664,8 @@ class HeldTurnAgentSession implements AgentSession {
   private interruptGate: Promise<void> | null = null;
   private closeGate?: { signalStart: () => void; waitForRelease: Promise<void> };
   private nextStartError: Error | null = null;
+  /** Work this session started will start a turn by itself, as a Claude background task does. */
+  pendingWakeup = false;
 
   constructor(
     readonly provider: AgentProvider,
@@ -3661,6 +3699,26 @@ class HeldTurnAgentSession implements AgentSession {
 
   rejectNextTurnStart(error: Error): void {
     this.nextStartError = error;
+  }
+
+  hasPendingWakeup(): boolean {
+    return this.pendingWakeup;
+  }
+
+  publishBackgroundWork(items: Array<{ id: string; description: string }>): void {
+    this.pushEvent({
+      type: "background_work",
+      provider: this.provider,
+      items: items.map((item) => ({ ...item, kind: "shell" })),
+    });
+  }
+
+  /** The provider wakes the session without a prompt, the way a background task completion does. */
+  startAutonomousTurn(): void {
+    if (this.activeTurnId) throw new Error("A turn is already running");
+    const turnId = `autonomous-${randomUUID()}`;
+    this.activeTurnId = turnId;
+    this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
   }
 
   tryHandleOutOfBand(prompt: AgentPromptInput) {
@@ -5222,6 +5280,202 @@ describe("message order for one recipient", () => {
       ]);
     } finally {
       await recipient.cleanup();
+    }
+  });
+});
+
+describe("finish notifications for a child that ends its turn while still working", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  async function setup() {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-still-working-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    const parent = await agentManager.createAgent(
+      { provider: "claude", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage: storage,
+      callerAgentId: parent.id,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    async function createChild(from: typeof server, title: string) {
+      const created = await invokeToolWithParsedInput(registeredTool(from, "create_agent"), {
+        relationship: { kind: "subagent" },
+        workspace: { kind: "current" },
+        title,
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Build it",
+      });
+      const id = z.object({ agentId: z.string() }).parse(created.structuredContent).agentId;
+      await vi.waitFor(() => expect(agentManager.getAgent(id)?.lifecycle).toBe("running"));
+      const session = childClient.sessions.at(-1)!;
+      return { id, session };
+    }
+    const parentPrompts = () => parentClient.sessions[0]?.prompts ?? [];
+    return { workdir, storage, agentManager, parent, server, createChild, parentPrompts };
+  }
+
+  it("tells the parent the child is still working, then reports its autonomous final reply", async () => {
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+    try {
+      const child = await createChild(server, "Builder");
+      child.session.pendingWakeup = true;
+      child.session.publishBackgroundWork([{ id: "build", description: "npm run build" }]);
+      child.session.finishTurn("WAITING for the build");
+
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
+      expect(parentPrompts()[0]).toContain(
+        `Agent ${child.id} (Builder) ended its turn but is still working: background work that will wake it.`,
+      );
+      expect(parentPrompts()[0]).toContain("WAITING for the build");
+      expect(parseAgentMessage(parentPrompts()[0]!)).toMatchObject({
+        source: { kind: "agent-notification", agentId: child.id, event: "message" },
+      });
+
+      // Claude publishes the empty roster before the turn its task notification starts.
+      child.session.publishBackgroundWork([]);
+      child.session.startAutonomousTurn();
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running"));
+      child.session.pendingWakeup = false;
+      child.session.finishTurn("FINAL: done");
+
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(2));
+      expect(parentPrompts()[1]).toContain(`Agent ${child.id} (Builder) finished.`);
+      expect(parentPrompts()[1]).toContain("FINAL: done");
+      expect(parseAgentMessage(parentPrompts()[1]!)).toMatchObject({
+        source: { kind: "agent-notification", agentId: child.id, event: "finished" },
+      });
+
+      // A turn after the child settled, as a person starts in the app, reports nothing.
+      child.session.startAutonomousTurn();
+      child.session.finishTurn("Unrelated later work");
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(parentPrompts()).toHaveLength(2);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("reports finished when the child's background work drains without another turn", async () => {
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+    try {
+      const child = await createChild(server, "Builder");
+      child.session.pendingWakeup = true;
+      child.session.publishBackgroundWork([{ id: "server", description: "dev server" }]);
+      child.session.finishTurn("Started the dev server");
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
+      expect(parentPrompts()[0]).toContain("ended its turn but is still working");
+
+      child.session.pendingWakeup = false;
+      child.session.publishBackgroundWork([]);
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(2));
+      expect(parentPrompts()[1]).toContain(`Agent ${child.id} (Builder) finished.`);
+      expect(parentPrompts()[1]).toContain("Started the dev server");
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("a heartbeat does not hold the child's finish notification", async () => {
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+    try {
+      const child = await createChild(server, "Watcher");
+      agentManager.setDaemonBackgroundWork({
+        agentId: child.id,
+        namespace: "heartbeat",
+        id: "check-ci",
+        kind: "heartbeat",
+        countsAsRunning: false,
+        description: "Check CI",
+        startedAt: new Date().toISOString(),
+        stop: async () => {},
+      });
+      child.session.finishTurn("Done; a heartbeat checks CI");
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
+      expect(parentPrompts()[0]).toContain(`Agent ${child.id} (Watcher) finished.`);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("follows a helper that waits on its own child until the helper's final reply", async () => {
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+    try {
+      const helper = await createChild(server, "Helper");
+      const helperServer = await createAgentMcpServer(
+        {
+          agentManager,
+          agentStorage: storage,
+          callerAgentId: helper.id,
+          providerSnapshotManager: createOpenCodeManager().manager,
+          logger,
+        },
+        undefined,
+        undefined,
+        server,
+      );
+      const sub = await createChild(helperServer, "Sub helper");
+      helper.session.finishTurn("Waiting for my helper");
+
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
+      expect(parentPrompts()[0]).toContain(
+        `Agent ${helper.id} (Helper) ended its turn but is still working: agents it is waiting on.`,
+      );
+
+      sub.session.finishTurn("SUB RESULT");
+      // The sub helper's finish starts the helper's next turn.
+      await vi.waitFor(() => expect(helper.session.prompts).toHaveLength(2));
+      expect(helper.session.prompts[1]).toContain(`Agent ${sub.id} (Sub helper) finished.`);
+      await vi.waitFor(() => expect(agentManager.getAgent(helper.id)?.lifecycle).toBe("running"));
+      helper.session.finishTurn("HELPER FINAL");
+
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(2));
+      expect(parentPrompts()[1]).toContain(`Agent ${helper.id} (Helper) finished.`);
+      expect(parentPrompts()[1]).toContain("HELPER FINAL");
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("a permission request after waking up reaches the parent, and the settled turn still reports", async () => {
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+    try {
+      const child = await createChild(server, "Planner");
+      child.session.pendingWakeup = true;
+      child.session.finishTurn("Waiting for research");
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
+
+      child.session.startAutonomousTurn();
+      child.session.pendingWakeup = false;
+      child.session.requestPermission("plan-approval");
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(2));
+      expect(parentPrompts()[1]).toContain("needs permission");
+      expect(parentPrompts()[1]).toContain("plan-approval");
+
+      await invokeToolWithParsedInput(registeredTool(server, "respond_to_permission"), {
+        agentId: child.id,
+        requestId: "plan-approval",
+        response: { behavior: "allow" },
+      });
+      child.session.finishTurn("Plan executed");
+      await vi.waitFor(() => expect(parentPrompts()).toHaveLength(3));
+      expect(parentPrompts()[2]).toContain(`Agent ${child.id} (Planner) finished.`);
+      expect(parentPrompts()[2]).toContain("Plan executed");
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
 });

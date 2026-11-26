@@ -37,7 +37,7 @@ export function useEnableBuiltInDaemonOption(): EnableBuiltInDaemonOption {
     void (async () => {
       const result = await enable();
       if (result?.kind === "enabled") {
-        router.push(buildSettingsHostSectionRoute(result.newStatus.serverId, "host"));
+        router.push(buildSettingsHostSectionRoute(result.newStatus.serverId, "daemon"));
       }
     })();
   }, [enable]);

@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import { deriveStreamTurnTiming, type StreamTurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
-import { getWebPartialVirtualizationThreshold } from "./web-virtualization";
+import {
+  getWebPartialVirtualizationThreshold,
+  MAX_MOUNTED_WEB_WINDOW_ITEMS,
+} from "./web-virtualization";
 import { orderHeadForStreamRenderStrategy, orderTailForStreamRenderStrategy } from "./strategy";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 
@@ -134,6 +137,7 @@ function splitOrderedTail(params: {
   const mountedWindowStart = findMountedWindowStart({
     items: orderedTail,
     minMountedCount: getMountedRecentStreamItems(),
+    maxMountedCount: MAX_MOUNTED_WEB_WINDOW_ITEMS,
   });
   const split = {
     history: orderedTail,

@@ -346,9 +346,18 @@ test("six concurrent 8 MiB images share the main-thread CPU budget", async () =>
 
 test("a busy event loop does not spend the image decode budget", async () => {
   const count = 8;
-  let turns = 0;
+  const materializing = new AsyncLocalStorage<boolean>();
+  let decodeYields = 0;
+  const hook = createHook({
+    init(_id, type) {
+      // Count decode budget refills. Waiting for the filesystem can take
+      // any number of event-loop turns without scheduling a refill.
+      if (type === "Immediate" && materializing.getStore()) decodeYields++;
+    },
+  });
+  let busyTurns = 0;
   let probe = setImmediate(function tick() {
-    turns++;
+    busyTurns++;
     // Simulate unrelated work that exceeds a 10 ms decode slice.
     const end = performance.now() + 20;
     while (performance.now() < end) {
@@ -357,15 +366,21 @@ test("a busy event loop does not spend the image decode budget", async () => {
     probe = setImmediate(tick);
   });
   const paths: string[] = [];
+  hook.enable();
   try {
     for (let index = 0; index < count; index++) {
       const data = Buffer.from(`attachment on a busy loop ${index}`).toString("base64");
-      const image = await materializeProviderImage({ data, mimeType: "image/png" });
+      const image = await materializing.run(true, () =>
+        materializeProviderImage({ data, mimeType: "image/png" }),
+      );
       paths.push(image.path);
     }
   } finally {
+    hook.disable();
     clearImmediate(probe);
     for (const image of paths) rmSync(image, { force: true });
   }
-  expect(turns).toBeLessThanOrEqual(7 * count);
+  expect(busyTurns).toBeGreaterThan(0);
+  // A prior materialization can leave the shared budget nearly depleted.
+  expect(decodeYields).toBeLessThanOrEqual(1);
 });

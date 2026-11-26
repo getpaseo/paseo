@@ -62,6 +62,7 @@ import {
   seedSavedSettingsHosts,
   selectSettingsHost,
   expectSettingsHostPickerLabel,
+  openClientHostSettings,
   openSettingsHostSection,
   removeCurrentHostFromSettings,
   openSidebarHostPicker,
@@ -176,28 +177,28 @@ test.describe("Settings sidebar scroll position", () => {
       }
 
       const sidebar = page.getByTestId("settings-sidebar");
-      const appScrollTop = await revealSettingsSidebarSection(page, "diagnostics");
+      const appScrollTop = await revealSettingsSidebarSection(page, "about");
       await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
 
       await openSettingsSection(page, "about");
       await expectAboutContent(page);
+      await expectDiagnosticsContent(page);
       await expectSettingsSidebarScrollOffset(page, appScrollTop);
 
-      await openSettingsSection(page, "diagnostics");
-      await expectDiagnosticsContent(page);
+      await openSettingsSection(page, "shortcuts");
       await expectSettingsSidebarScrollOffset(page, appScrollTop);
     });
   });
 });
 
 test.describe("Settings sidebar navigation", () => {
-  test("the sidebar host row opens Overview in one click", async ({ page, withWorkspace }) => {
+  test("the sidebar host row opens Daemon in one click", async ({ page, withWorkspace }) => {
     const workspace = await withWorkspace({ prefix: "sidebar-host-settings-" });
     await openWorkspace(page, workspace);
     await openSidebarHostPicker(page);
     await sidebarHostRowButton(page).click();
 
-    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "daemon"));
   });
 
   test("Enter opens the active sidebar host row", async ({ page, withWorkspace }) => {
@@ -207,7 +208,7 @@ test.describe("Settings sidebar navigation", () => {
     await openSidebarHostPicker(page);
     await activateSidebarHostSettingsWithKeyboard(page);
 
-    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "daemon"));
   });
 
   test("opening Settings closes the composer model selector until it is opened again", async ({
@@ -282,13 +283,10 @@ test.describe("Settings sidebar navigation", () => {
     await gotoAppShell(page);
     await openSettings(page);
 
-    await openSettingsSection(page, "diagnostics");
-    await expectSettingsHeader(page, "Diagnostics");
-    await expectDiagnosticsContent(page);
-
     await openSettingsSection(page, "about");
     await expectSettingsHeader(page, "About");
     await expectAboutContent(page);
+    await expectDiagnosticsContent(page);
 
     await openSettingsSection(page, "general");
     await expectSettingsHeader(page, "General");
@@ -313,18 +311,18 @@ test.describe("Settings sidebar navigation", () => {
     await gotoAppShell(page);
     await openSettings(page);
     await selectSettingsHost(page, secondaryServerId);
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await openSettingsSection(page, "appearance");
     await expectSettingsHostPickerLabel(page, "Stable horse");
     await openSettingsSection(page, "general");
     await expectSettingsHostPickerLabel(page, "Stable horse");
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await selectSettingsHost(page, primaryServerId);
     await openSettingsSection(page, "about");
     await expectSettingsHostPickerLabel(page, "First horse");
   });
 
-  test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {
+  test("/h/[serverId]/settings redirects to the host daemon section", async ({ page }) => {
     await gotoAppShell(page);
     await verifyLegacyHostSettingsRedirect(page);
   });
@@ -528,12 +526,12 @@ test.describe("Settings — compact master-detail", () => {
     await gotoAppShell(page);
     await openCompactSettings(page, buildOpenProjectRoute());
 
-    await expectSettingsSidebarSections(page, ["general", "diagnostics", "about"]);
+    await expectSettingsSidebarSections(page, ["general", "hosts", "about"]);
     await expectCompactSettingsList(page);
 
     await test.step("open app details and return to the list", async () => {
-      await openSettingsSection(page, "diagnostics");
-      await expectAppRoute(page, buildSettingsSectionRoute("diagnostics"));
+      await openSettingsSection(page, "about");
+      await expectAppRoute(page, buildSettingsSectionRoute("about"));
       await expectDiagnosticsContent(page);
       await expectSettingsSidebarHidden(page);
       await expectSettingsBackButton(page);
@@ -554,7 +552,7 @@ test.describe("Settings — compact master-detail", () => {
     });
   });
 
-  test("host picker settings opens Overview and backs through the settings list", async ({
+  test("host picker settings opens Daemon and backs through the settings list", async ({
     page,
     withWorkspace,
   }) => {
@@ -566,8 +564,8 @@ test.describe("Settings — compact master-detail", () => {
     await page.getByTestId("sidebar-hosts-trigger").click();
     await sidebarHostRowButton(page).click();
 
-    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
-    await expect(page.getByText("Overview", { exact: true })).toBeVisible();
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "daemon"));
+    await expect(page.getByText("Daemon", { exact: true }).first()).toBeVisible();
 
     await goBackInSettings(page);
     await expectCompactSettingsList(page);
@@ -597,14 +595,14 @@ test.describe("Settings — compact master-detail", () => {
     await expectSettingsSidebarVisible(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
 
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await goBackInSettings(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
 
     await openSettingsSection(page, "appearance");
     await goBackInSettings(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await goBackInSettings(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
   });
@@ -617,8 +615,9 @@ test.describe("Settings — compact master-detail", () => {
 
     await openWorkspace(page, workspace);
     await openCompactSettings(page, buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
-    await openSettingsHostSection(page, getServerId(), "host");
+    await openClientHostSettings(page, getServerId());
     await removeCurrentHostFromSettings(page);
+    await goBackInSettings(page);
     await closeCompactSettings(page);
 
     await expect(page).toHaveURL(/\/welcome$/);

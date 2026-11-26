@@ -643,6 +643,7 @@ export interface SessionOptions {
   serverId?: string;
   daemonVersion?: string;
   daemonRuntimeConfig?: DaemonRuntimeConfig;
+  getSourceLocalEndpoint?: (source: object) => string | undefined;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
 }
 
@@ -757,6 +758,16 @@ interface ClientActivity {
   appVisibilityChangedAt: Date;
 }
 
+function resolveAgentSubscriptionSnapshotIds(
+  synced: { snapshotAgentIds: Iterable<string> } | null,
+  payload: { entries: ReadonlyArray<{ agent: { id: string } }>; pageInfo: { hasMore: boolean } },
+  request: { page?: { cursor?: string } },
+): Iterable<string> | null {
+  if (synced) return synced.snapshotAgentIds;
+  if (payload.pageInfo.hasMore || Boolean(request.page?.cursor)) return null;
+  return payload.entries.map((entry) => entry.agent.id);
+}
+
 export class Session {
   private readonly connectedHostSession: ConnectedHostSession | null;
   private routed = false;
@@ -841,11 +852,16 @@ export class Session {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
+  // What worktree setup and teardown commands run through: the plugins' hooks, or none.
+  private get commandLifecycle(): NonNullable<SessionOptions["pluginRuntime"]> | null {
+    return this.pluginRuntime ?? null;
+  }
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
+  private unsubscribeBeforeWorkspacePublish: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
   private projectUpdateQueue: Promise<void> = Promise.resolve();
   private isCleanedUp = false;
@@ -902,6 +918,7 @@ export class Session {
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
+  private readonly getSourceLocalEndpoint?: (source: object) => string | undefined;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly changeRequestWatches: SessionOptions["changeRequestWatches"];
@@ -1068,6 +1085,8 @@ export class Session {
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
+      waitForDeferredPublication: (workspaceId) =>
+        this.workspaceRegistry.waitForDeferredPublication?.(workspaceId) ?? Promise.resolve(false),
       isCheckoutUntrusted: (checkoutPath) =>
         isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
       syncCheckoutWorktreeManager: async ({
@@ -1202,6 +1221,7 @@ export class Session {
       projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
     });
+    this.getSourceLocalEndpoint = options.getSourceLocalEndpoint;
     this.daemonSession = new DaemonSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -1302,6 +1322,7 @@ export class Session {
     });
     this.workspaceArchiveOperations = resolveWorkspaceArchiveOperations(workspaceArchiveOperations);
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
+      lifecycle: this.commandLifecycle,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       worktreeManagers: this.pluginRuntime,
@@ -1733,6 +1754,7 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
   ): Promise<void> {
     try {
+      await this.agentUpdates.flushPendingUpdates();
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       if (workspace.kind !== "directory" && this.wantsEvent("checkout_status_update")) {
         // Recovery can refresh Git before this session starts observing again.
@@ -1941,6 +1963,10 @@ export class Session {
         this.workspaceRegistry.subscribeToMutations?.((mutation) =>
           this.enqueueRegistryMutation(() => this.handleWorkspaceMutation(mutation)),
         ) ?? null;
+      this.unsubscribeBeforeWorkspacePublish ??=
+        this.workspaceRegistry.subscribeBeforePublish?.(() =>
+          this.agentUpdates.flushPendingUpdates(),
+        ) ?? null;
       this.unsubscribeTerminalWorkspaceContributionEvents ??=
         this.terminalManager?.subscribeTerminalWorkspaceContributionChanged((event) => {
           void this.emitWorkspaceUpdateForTerminalContribution(event).catch((error) =>
@@ -1955,6 +1981,8 @@ export class Session {
       this.unsubscribeProjectMutations = null;
       this.unsubscribeWorkspaceMutations?.();
       this.unsubscribeWorkspaceMutations = null;
+      this.unsubscribeBeforeWorkspacePublish?.();
+      this.unsubscribeBeforeWorkspacePublish = null;
       this.unsubscribeTerminalWorkspaceContributionEvents?.();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
     }
@@ -2003,6 +2031,7 @@ export class Session {
       if (this.isCleanedUp) {
         return;
       }
+      await this.agentUpdates.flushPendingUpdates();
       await this.emitWorkspaceUpdatesForWorkspaceIds(
         [mutation.workspaceId],
         mutation.expectsInitialAgent ? { optimisticStatus: "running" } : undefined,
@@ -2062,7 +2091,11 @@ export class Session {
         return;
       }
       const projectWorkspaceIds = (await this.workspaceRegistry.listActive())
-        .filter((workspace) => workspace.projectId === mutation.projectId)
+        .filter(
+          (workspace) =>
+            workspace.projectId === mutation.projectId &&
+            !this.workspaceRegistry.isBroadcastDeferred?.(workspace.workspaceId),
+        )
         .map((workspace) => workspace.workspaceId);
 
       if (mutation.kind === "remove") {
@@ -2749,7 +2782,7 @@ export class Session {
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchCreationMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
-      this.dispatchAgentConfigMessage(msg) ??
+      this.dispatchConfigMessage(msg, source) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
@@ -3348,7 +3381,10 @@ export class Session {
     }
   }
 
-  private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchConfigMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
@@ -3369,21 +3405,6 @@ export class Session {
           },
         });
         return undefined;
-      case "daemon.get_status.request":
-        return this.daemonSession.handleGetStatusRequest(msg);
-      case "daemon.get_pairing_offer.request":
-        return this.daemonSession.handleGetPairingOfferRequest(msg);
-      case "daemon.config.reload.request":
-        return this.daemonSession.handleConfigReloadRequest(msg);
-      case "hub.management.daemon.connect.request":
-      case "hub.management.daemon.get_status.request":
-      case "hub.management.daemon.disconnect.request":
-      case "hub.management.daemon.permissions.update.request":
-        return this.daemonSession.handleHubRelationshipRequest(msg);
-      case "diagnostics.request":
-        return this.daemonSession.handleDiagnosticsRequest(msg);
-      case "daemon.update.request":
-        return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request":
         return this.daemonConfigStore.patch(msg.config).then((config) => {
           return this.emit({
@@ -3398,6 +3419,39 @@ export class Session {
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":
         return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
+      default:
+        return this.dispatchDaemonMessage(msg, source);
+    }
+  }
+
+  private dispatchDaemonMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "daemon.get_status.request":
+        return this.daemonSession.handleGetStatusRequest(
+          msg,
+          source && this.getSourceLocalEndpoint?.(source),
+        );
+      case "daemon.tailscale.set.request":
+        return this.daemonSession.handleSetTailscaleRequest(
+          msg,
+          source && this.getSourceLocalEndpoint?.(source),
+        );
+      case "daemon.get_pairing_offer.request":
+        return this.daemonSession.handleGetPairingOfferRequest(msg);
+      case "daemon.config.reload.request":
+        return this.daemonSession.handleConfigReloadRequest(msg);
+      case "hub.management.daemon.connect.request":
+      case "hub.management.daemon.get_status.request":
+      case "hub.management.daemon.disconnect.request":
+      case "hub.management.daemon.permissions.update.request":
+        return this.daemonSession.handleHubRelationshipRequest(msg);
+      case "diagnostics.request":
+        return this.daemonSession.handleDiagnosticsRequest(msg);
+      case "daemon.update.request":
+        return this.daemonSession.handleUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -3680,7 +3734,7 @@ export class Session {
         await this.handleListCommandsRequest(msg);
         return;
       case "register_push_token":
-        this.handleRegisterPushToken(msg.token);
+        this.handleRegisterPushToken(msg.token, msg.preferences);
         return;
       case "push.unregister.request":
         this.pushNotifications.revoke(msg.token);
@@ -5632,9 +5686,12 @@ export class Session {
   /**
    * Handle push token registration
    */
-  private handleRegisterPushToken(token: string): void {
+  private handleRegisterPushToken(
+    token: string,
+    preferences?: Parameters<PushNotifications["renew"]>[1],
+  ): void {
     this.currentClientMetadata().pushToken = token;
-    this.pushNotifications.renew(token);
+    this.pushNotifications.renew(token, preferences);
     this.sessionLogger.info("Registered push token");
   }
 
@@ -5840,6 +5897,7 @@ export class Session {
   ): Promise<void> {
     return handleWorktreeArchiveRequest(
       {
+        lifecycle: this.commandLifecycle,
         paseoHome: this.paseoHome,
         paseoWorktreesBaseRoot: this.worktreesRoot,
         worktreeManagers: this.pluginRuntime,
@@ -6749,7 +6807,11 @@ export class Session {
     workspaceIds: Iterable<string>,
     options?: WorkspaceUpdateOptions,
   ): Promise<void> {
-    const uniqueWorkspaceIds = new Set(workspaceIds);
+    const uniqueWorkspaceIds = new Set<string>();
+    for (const workspaceId of workspaceIds) {
+      if (this.workspaceRegistry.isBroadcastDeferred?.(workspaceId)) continue;
+      uniqueWorkspaceIds.add(workspaceId);
+    }
     if (uniqueWorkspaceIds.size === 0) return;
     for (const subscription of this.workspaceUpdatesSubscriptions.values()) {
       await this.enqueueWorkspaceUpdates(uniqueWorkspaceIds, subscription, options);
@@ -6962,9 +7024,13 @@ export class Session {
         this.refreshObservationProducers();
       }
 
-      const payload = request.sync
+      const synced = request.sync
         ? await this.readAgentDirectorySync(request, backgroundVisibility)
+        : null;
+      const payload = synced
+        ? synced.payload
         : await this.listFetchAgentsEntries(request, backgroundVisibility);
+      const snapshotAgentIds = resolveAgentSubscriptionSnapshotIds(synced, payload, request);
       const snapshotUpdatedAtByAgentId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedUpdatedAt = Date.parse(entry.agent.updatedAt);
@@ -6983,7 +7049,10 @@ export class Session {
       });
 
       if (subscriptionId) {
-        this.agentUpdates.flushBootstrapped(owner!.id, { snapshotUpdatedAtByAgentId });
+        this.agentUpdates.flushBootstrapped(owner!.id, {
+          snapshotUpdatedAtByAgentId,
+          snapshotAgentIds,
+        });
       }
     } catch (error) {
       if (subscriptionId) {
@@ -7394,12 +7463,24 @@ export class Session {
       request.sync ?? {},
       backgroundVisibility,
     );
+    const snapshotAgentIds = (
+      await Promise.all(
+        snapshot.entries.map(async (entry) =>
+          (await this.agentDirectory.includes(entry.agent, backgroundVisibility))
+            ? entry.agent.id
+            : null,
+        ),
+      )
+    ).filter((id): id is string => id !== null);
     const entries = await Promise.all(
       result.entries.map(async (entry) =>
         (await this.agentDirectory.includes(entry.agent, backgroundVisibility)) ? entry : null,
       ),
     );
-    return { ...result, entries: entries.filter((entry) => entry !== null) };
+    return {
+      payload: { ...result, entries: entries.filter((entry) => entry !== null) },
+      snapshotAgentIds,
+    };
   }
 
   private async readWorkspaceDirectorySync(
@@ -8169,6 +8250,7 @@ export class Session {
   ): Promise<CreatePaseoWorktreeWorkflowResult> {
     return createWorktreeWorkflow(
       {
+        lifecycle: this.commandLifecycle,
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
         createPaseoWorktree: (workflowInput, serviceOptions) =>
@@ -8222,6 +8304,7 @@ export class Session {
   ): Promise<void> {
     return handleWorkspaceSetupRunRequestMessage(
       {
+        lifecycle: this.commandLifecycle,
         getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
         clearAutomationBlock: (workspaceId) =>
           this.withWorkspaceCheckout(workspaceId, async (checkoutPath) => {
@@ -8271,6 +8354,7 @@ export class Session {
           }
           return archiveByScope(
             {
+              lifecycle: this.commandLifecycle,
               paseoHome: this.paseoHome,
               paseoWorktreesBaseRoot: this.worktreesRoot,
               worktreeManagers: this.pluginRuntime,
@@ -9495,7 +9579,8 @@ export class Session {
   ): void {
     if (
       message.type !== "agent_attention_required" &&
-      message.type !== "terminal_attention_required"
+      message.type !== "terminal_attention_required" &&
+      message.type !== "plugin.notification"
     ) {
       subscription.owner.emit(message);
       return;
@@ -9504,11 +9589,13 @@ export class Session {
       message.payload.shouldNotify &&
       subscription.notifications &&
       !notified.has(subscription.owner.source);
-    subscription.owner.emit(
-      message.type === "agent_attention_required"
-        ? { ...message, payload: { ...message.payload, shouldNotify } }
-        : { ...message, payload: { ...message.payload, shouldNotify } },
-    );
+    if (message.type === "agent_attention_required") {
+      subscription.owner.emit({ ...message, payload: { ...message.payload, shouldNotify } });
+    } else if (message.type === "terminal_attention_required") {
+      subscription.owner.emit({ ...message, payload: { ...message.payload, shouldNotify } });
+    } else {
+      subscription.owner.emit({ ...message, payload: { ...message.payload, shouldNotify } });
+    }
     if (shouldNotify) notified.add(subscription.owner.source);
   }
 
@@ -9669,6 +9756,8 @@ export class Session {
     this.unsubscribePluginChanges = null;
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations = null;
+    this.unsubscribeBeforeWorkspacePublish?.();
+    this.unsubscribeBeforeWorkspacePublish = null;
     this.agentUpdates.dispose();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {
@@ -9736,6 +9825,23 @@ function isValidGitHubRepoSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/u.test(value);
 }
 
+function statusEventCategory(
+  status: Extract<SessionOutboundMessage, { type: "status" }>["payload"]["status"],
+): SessionEventSubscription | null {
+  switch (status) {
+    case "server_info":
+      return "status.server_info";
+    case "daemon_config_changed":
+      return "status.daemon_config_changed";
+    case "plugin_catalog_changed":
+      return "status.plugin_catalog_changed";
+    case "plugin_settings_changed":
+      return "status.plugin_settings_changed";
+    default:
+      return null;
+  }
+}
+
 function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubscription | null {
   switch (message.type) {
     case "project.update":
@@ -9749,23 +9855,13 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "agent.provider_subagents.update":
     case "agent.background_work.update":
     case "terminal_attention_required":
+    case "plugin.notification":
     case "activity_log":
     case "hub.execution.agent.update":
     case "hub.execution.agent.stream":
       return message.type;
     case "status":
-      switch (message.payload.status) {
-        case "server_info":
-          return "status.server_info";
-        case "daemon_config_changed":
-          return "status.daemon_config_changed";
-        case "plugin_catalog_changed":
-          return "status.plugin_catalog_changed";
-        case "plugin_settings_changed":
-          return "status.plugin_settings_changed";
-        default:
-          return null;
-      }
+      return statusEventCategory(message.payload.status);
     default:
       return null;
   }
@@ -9788,6 +9884,7 @@ function legacyWantsEvent(
       return capabilities.has(CLIENT_CAPS.providerSubagents);
     // Old apps parse outbound messages strictly and do not know this type.
     case "agent.background_work.update":
+    case "plugin.notification":
       return false;
     default:
       return true;

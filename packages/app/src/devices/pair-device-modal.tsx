@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
-import { PairDeviceSection } from "@/desktop/components/pair-device-section";
+import { PairDeviceSection } from "@/devices/pair-device-section";
 
 export interface PairDeviceModalProps {
   serverId: string;

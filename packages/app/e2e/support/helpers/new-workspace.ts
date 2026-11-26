@@ -243,6 +243,14 @@ export async function openNewWorkspaceProjectPickerWithShortcut(
   await expect(searchInput).toBeFocused();
 }
 
+export async function chooseProjectWithKeyboard(page: Page, projectName: string): Promise<void> {
+  const searchInput = page.getByPlaceholder("Search projects");
+  await expect(searchInput).toBeFocused({ timeout: 30_000 });
+  await page.keyboard.type(projectName);
+  await page.keyboard.press("Enter");
+  await expect(searchInput).toBeHidden({ timeout: 10_000 });
+}
+
 export async function expectNewWorkspaceProjectSelected(
   page: Page,
   projectDisplayName: string,

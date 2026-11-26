@@ -1,3 +1,6 @@
+import type { ChildProcess } from "node:child_process";
+import diagnosticsChannel from "node:diagnostics_channel";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -2254,6 +2257,150 @@ lines.on("line", (line) => {
     await connection.close();
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
     expect(Date.now() - startedAt).toBeLessThan(2_500);
+  });
+});
+
+async function hangingCatalogAgent(): Promise<{ executable: string; catalogCwd: string }> {
+  const catalogCwd = await mkdtemp(path.join(tmpdir(), "paseo-acp-hanging-catalog-"));
+  temporaryDirectories.push(catalogCwd);
+  // The catalogue probe records its PID and stays resident like an agent that ignores EOF.
+  const executable = await fakeAcp(`const fs = require("node:fs");
+const path = require("node:path");
+const readline = require("node:readline");
+const catalogCwd = ${JSON.stringify(catalogCwd)};
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new" && message.params.cwd === catalogCwd) {
+    setInterval(() => undefined, 1_000);
+    fs.writeFileSync(path.join(catalogCwd, "probe.pid"), String(process.pid));
+  }
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", modes: null, configOptions: [] } });
+  else if (message.method === "session/prompt") send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+});`);
+  return { executable, catalogCwd };
+}
+
+function readIfPresent(file: string): Promise<string> {
+  return readFile(file, "utf8").catch(() => "");
+}
+
+async function probePid(catalogCwd: string): Promise<number> {
+  const file = path.join(catalogCwd, "probe.pid");
+  await expect.poll(() => readIfPresent(file), { timeout: 5_000 }).not.toBe("");
+  return Number(await readFile(file, "utf8"));
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+describe("runAcpProvider catalogue requests whose session/new never answers", () => {
+  it("offers request cancellation", async () => {
+    const { executable } = await hangingCatalogAgent();
+    const { connection } = await connect(executable, ["prompt.message", "request.cancel"]);
+    try {
+      expect(connection.capabilities).toContain("request.cancel");
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("stops the probe process when Paseo cancels the request and keeps open sessions running", async () => {
+    const { executable, catalogCwd } = await hangingCatalogAgent();
+    const { connection, events } = await connect(executable, ["prompt.message", "request.cancel"]);
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+
+      await connection.send({ type: "catalog", requestId: "catalog-1", cwd: catalogCwd });
+      const pid = await probePid(catalogCwd);
+      expect(isRunning(pid)).toBe(true);
+
+      await connection.send({ type: "request.cancel", requestId: "catalog-1" });
+      await expect.poll(() => isRunning(pid), { timeout: 3_000 }).toBe(false);
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "after-cancel",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "still there?" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      expect(
+        events.filter((event) => "requestId" in event && event.requestId === "catalog-1"),
+      ).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("publishes the catalogue before the probe session starts closing", async () => {
+    const closeMarker = path.join(
+      await mkdtemp(path.join(tmpdir(), "paseo-acp-catalog-close-")),
+      "close-started",
+    );
+    temporaryDirectories.push(path.dirname(closeMarker));
+    // session/close never answers, so the probe's shutdown runs into its close timeout.
+    const executable = await fakeAcp(`const fs = require("node:fs");
+const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "catalog-native", modes: null, configOptions: [] } });
+  else if (message.method === "session/close") fs.writeFileSync(${JSON.stringify(closeMarker)}, "started");
+});`);
+    const { connection, events } = await connect(executable, ["prompt.message", "request.cancel"]);
+    let closingWhenPublished: boolean | undefined;
+    connection.onEvent((event) => {
+      if (event.type === "catalog") closingWhenPublished = existsSync(closeMarker);
+    });
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog-1" });
+      await waitForEvent(events, (event) => event.type === "catalog");
+      expect(closingWhenPublished).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("ignores cancellation of a request that already finished", async () => {
+    const executable = await fakeAcp(basicAgent);
+    const { connection, events } = await connect(executable, ["prompt.message", "request.cancel"]);
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog-1" });
+      await waitForEvent(events, (event) => event.type === "catalog");
+      await expect(
+        connection.send({ type: "request.cancel", requestId: "catalog-1" }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("stops the probe process when the connection closes", async () => {
+    const { executable, catalogCwd } = await hangingCatalogAgent();
+    const { connection } = await connect(executable, ["prompt.message", "request.cancel"]);
+    await connection.send({ type: "catalog", requestId: "catalog-1", cwd: catalogCwd });
+    const pid = await probePid(catalogCwd);
+
+    await connection.close();
+    expect(isRunning(pid)).toBe(false);
   });
 });
 
@@ -6166,7 +6313,6 @@ describe("deferTurnOnRunningTools", () => {
       );
 
       const childPid = Number((await readFile(pidFile, "utf8")).trim());
-      const startedAt = Date.now();
       await Promise.all([
         connection.send({
           type: "session.interrupt",
@@ -6188,8 +6334,8 @@ describe("deferTurnOnRunningTools", () => {
         (event) => event.type === "request.completed" && event.requestId === "int-2",
       );
 
-      // Both interrupts waited for the 250ms SIGTERM exit, and process is now dead.
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+      // Both interrupts waited for the process to exit. On POSIX it lives 250ms past SIGTERM, so an
+      // interrupt that returned early would find it alive; Windows ends it at once.
       expect(() => process.kill(childPid, 0)).toThrow();
 
       // Canceled turn and session.closed were each emitted exactly once.
@@ -7123,5 +7269,189 @@ describe("ACP tool call rows", () => {
     } finally {
       await connection.close();
     }
+  });
+});
+
+describe("runAcpProvider launch wrap", () => {
+  async function wrapFixture(): Promise<{
+    agent: string;
+    launchLog: string;
+    /** The wrap that runs the recording launcher as Node, tagged so the agent can tell. */
+    wrap: (tag: string) => [string, ...string[]];
+    launches: () => Promise<Array<{ argv: string[]; token: string | null }>>;
+    agentStarts: () => Promise<string[]>;
+  }> {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-acp-wrap-"));
+    temporaryDirectories.push(directory);
+    const launchLog = path.join(directory, "launches.jsonl");
+    const agentLog = path.join(directory, "agent.log");
+    const launcher = path.join(directory, "launcher.cjs");
+    // Consumes two arguments of its own (log path, tag), records what it saw, then runs the rest.
+    await writeFile(
+      launcher,
+      `const { appendFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const [log, tag, command, ...args] = process.argv.slice(2);
+appendFileSync(log, JSON.stringify({ argv: process.argv.slice(2), token: process.env.SESSION_TOKEN ?? null }) + "\\n");
+const child = spawn(command, args, { stdio: "inherit", env: { ...process.env, WRAPPED_BY: tag } });
+process.on("SIGTERM", () => child.kill("SIGTERM"));
+child.on("exit", (code) => process.exit(code ?? 1));
+`,
+      "utf8",
+    );
+    const agent = path.join(directory, "agent.cjs");
+    await writeFile(
+      agent,
+      `const { appendFileSync } = require("node:fs");
+const record = (event) => appendFileSync(${JSON.stringify(agentLog)}, event + ":" + (process.env.WRAPPED_BY ?? "bare") + "\\n");
+const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") { record("init"); send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } }); }
+  else if (message.method === "session/new") { record("new"); send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-" + Math.random(), modes: null, configOptions: [] } }); }
+});`,
+      "utf8",
+    );
+    const readLines = async (file: string) =>
+      (await readFile(file, "utf8").catch(() => "")).split("\n").filter(Boolean);
+    return {
+      agent,
+      launchLog,
+      wrap: (tag) => [process.execPath, launcher, launchLog, tag],
+      launches: async () => (await readLines(launchLog)).map((line) => JSON.parse(line)),
+      agentStarts: async () => await readLines(agentLog),
+    };
+  }
+
+  function wrappedOpen(
+    sessionId: string,
+    wrap: readonly [string, ...string[]] | undefined,
+  ): Extract<ProviderInput, { type: "session.open" }> {
+    const input = openInput();
+    return {
+      ...input,
+      requestId: `open-${sessionId}`,
+      sessionId,
+      config: { ...input.config, env: { SESSION_TOKEN: sessionId }, ...(wrap ? { wrap } : {}) },
+    };
+  }
+
+  async function connectWrapped(command: readonly [string, ...string[]]) {
+    const registration = runAcpProvider({ id: "wrap-acp", label: "Wrap ACP", command });
+    expect(registration.launchWrap).toBe(true);
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.launch_wrap"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    return { connection, events };
+  }
+
+  it("spawns the session as [...wrap, command, ...args] with the session env", async () => {
+    const fixture = await wrapFixture();
+    const { launchLog } = fixture;
+    const { connection, events } = await connectWrapped([process.execPath, fixture.agent]);
+    expect(connection.capabilities).toContain("session.launch_wrap");
+    try {
+      await connection.send(wrappedOpen("one", fixture.wrap("sandbox")));
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect(await fixture.launches()).toEqual([
+        { argv: [launchLog, "sandbox", process.execPath, fixture.agent], token: "one" },
+      ]);
+      expect(await fixture.agentStarts()).toEqual(["init:bare", "init:sandbox", "new:sandbox"]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("passes wrap and command arguments that contain spaces as single argv elements", async () => {
+    const fixture = await wrapFixture();
+    const { launchLog } = fixture;
+    const { connection, events } = await connectWrapped([
+      process.execPath,
+      fixture.agent,
+      "--profile name with spaces",
+    ]);
+    try {
+      await connection.send(wrappedOpen("one", fixture.wrap("tag with spaces")));
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect((await fixture.launches())[0]?.argv).toEqual([
+        launchLog,
+        "tag with spaces",
+        process.execPath,
+        fixture.agent,
+        "--profile name with spaces",
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("wraps only the session that selected a wrap on a shared connection", async () => {
+    const fixture = await wrapFixture();
+    const { launchLog } = fixture;
+    const { connection, events } = await connectWrapped([process.execPath, fixture.agent]);
+    try {
+      await connection.send(wrappedOpen("wrapped", fixture.wrap("sandbox")));
+      await connection.send(wrappedOpen("bare", undefined));
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.ready" && event.sessionId === "wrapped",
+      );
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.ready" && event.sessionId === "bare",
+      );
+      expect(await fixture.launches()).toEqual([
+        { argv: [launchLog, "sandbox", process.execPath, fixture.agent], token: "wrapped" },
+      ]);
+      expect(
+        (await fixture.agentStarts()).filter((line) => line.startsWith("new:")).sort(),
+      ).toEqual(["new:bare", "new:sandbox"]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("fails the open when the launcher is missing and never starts the bare command", async () => {
+    const fixture = await wrapFixture();
+    const missing = path.join(path.dirname(fixture.agent), "missing-launcher");
+    const { connection, events } = await connectWrapped([process.execPath, fixture.agent]);
+    // Node publishes every spawn attempt, a failed one included, before it fills in the fields.
+    const spawned: ChildProcess[] = [];
+    const onSpawn = (message: unknown) =>
+      spawned.push((message as { process: ChildProcess }).process);
+    diagnosticsChannel.subscribe("child_process", onSpawn);
+    try {
+      await connection.send(wrappedOpen("one", [missing, "--profile", "a b"]));
+      expect(await waitForEvent(events, (event) => event.type === "request.failed")).toMatchObject({
+        requestId: "open-one",
+        error: { message: expect.stringMatching(/ENOENT/u) },
+      });
+      expect(spawned.map((child) => child.spawnargs)).toEqual([
+        [missing, "--profile", "a b", process.execPath, fixture.agent],
+      ]);
+      // The only start of the agent is the connection's capability probe, before the open.
+      expect(await fixture.agentStarts()).toEqual(["init:bare"]);
+      expect(events.some((event) => event.type === "session.opened")).toBe(false);
+    } finally {
+      diagnosticsChannel.unsubscribe("child_process", onSpawn);
+      await connection.close();
+    }
+  });
+
+  it("does not offer launch wrap through a connector", async () => {
+    const { connector } = connectorHarness();
+    const registration = runAcpProvider({ id: "connector-acp", label: "Connector", connector });
+    expect(registration).not.toHaveProperty("launchWrap");
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.launch_wrap"],
+    });
+    expect(connection.capabilities).not.toContain("session.launch_wrap");
+    await connection.close();
   });
 });

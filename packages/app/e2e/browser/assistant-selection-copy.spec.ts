@@ -757,6 +757,161 @@ test("pasting an assistant selection preserves literal underscores and authored 
   }
 });
 
+const QUOTE_BODY = [
+  "Draft for the team: **ship it** with [the notes](https://example.com/notes).",
+  "",
+  "> Nested reply.",
+  "",
+  "```ts",
+  "const quoted = 1;",
+  "```",
+  "",
+  "```mermaid",
+  "flowchart LR",
+  "  Start --> Done",
+  "```",
+  "",
+  "Thanks!",
+].join("\n");
+
+const QUOTE_MARKDOWN = [
+  "Text before the quote.",
+  "",
+  ...QUOTE_BODY.split("\n").map((line) => (line ? `> ${line}` : ">")),
+  "",
+  "> [!NOTE]",
+  "> Heads up before you paste.",
+  "",
+  "Text after the quote.",
+].join("\n");
+
+function assistantQuote(page: Page, index: number): Locator {
+  return assistantMessageBlocks(page).getByRole("blockquote").nth(index);
+}
+
+/** A quote's own control is its first, ahead of any nested quote's. */
+function quoteCopyControl(quote: Locator): Locator {
+  return quote.getByRole("button", { name: "Copy quote" }).first();
+}
+
+async function copyQuote(quote: Locator): Promise<void> {
+  await quote.hover();
+  await quoteCopyControl(quote).click();
+  await expect(quote.getByRole("button", { name: "Copied" })).toBeVisible();
+}
+
+async function pasteIntoPlainAndRichFields(page: Page): Promise<{ plain: Locator; rich: Locator }> {
+  await page.evaluate(() => {
+    const fields = document.createElement("div");
+    fields.style.cssText = "position: fixed; bottom: 0; left: 0; z-index: 10000; background: white";
+    const plainText = document.createElement("textarea");
+    plainText.setAttribute("aria-label", "Plain text paste");
+    const richText = document.createElement("div");
+    richText.contentEditable = "true";
+    richText.setAttribute("role", "textbox");
+    richText.setAttribute("aria-label", "Rich text paste");
+    fields.append(plainText, richText);
+    document.body.append(fields);
+  });
+  const plain = page.getByRole("textbox", { name: "Plain text paste" });
+  await plain.focus();
+  await page.keyboard.press("ControlOrMeta+v");
+  const rich = page.getByRole("textbox", { name: "Rich text paste" });
+  await rich.focus();
+  await page.keyboard.press("ControlOrMeta+v");
+  return { plain, rich };
+}
+
+test("a quote's copy control copies only that quote's body", async ({ context, page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-quote-copy-",
+    title: "Assistant quote copy",
+    initialPrompt: "Render the quote fixture.",
+    featureValues: { mockAssistantResponse: QUOTE_MARKDOWN },
+  });
+
+  try {
+    await allowRichClipboard(context);
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await openAgentRoute(page, agent);
+    const quote = assistantQuote(page, 0);
+    const nested = assistantQuote(page, 1);
+    await expect(quote).toContainText("Thanks!");
+
+    await test.step("an admonition has no copy control", async () => {
+      await expect(assistantMessageBlocks(page)).toContainText("Heads up before you paste.");
+      await expect(
+        assistantMessageBlocks(page).getByRole("button", { name: "Copy quote" }),
+      ).toHaveCount(2);
+    });
+
+    await test.step("the control appears on hover or keyboard focus", async () => {
+      const control = quoteCopyControl(quote);
+      await expect(control).toHaveCSS("opacity", "0");
+      await quote.hover();
+      await expect(control).toHaveCSS("opacity", "1");
+      await page.mouse.move(0, 0);
+      await expect(control).toHaveCSS("opacity", "0");
+      await control.focus();
+      await expect(control).toHaveCSS("opacity", "1");
+      await control.blur();
+    });
+
+    await test.step("copying the quote takes its body, with a diagram as its fence", async () => {
+      await expect(quote.getByRole("img", { name: "Diagram" })).toBeVisible({ timeout: 30_000 });
+      await copyQuote(quote);
+      const copied = await readRichClipboard(page);
+      expect(copied.plainText).toBe(QUOTE_BODY);
+      expect(copied.html).toContain("<strong>ship it</strong>");
+      expect(copied.html).toContain("<blockquote>");
+    });
+
+    await test.step("the copy pastes as Markdown and as rich text", async () => {
+      const { plain, rich } = await pasteIntoPlainAndRichFields(page);
+      await expect(plain).toHaveValue(QUOTE_BODY);
+      await expect(rich.locator("strong")).toHaveText("ship it");
+      await expect(rich.getByRole("link", { name: "the notes" })).toHaveAttribute(
+        "href",
+        "https://example.com/notes",
+      );
+      await expect(rich).not.toContainText("Text before the quote.");
+    });
+
+    await test.step("a nested quote copies only itself", async () => {
+      await copyQuote(nested);
+      await expect
+        .poll(async () => (await readRichClipboard(page)).plainText)
+        .toBe("Nested reply.");
+    });
+
+    await test.step("a code block in the quote keeps its own copy", async () => {
+      const code = quote.getByText("const quoted = 1;", { exact: true });
+      await code.hover();
+      await quote.getByRole("button", { name: "Copy code" }).first().click();
+      await expect.poll(() => readPlainClipboard(page)).toBe("const quoted = 1;");
+    });
+
+    await test.step("a phone-sized layout shows the control above the full-width text", async () => {
+      await page.mouse.move(0, 0);
+      await page.setViewportSize({ width: 390, height: 844 });
+      const control = quoteCopyControl(quote);
+      await expect(control).toHaveCSS("opacity", "1");
+      const controlBox = await control.boundingBox();
+      const firstLine = await quote.getByText(/^Draft for the team/).boundingBox();
+      expect(controlBox && firstLine).toBeTruthy();
+      // The text starts below the control instead of wrapping short of it.
+      expect(firstLine!.y).toBeGreaterThanOrEqual(controlBox!.y + controlBox!.height);
+      expect(firstLine!.x + firstLine!.width).toBeGreaterThan(controlBox!.x);
+    });
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("copying a selection across an assistant image keeps its Markdown source and alt text", async ({
   context,
   page,

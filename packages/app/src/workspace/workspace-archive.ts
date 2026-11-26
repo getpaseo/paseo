@@ -2,6 +2,7 @@ import { queryClient } from "@/data/query-client";
 import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "@/hooks/agent-history-query-key";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import {
+  getWorkspaceArchiveUndoArchivedAgentIds,
   isWorkspaceArchiveIntentCurrent,
   markWorkspaceArchivePending,
   markWorkspaceArchiveUndoPending,
@@ -9,7 +10,10 @@ import {
   type WorkspaceArchiveIntent,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import {
+  normalizeWorkspaceOpaqueId,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
 import { i18n } from "@/i18n/i18next";
 
 export interface WorkspaceArchiveTarget {
@@ -55,11 +59,14 @@ export type WorkspaceArchiveOutcome = "archived" | "canceled";
 export interface OptimisticWorkspaceArchive {
   /** The row as it was before the archive hid it, for undo to put back. */
   hidden: WorkspaceDescriptor | null;
+  /** Active agents in this workspace at archive time, so undo only marks them as unarchiving. */
+  archivedAgentIds: ReadonlySet<string>;
   done: Promise<WorkspaceArchiveOutcome>;
 }
 
 interface OptimisticWorkspaceArchiveSnapshot {
   workspace: WorkspaceDescriptor | null;
+  archivedAgentIds: ReadonlySet<string>;
   intent: WorkspaceArchiveIntent;
 }
 
@@ -95,16 +102,36 @@ export function isWorkspaceListed(workspace: WorkspaceArchiveTarget): boolean {
   return findListedWorkspace(workspace) !== null;
 }
 
+function listActiveWorkspaceAgentIds(workspace: WorkspaceArchiveTarget): Set<string> {
+  const agents = useSessionStore.getState().sessions[workspace.serverId]?.agents;
+  const activeAgentIds = new Set<string>();
+  const targetWorkspaceId = normalizeWorkspaceOpaqueId(workspace.workspaceId);
+  if (!agents || !targetWorkspaceId) return activeAgentIds;
+  for (const agent of agents.values()) {
+    if (normalizeWorkspaceOpaqueId(agent.workspaceId) === targetWorkspaceId && !agent.archivedAt) {
+      activeAgentIds.add(agent.id);
+    }
+  }
+  return activeAgentIds;
+}
+
 function hideWorkspaceOptimistically(
   workspace: WorkspaceArchiveTarget,
 ): OptimisticWorkspaceArchiveSnapshot {
   const snapshot = findListedWorkspace(workspace);
+  const archivedAgentIds = listActiveWorkspaceAgentIds(workspace);
+  const pendingUndoArchivedAgentIds = getWorkspaceArchiveUndoArchivedAgentIds(workspace);
+  if (pendingUndoArchivedAgentIds) {
+    for (const agentId of pendingUndoArchivedAgentIds) {
+      archivedAgentIds.add(agentId);
+    }
+  }
   const intent = markWorkspaceArchivePending({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
   });
   getHostRuntimeStore().removeWorkspaceSnapshot(workspace.serverId, workspace.workspaceId);
-  return { workspace: snapshot, intent };
+  return { workspace: snapshot, archivedAgentIds, intent };
 }
 
 /**
@@ -168,7 +195,7 @@ export function beginOptimisticWorkspaceArchive(input: {
       throw error;
     }
   })();
-  return { hidden: snapshot.workspace, done };
+  return { hidden: snapshot.workspace, archivedAgentIds: snapshot.archivedAgentIds, done };
 }
 
 export async function archiveWorkspaceOptimistically(input: {
@@ -187,9 +214,14 @@ export async function undoWorkspaceArchiveOptimistically(input: {
   client: WorkspaceArchiveUndoClient;
   workspace: WorkspaceArchiveTarget;
   hidden: WorkspaceDescriptor | null;
+  archivedAgentIds?: ReadonlySet<string>;
 }): Promise<void> {
   const { serverId, workspaceId } = input.workspace;
-  const intent = markWorkspaceArchiveUndoPending({ serverId, workspaceId });
+  const intent = markWorkspaceArchiveUndoPending({
+    serverId,
+    workspaceId,
+    archivedAgentIds: input.archivedAgentIds,
+  });
   if (input.hidden) {
     getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [input.hidden]);
   }

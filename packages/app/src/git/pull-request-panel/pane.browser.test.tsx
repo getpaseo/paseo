@@ -466,6 +466,17 @@ describe("Watch PR", () => {
     ]);
   });
 
+  it("starts a watch for a dormant unarchived workspace agent", async () => {
+    await page.viewport(1150, 780);
+    showPane([agent("dormant", { status: "closed" })]);
+    await act(() => page.getByTestId("pr-pane-watch").click());
+    await expect
+      .element(page.getByTestId("pr-watch-agent-dormant"))
+      .toHaveAttribute("aria-checked", "true");
+    await act(() => page.getByTestId("pr-watch-confirm").click());
+    expect(subscribe).toHaveBeenCalledExactlyOnceWith({ agentId: "dormant", url: pr.url });
+  });
+
   it("preselects the sole workspace agent and reports a closed PR in a compact sheet", async () => {
     await page.viewport(390, 760);
     showPane([agent("only"), agent("other", { workspaceId: "another-workspace" })]);

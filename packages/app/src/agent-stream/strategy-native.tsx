@@ -230,19 +230,22 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     const hasMeasuredViewport =
       metrics.viewportMeasuredForKey === metrics.containerKey &&
       metrics.contentMeasuredForKey === metrics.containerKey;
+    const geometry = nativeHistoryStartGeometry({
+      contentHeight: metrics.contentHeight,
+      viewportHeight: metrics.viewportHeight,
+      offsetY: metrics.offsetY,
+      topOverlayInset,
+    });
     return {
-      ...nativeHistoryStartGeometry({
-        contentHeight: metrics.contentHeight,
-        viewportHeight: metrics.viewportHeight,
-        offsetY: metrics.offsetY,
-        topOverlayInset,
-      }),
+      ...geometry,
       hasOlderHistory,
       isLoadingOlderHistory,
+      // Reveal an already-filled measured viewport immediately; keep waiting on
+      // rAF before auto-fetching older pages on underfilled views.
       isReady:
         isActive &&
         isAuthoritativeHistoryReady &&
-        historyStartReadyRef.current &&
+        (historyStartReadyRef.current || !geometry.isUnderfilled) &&
         hasMeasuredViewport,
       progressKey: olderHistoryProgressKey,
     };

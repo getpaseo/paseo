@@ -88,4 +88,34 @@ describe("external CLI", () => {
       localDaemon: "running",
     });
   });
+
+  it("terminates and rejects when an external CLI subprocess hangs past the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const kill = vi.fn();
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        kill: typeof kill;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = kill;
+      mocks.spawnProcess.mockReturnValueOnce(child);
+
+      const pending = runExternalCliJsonCommand(["daemon", "status", "--json"]);
+      const assertion = expect(pending).rejects.toThrow(
+        "CLI command timed out after 15000ms: daemon status --json",
+      );
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+      expect(kill).toHaveBeenCalledWith("SIGTERM");
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -115,6 +115,44 @@ describe("OpenCode bridge adapter", () => {
     await customEnv.close();
     await customMcp.close();
   });
+
+  test("starts a wrapped session on its own server behind the wrap", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-adapter-"));
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    await bridge.start();
+    cleanups.push(async () => {
+      await bridge.close();
+      await rm(paseoHome, { recursive: true, force: true });
+    });
+    const runtime = new TestOpenCodeHarness();
+    const wrappedClient = new TestOpenCodeClient();
+    const sharedClient = new TestOpenCodeClient();
+    wrappedClient.sessionCreateResponse = { data: { id: "ses_wrapped" } };
+    sharedClient.sessionCreateResponse = { data: { id: "ses_shared" } };
+    runtime.enqueueClient(wrappedClient);
+    runtime.enqueueClient(sharedClient);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      bridge,
+    });
+
+    const wrapped = await client.createSession(
+      { provider: "opencode", cwd: "/workspace/one" },
+      { env: { PASEO_AGENT_ID: "one" }, wrap: ["/opt/sandbox/bin/run", "--profile", "a b"] },
+    );
+    const shared = await client.createSession(
+      { provider: "opencode", cwd: "/workspace/two" },
+      { env: { PASEO_AGENT_ID: "two" } },
+    );
+
+    expect(runtime.acquisitions.map(({ kind, wrap }) => ({ kind, wrap }))).toEqual([
+      { kind: "dedicated", wrap: ["/opt/sandbox/bin/run", "--profile", "a b"] },
+      { kind: "current", wrap: undefined },
+    ]);
+    await wrapped.close();
+    await shared.close();
+  });
 });
 
 async function readBridgeContext(bridge: OpenCodeBridge, sessionId: string): Promise<unknown> {

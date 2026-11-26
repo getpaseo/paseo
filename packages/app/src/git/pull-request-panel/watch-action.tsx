@@ -119,8 +119,7 @@ function WatchSetup({
         (agent) =>
           normalizeWorkspaceOpaqueId(agent.workspaceId) === workspaceId &&
           !agent.background &&
-          !agent.archivedAt &&
-          agent.status !== "closed",
+          !agent.archivedAt,
       ),
     ),
   );
