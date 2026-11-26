@@ -4,11 +4,8 @@ import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  createCheckoutReadSession,
-  getCheckoutIdentity,
-  getCheckoutStatus,
-} from "./checkout-git.js";
+import { getCheckoutIdentity, getCheckoutStatus } from "./checkout-git.js";
+import { CheckoutReadSession } from "./checkout-read-session.js";
 import { writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 import { createWorktree } from "./worktree.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
@@ -85,7 +82,7 @@ describe("getCheckoutIdentity", () => {
     await writePaseoWorktreeMetadata(linkedDir, { baseRefName: "main" });
     await writePaseoWorktreeMetadata(second, { baseRefName: "main" });
 
-    const readSession = createCheckoutReadSession();
+    const readSession = new CheckoutReadSession();
     startGitCommandMetrics();
     try {
       const checkouts = await Promise.all([

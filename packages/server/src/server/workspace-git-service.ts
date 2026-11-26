@@ -7,7 +7,8 @@ import pLimit from "p-limit";
 import type pino from "pino";
 import type { ForgeWeb, ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { CheckoutContext, CheckoutReadSession, UpstreamState } from "../utils/checkout-git.js";
+import type { CheckoutReadSession } from "../utils/checkout-read-session.js";
+import type { CheckoutContext, UpstreamState } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
   type BranchSuggestion,

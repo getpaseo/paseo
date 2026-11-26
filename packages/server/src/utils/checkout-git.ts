@@ -39,15 +39,12 @@ import {
   ForgeCliMissingError,
   ForgeCommandError,
 } from "../services/forge-cli-command.js";
+import type { CheckoutReadSession } from "./checkout-read-session.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
 import { readGitFileContents, readGitFileContentAtRef } from "./git-file-contents.js";
 import { unquoteGitPath } from "./git-quoted-path.js";
-import {
-  createRegisteredWorktreeLookup,
-  isPaseoOwnedWorktreeCwd,
-  resolvePaseoWorktreesBaseRoot,
-} from "./worktree.js";
+import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
   branchNameFromRef,
   findPaseoWorktreeRootForCwd,
@@ -974,12 +971,6 @@ export interface MergeFromBaseOptions {
   requireCleanTarget?: boolean;
 }
 
-export function createCheckoutReadSession() {
-  return { isRegisteredWorktree: createRegisteredWorktreeLookup() };
-}
-
-export type CheckoutReadSession = ReturnType<typeof createCheckoutReadSession>;
-
 export interface CheckoutContext {
   paseoHome?: string;
   worktreesRoot?: string;
@@ -1323,7 +1314,7 @@ async function getPaseoWorktreeForCwd(
     paseoHome: options.context?.paseoHome,
     worktreesRoot: options.context?.worktreesRoot,
     knownGitCommonDir: options.knownGitCommonDir,
-    isRegisteredWorktree: options.context?.readSession?.isRegisteredWorktree,
+    readSession: options.context?.readSession,
   });
   if (!ownership.allowed) {
     return { isPaseoOwnedWorktree: false };

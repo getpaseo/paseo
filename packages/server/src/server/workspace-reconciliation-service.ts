@@ -20,7 +20,7 @@ import {
   type MutableWorkspacePlacement,
 } from "./workspace-registry-model.js";
 import { workspaceIdsForProjects } from "./workspace-directory.js";
-import { createCheckoutReadSession, type CheckoutReadSession } from "../utils/checkout-git.js";
+import { CheckoutReadSession } from "../utils/checkout-read-session.js";
 import { getGitCommonDirForWorktreeRoot } from "../utils/worktree-metadata.js";
 import { deriveProjectKey } from "./project-key.js";
 
@@ -396,7 +396,7 @@ export class WorkspaceReconciliationService {
   ): Promise<void> {
     const checkoutReads: CachedCheckoutRead[] = [];
     const checkoutReadLimit = pLimit(CHECKOUT_READ_CONCURRENCY);
-    const readSession = createCheckoutReadSession();
+    const readSession = new CheckoutReadSession();
     const readCheckout = (cwd: string): Promise<ProjectCheckoutLitePayload> => {
       const existing = checkoutReads.find((read) => areEquivalentPaths(read.cwd, cwd));
       if (existing) return existing.checkout;
