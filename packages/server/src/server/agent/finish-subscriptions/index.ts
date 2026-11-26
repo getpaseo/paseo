@@ -85,6 +85,8 @@ interface Watch {
   decide(accepted: boolean): void;
   pending: boolean;
   task?: Promise<void>;
+  /** Decides a followed child's state again; see `createFollowing`. */
+  recheck?(): void;
 }
 function key(record: FinishSubscription): string {
   return JSON.stringify([record.callerAgentId, record.childAgentId, record.serverId]);
@@ -130,6 +132,18 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     group.delete(watch);
     if (!group.size && watches.get(key(watch.records[0]!)) === group)
       watches.delete(key(watch.records[0]!));
+  }
+  /**
+   * A watch that ends without telling its caller leaves that caller's own watchers with no event:
+   * the caller may have no work left now.
+   */
+  function recheckCallerOf(watch: Watch): void {
+    const { callerAgentId } = watch.records[0]!;
+    for (const group of watches.values())
+      for (const watcher of group) {
+        const record = watcher.records[0]!;
+        if (record.childAgentId === callerAgentId && !record.serverId) watcher.recheck?.();
+      }
   }
   async function remove(watch: Watch): Promise<void> {
     // Only IDs captured by this observer are eligible; newer registrations survive.
@@ -287,6 +301,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       pendingWork: () => pendingWork(record),
       reasonFor,
     });
+    watch.recheck = following.recheck;
     const permissions = new Set<string>();
     let observation: FinishObservationSession | undefined;
     /** One outcome and how far it got. Retries resume it: nothing is lost or sent twice. */
@@ -319,9 +334,10 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         };
       }
     }
-    async function end(): Promise<true> {
+    async function end(notified: boolean): Promise<true> {
       await remove(watch);
       stop(watch, group);
+      if (!notified) recheckCallerOf(watch);
       return true;
     }
     async function decide(outcome: FollowOutcome): Promise<Notice | undefined | "suppressed"> {
@@ -336,7 +352,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     }
     /** Handles one outcome. Returns true once the subscription has ended. */
     async function step(): Promise<boolean> {
-      if (await suppressed(record)) return end();
+      if (await suppressed(record)) return end(false);
       if (!current) {
         const outcome = await observeNext();
         if (!outcome) {
@@ -348,7 +364,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       signal.throwIfAborted();
       if (!current.decided) {
         const notice = await decide(current.outcome);
-        if (notice === "suppressed") return end();
+        if (notice === "suppressed") return end(false);
         current = { ...current, decided: true, notice };
       }
       const { notice } = current;
@@ -358,7 +374,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         current.sent = true;
       }
       // A removal failure retries only the commit, never the already accepted callback.
-      if (notice && endsSubscription(notice.reason)) return end();
+      if (notice && endsSubscription(notice.reason)) return end(true);
       current = undefined;
       retries = 0;
       warned = false;

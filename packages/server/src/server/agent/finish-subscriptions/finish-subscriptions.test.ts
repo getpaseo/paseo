@@ -702,6 +702,30 @@ describe("a child that ends its turn while it is still working", () => {
     expect(state.delivery.prompts[2]).toContain("Helper final");
   });
 
+  test("a followed helper settles when its last delegation ends without reporting to it", async () => {
+    const state = await scenario();
+    await state.service.register({ callerAgentId: "parent", childAgentId: "helper" });
+    await state.service.register({
+      callerAgentId: "helper",
+      childAgentId: "sub",
+      requireParentOwnership: true,
+    });
+    await until(() => state.observation.waits.length === 2);
+    const wait = (child: string, index = 0) => state.observation.waitsFor(child)[index]!;
+
+    wait("helper").result.resolve(outcome("idle", "helper", "Waiting for my helper"));
+    await until(() => state.delivery.prompts.length === 1);
+    expect(state.delivery.prompts[0]).toContain("ended its turn but is still working");
+    state.delivery.acknowledgments[0]!.resolve("steered");
+
+    // The sub was detached from the helper, so its result is not reported to the helper.
+    wait("sub").result.resolve(outcome("idle", "sub", "Sub result"));
+    await until(() => state.delivery.prompts.length === 2);
+    expect(state.delivery.prompts[1]).toContain("Agent helper (Child) finished.");
+    expect(state.delivery.prompts[1]).toContain("Waiting for my helper");
+    expect(state.delivery.prompts[1]).not.toContain("Sub result");
+  });
+
   test("agents that only wait on each other settle and both callers hear finished", async () => {
     const state = await scenario();
     await state.service.register({ callerAgentId: "parent", childAgentId: "helper" });

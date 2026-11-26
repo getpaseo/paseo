@@ -36,6 +36,16 @@ export function createFollowing(options: Options) {
     .filter((value) => value !== undefined)
     .sort()[0];
   let latest: FinishObservationResult | null = null;
+  /** Set when something outside the child's own events may have settled it. */
+  let stale = false;
+  let wake: (() => void) | undefined;
+
+  /** The child's last idle outcome, decided again. Nothing while it waits on a permission. */
+  function recheckOutcome(): FinishObservationResult | undefined {
+    stale = false;
+    if (latest?.status !== "idle") return undefined;
+    return { ...latest, workChanged: true };
+  }
 
   async function follow(): Promise<void> {
     const followingSince = new Date().toISOString();
@@ -50,6 +60,8 @@ export function createFollowing(options: Options) {
       if (!since) return observed;
       // The losing side settles when the observation closes.
       observed.catch(() => undefined);
+      const rechecked = stale && recheckOutcome();
+      if (rechecked) return rechecked;
       const timer = new AbortController();
       const limit = pause(
         Math.max(0, Date.parse(since) + options.limitMs - Date.now()),
@@ -57,11 +69,27 @@ export function createFollowing(options: Options) {
         { signal: AbortSignal.any([signal, timer.signal]) },
       );
       limit.catch(() => undefined);
+      const recheck = new Promise<FinishObservationResult>((resolve) => {
+        wake = () => {
+          const outcome = recheckOutcome();
+          if (outcome) resolve(outcome);
+        };
+      });
       try {
-        return await Promise.race<FollowOutcome>([observed, limit]);
+        return await Promise.race<FollowOutcome>([observed, limit, recheck]);
       } finally {
+        wake = undefined;
         timer.abort();
       }
+    },
+    /**
+     * Decides the child's state again without an event from it, as when a delegation of its
+     * own ended without reporting back. Only a followed child is decided again.
+     */
+    recheck() {
+      if (!since) return;
+      stale = true;
+      wake?.();
     },
     /** Returns nothing when the outcome is not worth telling the caller. */
     async decide(outcome: FollowOutcome): Promise<Notice | undefined> {
