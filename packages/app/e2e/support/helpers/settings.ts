@@ -66,7 +66,7 @@ export type SettingsSection = keyof typeof SECTION_LABELS;
 type HostSection =
   | "projects"
   | "connections"
-  | "pair-device"
+  | "devices"
   | "agents"
   | "metadata"
   | "voice"

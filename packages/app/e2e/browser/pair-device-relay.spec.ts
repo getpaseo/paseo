@@ -1,7 +1,24 @@
+import { gotoAppShell, openSettings } from "../support/helpers/app";
+import {
+  addDirectHostFromSettings,
+  openSettingsHostSection,
+  selectSettingsHost,
+} from "../support/helpers/settings";
 import { test } from "../support/fixtures";
+import { startTailscaleTestDaemon } from "../support/helpers/tailscale-daemon";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import {
   expectPairingOffer,
+  cancelTailscaleTurnOff,
+  confirmTailscaleTurnOff,
+  connectThroughTailscale,
+  disableTailscale,
+  enableTailscale,
+  expectTailscaleAddress,
+  expectTailscaleRowLoadsOn,
+  openSetupMobileStep,
+  slowConnectionToHost,
+  expectTailscaleUpdateRequired,
   expectCompletePairingQr,
   expectRelayConsent,
   openPairDeviceModal,
@@ -33,6 +50,62 @@ test("keeps the pairing QR code inside its compact tile", async ({ page }, testI
 
     await expectCompletePairingQr(page);
     await page.screenshot({ path: testInfo.outputPath("pairing-compact.png") });
+  } finally {
+    await daemon.close();
+  }
+});
+
+test("asks for a host update when Tailscale controls are unavailable", async ({ page }) => {
+  const daemon = await startIsolatedHostDaemon("pair-device-browser-old-host", {
+    publishedVersion: "0.13.0-beta.2",
+  });
+  try {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await addDirectHostFromSettings(page, { host: "127.0.0.1", port: daemon.port });
+    await selectSettingsHost(page, daemon.serverId);
+    await openSettingsHostSection(page, daemon.serverId, "devices");
+    await expectTailscaleUpdateRequired(page);
+  } finally {
+    await daemon.close();
+  }
+});
+
+test("turns Tailscale on and off from Devices, asking first over Tailscale", async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  test.skip(process.platform !== "linux", "Uses a second IPv4 loopback address");
+  // The journey opens Devices or the setup six times, two of them over a slowed connection.
+  test.setTimeout(120_000);
+  if (!baseURL) throw new Error("Expected the app base URL");
+  const daemon = await startTailscaleTestDaemon(baseURL);
+  try {
+    await preparePairingHost(page, daemon);
+    await enableTailscale(page);
+    await expectTailscaleAddress(page, daemon.tailscaleAddress);
+    await page.screenshot({ path: testInfo.outputPath("devices.png") });
+
+    await test.step("While its status loads, the row never shows Tailscale off", async () => {
+      const address = daemon.tailscaleAddress;
+      await expectTailscaleRowLoadsOn(page, address, () => preparePairingHost(page, daemon));
+      await expectTailscaleRowLoadsOn(page, address, () => openSetupMobileStep(page, daemon));
+      const restoreSpeed = await slowConnectionToHost(page, daemon.port, 300);
+      await expectTailscaleRowLoadsOn(page, address, () => openSetupMobileStep(page, daemon));
+      await expectTailscaleRowLoadsOn(page, address, () => preparePairingHost(page, daemon));
+      restoreSpeed();
+    });
+
+    await disableTailscale(page, daemon.tailscaleAddress);
+
+    await test.step("Over Tailscale, turning it off asks first and Cancel changes nothing", async () => {
+      await enableTailscale(page);
+      await connectThroughTailscale(page, daemon);
+      await cancelTailscaleTurnOff(page, daemon.tailscaleAddress);
+    });
+    await test.step("Confirming turns it off and cuts this connection", async () => {
+      await confirmTailscaleTurnOff(page, daemon.tailscaleAddress);
+    });
   } finally {
     await daemon.close();
   }

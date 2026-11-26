@@ -23,7 +23,7 @@ const SETTINGS_DESTINATIONS = [
   "Overview",
   "Projects",
   "Connections",
-  "Pair device",
+  "Devices",
   "Agents",
   "Metadata",
   "Workspaces",
