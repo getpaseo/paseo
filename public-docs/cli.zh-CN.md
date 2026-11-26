@@ -42,6 +42,28 @@ paseo usage inspect <report-id> --refresh
 
 查询会在可用时使用主机的五分钟缓存。添加 `--refresh` 可以绕过缓存。使用 `--host` 或 `--home` [选择一个 daemon](#select-one-daemon)。不支持用量来源的主机会返回一条更新提示。
 
+### 为主机用量授权 Cursor {#authorize-cursor-for-host-usage}
+
+通过 [Cursor SDK 浏览器登录](https://cursor.com/docs/sdk/typescript#cursor-auth) 为主机的用量面板创建密钥。在 daemon 所在主机上，用运行 daemon 的系统账号进入一个空目录，并用 Node.js 22.13 或更新版本执行以下命令。
+
+```bash
+npm install --no-save @cursor/sdk@1.5.0
+node --input-type=module -e '
+  import { Cursor, FileCredentialStore } from "@cursor/sdk";
+  import { homedir } from "node:os";
+  import { join } from "node:path";
+  await Cursor.auth.login({
+    apiKeyName: "Paseo Usage",
+    backendUrl: "https://api2.cursor.sh",
+    websiteUrl: "https://cursor.com",
+    store: new FileCredentialStore(join(homedir(), ".cursor", "sdk", "paseo-usage.json")),
+  });
+'
+paseo usage ls --refresh
+```
+
+SDK 将凭据保存在 `~/.cursor/sdk/paseo-usage.json`。Paseo 用它查询主机的用量。密钥过期后，再执行一次浏览器登录。你可以在 Cursor 的 API Keys 页面撤销密钥。
+
 ### 在脚本中使用用量 {#usage-in-scripts}
 
 ```bash

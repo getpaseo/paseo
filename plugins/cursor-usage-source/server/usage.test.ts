@@ -37,6 +37,25 @@ function writeCursorAuthJson(homeDir: string, accessToken: string): void {
   writeFileSync(join(dir, "auth.json"), JSON.stringify({ accessToken }));
 }
 
+function writeCursorSdkAuth(
+  homeDir: string,
+  backendUrl = "https://api2.cursor.sh",
+  apiKeyExpiresAtMs?: number,
+): void {
+  const directory = join(homeDir, ".cursor", "sdk");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, "paseo-usage.json"),
+    JSON.stringify({
+      version: 1,
+      apiKey: "cursor_sdk_key",
+      backendUrl,
+      createdAtMs: 1,
+      apiKeyExpiresAtMs,
+    }),
+  );
+}
+
 function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
   return vi.fn(async (url: RequestInfo | URL) => {
     const key = url.toString();
@@ -255,6 +274,62 @@ describe("cursor usage source", () => {
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "state.vscdb"), "invalid database");
     expect(await discover()).toEqual([]);
+  });
+
+  it("exchanges the SDK login key when encrypted desktop credentials are present", async () => {
+    writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "cursor-safe-storage:v1:fixture" });
+    writeCursorSdkAuth(homeDir);
+    const requests: Array<[string, string | null]> = [];
+    const report = await fetchFirst(async (url, init) => {
+      requests.push([String(url), new Headers(init?.headers).get("authorization")]);
+      return String(url).endsWith("/auth/exchange_user_api_key")
+        ? jsonResponse({ accessToken: "cursor_usage_token" })
+        : jsonResponse({ planUsage: { totalPercentUsed: 37 } });
+    });
+
+    expect(requests).toEqual([
+      ["https://api2.cursor.sh/auth/exchange_user_api_key", "Bearer cursor_sdk_key"],
+      [
+        "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+        "Bearer cursor_usage_token",
+      ],
+    ]);
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [{ id: "plan_usage", usedPct: 37 }],
+    });
+  });
+
+  it("reports an SDK login rejected during exchange without querying quota", async () => {
+    writeCursorSdkAuth(homeDir);
+    const requests: string[] = [];
+    const report = await fetchFirst(async (url) => {
+      requests.push(String(url));
+      return new Response(null, { status: 401 });
+    });
+
+    expect(requests).toEqual(["https://api2.cursor.sh/auth/exchange_user_api_key"]);
+    expect(report).toMatchObject({
+      status: "unavailable",
+      problem: { kind: "rejected", status: 401 },
+    });
+  });
+
+  it("skips SDK logins issued for another backend", async () => {
+    writeCursorSdkAuth(homeDir, "https://example.test");
+    expect(await discover()).toEqual([]);
+  });
+
+  it("reports an expired SDK key before making a network request", async () => {
+    writeCursorSdkAuth(homeDir, "https://api2.cursor.sh", 1);
+    const report = await fetchFirst(async () => {
+      throw new Error("Unexpected request");
+    });
+
+    expect(report).toMatchObject({
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "1970-01-01T00:00:00.001Z" },
+    });
   });
 
   describe("session discovery", () => {

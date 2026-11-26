@@ -36,6 +36,7 @@ function toIsoStringOrNull(timestampMs: number): string | null {
 // ~/.config/cursor/auth.json instead.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
+const CURSOR_API_ORIGIN = "https://api2.cursor.sh";
 
 // @types/node@20 predates the node:sqlite typings; declare the slice we use.
 interface CursorStateStatement {
@@ -74,6 +75,14 @@ const CursorUsageResponseSchema = z.object({
 const CursorAuthStatusSchema = z.object({
   accessToken: z.string().optional(),
 });
+
+const CursorSdkLoginSchema = z.object({
+  version: z.literal(1),
+  backendUrl: z.literal(CURSOR_API_ORIGIN),
+  apiKey: z.string().trim().min(1),
+  apiKeyExpiresAtMs: z.number().finite().optional(),
+});
+const CursorApiKeyExchangeSchema = z.object({ accessToken: z.string().trim().min(1) });
 
 type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
 
@@ -155,22 +164,67 @@ async function readCursorTokenFromAuthJson(path: string): Promise<string | null>
   }
 }
 
+async function readSdkLogin(path: string) {
+  if (!existsSync(path)) return undefined;
+  try {
+    return CursorSdkLoginSchema.parse(JSON.parse(await readFile(path, "utf8")));
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveUsageToken(
+  input: UsageInput,
+  fetchApi: typeof fetch,
+  signal: AbortSignal,
+): Promise<string | ReturnType<typeof unavailable>> {
+  if (input.store !== "sdk") {
+    const token = await readCredential(input);
+    if (!token) throw new Error("Cursor login store no longer exists");
+    return token;
+  }
+
+  const sdkLogin = await readSdkLogin(input.locator);
+  if (!sdkLogin) throw new Error("Cursor SDK login store no longer exists");
+  const expiresAt = sdkLogin.apiKeyExpiresAtMs;
+  if (expiresAt !== undefined && expiresAt <= Date.now()) {
+    const isoExpiry = toIsoStringOrNull(expiresAt);
+    if (isoExpiry) return unavailable({ kind: "expired", expiresAt: isoExpiry });
+  }
+  const exchange = await fetchApi(`${CURSOR_API_ORIGIN}/auth/exchange_user_api_key`, {
+    signal,
+    method: "POST",
+    redirect: "error",
+    headers: { Authorization: `Bearer ${sdkLogin.apiKey}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (exchange.status === 401 || exchange.status === 403)
+    return unavailable({ kind: "rejected", status: exchange.status });
+  if (!exchange.ok) throw new Error(`Cursor API key exchange returned ${exchange.status}`);
+  const result = CursorApiKeyExchangeSchema.safeParse(await exchange.json().catch(() => null));
+  if (!result.success) throw new Error("Cursor API key exchange returned no access token");
+  return result.data.accessToken;
+}
+
 export async function fetchUsage(
   input: UsageInput,
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
-  const token = await readToken(input);
-  if (!token) throw new Error("Cursor login store no longer exists");
+  const signal = AbortSignal.timeout(15_000);
+  const token = await resolveUsageToken(input, fetchApi, signal);
+  if (typeof token !== "string") return token;
 
   const res = await fetchApi(
-    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+    `${CURSOR_API_ORIGIN}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
     {
-      signal: AbortSignal.timeout(15_000),
+      signal,
       method: "POST",
+      redirect: "error",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "Connect-Protocol-Version": "1",
+        "X-Cursor-Client-Type": "cli",
       },
       body: JSON.stringify({}),
     },
@@ -229,8 +283,9 @@ export async function fetchUsage(
   };
 }
 
-async function readToken(input: UsageInput): Promise<string | undefined> {
+async function readCredential(input: UsageInput): Promise<string | undefined> {
   if (input.store === "env") return process.env[input.locator];
+  if (input.store === "sdk") return (await readSdkLogin(input.locator))?.apiKey;
   const token =
     input.store === "sqlite"
       ? await readCursorTokenFromSqlite(input.locator)
@@ -240,9 +295,9 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
 
 const CursorIdentitySchema = z.object({ sub: z.string().min(1) });
 
-function cursorAccount(token: string, input: UsageInput): UsageAccount {
-  const parts = token.split(".");
-  if (parts.length === 3) {
+function cursorAccount(input: UsageInput, token?: string): UsageAccount {
+  const parts = token?.split(".");
+  if (parts?.length === 3) {
     try {
       const payload: unknown = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
       const identity = CursorIdentitySchema.safeParse(payload);
@@ -264,6 +319,7 @@ export async function discover(): Promise<UsageAccount[]> {
     store: "env",
     locator,
   }));
+  candidates.push({ store: "sdk", locator: join(home, ".cursor", "sdk", "paseo-usage.json") });
   if (process.env.APPDATA)
     candidates.push({
       store: "sqlite",
@@ -285,8 +341,8 @@ export async function discover(): Promise<UsageAccount[]> {
     { store: "file", locator: join(home, ".config", "cursor", "auth.json") },
   );
   for (const input of candidates) {
-    const token = await readToken(input);
-    if (token) return [cursorAccount(token, input)];
+    const credential = await readCredential(input);
+    if (credential) return [cursorAccount(input, input.store === "sdk" ? undefined : credential)];
   }
   return [];
 }
@@ -300,8 +356,8 @@ export async function discoverSession(
   const locator = cursorAgentAuthPath(scope.env, platform);
   if (!locator) return [];
   const input: UsageInput = { store: "file", locator };
-  const token = await readToken(input);
-  return token ? [cursorAccount(token, input)] : [];
+  const token = await readCredential(input);
+  return token ? [cursorAccount(input, token)] : [];
 }
 
 // Mirrors cursor-agent's credential store. Env credentials win over the stored login and

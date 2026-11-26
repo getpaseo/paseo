@@ -46,6 +46,28 @@ Queries use the host's five-minute cache when available. Add `--refresh` to bypa
 
 For OpenRouter, set `OPENROUTER_API_KEY` in the daemon’s environment to show what the key spent today, this week, and this month in UTC. Set `OPENROUTER_MANAGEMENT_KEY` to show the remaining account credits. Each variable adds its own report to the host’s Usage panel and `paseo usage`.
 
+### Authorize Cursor for host usage
+
+Use the [Cursor SDK browser login](https://cursor.com/docs/sdk/typescript#cursor-auth) to create a key for the host’s Usage panel. In an empty directory on the daemon host, run these commands with Node.js 22.13 or newer as the user who runs the daemon.
+
+```bash
+npm install --no-save @cursor/sdk@1.5.0
+node --input-type=module -e '
+  import { Cursor, FileCredentialStore } from "@cursor/sdk";
+  import { homedir } from "node:os";
+  import { join } from "node:path";
+  await Cursor.auth.login({
+    apiKeyName: "Paseo Usage",
+    backendUrl: "https://api2.cursor.sh",
+    websiteUrl: "https://cursor.com",
+    store: new FileCredentialStore(join(homedir(), ".cursor", "sdk", "paseo-usage.json")),
+  });
+'
+paseo usage ls --refresh
+```
+
+The SDK stores the credential in `~/.cursor/sdk/paseo-usage.json`. Paseo uses it for the host Usage panel. When the key expires, run the browser login again. You can revoke the key in Cursor’s API Keys dashboard.
+
 ### Usage in scripts
 
 ```bash
