@@ -201,15 +201,9 @@ export class AgentStoreProjection {
     useDraftStore.getState().clearDraftInput({
       draftKey: buildDraftStoreKey({ serverId: this.serverId, agentId }),
     });
-    // Only entity deletion destroys the transcript. A filtered active-list
-    // response can arrive after a fresh history response for an archived agent.
-    const store = useSessionStore.getState();
-    const removeKey = withoutAgent(agentId);
-    store.setAgentTimelineCursor(this.serverId, removeKey);
-    store.setAgentTimelineUnsettledTurn(this.serverId, agentId, null);
-    store.setAgentAuthoritativeHistoryApplied(this.serverId, agentId, false);
-    store.setAgentStreamTail(this.serverId, removeKey);
-    store.clearAgentStreamHead(this.serverId, agentId);
+    // Leaving the active list does not release the transcript: an archived chat open in
+    // History stays readable. The viewed timeline owner releases it once nobody shows it.
+    useSessionStore.getState().releaseAgentTimeline(this.serverId, agentId);
   }
 
   archive(agentId: string, archivedAt: string): Agent | null {

@@ -52,6 +52,9 @@ export function createPluginWorkspaceSnapshot(
     createdAt: serializeTimestamp(workspace.createdAt),
     lastPromptAt: serializeTimestamp(workspace.lastUserMessageAt),
     parentAgent,
+    parentWorkspace: workspace.parentWorkspaceId
+      ? entityRefs.workspace(hostId, workspace.parentWorkspaceId)
+      : null,
     indicator,
     indicatorLabel: getStatusBucketLabel(indicator, i18n.t),
     id: workspace.id,

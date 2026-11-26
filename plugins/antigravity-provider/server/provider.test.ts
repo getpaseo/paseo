@@ -517,6 +517,112 @@ it.each(["live", "replay"] as const)(
   },
 );
 
+// agy 1.5.14 lists `thought_level` only for the selected model and omits it for Orchestrator.
+it("offers each model its own thinking options and opens Orchestrator with its default", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const levels = (...values) => values.map((value) => ({ value, name: value }));
+    const thinking = {
+      "gemini-4-neon": { currentValue: "high", options: levels("low", "medium", "high", "xhigh") },
+      "gemini-4-carbon": { currentValue: "high", options: levels("low", "medium", "high") },
+      "claude-opus-5-5": { currentValue: "medium", options: levels("low", "medium", "high") },
+    };
+    let model = "gemini-4-neon";
+    const configOptions = () => [
+      { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: [
+        { value: "gemini-4-neon", name: "Gemini 4 Neon" },
+        { value: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+        { value: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)" },
+        { value: "claude-opus-5-5", name: "Claude Opus 5.5" },
+      ] },
+      ...(thinking[model] ? [{ id: "thought_level", name: "Thinking", category: "thought_level", type: "select", ...thinking[model] }] : []),
+      { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+        options: [{ value: "default", name: "Default" }, { value: "plan", name: "Plan" }] },
+    ];
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      if (method === "initialize") send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+      if (method === "session/new") {
+        model = "gemini-4-neon";
+        send({ id, result: { sessionId: "native", configOptions: configOptions() } });
+      }
+      if (method === "session/set_config_option") {
+        if (params.configId === "thought_level" && !thinking[model]) {
+          send({ id, error: { code: -32602, message: "unknown config option" } });
+          return;
+        }
+        if (params.configId === "model") model = params.value;
+        else if (params.configId === "thought_level") thinking[model].currentValue = params.value;
+        send({ id, result: { configOptions: configOptions() } });
+      }
+      if (method === "session/close") send({ id, result: {} });
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["session.configure"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({ type: "catalog", requestId: "catalog", cwd: directory });
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "catalog" || event.type === "request.failed"),
+      )
+      .toMatchObject({ type: "catalog" });
+    const catalog = events.find((event) => event.type === "catalog");
+    if (catalog?.type !== "catalog") throw new Error("Expected a catalog");
+    const thinkingByModel = Object.fromEntries(
+      catalog.catalog.models.map((model) => [
+        model.id,
+        {
+          options: model.thinkingOptions?.map((option) => option.id),
+          default: model.defaultThinkingOptionId,
+        },
+      ]),
+    );
+    expect(thinkingByModel).toEqual({
+      "gemini-4-neon": { options: ["low", "medium", "high", "xhigh"], default: "high" },
+      "gemini-4-carbon": { options: ["low", "medium", "high"], default: "high" },
+      "gemini-pro-orchestrator-neon": { options: [], default: undefined },
+      "claude-opus-5-5": { options: ["low", "medium", "high"], default: "medium" },
+    });
+
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "orchestrator",
+      history: "skip",
+      config: {
+        cwd: directory,
+        model: "gemini-pro-orchestrator-neon",
+        mode: "full-access",
+        thinkingOption: thinkingByModel["gemini-pro-orchestrator-neon"]!.default,
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: true,
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              (event.type === "session.ready" && event.sessionId === "orchestrator") ||
+              (event.type === "request.failed" && event.requestId === "open"),
+          ),
+        { timeout: 3_000 },
+      )
+      .toMatchObject({ type: "session.ready" });
+  } finally {
+    await connection.close();
+  }
+});
+
 describe("installation", () => {
   const signal = new AbortController().signal;
 
@@ -776,6 +882,78 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
         item: expect.objectContaining({ type: "assistant_message", text: "Build finished." }),
       }),
     );
+  } finally {
+    await connection.close();
+  }
+});
+
+it("runs a wrapped session as [...wrap, agy, acp, --disable-telemetry] with the session env", async () => {
+  const { directory, launch: fixture } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      if (method === "initialize") send({ id, result: { protocolVersion: 1 } });
+      if (method === "session/new") {
+        send({ id, result: { sessionId: "native", configOptions: [{ id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] }] } });
+        send({ method: "session/update", params: { sessionId: "native", update: { sessionUpdate: "available_commands_update", availableCommands: [] } } });
+      }
+    });
+  `);
+  // Records what it was started with, then runs the rest: the provider's own launch.
+  const launcher = path.join(directory, "launcher.cjs");
+  const record = path.join(directory, "launch.json");
+  await writeFile(
+    launcher,
+    `const { writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const [log, command, ...args] = process.argv.slice(2);
+writeFileSync(log, JSON.stringify({ argv: process.argv.slice(2), hook: process.env.HOOK_ENV ?? null }));
+const child = spawn(command, args, { stdio: "inherit" });
+process.on("SIGTERM", () => child.kill("SIGTERM"));
+child.on("exit", (code) => process.exit(code ?? 1));
+`,
+  );
+  const provider = createAntigravityProvider();
+  expect(provider.launchWrap).toBe(true);
+  // The daemon resolves the registration's executable and passes its arguments as declared;
+  // Node running the fake agent stands in for the resolved `agy`.
+  const [executable, ...declaredArgs] = provider.command!;
+  expect(executable).toBe("agy");
+  const agentScript = fixture.args[0]!;
+  const launch = { ...fixture, args: [agentScript, ...declaredArgs] };
+  const connection = await provider.connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message", "session.launch_wrap"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "new",
+      sessionId: "test",
+      history: "skip",
+      config: {
+        cwd: directory,
+        env: { HOOK_ENV: "final" },
+        mcpServers: {},
+        settings: {},
+        persist: false,
+        wrap: [process.execPath, launcher, record],
+      },
+    });
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "session.ready" || event.type === "request.failed"),
+      )
+      .toMatchObject({ type: "session.ready" });
+    const launched = JSON.parse(await readFile(record, "utf8"));
+    expect(launched).toEqual({
+      argv: [record, process.execPath, agentScript, "acp", "--disable-telemetry"],
+      hook: "final",
+    });
   } finally {
     await connection.close();
   }

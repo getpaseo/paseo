@@ -201,23 +201,6 @@ test("exposes and applies auto permission mode", async () => {
   }
 });
 
-test("rejects auto mode when Claude Code uses Bedrock", async () => {
-  const previousBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
-  process.env.CLAUDE_CODE_USE_BEDROCK = "1";
-
-  const session = await createSession();
-
-  try {
-    await expect(session.setMode("auto")).rejects.toThrow(
-      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Bedrock",
-    );
-    expect(sdkQueryFactory).not.toHaveBeenCalled();
-  } finally {
-    restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
-    await session.close();
-  }
-});
-
 test.each([
   { env: {}, expected: "auto" },
   { env: { CLAUDE_CODE_USE_BEDROCK: "1" }, expected: "default" },
@@ -289,40 +272,6 @@ test("allows launch env to disable inherited Bedrock transport for auto mode", a
     expect(await session.getCurrentMode()).toBe("auto");
   } finally {
     restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
-    await session.close();
-  }
-});
-
-test("fails an auto mode turn when Claude Code uses Vertex", async () => {
-  const previousVertex = process.env.CLAUDE_CODE_USE_VERTEX;
-  process.env.CLAUDE_CODE_USE_VERTEX = "true";
-  sdkQueryFactory.mockImplementation(() => {
-    throw new Error("query should not start");
-  });
-  const client = new ClaudeAgentClient({
-    logger: createTestLogger(),
-    queryFactory: sdkQueryFactory,
-    resolveBinary: async () => "/test/claude/bin",
-  });
-  const session = await client.createSession({
-    provider: "claude",
-    cwd: process.cwd(),
-    modeId: "auto",
-  });
-
-  try {
-    const events = await collectUntilTerminal(streamSession(session, "hello"));
-    const failure = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
-        event.type === "turn_failed",
-    );
-
-    expect(failure?.error).toContain(
-      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Vertex",
-    );
-    expect(sdkQueryFactory).not.toHaveBeenCalled();
-  } finally {
-    restoreEnvValue("CLAUDE_CODE_USE_VERTEX", previousVertex);
     await session.close();
   }
 });

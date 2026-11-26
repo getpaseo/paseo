@@ -49,6 +49,11 @@ export interface AcpOptions {
   startupTimeoutMs?: number;
   /** Global discovery initializes ACP but returns an empty catalog without opening a session. */
   workspaceOnlyCatalog?: boolean;
+  /**
+   * For an agent that lists thinking options only for the selected model: discovery selects each
+   * model in turn and records the thinking options the agent lists for it, or none.
+   */
+  perModelThinkingOptions?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
   /**
@@ -112,9 +117,14 @@ export interface AcpToolCallSnapshot {
   title: string;
   kind?: string;
   status: "pending" | "in_progress" | "completed" | "failed";
+  /** The call's ACP `rawInput`. */
   input: JsonValue;
+  /** The call's ACP `rawOutput`. */
   output: JsonValue;
+  /** The call's ACP `content` blocks. An update that sends `content` replaces them. */
+  content?: JsonValue;
   locations: readonly string[];
+  /** The row Paseo shows. Without it, Paseo builds the standard row for the call's ACP `kind`. */
   detail?: ProviderToolCallDetail;
 }
 
@@ -145,9 +155,14 @@ export interface AcpTransformer {
     notification: { method: string; params: JsonValue },
     context: AcpContext,
   ): AcpVendorUpdate | readonly AcpVendorUpdate[] | null;
+  /** Rewrites each update of a tool call, merged with the call's earlier updates. */
   toolCall?(
     toolCall: AcpToolCallSnapshot,
-    context: AcpContext & { mcpServerNames?: readonly string[] },
+    context: AcpContext & {
+      mcpServerNames?: readonly string[];
+      /** The call as Paseo last presented it, after every transformer. Absent on its first update. */
+      previous?: AcpToolCallSnapshot;
+    },
   ): AcpToolCallSnapshot;
 }
 
@@ -166,6 +181,8 @@ export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistra
     description: options.description,
     icon: options.icon,
     command: options.command,
+    // Each command-based session spawns its own process, so it can run behind that session's wrap.
+    ...(hasCommand ? { launchWrap: true } : {}),
     connect(request) {
       return createAcpProviderConnection(options, request);
     },

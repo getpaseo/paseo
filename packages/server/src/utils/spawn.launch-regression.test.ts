@@ -127,6 +127,7 @@ async function runFixture(params: {
   args: string[];
   shell?: boolean;
   env?: NodeJS.ProcessEnv;
+  expectedArgs?: string[];
 }): Promise<SpawnResult> {
   const child = spawnProcess(params.command, params.args, {
     env: {
@@ -135,7 +136,7 @@ async function runFixture(params: {
       // Terminal color settings must not add Node warnings to the argv fixture's stderr.
       NO_COLOR: undefined,
       FORCE_COLOR: undefined,
-      PASEO_EXPECTED_ARGV_JSON: JSON.stringify(["--config", JSON_ARG]),
+      PASEO_EXPECTED_ARGV_JSON: JSON.stringify(params.expectedArgs ?? ["--config", JSON_ARG]),
     },
     stdio: ["ignore", "pipe", "pipe"],
     ...(params.shell === undefined ? {} : { shell: params.shell }),
@@ -276,6 +277,18 @@ describe.runIf(isPlatform("win32"))("Windows spawn launch regression", () => {
     expect(result.signal).toBeNull();
     expect(result.stderr).toBe("");
     expect(result.stdout.trim()).toBe("ARGV_OK");
+  });
+
+  // A plugin launch wrap can pass an empty argument to a .cmd launcher; cmd.exe must keep its slot.
+  test("launches a cmd shim with an empty argument in its position", async () => {
+    const fixture = makeFixture();
+    const args = ["--profile", "", "--config", JSON_ARG];
+
+    const result = await runFixture({ command: fixture.shim, args, expectedArgs: args });
+
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe("ARGV_OK");
+    expect(result.code).toBe(0);
   });
 
   test("direct launch with a space-containing executable preserves JSON args", async () => {

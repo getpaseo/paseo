@@ -6,7 +6,11 @@ import {
   isSameDaemonInstance,
   DaemonInstanceError,
 } from "@getpaseo/server/daemon-control";
-import { readPersistedConfig, resolveConfigFromPersisted } from "@getpaseo/server/configuration";
+import {
+  readPersistedConfig,
+  resolveConfigFromPersisted,
+  getMainListenAddress,
+} from "@getpaseo/server/configuration";
 import { connectToDaemon, buildDaemonConnectionCommandError } from "../../utils/client.js";
 import { withOutput, toCommandError, type CommandOptions } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
@@ -103,6 +107,8 @@ async function probeDaemonStatus(
         daemonNode: status.nodePath,
         providers: status.providers,
         relay: status.relay,
+        tailscale: status.tailscale,
+        extraListeners: status.extraListeners,
         ...(status.terminalsUnavailable ? { terminals: status.terminalsUnavailable } : {}),
       };
     }
@@ -127,7 +133,7 @@ function localStatus(home: string, instance: Awaited<ReturnType<typeof readDaemo
     listen: instance?.listen ?? null,
     serverId: instance?.serverId ?? undefined,
     hostname: instance?.hostname ?? null,
-    configuredListen: config.listen,
+    configuredListen: getMainListenAddress(config.listen),
     localDaemon,
     desktopManaged: instance?.desktopManaged === true,
     logPath: daemonLogPath(home),

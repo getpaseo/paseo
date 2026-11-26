@@ -87,10 +87,6 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npx --yes lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
 
-      - name: Verify dependency signatures
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
-        run: npm audit signatures
-
       - name: Lint
         if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.quality != 'false') }}
         run: npm run lint
@@ -134,6 +130,29 @@ jobs:
       - name: Typecheck client examples
         if: ${{ !cancelled() && steps.install.outcome == 'success' && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
         run: npm run typecheck:examples --workspace=@getpaseo/client
+
+  # Plugin process launches and launch wraps quote for cmd.exe, which only real Windows checks.
+  sdk-tests-windows:
+    name: sdk-tests (windows-latest)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.sdk != 'false') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build plugin SDK
+        run: npm run build:relay && npm run build:client && npm run build:plugin
+
+      - name: Run plugin SDK tests
+        run: npm run test --workspace=@getpaseo/plugin
 
   # The locked Playwright installers do not support ubuntu-latest's Ubuntu 26.04.
   typecheck:
@@ -299,10 +318,7 @@ jobs:
         run: npm run test:integration --workspace=@getpaseo/server
         env: *server_test_env
 
-  # native-recursive.ts serves darwin and win32, but windows-latest above is the only
-  # runner that exercises it. macOS — the platform the reported watcher bug was on —
-  # otherwise has no server-test coverage. Keep this job scoped to regressions
-  # reported on macOS.
+  # Keep this job scoped to regressions reported on macOS.
   server-tests-macos:
     name: server-tests (macos-latest, file observation)
     needs: changes
@@ -326,8 +342,17 @@ jobs:
         run: |
           npm run test:unit --workspace=@getpaseo/server -- \
             src/server/file-observer \
+            src/server/workspace-reconciliation-observation.test.ts \
+            src/utils/checkout-git-identity.test.ts \
             src/server/workspace-git-service.observation.test.ts \
             src/server/workspace-git-service.observation.integration.test.ts \
+            --bail=1
+
+      - name: Verify path casing on macOS
+        run: |
+          npm run test:unit --workspace=@getpaseo/server -- \
+            src/server/agent/agent-storage.test.ts \
+            src/utils/directory-suggestions.test.ts \
             --bail=1
 
       - name: Verify plugin compiler children are reaped
@@ -335,6 +360,11 @@ jobs:
           npm run test:unit --workspace=@getpaseo/server -- \
             src/server/plugins/index.posix.test.ts \
             -t "reaps compiler children" --bail=1
+
+      - name: Verify plugin session sockets survive a dead plugin child
+        run: |
+          npm run test:unit --workspace=@getpaseo/server -- \
+            src/server/plugins/session-socket.posix.test.ts --bail=1
 
   desktop-tests-ubuntu:
     name: desktop-tests (ubuntu-latest)

@@ -94,6 +94,19 @@ describe("Hub session protocol", () => {
     expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
   });
 
+  test("round-trips the working directory on named-agent validation", () => {
+    const request = {
+      type: "hub.execution.agent.validate.request",
+      requestId: "validate-workspace",
+      provider: "opencode",
+      model: "workspace-model",
+      cwd: "/workspace",
+    };
+
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    expect(SessionInboundMessageSchema.safeParse({ ...request, cwd: 123 }).success).toBe(false);
+  });
+
   test("accepts the Hub execution create request", () => {
     const message = {
       type: "hub.execution.agent.create.request",

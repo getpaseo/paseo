@@ -646,6 +646,7 @@ export interface SessionOptions {
   serverId?: string;
   daemonVersion?: string;
   daemonRuntimeConfig?: DaemonRuntimeConfig;
+  getSourceLocalEndpoint?: (source: object) => string | undefined;
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
 }
 
@@ -845,6 +846,10 @@ export class Session {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
+  // What worktree setup and teardown commands run through: the plugins' hooks, or none.
+  private get commandLifecycle(): NonNullable<SessionOptions["pluginRuntime"]> | null {
+    return this.pluginRuntime ?? null;
+  }
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
@@ -906,6 +911,7 @@ export class Session {
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
+  private readonly getSourceLocalEndpoint?: (source: object) => string | undefined;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly messageReceipts: Pick<MessageReceipts, "send">;
@@ -1205,6 +1211,7 @@ export class Session {
       projectRegistry: this.projectRegistry,
       logger: this.sessionLogger,
     });
+    this.getSourceLocalEndpoint = options.getSourceLocalEndpoint;
     this.daemonSession = new DaemonSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -1306,11 +1313,14 @@ export class Session {
     });
     this.workspaceArchiveOperations = resolveWorkspaceArchiveOperations(workspaceArchiveOperations);
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
+      lifecycle: this.commandLifecycle,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       worktreeManagers: this.pluginRuntime,
       workspaceArchiveOperations: this.workspaceArchiveOperations,
       getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+      assertWorkspaceAutomationAllowed: (workspaceId) =>
+        assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
       isCheckoutUntrusted: (checkoutPath) =>
         isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
       agentManager: this.agentManager,
@@ -2752,7 +2762,7 @@ export class Session {
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchCreationMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
-      this.dispatchAgentConfigMessage(msg) ??
+      this.dispatchConfigMessage(msg, source) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
@@ -3349,7 +3359,10 @@ export class Session {
     }
   }
 
-  private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchConfigMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
     switch (msg.type) {
       case "set_agent_mode_request":
         return this.agentConfigSession.handleSetAgentModeRequest(msg);
@@ -3370,21 +3383,6 @@ export class Session {
           },
         });
         return undefined;
-      case "daemon.get_status.request":
-        return this.daemonSession.handleGetStatusRequest(msg);
-      case "daemon.get_pairing_offer.request":
-        return this.daemonSession.handleGetPairingOfferRequest(msg);
-      case "daemon.config.reload.request":
-        return this.daemonSession.handleConfigReloadRequest(msg);
-      case "hub.management.daemon.connect.request":
-      case "hub.management.daemon.get_status.request":
-      case "hub.management.daemon.disconnect.request":
-      case "hub.management.daemon.permissions.update.request":
-        return this.daemonSession.handleHubRelationshipRequest(msg);
-      case "diagnostics.request":
-        return this.daemonSession.handleDiagnosticsRequest(msg);
-      case "daemon.update.request":
-        return this.daemonSession.handleUpdateRequest(msg);
       case "set_daemon_config_request":
         return this.daemonConfigStore.patch(msg.config).then((config) => {
           return this.emit({
@@ -3399,6 +3397,39 @@ export class Session {
         return this.projectConfigSession.handleReadProjectConfigRequest(msg);
       case "write_project_config_request":
         return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
+      default:
+        return this.dispatchDaemonMessage(msg, source);
+    }
+  }
+
+  private dispatchDaemonMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "daemon.get_status.request":
+        return this.daemonSession.handleGetStatusRequest(
+          msg,
+          source && this.getSourceLocalEndpoint?.(source),
+        );
+      case "daemon.tailscale.set.request":
+        return this.daemonSession.handleSetTailscaleRequest(
+          msg,
+          source && this.getSourceLocalEndpoint?.(source),
+        );
+      case "daemon.get_pairing_offer.request":
+        return this.daemonSession.handleGetPairingOfferRequest(msg);
+      case "daemon.config.reload.request":
+        return this.daemonSession.handleConfigReloadRequest(msg);
+      case "hub.management.daemon.connect.request":
+      case "hub.management.daemon.get_status.request":
+      case "hub.management.daemon.disconnect.request":
+      case "hub.management.daemon.permissions.update.request":
+        return this.daemonSession.handleHubRelationshipRequest(msg);
+      case "diagnostics.request":
+        return this.daemonSession.handleDiagnosticsRequest(msg);
+      case "daemon.update.request":
+        return this.daemonSession.handleUpdateRequest(msg);
       default:
         return undefined;
     }
@@ -5851,6 +5882,7 @@ export class Session {
   ): Promise<void> {
     return handleWorktreeArchiveRequest(
       {
+        lifecycle: this.commandLifecycle,
         paseoHome: this.paseoHome,
         paseoWorktreesBaseRoot: this.worktreesRoot,
         worktreeManagers: this.pluginRuntime,
@@ -5871,6 +5903,8 @@ export class Session {
         clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
         killTerminalsForWorkspace: (workspaceId) =>
           this.terminalController.killTerminalsForWorkspace(workspaceId),
+        assertWorkspaceAutomationAllowed: (workspaceId) =>
+          assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
         isCheckoutUntrusted: (checkoutPath) =>
           isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
         sessionLogger: this.sessionLogger,
@@ -6572,16 +6606,19 @@ export class Session {
     };
   }
 
-  private async withWorkspaceCheckout<T>(workspaceId: string, run: () => Promise<T>): Promise<T> {
+  private async withWorkspaceCheckout<T>(
+    workspaceId: string,
+    run: (checkoutPath: string | null) => Promise<T>,
+  ): Promise<T> {
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) {
-      return run();
+      return run(null);
     }
     const checkoutPath = await resolveWorkspaceBackingPath(workspace, {
       paseoHome: this.paseoHome,
       paseoWorktreesBaseRoot: this.worktreesRoot,
     });
-    return this.workspaceArchiveOperations.withCheckout(checkoutPath, run);
+    return this.workspaceArchiveOperations.withCheckout(checkoutPath, () => run(checkoutPath));
   }
 
   private async withCheckoutForDirectory<T>(cwd: string, run: () => Promise<T>): Promise<T> {
@@ -8165,6 +8202,7 @@ export class Session {
   ): Promise<CreatePaseoWorktreeWorkflowResult> {
     return createWorktreeWorkflow(
       {
+        lifecycle: this.commandLifecycle,
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
         createPaseoWorktree: (workflowInput, serviceOptions) =>
@@ -8218,9 +8256,18 @@ export class Session {
   ): Promise<void> {
     return handleWorkspaceSetupRunRequestMessage(
       {
+        lifecycle: this.commandLifecycle,
         getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
         clearAutomationBlock: (workspaceId) =>
-          clearWorkspaceAutomationBlock(this.workspaceRegistry, workspaceId),
+          this.withWorkspaceCheckout(workspaceId, async (checkoutPath) => {
+            const current = await this.workspaceRegistry.get(workspaceId);
+            if (!current || current.archivedAt) {
+              throw new Error(`Workspace not found: ${workspaceId}`);
+            }
+            return clearWorkspaceAutomationBlock(this.workspaceRegistry, workspaceId, {
+              checkoutPath,
+            });
+          }),
         startWorkspaceSetup: (workspaceId, operation) =>
           this.workspaceSetupRuntime.start(workspaceId, operation),
         paseoHome: this.paseoHome,
@@ -8259,6 +8306,7 @@ export class Session {
           }
           return archiveByScope(
             {
+              lifecycle: this.commandLifecycle,
               paseoHome: this.paseoHome,
               paseoWorktreesBaseRoot: this.worktreesRoot,
               worktreeManagers: this.pluginRuntime,

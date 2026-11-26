@@ -1,10 +1,11 @@
 import { useWorkspaceChatStatusSummary } from "@/hooks/use-workspace-chat-status-summary";
 import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { PressableStateCallbackType } from "react-native";
+import type { GestureResponderEvent, PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
+  CheckSquare,
   CircleCheck,
   Copy,
   MoreVertical,
@@ -57,6 +58,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
+const ThemedCheckSquare = withUnistyles(CheckSquare);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
@@ -68,6 +70,7 @@ const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColor
 const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
+const selectLeadingIcon = <ThemedCheckSquare size={14} uniProps={foregroundMutedColorMapping} />;
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
@@ -122,6 +125,7 @@ export interface SidebarWorkspaceMenuProps {
   onCopyBranchName?: () => void;
   onRename?: () => void;
   onMarkAsRead?: () => void;
+  onSelectWorkspace?: () => void;
   onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
@@ -169,6 +173,7 @@ function SidebarWorkspaceMenuItems({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
+  onSelectWorkspace,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -258,6 +263,16 @@ function SidebarWorkspaceMenuItems({
         path={openInFileManagerPath}
         testID={`sidebar-workspace-menu-open-folder-${workspaceKey}`}
       />
+      {onSelectWorkspace ? (
+        <WorkspaceMenuItem
+          surface={surface}
+          testID={`sidebar-workspace-menu-select-${workspaceKey}`}
+          leading={selectLeadingIcon}
+          onSelect={onSelectWorkspace}
+        >
+          {t("sidebar.workspace.actions.select")}
+        </WorkspaceMenuItem>
+      ) : null}
       {onArchive ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -284,6 +299,7 @@ export function SidebarWorkspaceMenu({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
+  onSelectWorkspace,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -329,6 +345,7 @@ export function SidebarWorkspaceMenu({
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
+          onSelectWorkspace={onSelectWorkspace}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}
@@ -361,6 +378,7 @@ export function SidebarWorkspaceContextMenu({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
+  onSelectWorkspace,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -414,11 +432,37 @@ export function SidebarWorkspaceContextMenu({
     [workspace],
   );
   const pages = useWorkspaceLabelMenuPages(workspaceTarget);
+  const checkboxSpaceKeyProps = useMemo(() => {
+    if (!isWeb || triggerProps.accessibilityRole !== "checkbox" || !triggerProps.onPress) {
+      return {};
+    }
+    const onPress = triggerProps.onPress;
+    return {
+      // React Native Web's Pressable activates Space only for role="button", not checkbox.
+      onKeyDown: (event: {
+        key?: string;
+        repeat?: boolean;
+        target?: unknown;
+        currentTarget?: unknown;
+        preventDefault?: () => void;
+      }) => {
+        if (triggerProps.disabled) return;
+        if (event.target !== event.currentTarget) return;
+        if (event.key === " " || event.key === "Spacebar") {
+          event.preventDefault?.();
+          if (!event.repeat) {
+            onPress(event as unknown as GestureResponderEvent);
+          }
+        }
+      },
+    };
+  }, [triggerProps.accessibilityRole, triggerProps.disabled, triggerProps.onPress]);
 
   return (
     <ContextMenu open={contextMenuOpen} onOpenChange={onContextMenuOpenChange}>
       <ContextMenuTrigger
         {...triggerProps}
+        {...checkboxSpaceKeyProps}
         enabledOnMobile={false}
         accessibilityLabel={accessibilityLabel ?? rowAccessibilityLabel}
         highlightStyle={highlightStyle}
@@ -441,6 +485,7 @@ export function SidebarWorkspaceContextMenu({
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
+          onSelectWorkspace={onSelectWorkspace}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}

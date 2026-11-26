@@ -23,9 +23,12 @@ export class ClaudeRuntimeSafety {
   // count unknown until the next Stop, so an interrupted or failed turn keeps the runtime.
   private sessionCrons = 0;
   private sessionCronsUnknown = false;
+  // One-shot wakeups (ScheduleWakeup) start a turn by themselves; recurring crons never settle.
+  private oneShotWakeups = 0;
 
   reset(): void {
     this.sessionCrons = 0;
+    this.oneShotWakeups = 0;
     this.sessionCronsUnknown = false;
     this.inventoryState = "unknown";
     this.turnSeen = false;
@@ -51,7 +54,20 @@ export class ClaudeRuntimeSafety {
   observeStop(sessionCrons: readonly SessionCronSummary[] | undefined): void {
     if (this.inventoryState === "retired") return;
     this.sessionCronsUnknown = false;
-    if (sessionCrons) this.sessionCrons = sessionCrons.length;
+    if (sessionCrons) {
+      this.sessionCrons = sessionCrons.length;
+      this.oneShotWakeups = sessionCrons.filter((cron) => !cron.recurring).length;
+    }
+  }
+
+  /**
+   * True while a live background task or an undelivered task notification will start a turn,
+   * or a one-shot wakeup is scheduled. Recurring crons are excluded: they never settle.
+   */
+  hasPendingWakeup(): boolean {
+    return (
+      this.liveTasks.length > 0 || this.awaitingNotifications.size > 0 || this.oneShotWakeups > 0
+    );
   }
 
   /** Returns a full replacement only when the visible inventory changes. */

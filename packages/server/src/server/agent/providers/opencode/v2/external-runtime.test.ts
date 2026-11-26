@@ -4,6 +4,7 @@ import { createServer as createNetServer } from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
+import { OpenCodeHttpError } from "../http-error.js";
 import { V2Runtime } from "./runtime.js";
 import { EXTERNAL_SERVER_PASSWORD_ENV, EXTERNAL_SERVER_URL_ENV } from "./external-server.js";
 
@@ -101,6 +102,51 @@ describe("V2Runtime against an external server", () => {
     expect(requests).toHaveLength(1);
   });
 
+  test.each([
+    {
+      status: 404,
+      contentType: "application/json",
+      body: '{"_tag":"LocationNotFoundError","message":"Location not found"}',
+    },
+    { status: 404, contentType: "application/json", body: "invalid JSON" },
+    { status: 404, contentType: "text/html", body: "<html>Not found</html>" },
+    { status: 500, contentType: "application/json", body: '{"_tag":"SessionNotFoundError"}' },
+  ])(
+    "keeps unrelated HTTP $status $contentType failures",
+    async ({ status, contentType, body }) => {
+      server = createServer((request, response) => {
+        if (request.url === "/api/info") {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({ version: "2.3.0", pid: 1, urls: [], paths: { tmp: "/tmp" } }),
+          );
+          return;
+        }
+        response.writeHead(status, { "content-type": contentType });
+        response.end(body);
+      });
+      const port = await listen(server);
+      const runtime = new V2Runtime({
+        logger: createTestLogger(),
+        externalServer: { url: `http://127.0.0.1:${port}` },
+      });
+      try {
+        const connection = await runtime.acquire();
+        await expect(connection.client.session.get({ sessionID: "missing" })).rejects.toMatchObject(
+          {
+            cause: expect.objectContaining({
+              name: OpenCodeHttpError.name,
+              status,
+              html: contentType === "text/html",
+            }),
+          },
+        );
+      } finally {
+        await runtime.shutdown();
+      }
+    },
+  );
+
   test("reports the external server as exited once it stops accepting connections", async () => {
     server = createServer((request, response) => {
       if (request.url !== "/api/info") {
@@ -166,17 +212,6 @@ describe("V2Runtime against an external server", () => {
 
     await expect(runtime.acquire()).rejects.toThrow(
       `Cannot reach OpenCode v2 server at http://127.0.0.1:${port}`,
-    );
-    await runtime.shutdown();
-  });
-
-  test("rejects session configuration that requires process isolation", async () => {
-    const runtime = new V2Runtime({
-      logger: createTestLogger(),
-      externalServer: { url: "http://127.0.0.1:1" },
-    });
-    await expect(runtime.acquire({ dedicated: true })).rejects.toThrow(
-      "require an isolated server",
     );
     await runtime.shutdown();
   });

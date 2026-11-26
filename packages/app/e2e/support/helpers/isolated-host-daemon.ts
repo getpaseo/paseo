@@ -1,4 +1,5 @@
 import { promisify } from "node:util";
+import { once } from "node:events";
 import {
   spawn,
   execFile,
@@ -11,6 +12,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { WebSocket } from "ws";
 import { withDisabledE2ESpeechEnv } from "./speech-env";
 import { killProcessTree, spawnTsx } from "./spawn-node";
 
@@ -64,12 +66,14 @@ export async function getAvailableHostDaemonPort(): Promise<number> {
  * Resolves once this daemon answers on its port. An open TCP port is not
  * enough: the port is released before the daemon binds it, and whatever takes
  * it in between also accepts connections while the daemon exits with
- * EADDRINUSE. Only the daemon's own status reports its server id.
+ * EADDRINUSE. Only the daemon's own status reports its server id. Published
+ * daemons can serve status before they accept WebSocket upgrades.
  */
 async function waitForServer(
   port: number,
   child: ChildProcess,
   identity: { serverId: string; paseoHome: string },
+  published: boolean,
 ): Promise<void> {
   const deadline = Date.now() + 90_000;
   let lastError: unknown = null;
@@ -82,7 +86,10 @@ async function waitForServer(
     }
     try {
       const serverId = await readServerId(port, identity.paseoHome);
-      if (serverId === identity.serverId) return;
+      if (serverId === identity.serverId) {
+        if (published) await checkWebSocketUpgrade(port);
+        return;
+      }
       lastError = new Error(`Port ${port} is served by ${serverId}, not ${identity.serverId}`);
     } catch (error) {
       lastError = error;
@@ -95,6 +102,12 @@ async function waitForServer(
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );
+}
+
+async function checkWebSocketUpgrade(port: number): Promise<void> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { handshakeTimeout: 1_000 });
+  await once(socket, "open");
+  socket.close();
 }
 
 /**
@@ -246,7 +259,7 @@ export async function startIsolatedHostDaemon(
     });
 
     try {
-      await waitForServer(port, spawned, { serverId, paseoHome });
+      await waitForServer(port, spawned, { serverId, paseoHome }, Boolean(publishedPackageRoot));
       return spawned;
     } catch (error) {
       throw new Error(

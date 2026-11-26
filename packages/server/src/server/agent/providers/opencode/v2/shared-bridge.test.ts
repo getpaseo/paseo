@@ -18,11 +18,25 @@ interface TestTool {
   name: string;
   execute(input: { value: string }, call: { sessionID: string }): Promise<unknown>;
 }
+interface ToolDefinition {
+  name: string;
+  description: string;
+}
+interface McpTestTool {
+  name: string;
+  execute(
+    input: unknown,
+    call: { sessionID: string; agent: string; messageID: string; id: string },
+  ): Promise<unknown>;
+}
 interface TestContext {
   sessionID: string;
   tools: Record<string, unknown>;
   system: unknown[];
 }
+
+// The fake OpenCode context has no permission service, as on OpenCode before 2.0.29.
+const BOUND_WITHOUT_MCP = { features: { mcpTools: false } };
 
 test("a shared plugin binds Paseo sessions without involving unrelated sessions", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "paseo-shared-bridge-"));
@@ -157,7 +171,7 @@ test("a shared plugin binds Paseo sessions without involving unrelated sessions"
     try {
       await expect(
         rpc.bind({ sessionID: "paseo", ...restarted.sharedV2Connection() }),
-      ).resolves.toEqual({});
+      ).resolves.toEqual(BOUND_WITHOUT_MCP);
     } finally {
       releaseRestarted();
       await restarted.close();
@@ -212,7 +226,9 @@ test("a shared plugin rebinds a session after the previous bridge stops listenin
         hook: async () => ({ dispose: async () => {} }),
       },
     });
-    await expect(rpc.bind({ sessionID: "paseo", ...plugin.options })).resolves.toEqual({});
+    await expect(rpc.bind({ sessionID: "paseo", ...plugin.options })).resolves.toEqual(
+      BOUND_WITHOUT_MCP,
+    );
     await current.start();
     // The restarted daemon owns the agent again, so its bridge serves this session.
     releaseCurrent = current.bindSession({ sessionId: "paseo", env: {} });
@@ -222,12 +238,327 @@ test("a shared plugin rebinds a session after the previous bridge stops listenin
     });
     await expect(
       rpc.bind({ sessionID: "paseo", ...current.sharedV2Connection() }),
-    ).resolves.toEqual({});
+    ).resolves.toEqual(BOUND_WITHOUT_MCP);
   } finally {
     await dispose?.();
     releaseCurrent?.();
     await current.close();
     await new Promise<void>((resolve) => previous.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+function addSession(
+  bridge: OpenCodeBridge,
+  sessionId: string,
+  descriptions: Record<string, string>,
+) {
+  const tools = new Map(
+    Object.entries(descriptions).map(([name, description]) => [
+      name,
+      { name, description, inputSchema: { value: z.string() } },
+    ]),
+  );
+  return bridge.bindSession({
+    sessionId,
+    env: {},
+    tools: {
+      tools,
+      getTool: (name) => tools.get(name),
+      executeTool: async () => ({ content: [] }),
+    },
+  });
+}
+
+async function registerAtLocation(bridge: OpenCodeBridge, home: string) {
+  const pluginPath = fileURLToPath(await bridge.materializeV2Plugin());
+  const plugin = await import(pathToFileURL(path.join(pluginPath, "server.js")).href);
+  const tools: Record<string, ToolDefinition> = {};
+  const hooks: Array<(context: TestContext) => Promise<void>> = [];
+  let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
+  const dispose = await plugin.default.setup({
+    options: {},
+    location: { directory: home },
+    rpc: {
+      register: async (_definition: unknown, handlers: typeof rpc) => {
+        rpc = handlers;
+        return { dispose: async () => {} };
+      },
+    },
+    tool: {
+      transform: async (apply: (editor: { add(item: ToolDefinition): void }) => void) => {
+        const added: string[] = [];
+        apply({
+          add: (item) => {
+            added.push(item.name);
+            tools[item.name] = item;
+          },
+        });
+        return {
+          dispose: async () => {
+            for (const name of added) delete tools[name];
+          },
+        };
+      },
+    },
+    session: {
+      context: async () => [],
+      get: async () => ({ parentID: "" }),
+      hook: async (event: string, handler: (context: TestContext) => Promise<void>) => {
+        if (event === "context") hooks.push(handler);
+        return { dispose: async () => {} };
+      },
+    },
+  });
+  return {
+    bind: (owner: OpenCodeBridge, sessionID: string) =>
+      rpc.bind!({ sessionID, ...owner.sharedV2Connection() }),
+    visible: async (sessionID: string) => {
+      const context = { sessionID, tools: { ...tools }, system: [] };
+      for (const hook of hooks) await hook(context);
+      return context.tools;
+    },
+    dispose,
+  };
+}
+
+test.each([false, true])(
+  "rebinds an existing session after an owner stops and its definition changes (second retained session: %s)",
+  async (second) => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-upgrade-repro-"));
+    const old = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+    const peer = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+    const next = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+    let location: Awaited<ReturnType<typeof registerAtLocation>> | undefined;
+    try {
+      await old.start();
+      addSession(old, "first", { echo: "echo v1" });
+      location = await registerAtLocation(old, home);
+      await location.bind(old, "first");
+      expect(await location.visible("first")).toHaveProperty("paseo_echo.description", "echo v1");
+      if (second) {
+        addSession(old, "second", { echo: "echo v1" });
+        await location.bind(old, "second");
+      }
+
+      await peer.start();
+      addSession(peer, "peer", { extra: "extra" });
+      await location.bind(peer, "peer");
+
+      // The OpenCode location survives, while the old daemon's HTTP service stops.
+      await old.close();
+      await next.start();
+      addSession(next, "first", { echo: "echo v2" });
+      await expect(location.bind(next, "first")).resolves.toEqual(BOUND_WITHOUT_MCP);
+      expect(await location.visible("first")).toHaveProperty("paseo_echo.description", "echo v2");
+      expect(await location.visible("peer")).toHaveProperty("paseo_extra");
+    } finally {
+      await location?.dispose();
+      await old.close();
+      await next.close();
+      await peer.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("binding another session at the same location preserves the first session's tools", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-upgrade-scope-repro-"));
+  const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+  let location: Awaited<ReturnType<typeof registerAtLocation>> | undefined;
+  try {
+    await bridge.start();
+    addSession(bridge, "first", { echo: "echo", extra: "extra" });
+    addSession(bridge, "second", { echo: "echo" });
+    location = await registerAtLocation(bridge, home);
+    await location.bind(bridge, "first");
+    expect(await location.visible("first")).toHaveProperty("paseo_extra");
+    await location.bind(bridge, "second");
+    expect(await location.visible("second")).not.toHaveProperty("paseo_extra");
+    expect(await location.visible("first")).toHaveProperty("paseo_extra");
+
+    addSession(bridge, "conflict", { echo: "echo different" });
+    await expect(location.bind(bridge, "conflict")).rejects.toThrow(
+      "Conflicting Paseo tool definition: echo",
+    );
+    expect(await location.visible("first")).toHaveProperty("paseo_echo.description", "echo");
+  } finally {
+    await location?.dispose();
+    await bridge.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a shared plugin gives each session its own MCP tools behind OpenCode's permission check", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-shared-bridge-mcp-"));
+  const bridge = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+  bridge.setManifestCatalog({ tools: new Map() });
+  await bridge.start();
+  const adopted: string[] = [];
+  const sessionMcp = (marker: string) => ({
+    tools: [
+      {
+        name: "hub_marker",
+        description: `Return ${marker}`,
+        inputSchema: { type: "object" as const },
+      },
+      // Only session A has `local_env`, which the user's own OpenCode configuration also has.
+      ...(marker === "A"
+        ? [
+            {
+              name: "local_env",
+              description: "Paseo env",
+              inputSchema: { type: "object" as const },
+            },
+          ]
+        : []),
+    ],
+    instructions: `Use ${marker}`,
+    execute: async (name: string, input: unknown) => ({
+      content: [{ type: "text" as const, text: `${name}:${marker}:${JSON.stringify(input)}` }],
+    }),
+  });
+  const releases = ["a", "b"].map((id) =>
+    bridge.bindSession({
+      sessionId: id,
+      env: {},
+      mcp: sessionMcp(id.toUpperCase()),
+      adoptDescendant: async (child) => {
+        adopted.push(`${id}>${child}`);
+      },
+    }),
+  );
+  let dispose: (() => Promise<void>) | undefined;
+  try {
+    const plugin = await bridge.materializeV2Plugin();
+    const module = await import(pathToFileURL(path.join(fileURLToPath(plugin), "server.js")).href);
+    const installed = new Map<string, McpTestTool>();
+    const natives = new Map<string, McpTestTool & { description: string; input: unknown }>([
+      [
+        "local_env",
+        {
+          name: "local_env",
+          description: "User env",
+          input: { type: "object" },
+          execute: async () => ({ output: { from: "user" } }),
+        },
+      ],
+    ]);
+    const hooks: Array<(input: TestContext) => Promise<void>> = [];
+    const asserted: unknown[] = [];
+    let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
+    const parents: Record<string, string> = { child: "a" };
+    dispose = await module.default.setup({
+      options: {},
+      location: { directory: home },
+      ...Object.fromEntries(
+        ["provider", "model", "agent", "command", "skill"].map((name) => [
+          name,
+          { reload: async () => {} },
+        ]),
+      ),
+      rpc: {
+        register: async (_definition: unknown, handlers: typeof rpc) => {
+          rpc = handlers;
+          return { dispose: async () => {} };
+        },
+      },
+      tool: {
+        transform: async (
+          fn: (editor: {
+            get(name: string): McpTestTool | undefined;
+            add(item: McpTestTool): void;
+          }) => void,
+        ) => {
+          fn({ get: (name) => natives.get(name), add: (item) => installed.set(item.name, item) });
+          return { dispose: async () => {} };
+        },
+      },
+      permission: {
+        assert: async (request: unknown) => {
+          asserted.push(request);
+        },
+      },
+      session: {
+        context: async () => [],
+        get: async ({ sessionID }: { sessionID: string }) => ({
+          parentID: parents[sessionID] ?? "",
+        }),
+        hook: async (_name: string, fn: (input: TestContext) => Promise<void>) => {
+          hooks.push(fn);
+          return { dispose: async () => {} };
+        },
+      },
+    });
+    for (const sessionID of ["a", "b"])
+      await expect(rpc.bind({ sessionID, ...bridge.sharedV2Connection() })).resolves.toEqual({
+        features: { mcpTools: true },
+      });
+    const requestFor = async (sessionID: string) => {
+      const input = {
+        sessionID,
+        tools: { hub_marker: {}, local_env: { description: "User env" }, native: {} },
+        system: [],
+      };
+      for (const hook of hooks) await hook(input);
+      return input;
+    };
+    const contextFor = async (sessionID: string) => (await requestFor(sessionID)).tools;
+    expect(await contextFor("a")).toEqual({
+      hub_marker: { description: "Return A", input: { type: "object" } },
+      local_env: { description: "Paseo env", input: { type: "object" } },
+      native: {},
+    });
+    expect(await contextFor("b")).toEqual({
+      hub_marker: { description: "Return B", input: { type: "object" } },
+      local_env: { description: "User env", input: { type: "object" } },
+      native: {},
+    });
+    expect(await contextFor("other")).toEqual({
+      local_env: { description: "User env", input: { type: "object" } },
+      native: {},
+    });
+    // OpenCode validates input against the registration, so it accepts both tools' input.
+    expect(installed.get("local_env")).toMatchObject({
+      input: { type: "object", additionalProperties: true },
+    });
+    // A descendant uses its root's servers and instructions from its first request, and is
+    // adopted once.
+    const child = await requestFor("child");
+    expect(child.tools).toMatchObject({ hub_marker: { description: "Return A" } });
+    expect(child.system).toEqual([{ type: "text", text: "Use A" }]);
+    await contextFor("child");
+    expect(adopted).toEqual(["a>child"]);
+    expect((await requestFor("other")).system).toEqual([]);
+
+    const call = { agent: "build", messageID: "message", id: "call" };
+    const hub = installed.get("hub_marker")!;
+    await expect(hub.execute({ q: 1 }, { ...call, sessionID: "child" })).resolves.toMatchObject({
+      content: [{ type: "text", text: 'hub_marker:A:{"q":1}' }],
+    });
+    await expect(hub.execute({}, { ...call, sessionID: "b" })).resolves.toMatchObject({
+      content: [{ type: "text", text: "hub_marker:B:{}" }],
+    });
+    await expect(hub.execute({}, { ...call, sessionID: "other" })).rejects.toThrow(
+      "not bound to a Paseo agent",
+    );
+    // A session without its own `local_env` runs the user's tool, which checks its own permission.
+    const env = installed.get("local_env")!;
+    await expect(env.execute({}, { ...call, sessionID: "b" })).resolves.toEqual({
+      content: [{ type: "text", text: '{"from":"user"}' }],
+    });
+    await expect(env.execute({}, { ...call, sessionID: "a" })).resolves.toMatchObject({
+      content: [{ type: "text", text: "local_env:A:{}" }],
+    });
+    expect(asserted).toEqual([
+      expect.objectContaining({ sessionID: "child", action: "hub_marker", resources: ["*"] }),
+      expect.objectContaining({ sessionID: "b", action: "hub_marker", resources: ["*"] }),
+      expect.objectContaining({ sessionID: "a", action: "local_env", resources: ["*"] }),
+    ]);
+  } finally {
+    await dispose?.();
+    for (const release of releases) release();
+    await bridge.close();
     await rm(home, { recursive: true, force: true });
   }
 });
