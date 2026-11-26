@@ -255,6 +255,13 @@ describe("translation resources", () => {
     expect(ko.desktop.daemon.status.notRunning).toBe("실행 중이 아님");
   });
 
+  it("uses reservation wording for Korean schedule labels", () => {
+    expect(ko.sidebar.sections.schedules).toBe("예약");
+    expect(ko.settings.host.orchestration.enableTools.hint).toBe(
+      "에이전트가 워크트리, 에이전트, 예약 작업을 관리할 수 있습니다",
+    );
+  });
+
   it("uses the French navigation and Git meanings for reported labels", () => {
     expect(fr.common.back).toBe("Retour");
     expect(fr.common.actions.back).toBe("Retour");
