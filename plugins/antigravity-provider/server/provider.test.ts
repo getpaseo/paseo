@@ -887,6 +887,241 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
   }
 });
 
+it("does not keep a turn open while waiting on ask_question and completes the follow-up reply immediately", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    let turn = 0;
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "agy-session", configOptions: [
+            { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+              options: [{ value: "default", name: "Default" }] },
+          ] } });
+          break;
+        case "session/prompt":
+          turn += 1;
+          if (turn === 1) {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call", toolCallId: "ask-1", name: "ask_question",
+              title: "Ask question", status: "in_progress",
+              rawInput: { questions: [{ question: "Proceed?", options: ["Yes", "No"], is_multi_select: false }] },
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk", content: { type: "text", text: "\\nProceed?\\n- [1] Yes\\n- [2] No\\n" },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+          } else {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call_update", toolCallId: "ask-1", status: "completed", rawOutput: "A1: Yes",
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk", content: { type: "text", text: "QA_DONE" },
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "usage_update", used: 80, size: 1000,
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+          }
+          break;
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+  const provider = createAntigravityProvider();
+  const connection = await provider.connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message", "prompt.steer"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open-ask",
+      sessionId: "agy-ask-test",
+      history: "skip",
+      config: {
+        cwd: directory,
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: false,
+      },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+      .toMatchObject({ type: "session.ready", sessionId: "agy-ask-test" });
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-ask-test",
+      prompt: {
+        clientMessageId: "ask-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "ask me" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:ask-turn" &&
+              event.state === "completed",
+          ),
+        { timeout: 500 },
+      )
+      .toEqual({
+        type: "session.turn",
+        sessionId: "agy-ask-test",
+        turnId: "acp:ask-turn",
+        state: "completed",
+      });
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-ask-test",
+      prompt: {
+        clientMessageId: "answer-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Yes" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:answer-turn" &&
+              event.state === "completed",
+          ),
+        { timeout: 500 },
+      )
+      .toEqual({
+        type: "session.turn",
+        sessionId: "agy-ask-test",
+        turnId: "acp:answer-turn",
+        state: "completed",
+      });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "tool_call",
+          id: "ask-1",
+          status: "completed",
+          detail: expect.objectContaining({ output: "A1: Yes" }),
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({ type: "assistant_message", text: "QA_DONE" }),
+      }),
+    );
+  } finally {
+    await connection.close();
+  }
+});
+
+it("does not keep a turn open for ask_question even before rawInput arrives", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "agy-session", configOptions: [
+            { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+              options: [{ value: "default", name: "Default" }] },
+          ] } });
+          break;
+        case "session/prompt":
+          send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+            sessionUpdate: "tool_call", toolCallId: "ask-no-input", name: "ask_question",
+            title: "Ask question", status: "in_progress",
+          } } });
+          send({ id, result: { stopReason: "end_turn" } });
+          break;
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+  const provider = createAntigravityProvider();
+  const connection = await provider.connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open-ask-no-input",
+      sessionId: "agy-ask-no-input-test",
+      history: "skip",
+      config: {
+        cwd: directory,
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: false,
+      },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+      .toMatchObject({ type: "session.ready", sessionId: "agy-ask-no-input-test" });
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-ask-no-input-test",
+      prompt: {
+        clientMessageId: "ask-no-input-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "ask me" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:ask-no-input-turn" &&
+              event.state === "completed",
+          ),
+        { timeout: 500 },
+      )
+      .toEqual({
+        type: "session.turn",
+        sessionId: "agy-ask-no-input-test",
+        turnId: "acp:ask-no-input-turn",
+        state: "completed",
+      });
+  } finally {
+    await connection.close();
+  }
+});
+
 it("runs a wrapped session as [...wrap, agy, acp, --disable-telemetry] with the session env", async () => {
   const { directory, launch: fixture } = await launchAgent(`
     const { createInterface } = require("node:readline");

@@ -116,6 +116,8 @@ export function createAntigravityProvider(): ProviderRegistration {
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
       deferTurnOnRunningTools: {
         keepsTurnOpen(toolCall) {
+          // agy leaves ask_question in progress until the user replies in a follow-up prompt.
+          if (toolCall.name === "ask_question") return false;
           const input = toolCall.input;
           if (typeof input !== "object" || input === null || Array.isArray(input)) return true;
           if (input.IsDaemon === true) return false;
