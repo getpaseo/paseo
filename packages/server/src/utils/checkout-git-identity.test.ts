@@ -102,6 +102,39 @@ describe("getCheckoutIdentity", () => {
     }
   });
 
+  it("shares worktree registration and main checkout discovery in a bare repository", async () => {
+    const bare = join(tempDir, "shared.git");
+    const main = join(tempDir, "main");
+    const first = join(tempDir, "first");
+    const second = join(tempDir, "second");
+    git(repoDir, "clone", "--bare", repoDir, bare);
+    git(bare, "worktree", "add", main, "main");
+    git(bare, "worktree", "add", "-b", "first", first);
+    git(bare, "worktree", "add", "-b", "second", second);
+    await writePaseoWorktreeMetadata(first, { baseRefName: "main" });
+    await writePaseoWorktreeMetadata(second, { baseRefName: "main" });
+
+    const readSession = new CheckoutReadSession();
+    startGitCommandMetrics();
+    try {
+      const checkouts = await Promise.all(
+        [main, first, second].map((cwd) => getCheckoutIdentity(cwd, { paseoHome, readSession })),
+      );
+      const mainRepoRoot = await realpath(main);
+      expect(checkouts).toMatchObject([
+        { currentBranch: "main", isPaseoOwnedWorktree: false, mainRepoRoot: null },
+        { currentBranch: "first", isPaseoOwnedWorktree: true, mainRepoRoot },
+        { currentBranch: "second", isPaseoOwnedWorktree: true, mainRepoRoot },
+      ]);
+      const worktreeLists = stopGitCommandMetrics().commands.filter(
+        (command) => command.args[0] === "worktree" && command.args[1] === "list",
+      );
+      expect(worktreeLists).toHaveLength(1);
+    } finally {
+      stopGitCommandMetrics();
+    }
+  });
+
   it("never scans the working tree or compares commits", async () => {
     startGitCommandMetrics();
     await getCheckoutIdentity(repoDir, { paseoHome });

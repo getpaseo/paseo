@@ -44,7 +44,11 @@ import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-pa
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
 import { readGitFileContents, readGitFileContentAtRef } from "./git-file-contents.js";
 import { unquoteGitPath } from "./git-quoted-path.js";
-import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
+import {
+  isPaseoOwnedWorktreeCwd,
+  readWorktreeRegistration,
+  resolvePaseoWorktreesBaseRoot,
+} from "./worktree.js";
 import {
   branchNameFromRef,
   findPaseoWorktreeRootForCwd,
@@ -1159,6 +1163,19 @@ async function getMainRepoRootFromCommonDir(
     return dirname(normalized);
   }
 
+  const session = context?.readSession;
+  if (session) {
+    return session.readMainCheckout(normalized, async () => {
+      const { entries } = await readWorktreeRegistration(
+        cwd,
+        normalized,
+        session,
+        getRunGitCommand(context),
+      );
+      return selectMainCheckout(entries, normalized, context);
+    });
+  }
+
   const { stdout: worktreeOut } = await getRunGitCommand(context)(
     ["worktree", "list", "--porcelain"],
     {
@@ -1166,7 +1183,14 @@ async function getMainRepoRootFromCommonDir(
       envOverlay: READ_ONLY_GIT_ENV,
     },
   );
-  const worktrees = parseWorktreeList(worktreeOut);
+  return selectMainCheckout(parseWorktreeList(worktreeOut), normalized, context);
+}
+
+async function selectMainCheckout(
+  worktrees: readonly Pick<GitWorktreeEntry, "path" | "isBare">[],
+  normalized: string,
+  context?: CheckoutContext,
+): Promise<string> {
   const paseoPaths = new Set(
     (
       await Promise.all(
@@ -1315,6 +1339,7 @@ async function getPaseoWorktreeForCwd(
     worktreesRoot: options.context?.worktreesRoot,
     knownGitCommonDir: options.knownGitCommonDir,
     readSession: options.context?.readSession,
+    runGitCommand: options.context?.runGitCommand,
   });
   if (!ownership.allowed) {
     return { isPaseoOwnedWorktree: false };

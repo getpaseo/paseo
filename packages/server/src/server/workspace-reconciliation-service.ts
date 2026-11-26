@@ -117,7 +117,7 @@ export interface WorkspaceReconciliationServiceOptions {
 interface ProjectReconciliationInput {
   project: PersistedProjectRecord;
   siblings: PersistedWorkspaceRecord[];
-  currentGit: ProjectCheckoutLitePayload;
+  currentGit: ProjectCheckoutLitePayload | null;
   readCheckout: (cwd: string) => Promise<ProjectCheckoutLitePayload>;
   changes: ReconciliationChange[];
 }
@@ -129,7 +129,7 @@ interface CachedCheckoutRead {
 
 interface CheckoutDirectory {
   path: string;
-  commonDir: string | null;
+  repository: { root: string; commonDir: string } | null;
 }
 
 type DirectoryInspection = DirectoryState | CheckoutDirectory;
@@ -252,18 +252,9 @@ export class WorkspaceReconciliationService {
         )
       : null;
     const isAffectedDirectory = (cwd: string) => affectedDirectories?.has(cwd) ?? true;
-    const affectedProjectIds = new Set(
-      projects
-        .filter((project) => isAffectedDirectory(project.rootPath))
-        .map((project) => project.projectId),
-    );
-    // An explicitly chosen project can own a workspace outside its root.
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     const workspaceStates = await mapBounded(
-      activeWorkspaces.filter(
-        (workspace) =>
-          affectedProjectIds.has(workspace.projectId) || isAffectedDirectory(workspace.cwd),
-      ),
+      activeWorkspaces.filter((workspace) => isAffectedDirectory(workspace.cwd)),
       async (workspace) => ({ workspace, state: await this.inspectDirectory(workspace.cwd) }),
     );
     for (const { workspace, state } of workspaceStates) {
@@ -276,7 +267,7 @@ export class WorkspaceReconciliationService {
     const projectStates = await mapBounded(
       projects.filter(
         (project) =>
-          affectedProjectIds.has(project.projectId) || workspacesByProject.has(project.projectId),
+          isAffectedDirectory(project.rootPath) || workspacesByProject.has(project.projectId),
       ),
       async (project) => ({ project, state: await this.inspectDirectory(project.rootPath) }),
     );
@@ -284,6 +275,7 @@ export class WorkspaceReconciliationService {
       projectStates.filter(({ state }) => state === "directory").map(({ project }) => project),
       workspacesByProject,
       changes,
+      isAffectedDirectory,
     );
     if (changes.length > 0) this.onChanges?.(changes);
     return { changesApplied: changes, durationMs: Date.now() - start };
@@ -393,6 +385,7 @@ export class WorkspaceReconciliationService {
     projectsToReconcile: PersistedProjectRecord[],
     workspacesByProject: Map<string, PersistedWorkspaceRecord[]>,
     changes: ReconciliationChange[],
+    isAffectedDirectory: (cwd: string) => boolean = () => true,
   ): Promise<void> {
     const checkoutReads: CachedCheckoutRead[] = [];
     const checkoutReadLimit = pLimit(CHECKOUT_READ_CONCURRENCY);
@@ -415,7 +408,7 @@ export class WorkspaceReconciliationService {
     await Promise.all(
       roots.map(async ({ rootPath, projects }) => {
         try {
-          const rootGit = await readCheckout(rootPath);
+          const rootGit = isAffectedDirectory(rootPath) ? await readCheckout(rootPath) : null;
           await Promise.all(
             projects.map((project) =>
               this.reconcileProject({
@@ -448,6 +441,45 @@ export class WorkspaceReconciliationService {
     );
     const project = await this.projectRegistry.get(input.project.projectId);
     if (!project || project.archivedAt || project.rootPath !== input.project.rootPath) return;
+    if (currentGit) await this.reconcileProjectMetadata(project, currentGit, changes);
+
+    await Promise.all(
+      workspaceCheckouts.map(async (entry) => {
+        if (!entry) return;
+        const { workspace, checkout: wsGit } = entry;
+        const timestamp = new Date().toISOString();
+        if (!reconcileWorkspacePlacement({ workspace, checkout: wsGit, updatedAt: timestamp }))
+          return;
+        let fields: Partial<MutableWorkspacePlacement> | null = null;
+        await this.workspaceRegistry.update(workspace.workspaceId, (current) => {
+          // Archive removes a worktree only after archiving its record, so a read
+          // that raced the archive may have seen the directory mid-deletion.
+          if (!isStillReconcilable(current, workspace)) return current;
+          const update = reconcileWorkspacePlacement({
+            workspace: current,
+            checkout: wsGit,
+            updatedAt: timestamp,
+          });
+          if (!update) return current;
+          fields = update.fields;
+          return { ...current, ...fields, updatedAt: timestamp };
+        });
+        if (!fields) return;
+        changes.push({
+          kind: "workspace_updated",
+          workspaceId: workspace.workspaceId,
+          directory: workspace.cwd,
+          fields,
+        });
+      }),
+    );
+  }
+
+  private async reconcileProjectMetadata(
+    project: PersistedProjectRecord,
+    currentGit: ProjectCheckoutLitePayload,
+    changes: ReconciliationChange[],
+  ): Promise<void> {
     const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind" | "projectKey">> = {};
     const mappedKind = deriveProjectKind(currentGit);
     const projectKey = deriveProjectKey({
@@ -481,37 +513,6 @@ export class WorkspaceReconciliationService {
           fields: projectUpdates,
         });
     }
-
-    await Promise.all(
-      workspaceCheckouts.map(async (entry) => {
-        if (!entry) return;
-        const { workspace, checkout: wsGit } = entry;
-        const timestamp = new Date().toISOString();
-        if (!reconcileWorkspacePlacement({ workspace, checkout: wsGit, updatedAt: timestamp }))
-          return;
-        let fields: Partial<MutableWorkspacePlacement> | null = null;
-        await this.workspaceRegistry.update(workspace.workspaceId, (current) => {
-          // Archive removes a worktree only after archiving its record, so a read
-          // that raced the archive may have seen the directory mid-deletion.
-          if (!isStillReconcilable(current, workspace)) return current;
-          const update = reconcileWorkspacePlacement({
-            workspace: current,
-            checkout: wsGit,
-            updatedAt: timestamp,
-          });
-          if (!update) return current;
-          fields = update.fields;
-          return { ...current, ...fields, updatedAt: timestamp };
-        });
-        if (!fields) return;
-        changes.push({
-          kind: "workspace_updated",
-          workspaceId: workspace.workspaceId,
-          directory: workspace.cwd,
-          fields,
-        });
-      }),
-    );
   }
 
   private async syncProjectRootWatches(): Promise<void> {
@@ -759,7 +760,7 @@ async function findAffectedCheckoutDirectories(
     return result;
   };
   const gitDirectories = new Map<string, Promise<string | null>>();
-  const findCommonDir = async (cwd: string): Promise<string | null> => {
+  const findRepository = async (cwd: string): Promise<CheckoutDirectory["repository"]> => {
     for (let current = cwd; ; current = dirname(current)) {
       let result = gitDirectories.get(current);
       if (!result) {
@@ -767,17 +768,17 @@ async function findAffectedCheckoutDirectories(
         gitDirectories.set(current, result);
       }
       const gitDir = await result;
-      if (gitDir) return resolvePath(gitDir);
+      if (gitDir) return { root: current, commonDir: await resolvePath(gitDir) };
       if (dirname(current) === current) return null;
     }
   };
 
-  const dirty = await mapBounded(changedRoots, (root) =>
-    inspect(root, async () => {
-      const path = await resolvePath(root);
-      return { path, commonDir: await findCommonDir(path) };
-    }),
-  );
+  const inspectCheckoutDirectory = (directory: string) =>
+    inspect(directory, async () => {
+      const path = await resolvePath(directory);
+      return { path, repository: await findRepository(path) };
+    });
+  const dirty = await mapBounded(changedRoots, inspectCheckoutDirectory);
   const roots = dirty.map((entry, index) =>
     typeof entry === "string" ? changedRoots[index]! : entry.path,
   );
@@ -786,7 +787,7 @@ async function findAffectedCheckoutDirectories(
     compareAsWindows: process.platform === "win32",
   });
   const commonDirs = dirty.flatMap((entry) =>
-    typeof entry !== "string" && entry.commonDir ? [entry.commonDir] : [],
+    typeof entry !== "string" && entry.repository ? [entry.repository.commonDir] : [],
   );
   // If a main checkout loses .git, surviving linked checkouts still point at
   // their missing admin directories inside it.
@@ -800,19 +801,19 @@ async function findAffectedCheckoutDirectories(
   });
   const affected = new Set<string>();
   await mapBounded([...new Set(candidates)], async (candidate) => {
-    const entry = await inspect(candidate, async () => {
-      const path = await resolvePath(candidate);
-      const commonDir = !tree.matches(path) ? await findCommonDir(path) : null;
-      return { path, commonDir };
-    });
+    const entry = await inspectCheckoutDirectory(candidate);
     const path = typeof entry === "string" ? candidate : entry.path;
-    if (
-      tree.matches(path) ||
-      (typeof entry !== "string" &&
-        entry.commonDir &&
-        (repositories.matchesExact(entry.commonDir) || gitEntries.matches(entry.commonDir)))
-    )
+    const repository = typeof entry === "string" ? null : entry.repository;
+    const sharesMetadata =
+      repository &&
+      (repositories.matchesExact(repository.commonDir) || gitEntries.matches(repository.commonDir));
+    // A surviving nested repository provides its own metadata even if its
+    // parent gains or loses a .git entry.
+    const hasIndependentNestedRepository =
+      repository && tree.matches(repository.root) && !tree.matchesExact(repository.root);
+    if (sharesMetadata || (tree.matches(path) && !hasIndependentNestedRepository)) {
       affected.add(candidate);
+    }
   });
   return affected;
 }

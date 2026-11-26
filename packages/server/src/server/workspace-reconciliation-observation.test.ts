@@ -563,7 +563,7 @@ describe("observed workspace placement", () => {
       expect(observed.workspaceBatches.map((batch) => batch.sort())).toEqual([
         ["attached-ws", "nested-ws", "parent-ws"],
       ]);
-      expect(observed.takeCheckoutReads()).toEqual(["outside", "repo", "repo/sub"]);
+      expect(observed.takeCheckoutReads()).toEqual(["repo", "repo/sub"]);
     } finally {
       observed.dispose();
     }
@@ -660,6 +660,67 @@ describe("observed workspace placement", () => {
       expect(await observed.project("linked")).toMatchObject({ kind: "non_git" });
       expect(await observed.placement("linked-ws")).toMatchObject({ kind: "directory" });
       expect(observed.takeCheckoutReads()).toEqual(["linked", "repo"]);
+    } finally {
+      await observed.disposeGit();
+    }
+  });
+
+  test("skips independent nested repositories and workspaces attached from other repositories", async () => {
+    const observed = new ObservedPlacements(
+      [
+        {
+          id: "outer",
+          root: "outer",
+          workspaces: [
+            { id: "outer-ws", cwd: "outer" },
+            { id: "foreign-ws", cwd: "foreign" },
+          ],
+        },
+        {
+          id: "nested",
+          root: "outer/independent",
+          workspaces: [
+            { id: "nested-ws", cwd: "outer/independent" },
+            { id: "nested-linked-ws", cwd: "independent-linked" },
+          ],
+        },
+      ],
+      true,
+    );
+    try {
+      await observed.start();
+      for (const root of ["outer", "outer/independent", "foreign"]) {
+        observed.git(root, "init", "-b", "main");
+      }
+      observed.git(
+        "outer/independent",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      );
+      observed.git(
+        "outer/independent",
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        "../../independent-linked",
+      );
+      observed.change("outer", ".git");
+      await observed.advanceBy(DEBOUNCE_MS);
+
+      expect(observed.takeCheckoutReads()).toEqual(["outer"]);
+      expect(await observed.placement("outer-ws")).toMatchObject({ kind: "local_checkout" });
+      for (const id of ["foreign-ws", "nested-ws", "nested-linked-ws"]) {
+        expect(await observed.placement(id)).toMatchObject({ kind: "directory" });
+      }
     } finally {
       await observed.disposeGit();
     }

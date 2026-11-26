@@ -36,13 +36,13 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runWithRepositoryRoot } from "./git-repository-discovery.js";
-import { runGitCommand } from "./run-git-command.js";
+import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
 import { getCurrentBranch, resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
 import { applyLaunchWrap } from "./launch-wrap.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
-import type { CheckoutReadSession } from "./checkout-read-session.js";
+import type { CheckoutReadSession, WorktreeRegistration } from "./checkout-read-session.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import {
   createRealpathAwarePathMatcher,
@@ -246,6 +246,7 @@ export interface PaseoWorktreeOwnership {
 export interface PaseoWorktreeOwnershipOptions extends WorktreeRootOptions {
   knownGitCommonDir?: string | null;
   readSession?: CheckoutReadSession;
+  runGitCommand?: RunGitCommand;
 }
 
 export interface WorktreeRootOptions {
@@ -1187,11 +1188,13 @@ async function isRegisteredGitWorktree(
   options?: PaseoWorktreeOwnershipOptions,
 ): Promise<boolean> {
   if (options?.readSession && options.knownGitCommonDir) {
-    const repository = await normalizePathForOwnership(options.knownGitCommonDir);
-    const matches = await options.readSession.readWorktrees(repository, () =>
-      readRegisteredWorktreeLookup(candidate),
+    const registration = await readWorktreeRegistration(
+      candidate,
+      options.knownGitCommonDir,
+      options.readSession,
+      options.runGitCommand,
     );
-    return matches(candidate);
+    return registration.contains(candidate);
   }
   const { entries } = await readGitWorktreeEntries(candidate);
   for (const entry of entries) {
@@ -1200,22 +1203,33 @@ async function isRegisteredGitWorktree(
   return false;
 }
 
-async function readRegisteredWorktreeLookup(cwd: string) {
-  const { entries } = await readGitWorktreeEntries(cwd);
-  const registeredPaths = new Set(entries.map((entry) => resolve(entry.path)));
-  const resolvedPaths = new Map<string, Promise<string>>();
-  return async (candidate: string) => {
-    if (registeredPaths.has(candidate)) return true;
-    for (const path of registeredPaths) {
-      let canonical = resolvedPaths.get(path);
-      if (!canonical) {
-        canonical = normalizePathForOwnership(path);
-        resolvedPaths.set(path, canonical);
-      }
-      if ((await canonical) === candidate) return true;
-    }
-    return false;
-  };
+export async function readWorktreeRegistration(
+  cwd: string,
+  gitCommonDir: string,
+  session: CheckoutReadSession,
+  run: RunGitCommand = runGitCommand,
+): Promise<WorktreeRegistration> {
+  const repository = await normalizePathForOwnership(gitCommonDir);
+  return session.readWorktrees(repository, async () => {
+    const { entries } = await readGitWorktreeEntries(cwd, run);
+    const registeredPaths = new Set(entries.map((entry) => resolve(entry.path)));
+    const resolvedPaths = new Map<string, Promise<string>>();
+    return {
+      entries,
+      async contains(candidate) {
+        if (registeredPaths.has(candidate)) return true;
+        for (const path of registeredPaths) {
+          let canonical = resolvedPaths.get(path);
+          if (!canonical) {
+            canonical = normalizePathForOwnership(path);
+            resolvedPaths.set(path, canonical);
+          }
+          if ((await canonical) === candidate) return true;
+        }
+        return false;
+      },
+    };
+  });
 }
 
 type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
@@ -1223,6 +1237,7 @@ type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
 interface ParsedWorktreeEntry extends ParsedPaseoWorktreeInfo {
   /** A bare repository or a worktree whose directory is gone; nothing can work there. */
   unusable?: true;
+  isBare?: true;
 }
 
 /**
@@ -1233,8 +1248,9 @@ interface ParsedWorktreeEntry extends ParsedPaseoWorktreeInfo {
  */
 async function readGitWorktreeEntries(
   cwd: string,
+  run: RunGitCommand = runGitCommand,
 ): Promise<{ entries: ParsedWorktreeEntry[]; exact: boolean }> {
-  const nulResult = await runGitCommand(["worktree", "list", "--porcelain", "-z"], {
+  const nulResult = await run(["worktree", "list", "--porcelain", "-z"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
     acceptExitCodes: [0, 129],
@@ -1245,7 +1261,7 @@ async function readGitWorktreeEntries(
       exact: true,
     };
   }
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+  const { stdout } = await run(["worktree", "list", "--porcelain"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
   });
@@ -1282,7 +1298,10 @@ function parseWorktreeEntriesTokens(
       current.branchName = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
     } else if (token.startsWith("HEAD ")) {
       current.head = token.slice("HEAD ".length).trim();
-    } else if (token === "bare" || token.startsWith("prunable")) {
+    } else if (token === "bare") {
+      current.isBare = true;
+      current.unusable = true;
+    } else if (token.startsWith("prunable")) {
       current.unusable = true;
     } else if ((lineDelimited ? token.trim() : token).length === 0) {
       if (current.path) {
@@ -1375,7 +1394,7 @@ async function listPaseoWorktreesAtRepositoryRoot({
   const roots = await ownershipPathVariants(projectWorktreesRoot);
   const worktrees: PaseoWorktreeInfo[] = [];
   // Inspect foreign paths sequentially; a large worktree list must not consume the FS pool.
-  for (const { unusable: _unusable, ...entry } of entries) {
+  for (const { unusable: _unusable, isBare: _isBare, ...entry } of entries) {
     const path = await normalizePathForOwnership(entry.path);
     if (
       !roots.some((root) => getRelativePathInsideRoot(root, path) !== null) &&
