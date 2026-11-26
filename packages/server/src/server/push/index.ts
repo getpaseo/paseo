@@ -1,4 +1,10 @@
 import type pino from "pino";
+import {
+  normalizeNotificationPreferences,
+  shouldDeliverNotification,
+  type NotificationKind,
+  type NotificationPreferencesInput,
+} from "@getpaseo/protocol/notification-preferences";
 
 import { PushService, type PushPayload } from "./push-service.js";
 import { PushTokenStore } from "./token-store.js";
@@ -8,9 +14,9 @@ export type { PushPayload };
 const PUSH_TOKEN_LEASE_MS = 48 * 60 * 60 * 1000;
 
 export interface PushNotifications {
-  renew(token: string): void;
+  renew(token: string, preferences?: NotificationPreferencesInput): void;
   revoke(token: string): void;
-  send(payload: PushPayload): Promise<void>;
+  send(payload: PushPayload, kind?: NotificationKind): Promise<void>;
 }
 
 export type PushNotificationSender = Pick<PushNotifications, "send">;
@@ -29,15 +35,24 @@ export function createPushNotifications(options: {
     ((tokens: string[], payload: PushPayload) => service.sendPush(tokens, payload));
 
   return {
-    renew(token) {
-      store.renewToken(token);
+    renew(token, preferences) {
+      store.renewToken(token, preferences);
     },
     revoke(token) {
       store.revokeToken(token);
     },
-    async send(payload) {
-      const tokens = store.getActiveTokens();
-      options.logger.info({ tokenCount: tokens.length }, "Sending push notification");
+    async send(payload, kind) {
+      const subscriptions = store.getActiveSubscriptions();
+      const tokens = subscriptions
+        .filter((entry) => {
+          const preferences = normalizeNotificationPreferences(entry.preferences);
+          return kind ? shouldDeliverNotification(preferences, kind) : preferences.enabled;
+        })
+        .map((entry) => entry.token);
+      options.logger.info(
+        { tokenCount: tokens.length, activeTokenCount: subscriptions.length, kind },
+        "Sending push notification",
+      );
       if (tokens.length === 0) return;
       await deliver(tokens, payload);
     },
