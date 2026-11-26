@@ -7,7 +7,7 @@ import { spawnSync as defaultSpawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { userInfo as defaultUserInfo } from "node:os";
 import { basename } from "node:path";
-import { stripAppImageRuntimeEnv } from "@getpaseo/server/daemon-control";
+import { stripAppImageRuntimeEnv } from "@getpaseo/server/process";
 import defaultLog from "electron-log/main";
 
 const DEFAULT_RESOLVE_TIMEOUT_MS = 30_000;

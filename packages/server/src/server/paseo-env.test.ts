@@ -7,7 +7,6 @@ import {
   resolvePaseoNodeEnv,
   stripAppImageRuntimeEnv,
 } from "./paseo-env.js";
-import { stripAppImageRuntimeEnv as stripFromDaemonControl } from "./daemon-instance.js";
 import { stripAppImageRuntimeEnv as stripFromProcess } from "../utils/spawn.js";
 
 describe("paseo env contract", () => {
@@ -209,8 +208,7 @@ describe("paseo env contract", () => {
 });
 
 describe("stripAppImageRuntimeEnv", () => {
-  test("re-exports the shared helper from daemon-control and process entrypoints", () => {
-    expect(stripFromDaemonControl).toBe(stripAppImageRuntimeEnv);
+  test("re-exports the shared helper from the process entrypoint", () => {
     expect(stripFromProcess).toBe(stripAppImageRuntimeEnv);
   });
 
