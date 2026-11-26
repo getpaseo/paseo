@@ -36,6 +36,11 @@ export type {
 } from "./backend.js";
 export type { TimelineRetirement } from "../../timeline-projection.js";
 
+export interface TimelinePrompts {
+  head: TimelineHead;
+  rows: ProjectedTimelineRow[];
+}
+
 export interface TimelineCommit {
   row: AgentTimelineRow;
   epoch: string;
@@ -72,6 +77,14 @@ export type TimelineRewindVerdict =
   | { kind: "absent" };
 
 /** Another rewind is open on the history; it must settle first. */
+/** The timeline was closed for shutdown; it takes no more operations. */
+export class TimelineClosedError extends Error {
+  constructor() {
+    super("The agent timeline is closed");
+    this.name = "TimelineClosedError";
+  }
+}
+
 export class TimelineRewindPendingError extends Error {
   constructor(readonly intent: TimelineRewindIntent) {
     super("Another rewind of this conversation has not settled");
@@ -144,6 +157,14 @@ export interface TimelineAppendOptions {
 }
 
 /**
+ * Where a new history lives. `inMemory` keeps an agent's history, its children included, in
+ * process memory only, for agents that must leave nothing on disk; it ends with the process.
+ */
+export interface TimelineRetention {
+  inMemory?: boolean;
+}
+
+/**
  * Owner of agent timeline history: item identity, sequence numbers, projection, and reads.
  *
  * Operations on one agent (its root history and its provider children) run in call order. A read
@@ -153,23 +174,37 @@ export interface TimelineAppendOptions {
 export class AgentTimeline {
   private readonly tails = new Map<string, Promise<void>>();
   private readonly sizes = new Map<string, number>();
+  private closed = false;
 
-  constructor(private readonly backend: AgentTimelineBackend = new MemoryTimelineBackend()) {}
+  /** Agents whose history lives only in `memory`; see `TimelineRetention`. */
+  private readonly memoryAgents = new Set<string>();
+
+  constructor(
+    private readonly backend: AgentTimelineBackend = new MemoryTimelineBackend(),
+    private readonly memory: AgentTimelineBackend = new MemoryTimelineBackend(),
+  ) {}
 
   describe(scope: TimelineScope): Promise<TimelineHead | null> {
-    return this.run(scope, () => this.backend.head(scope));
+    return this.run(scope, () => this.backendFor(scope).head(scope));
   }
 
   /** Creates the scope's history with a new identity, replacing any existing history. */
-  create(scope: TimelineScope, seed: TimelineSeed = {}): Promise<TimelineHead> {
-    return this.run(scope, async () => this.track(scope, await this.backend.create(scope, seed)));
+  create(
+    scope: TimelineScope,
+    seed: TimelineSeed = {},
+    options: TimelineRetention = {},
+  ): Promise<TimelineHead> {
+    return this.run(scope, async () => {
+      this.retain(scope, options);
+      return this.track(scope, await this.backendFor(scope).create(scope, seed));
+    });
   }
 
   /** Returns the existing history, or creates an empty one. */
   open(scope: TimelineScope): Promise<TimelineHead> {
     return this.run(scope, async () => {
-      const existing = await this.backend.head(scope);
-      return existing ?? this.track(scope, await this.backend.create(scope, {}));
+      const existing = await this.backendFor(scope).head(scope);
+      return existing ?? this.track(scope, await this.backendFor(scope).create(scope, {}));
     });
   }
 
@@ -180,12 +215,13 @@ export class AgentTimeline {
   importHistory(
     scope: TimelineScope,
     entries: readonly TimelineEntry[],
-    options: { timestamp?: string } = {},
+    options: { timestamp?: string } & TimelineRetention = {},
   ): Promise<TimelineImportResult> {
     return this.run(scope, async () => {
-      const existing = await this.backend.head(scope);
+      this.retain(scope, options);
+      const existing = await this.backendFor(scope).head(scope);
       if (existing) return { kind: "present", head: existing };
-      const head = await this.backend.create(scope, {
+      const head = await this.backendFor(scope).create(scope, {
         entries: entries.map(providerHistoryEntry),
         timestamp: options.timestamp,
       });
@@ -207,8 +243,8 @@ export class AgentTimeline {
       const head = await this.requireHead(scope);
       if (head.rewind) return { kind: "rewind_open" };
       const plan = planProviderHistory({
-        rows: await this.backend.readRows(scope),
-        prompts: await this.backend.prompts(scope),
+        rows: await this.backendFor(scope).readRows(scope),
+        prompts: await this.prompts(scope),
         provider: entries.map(providerHistoryEntry),
       });
       if (plan.kind !== "append") return plan;
@@ -222,7 +258,7 @@ export class AgentTimeline {
 
   /** The agent's provider children, retired ones included. */
   listChildren(agentId: string): Promise<TimelineChild[]> {
-    return this.run({ agentId }, () => this.backend.children(agentId));
+    return this.run({ agentId }, () => this.backendFor({ agentId }).children(agentId));
   }
 
   /**
@@ -234,10 +270,10 @@ export class AgentTimeline {
     update: (previous: ProviderSubagentDescriptor | null) => ProviderSubagentDescriptor,
   ): Promise<ProviderSubagentDescriptor | null> {
     return this.run(scope, async () => {
-      const child = await this.backend.child(scope);
+      const child = await this.backendFor(scope).child(scope);
       if (child?.retired) return null;
       const descriptor = update(child?.descriptor ?? null);
-      await this.backend.setChild(scope, descriptor);
+      await this.backendFor(scope).setChild(scope, descriptor);
       return descriptor;
     });
   }
@@ -248,9 +284,9 @@ export class AgentTimeline {
     entries: readonly TimelineEntry[],
   ): Promise<TimelineCommit[] | null> {
     return this.run(scope, async () => {
-      const child = await this.backend.child(scope);
+      const child = await this.backendFor(scope).child(scope);
       if (child?.retired) return null;
-      if (!child) this.track(scope, await this.backend.create(scope, {}));
+      if (!child) this.track(scope, await this.backendFor(scope).create(scope, {}));
       return entries.length === 0 ? [] : await this.commit(scope, entries);
     });
   }
@@ -258,9 +294,9 @@ export class AgentTimeline {
   /** Deletes a child's history. A retired child stays stored and resolves false. */
   removeChild(scope: TimelineScope): Promise<boolean> {
     return this.run(scope, async () => {
-      const child = await this.backend.child(scope);
+      const child = await this.backendFor(scope).child(scope);
       if (child?.retired) return false;
-      await this.backend.delete(scope);
+      await this.backendFor(scope).delete(scope);
       this.sizes.delete(sizeKey(scope));
       return true;
     });
@@ -269,9 +305,10 @@ export class AgentTimeline {
   /** Deleting an agent's root history deletes all of its children's too. */
   delete(scope: TimelineScope): Promise<void> {
     return this.run(scope, async () => {
-      await this.backend.delete(scope);
+      await this.backendFor(scope).delete(scope);
       this.sizes.delete(sizeKey(scope));
       if (scope.subagentId !== undefined) return;
+      this.memoryAgents.delete(scope.agentId);
       const childPrefix = sizeKey({ agentId: scope.agentId, subagentId: "" });
       for (const key of this.sizes.keys()) {
         if (key.startsWith(childPrefix)) this.sizes.delete(key);
@@ -287,7 +324,7 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const clientMessageId = submittedPromptId(entry.item);
       if (clientMessageId) {
-        const existing = await this.backend.findSubmittedPrompt(scope, clientMessageId);
+        const existing = await this.backendFor(scope).findSubmittedPrompt(scope, clientMessageId);
         if (existing) {
           const head = await this.requireHead(scope);
           return {
@@ -298,7 +335,7 @@ export class AgentTimeline {
           };
         }
       }
-      if (await this.backend.isRetired(scope, entry)) return { kind: "dropped" };
+      if (await this.backendFor(scope).isRetired(scope, entry)) return { kind: "dropped" };
       const [commit] = await this.commit(scope, [entry]);
       const failure = publishCommitted(options?.publish, commit);
       return failure
@@ -329,7 +366,7 @@ export class AgentTimeline {
     providerMessageId: string,
   ): Promise<AgentTimelineRow | null> {
     return this.run(scope, () =>
-      this.backend.attachProviderMessageId(scope, clientMessageId, providerMessageId),
+      this.backendFor(scope).attachProviderMessageId(scope, clientMessageId, providerMessageId),
     );
   }
 
@@ -339,29 +376,39 @@ export class AgentTimeline {
     metrics: AgentMetric[],
     options?: { turnId?: string },
   ): Promise<ProjectedTimelineRow | null> {
-    return this.run(scope, () => this.backend.stampTurnMetrics(scope, metrics, options));
+    return this.run(scope, () => this.backendFor(scope).stampTurnMetrics(scope, metrics, options));
   }
 
   findSubmittedPrompt(
     scope: TimelineScope,
     clientMessageId: string,
   ): Promise<AgentTimelineRow | null> {
-    return this.run(scope, () => this.backend.findSubmittedPrompt(scope, clientMessageId));
+    return this.run(scope, () =>
+      this.backendFor(scope).findSubmittedPrompt(scope, clientMessageId),
+    );
   }
 
   fetch(
     scope: TimelineScope,
     options: AgentTimelineFetchOptions = {},
   ): Promise<AgentTimelineFetchResult> {
-    return this.run(scope, () => this.backend.fetch(scope, options));
+    return this.run(scope, () => this.backendFor(scope).fetch(scope, options));
   }
 
   readRows(scope: TimelineScope): Promise<ProjectedTimelineRow[]> {
-    return this.run(scope, () => this.backend.readRows(scope));
+    return this.run(scope, () => this.backendFor(scope).readRows(scope));
+  }
+
+  /** The active user prompt rows and the head they belong to, without replies or tool output. */
+  readPrompts(scope: TimelineScope): Promise<TimelinePrompts> {
+    return this.run(scope, async () => ({
+      head: await this.requireHead(scope),
+      rows: await this.backendFor(scope).promptRows(scope),
+    }));
   }
 
   lastItem(scope: TimelineScope): Promise<AgentTimelineItem | null> {
-    return this.run(scope, () => this.backend.lastItem(scope));
+    return this.run(scope, () => this.backendFor(scope).lastItem(scope));
   }
 
   /**
@@ -370,7 +417,7 @@ export class AgentTimeline {
    * before it ends the run. Null when the history has no assistant message.
    */
   lastAssistantMessage(scope: TimelineScope): Promise<string | null> {
-    return this.run(scope, () => this.backend.lastAssistantMessage(scope));
+    return this.run(scope, () => this.backendFor(scope).lastAssistantMessage(scope));
   }
 
   /**
@@ -381,16 +428,14 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const head = await this.requireHead(scope);
       if (head.rewind) throw new TimelineRewindPendingError(head.rewind);
-      const target = (await this.backend.prompts(scope)).find(
-        (prompt) => prompt.messageId === messageId,
-      );
+      const target = (await this.prompts(scope)).find((prompt) => prompt.messageId === messageId);
       if (!target) throw new TimelineRewindTargetError(messageId);
       const intent: TimelineRewindIntent = {
         id: randomUUID(),
         messageId,
         targetSeq: target.seqStart,
       };
-      await this.backend.setRewind(scope, intent);
+      await this.backendFor(scope).setRewind(scope, intent);
       return intent;
     });
   }
@@ -405,7 +450,7 @@ export class AgentTimeline {
       const head = await this.requireHead(scope);
       if (head.rewind?.id !== intentId) return null;
       const intent = { ...head.rewind, cut };
-      await this.backend.setRewind(scope, intent);
+      await this.backendFor(scope).setRewind(scope, intent);
       return intent;
     });
   }
@@ -414,7 +459,7 @@ export class AgentTimeline {
   abandonRewind(scope: TimelineScope, intentId: string): Promise<void> {
     return this.run(scope, async () => {
       const head = await this.requireHead(scope);
-      if (head.rewind?.id === intentId) await this.backend.setRewind(scope, null);
+      if (head.rewind?.id === intentId) await this.backendFor(scope).setRewind(scope, null);
     });
   }
 
@@ -430,7 +475,7 @@ export class AgentTimeline {
     return this.run(scope, async () => {
       const intent = (await this.requireHead(scope)).rewind;
       if (intent?.id !== intentId) return { kind: "absent" };
-      return judgeRewindEvidence(intent, await this.backend.prompts(scope), providerPromptIds);
+      return judgeRewindEvidence(intent, await this.prompts(scope), providerPromptIds);
     });
   }
 
@@ -448,9 +493,9 @@ export class AgentTimeline {
       const intent = head.rewind;
       if (intent?.id !== intentId) return { kind: "absent" };
       if (!intent.cut) throw new Error("Cannot complete a rewind before its provider outcome");
-      const retireFromSeq = resolveRetireFromSeq(intent, await this.backend.prompts(scope));
+      const retireFromSeq = resolveRetireFromSeq(intent, await this.prompts(scope));
       if (retireFromSeq === null) throw new TimelineRewindBoundaryError(intent);
-      const result = await this.backend.retire(scope, {
+      const result = await this.backendFor(scope).retire(scope, {
         retireFromSeq,
         selectChildren: childrenSpawnedBy,
       });
@@ -474,7 +519,18 @@ export class AgentTimeline {
    * Callers use it so an event published outside the timeline cannot overtake queued writes.
    */
   settled(scope: TimelineScope): Promise<void> {
+    // A closed timeline takes no operations, so the ones already queued are all there is.
+    if (this.closed) return this.tails.get(scope.agentId) ?? Promise.resolve();
     return this.run(scope, settledOperation);
+  }
+
+  /**
+   * Refuses new operations with `TimelineClosedError` and resolves once every operation called
+   * before it has finished. The daemon calls it before closing the store.
+   */
+  async close(): Promise<void> {
+    this.closed = true;
+    await Promise.all(this.tails.values());
   }
 
   /** Projected row count as of the last committed write, for diagnostics. */
@@ -486,7 +542,7 @@ export class AgentTimeline {
     scope: TimelineScope,
     entries: readonly TimelineEntry[],
   ): Promise<TimelineCommit[]> {
-    const { rows, head } = await this.backend.append(scope, entries.map(boundEntry));
+    const { rows, head } = await this.backendFor(scope).append(scope, entries.map(boundEntry));
     this.track(scope, head);
     return rows.map((row) => ({
       row,
@@ -496,9 +552,22 @@ export class AgentTimeline {
   }
 
   private async requireHead(scope: TimelineScope): Promise<TimelineHead> {
-    const head = await this.backend.head(scope);
+    const head = await this.backendFor(scope).head(scope);
     if (!head) throw new UnknownTimelineError(scope);
     return head;
+  }
+
+  private backendFor(scope: TimelineScope): AgentTimelineBackend {
+    return this.memoryAgents.has(scope.agentId) ? this.memory : this.backend;
+  }
+
+  private async prompts(scope: TimelineScope): Promise<TimelinePrompt[]> {
+    return (await this.backendFor(scope).promptRows(scope)).map(toTimelinePrompt);
+  }
+
+  /** An agent stays in memory until its history is deleted. */
+  private retain(scope: TimelineScope, options: TimelineRetention): void {
+    if (options.inMemory && scope.subagentId === undefined) this.memoryAgents.add(scope.agentId);
   }
 
   private track(scope: TimelineScope, head: TimelineHead): TimelineHead {
@@ -507,6 +576,7 @@ export class AgentTimeline {
   }
 
   private run<T>(scope: TimelineScope, operation: () => T | Promise<T>): Promise<T> {
+    if (this.closed) return Promise.reject(new TimelineClosedError());
     const key = scope.agentId;
     const previous = this.tails.get(key) ?? Promise.resolve();
     const result = previous.then(operation);
@@ -642,4 +712,14 @@ function sizeKey(scope: TimelineScope): string {
 
 function submittedPromptId(item: AgentTimelineItem): string | null {
   return item.type === "user_message" && item.clientMessageId ? item.clientMessageId : null;
+}
+
+function toTimelinePrompt(row: ProjectedTimelineRow): TimelinePrompt {
+  const item = row.item as Extract<AgentTimelineItem, { type: "user_message" }>;
+  return {
+    seqStart: row.seqStart,
+    messageId: item.messageId,
+    providerMessageId: row.providerMessageId,
+    submitted: item.clientMessageId !== undefined,
+  };
 }

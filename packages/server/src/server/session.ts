@@ -380,11 +380,18 @@ function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
 
 type DeleteFencedAgentStorage = AgentStorage & {
   beginDelete(agentId: string): void;
+  abandonDelete(agentId: string): void;
 };
 
 function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string): void {
   if ("beginDelete" in agentStorage && typeof agentStorage.beginDelete === "function") {
     (agentStorage as DeleteFencedAgentStorage).beginDelete(agentId);
+  }
+}
+
+function abandonAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string): void {
+  if ("abandonDelete" in agentStorage && typeof agentStorage.abandonDelete === "function") {
+    (agentStorage as DeleteFencedAgentStorage).abandonDelete(agentId);
   }
 }
 
@@ -3884,14 +3891,17 @@ export class Session {
     // durable snapshot, otherwise an in-flight background write can recreate it.
     await this.agentManager.flush();
 
+    // History goes before the record: if it cannot be removed, the request fails and the record
+    // stays, so the user still sees the agent, can keep using it, and can delete it again.
     try {
-      await this.agentStorage.remove(agentId);
       await this.agentManager.deleteAgentState(agentId);
-      // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
-      if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
     } catch (error) {
-      this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
+      abandonAgentDeleteIfSupported(this.agentStorage, agentId);
+      throw error;
     }
+    await this.agentStorage.remove(agentId);
+    // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
+    if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
 
     this.emit({
       type: "agent_deleted",
@@ -5603,7 +5613,7 @@ export class Session {
       }
       const event = serializeAgentStreamEvent({
         type: "timeline",
-        provider,
+        provider: row.provider ?? provider,
         item: row.item,
         ...(row.turnId ? { turnId: row.turnId } : {}),
         timestamp: row.timestamp,
@@ -8774,7 +8784,8 @@ export class Session {
               : {}),
             entries: entries.map((entry) => {
               const payloadEntry = {
-                provider: agentPayload.provider,
+                // A row keeps the provider that wrote it; older rows have none.
+                provider: entry.provider ?? agentPayload.provider,
                 item: entry.item,
                 timestamp: entry.timestamp,
                 seqStart: entry.seqStart,
@@ -8905,13 +8916,9 @@ export class Session {
   ): Promise<void> {
     try {
       await this.loadAgentHistoryPayload(msg.agentId);
-      const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
-        direction: "tail",
-        limit: 1,
-      });
+      const { head, rows } = await this.agentManager.getTimelinePrompts(msg.agentId);
       const index = buildTimelinePromptIndex(
-        this.wireEpoch(timeline.epoch, timeline.retirementCount, source),
+        this.wireEpoch(head.epoch, head.retirementCount, source),
         rows,
       );
       this.emitForSource(

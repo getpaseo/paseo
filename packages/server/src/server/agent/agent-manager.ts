@@ -97,6 +97,7 @@ import {
   type TimelineAppendResult,
   type TimelineCommit,
   type TimelineHead,
+  type TimelinePrompts,
   type TimelineEntry,
   type TimelineIngestResult,
   type TimelineRetirementCommit,
@@ -535,6 +536,16 @@ interface HandleStreamEventOptions {
   fromHistory?: boolean;
 }
 
+interface StreamEventDispatch {
+  agent: ActiveManagedAgent;
+  event: AgentStreamEvent;
+  options: HandleStreamEventOptions | undefined;
+  isForegroundEvent: boolean;
+  eventTurnId: string | undefined;
+  terminalDisposition: ActiveTurnTerminalDisposition;
+  flags: StreamEventFlags;
+}
+
 interface ManagedAgentBase {
   id: string;
   provider: AgentProvider;
@@ -815,7 +826,11 @@ function validateAgentId(agentId: string, source: string): string {
 }
 
 function toTimelineEntry(event: Extract<AgentStreamEvent, { type: "timeline" }>): TimelineEntry {
-  return event.timestamp ? { item: event.item, timestamp: event.timestamp } : { item: event.item };
+  return {
+    item: event.item,
+    provider: event.provider,
+    ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+  };
 }
 
 /** The live event that publishes a row committed from provider history. */
@@ -829,6 +844,7 @@ function historyEvent(provider: AgentProvider, commit: TimelineCommit): AgentStr
 }
 
 function projectImportedTimelineEntries(
+  provider: AgentProvider,
   entries: readonly ImportedTimelineEntry[],
 ): TimelineEntry[] {
   const projected: TimelineEntry[] = [];
@@ -836,9 +852,11 @@ function projectImportedTimelineEntries(
   const projection = new TimelineProjection();
   for (const entry of entries) {
     for (const item of projectAgentMessages(entry.item)) {
-      const timelineEntry: TimelineEntry = entry.timestamp
-        ? { item, timestamp: entry.timestamp }
-        : { item };
+      const timelineEntry: TimelineEntry = {
+        item,
+        provider,
+        ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
+      };
       projected.push(timelineEntry);
       projection.append({
         seq: projected.length,
@@ -1570,6 +1588,12 @@ export class AgentManager {
     return await this.timeline.readRows({ agentId: id });
   }
 
+  /** The agent's active prompt rows and timeline head, without its replies or tool output. */
+  async getTimelinePrompts(id: string): Promise<TimelinePrompts> {
+    await this.requireHistory(id);
+    return await this.timeline.readPrompts({ agentId: id });
+  }
+
   /** The timeline head of a loaded agent, or null when this agent is not loaded. Never loads. */
   async getLoadedTimelineHead(id: string): Promise<TimelineHead | null> {
     if (!this.getAgent(id)) return null;
@@ -1703,14 +1727,20 @@ export class AgentManager {
             `Agent ${resolvedAgentId} references unavailable provider '${record.provider}'`,
           );
         }
-        return this.createAgentInternal(config, resolvedAgentId, {
-          labels: record.labels,
-          metadata: record.metadata,
-          workspaceId: record.workspaceId,
-          owner: record.owner,
-          background: record.background,
-          env: record.launchEnv,
-        });
+        return this.createAgentInternal(
+          config,
+          resolvedAgentId,
+          {
+            labels: record.labels,
+            metadata: record.metadata,
+            workspaceId: record.workspaceId,
+            owner: record.owner,
+            background: record.background,
+            env: record.launchEnv,
+          },
+          // The stored agent's history is still its own; registration keeps it.
+          { history: "keep" },
+        );
       }),
     );
   }
@@ -1719,9 +1749,10 @@ export class AgentManager {
     config: AgentSessionConfig,
     resolvedAgentId: string,
     options: CreateAgentOptions,
+    historyOptions: { history: "discard" | "keep" } = { history: "discard" },
   ): Promise<ManagedAgent> {
     return this.launchAgent(resolvedAgentId, () =>
-      this.createAgentSession(config, resolvedAgentId, options),
+      this.createAgentSession(config, resolvedAgentId, options, historyOptions),
     );
   }
 
@@ -1729,6 +1760,7 @@ export class AgentManager {
     config: AgentSessionConfig,
     resolvedAgentId: string,
     options: CreateAgentOptions,
+    { history }: { history: "discard" | "keep" } = { history: "discard" },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     config = this.withConvertedOptions(config);
@@ -1752,7 +1784,8 @@ export class AgentManager {
       };
       options = { ...options, env: request.env, metadata: request.metadata ?? options.metadata };
     }
-    await this.deleteAgentState(resolvedAgentId);
+    if (history === "keep") this.discardRuntimeState(resolvedAgentId);
+    else await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
@@ -2032,7 +2065,7 @@ export class AgentManager {
         }),
         { resolveDefaultModel: false },
       );
-      const importedEntries = projectImportedTimelineEntries(imported.timeline);
+      const importedEntries = projectImportedTimelineEntries(input.provider, imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, importedEntries);
 
       handedToRegistration = true;
@@ -3383,7 +3416,7 @@ export class AgentManager {
         const write = this.timeline
           .ingest(
             scope,
-            { item: event.item },
+            { item: event.item, provider: event.provider },
             { publish: (commit) => this.publishTimelineEvent(agent.id, event, commit) },
           )
           .then((result) => this.reportUnpublished(agent.id, result));
@@ -3447,7 +3480,7 @@ export class AgentManager {
     const event: AgentStreamEvent = { type: "timeline", item, provider: agent.provider };
     const result = await this.timeline.ingest(
       { agentId },
-      { item },
+      { item, provider: agent.provider },
       { publish: (commit) => this.publishTimelineEvent(agentId, event, commit) },
     );
     if (result.kind === "dropped") {
@@ -4913,6 +4946,8 @@ export class AgentManager {
         agentId: resolvedAgentId,
         session,
         now,
+        // Nothing about an internal agent is on disk, its history included.
+        inMemory: config.internal === true,
         options,
       });
 
@@ -4953,7 +4988,7 @@ export class AgentManager {
         if (timelineInit.kind === "created") {
           await this.timeline.append(
             { agentId: managed.id },
-            projectImportedTimelineEntries(session.initialTimeline),
+            projectImportedTimelineEntries(managed.provider, session.initialTimeline),
           );
         }
         this.refreshSessionPersistence(managed);
@@ -5038,6 +5073,7 @@ export class AgentManager {
     agentId: string;
     session: AgentSession;
     now: Date;
+    inMemory: boolean;
     options:
       | {
           providerHistory?: readonly TimelineEntry[];
@@ -5052,22 +5088,24 @@ export class AgentManager {
     | { kind: "kept" }
     | { kind: "imported"; subagents: ProviderSubagentStreamEvent[]; sessionMetrics?: AgentMetric[] }
   > {
-    const { agentId, session, now, options } = params;
+    const { agentId, session, now, inMemory, options } = params;
     const scope: TimelineScope = { agentId };
     if (options?.providerHistory) {
       const result = await this.timeline.importHistory(scope, options.providerHistory, {
         timestamp: (options.updatedAt ?? options.createdAt ?? now).toISOString(),
+        inMemory,
       });
       return result.kind === "imported" ? { kind: "imported", subagents: [] } : { kind: "kept" };
     }
     if (await this.timeline.describe(scope)) return { kind: "kept" };
     if (!options?.importMissingHistory) {
-      await this.timeline.create(scope, { timestamp: now.toISOString() });
+      await this.timeline.create(scope, { timestamp: now.toISOString() }, { inMemory });
       return { kind: "created" };
     }
     const history = await this.readProviderHistory(session.streamHistory());
     const result = await this.timeline.importHistory(scope, history.entries, {
       timestamp: now.toISOString(),
+      inMemory,
     });
     return result.kind === "imported"
       ? {
@@ -5239,9 +5277,14 @@ export class AgentManager {
 
   private async discardRetainedAgentState(agentId: string): Promise<void> {
     const removed = await this.providerSubagents.deleteParent(agentId);
+    this.discardRuntimeState(agentId);
+    for (const event of removed) this.publishProviderSubagent(event);
+  }
+
+  /** What a previous session of the agent left in this process; its saved history stays. */
+  private discardRuntimeState(agentId: string): void {
     this.paseoToolPolicies.delete(agentId);
     this.detachPluginTools(agentId);
-    for (const event of removed) this.publishProviderSubagent(event);
     this.clearProviderBackgroundWork(agentId);
   }
 
@@ -5575,11 +5618,9 @@ export class AgentManager {
       );
     }
 
-    event = await this.settleTurnMetrics({ agent, event, options, terminalDisposition });
-
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
 
-    const dispatchPromise = this.dispatchStreamEventByType({
+    event = await this.recordStreamEvent({
       agent,
       event,
       options,
@@ -5588,9 +5629,6 @@ export class AgentManager {
       terminalDisposition,
       flags,
     });
-    if (dispatchPromise) {
-      await dispatchPromise;
-    }
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
@@ -5702,15 +5740,32 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private dispatchStreamEventByType(params: {
-    agent: ActiveManagedAgent;
-    event: AgentStreamEvent;
-    options: HandleStreamEventOptions | undefined;
-    isForegroundEvent: boolean;
-    eventTurnId: string | undefined;
-    terminalDisposition: ActiveTurnTerminalDisposition;
-    flags: StreamEventFlags;
-  }): Promise<void> | undefined {
+  /**
+   * Applies the event by type, then stamps a completed turn's metrics, returning the event as
+   * stamped. Handlers change the agent's state before they write, so a terminal event whose
+   * record fails to write still ends the turn; the failure is logged.
+   */
+  private async recordStreamEvent(params: StreamEventDispatch): Promise<AgentStreamEvent> {
+    const { agent, options, eventTurnId, terminalDisposition } = params;
+    const event = withTurnMetrics(params);
+    try {
+      await this.dispatchStreamEventByType({ ...params, event });
+      if (event.type === "turn_completed" && event.metrics && terminalDisposition !== "stale") {
+        await this.timeline.stampTurnMetrics({ agentId: agent.id }, event.metrics, {
+          turnId: event.turnId,
+        });
+      }
+    } catch (error) {
+      if (options?.fromHistory || !isTurnTerminalEvent(event)) throw error;
+      this.logger.error(
+        { err: error, agentId: agent.id, turnId: eventTurnId, eventType: event.type },
+        "Failed to record how the turn ended",
+      );
+    }
+    return event;
+  }
+
+  private dispatchStreamEventByType(params: StreamEventDispatch): Promise<void> | undefined {
     const { agent, event, options, isForegroundEvent, eventTurnId, terminalDisposition, flags } =
       params;
     switch (event.type) {
@@ -5850,29 +5905,6 @@ export class AgentManager {
    * Decides what a completed turn shows and records it on the turn's footer row, so
    * the live event and a later timeline fetch agree.
    */
-  private async settleTurnMetrics(params: {
-    agent: ActiveManagedAgent;
-    event: AgentStreamEvent;
-    options: HandleStreamEventOptions | undefined;
-    terminalDisposition: ActiveTurnTerminalDisposition;
-  }): Promise<AgentStreamEvent> {
-    if (params.event.type !== "turn_completed") return params.event;
-    const { agent } = params;
-    const { metrics: reported, ...event } = params.event;
-    // A replayed turn may have run on another model than the agent has now.
-    const model = params.options?.fromHistory
-      ? null
-      : (agent.runtimeInfo?.model ?? agent.config.model);
-    const metrics = withModelMetric(sanitizeAgentMetrics(reported), model);
-    if (metrics.length === 0) return event;
-    if (params.terminalDisposition !== "stale") {
-      await this.timeline.stampTurnMetrics({ agentId: agent.id }, metrics, {
-        turnId: event.turnId,
-      });
-    }
-    return { ...event, metrics };
-  }
-
   private onStreamTurnCompleted(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "turn_completed" }>;
@@ -5940,13 +5972,13 @@ export class AgentManager {
       agent.lifecycle = "error";
     }
     agent.lastError = event.error;
+    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
     await this.appendSystemErrorTimelineMessage(
       agent,
       event.provider,
       this.formatTurnFailedMessage(event),
       options,
     );
-    this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
   }
 
   private onStreamTurnCanceled(params: {
@@ -6094,6 +6126,7 @@ export class AgentManager {
       { agentId },
       {
         item,
+        provider,
         ...(turnId !== undefined ? { turnId } : {}),
         ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
       },
@@ -6975,4 +7008,23 @@ function pluginPromptContext(
 async function requireLaunchWrap(client: AgentClient): Promise<void> {
   if (client.supportsLaunchWrap !== true) throw new LaunchWrapUnsupportedError(client.provider);
   await client.requireLaunchWrap?.();
+}
+
+/**
+ * A completed turn with its metrics sanitized and the model added; a replayed turn may have run
+ * on another model than the agent has now, so it gets none.
+ */
+function withTurnMetrics(params: {
+  agent: ActiveManagedAgent;
+  event: AgentStreamEvent;
+  options: HandleStreamEventOptions | undefined;
+}): AgentStreamEvent {
+  if (params.event.type !== "turn_completed") return params.event;
+  const { agent } = params;
+  const { metrics: reported, ...event } = params.event;
+  const model = params.options?.fromHistory
+    ? null
+    : (agent.runtimeInfo?.model ?? agent.config.model);
+  const metrics = withModelMetric(sanitizeAgentMetrics(reported), model);
+  return metrics.length === 0 ? event : { ...event, metrics };
 }

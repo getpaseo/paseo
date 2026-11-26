@@ -1,5 +1,10 @@
 import { continuesTimelineTurn, isTimelineTurnTrigger } from "@getpaseo/protocol/timeline-turn";
-import type { AgentMetric, AgentTimelineItem, ToolCallDetail } from "./agent-sdk-types.js";
+import type {
+  AgentMetric,
+  AgentProvider,
+  AgentTimelineItem,
+  ToolCallDetail,
+} from "./agent-sdk-types.js";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
@@ -20,6 +25,7 @@ export type TimelineLimitDirection = "tail" | "before" | "after";
 
 export interface TimelineProjectionEntry {
   item: AgentTimelineItem;
+  provider?: AgentProvider;
   turnId?: string;
   providerMessageId?: string;
   turnMetrics?: AgentMetric[];
@@ -135,6 +141,7 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
     return {
       item: row.item,
       timestamp: row.timestamp,
+      ...(row.provider ? { provider: row.provider } : {}),
       ...(row.turnId ? { turnId: row.turnId } : {}),
       ...(row.providerMessageId ? { providerMessageId: row.providerMessageId } : {}),
       ...(row.turnMetrics ? { turnMetrics: row.turnMetrics } : {}),
@@ -332,12 +339,67 @@ function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] 
 /** A retained item. `seq` is its latest source event, not its display anchor. */
 export type ProjectedTimelineRow = AgentTimelineRow & TimelineProjectionEntry;
 
-interface ProjectedTimelinePageOptions {
+export interface ProjectedTimelinePageOptions {
   wholeTurns?: boolean;
   bounds: { minSeq: number; maxSeq: number };
   direction: TimelineLimitDirection;
   cursorSeq?: number;
   limit?: number;
+}
+
+/**
+ * How a new source row lands in a projection:
+ * - `identity`: it updates `identityRow`, the active row with the same item identity;
+ * - `adjacent`: it continues `lastRow`, the last active row (streamed assistant or reasoning text);
+ * - `new`: it becomes a new last row.
+ * The result is the whole projected row. For `adjacent`, a merged text is `lastRow`'s text followed
+ * by the new chunk, so a `lastRow` passed with empty text yields the chunk alone.
+ */
+export type TimelineRowFold =
+  | { kind: "identity"; row: ProjectedTimelineRow }
+  | { kind: "adjacent"; row: ProjectedTimelineRow }
+  | { kind: "new"; row: ProjectedTimelineRow };
+
+export function foldTimelineRow(input: {
+  row: AgentTimelineRow;
+  /** The row the projection holds for `timelineItemIdentity(row.item)`, if any. */
+  identityRow: ProjectedTimelineRow | undefined;
+  lastRow: ProjectedTimelineRow | undefined;
+}): TimelineRowFold {
+  const entry = makeCanonicalEntries([input.row])[0];
+  const merged = input.identityRow ? mergeIdentityEntries(input.identityRow, entry) : null;
+  if (merged) return { kind: "identity", row: { ...merged, seq: merged.seqEnd } };
+  const previous = input.lastRow;
+  const adjacent = previous
+    ? mergeReasoningChunks(mergeAssistantChunks([previous, entry]))
+    : [entry];
+  if (previous && adjacent.length === 1) {
+    return { kind: "adjacent", row: { ...adjacent[0], seq: adjacent[0].seqEnd } };
+  }
+  return { kind: "new", row: { ...entry, seq: entry.seqEnd } };
+}
+
+/**
+ * Merges neighbouring retirements that no active row separates. Merging keeps the meaning (drop
+ * rows anchored in `[retireFromSeq, seq)`) and bounds the count by the active rows in the span.
+ */
+export function coalesceTimelineRetirements(
+  retirements: readonly TimelineRetirement[],
+  hasActiveAnchorIn: (startSeq: number, endSeq: number) => boolean,
+): TimelineRetirement[] {
+  const coalesced: TimelineRetirement[] = [];
+  for (const retirement of retirements) {
+    const previous = coalesced.at(-1);
+    if (previous && !hasActiveAnchorIn(previous.seq, retirement.retireFromSeq)) {
+      coalesced[coalesced.length - 1] = {
+        seq: retirement.seq,
+        retireFromSeq: Math.min(previous.retireFromSeq, retirement.retireFromSeq),
+      };
+      continue;
+    }
+    coalesced.push({ ...retirement });
+  }
+  return coalesced;
 }
 
 /** Owns projected state; source events are consumed, never retained. */
@@ -375,28 +437,26 @@ export class TimelineProjection {
   }
 
   private appendProjected(row: AgentTimelineRow): number {
-    const entry = makeCanonicalEntries([row])[0];
     const identity = timelineItemIdentity(row.item);
     const index = identity === null ? undefined : this.identities.get(identity);
-    const existing = index === undefined ? undefined : this.rows[index];
-    const merged = existing ? mergeIdentityEntries(existing, entry) : null;
-    if (merged && index !== undefined) {
-      this.rows[index] = { ...merged, seq: merged.seqEnd };
+    const fold = foldTimelineRow({
+      row,
+      identityRow: index === undefined ? undefined : this.rows[index],
+      lastRow: this.rows.at(-1),
+    });
+    if (fold.kind === "identity" && index !== undefined) {
+      this.rows[index] = fold.row;
       this.extendSpan(index);
       return index;
     }
-    const previous = this.rows.at(-1);
-    const adjacent = previous
-      ? mergeReasoningChunks(mergeAssistantChunks([previous, entry]))
-      : [entry];
-    if (previous && adjacent.length === 1) {
-      const mergedText = adjacent[0];
-      this.rows[this.rows.length - 1] = { ...mergedText, seq: mergedText.seqEnd };
+    if (fold.kind === "adjacent") {
+      this.rows[this.rows.length - 1] = fold.row;
       this.extendSpan(this.rows.length - 1);
       return this.rows.length - 1;
     }
+    const entry = fold.row;
     if (identity !== null) this.identities.set(identity, this.rows.length);
-    this.rows.push({ ...entry, seq: entry.seqEnd });
+    this.rows.push(entry);
     const last = this.spans.at(-1);
     if (last && last.endSeq >= entry.seqStart) {
       last.endSeq = Math.max(last.endSeq, entry.seqEnd);
@@ -516,19 +576,9 @@ export class TimelineProjection {
   }
 
   private coalesceRetirements(retirements: readonly TimelineRetirement[]): TimelineRetirement[] {
-    const coalesced: TimelineRetirement[] = [];
-    for (const retirement of retirements) {
-      const previous = coalesced.at(-1);
-      if (previous && !this.hasActiveAnchorIn(previous.seq, retirement.retireFromSeq)) {
-        coalesced[coalesced.length - 1] = {
-          seq: retirement.seq,
-          retireFromSeq: Math.min(previous.retireFromSeq, retirement.retireFromSeq),
-        };
-        continue;
-      }
-      coalesced.push({ ...retirement });
-    }
-    return coalesced;
+    return coalesceTimelineRetirements(retirements, (startSeq, endSeq) =>
+      this.hasActiveAnchorIn(startSeq, endSeq),
+    );
   }
 
   private hasActiveAnchorIn(startSeq: number, endSeq: number): boolean {
@@ -693,7 +743,7 @@ export class TimelineProjection {
       const start = input.wholeTurns ? this.wholeTurnWindowStart(requestedStart) : requestedStart;
       // Choose the window before extending the right edge, so a prompt jump
       // cannot lose its target when the next turn is arbitrarily large.
-      if (input.wholeTurns) {
+      if (input.wholeTurns && low > 0) {
         while (low < this.rows.length && continuesProjectedTurn(this.rows[low - 1], this.rows[low]))
           low++;
       }
@@ -898,7 +948,7 @@ interface ProjectedEntryCandidate {
   firstSourceSeq: number;
 }
 
-function selectProjectedEntriesAfter(input: {
+export function selectProjectedEntriesAfter(input: {
   entries: readonly TimelineProjectionEntry[];
   /** Seqs covered without an active row; they advance the cursor but add no entry. */
   covered?: readonly TimelineSeqRange[];
@@ -940,7 +990,7 @@ function selectProjectedEntriesAfter(input: {
   };
 }
 
-function continuesProjectedTurn(
+export function continuesProjectedTurn(
   previous: TimelineProjectionEntry,
   next: TimelineProjectionEntry,
 ): boolean {

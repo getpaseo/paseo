@@ -403,7 +403,7 @@ initializing → idle ⇄ running
   client-side dedup; the default fetch page is 200 items.
 - Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to connected clients in real time; correctness is backed by authoritative timeline fetches and paged-to-completion catch-up.
-- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`. Timeline rows are runtime memory; provider history is the durable transcript authority and resumed agents rebuild from it. That storage path is derived from `cwd`, not from workspace id.
+- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`. That storage path is derived from `cwd`, not from workspace id. Timeline rows persist in the daemon database, `$PASEO_HOME/paseo.db`. They are the transcript authority after the first import of provider history. See [owned history](timeline-sync.md#owned-history).
 
 ## Right-sidebar boundary: directory-backed vs workspace-owned
 
@@ -479,6 +479,7 @@ Providers that can accept native tool definitions should set `supportsNativePase
 ```
 $PASEO_HOME/
 ├── agents/{cwd-with-dashes}/{agent-id}.json   # Agent record
+├── paseo.db                                    # Daemon database (SQLite): agent timelines
 ├── projects/projects.json                      # Project registry
 ├── projects/workspaces.json                    # Workspace registry
 ├── projects/icons/                             # Custom project icon images

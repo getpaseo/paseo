@@ -1,4 +1,8 @@
 import { setImmediate as nextTurn } from "node:timers/promises";
+import { onTestFinished } from "vitest";
+import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { nextTestDatabasePath } from "../../test-utils/test-database-path.js";
+import { openDaemonDatabase, type DaemonDatabase } from "../../database/index.js";
 import type { AgentMetric, AgentTimelineItem } from "../agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
@@ -16,12 +20,12 @@ import type {
   TimelineChild,
   TimelineEntry,
   TimelineHead,
-  TimelinePrompt,
   TimelineRewindIntent,
   TimelineScope,
   TimelineSeed,
 } from "./internal/backend.js";
 import { MemoryTimelineBackend } from "./internal/memory-backend.js";
+import { SqliteTimelineBackend, timelineSchema } from "./internal/sqlite-backend.js";
 
 /**
  * Testing entry point of the timeline module. Production code imports `./index.js`.
@@ -39,18 +43,37 @@ export interface InspectableTimelineBackend extends AgentTimelineBackend {
 export const TIMELINE_CONTRACT_BACKENDS: ReadonlyArray<{
   name: string;
   create: () => InspectableTimelineBackend;
-}> = [{ name: "memory", create: () => new MemoryTimelineBackend() }];
+}> = [
+  { name: "memory", create: () => new MemoryTimelineBackend() },
+  { name: "sqlite", create: () => new SqliteTimelineBackend(openTestTimelineDatabase()) },
+];
+
+/**
+ * Opens a fresh file-backed timeline database, closed when the calling test finishes, in a
+ * directory removed when the process exits. Pass the path of an earlier database to reopen it, as
+ * a daemon restart does.
+ */
+export function openTestTimelineDatabase(file?: string): DaemonDatabase {
+  const database = openDaemonDatabase({
+    path: file ?? nextTestDatabasePath(),
+    modules: [timelineSchema],
+    logger: createTestLogger(),
+  });
+  onTestFinished(() => database.close());
+  return database;
+}
 
 /**
  * Wraps a backend: defers every call by a turn of the event loop, the shape of an I/O-backed
- * store, records the committed appends and whole-history reads, and fails the next append or
- * retirement on request.
+ * store, records the committed appends and whole-history reads, and fails the next append,
+ * retirement, or metrics stamp on request.
  */
 export class DeferredTimelineBackend implements AgentTimelineBackend {
   readonly appends: TimelineEntry[][] = [];
   readRowsCalls = 0;
   failNextAppend = false;
   failNextRetire = false;
+  failNextStampTurnMetrics = false;
 
   constructor(private readonly inner: InspectableTimelineBackend = new MemoryTimelineBackend()) {}
 
@@ -85,8 +108,8 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
   isRetired(scope: TimelineScope, entry: TimelineEntry): Promise<boolean> {
     return this.defer(() => this.inner.isRetired(scope, entry));
   }
-  prompts(scope: TimelineScope): Promise<TimelinePrompt[]> {
-    return this.defer(() => this.inner.prompts(scope));
+  promptRows(scope: TimelineScope): Promise<ProjectedTimelineRow[]> {
+    return this.defer(() => this.inner.promptRows(scope));
   }
   setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): Promise<TimelineHead> {
     return this.defer(() => this.inner.setRewind(scope, rewind));
@@ -130,7 +153,13 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
     metrics: AgentMetric[],
     options?: { turnId?: string },
   ): Promise<ProjectedTimelineRow | null> {
-    return this.defer(() => this.inner.stampTurnMetrics(scope, metrics, options));
+    return this.defer(() => {
+      if (this.failNextStampTurnMetrics) {
+        this.failNextStampTurnMetrics = false;
+        throw new Error("disk full");
+      }
+      return this.inner.stampTurnMetrics(scope, metrics, options);
+    });
   }
   findSubmittedPrompt(
     scope: TimelineScope,

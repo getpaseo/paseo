@@ -1,10 +1,12 @@
 import type { ProjectedTimelineRow, TimelineRetirement } from "./timeline-projection.js";
-import type { AgentMetric, AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentMetric, AgentProvider, AgentTimelineItem } from "./agent-sdk-types.js";
 
 export interface AgentTimelineRow {
   seq: number;
   timestamp: string;
   item: AgentTimelineItem;
+  /** The provider that wrote the row; an agent's history can span providers. */
+  readonly provider?: AgentProvider;
   readonly turnId?: string;
   readonly providerMessageId?: string;
   /** Metrics of the turn this row carries the footer for. */

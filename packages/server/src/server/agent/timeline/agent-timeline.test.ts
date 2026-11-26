@@ -64,6 +64,24 @@ describe.each(
     expect(published).toEqual([1, 2, 3]);
   });
 
+  it("keeps the provider that wrote each row, and a merged row the one it started with", async () => {
+    const timeline = createTimeline();
+    await timeline.create(root("a"), { epoch: "e" });
+    await timeline.append(root("a"), [
+      { item: { type: "user_message", text: "prompt" }, provider: "codex" },
+      { item: { type: "assistant_message", text: "A" }, provider: "claude" },
+      { item: { type: "assistant_message", text: "B" }, provider: "claude" },
+      { item: { type: "user_message", text: "unattributed" } },
+    ]);
+
+    const page = await timeline.fetch(root("a"), { direction: "tail", limit: 0 });
+    expect(page.rows.map((row) => [row.item.type, row.provider])).toEqual([
+      ["user_message", "codex"],
+      ["assistant_message", "claude"],
+      ["user_message", undefined],
+    ]);
+  });
+
   it("publishes each commit before the next operation starts", async () => {
     const timeline = createTimeline();
     await timeline.create(root("a"), { epoch: "e" });
@@ -353,6 +371,27 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("history paging over a $name backend",
       ],
     });
   });
+
+  it("resets an after cursor ahead of the history, as after a restored database", async () => {
+    const timeline = new AgentTimeline(create());
+    await timeline.create(root("agent-1"), { epoch: "epoch-1", nextSeq: 8, rows: seededRows });
+
+    const result = await timeline.fetch(root("agent-1"), {
+      direction: "after",
+      cursor: { epoch: "epoch-1", seq: 20 },
+      limit: 1,
+    });
+
+    // Without the reset the client keeps its cursor and drops seqs 8 to 20 when they arrive.
+    expect(result).toMatchObject({
+      direction: "after",
+      reset: true,
+      staleCursor: false,
+      gap: true,
+      window: { minSeq: 5, maxSeq: 7, nextSeq: 8 },
+      rows: [{ seq: 7 }],
+    });
+  });
 });
 
 describe("projected timeline retention", () => {
@@ -615,7 +654,8 @@ async function assertSelectionMatchesReference(
         const expected = selectReferenceProjectedTimelinePage({
           rows,
           bounds: actual.window,
-          direction,
+          // A reset serves the tail, as `fetchTimelinePage` does.
+          direction: actual.reset ? "tail" : direction,
           limit,
           cursorSeq,
         });

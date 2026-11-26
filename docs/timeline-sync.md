@@ -46,19 +46,24 @@ deleting the agent, or a provider removing one of its own children, deletes hist
   for example because the provider stored expanded attachment text, the chat stays unchanged and
   Paseo reports a mismatch. A provider child Paseo already holds, listed or retired, is never imported again.
 - **Archive and reload** keep the history and the provider children. An archived chat reads them
-  without its provider. Deleting the agent deletes its history and every child's, retired ones
-  included.
+  without its provider. Opening a stored agent that has no provider session to resume starts its
+  first session on the same history.
+- **Delete** removes the agent's history and every child's, retired ones included, before the
+  agent record. If the history cannot be removed, the request fails and the agent stays listed. The
+  user can keep using it and delete it again.
 
 `epoch` is the stored history's identity, minted once when the history is created.
 
 `AgentTimeline` serializes every operation of one agent, child scopes included, and keeps its
 state in an `AgentTimelineBackend`: the sequence, the rows and retirements, prompt identities, the
 open rewind, and the children. The backend contract suite is `agent-timeline.test.ts`, run over
-`TIMELINE_CONTRACT_BACKENDS` in `timeline/testing.ts`. The only backend keeps everything in
-memory, so a daemon restart loses the owned history: the next resume imports provider history into
-a new epoch, and clients take the destructive reset below. Rewinds retired before the restart come
-back if the provider history still holds them. Retained history costs memory for every loaded,
-closed or archived agent until the daemon exits or the agent is deleted.
+`TIMELINE_CONTRACT_BACKENDS` in `timeline/testing.ts`. The daemon uses the SQLite backend in the
+[daemon database](data-model.md#daemon-database). History, retirements, the open rewind, and
+provider children survive a daemon restart in the same epoch, so clients keep their cursors. A
+closed or archived agent holds no history in memory. Each fetch reads the page from the database
+and starts no provider. An internal agent, such as the one that writes a commit message, keeps its
+history in a memory backend instead, so it leaves nothing on disk. The memory backend also serves
+tests.
 
 An open rewind is stored with the history. Resuming an agent whose history holds one settles it
 before the agent takes prompts: a recorded provider cut is committed, and an unknown outcome is

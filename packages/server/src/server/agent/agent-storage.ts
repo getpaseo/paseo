@@ -364,6 +364,11 @@ export class AgentStorage {
     this.deleting.add(agentId);
   }
 
+  /** Ends a delete that did not happen; the agent's record takes writes again. */
+  abandonDelete(agentId: string): void {
+    this.deleting.delete(agentId);
+  }
+
   async remove(agentId: string): Promise<void> {
     await this.load();
     this.beginDelete(agentId);

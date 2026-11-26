@@ -210,7 +210,12 @@ try {
     console.log("Foreground SIGINT reached the supervisor. The worker and ACP processes exited.");
 
     daemon = await startSupervisor();
-    const restoredIdle = (await daemon.client.fetchAgentTimeline(idle.id)).agent;
+    // The stored timeline is served without reopening the agent.
+    const storedIdle = (await daemon.client.fetchAgentTimeline(idle.id)).agent;
+    assert.equal(storedIdle?.status, "closed");
+    assert.equal(storedIdle?.requiresAttention, false);
+    await daemon.client.refreshAgent(idle.id);
+    const restoredIdle = (await daemon.client.fetchAgent(idle.id))?.agent;
     assert.equal(restoredIdle?.status, "idle");
     assert.equal(restoredIdle?.requiresAttention, false);
     await waitFor(async () => {
