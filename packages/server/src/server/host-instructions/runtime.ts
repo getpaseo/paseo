@@ -100,6 +100,8 @@ export class HostInstructionsRuntime {
   private relayOffer: Promise<string> | undefined;
   private credentialKey: Promise<string> | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private unsubscribeStop: (() => void) | undefined;
+  private unsubscribeTurns: (() => void) | undefined;
   private readonly active = new Map<string, ActiveInstruction>();
   private readonly discoveredTargets = new Map<string, ConversationTarget[]>();
   private busy = false;
@@ -117,10 +119,29 @@ export class HostInstructionsRuntime {
 
   start(): void {
     if (this.stopped || this.timer) return;
+    const { agentManager } = this.options;
+    this.unsubscribeStop = agentManager.onStop((agentId) => {
+      const active = this.active.get(agentId);
+      this.setStopHold(agentId, true, active?.admitted === false ? active : undefined);
+    });
+    this.unsubscribeTurns = agentManager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream" && event.event.type === "turn_started") {
+          this.setStopHold(event.agentId, false);
+        }
+      },
+      { replayState: false },
+    );
     this.timer = setInterval(() => {
       void this.tick().catch(() => this.options.logger.warn("host_instruction_tick_failed"));
     }, 3000);
     this.timer.unref();
+  }
+
+  private setStopHold(agentId: string, held: boolean, unadmitted?: ActiveInstruction): void {
+    void this.inbox.setStopHold(agentId, held, unadmitted).catch(() => {
+      this.options.logger.warn({ agentId, held }, "host_instruction_stop_hold_failed");
+    });
   }
 
   static async open(options: RuntimeOptions) {
@@ -357,6 +378,8 @@ export class HostInstructionsRuntime {
     if (this.closing) return this.closing;
     this.stopped = true;
     clearInterval(this.timer);
+    this.unsubscribeStop?.();
+    this.unsubscribeTurns?.();
     // Once admission is closed, these claims cannot run. Release them without
     // waiting for a provider to finish loading a session during shutdown.
     const unadmitted = [...this.active.values()].filter((dispatch) => !dispatch.admitted);
@@ -367,6 +390,7 @@ export class HostInstructionsRuntime {
   private async closeRelayAndRelease(unadmitted: ActiveInstruction[]) {
     const results = await Promise.allSettled([
       this.relay?.stop(),
+      this.inbox.flush(),
       ...unadmitted.map(async ({ claim, sourceId, id }) => {
         if ((await claim)?.state === "dispatching") await this.inbox.markBusy(sourceId, id);
         return undefined;
@@ -552,8 +576,9 @@ export class HostInstructionsRuntime {
       this.relay?.setEnabled(relayEnabled);
       const requests = await this.inbox.list();
       if (this.stopped) return;
-      for (const { state, sourceId, instruction } of requests) {
-        if (state !== "queued" || instruction.target.kind !== "conversation") continue;
+      for (const { state, sourceId, instruction, heldAfterStop } of requests) {
+        if (state !== "queued" || heldAfterStop || instruction.target.kind !== "conversation")
+          continue;
         const agentId = instruction.target.agentId;
         if (this.active.has(agentId)) continue;
         const dispatch = { sourceId, id: instruction.id, admitted: false };

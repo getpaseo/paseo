@@ -51,6 +51,7 @@ const RecordSchema = z.object({
   state: HostInstructionStateSchema,
   profileId: Id.optional(),
   approved: z.boolean().optional(),
+  heldAfterStop: z.boolean().optional(),
   agentId: Id.optional(),
   messageId: z.uuid(),
   reply: z.string().max(32_768).optional(),
@@ -105,7 +106,8 @@ export class HostInstructionInbox {
     let recovered = false;
     for (const request of data.requests) {
       if (request.state === "dispatching" || request.state === "running") {
-        request.state = "outcome_unknown";
+        request.state =
+          request.state === "dispatching" && request.heldAfterStop ? "queued" : "outcome_unknown";
         recovered = true;
       }
     }
@@ -365,6 +367,35 @@ export class HostInstructionInbox {
     return this.writer.readSettled(() => structuredClone(this.data.requests));
   }
 
+  flush(): Promise<void> {
+    return this.writer.settled();
+  }
+
+  async setStopHold(
+    agentId: string,
+    held: boolean,
+    unadmitted?: { sourceId: string; id: string },
+  ): Promise<void> {
+    const matches = (request: InboxRequest) => {
+      const { target, id } = request.instruction;
+      return (
+        target.kind === "conversation" &&
+        target.agentId === agentId &&
+        Boolean(request.heldAfterStop) !== held &&
+        (request.state === "queued" ||
+          (request.state === "dispatching" &&
+            (!held || (unadmitted?.id === id && unadmitted.sourceId === request.sourceId))))
+      );
+    };
+    if (!this.data.requests.some(matches)) return;
+    await this.commit({
+      ...this.data,
+      requests: this.data.requests.map((request) =>
+        matches(request) ? { ...request, heldAfterStop: held || undefined } : request,
+      ),
+    });
+  }
+
   async claim(
     sourceId: string,
     instructionId: string,
@@ -372,7 +403,7 @@ export class HostInstructionInbox {
   ) {
     await this.expire();
     const request = this.requireRequest(sourceId, instructionId);
-    if (request.state !== "queued") return null;
+    if (request.state !== "queued" || request.heldAfterStop) return null;
     const grant = this.requireGrant({ id: request.grantId, sourceId });
     const target = currentTarget === null ? null : Target.parse(currentTarget);
     if (
@@ -404,6 +435,7 @@ export class HostInstructionInbox {
     const request = this.find(sourceId, instructionId);
     return (
       request?.state === "dispatching" &&
+      !request.heldAfterStop &&
       request.instruction.expiresAt > this.now() &&
       this.pendingState(
         request,

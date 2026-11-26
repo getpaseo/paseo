@@ -890,6 +890,107 @@ async function waitForCapturedLog(
   );
 
   test(
+    "holds a queued host instruction after Stop until a new prompt starts",
+    { timeout: 60000 },
+    async () => {
+      const cleanup: (() => Promise<unknown>)[] = [];
+      const started = vi.fn();
+      try {
+        await startRelay({ useLocalRelay: true });
+        const source = await createTestPaseoDaemon();
+        cleanup.push(() => source.close());
+        const destination = await createTestPaseoDaemon({
+          relayEnabled: true,
+          relayEndpoint: `127.0.0.1:${relayPort}`,
+          relayUseTls: false,
+          relayPublicUseTls: false,
+          agentClients: createTestAgentClients({ onStartTurn: started }),
+        });
+        cleanup.push(() => destination.close());
+        const sourceClient = createHostClient(`127.0.0.1:${source.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        const destinationClient = createHostClient(`127.0.0.1:${destination.port}`, {
+          clientId: crypto.randomUUID(),
+        });
+        cleanup.push(
+          () => sourceClient.close(),
+          () => destinationClient.close(),
+        );
+        await Promise.all([sourceClient.connect(), destinationClient.connect()]);
+
+        const sourceId = source.daemon.getServerId();
+        const serverId = destination.daemon.getServerId();
+        const { registration } = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "unattended",
+          workspaceOverrides: [],
+        });
+        if (!registration) throw new Error("Expected instruction registration");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: registration.offer,
+          token: registration.token,
+        });
+        const paseo = createPaseoApi(destinationClient);
+        cleanup.push(() => paseo.dispose());
+        const workspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: destination.staticDir },
+        });
+        const agent = await workspace.agents.create({
+          config: { provider: "claude/claude-test", modeId: "default" },
+        });
+        await destinationClient.sendAgentMessage(agent.id, "Please read /etc/hosts");
+        const manager = destination.daemon.agentManager;
+        await expect.poll(() => manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1);
+
+        const mcp = new McpClient({ name: "stop-instruction-source", version: "1" });
+        cleanup.push(() => mcp.close());
+        await mcp.connect(
+          new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
+        );
+        const submitted = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Run the local check",
+          },
+        });
+        const id = submitted.structuredContent?.id;
+        if (typeof id !== "string") throw new Error("Expected instruction receipt");
+        const status = async () =>
+          (await mcp.callTool({ name: "get_host_instruction_status", arguments: { id } }))
+            .structuredContent?.state;
+        await expect.poll(status, { timeout: 15000 }).toBe("queued");
+        await destinationClient.cancelAgent(agent.id);
+
+        const scan = vi.spyOn(HostInstructionInbox.prototype, "list");
+        try {
+          // Let the idle scheduler scan twice while the recipient is stopped.
+          await expect
+            .poll(() => scan.mock.calls.length, { timeout: 10000 })
+            .toBeGreaterThanOrEqual(2);
+          expect(await status()).toBe("queued");
+          expect(started).toHaveBeenCalledOnce();
+        } finally {
+          scan.mockRestore();
+        }
+
+        await destinationClient.sendAgentMessage(agent.id, "Continue the local conversation");
+        await expect.poll(status, { timeout: 15000 }).toBe("completed");
+        expect(started).toHaveBeenCalledTimes(3);
+      } finally {
+        for (const close of cleanup.toReversed()) await close();
+        await stopRelay();
+      }
+    },
+  );
+
+  test(
     "connected hosts retry an unpersisted cancellation after the receiver restarts",
     { timeout: 60000 },
     async () => {

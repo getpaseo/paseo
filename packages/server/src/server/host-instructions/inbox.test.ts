@@ -254,6 +254,40 @@ describe("host instruction inbox", () => {
     });
   });
 
+  it("holds pre-Stop instructions across restart until a new turn", async () => {
+    const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
+    const target = {
+      kind: "conversation" as const,
+      workspaceId: "workspace",
+      agentId: "exception",
+    };
+    const claimed = { ...instruction, target };
+    const queued = { ...claimed, id: randomUUID() };
+    await inbox.submit(grant, claimed);
+    await inbox.submit(grant, queued);
+    await inbox.claim(grant.sourceId, claimed.id, target);
+
+    await inbox.setStopHold(target.agentId, true, { sourceId: grant.sourceId, id: claimed.id });
+    expect(inbox.canDispatch(grant.sourceId, claimed.id)).toBe(false);
+    inbox = await HostInstructionInbox.open(home, () => now);
+    expect(await inbox.claim(grant.sourceId, claimed.id, target)).toBeNull();
+    expect(await inbox.claim(grant.sourceId, queued.id, target)).toBeNull();
+    expect(await inbox.status(grant, queued.id)).toMatchObject({ state: "queued" });
+
+    const newer = { ...claimed, id: randomUUID() };
+    await inbox.submit(grant, newer);
+    expect(await inbox.claim(grant.sourceId, newer.id, target)).toMatchObject({
+      state: "dispatching",
+    });
+    await inbox.setStopHold(target.agentId, false);
+    expect(await inbox.claim(grant.sourceId, claimed.id, target)).toMatchObject({
+      state: "dispatching",
+    });
+    expect(await inbox.claim(grant.sourceId, queued.id, target)).toMatchObject({
+      state: "dispatching",
+    });
+  });
+
   it("expires queued work after restart and never replays an ambiguous dispatch", async () => {
     const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
     const waiting = { ...instruction, id: randomUUID() };

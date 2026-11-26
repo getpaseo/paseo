@@ -76,7 +76,8 @@ with workspace instruction policies, and the receiving host must have relay enab
 Ask an agent on the sending host to use `list_instruction_targets` and `send_host_instruction`.
 Use the receipt with `get_host_instruction_status` or `cancel_host_instruction`. The sending daemon
 retries delivery when the receiver wakes. The receiving daemon waits for a busy conversation to finish
-its current turn. The receiving agent can use `reply_host_instruction` to return an explicit reply.
+its current turn. **Stop** holds already queued instructions until a new prompt starts a turn.
+The receiving agent can use `reply_host_instruction` to return an explicit reply.
 
 The destination owns the grant and can revoke it while the source is offline. The instruction relay
 uses its own endpoint identity and accepts only instruction traffic. The host policy
