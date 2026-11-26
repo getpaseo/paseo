@@ -348,6 +348,41 @@ describe("Claude runtime exit", () => {
     }
   });
 
+  test("reports the failure before it empties background work when the idle process dies", async () => {
+    let capturedOptions: Options | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock(BACKGROUND_SHELL_TURN_EVENTS);
+    });
+    const child = createChildProcessStub();
+    vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    try {
+      await session.run("start a background shell");
+      capturedOptions?.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      child.emit("exit", 1, null);
+
+      // A watcher that sees the work end first takes the idle child for settled.
+      expect(
+        events
+          .filter((event) => event.type === "turn_failed" || event.type === "background_work")
+          .map((event) => event.type),
+      ).toEqual(["turn_failed", "background_work"]);
+      expect(session.hasPendingWakeup?.()).toBe(false);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("empties background work when a query restart retires the process", async () => {
     let capturedOptions: Options | undefined;
     const child = createChildProcessStub();

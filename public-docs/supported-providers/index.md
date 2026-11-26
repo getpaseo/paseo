@@ -32,7 +32,7 @@ Paseo runs any agent that speaks the [Agent Client Protocol](https://agentclient
 To add one from the catalog:
 
 1. If the agent does not launch through `npx` or `uvx`, install its CLI on your daemon host.
-2. Open **Settings → Hosts → your host → Providers** in Paseo.
+2. Open **Settings → Host → Providers** in Paseo.
 3. Select **+ Provider**, find the agent, and select **Add**.
 
 Entries that launch through `npx` or `uvx` need only that tool on your daemon host. If a CLI is missing, the provider page shows **Not installed**, and **Install** opens its install instructions.
@@ -59,7 +59,7 @@ Entries that launch through `npx` or `uvx` need only that tool on your daemon ho
 - [GLM Agent](https://github.com/stefandevo/glm-acp-agent), Zhipu AI's GLM coding agent.
 - [goose](https://block.github.io/goose/), Block's local open-source AI agent. Paseo lists models from all providers configured in goose when goose supports model inventory discovery.
 - [Grok](https://docs.x.ai/build/overview), xAI's Grok Build agentic coding CLI.
-- [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp), Nous Research's self-improving agent.
+- [Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp), Nous Research's self-improving agent. Paseo shows the full command of each terminal call.
 - [Junie](https://junie.jetbrains.com/docs/junie-cli-acp.html), JetBrains' coding agent.
 - [Kilo Code](https://kilo.ai/docs/code-with-ai/platforms/cli), open-source coding agent.
 - [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code), Moonshot AI's coding assistant.

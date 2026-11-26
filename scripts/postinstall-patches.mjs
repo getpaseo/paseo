@@ -23,9 +23,28 @@ const patchedPackages = [
   // Layout constraints: backport of https://github.com/jpudysz/react-native-unistyles/pull/1357
   // (commit from the root the commit hands us, so a concurrent window-size commit is kept).
   // Remove the ShadowTreeManager hunk when the installed release includes that PR.
+  // Web stylesheet: backport of https://github.com/jpudysz/react-native-unistyles/pull/1354
+  // (3.8.0). Classes are added and removed as CSSOM rules, not by rewriting the style tag, which
+  // made the browser restyle the whole document. Remove the web/css hunks at >= 3.8.0.
   {
     nodeModulesPath: "node_modules/react-native-unistyles",
     patchPrefix: "react-native-unistyles+",
+  },
+  // Portal state lives in a store that each host subscribes to. As the provider's context value it
+  // changed on every portal add, update and remove, and React searched every fiber under the
+  // provider (the whole app) for consumers. No upstream fix; keep while the app uses this package.
+  // Keyed hosts: backport of https://github.com/gorhom/react-native-portal/pull/62, unreleased
+  // after 1.0.14. Remove the PortalHost hunks when an installed release includes it.
+  {
+    nodeModulesPath: "node_modules/@gorhom/portal",
+    patchPrefix: "@gorhom+portal+",
+  },
+  // Backport of React 19.3.0 to the development builds: clear each render timing after reporting
+  // it. The browser keeps every performance measure for the life of the page, so a development
+  // session held millions of them and gigabytes of memory. Remove when react-dom is >= 19.3.0.
+  {
+    nodeModulesPath: "node_modules/react-dom",
+    patchPrefix: "react-dom+",
   },
   // Backport of https://github.com/software-mansion/react-native-reanimated/pull/10435
   // (Reanimated 4.7.1): skip synchronous Android prop updates for unmounted view tags

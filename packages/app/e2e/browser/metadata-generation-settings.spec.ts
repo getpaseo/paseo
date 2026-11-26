@@ -13,8 +13,8 @@ async function openMetadataGenerationSettings(page: Page) {
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsHost(page, serverId);
-  await openHostSection(page, serverId, "metadata");
-  await expectSettingsHeader(page, "Metadata");
+  await openHostSection(page, serverId, "workspaces");
+  await expectSettingsHeader(page, "Workspaces");
 }
 
 async function openManualMetadataModelPicker(page: Page) {

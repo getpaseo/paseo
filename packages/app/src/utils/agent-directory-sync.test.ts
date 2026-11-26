@@ -6,6 +6,11 @@ import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import { useSessionStore } from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { isAgentArchiving, setAgentArchiving } from "@/hooks/use-archive-agent";
+import {
+  beginAgentUnarchive,
+  clearUnarchiveAgentPending,
+  isAgentUnarchiving,
+} from "@/stores/unarchive-agent-store";
 import { queryClient } from "@/data/query-client";
 import { createUserMessage } from "@/types/stream";
 import { AgentStoreProjection } from "@/runtime/directory-sync/internal/agent-store";
@@ -39,6 +44,7 @@ function createAgentPayload(
     persistence: input.persistence ?? null,
     title: input.title ?? null,
     labels: input.labels ?? {},
+    archivedAt: input.archivedAt ?? null,
   };
 }
 
@@ -328,6 +334,55 @@ describe("replaceFetchedAgentDirectory", () => {
       activity: "2026-07-12T11:00:00.000Z",
     });
 
+    store.clearSession(serverId);
+  });
+
+  it("preserves archived agentDetails across directory removes and clears them on unarchive upsert or entity remove", () => {
+    const serverId = "server-archived-details";
+    const agentId = "archived-agent";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const archivedPayload = createAgentPayload({
+      id: agentId,
+      archivedAt: "2026-04-20T00:05:00.000Z",
+    });
+    const archivedAgent = {
+      ...normalizeAgentSnapshot(archivedPayload, serverId),
+      projectPlacement: null,
+    };
+    store.setAgentDetails(serverId, new Map([[agentId, archivedAgent]]));
+    beginAgentUnarchive({ serverId, agentId });
+
+    const projection = new AgentStoreProjection(serverId);
+    projection.applyDelta({ kind: "remove", agentId });
+
+    expect(useSessionStore.getState().sessions[serverId]?.agentDetails.get(agentId)?.id).toBe(
+      agentId,
+    );
+    expect(isAgentUnarchiving({ serverId, agentId })).toBe(true);
+
+    const activePayload = createAgentPayload({
+      id: agentId,
+      archivedAt: null,
+      updatedAt: "2026-04-20T00:06:00.000Z",
+    });
+    projection.applyDelta({
+      kind: "upsert",
+      agent: activePayload,
+      project: createEntry(activePayload).project,
+    });
+
+    const afterUnarchive = useSessionStore.getState().sessions[serverId];
+    expect(afterUnarchive?.agents.get(agentId)?.archivedAt).toBeNull();
+    expect(afterUnarchive?.agentDetails.has(agentId)).toBe(false);
+    expect(isAgentUnarchiving({ serverId, agentId })).toBe(false);
+
+    // True entity deletion still removes archived agentDetails.
+    store.setAgentDetails(serverId, new Map([[agentId, archivedAgent]]));
+    projection.remove(agentId);
+    expect(useSessionStore.getState().sessions[serverId]?.agentDetails.has(agentId)).toBe(false);
+
+    clearUnarchiveAgentPending({ serverId, agentId });
     store.clearSession(serverId);
   });
 });

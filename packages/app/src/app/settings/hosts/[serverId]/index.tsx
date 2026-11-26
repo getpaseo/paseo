@@ -9,5 +9,5 @@ export default function SettingsHostIndexRoute() {
     return <Redirect href={buildSettingsRoute()} />;
   }
 
-  return <Redirect href={buildSettingsHostSectionRoute(serverId, "connections")} />;
+  return <Redirect href={buildSettingsHostSectionRoute(serverId, "daemon")} />;
 }

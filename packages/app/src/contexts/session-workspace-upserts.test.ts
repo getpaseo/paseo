@@ -3,6 +3,7 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   clearWorkspaceArchivePending,
   isWorkspaceArchivePending,
+  isWorkspaceArchiveUndoRestoringAgent,
   markWorkspaceArchivePending,
   markWorkspaceArchiveUndoPending,
   shouldSuppressWorkspaceForLocalArchive,
@@ -155,5 +156,25 @@ describe("workspace archive undo intent", () => {
     expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(true);
 
     settleWorkspaceArchiveIntent(secondUndo);
+  });
+
+  it("marks only agents that were active at archive time as restoring during undo", () => {
+    const activeTarget = { serverId: "server-1", workspaceId: "/repo/worktree-agents" };
+    const undo = markWorkspaceArchiveUndoPending({
+      ...activeTarget,
+      archivedAgentIds: new Set(["agent-active"]),
+    });
+
+    expect(isWorkspaceArchiveUndoRestoringAgent({ ...activeTarget, agentId: "agent-active" })).toBe(
+      true,
+    );
+    expect(
+      isWorkspaceArchiveUndoRestoringAgent({ ...activeTarget, agentId: "agent-pre-archived" }),
+    ).toBe(false);
+
+    settleWorkspaceArchiveIntent(undo);
+    expect(isWorkspaceArchiveUndoRestoringAgent({ ...activeTarget, agentId: "agent-active" })).toBe(
+      false,
+    );
   });
 });

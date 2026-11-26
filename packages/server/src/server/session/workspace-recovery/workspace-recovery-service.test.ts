@@ -23,12 +23,14 @@ import {
 } from "../../../utils/worktree-metadata.js";
 import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import {
+  FileBackedProjectRegistry,
   FileBackedWorkspaceRegistry,
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
+import { createWorkspaceProvisioningService } from "../workspace-provisioning/workspace-provisioning-service.js";
 import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js";
 
 const NOW = "2026-07-11T10:12:30.752Z";
@@ -718,4 +720,206 @@ test("restores a user-created worktree at its recorded path outside Paseo's root
     }).trim(),
   ).toBe("external-feature");
   expect(unarchived).toEqual([workspace.workspaceId]);
+});
+
+describe("recovery approval ownership for shared archived history", () => {
+  async function setupSlugReuseHistory(options: { keepLatestCheckoutOnDisk: boolean }) {
+    const { tempDir, repoDir } = createGitRepository();
+    const paseoHome = join(tempDir, "paseo-home");
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      join(paseoHome, "workspaces.json"),
+      pino({ level: "silent" }),
+    );
+    const projectRegistry = new FileBackedProjectRegistry(
+      join(paseoHome, "projects.json"),
+      pino({ level: "silent" }),
+    );
+    const provisioning = createWorkspaceProvisioningService({
+      unarchiveWorkspaceAgents: async () => {},
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: {
+        getCheckout: async (cwd) => getCheckoutStatus(cwd),
+        getSnapshot: async () => ({
+          checkout: null,
+          forge: { pullRequest: null, checkedAt: null, error: null },
+        }),
+      },
+      isDirectory: async (target) => existsSync(target) && statSync(target).isDirectory(),
+      logger: pino({ level: "silent" }),
+    });
+
+    const firstWorktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "shared-slug",
+      source: { kind: "branch-off", branchName: "feature/older-approved", baseBranch: "main" },
+      paseoHome,
+    });
+    const olderApproved = await provisioning.createWorkspaceForWorktree({
+      sourceCwd: repoDir,
+      repoRoot: repoDir,
+      cwd: firstWorktree.worktreePath,
+      worktreeRoot: firstWorktree.worktreePath,
+      branch: firstWorktree.branchName,
+      baseBranch: firstWorktree.baseRef,
+      title: null,
+      isPaseoOwnedWorktree: true,
+    });
+    await workspaceRegistry.archive(olderApproved.workspaceId, "2026-04-01T00:00:00.000Z");
+    await deletePaseoWorktree({
+      cwd: repoDir,
+      worktreePath: firstWorktree.worktreePath,
+      paseoHome,
+    });
+
+    const untrustedSource = {
+      kind: "change_request" as const,
+      forge: "github",
+      number: 72,
+      headRepository: "contributor/repo",
+    };
+    const secondWorktree = await createWorktree({
+      cwd: repoDir,
+      worktreeSlug: "shared-slug",
+      source: { kind: "branch-off", branchName: "contributor/pr-72", baseBranch: "main" },
+      paseoHome,
+    });
+    await writePaseoWorktreeMetadata(secondWorktree.worktreePath, {
+      baseRefName: "main",
+      untrustedSource,
+    });
+    const laterUntrusted = await provisioning.createWorkspaceForWorktree({
+      sourceCwd: repoDir,
+      repoRoot: repoDir,
+      cwd: secondWorktree.worktreePath,
+      worktreeRoot: secondWorktree.worktreePath,
+      branch: secondWorktree.branchName,
+      baseBranch: secondWorktree.baseRef,
+      title: null,
+      isPaseoOwnedWorktree: true,
+      untrustedSource,
+    });
+    await workspaceRegistry.archive(laterUntrusted.workspaceId, "2026-04-02T00:00:00.000Z");
+    if (!options.keepLatestCheckoutOnDisk) {
+      await deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: secondWorktree.worktreePath,
+        paseoHome,
+      });
+    }
+
+    const recovery = createWorkspaceRecoveryService({
+      paseoHome,
+      getWorkspace: (id) => workspaceRegistry.get(id),
+      getProject: (id) => projectRegistry.get(id),
+      isDirectory: async (target) => existsSync(target) && statSync(target).isDirectory(),
+      unarchiveWorkspace: async (workspace) => {
+        await provisioning.ensureWorkspaceRecordUnarchived(workspace);
+      },
+    });
+
+    return {
+      olderApproved,
+      untrustedSource,
+      worktreePath: firstWorktree.worktreePath,
+      workspaceRegistry,
+      recovery,
+    };
+  }
+
+  test("restoring a deleted approved workspace after slug reuse keeps the recreated worktree approved", async () => {
+    const { olderApproved, worktreePath, workspaceRegistry, recovery } =
+      await setupSlugReuseHistory({ keepLatestCheckoutOnDisk: false });
+
+    const result = await recovery.restore(olderApproved.workspaceId);
+
+    expect(result).toEqual({ workspaceId: olderApproved.workspaceId, action: "restore" });
+    const restored = await workspaceRegistry.get(olderApproved.workspaceId);
+    expect(restored?.archivedAt).toBeNull();
+    expect(restored?.untrustedSource).toBeUndefined();
+    expect((await readPaseoWorktreeMetadata(worktreePath))?.untrustedSource).toBeUndefined();
+  });
+
+  test("unarchiving onto a retained unapproved checkout inherits untrustedSource from worktree metadata", async () => {
+    const { olderApproved, untrustedSource, workspaceRegistry, recovery } =
+      await setupSlugReuseHistory({ keepLatestCheckoutOnDisk: true });
+
+    const result = await recovery.restore(olderApproved.workspaceId);
+
+    expect(result).toEqual({ workspaceId: olderApproved.workspaceId, action: "unarchive" });
+    const restored = await workspaceRegistry.get(olderApproved.workspaceId);
+    expect(restored?.archivedAt).toBeNull();
+    expect(restored?.untrustedSource).toEqual(untrustedSource);
+  });
+
+  test("inspect and concurrent restore wait for deferred workspace publication instead of failing mid-unarchive", async () => {
+    const workspace: PersistedWorkspaceRecord = {
+      workspaceId: "ws-deferred-recovery",
+      projectId: "proj-1",
+      cwd: "/tmp/ws-deferred-recovery",
+      kind: "local_checkout",
+      displayName: "main",
+      title: null,
+      branch: "main",
+      baseBranch: null,
+      head: undefined,
+      isPaseoOwnedWorktree: false,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+      archivedAt: null,
+      autoArchivedChangeRequestUrl: null,
+      pinnedAt: null,
+      metadata: {},
+      background: false,
+    };
+
+    let settling = true;
+    let releaseDeferral!: () => void;
+    const deferralSettled = new Promise<boolean>((resolve) => {
+      releaseDeferral = () => {
+        settling = false;
+        resolve(true);
+      };
+    });
+    const unarchiveWorkspace = vi.fn(async () => {});
+    const service = createWorkspaceRecoveryService({
+      paseoHome: "/tmp/paseo-home",
+      getWorkspace: async () => workspace,
+      getProject: async () => null,
+      isDirectory: async () => true,
+      unarchiveWorkspace,
+      waitForDeferredPublication: () => (settling ? deferralSettled : Promise.resolve(false)),
+    });
+
+    let inspectSettled = false;
+    let restoreSettled = false;
+    const inspectPromise = service.inspect(workspace.workspaceId).then((state) => {
+      inspectSettled = true;
+      return state;
+    });
+    const restorePromise = service.restore(workspace.workspaceId).then((result) => {
+      restoreSettled = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(inspectSettled).toBe(false);
+    expect(restoreSettled).toBe(false);
+
+    releaseDeferral();
+    const [inspectResult, restoreResult] = await Promise.all([inspectPromise, restorePromise]);
+    expect(inspectResult).toMatchObject({
+      kind: "unavailable",
+      workspaceId: workspace.workspaceId,
+      reason: "workspace_not_archived",
+    });
+    expect(restoreResult).toEqual({
+      workspaceId: workspace.workspaceId,
+      action: "unarchive",
+    });
+    expect(unarchiveWorkspace).not.toHaveBeenCalled();
+  });
 });

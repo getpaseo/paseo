@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
+import { resolveWorkspaceFilePaths } from "@/workspace/file-open";
 import {
   classifyAssistantFileLink,
   normalizeInlinePathTarget,
@@ -608,6 +610,46 @@ describe("encoded filename line markers", () => {
           decodeHref: true,
         })?.lineStart,
       ).toBeUndefined();
+    },
+  );
+});
+
+describe("slash-prefixed drive links in Windows workspaces", () => {
+  it.each([
+    ["/E:/demo/repo/tools/tool.vbs", "E:/demo/repo/tools/tool.vbs", undefined],
+    ["/E:/demo/repo/docs/my%20file.md#L12", "E:/demo/repo/docs/my file.md", 12],
+    ["/E:/demo/repo/docs/guide.md:12", "E:/demo/repo/docs/guide.md", 12],
+    ["E:/demo/repo/tools/tool.vbs", "E:/demo/repo/tools/tool.vbs", undefined],
+    ["file:///E:/demo/repo/tools/tool.vbs", "E:/demo/repo/tools/tool.vbs", undefined],
+  ])("resolves %s to the workspace read target", (href, path, lineStart) => {
+    const workspaceRoot = "E:\\demo\\repo";
+    const target = parseAssistantFileLink(href, {
+      workspaceRoot,
+      decodeHref: true,
+      explicitLink: true,
+    });
+    expect(target).toMatchObject({ raw: href, path });
+    expect(target?.lineStart).toBe(lineStart);
+    expect(resolveFilePreviewReadTarget({ path: target!.path, workspaceRoot })).toEqual({
+      cwd: workspaceRoot,
+      path,
+    });
+    expect(resolveWorkspaceFilePaths({ path: target!.path, workspaceRoot })).toEqual({
+      absolutePath: path,
+      relativePath: path.slice("E:/demo/repo/".length),
+    });
+  });
+
+  it.each(["/home/demo/repo", undefined])(
+    "preserves POSIX paths with workspace %s",
+    (workspaceRoot) => {
+      expect(
+        parseAssistantFileLink("/E:/demo/repo/tools/tool.vbs", {
+          workspaceRoot,
+          decodeHref: true,
+          explicitLink: true,
+        })?.path,
+      ).toBe("/E:/demo/repo/tools/tool.vbs");
     },
   );
 });

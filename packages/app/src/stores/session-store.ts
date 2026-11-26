@@ -1,6 +1,7 @@
 import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
+import { clearUnarchiveAgentPendingForServer } from "./unarchive-agent-store";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
@@ -177,7 +178,7 @@ export function normalizeWorkspaceDescriptor(
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     background: payload.background ?? false,
-    parentWorkspaceId: payload.parentWorkspaceId,
+    parentWorkspaceId: normalizeWorkspaceOpaqueId(payload.parentWorkspaceId) ?? undefined,
     name: payload.name,
     title: payload.title ?? null,
     pinnedAt: payload.pinnedAt ?? null,
@@ -294,6 +295,7 @@ export interface DaemonServerInfo {
   serverId: string;
   hostname: string | null;
   version: string | null;
+  machineKind?: string | null;
   desktopManaged?: boolean;
   capabilities?: ServerCapabilities;
   features?: ServerInfoStatusPayload["features"];
@@ -304,6 +306,7 @@ export function toDaemonServerInfo(serverInfo: ServerInfoStatusPayload): DaemonS
     serverId: serverInfo.serverId,
     hostname: serverInfo.hostname ?? null,
     version: serverInfo.version ?? null,
+    ...(serverInfo.machineKind !== undefined ? { machineKind: serverInfo.machineKind } : {}),
     ...(serverInfo.desktopManaged !== undefined
       ? { desktopManaged: serverInfo.desktopManaged }
       : {}),
@@ -602,6 +605,8 @@ interface SessionStoreActions {
     message: UserMessageItem,
   ) => boolean;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
+  /** Drops every piece of one chat's resident transcript: rows, cursors, paging and sync marks. */
+  releaseAgentTimeline: (serverId: string, agentId: string) => void;
   setAgentTimelineCursor: (
     serverId: string,
     state:
@@ -787,6 +792,7 @@ function isSessionServerInfoUnchanged(input: {
   currentServerInfo: SessionState["serverInfo"] | undefined;
   nextHostname: string | null;
   nextVersion: string | null;
+  nextMachineKind: string | null;
   nextDesktopManaged: boolean | undefined;
   nextCapabilities: ServerCapabilities | undefined;
   nextFeatures: ServerInfoStatusPayload["features"] | undefined;
@@ -796,16 +802,19 @@ function isSessionServerInfoUnchanged(input: {
     currentServerInfo,
     nextHostname,
     nextVersion,
+    nextMachineKind,
     nextDesktopManaged,
     nextCapabilities,
     nextFeatures,
   } = input;
   const prevHostname = currentServerInfo?.hostname?.trim() || null;
   const prevVersion = currentServerInfo?.version?.trim() || null;
+  const prevMachineKind = currentServerInfo?.machineKind?.trim() || null;
   return (
     currentServerInfo?.serverId === input.nextServerId &&
     prevHostname === nextHostname &&
     prevVersion === nextVersion &&
+    prevMachineKind === nextMachineKind &&
     currentServerInfo?.desktopManaged === nextDesktopManaged &&
     areServerCapabilitiesEqual(currentServerInfo?.capabilities, nextCapabilities) &&
     areServerInfoFeaturesEqual(currentServerInfo?.features, nextFeatures)
@@ -859,6 +868,7 @@ export const useSessionStore = create<SessionStore>()(
       },
 
       clearSession: (serverId) => {
+        clearUnarchiveAgentPendingForServer(serverId);
         agentLastActivityCoalescer.flushNow();
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -943,6 +953,7 @@ export const useSessionStore = create<SessionStore>()(
 
           const nextHostname = info.hostname?.trim() || null;
           const nextVersion = info.version?.trim() || null;
+          const nextMachineKind = info.machineKind?.trim() || null;
           const nextDesktopManaged = info.desktopManaged;
           const nextCapabilities = info.capabilities;
           const nextFeatures = info.features;
@@ -952,6 +963,7 @@ export const useSessionStore = create<SessionStore>()(
               currentServerInfo: session.serverInfo,
               nextHostname,
               nextVersion,
+              nextMachineKind,
               nextDesktopManaged,
               nextCapabilities,
               nextFeatures,
@@ -971,6 +983,7 @@ export const useSessionStore = create<SessionStore>()(
                   serverId: info.serverId,
                   hostname: nextHostname,
                   version: nextVersion,
+                  ...(nextMachineKind !== null ? { machineKind: nextMachineKind } : {}),
                   ...(nextDesktopManaged !== undefined
                     ? { desktopManaged: nextDesktopManaged }
                     : {}),
@@ -1331,6 +1344,35 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: { ...session, agentStreamHead: nextHead },
             },
           };
+        });
+      },
+
+      releaseAgentTimeline: (serverId, agentId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const timelineKeys = [
+            "agentStreamTail",
+            "agentStreamHead",
+            "agentTasks",
+            "agentTimelineCursor",
+            "agentTimelineUnsettledTurn",
+            "agentTimelineHasOlder",
+            "agentTimelineHasNewer",
+            "agentTimelineOlderFetchInFlight",
+            "agentHistorySyncGeneration",
+            "agentAuthoritativeHistoryApplied",
+          ] as const satisfies readonly (keyof SessionState)[];
+          let next: SessionState | null = null;
+          for (const key of timelineKeys) {
+            const current: Map<string, unknown> = session[key];
+            if (!current.has(agentId)) continue;
+            const without = new Map(current);
+            without.delete(agentId);
+            next = { ...(next ?? session), [key]: without };
+          }
+          if (!next) return prev;
+          return { ...prev, sessions: { ...prev.sessions, [serverId]: next } };
         });
       },
 

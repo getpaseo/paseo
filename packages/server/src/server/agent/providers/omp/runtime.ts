@@ -1,5 +1,6 @@
 import type {
   OmpAgentMessage,
+  OmpExtensionUiResponse,
   OmpModel,
   OmpPromptAck,
   OmpRpcHostToolDefinition,
@@ -18,6 +19,8 @@ export interface OmpRuntimeLaunch {
   cwd: string;
   argv: string[];
   env?: Record<string, string>;
+  /** Start OMP as `[...wrap, ...argv]`. */
+  wrap?: readonly [string, ...string[]];
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -32,6 +35,8 @@ export interface OmpStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
   env?: Record<string, string>;
+  /** The agent's launch wrap; every OMP process started for the agent runs behind it. */
+  wrap?: readonly [string, ...string[]];
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -77,10 +82,7 @@ export interface OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void>;
   handoff(customInstructions?: string): Promise<void>;
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void;
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void;
   cancelExtensionUiRequest(id: string): void;
   close(): Promise<void>;
 }
@@ -114,6 +116,7 @@ export function buildOmpLaunch(input: {
             ...input.session.env,
           }
         : undefined,
+    wrap: input.session.wrap,
     model: input.session.model,
     thinkingOptionId: input.session.thinkingOptionId,
     protocolMode,

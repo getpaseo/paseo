@@ -14,6 +14,7 @@ const entries = {
   "./server/usage": "server",
   "./server/acp": "server",
   "./internal/lifecycle": "server",
+  "./internal/windows-command": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/ui": "client",
@@ -392,7 +393,7 @@ describe("lifecycle hook SDK types", () => {
   it("infers payloads and replacement requests and requires async handlers and new names", () => {
     expect(
       typeErrors(`
-      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult, PluginLaunchWrap } from "@getpaseo/plugin/server";
       import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
@@ -427,6 +428,38 @@ describe("lifecycle hook SDK types", () => {
           const { metadata, ...withoutMetadata } = request;
           return withoutMetadata;
         });
+        server.addHook("agent.create.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          // @ts-expect-error The agent's workspace is read-only.
+          request.workspaceId = "wks_other";
+        });
+        // Results built before workspaceId existed still typecheck; the daemon keeps the id.
+        server.addHook("agent.create.before", async ({ request }) => ({ config: request.config, env: request.env }));
+        server.before("agent.create", ({ request }) => ({ config: request.config, env: request.env }));
+        server.addHook("terminal.create.before", async ({ request }) => {
+          const source: "client" | "agent" | "script" | "worktree" = request.source;
+          const input: string | null = request.input;
+          const program: string | null = request.command;
+          // @ts-expect-error The terminal's workspace is read-only.
+          request.workspaceId = "wks_other";
+          // @ts-expect-error The terminal's program is read-only; return a wrap instead.
+          request.command = "/usr/bin/other";
+          const wrap: PluginLaunchWrap = ["/usr/bin/sandbox", "--workspace", request.workspaceId];
+          return { ...request, env: { A: "1" }, wrap };
+        });
+        server.addHook("command.run.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          const purpose: "setup" | "teardown" = request.purpose;
+          // @ts-expect-error A command's purpose is read-only.
+          request.purpose = "setup";
+          // @ts-expect-error The configured command is read-only; return a wrap instead.
+          request.command = "wrapper " + request.command;
+          return { ...request, wrap: ["/usr/bin/sandbox"] };
+        });
+        server.addHook("agent.open.before", async ({ request }) => ({
+          ...request,
+          wrap: ["/usr/bin/sandbox", "--workspace", request.workspaceId ?? "none"],
+        }));
         server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
           const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
@@ -656,6 +689,91 @@ describe("worktree manager SDK boundary", () => {
           },
         });
         return dispose;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("plugin notifications SDK boundary", () => {
+  it("types server notification sends and client tap handlers with capabilities and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        PluginNotifications,
+        PluginNotificationSendInput,
+        PluginNotificationSendResult,
+        PluginNotificationOpenTarget,
+      } from "@getpaseo/plugin/server";
+      import type {
+        PluginClientContext,
+        PluginHostNavigationActions,
+        PluginNotificationOpenContext,
+        PluginNotificationOpenEvent,
+        PluginNotificationOpenHandler,
+      } from "@getpaseo/plugin/client";
+
+      export async function sendFromServer(server: PluginServerContext) {
+        const notifications: PluginNotifications = server.notifications;
+        const target: PluginNotificationOpenTarget = {
+          type: "screen",
+          screenId: "details",
+          params: { id: "42" },
+        };
+        const input: PluginNotificationSendInput = {
+          title: "Build failed",
+          body: "Check the logs",
+          key: "build:42",
+          open: target,
+          data: { buildId: 42, ok: false, tags: ["ci"] },
+        };
+        const result: PluginNotificationSendResult = await notifications.send(input);
+        if (result.status === "sent") {
+          const id: string = result.notificationId;
+          void id;
+        }
+        await server.notifications.send({
+          title: "Agent ready",
+          body: "Done",
+          open: { type: "agent", agentId: "agent-1" },
+        });
+        await server.notifications.send({
+          title: "Workspace ready",
+          body: "Done",
+          open: { type: "workspace", workspaceId: "ws-1" },
+        });
+        // @ts-expect-error data must be JSON values
+        await server.notifications.send({ title: "Bad", body: "Bad", data: { fn: () => {} } });
+        // @ts-expect-error open target requires a known type discriminant
+        await server.notifications.send({ title: "Bad", body: "Bad", open: { type: "unknown" } });
+      }
+
+      export function contributeClient(client: PluginClientContext) {
+        const handler: PluginNotificationOpenHandler = (context: PluginNotificationOpenContext) => {
+          const navigation: PluginHostNavigationActions = context.navigation;
+          void navigation;
+          const event: PluginNotificationOpenEvent = context.event;
+          const kind: "opened" = event.type;
+          const id: string = event.notificationId;
+          void kind;
+          void id;
+          // @ts-expect-error event fields are read-only
+          event.notificationId = "other";
+          if (event.data) {
+            // @ts-expect-error event data record is read-only
+            event.data.extra = "nope";
+          }
+          if (typeof event.data?.agentId === "string") {
+            context.navigation.openAgent({ agentId: event.data.agentId, focusHost: true });
+          } else if (typeof event.data?.workspaceId === "string") {
+            context.navigation.openWorkspace({ workspaceId: event.data.workspaceId });
+          } else {
+            context.openScreen({ screenId: "main", params: { from: "notification" } });
+          }
+        };
+        const cleanup = client.onNotificationOpen(handler);
+        return cleanup;
       }
     `),
     ).toEqual([]);

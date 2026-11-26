@@ -15,7 +15,7 @@ import {
   closeRelayPairing,
   emptyHome,
   loadingScreen,
-  openTailscaleDocsFromSetup,
+  expectTailscaleSwitchDisabled,
   paseoToolsSwitch,
   pickTheme,
   projectSuggestion,
@@ -105,7 +105,7 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
       await expectSetupStep(page, "Let agents use Paseo");
       await expect(paseoToolsSwitch(setupModal(page))).toBeChecked();
       await expect(
-        setupModal(page).getByRole("switch", { name: "Orchestration skills", exact: true }),
+        setupModal(page).getByRole("switch", { name: "Paseo skills", exact: true }),
       ).toBeChecked();
       await page.screenshot({ path: testInfo.outputPath("4-orchestration.png") });
     });
@@ -403,12 +403,10 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
       await continueSetup(page);
     });
 
-    await test.step("Phone offers Tailscale docs and pairs over relay in its own modal", async () => {
+    await test.step("Phone shows a disabled Tailscale switch and pairs over relay", async () => {
       await expectSetupStep(page, "Take your agents with you");
       await page.screenshot({ path: testInfo.outputPath("5-phone.png") });
-      expect(await openTailscaleDocsFromSetup(page)).toBe(
-        "https://paseo.sh/docs/connectivity#tailscale",
-      );
+      await expectTailscaleSwitchDisabled(page);
       const pairing = await openRelayPairingFromSetup(page);
       await expect(pairing.getByText("Enable relay?", { exact: true })).toBeVisible();
       await enableRelayAndExpectOffer(page);
@@ -419,7 +417,7 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
     await test.step("Finish closes setup and Settings shows the same Paseo tools value", async () => {
       await finishSetup(page);
       await page.locator('[data-testid="sidebar-settings"]:visible').first().click();
-      await openSettingsHostSection(page, host.serverId, "agents");
+      await openSettingsHostSection(page, host.serverId, "tools");
       await expect(paseoToolsSwitch(page)).toBeChecked();
       await page.screenshot({ path: testInfo.outputPath("7-settings-agents.png") });
     });
@@ -441,7 +439,7 @@ test("with no skills picked, skills read as off and Continue moves on", async ({
     await chooseCustomSkills(page, []);
     await saveSkillSelection(page);
     const skillsSwitch = setupModal(page).getByRole("switch", {
-      name: "Orchestration skills",
+      name: "Paseo skills",
       exact: true,
     });
     await expect(skillsSwitch).not.toBeChecked();
@@ -478,7 +476,7 @@ test("in the compact layout, Finish on Orchestration applies its switches", asyn
     await step("Let agents use Paseo");
     await expect(paseoToolsSwitch(page)).toBeChecked();
     // Skills are not installed, so leaving them off has nothing to apply.
-    const skillsSwitch = page.getByRole("switch", { name: "Orchestration skills", exact: true });
+    const skillsSwitch = page.getByRole("switch", { name: "Paseo skills", exact: true });
     await skillsSwitch.click();
     await expect(skillsSwitch).not.toBeChecked();
     gate.holdNextClientRequest("set_daemon_config_request");

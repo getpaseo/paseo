@@ -4,10 +4,9 @@ import path from "node:path";
 import { expect, test } from "../support/fixtures";
 import {
   addProjectFlow,
-  addProjectFlowBack,
   addProjectFlowInput,
-  chooseAddProjectMethod,
-  expectAddProjectPage,
+  chooseAddProjectLocation,
+  chooseAddProjectTab,
   expectNewWorkspaceForAddedProject,
   openAddProjectFlow,
 } from "../support/helpers/add-project-flow";
@@ -39,28 +38,22 @@ test.describe("Add Project GitHub flow", () => {
 
       await gotoAppShell(page);
       await openAddProjectFlow(page);
-      await chooseAddProjectMethod(page, "github");
+      await chooseAddProjectTab(page, "clone");
 
       await addProjectFlowInput(page).fill("getpaseo/paseo");
       await expect(addProjectFlow(page).getByText("getpaseo/paseo", { exact: true })).toBeVisible({
         timeout: 30_000,
       });
-      await addProjectFlowInput(page).fill("");
+      await addProjectFlowInput(page).fill(repository.fullName);
 
       const repositoryRow = addProjectFlow(page).getByText(repository.fullName, { exact: true });
       await expect(repositoryRow).toBeVisible({ timeout: 30_000 });
       await repositoryRow.click();
-      await expectAddProjectPage(page, "github-location");
-
-      await addProjectFlowInput(page).fill(parentDirectory);
-      await expect(addProjectFlow(page)).toContainText(checkoutPath, { timeout: 30_000 });
-
-      await addProjectFlowBack(page).click();
-      await expectAddProjectPage(page, "github-search");
-      await expect(repositoryRow).toBeVisible();
-      await repositoryRow.click();
-      await expectAddProjectPage(page, "github-location");
-      await expect(addProjectFlowInput(page)).toHaveValue(parentDirectory);
+      await chooseAddProjectLocation(page, parentDirectory);
+      await expect(page.getByTestId("add-project-flow-location")).toContainText(
+        path.join(path.basename(parentDirectory), repository.name),
+      );
+      await addProjectFlowInput(page).focus();
 
       await mkdir(checkoutPath);
       await page.keyboard.press("Enter");

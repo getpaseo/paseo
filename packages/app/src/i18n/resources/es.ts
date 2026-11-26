@@ -117,6 +117,8 @@ export const es: TranslationResources = {
       groupByProject: "Agrupar por proyecto",
       groupByStatus: "Agrupar por estado",
       copyBrowserHostName: "Copiar el nombre del host del navegador",
+      profileGroupLabel: "Perfil",
+      profileSearchKeywords: "perfil aplicar perfil perfil de agente preajuste",
       modelGroupLabel: "Modelo",
       modelSearchKeywords: "cambiar modelo modificar modelo establecer modelo seleccionar modelo",
       thinkingGroupLabel: "Razonamiento",
@@ -297,6 +299,7 @@ export const es: TranslationResources = {
     archived: {
       callout: "Este agente está archivado.",
       unarchive: "Desarchivar",
+      unarchiving: "Desarchivando...",
     },
   },
   sessions: {
@@ -350,6 +353,7 @@ export const es: TranslationResources = {
       viewDiagram: "Ver diagrama",
     },
     actions: {
+      copyQuote: "Copiar cita",
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensaje",
@@ -925,6 +929,8 @@ export const es: TranslationResources = {
           pushBehind:
             "Push aún no está disponible porque hay cambios más nuevos que implementar primero",
           pushNothing: "Push no está disponible porque no hay nada nuevo que enviar",
+          pushUpstreamGone:
+            "Push no está disponible porque la rama que sigue esta rama ya no existe",
           pullAndPushNoRemote:
             "Tirar y empujar no está disponible aquí porque esta rama aún no está conectada a un control remoto",
           pullAndPushDirty:
@@ -989,6 +995,8 @@ export const es: TranslationResources = {
         },
         archiveWarning: {
           title: '¿Archivo "{{workspaceName}}"?',
+          bulkTitle: "¿Archivar {{count}} espacios de trabajo?",
+          bulkWorkspaceReason: "{{workspaceName}}: {{reason}}",
           confirm: "Archivo",
           cancel: "Cancelar",
           uncommittedChanges: "Cambios no confirmados",
@@ -1407,6 +1415,7 @@ export const es: TranslationResources = {
         rename: "Cambiar nombre del espacio de trabajo",
         pin: "Anclar arriba",
         unpin: "Desanclar",
+        select: "Seleccionar",
         archive: "Archivo",
         archiveWorkspace: "Archivar espacio de trabajo",
         hideFromSidebar: "Ocultar de la barra lateral",
@@ -1425,6 +1434,10 @@ export const es: TranslationResources = {
         submit: "Rebautizar",
         invalidBranchName: "Nombre de sucursal no válido",
       },
+      selection: {
+        count: "{{count}} seleccionados",
+        exit: "Salir de la selección",
+      },
       toasts: {
         workspacePathUnavailable: "RutaWorkspaceno disponible",
         pathCopied: "Ruta copiada",
@@ -1432,7 +1445,9 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
+        archiveMultipleFailed: "No se pudieron archivar {{count}} espacios de trabajo",
         archived: "Espacio de trabajo archivado",
+        archivedCount: "{{count}} espacios de trabajo archivados",
         undoArchive: "Deshacer",
         undoArchiveFailed: "No se pudo deshacer el archivado",
       },
@@ -1579,6 +1594,8 @@ export const es: TranslationResources = {
       status: {
         checking: "Buscando actualizaciones de la aplicación...",
         installing: "Instalando actualización de la aplicación...",
+        downloadingVersionProgress: "Descargando {{version}}... {{percent}}%",
+        downloadingProgress: "Descargando actualización de la aplicación... {{percent}}%",
         upToDate: "La aplicación está actualizada.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "Le avisaremos cuando la actualización esté lista.",
@@ -1587,6 +1604,16 @@ export const es: TranslationResources = {
         pendingWithVersion: "Actualización encontrada: {{version}}. Descargando...",
         pendingWithVersionAndLastChecked:
           "Actualización encontrada: {{version}}. Descargando... Última comprobación a las {{time}}.",
+        pendingWithVersionProgress:
+          "Actualización encontrada: {{version}}. Descargando... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Actualización encontrada: {{version}}. Descargando... {{percent}}% Última comprobación a las {{time}}.",
+        downloadAvailableWithVersion: "Actualización disponible: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Actualización disponible: {{version}}. Última comprobación a las {{time}}.",
+        downloadAvailable: "Hay una actualización de la aplicación disponible.",
+        downloadAvailableWithLastChecked:
+          "Hay una actualización de la aplicación disponible. Última comprobación a las {{time}}.",
         availableWithVersion: "Actualización lista:{{version}}",
         availableWithVersionAndLastChecked:
           "Actualización lista:{{version}}. Última comprobación a las {{time}}.",
@@ -1599,14 +1626,21 @@ export const es: TranslationResources = {
       },
       installError: "No se puede instalar la actualización de la aplicación de escritorio.",
       callout: {
+        downloadingTitle: "Descargando actualización",
         installingTitle: "Instalando actualización",
         failedTitle: "La actualización falló",
         availableTitle: "Actualización disponible",
         genericError: "Algo salió mal.",
         whatsNew: "Qué hay de nuevo",
+        downloadingAction: "Descargando...",
         installingAction: "Instalando...",
+        downloadAndRestart: "Descargar",
         installAndRestart: "Instalar y reiniciar",
+        downloadingVersionDescription: "Descargando {{version}}... {{percent}}%",
+        downloadingDescription: "Descargando actualización... {{percent}}%",
         installingDescription: "Instalando y reiniciando...",
+        versionAvailable: "{{version}} está disponible para descargar.",
+        newVersionAvailable: "Una nueva versión está disponible para descargar.",
         versionReady: "{{version}}está listo para instalar.",
         newVersionReady: "Una nueva versión está lista para instalar.",
         restartWarning:
@@ -1831,12 +1865,6 @@ export const es: TranslationResources = {
             "La app móvil nativa completa te permite controlar cualquier ordenador con Paseo desde tu teléfono",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "Elige cómo conectarte",
-          connectDocs: "Docs",
-          openConnectDocs: "Abrir la documentación de conectividad",
-          recommended: "Recomendado",
-          relay: { title: "Relé", hint: "Cifrado de extremo a extremo, escanea un código QR" },
-          tailscale: { title: "Tailscale", hint: "Requiere algo de configuración" },
         },
       },
     },
@@ -1857,11 +1885,15 @@ export const es: TranslationResources = {
     defaultModel: "Por defecto",
     profiles: "Perfiles",
     providers: "Proveedores",
+    models: "Modelos",
     model: "Modelo",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfiles de agente",
     createProfile: "Crear perfil",
     createProfileFromModel: "Crear perfil desde este modelo",
+    profileSaved: 'Guardado "{{name}}"',
+    undo: "Deshacer",
+    undoProfileSave: "Deshacer perfil guardado",
     editProfileLabel: "Editar {{name}}",
     editProfilesCount: "Editar perfiles ({{count}})",
     modelCount: "{{count}} modelo",
@@ -1909,6 +1941,37 @@ export const es: TranslationResources = {
       noModelAvailable: "No hay ningún modelo disponible para el proveedor seleccionado",
       workspaceDirectoryNotFound: "DirectorioWorkspaceno encontrado",
       hostDisconnected: "Hostno está conectado",
+    },
+  },
+  devices: {
+    title: "Dispositivos",
+    waysToConnect: "Formas de conectarse",
+    docs: "Docs",
+    docsAccessibility: "Abrir la documentación de conectividad",
+    relay: {
+      title: "Relé",
+      hint: "Sin configuración, cifrado de extremo a extremo, escanea un código QR",
+    },
+    tailscale: {
+      hint: "Conexión directa por tu tailnet, introduce una dirección",
+      unavailable: "Tailscale no se está ejecutando en este host",
+      install: "Obtener Tailscale",
+      refresh: "Actualizar",
+      refreshing: "Actualizando...",
+      waiting: "Esperando a que Tailscale se inicie en este host",
+      alwaysOn: "Siempre activado, porque este host ya acepta conexiones de Tailscale",
+      socket: "Desactivado, porque este host escucha en un socket local",
+      launch: "Lo controla el comando que inicia este host",
+      update: "Actualiza este host para usar Tailscale",
+      updateDocs: "Cómo actualizar",
+      address: "En un teléfono con Tailscale, añade un host con esta dirección",
+      statusError: "No se pudo comprobar Tailscale",
+      turnOnError: "No se pudo activar Tailscale",
+      turnOffError: "No se pudo desactivar Tailscale",
+      confirmTitle: "¿Desactivar Tailscale?",
+      confirmMessage:
+        "Este dispositivo está conectado mediante Tailscale y perderá la conexión con el host.",
+      confirmAction: "Desactivar",
     },
   },
   pairing: {
@@ -2379,7 +2442,7 @@ export const es: TranslationResources = {
     title: "Ajustes",
     loading: "Cargando configuración...",
     groups: {
-      app: "Aplicación",
+      app: "Este dispositivo",
       host: "Host",
     },
     hostPicker: {
@@ -2397,7 +2460,9 @@ export const es: TranslationResources = {
     groupInfo: "Acerca de{{title}}",
     sections: {
       general: "General",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat y paneles",
       appearance: "Apariencia",
       sidebar: "Barra lateral",
       terminal: "Terminal",
@@ -2410,6 +2475,16 @@ export const es: TranslationResources = {
       permissions: "Permisos",
       diagnostics: "Diagnóstico",
       about: "Acerca de",
+    },
+    clientHosts: {
+      title: "Hosts guardados",
+      info: "Hosts a los que se conecta este dispositivo. Los nombres, iconos, insignias y rutas aquí solo afectan a este dispositivo.",
+      backToHosts: "Volver a hosts",
+      routesTitle: "Cómo se conecta este dispositivo",
+      routesInfo:
+        "Rutas guardadas que usa este dispositivo para llegar a este host. Paseo elige la más rápida disponible.",
+      addRoute: "Añadir ruta",
+      activeRoute: "Activa",
     },
     layout: en.settings.layout,
     editor: {
@@ -2427,6 +2502,49 @@ export const es: TranslationResources = {
     },
     notifications: {
       title: "Notificaciones",
+      enabled: {
+        label: "Activar notificaciones",
+        description: "Recibe notificaciones de agentes, terminales y plugins en este dispositivo",
+        pausedDescription:
+          "Todas las notificaciones, incluidas las de plugins, están en pausa en este dispositivo",
+      },
+      events: {
+        title: "Eventos",
+        agentPermission: {
+          label: "El agente necesita permiso",
+          description: "Aprobaciones, planes y preguntas",
+        },
+        agentError: {
+          label: "Error del agente",
+          description: "Cuando un agente se detiene con un error",
+        },
+        agentFinished: {
+          label: "El agente terminó",
+          description: "Cuando un agente completa un turno",
+        },
+        terminalNeedsInput: {
+          label: "La terminal necesita entrada",
+          description: "Cuando un comando de terminal espera entrada",
+        },
+        terminalFinished: {
+          label: "La terminal terminó",
+          description: "Cuando finaliza un comando de terminal",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Notificaciones de plugins",
+          description: "Permitir que los plugins instalados envíen notificaciones",
+        },
+        empty: "Los plugins instalados aparecen aquí para que puedas silenciarlos individualmente",
+      },
+      legacyHostTitle: "Actualiza el host para preferencias push",
+      legacyHostHint:
+        "Actualiza los hosts conectados para sincronizar preferencias de notificaciones push desde este dispositivo",
+      desktop: {
+        title: "Sistema",
+      },
       permission: "Permiso de notificaciones",
       refreshAccessibility: "Actualizar permiso de notificaciones",
       playSound: "Reproducir sonido",
@@ -2444,6 +2562,8 @@ export const es: TranslationResources = {
       projects: "Proyectos",
       connections: "Conexiones",
       agents: "Agents",
+      tools: "Herramientas e instrucciones",
+      agentProfiles: "Perfiles de agente",
       metadata: "Metadatos",
       voice: "Voz",
       workspaces: "Workspaces",
@@ -2452,6 +2572,7 @@ export const es: TranslationResources = {
       terminals: "Terminals",
       plugins: "Plugins",
       host: "Resumen",
+      daemon: "Daemon",
     },
     plugins: pluginSettings.es,
     metadataGeneration: {
@@ -2664,9 +2785,28 @@ export const es: TranslationResources = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "Actualizaciones automáticas",
+        options: {
+          automatic: "Auto",
+          notify: "Notificar",
+          off: "Desactivado",
+        },
+        descriptions: {
+          automatic: "Buscar y descargar actualizaciones en segundo plano",
+          notify: "Buscar actualizaciones, pero descargar solo cuando lo elijas",
+          off: "No buscar automáticamente. Solo buscar al hacer clic en Comprobar",
+        },
+      },
       updates: {
         label: "Actualizaciones de aplicaciones",
         readyToInstall: "Listo para instalar:{{version}}",
+        downloadTitle: "Descargar actualización de escritorio",
+        downloadMessage: "Esto descarga e instala la actualización de Paseo en esta computadora.",
+        downloadConfirm: "Descargar e instalar",
+        download: "Descargar",
+        downloadTo: "Descargar {{version}}",
+        downloading: "Descargando...",
         installTitle: "Instalar actualización de escritorio",
         installMessage: "Esto actualizaPaseoen esta computadora.",
         installConfirm: "Instalar actualización",
@@ -2869,6 +3009,23 @@ export const es: TranslationResources = {
         name: {
           label: "Nombre",
         },
+        icon: {
+          label: "Icono",
+          accessibilityLabel: "Icono, {{value}}",
+          auto: "Automático",
+          autoDetected: "Automático ({{icon}})",
+          options: {
+            server: "Servidor",
+            laptop: "Portátil",
+            desktop: "Escritorio",
+            mini: "Mini",
+            workstation: "Estación de trabajo",
+            cloud: "Nube",
+            container: "Contenedor",
+            board: "PC de placa única",
+            terminal: "Terminal",
+          },
+        },
         color: {
           label: "Color",
           accessibilityLabel: "Color, {{value}}",
@@ -2905,6 +3062,14 @@ export const es: TranslationResources = {
         local: "Local",
         remoteSsh: "SSH remoto",
       },
+      connectionKinds: {
+        local: "Local",
+        relay: "Relé",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Directo",
+        routed: "Vía",
+      },
       connections: {
         title: "Conexiones",
         removeTitle: "Quitar conexión",
@@ -2915,9 +3080,7 @@ export const es: TranslationResources = {
         timeout: "Se acabó el tiempo",
       },
       pairDevices: {
-        title: "Emparejar dispositivos",
         rowTitle: "Emparejar un dispositivo",
-        rowHint: "Escanee un códigoQRo copie un enlace para conectar su teléfono a este host",
       },
       skills: {
         ...en.settings.host.skills,
@@ -2957,6 +3120,10 @@ export const es: TranslationResources = {
           update: "Actualizar habilidad",
           delete: "Eliminar habilidad",
         },
+      },
+      tools: {
+        instructionsTitle: "Instrucciones",
+        toolsTitle: "Herramientas de agentes",
       },
       orchestration: {
         title: "Orquestación",
@@ -3058,8 +3225,34 @@ export const es: TranslationResources = {
         removeConfirmMessage: '¿Eliminar "{{name}}"?',
         moveUp: "Mover hacia arriba",
         moveDown: "Mover hacia abajo",
+        searchPlaceholder: "Buscar perfiles",
+        clearSearch: "Limpiar búsqueda",
+        noSearchMatches: 'Ningún perfil coincide con "{{query}}"',
+        noRoutingNote: "Sin nota",
+        duplicate: "Duplicar",
+        copyName: "{{name}} (copia)",
+        moveToTop: "Mover al principio",
+        profileActions: "Acciones para {{name}}",
+        reorderProfile: "Reordenar {{name}}",
+        previousProfile: "Perfil anterior",
+        nextProfile: "Perfil siguiente",
+        chooseModelPlaceholder: "Seleccionar un modelo",
+        searchModelsPlaceholder: "Buscar modelos",
+        chooseModelSubtitle: "Seleccionar un modelo",
+        customizeSettings: "Personalizar ajustes",
+        addRoutingNoteShort: "Añadir una nota",
+        providerOptionsLabel: "Opciones de {{provider}}",
+        discardTitle: "¿Descartar cambios?",
+        discardMessage: "Tienes cambios sin guardar en este perfil.",
+        discardConfirm: "Descartar",
+        columns: {
+          profile: "Perfil",
+          runtime: "Modelo y ejecución",
+          whenToUse: "Cuándo usarlo",
+        },
       },
       daemon: {
+        runtimeTitle: "Ejecución de agentes",
         rename: {
           editLabel: "Editar etiqueta",
           title: "Cambiar nombre de host",

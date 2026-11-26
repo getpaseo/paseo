@@ -15,7 +15,7 @@ import DraggableFlatList, {
 } from "react-native-draggable-flatlist";
 import type { GestureType } from "react-native-gesture-handler";
 import { useUnistyles } from "react-native-unistyles";
-import { useContentDrag } from "@/components/ui/scroll-view";
+import { useContentDrag } from "@/components/ui/content-drag";
 import { createDragHold } from "./drag-reorder/drag-hold";
 import { movedItemKey } from "./drag-reorder/native-drop";
 import type {

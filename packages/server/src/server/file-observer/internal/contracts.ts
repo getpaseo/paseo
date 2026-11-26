@@ -31,6 +31,8 @@ export interface ObservationHost {
   metrics: ObserverMetrics;
   isActive(): boolean;
   isIgnored(path: string): boolean;
+  /** O(1) exact ignored-root check for a child whose parent is already known non-ignored. */
+  isIgnoredRoot(path: string): boolean;
   isPathInside(root: string, path: string): boolean;
   queueEvent(type: FileChangeType, path: string): void;
   fail(error: Error): void;
