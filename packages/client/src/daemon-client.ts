@@ -61,6 +61,7 @@ import type {
   CreatePaseoWorktreeRequest,
   FileDownloadTokenResponse,
   FileUploadResponse,
+  NetworkTunnelCreateTicketPayload,
   FileExplorerResponse,
   FileVersion,
   FileWriteResult,
@@ -5969,6 +5970,27 @@ export class DaemonClient {
         path,
       },
       responseType: "file_download_token_response",
+    });
+  }
+
+  /**
+   * Requests a short-lived single-use ticket for opening a dedicated binary
+   * network tunnel WebSocket against this daemon.
+   * Gated on `server_info.features.networkTunnel`.
+   */
+  async createNetworkTunnelTicket(requestId?: string): Promise<NetworkTunnelCreateTicketPayload> {
+    if (!this.isConnected) {
+      throw this.unavailableError();
+    }
+    // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
+    if (this.getLastServerInfoMessage()?.features?.networkTunnel !== true) {
+      throw Object.assign(new Error("Update the daemon to use the network tunnel"), {
+        code: "unsupported_capability",
+      });
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"network.tunnel.create_ticket.response">({
+      requestId,
+      message: { type: "network.tunnel.create_ticket.request" },
     });
   }
 
