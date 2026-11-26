@@ -7,7 +7,9 @@ import {
 } from "@/runtime/replica-cache/row-store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { AgentSnapshotPayload, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
+import { AgentDirectoryReplica } from "@/runtime/directory-sync/agent-replica";
 import type { CachedTimeline } from "@/runtime/replica-cache";
 import {
   selectAgentTimelineState,
@@ -1800,5 +1802,299 @@ describe("SQLite baseline restoration", () => {
       await preparation;
       database.close();
     }
+  });
+});
+
+describe("archived timeline lifetime", () => {
+  const ACTIVE = "active-agent";
+  const OTHER = "other-agent";
+  const ARCHIVED = "archived-agent";
+
+  function agentPayload(id: string, archivedAt?: string): AgentSnapshotPayload {
+    return {
+      id,
+      provider: "codex",
+      cwd: "/repo",
+      model: null,
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-17T00:01:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: id,
+      labels: {},
+      ...(archivedAt ? { archivedAt } : {}),
+    };
+  }
+
+  function directoryEntry(id: string): FetchAgentsEntry {
+    return {
+      agent: agentPayload(id),
+      project: {
+        projectKey: "/repo",
+        projectName: "repo",
+        checkout: {
+          cwd: "/repo",
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    };
+  }
+
+  function historyPage(agentId: string): TimelineResponsePayload {
+    return {
+      requestId: `tail-${agentId}`,
+      agentId,
+      agent: null,
+      direction: "tail",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+      startCursor: { epoch: "epoch-1", seq: 1 },
+      endCursor: { epoch: "epoch-1", seq: 1 },
+      entries: [
+        {
+          provider: "codex",
+          item: { type: "assistant_message", text: `history of ${agentId}` },
+          timestamp: "2026-08-26T10:00:00.000Z",
+          seqStart: 1,
+          seqEnd: 1,
+          sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+          collapsed: [],
+        },
+      ],
+      error: null,
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    };
+  }
+
+  /**
+   * A host with an active directory and a viewed-timeline owner. Fetches reach the store the
+   * way the host runtime delivers them: the agent row first, then the page, whether or not
+   * the catch-up that asked for it is still current.
+   */
+  function openHost(
+    activeAgentIds: string[],
+    storage: TimelineReplicaStorage = {
+      readTimeline: async () => undefined,
+      commitTimeline: () => undefined,
+    },
+  ) {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const directory = new AgentDirectoryReplica(
+      SERVER_ID,
+      () => undefined,
+      () => undefined,
+    );
+    directory.commitSnapshot(activeAgentIds.map(directoryEntry), []);
+    const fetches: string[] = [];
+    const held = new Map<string, () => void>();
+    const holding = new Set<string>();
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage,
+      prepareAgent: async () => undefined,
+    });
+    const owner: ViewedTimelineOwner = createViewedTimelineOwner({
+      serverId: SERVER_ID,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+      applyTurnLiveness: () => undefined,
+      ports: {
+        canCheckFreshness: () => false,
+        observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+        readCursor: () => undefined,
+        fetchPage: async (agentId) => {
+          fetches.push(agentId);
+          if (holding.has(agentId)) {
+            await new Promise<void>((resolve) => held.set(agentId, resolve));
+          }
+          if (agentId === ARCHIVED) {
+            directory.submitTimelineAgent(
+              directory.captureTimeline(agentId),
+              agentPayload(agentId, "2026-09-11T00:00:00.000Z"),
+            );
+          }
+          owner.applyTimelineResponse(historyPage(agentId));
+          return { hasNewer: false, endCursor: null };
+        },
+        fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
+        reportError: () => undefined,
+      },
+    });
+    owner.setConnected(true);
+    return {
+      directory,
+      owner,
+      fetches,
+      view(agentIds: string[]) {
+        owner.replaceVisibleAgentIds("workspace", agentIds);
+      },
+      hold(agentId: string) {
+        holding.add(agentId);
+      },
+      async deliverHeld(agentId: string) {
+        await expect.poll(() => held.has(agentId)).toBe(true);
+        held.get(agentId)?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+    };
+  }
+
+  function timelineStatus(agentId: string): string {
+    return selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], agentId).status;
+  }
+
+  function residentAgentIds(): string[] {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    if (!session) return [];
+    return [
+      ...new Set([
+        ...session.agentStreamTail.keys(),
+        ...session.agentStreamHead.keys(),
+        ...session.agentTimelineCursor.keys(),
+        ...session.agentAuthoritativeHistoryApplied.keys(),
+        ...session.agentTimelineHasOlder.keys(),
+        ...session.agentTimelineHasNewer.keys(),
+        ...session.agentHistorySyncGeneration.keys(),
+      ]),
+    ].sort();
+  }
+
+  it("keeps hidden active chats cached and switches back without a fetch", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+    host.view([ACTIVE]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(timelineStatus(ACTIVE)).toBe("synced");
+    expect(timelineStatus(OTHER)).toBe("synced");
+    expect(host.fetches).toEqual([ACTIVE, OTHER]);
+    host.owner.dispose();
+  });
+
+  it("releases a hidden chat's timeline when its agent is archived", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+
+    host.directory.applyDelta({ kind: "remove", agentId: ACTIVE });
+
+    expect(timelineStatus(ACTIVE)).toBe("cold");
+    expect(residentAgentIds()).toEqual([OTHER]);
+    host.owner.dispose();
+  });
+
+  it("releases an archived chat's timeline once its tab is no longer shown", async () => {
+    const host = openHost([ACTIVE]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+
+    host.directory.archive(ACTIVE, "2026-09-11T00:00:00.000Z");
+    expect(timelineStatus(ACTIVE)).toBe("synced");
+    host.view([]);
+
+    expect(timelineStatus(ACTIVE)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+    host.owner.dispose();
+  });
+
+  it("releases every timeline of a workspace when the active list drops its agents", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+    host.view([]);
+
+    host.directory.commitSnapshot([], []);
+
+    expect(residentAgentIds()).toEqual([]);
+    host.owner.dispose();
+  });
+
+  it("keeps an archived chat open from History through active-list syncs and releases it on leave", async () => {
+    const host = openHost([ACTIVE]);
+    host.view([ARCHIVED]);
+    await expect.poll(() => timelineStatus(ARCHIVED)).toBe("synced");
+
+    host.directory.commitSnapshot([directoryEntry(ACTIVE)], []);
+    host.directory.applyDelta({ kind: "remove", agentId: ARCHIVED });
+    expect(timelineStatus(ARCHIVED)).toBe("synced");
+
+    host.view([]);
+    expect(timelineStatus(ARCHIVED)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+
+    host.view([ARCHIVED]);
+    await expect.poll(() => timelineStatus(ARCHIVED)).toBe("synced");
+    expect(host.fetches).toEqual([ARCHIVED, ARCHIVED]);
+    host.owner.dispose();
+  });
+
+  it("ignores a History read that answers after the archived chat was left", async () => {
+    const host = openHost([ACTIVE]);
+    host.hold(ARCHIVED);
+    host.view([ARCHIVED]);
+    await expect.poll(() => host.fetches).toEqual([ARCHIVED]);
+
+    host.view([]);
+    await host.deliverHeld(ARCHIVED);
+
+    expect(timelineStatus(ARCHIVED)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+    host.owner.dispose();
+  });
+
+  it("does not paint a cached archived chat back after it was left", async () => {
+    let finishRead!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      finishRead = resolve;
+    });
+    let reading = false;
+    const host = openHost([ACTIVE], {
+      readTimeline: async (_serverId, agentId) => {
+        reading = true;
+        await readStarted;
+        return { ...cachedTimeline(), agentId };
+      },
+      commitTimeline: () => undefined,
+    });
+    host.view([ARCHIVED]);
+    await expect.poll(() => reading).toBe(true);
+
+    host.view([]);
+    finishRead();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(timelineStatus(ARCHIVED)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+    host.owner.dispose();
   });
 });

@@ -603,6 +603,8 @@ interface SessionStoreActions {
     message: UserMessageItem,
   ) => boolean;
   clearAgentStreamHead: (serverId: string, agentId: string) => void;
+  /** Drops every piece of one chat's resident transcript: rows, cursors, paging and sync marks. */
+  releaseAgentTimeline: (serverId: string, agentId: string) => void;
   setAgentTimelineCursor: (
     serverId: string,
     state:
@@ -1339,6 +1341,35 @@ export const useSessionStore = create<SessionStore>()(
               [serverId]: { ...session, agentStreamHead: nextHead },
             },
           };
+        });
+      },
+
+      releaseAgentTimeline: (serverId, agentId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const timelineKeys = [
+            "agentStreamTail",
+            "agentStreamHead",
+            "agentTasks",
+            "agentTimelineCursor",
+            "agentTimelineUnsettledTurn",
+            "agentTimelineHasOlder",
+            "agentTimelineHasNewer",
+            "agentTimelineOlderFetchInFlight",
+            "agentHistorySyncGeneration",
+            "agentAuthoritativeHistoryApplied",
+          ] as const satisfies readonly (keyof SessionState)[];
+          let next: SessionState | null = null;
+          for (const key of timelineKeys) {
+            const current: Map<string, unknown> = session[key];
+            if (!current.has(agentId)) continue;
+            const without = new Map(current);
+            without.delete(agentId);
+            next = { ...(next ?? session), [key]: without };
+          }
+          if (!next) return prev;
+          return { ...prev, sessions: { ...prev.sessions, [serverId]: next } };
         });
       },
 
