@@ -53,6 +53,7 @@ export async function chooseAddProjectLocation(page: Page, location: string): Pr
   await page.getByTestId("add-project-flow-location").click();
   await page.getByPlaceholder("Search folders or enter a path").last().fill(location);
   await page.getByPlaceholder("Search folders or enter a path").last().press("Enter");
+  await expect(page.getByPlaceholder("Search folders or enter a path")).toBeHidden();
   await expect(page.getByTestId("add-project-flow-location")).toContainText(
     path.basename(location),
   );
