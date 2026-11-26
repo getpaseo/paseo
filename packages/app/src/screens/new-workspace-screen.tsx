@@ -423,15 +423,24 @@ async function createMultiplicityWorkspace(input: {
       config: { ...input.agent.config, cwd },
       workspaceId: ready.id,
     };
-    const agent = await draftCreations.submit({
+    const reconciled = await draftCreations.reconcileWorkspace({
       serverId: input.serverId,
       draftId: input.idempotencyKey,
-      kind: "agent",
-      onAdmitted: input.claimIdentity,
+      workspaceId: ready.id,
       request: agentRequest,
-      onEvent: (snapshot) => input.onEvent?.({ ...snapshot, workspace: ready }),
-      send: (options) => input.client.createAgent({ ...agentRequest, ...options }),
+      observe: (kind, key, onEvent) => input.client.waitForCreation(kind, key, onEvent),
     });
+    const agent =
+      reconciled ??
+      (await draftCreations.submit({
+        serverId: input.serverId,
+        draftId: input.idempotencyKey,
+        kind: "agent",
+        onAdmitted: input.claimIdentity,
+        request: agentRequest,
+        onEvent: (snapshot) => input.onEvent?.({ ...snapshot, workspace: ready }),
+        send: (options) => input.client.createAgent({ ...agentRequest, ...options }),
+      }));
     return { workspace, agent };
   }
   const payload = await draftCreations.submit({

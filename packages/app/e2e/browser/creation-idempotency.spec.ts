@@ -764,3 +764,67 @@ test("repeated empty Create clicks provision once on a legacy host without works
   await page.reload();
   await creation.expectOneCreatedWorkspace();
 });
+
+for (const outcome of ["failed", "completed"] as const) {
+  test(`an edited source draft reconciles its pending workspace receipt after reload when startup ${outcome}`, async ({
+    creation,
+    startup,
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const delay = await delayBrowserWorkspaceCreatedResponse(page);
+    const client = await connectNewWorkspaceDaemonClient();
+    try {
+      await creation.openWorkspaceForm("local");
+      const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+      await creation.submitPrompt("Original source task before reload", "Create");
+      await delay.waitForCreateRequest();
+      await creation.leaveWorkspaceForm();
+      delay.release();
+      await page.waitForFunction(() =>
+        Object.keys(localStorage).some((key) => {
+          if (!key.startsWith("draft-creation:")) return false;
+          const record = JSON.parse(localStorage.getItem(key)!);
+          return (
+            record.workspace &&
+            record.attempt?.kind === "workspace" &&
+            record.attempt.outcome === "pending"
+          );
+        }),
+      );
+      await creation.returnToWorkspaceForm();
+      await page.reload();
+      if (outcome === "failed") await startup.fail();
+      else await startup.release();
+      await creation.submitPrompt("Corrected source task after reload", "Create");
+      if (outcome === "failed") {
+        await creation.expectPromptVisible("Corrected source task after reload");
+      } else {
+        await expect(
+          page
+            .getByText(
+              "The previous start may still be running. Check your workspaces and agents before starting another.",
+            )
+            .filter({ visible: true })
+            .first(),
+        ).toBeVisible();
+      }
+      const workspaces = (await client.fetchWorkspaces()).entries.filter(
+        (entry) => !before.has(entry.id),
+      );
+      expect(workspaces).toHaveLength(1);
+      await expect
+        .poll(
+          async () =>
+            (await client.fetchAgents()).entries.filter(
+              (entry) => entry.agent.workspaceId === workspaces[0]!.id,
+            ).length,
+        )
+        .toBe(1);
+    } finally {
+      delay.release();
+      await startup.release();
+      await client.close();
+    }
+  });
+}
