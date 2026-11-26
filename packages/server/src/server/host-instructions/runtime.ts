@@ -483,7 +483,14 @@ export class HostInstructionsRuntime {
       if (request.action === "cancel") {
         return {
           ok: true,
-          receipt: await this.inbox.cancelDelivery(principal, request.instruction),
+          receipt: await this.inbox.cancelDelivery(principal, request.instruction, (claimed) => {
+            const active = claimed.agentId ? this.active.get(claimed.agentId) : undefined;
+            return (
+              active?.sourceId === claimed.sourceId &&
+              active.id === claimed.instruction.id &&
+              !active.admitted
+            );
+          }),
         };
       }
       await this.inbox.submit(principal, request.instruction, async (target) => {

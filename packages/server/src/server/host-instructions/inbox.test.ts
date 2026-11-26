@@ -234,6 +234,26 @@ describe("host instruction inbox", () => {
     expect((await inbox.list())[0]?.state).toBe("revoked");
   });
 
+  it("keeps a dispatching claim when the runtime cannot withdraw it", async () => {
+    const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
+    const delivery = {
+      ...instruction,
+      target: { kind: "conversation" as const, workspaceId: "workspace", agentId: "exception" },
+    };
+    await inbox.submit(grant, delivery);
+    await inbox.claim(grant.sourceId, delivery.id, delivery.target);
+
+    await expect(inbox.cancelDelivery(grant, delivery, () => false)).resolves.toMatchObject({
+      id: delivery.id,
+      state: "dispatching",
+    });
+    await inbox.markRunning(grant.sourceId, delivery.id, delivery.target.agentId);
+    await expect(inbox.cancelDelivery(grant, delivery, () => true)).resolves.toMatchObject({
+      id: delivery.id,
+      state: "running",
+    });
+  });
+
   it("expires queued work after restart and never replays an ambiguous dispatch", async () => {
     const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
     const waiting = { ...instruction, id: randomUUID() };

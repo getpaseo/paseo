@@ -793,60 +793,95 @@ async function waitForCapturedLog(
             workspaceId: workspace.id,
           }),
         ]);
-        const first = await mcp.callTool({
-          name: "send_host_instruction",
-          arguments: { serverId, agentId: agent.id, prompt: "Use the host grant on the first try" },
-        });
-        await expect
-          .poll(
-            async () => {
-              const status = await mcp.callTool({
-                name: "get_host_instruction_status",
-                arguments: { id: first.structuredContent?.id },
-              });
-              return status.structuredContent?.state;
-            },
-            { timeout: 15000 },
-          )
-          .toBe("awaiting_approval");
-
-        // Pause the prompt's storage load after the runtime has claimed the request.
-        const pendingId = first.structuredContent?.id;
-        if (typeof pendingId !== "string") throw new Error("Expected instruction receipt");
-        const { agentStorage } = destination.daemon;
-        const readRecord = agentStorage.get.bind(agentStorage);
-        const loading = Promise.withResolvers<void>();
-        const resumeLoad = Promise.withResolvers<void>();
-        let targetReads = 0;
-        const held = vi.spyOn(agentStorage, "get").mockImplementation(async (recordId) => {
-          if (recordId === agent.id && ++targetReads === 2) {
-            loading.resolve();
-            await resumeLoad.promise;
-          }
-          return readRecord(recordId);
-        });
-        try {
-          await destinationClient.manageHostInstructions({
-            action: "decide",
-            id: pendingId,
-            sourceId,
-            approve: true,
+        async function withPausedClaim(
+          prompt: string,
+          onClaim: (requestId: string) => Promise<void>,
+        ) {
+          const submitted = await mcp.callTool({
+            name: "send_host_instruction",
+            arguments: { serverId, agentId: agent.id, prompt },
           });
-          await withTimeout(
-            loading.promise,
-            10000,
-            "Expected a claimed instruction to load its agent",
-          );
-          await destination.daemon.stop();
-          const persisted = await HostInstructionInbox.open(destination.paseoHome);
-          expect(
-            (await persisted.list()).find((entry) => entry.instruction.id === pendingId)?.state,
-          ).toBe("queued");
-          expect(sent).toHaveLength(1);
-        } finally {
-          resumeLoad.resolve();
-          held.mockRestore();
+          const requestId = submitted.structuredContent?.id;
+          if (typeof requestId !== "string") throw new Error("Expected instruction receipt");
+          await expect
+            .poll(
+              async () => {
+                const status = await mcp.callTool({
+                  name: "get_host_instruction_status",
+                  arguments: { id: requestId },
+                });
+                return status.structuredContent?.state;
+              },
+              { timeout: 15000 },
+            )
+            .toBe("awaiting_approval");
+
+          // Pause the prompt's storage load after the runtime has claimed the request.
+          const { agentStorage } = destination.daemon;
+          const readRecord = agentStorage.get.bind(agentStorage);
+          const loading = Promise.withResolvers<void>();
+          const resumeLoad = Promise.withResolvers<void>();
+          let targetReads = 0;
+          const held = vi.spyOn(agentStorage, "get").mockImplementation(async (recordId) => {
+            if (recordId === agent.id && ++targetReads === 2) {
+              loading.resolve();
+              await resumeLoad.promise;
+            }
+            return readRecord(recordId);
+          });
+          try {
+            await destinationClient.manageHostInstructions({
+              action: "decide",
+              id: requestId,
+              sourceId,
+              approve: true,
+            });
+            await withTimeout(
+              loading.promise,
+              10000,
+              "Expected a claimed instruction to load its agent",
+            );
+            await onClaim(requestId);
+          } finally {
+            resumeLoad.resolve();
+            held.mockRestore();
+          }
+          return requestId;
         }
+
+        async function cancelPausedClaim(requestId: string) {
+          await mcp.callTool({
+            name: "cancel_host_instruction",
+            arguments: { id: requestId },
+          });
+          await expect
+            .poll(
+              async () => {
+                const status = await mcp.callTool({
+                  name: "get_host_instruction_status",
+                  arguments: { id: requestId },
+                });
+                return status.structuredContent;
+              },
+              { timeout: 12000 },
+            )
+            .toMatchObject({ id: requestId, state: "cancelled", cancellationPending: false });
+        }
+
+        const cancelledId = await withPausedClaim("Cancel during session load", cancelPausedClaim);
+        const pendingId = await withPausedClaim("Stop during session load", async () => {
+          await destination.daemon.stop();
+        });
+        const persisted = await HostInstructionInbox.open(destination.paseoHome);
+        expect(
+          (await persisted.list()).map(({ instruction, state }) => ({ id: instruction.id, state })),
+        ).toEqual(
+          expect.arrayContaining([
+            { id: cancelledId, state: "cancelled" },
+            { id: pendingId, state: "queued" },
+          ]),
+        );
+        expect(sent).toHaveLength(1);
       } finally {
         for (const close of cleanup.toReversed()) await close();
         await stopRelay();

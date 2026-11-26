@@ -246,20 +246,32 @@ export class HostInstructionInbox {
     input: HostInstruction,
     validateTarget?: (target: HostInstruction["target"]) => Promise<boolean>,
   ): Promise<InboxRequest> {
-    return this.receive(principal, input, false, validateTarget);
+    return this.receive(principal, input, validateTarget);
   }
 
-  async cancelDelivery(principal: Principal, input: HostInstruction) {
-    await this.receive(principal, input, true);
+  async cancelDelivery(
+    principal: Principal,
+    input: HostInstruction,
+    canWithdrawClaim?: (request: InboxRequest) => boolean,
+  ) {
+    await this.receive(
+      principal,
+      input,
+      undefined,
+      (request) =>
+        unstarted(request.state) ||
+        (request.state === "dispatching" && canWithdrawClaim?.(request) === true),
+    );
     return this.status(principal, input.id);
   }
 
   private async receive(
     principal: Principal,
     input: HostInstruction,
-    cancel: boolean,
     validateTarget?: (target: HostInstruction["target"]) => Promise<boolean>,
+    canCancel?: (request: InboxRequest) => boolean,
   ): Promise<InboxRequest> {
+    const cancel = Boolean(canCancel);
     await this.expire();
     await this.writer.settled();
     this.requireGrant(principal);
@@ -275,7 +287,9 @@ export class HostInstructionInbox {
       if (existing.grantId !== grant.id || existing.fingerprint !== fingerprint) {
         throw new Error("Instruction ID is already in use");
       }
-      if (cancel && unstarted(existing.state)) return this.update(existing, { state: "cancelled" });
+      if (canCancel?.(existing)) {
+        return this.update(existing, { state: "cancelled" });
+      }
       await this.writer.settled();
       return structuredClone(existing);
     }
@@ -378,6 +392,8 @@ export class HostInstructionInbox {
 
   async markBusy(sourceId: string, instructionId: string): Promise<void> {
     const request = this.requireRequest(sourceId, instructionId);
+    // An authenticated cancellation can already have withdrawn an unadmitted claim.
+    if (request.state === "cancelled") return;
     if (request.state !== "dispatching") throw new Error("Instruction has no dispatch claim");
     const grant = this.data.grants.find((entry) => entry.id === request.grantId);
     await this.update(request, { state: this.pendingState(request, grant) });
