@@ -6839,6 +6839,28 @@ test("successful results survive acknowledgement, manual unread and restart unti
   expect(resolved?.reviewResult).toBeUndefined();
   const afterResolution = new AgentManager({ clients, registry: resolvedStore, logger });
   await afterResolution.markAgentDone(id, second.reviewResult!.id);
+  await afterResolution.markAgentForFollowUp(id, second.reviewResult!.id);
+  const restored = await resolvedStore.get(id);
+  expect(restored).toMatchObject({
+    requiresAttention: false,
+    updatedAt: storedUpdatedAt,
+    reviewResult: { followUpAt: expect.any(String) },
+  });
+  await ensureAgentLoaded(id, {
+    agentManager: afterResolution,
+    agentStorage: resolvedStore,
+    logger,
+  });
+  expect(afterResolution.getAgent(id)?.reviewResult).toEqual(restored?.reviewResult);
+  const replyStarted = waitForAgentLifecycle(afterResolution, id, "running").then(
+    () => afterResolution.getAgent(id)?.reviewResult,
+  );
+  for await (const _ of afterResolution.streamAgent(id, "reply to the restored result")) {
+    /* drain the turn */
+  }
+  expect(await replyStarted).toBeUndefined();
+  await afterResolution.closeAgent(id);
+  await afterResolution.flush();
 });
 
 test("a failed review write leaves the same result available to retry", async () => {

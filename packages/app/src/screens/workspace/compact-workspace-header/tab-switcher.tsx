@@ -18,6 +18,7 @@ import {
   buildWorkspaceTabMenuEntries,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
+import { useAgentTabReviewActions } from "@/hooks/use-agent-tab-review-actions";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 // The trigger draws at 32pt beside its island neighbours, so only vertical slop is free.
@@ -187,6 +188,10 @@ function MobileWorkspaceTabOption({
   const { t } = useTranslation();
   const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
     () => ({
+      markAsRead: t("workspace.tabs.menu.markAsRead"),
+      markAsUnread: t("workspace.tabs.menu.markAsUnread"),
+      markDone: t("workspace.tabs.menu.markDone"),
+      markForFollowUp: t("workspace.tabs.menu.markForFollowUp"),
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
@@ -204,12 +209,18 @@ function MobileWorkspaceTabOption({
     [t],
   );
   const menuTestIDBase = `workspace-tab-menu-${tab.tabId}`;
+  const reviewActions = useAgentTabReviewActions({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    tab,
+  });
   const menuEntries = buildWorkspaceTabMenuEntries({
     surface: "mobile",
     tab,
     index: tabIndex,
     tabCount,
     menuTestIDBase,
+    reviewActions,
     onCopyResumeCommand,
     onCopyAgentId,
     onCopyTerminalId,

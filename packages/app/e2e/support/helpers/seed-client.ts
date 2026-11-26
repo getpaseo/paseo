@@ -51,6 +51,7 @@ export interface SeedDaemonClient {
   setWorkspaceTitle(workspaceId: string, title: string | null): Promise<{ title: string | null }>;
   setWorkspacePinned(workspaceId: string, pinned: boolean): Promise<{ pinnedAt: string | null }>;
   markAgentDone(agentId: string, resultId: string): Promise<void>;
+  markAgentUnread(agentId: string): Promise<void>;
   clearWorkspaceAttention(workspaceId: string): Promise<void>;
   setWorkspaceLabel(input: {
     workspaceId: string;

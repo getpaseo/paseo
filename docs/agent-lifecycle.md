@@ -357,14 +357,17 @@ purple dot, including when another tab is selected. Its workspace shows a
 purple dot once Needs input, Failed, Working and Ready to review have cleared. Each workspace
 counts once in its sidebar status group. For mixed chat states, the workspace hover card and row
 menu show how many chats are in each state.
-Use **Mark done** in the floating status pill above the composer or choose the chat in the workspace row menu to resolve
+Use **Mark done** in the chat tab menu or in the floating status pill above the composer to resolve
 that result. An accepted reply also resolves it. Read, follow-up and resolution survive restarts.
+Use **Mark for follow-up** in the chat tab menu to restore the reminder for a result you marked
+done. The action is available until the chat takes a new turn.
 
-A finished or failed workspace can be marked unread after it has been reviewed. The daemon restores
-attention on its newest eligible workspace-root agent, `error` for an agent whose lifecycle is
-`error` and `finished` otherwise, without sending a new notification. Opening a workspace restores
-its selected tab; attention on another agent remains unread until that agent is focused or the
-workspace is explicitly marked read. Marking a result unread keeps its reminder. Marking a resolved chat unread only restores its unread indicator.
+Use **Mark as unread** in the chat tab menu to bring back the unread indicator for a finished or failed
+chat without sending a new notification. Opening a workspace restores its selected tab. Use
+**Mark as read** in another chat's tab menu to acknowledge that chat without switching tabs. Use
+**Mark all as read** in the workspace row menu to acknowledge all unread completions and failures
+in the workspace. Marking a result unread keeps its reminder. Marking a resolved chat unread only
+restores its unread indicator.
 
 Attention is set by the agent finishing or failing and acknowledged by deliberate focus or
 interaction with its chat, including repeat clicks in an already focused pane. A completion

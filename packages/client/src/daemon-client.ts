@@ -2573,6 +2573,24 @@ export class DaemonClient {
     if (response.error) throw new Error(response.error);
   }
 
+  async markAgentForFollowUp(agentId: string, resultId: string): Promise<void> {
+    const response =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.review.mark_for_follow_up.response">(
+        {
+          message: { type: "agent.review.mark_for_follow_up.request", agentId, resultId },
+        },
+      );
+    if (response.error) throw new Error(response.error);
+  }
+
+  async markAgentUnread(agentId: string): Promise<void> {
+    const response =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.review.mark_unread.response">({
+        message: { type: "agent.review.mark_unread.request", agentId },
+      });
+    if (response.error) throw new Error(response.error);
+  }
+
   async markWorkspaceUnread(workspaceId: string, requestId?: string): Promise<void> {
     const response =
       await this.sendNamespacedCorrelatedSessionRequest<"workspace.mark_unread.response">({

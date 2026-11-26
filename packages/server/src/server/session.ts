@@ -3594,7 +3594,9 @@ export class Session {
       case "workspace.archive.undo.request":
         return this.handleWorkspaceArchiveUndoRequest(msg);
       case "agent.mark_done.request":
-        return this.handleAgentMarkDone(msg);
+      case "agent.review.mark_for_follow_up.request":
+      case "agent.review.mark_unread.request":
+        return this.handleAgentReviewAction(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
@@ -8505,21 +8507,44 @@ export class Session {
     });
   }
 
-  private async handleAgentMarkDone(
-    request: Extract<SessionInboundMessage, { type: "agent.mark_done.request" }>,
+  private async handleAgentReviewAction(
+    request: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "agent.mark_done.request"
+          | "agent.review.mark_for_follow_up.request"
+          | "agent.review.mark_unread.request";
+      }
+    >,
   ): Promise<void> {
-    const { agentId, resultId, requestId } = request;
+    const { agentId, requestId } = request;
     let error: string | null = null;
     try {
       const agent = this.agentManager.getAgent(agentId) ?? (await this.agentStorage.get(agentId));
       if (!agent || agent.internal || !this.isProviderVisibleToClient(agent.provider)) {
         throw new Error(`Agent not found: ${agentId}`);
       }
-      await this.agentManager.markAgentDone(agentId, resultId);
+      switch (request.type) {
+        case "agent.mark_done.request":
+          await this.agentManager.markAgentDone(agentId, request.resultId);
+          break;
+        case "agent.review.mark_for_follow_up.request":
+          await this.agentManager.markAgentForFollowUp(agentId, request.resultId);
+          break;
+        case "agent.review.mark_unread.request":
+          await this.agentManager.markAgentUnread(agentId);
+          break;
+      }
     } catch (cause) {
       error = getErrorMessage(cause);
     }
-    this.emit({ type: "agent.mark_done.response", payload: { requestId, error } });
+    const responseTypes = {
+      "agent.mark_done.request": "agent.mark_done.response",
+      "agent.review.mark_for_follow_up.request": "agent.review.mark_for_follow_up.response",
+      "agent.review.mark_unread.request": "agent.review.mark_unread.response",
+    } as const;
+    this.emit({ type: responseTypes[request.type], payload: { requestId, error } });
   }
 
   private async handleWorkspaceMarkUnreadRequest(

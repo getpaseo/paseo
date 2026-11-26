@@ -107,7 +107,7 @@ function ReviewResultAction({
   const status = t(
     showFollowUp ? "sidebar.statusBucket.needsFollowUp" : "sidebar.statusBucket.readyToReview",
   );
-  const action = t(pending ? "common.states.saving" : "sidebar.workspace.actions.markDone");
+  const action = t(pending ? "common.states.saving" : "workspace.tabs.menu.markDone");
   const label = success ? t("sidebar.statusBucket.done") : `${status} · ${action}`;
   return (
     <Button

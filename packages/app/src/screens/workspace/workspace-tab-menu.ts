@@ -1,4 +1,5 @@
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import type { AgentTabReviewActions } from "@/hooks/use-agent-tab-review-actions";
 import { i18n } from "@/i18n/i18next";
 import { encodeFilePathForPathSegment, encodeWorkspaceIdForPathSegment } from "@/utils/host-routes";
 import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
@@ -6,6 +7,10 @@ import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 export type WorkspaceTabMenuSurface = "desktop" | "mobile";
 
 export interface WorkspaceTabMenuLabels {
+  markAsRead: string;
+  markAsUnread: string;
+  markDone: string;
+  markForFollowUp: string;
   copyResumeCommand: string;
   copyAgentId: string;
   copyTerminalId: string;
@@ -22,6 +27,10 @@ export interface WorkspaceTabMenuLabels {
 }
 
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
+  markAsRead: i18n.t("workspace.tabs.menu.markAsRead"),
+  markAsUnread: i18n.t("workspace.tabs.menu.markAsUnread"),
+  markDone: i18n.t("workspace.tabs.menu.markDone"),
+  markForFollowUp: i18n.t("workspace.tabs.menu.markForFollowUp"),
   copyResumeCommand: i18n.t("workspace.tabs.menu.copyResumeCommand"),
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
@@ -47,7 +56,11 @@ export type WorkspaceTabMenuEntry =
         | "rotate-cw"
         | "arrow-left-to-line"
         | "arrow-right-to-line"
+        | "check"
+        | "circle"
+        | "circle-check"
         | "copy-x"
+        | "flag"
         | "pencil"
         | "x";
       hint?: string;
@@ -73,6 +86,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   index: number;
   tabCount: number;
   menuTestIDBase: string;
+  reviewActions?: AgentTabReviewActions;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
@@ -90,6 +104,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   tab: WorkspaceTabDescriptor;
   index: number;
   tabCount: number;
+  reviewActions?: AgentTabReviewActions;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
@@ -168,6 +183,35 @@ function getCloseButtonTestId(tab: WorkspaceTabDescriptor): string {
   return `workspace-file-close-${encodeFilePathForPathSegment(tab.target.path)}`;
 }
 
+function buildAgentReviewMenuEntries(
+  actions: AgentTabReviewActions,
+  labels: WorkspaceTabMenuLabels,
+  menuTestIDBase: string,
+): WorkspaceTabMenuEntry[] {
+  const options = [
+    { key: "mark-as-read", label: labels.markAsRead, icon: "check", onSelect: actions.markAsRead },
+    {
+      key: "mark-as-unread",
+      label: labels.markAsUnread,
+      icon: "circle",
+      onSelect: actions.markAsUnread,
+    },
+    { key: "mark-done", label: labels.markDone, icon: "circle-check", onSelect: actions.markDone },
+    {
+      key: "mark-for-follow-up",
+      label: labels.markForFollowUp,
+      icon: "flag",
+      onSelect: actions.markForFollowUp,
+    },
+  ] as const;
+
+  return options.flatMap(({ key, label, icon, onSelect }) =>
+    onSelect
+      ? [{ kind: "item", key, label, icon, testID: `${menuTestIDBase}-${key}`, onSelect }]
+      : [],
+  );
+}
+
 export function buildWorkspaceTabMenuEntries(
   input: BuildWorkspaceTabMenuEntriesInput,
 ): WorkspaceTabMenuEntry[] {
@@ -177,6 +221,7 @@ export function buildWorkspaceTabMenuEntries(
     index,
     tabCount,
     menuTestIDBase,
+    reviewActions,
     onCopyResumeCommand,
     onCopyAgentId,
     onCopyTerminalId,
@@ -196,6 +241,12 @@ export function buildWorkspaceTabMenuEntries(
 
   if (tab.target.kind === "agent") {
     const { agentId } = tab.target;
+    if (reviewActions) {
+      entries.push(...buildAgentReviewMenuEntries(reviewActions, labels, menuTestIDBase));
+    }
+    if (entries.length > 0) {
+      entries.push({ kind: "separator", key: "separator-review" });
+    }
     entries.push({
       kind: "item",
       key: "copy-resume-command",
@@ -339,6 +390,7 @@ export function buildWorkspaceDesktopTabActions(
       index: input.index,
       tabCount: input.tabCount,
       menuTestIDBase: contextMenuTestId,
+      reviewActions: input.reviewActions,
       onCopyResumeCommand: input.onCopyResumeCommand,
       onCopyAgentId: input.onCopyAgentId,
       onCopyTerminalId: input.onCopyTerminalId,

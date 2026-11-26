@@ -5,7 +5,11 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   ArrowLeftToLine,
   ArrowRightToLine,
+  Check,
+  Circle,
+  CircleCheck,
   Copy,
+  Flag,
   CopyX,
   Ellipsis,
   Pencil,
@@ -24,7 +28,11 @@ import type { WorkspaceTabMenuEntry } from "@/screens/workspace/workspace-tab-me
 import type { Theme } from "@/styles/theme";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
+const ThemedCheck = withUnistyles(Check);
+const ThemedCircle = withUnistyles(Circle);
+const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCopy = withUnistyles(Copy);
+const ThemedFlag = withUnistyles(Flag);
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
 const ThemedArrowRightToLine = withUnistyles(ArrowRightToLine);
@@ -48,6 +56,14 @@ function MobileTabDropdownMenuItem({
 }) {
   const leading = useMemo(() => {
     switch (entry.icon) {
+      case "check":
+        return <ThemedCheck size={16} uniProps={mutedColorMapping} />;
+      case "circle":
+        return <ThemedCircle size={16} uniProps={mutedColorMapping} />;
+      case "circle-check":
+        return <ThemedCircleCheck size={16} uniProps={mutedColorMapping} />;
+      case "flag":
+        return <ThemedFlag size={16} uniProps={mutedColorMapping} />;
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":

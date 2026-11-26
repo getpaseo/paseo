@@ -969,6 +969,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   reviewResult: AgentReviewResultSchema.optional(),
+  reopenableReviewResultId: z.string().optional(),
   archivedAt: z.string().nullable().optional(),
   providerUnavailable: z.boolean().optional(),
   // Private helper marker, retained for exact-ID snapshots and older wire messages.
@@ -3065,6 +3066,19 @@ export const AgentMarkDoneRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentMarkForFollowUpRequestSchema = z.object({
+  type: z.literal("agent.review.mark_for_follow_up.request"),
+  agentId: z.string(),
+  resultId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentMarkUnreadRequestSchema = z.object({
+  type: z.literal("agent.review.mark_unread.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
 export const WorkspaceMarkUnreadRequestSchema = z.object({
   type: z.literal("workspace.mark_unread.request"),
   workspaceId: z.string(),
@@ -3774,6 +3788,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CreationSubscribeRequestSchema,
   WorkspaceClearAttentionRequestSchema,
   AgentMarkDoneRequestSchema,
+  AgentMarkForFollowUpRequestSchema,
+  AgentMarkUnreadRequestSchema,
   WorkspaceMarkUnreadRequestSchema,
   FileExplorerRequestSchema,
   FileSubscribeRequestSchema,
@@ -4166,6 +4182,10 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(agentFollowUp): added in v0.17.2, remove gate after 2027-05-22.
         agentFollowUp: z.boolean().optional(),
+        // COMPAT(agentRestoreFollowUp): added in v0.17.2, remove gate after 2027-05-25.
+        agentRestoreFollowUp: z.boolean().optional(),
+        // COMPAT(agentMarkUnread): added in v0.17.2, remove gate after 2027-05-25.
+        agentMarkUnread: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
         hubRelationship: z.boolean().optional(),
         // COMPAT(relayProtectedSecurity): added in v0.13.0. A capable daemon always advertises
@@ -5553,6 +5573,22 @@ export const WorkspaceClearAttentionResponseSchema = z.object({
 
 export const AgentMarkDoneResponseSchema = z.object({
   type: z.literal("agent.mark_done.response"),
+  payload: z.object({
+    requestId: z.string(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentMarkForFollowUpResponseSchema = z.object({
+  type: z.literal("agent.review.mark_for_follow_up.response"),
+  payload: z.object({
+    requestId: z.string(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentMarkUnreadResponseSchema = z.object({
+  type: z.literal("agent.review.mark_unread.response"),
   payload: z.object({
     requestId: z.string(),
     error: z.string().nullable(),
@@ -7807,6 +7843,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CreationSubscribeResponseSchema,
   WorkspaceClearAttentionResponseSchema,
   AgentMarkDoneResponseSchema,
+  AgentMarkForFollowUpResponseSchema,
+  AgentMarkUnreadResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,

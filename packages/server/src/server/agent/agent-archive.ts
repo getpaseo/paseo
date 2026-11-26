@@ -4,6 +4,7 @@ export type ArchivedStoredAgentRecord = StoredAgentRecord & { archivedAt: string
 
 export const ARCHIVED_AGENT_ATTENTION = {
   reviewResult: undefined,
+  reopenableReviewResultId: undefined,
   requiresAttention: false,
   attentionReason: null,
   attentionTimestamp: null,

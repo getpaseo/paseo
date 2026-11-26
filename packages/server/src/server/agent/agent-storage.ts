@@ -87,6 +87,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   sessionMetrics: z.array(AgentMetricSchema).optional(),
   lastError: z.string().nullable().optional(),
   reviewResult: AgentReviewResultSchema.nullable().optional(),
+  reopenableReviewResultId: z.string().optional(),
   lastMarkedDoneResultId: z.string().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),

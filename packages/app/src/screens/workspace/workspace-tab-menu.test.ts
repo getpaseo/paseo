@@ -16,6 +16,7 @@ function createAgentTab(): WorkspaceTabDescriptor {
 
 describe("buildWorkspaceTabMenuEntries", () => {
   it("uses desktop tab ordering labels for desktop menus", () => {
+    const markAsRead = vi.fn();
     const onCopyResumeCommand = vi.fn();
     const onCopyAgentId = vi.fn();
     const onCopyFilePath = vi.fn();
@@ -32,6 +33,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 1,
       tabCount: 3,
       menuTestIDBase: "workspace-tab-context-agent_123",
+      reviewActions: { markAsRead },
       onCopyResumeCommand,
       onCopyAgentId,
       onCopyTerminalId: vi.fn(),
@@ -45,6 +47,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     });
 
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
+      "Mark as read",
       "Copy resume command",
       "Copy agent id",
       "Rename",
@@ -54,15 +57,22 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Reload agent",
       "Close",
     ]);
+    const read = entries.find((entry) => entry.key === "mark-as-read");
+    if (read?.kind !== "item") throw new Error("Missing read menu item");
+    read.onSelect();
+    expect(markAsRead).toHaveBeenCalledOnce();
   });
 
   it("uses stacked ordering labels for mobile menus", () => {
+    const markAsUnread = vi.fn();
+    const markForFollowUp = vi.fn();
     const entries = buildWorkspaceTabMenuEntries({
       surface: "mobile",
       tab: createAgentTab(),
       index: 1,
       tabCount: 3,
       menuTestIDBase: "workspace-tab-menu-agent_123",
+      reviewActions: { markAsUnread, markForFollowUp },
       onCopyResumeCommand: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
@@ -76,6 +86,8 @@ describe("buildWorkspaceTabMenuEntries", () => {
     });
 
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
+      "Mark as unread",
+      "Mark for follow-up",
       "Copy resume command",
       "Copy agent id",
       "Rename",
@@ -85,6 +97,14 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Reload agent",
       "Close",
     ]);
+    const followUp = entries.find((entry) => entry.key === "mark-for-follow-up");
+    if (followUp?.kind !== "item") throw new Error("Missing follow-up menu item");
+    followUp.onSelect();
+    expect(markForFollowUp).toHaveBeenCalledOnce();
+    const unread = entries.find((entry) => entry.key === "mark-as-unread");
+    if (unread?.kind !== "item") throw new Error("Missing unread menu item");
+    unread.onSelect();
+    expect(markAsUnread).toHaveBeenCalledOnce();
   });
 
   it("omits agent copy actions and rename for draft tabs", () => {

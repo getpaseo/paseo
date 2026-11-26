@@ -1874,7 +1874,7 @@ test("mark as read only acknowledges the chat notifications in the observed work
   }
 });
 
-test("mark done reports superseded and archived results and accepts a completed retry", async () => {
+test("review actions only change the selected chat", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   try {
@@ -1893,11 +1893,53 @@ test("mark done reports superseded and archived results and accepts a completed 
     expect((await client.fetchAgent(id))?.agent.reviewResult).toEqual(second);
     await client.markAgentDone(id, second.id);
     await client.markAgentDone(id, second.id);
+    const done = (await client.fetchAgent(id))!.agent;
+    expect(done.reviewResult).toBeUndefined();
+    expect(done.reopenableReviewResultId).toBe(second.id);
+    await client.markAgentForFollowUp(id, second.id);
+    const reopened = (await client.fetchAgent(id))!.agent;
+    expect(reopened).toMatchObject({
+      requiresAttention: false,
+      updatedAt: done.updatedAt,
+      reviewResult: { followUpAt: expect.any(String) },
+    });
+    expect(reopened.reopenableReviewResultId).toBeUndefined();
+    expect(reopened.reviewResult?.id).not.toBe(second.id);
+    const workspace = (await client.fetchWorkspaces()).entries.find(
+      (ws) => ws.id === done.workspaceId,
+    );
+    expect(workspace?.reviewResults).toContainEqual(
+      expect.objectContaining({ agentId: id, ...reopened.reviewResult }),
+    );
+    await client.markAgentDone(id, second.id);
+    expect((await client.fetchAgent(id))?.agent.reviewResult).toEqual(reopened.reviewResult);
+    await client.markAgentDone(id, reopened.reviewResult!.id);
     expect((await client.fetchAgent(id))?.agent.reviewResult).toBeUndefined();
+    const sibling = await client.createAgent({
+      provider: "codex",
+      cwd: daemon.staticDir,
+      workspaceId: done.workspaceId,
+    });
+    await client.markAgentUnread(id);
+    expect((await client.fetchAgent(id))?.agent).toMatchObject({
+      requiresAttention: true,
+      attentionReason: "finished",
+      updatedAt: done.updatedAt,
+      reopenableReviewResultId: reopened.reviewResult!.id,
+    });
+    expect((await client.fetchAgent(sibling.id))?.agent.requiresAttention).toBe(false);
 
     const third = await finish();
+    await expect(client.markAgentForFollowUp(id, reopened.reviewResult!.id)).rejects.toThrow(
+      "This chat result is no longer current",
+    );
+    await client.markAgentDone(id, third.id);
     await client.archiveAgent(id);
     await expect(client.markAgentDone(id, third.id)).rejects.toThrow("This chat is archived");
+    await expect(client.markAgentForFollowUp(id, third.id)).rejects.toThrow(
+      "This chat is archived",
+    );
+    await expect(client.markAgentUnread(id)).rejects.toThrow("Agent is no longer settled and read");
   } finally {
     await client.close();
     await daemon.close();

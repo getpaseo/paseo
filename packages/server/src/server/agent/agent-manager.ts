@@ -453,23 +453,36 @@ export type AttentionState =
 
 type ReviewAction =
   | { kind: "read"; expectedKey?: string | null }
-  | { kind: "done"; resultId: string };
+  | { kind: "done"; resultId: string }
+  | { kind: "follow_up"; resultId: string };
+
+type ReviewState = Pick<StoredAgentRecord, "reviewResult" | "reopenableReviewResultId">;
 
 function applyReviewAction(
-  state: Pick<
-    StoredAgentRecord,
-    "requiresAttention" | "attentionReason" | "attentionTimestamp" | "reviewResult"
-  >,
+  state: ReviewState &
+    Pick<StoredAgentRecord, "requiresAttention" | "attentionReason" | "attentionTimestamp">,
   action: ReviewAction,
-): { clearAttention: boolean; reviewResult: StoredAgentRecord["reviewResult"] } | null {
-  const { reviewResult, requiresAttention, attentionReason } = state;
+): ({ clearAttention: boolean } & ReviewState) | null {
+  const { reviewResult, reopenableReviewResultId, requiresAttention, attentionReason } = state;
   if (action.kind === "done") {
     if (reviewResult?.id !== action.resultId) {
       throw new Error("This chat result is no longer current");
     }
     return {
       reviewResult: undefined,
+      reopenableReviewResultId: action.resultId,
       clearAttention: requiresAttention === true && attentionReason === "finished",
+    };
+  }
+  if (action.kind === "follow_up") {
+    if (reviewResult || reopenableReviewResultId !== action.resultId) {
+      throw new Error("This chat result is no longer current");
+    }
+    return {
+      // A delayed Mark done for the original result must not dismiss this reminder.
+      reviewResult: { id: randomUUID(), followUpAt: new Date().toISOString() },
+      reopenableReviewResultId: undefined,
+      clearAttention: false,
     };
   }
   if (!requiresAttention || attentionReason === "permission") return null;
@@ -477,6 +490,7 @@ function applyReviewAction(
     return null;
   return {
     clearAttention: true,
+    reopenableReviewResultId,
     reviewResult:
       attentionReason === "finished" && reviewResult && !reviewResult.followUpAt
         ? { ...reviewResult, followUpAt: new Date().toISOString() }
@@ -558,6 +572,7 @@ interface ManagedAgentBase {
   sessionMetrics?: AgentMetric[];
   lastError?: string;
   reviewResult?: StoredAgentRecord["reviewResult"];
+  reopenableReviewResultId?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
@@ -1881,6 +1896,7 @@ export class AgentManager {
         ? {
             metadata: record.metadata,
             reviewResult: record.reviewResult,
+            reopenableReviewResultId: record.reopenableReviewResultId,
             attention: extractAttention(record),
             // Shown until the reopened session reports its own.
             sessionMetrics: record.sessionMetrics,
@@ -2114,6 +2130,7 @@ export class AgentManager {
         sessionMetrics: preservedSessionMetrics,
         lastError: preservedLastError,
         reviewResult: existing.reviewResult,
+        reopenableReviewResultId: existing.reopenableReviewResultId,
         attention: preservedAttention,
         restoring: true,
       });
@@ -2496,6 +2513,7 @@ export class AgentManager {
     const live = this.agents.get(record.id);
     if (live) {
       live.reviewResult = undefined;
+      live.reopenableReviewResultId = undefined;
       live.attention = { requiresAttention: false };
       this.notifyAgentState(record.id);
     } else if (!archivedRecord.internal) {
@@ -2576,6 +2594,7 @@ export class AgentManager {
         sessionMetrics: record.sessionMetrics,
         lastError: record.lastError ?? undefined,
         reviewResult: record.reviewResult,
+        reopenableReviewResultId: record.reopenableReviewResultId,
         attention,
         internal: record.internal,
         background: record.background,
@@ -2949,15 +2968,20 @@ export class AgentManager {
     await this.updateAgentReview(agentId, { kind: "done", resultId });
   }
 
+  async markAgentForFollowUp(agentId: string, resultId: string): Promise<void> {
+    await this.updateAgentReview(agentId, { kind: "follow_up", resultId });
+  }
+
   private updateAgentReview(agentId: string, action: ReviewAction): Promise<boolean> {
     return this.runLifecycleMutation(agentId, async () => {
       const agent = this.agents.get(agentId);
       const registry = agent ? this.registry : this.requireRegistry();
-      const record = action.kind === "done" || !agent ? await registry?.get(agentId) : undefined;
+      const record = action.kind !== "read" || !agent ? await registry?.get(agentId) : undefined;
       const markedDoneResultId = action.kind === "done" ? action.resultId : undefined;
-      if (action.kind === "done") {
+      if (action.kind !== "read") {
         if (record?.archivedAt) throw new Error("This chat is archived");
-        if (record?.lastMarkedDoneResultId === action.resultId) return true;
+        if (action.kind === "done" && record?.lastMarkedDoneResultId === action.resultId)
+          return true;
       }
       if (agent) {
         if (action.kind === "read" && agent.pendingPermissions.size > 0) return false;
@@ -2968,6 +2992,7 @@ export class AgentManager {
               ? agent.attention.attentionTimestamp.toISOString()
               : null,
             reviewResult: agent.reviewResult,
+            reopenableReviewResultId: agent.reopenableReviewResultId,
           },
           action,
         );
@@ -2975,6 +3000,7 @@ export class AgentManager {
         await this.persistAgentReview(agent, {
           attention: change.clearAttention ? { requiresAttention: false } : agent.attention,
           reviewResult: change.reviewResult,
+          reopenableReviewResultId: change.reopenableReviewResultId,
           markedDoneResultId,
         });
         return true;
@@ -2990,7 +3016,7 @@ export class AgentManager {
     action: ReviewAction,
   ): Promise<boolean> {
     if (!record || record.internal || record.archivedAt) {
-      if (action.kind === "done") throw new Error(`Agent not found: ${agentId}`);
+      if (action.kind !== "read") throw new Error(`Agent not found: ${agentId}`);
       return false;
     }
     const change = applyReviewAction(record, action);
@@ -2998,6 +3024,7 @@ export class AgentManager {
     const nextRecord: StoredAgentRecord = {
       ...record,
       reviewResult: change.reviewResult,
+      reopenableReviewResultId: change.reopenableReviewResultId,
       lastMarkedDoneResultId:
         action.kind === "done" ? action.resultId : record.lastMarkedDoneResultId,
       ...(change.clearAttention
@@ -3011,16 +3038,24 @@ export class AgentManager {
 
   private async persistAgentReview(
     agent: ManagedAgent,
-    change: Pick<ManagedAgent, "attention" | "reviewResult"> & { markedDoneResultId?: string },
+    change: Pick<ManagedAgent, "attention"> & ReviewState & { markedDoneResultId?: string },
   ): Promise<void> {
-    const previous = { attention: agent.attention, reviewResult: agent.reviewResult };
+    const previous = {
+      attention: agent.attention,
+      reviewResult: agent.reviewResult,
+      reopenableReviewResultId: agent.reopenableReviewResultId,
+    };
     const { markedDoneResultId, ...review } = change;
     Object.assign(agent, review);
     try {
       await this.persistSnapshot(agent, { markedDoneResultId });
     } catch (error) {
       // Provider events can publish a newer result while the filesystem write is pending.
-      if (agent.attention === change.attention && agent.reviewResult === change.reviewResult) {
+      if (
+        agent.attention === change.attention &&
+        agent.reviewResult === change.reviewResult &&
+        agent.reopenableReviewResultId === change.reopenableReviewResultId
+      ) {
         Object.assign(agent, previous);
         this.emitState(agent, { persist: false });
       }
@@ -3036,16 +3071,22 @@ export class AgentManager {
   private async markAgentUnreadUnlocked(agentId: string): Promise<void> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
+      const record = await this.registry?.get(agentId);
       const attentionReason = unreadAttentionReason(liveAgent.lifecycle);
       const hasPendingPermissions = liveAgent.pendingPermissions.size > 0;
       const canMarkUnread =
-        attentionReason && !liveAgent.attention.requiresAttention && !hasPendingPermissions;
+        attentionReason &&
+        !record?.archivedAt &&
+        !liveAgent.internal &&
+        !liveAgent.attention.requiresAttention &&
+        !hasPendingPermissions;
       if (!canMarkUnread) {
         throw new Error(`Agent is no longer settled and read: ${agentId}`);
       }
       await this.persistAgentReview(liveAgent, {
         attention: { requiresAttention: true, attentionReason, attentionTimestamp: new Date() },
         reviewResult: liveAgent.reviewResult,
+        reopenableReviewResultId: liveAgent.reopenableReviewResultId,
       });
       return;
     }
@@ -3586,6 +3627,7 @@ export class AgentManager {
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.reviewResult = undefined;
+      agent.reopenableReviewResultId = undefined;
       agent.attention = { requiresAttention: false };
       agent.lifecycle = "running";
       this.touchUpdatedAt(agent);
@@ -3980,9 +4022,10 @@ export class AgentManager {
     expectedTurnId: string,
     providerMessageId: string | undefined,
   ): Promise<void> {
-    const hadReviewResult = Boolean(agent.reviewResult);
+    const hadReviewResult = Boolean(agent.reviewResult || agent.reopenableReviewResultId);
     if (hadReviewResult) {
       agent.reviewResult = undefined;
+      agent.reopenableReviewResultId = undefined;
       if (agent.attention.requiresAttention && agent.attention.attentionReason === "finished") {
         agent.attention = { requiresAttention: false };
       }
@@ -4378,8 +4421,9 @@ export class AgentManager {
   }
 
   private retireRewoundResult(agent: ManagedAgent): void {
-    if (!agent.reviewResult) return;
+    if (!agent.reviewResult && !agent.reopenableReviewResultId) return;
     agent.reviewResult = undefined;
+    agent.reopenableReviewResultId = undefined;
     if (agent.attention.requiresAttention && agent.attention.attentionReason === "finished") {
       agent.attention = { requiresAttention: false };
     }
@@ -4652,6 +4696,7 @@ export class AgentManager {
       sessionMetrics?: AgentMetric[];
       lastError?: string;
       reviewResult?: StoredAgentRecord["reviewResult"];
+      reopenableReviewResultId?: string;
       attention?: AttentionState;
       /**
        * Bringing a known agent back, rather than starting a new one. Its timestamps and
@@ -4864,6 +4909,7 @@ export class AgentManager {
           sessionMetrics?: AgentMetric[];
           lastError?: string;
           reviewResult?: StoredAgentRecord["reviewResult"];
+          reopenableReviewResultId?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
@@ -4881,6 +4927,7 @@ export class AgentManager {
       durableTimelineHasRows,
       options,
     } = params;
+    const { reviewResult, reopenableReviewResultId } = options ?? {};
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -4918,7 +4965,8 @@ export class AgentManager {
       lastUsage: options?.lastUsage,
       sessionMetrics: options?.sessionMetrics,
       lastError: options?.lastError,
-      reviewResult: options?.reviewResult,
+      reviewResult,
+      reopenableReviewResultId,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
       background: params.background,
@@ -5816,6 +5864,7 @@ export class AgentManager {
       raisesAttention(agent)
     ) {
       agent.reviewResult = { id: randomUUID() };
+      agent.reopenableReviewResultId = undefined;
     }
 
     if (event.usage) {

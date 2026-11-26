@@ -108,6 +108,7 @@ export interface Agent {
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   reviewResult?: AgentReviewResult;
+  reopenableReviewResultId?: string;
   attentionTimestamp?: Date | null;
   archivedAt?: Date | null;
   /** Background agents stay out of tabs, the subagent track and agent lists. Open them by id. */

@@ -18,7 +18,11 @@ import {
   CopyX,
   ArrowLeftToLine,
   ArrowRightToLine,
+  Check,
+  Circle,
+  CircleCheck,
   Copy,
+  Flag,
   Pencil,
   RotateCw,
   Columns2,
@@ -66,6 +70,7 @@ import {
   type WorkspaceTabMenuEntry,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
+import { useAgentTabReviewActions } from "@/hooks/use-agent-tab-review-actions";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import type { PaneHost } from "@/panels/panel-manifest";
 import type { WorkspaceTabLaunchPurpose } from "@/workspace-tabs/launcher";
@@ -128,7 +133,11 @@ const AGENT_TOOLTIP_TITLE_MAX_LENGTH = 80;
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedX = withUnistyles(X);
+const ThemedCheck = withUnistyles(Check);
+const ThemedCircle = withUnistyles(Circle);
+const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCopy = withUnistyles(Copy);
+const ThemedFlag = withUnistyles(Flag);
 
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedArrowLeftToLine = withUnistyles(ArrowLeftToLine);
@@ -427,6 +436,14 @@ function TabContextMenuItem({
 }) {
   const leading = useMemo(() => {
     switch (entry.icon) {
+      case "check":
+        return <ThemedCheck size={16} uniProps={mutedColorMapping} />;
+      case "circle":
+        return <ThemedCircle size={16} uniProps={mutedColorMapping} />;
+      case "circle-check":
+        return <ThemedCircleCheck size={16} uniProps={mutedColorMapping} />;
+      case "flag":
+        return <ThemedFlag size={16} uniProps={mutedColorMapping} />;
       case "copy":
         return <ThemedCopy size={16} uniProps={mutedColorMapping} />;
       case "rotate-cw":
@@ -1168,6 +1185,10 @@ function ResolvedWorkspaceDesktopTabsRow({
   );
   const tabMenuLabels = useMemo<WorkspaceTabMenuLabels>(
     () => ({
+      markAsRead: t("workspace.tabs.menu.markAsRead"),
+      markAsUnread: t("workspace.tabs.menu.markAsUnread"),
+      markDone: t("workspace.tabs.menu.markDone"),
+      markForFollowUp: t("workspace.tabs.menu.markForFollowUp"),
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
@@ -1551,12 +1572,14 @@ function ResolvedDesktopTabChip({
 }) {
   const { t } = useTranslation();
   const presentation = item.presentation;
+  const reviewActions = useAgentTabReviewActions({ serverId, workspaceId, tab: item.tab });
   const resolvedTab = useMemo(
     () =>
       buildWorkspaceDesktopTabActions({
         tab: item.tab,
         index,
         tabCount,
+        reviewActions,
         onCopyResumeCommand,
         onCopyAgentId,
         onCopyTerminalId,
@@ -1572,6 +1595,7 @@ function ResolvedDesktopTabChip({
     [
       index,
       item.tab,
+      reviewActions,
       onCloseOtherTabs,
       onCloseTab,
       onCloseTabsToLeft,

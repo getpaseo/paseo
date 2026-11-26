@@ -1,13 +1,10 @@
 import { useWorkspaceChatStatusSummary } from "@/hooks/use-workspace-chat-status-summary";
-import { useMarkAgentDone } from "@/hooks/use-mark-agent-done";
-import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
-  Circle,
   CircleCheck,
   Copy,
   MoreVertical,
@@ -60,7 +57,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
-const ThemedCircle = withUnistyles(Circle);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedPin = withUnistyles(Pin);
@@ -72,7 +68,6 @@ const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColor
 const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
-const markAsUnreadLeadingIcon = <ThemedCircle size={14} uniProps={foregroundMutedColorMapping} />;
 const archiveLeadingIcon = <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />;
 const pinLeadingIcon = <ThemedPin size={14} uniProps={foregroundMutedColorMapping} />;
 const unpinLeadingIcon = <ThemedPinOff size={14} uniProps={foregroundMutedColorMapping} />;
@@ -127,7 +122,6 @@ export interface SidebarWorkspaceMenuProps {
   onCopyBranchName?: () => void;
   onRename?: () => void;
   onMarkAsRead?: () => void;
-  onMarkAsUnread?: () => void;
   onArchive: () => void;
   archiveLabel?: string;
   archiveStatus?: "idle" | "pending" | "success";
@@ -175,7 +169,6 @@ function SidebarWorkspaceMenuItems({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
-  onMarkAsUnread,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -186,33 +179,7 @@ function SidebarWorkspaceMenuItems({
   openInFileManagerPath,
 }: SidebarWorkspaceMenuItemsProps & { surface: MenuSurface }): ReactNode {
   const { t } = useTranslation();
-  const markDone = useMarkAgentDone(serverId);
   const chatSummary = useWorkspaceChatStatusSummary(serverId, workspaceId);
-  const results = useWorkspaceFields(
-    serverId ?? null,
-    workspaceId ?? null,
-    (workspace) => workspace.reviewResults,
-  );
-  const doneActions = useMemo(() => {
-    if (!markDone || !results) return [];
-    return results.map((result) => {
-      const uniqueTitle =
-        result.title &&
-        !results.some((other) => other.agentId !== result.agentId && other.title === result.title);
-      const chat = uniqueTitle
-        ? result.title
-        : [result.title, `#${result.agentId.slice(0, 7)}`].filter(Boolean).join(" ");
-      return {
-        agentId: result.agentId,
-        // A subagent's result is always named so it isn't mistaken for the main chat.
-        label:
-          results.length === 1 && !result.nested
-            ? t("sidebar.workspace.actions.markDone")
-            : t("sidebar.workspace.actions.markChatDone", { chat }),
-        onSelect: () => void markDone(result.agentId, result.id),
-      };
-    });
-  }, [markDone, results, t]);
   const archiveTrailing = useMemo(
     () => (archiveShortcutKeys ? <Shortcut chord={archiveShortcutKeys} /> : null),
     [archiveShortcutKeys],
@@ -257,17 +224,6 @@ function SidebarWorkspaceMenuItems({
           {t("sidebar.workspace.actions.rename")}
         </WorkspaceMenuItem>
       ) : null}
-      {doneActions.map((action) => (
-        <WorkspaceMenuItem
-          key={action.agentId}
-          surface={surface}
-          testID={`sidebar-workspace-mark-done-${action.agentId}`}
-          leading={markAsReadLeadingIcon}
-          onSelect={action.onSelect}
-        >
-          {action.label}
-        </WorkspaceMenuItem>
-      ))}
       {onMarkAsRead ? (
         <WorkspaceMenuItem
           surface={surface}
@@ -275,17 +231,7 @@ function SidebarWorkspaceMenuItems({
           leading={markAsReadLeadingIcon}
           onSelect={onMarkAsRead}
         >
-          Mark as read
-        </WorkspaceMenuItem>
-      ) : null}
-      {onMarkAsUnread ? (
-        <WorkspaceMenuItem
-          surface={surface}
-          testID={`sidebar-workspace-menu-mark-as-unread-${workspaceKey}`}
-          leading={markAsUnreadLeadingIcon}
-          onSelect={onMarkAsUnread}
-        >
-          Mark as unread
+          {t("sidebar.workspace.actions.markAllAsRead")}
         </WorkspaceMenuItem>
       ) : null}
       {onTogglePin ? (
@@ -338,7 +284,6 @@ export function SidebarWorkspaceMenu({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
-  onMarkAsUnread,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -384,7 +329,6 @@ export function SidebarWorkspaceMenu({
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
-          onMarkAsUnread={onMarkAsUnread}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}
@@ -417,7 +361,6 @@ export function SidebarWorkspaceContextMenu({
   onCopyBranchName,
   onRename,
   onMarkAsRead,
-  onMarkAsUnread,
   onArchive,
   archiveLabel,
   archiveStatus,
@@ -498,7 +441,6 @@ export function SidebarWorkspaceContextMenu({
           onCopyBranchName={onCopyBranchName}
           onRename={onRename}
           onMarkAsRead={onMarkAsRead}
-          onMarkAsUnread={onMarkAsUnread}
           onArchive={onArchive}
           archiveLabel={archiveLabel}
           archiveStatus={archiveStatus}

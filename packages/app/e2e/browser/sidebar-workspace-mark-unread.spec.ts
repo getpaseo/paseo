@@ -5,7 +5,12 @@ import {
   seedMockAgentWorkspace,
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
-import { expectOpenTabCount } from "../support/helpers/sheet";
+import {
+  expectNoSheetOpen,
+  expectOneSheetOpen,
+  expectOpenTabCount,
+  tapSheetBackdrop,
+} from "../support/helpers/sheet";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   composerLocator,
@@ -59,21 +64,59 @@ async function openWorkspace(page: Page, workspaceId: string) {
   await expect(page).toHaveURL(new RegExp(`/workspace/${workspaceId}`));
 }
 
-async function chooseReadAction(page: Page, workspaceId: string, action: "read" | "unread") {
+async function chooseWorkspaceMarkAsRead(page: Page, workspaceId: string) {
   await workspaceRow(page, workspaceId).hover();
   await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${workspaceId}`).click();
-  const item = page.getByRole("menuitem", { name: `Mark as ${action}`, exact: true });
+  const item = page.getByRole("menuitem", { name: "Mark all as read", exact: true });
   await expect(item).toBeVisible();
   await item.click();
 }
 
-async function markAsUnread(page: Page, workspaceId: string) {
-  await chooseReadAction(page, workspaceId, "unread");
-  await expectStatus(page, workspaceId, "attention");
+async function chooseChatReviewAction(
+  page: Page,
+  workspaceId: string,
+  agentId: string,
+  action: "mark-as-read" | "mark-as-unread" | "mark-done" | "mark-for-follow-up",
+  compact = false,
+) {
+  const tabId = `agent_${agentId}`;
+  if (compact) {
+    await page
+      .getByTestId(`workspace-deck-entry-${getServerId()}:${workspaceId}`)
+      .getByTestId("workspace-tab-switcher-trigger")
+      .click();
+    await page.getByTestId(`workspace-tab-menu-${tabId}-trigger`).click();
+    await page.getByTestId(`workspace-tab-menu-${tabId}-${action}`).click();
+    await expectOneSheetOpen(page);
+    await tapSheetBackdrop(page);
+    await expectNoSheetOpen(page);
+    return;
+  }
+  await page
+    .getByTestId(`workspace-tab-${tabId}`)
+    .filter({ visible: true })
+    .click({ button: "right" });
+  await page
+    .getByTestId(`workspace-tab-context-${tabId}-${action}`)
+    .filter({ visible: true })
+    .click();
+}
+
+async function markAsUnread(page: Page, workspace: MockAgentWorkspace, compact = false) {
+  if (compact) await closeMobileAgentSidebar(page);
+  await chooseChatReviewAction(
+    page,
+    workspace.workspaceId,
+    workspace.agentId,
+    "mark-as-unread",
+    compact,
+  );
+  if (compact) await openMobileAgentSidebar(page);
+  await expectStatus(page, workspace.workspaceId, "attention");
 }
 
 async function markAsRead(page: Page, workspaceId: string) {
-  await chooseReadAction(page, workspaceId, "read");
+  await chooseWorkspaceMarkAsRead(page, workspaceId);
   await expectStatus(page, workspaceId, "needs_follow_up");
 }
 
@@ -87,17 +130,18 @@ async function expectStatus(
   ).toBeVisible();
 }
 
-async function markBackgroundWorkspaceAndReopen(page: Page, workspaceId: string) {
-  await test.step("background workspace gains green dot and clears when clicked", async () => {
-    await markAsUnread(page, workspaceId);
-    await openWorkspace(page, workspaceId);
-    await expectStatus(page, workspaceId, "needs_follow_up");
+async function markBackgroundWorkspaceAndReopen(page: Page, workspace: MockAgentWorkspace) {
+  await test.step("a chat marked unread in the background clears on reopening", async () => {
+    await workspace.client.markAgentUnread(workspace.agentId);
+    await expectStatus(page, workspace.workspaceId, "attention");
+    await openWorkspace(page, workspace.workspaceId);
+    await expectStatus(page, workspace.workspaceId, "needs_follow_up");
   });
 }
 
 async function leaveMarkedWorkspaceAndRead(page: Page, { subject, other }: FinishedWorkspaces) {
-  await test.step("leaving preserves manual unread until Mark as read", async () => {
-    await markAsUnread(page, subject.workspaceId);
+  await test.step("leaving preserves manual unread until Mark all as read", async () => {
+    await markAsUnread(page, subject);
     await openWorkspace(page, other.workspaceId);
     await markAsRead(page, subject.workspaceId);
     await openWorkspace(page, subject.workspaceId);
@@ -106,7 +150,7 @@ async function leaveMarkedWorkspaceAndRead(page: Page, { subject, other }: Finis
 
 async function leaveMarkedWorkspaceAndReopen(page: Page, { subject, other }: FinishedWorkspaces) {
   await test.step("leaving preserves manual unread until reopening", async () => {
-    await markAsUnread(page, subject.workspaceId);
+    await markAsUnread(page, subject);
     await openWorkspace(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspace(page, subject.workspaceId);
@@ -135,8 +179,8 @@ async function leaveMarkedWorkspaceAndReadOnCompact(
   page: Page,
   { subject, other }: FinishedWorkspaces,
 ) {
-  await test.step("leaving preserves manual unread until Mark as read", async () => {
-    await markAsUnread(page, subject.workspaceId);
+  await test.step("leaving preserves manual unread until Mark all as read", async () => {
+    await markAsUnread(page, subject, true);
     await openWorkspaceOnCompact(page, other.workspaceId);
     await markAsRead(page, subject.workspaceId);
     await openWorkspaceOnCompact(page, subject.workspaceId);
@@ -148,7 +192,7 @@ async function leaveMarkedWorkspaceAndReopenOnCompact(
   { subject, other }: FinishedWorkspaces,
 ) {
   await test.step("leaving preserves manual unread until reopening", async () => {
-    await markAsUnread(page, subject.workspaceId);
+    await markAsUnread(page, subject, true);
     await openWorkspaceOnCompact(page, other.workspaceId);
     await expectStatus(page, subject.workspaceId, "attention");
     await openWorkspaceOnCompact(page, subject.workspaceId);
@@ -170,10 +214,11 @@ async function completeTurnAndLeaveOnCompact(page: Page, { subject, other }: Fin
   });
 }
 
-async function markBackgroundWorkspaceAndRead(page: Page, workspaceId: string) {
-  await test.step("explicit Mark as read clears a background workspace", async () => {
-    await markAsUnread(page, workspaceId);
-    await markAsRead(page, workspaceId);
+async function markBackgroundWorkspaceAndRead(page: Page, workspace: MockAgentWorkspace) {
+  await test.step("Mark all as read clears a background workspace", async () => {
+    await workspace.client.markAgentUnread(workspace.agentId);
+    await expectStatus(page, workspace.workspaceId, "attention");
+    await markAsRead(page, workspace.workspaceId);
   });
 }
 
@@ -202,13 +247,13 @@ async function openCompactWorkspace(page: Page, workspace: MockAgentWorkspace) {
   await openMobileAgentSidebar(page);
 }
 
-async function markUnreadThenResumeChat(page: Page, workspaceId: string) {
+async function markUnreadThenResumeChat(page: Page, workspace: MockAgentWorkspace) {
   await test.step("interacting with the visible chat clears manual unread", async () => {
-    await markAsUnread(page, workspaceId);
+    await markAsUnread(page, workspace, true);
     await closeMobileAgentSidebar(page);
     await page.getByRole("textbox", { name: "Message agent..." }).click();
     await openMobileAgentSidebar(page);
-    await expectStatus(page, workspaceId, "needs_follow_up");
+    await expectStatus(page, workspace.workspaceId, "needs_follow_up");
   });
 }
 
@@ -219,11 +264,12 @@ test("manual unread survives departure and clears on reopening and ordinary comp
   await openAgentRoute(page, workspaces.subject);
   await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
   await openWorkspace(page, workspaces.other.workspaceId);
-  await markBackgroundWorkspaceAndReopen(page, workspaces.subject.workspaceId);
+  await markBackgroundWorkspaceAndReopen(page, workspaces.subject);
   await leaveMarkedWorkspaceAndRead(page, workspaces);
   await leaveMarkedWorkspaceAndReopen(page, workspaces);
   await completeTurnAndLeave(page, workspaces);
-  await markBackgroundWorkspaceAndRead(page, workspaces.subject.workspaceId);
+  await openWorkspace(page, workspaces.other.workspaceId);
+  await markBackgroundWorkspaceAndRead(page, workspaces.subject);
 });
 
 test("clicking a multi-agent workspace preserves its selected agent and leaves the other unread", async ({
@@ -234,8 +280,8 @@ test("clicking a multi-agent workspace preserves its selected agent and leaves t
   await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
   await expectSelectedAgent(page, workspaces.subject.agentId);
   await openWorkspace(page, workspaces.other.workspaceId);
-  await addFinishedAgent(workspaces.subject);
-  await markAsUnread(page, workspaces.subject.workspaceId);
+  const second = await addFinishedAgent(workspaces.subject);
+  await workspaces.subject.client.markAgentUnread(second.id);
   await openWorkspace(page, workspaces.subject.workspaceId);
   await expectSelectedAgent(page, workspaces.subject.agentId);
   await expectStatus(page, workspaces.subject.workspaceId, "attention");
@@ -245,10 +291,11 @@ test("manual unread survives leaving the current workspace on compact layout", a
   page,
   workspaces,
 }) => {
+  test.setTimeout(120_000);
   await openCompactWorkspace(page, workspaces.subject);
   await leaveMarkedWorkspaceAndReadOnCompact(page, workspaces);
   await leaveMarkedWorkspaceAndReopenOnCompact(page, workspaces);
-  await markUnreadThenResumeChat(page, workspaces.subject.workspaceId);
+  await markUnreadThenResumeChat(page, workspaces.subject);
   await completeTurnAndLeaveOnCompact(page, workspaces);
 });
 
@@ -284,9 +331,9 @@ test("reopening a marked unread workspace restores only its agent tab and curren
     await expectOpenTabCount(page, 1);
     await expect(page.getByText("Finish this turn.", { exact: true })).toBeVisible();
   });
-  await test.step("mark the current workspace unread, then close and reopen the app", async () => {
+  await test.step("mark the current chat unread, then close and reopen the app", async () => {
     await openMobileAgentSidebar(page);
-    await markAsUnread(page, workspaces.subject.workspaceId);
+    await markAsUnread(page, workspaces.subject, true);
     await reopenWorkspaceAfterBackgroundTurn(page, workspaces.subject);
   });
   await test.step("restore the main tab without Explorer entries and load its latest history", async () => {
@@ -470,10 +517,7 @@ test("a cached read chat acknowledges a completion that arrived while the app wa
   await expectStatus(page, workspaces.subject.workspaceId, "needs_follow_up");
 });
 
-test("Mark done resolves only the selected chat from the row and composer", async ({
-  page,
-  workspaces,
-}) => {
+test("review actions affect only the chat chosen in the tab menu", async ({ page, workspaces }) => {
   const { subject } = workspaces;
   await openAgentRoute(page, subject);
   await expectStatus(page, subject.workspaceId, "needs_follow_up");
@@ -499,19 +543,34 @@ test("Mark done resolves only the selected chat from the row and composer", asyn
   await expect(page.getByTestId("hover-card-workspace-status")).toHaveText(mixedStatus);
   await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
   await expect(page.getByTestId("workspace-menu-chat-status")).toHaveText(mixedStatus);
-  await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Mark all as read", exact: true }).click();
   await expect(groupedRow("needs_follow_up")).toBeVisible();
   await expect(page.getByTestId("sidebar-status-group-needs_follow_up")).toContainText("2");
-  await workspaceRow(page, subject.workspaceId).hover();
-  await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
-  await page.getByRole("menuitem", { name: "Mark Newest agent done", exact: true }).click();
+  await chooseChatReviewAction(page, subject.workspaceId, second.id, "mark-as-unread");
+  await expect(groupedRow("attention")).toBeVisible();
+  await chooseChatReviewAction(page, subject.workspaceId, second.id, "mark-as-read");
   await expect(groupedRow("needs_follow_up")).toBeVisible();
+  await expectSelectedAgent(page, subject.agentId);
+  await chooseChatReviewAction(page, subject.workspaceId, second.id, "mark-done");
+  await expect(groupedRow("needs_follow_up")).toBeVisible();
+  await chooseChatReviewAction(page, subject.workspaceId, second.id, "mark-for-follow-up");
+  await expect(
+    page
+      .getByTestId(`workspace-tab-agent_${second.id}`)
+      .filter({ visible: true })
+      .getByTestId("agent-status-dot"),
+  ).toBeVisible();
+  await chooseChatReviewAction(page, subject.workspaceId, second.id, "mark-done");
   await page.reload();
   await page.getByTestId("composer-mark-done").click();
   await expect(groupedRow("done")).toBeVisible();
   await expect(page.getByTestId("composer-mark-done")).toHaveCount(0);
-  await chooseReadAction(page, subject.workspaceId, "unread");
+  await workspaceRow(page, subject.workspaceId).hover();
+  await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
+  await expect(page.getByRole("menuitem", { name: "Mark as unread", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await chooseChatReviewAction(page, subject.workspaceId, subject.agentId, "mark-as-unread");
   await expect(groupedRow("attention")).toBeVisible();
-  await chooseReadAction(page, subject.workspaceId, "read");
+  await chooseWorkspaceMarkAsRead(page, subject.workspaceId);
   await expect(groupedRow("done")).toBeVisible();
 });
