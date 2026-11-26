@@ -25,6 +25,7 @@ import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
 import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { ToolPolicyUnsupportedError } from "./provider-options.js";
 import { runProviderRefreshWithDeadline } from "./provider-refresh-deadline.js";
 import {
   isStaleProviderSessionError,
@@ -3868,4 +3869,71 @@ test("a plugin session reopen sends the wrap the session opened with", async () 
   for (const open of opens) expect(open.config.wrap).toEqual(wrap);
   await session.close();
   await registry.shutdown();
+});
+
+describe("plugin provider tool policy", () => {
+  const hubMcpServers = { hub: { type: "http" as const, url: "https://hub.test/mcp" } };
+  const grants = { preapproved: [{ kind: "mcp" as const, server: "hub", tool: "reply" }] };
+
+  async function createWithToolPolicy(
+    capabilities: ProviderConnection["capabilities"],
+    toolPolicy: { preapproved: (typeof grants)["preapproved"] },
+  ) {
+    const logger = createTestLogger();
+    const harness = createProviderHarness({ capabilities });
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([harness.registration]);
+    const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+    const manager = new AgentManager({
+      logger,
+      clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+      providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+    });
+    const created = manager
+      .createAgent(
+        { provider: "plugin-direct", cwd: tmpdir(), mcpServers: hubMcpServers, toolPolicy },
+        undefined,
+        { workspaceId: undefined },
+      )
+      .then(
+        (agent) => ({ agent, error: null }),
+        (error: unknown) => ({ agent: null, error }),
+      );
+    const result = await created;
+    const opened = harness.inputs.filter((input) => input.type === "session.open");
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+    return { ...result, opened };
+  }
+
+  test.each([
+    ["exact grants", grants],
+    ["an empty grant list", { preapproved: [] }],
+  ])(
+    "a plugin without permission.tool_policy refuses %s with ToolPolicyUnsupportedError",
+    async (_label, toolPolicy) => {
+      const result = await createWithToolPolicy(CAPABILITIES, toolPolicy);
+
+      expect(result.error).toBeInstanceOf(ToolPolicyUnsupportedError);
+      expect(result.error).toMatchObject({
+        code: "tool_policy_unsupported",
+        provider: "plugin-direct",
+      });
+      expect(result.opened).toEqual([]);
+    },
+  );
+
+  test.each([
+    ["exact grants", grants],
+    ["an empty grant list", { preapproved: [] }],
+  ])("a plugin with permission.tool_policy opens with %s", async (_label, toolPolicy) => {
+    const result = await createWithToolPolicy(
+      [...CAPABILITIES, "permission.tool_policy"],
+      toolPolicy,
+    );
+
+    expect(result.error).toBeNull();
+    expect(result.opened).toHaveLength(1);
+    expect(result.opened[0]).toMatchObject({ config: { toolPolicy } });
+  });
 });
