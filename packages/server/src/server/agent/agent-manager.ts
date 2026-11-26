@@ -2439,7 +2439,9 @@ export class AgentManager {
     entries.add(activeSwitch);
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(resolvedAgentId, () =>
-        this.switchAgentProviderUnlocked(resolvedAgentId, input, markHandedOff),
+        this.launchAgent(resolvedAgentId, () =>
+          this.switchAgentProviderUnlocked(resolvedAgentId, input, markHandedOff),
+        ),
       ).finally(() => {
         markHandedOff();
         entries.delete(activeSwitch);
@@ -2901,7 +2903,7 @@ export class AgentManager {
     previousPaseoToolPolicy: ProviderPaseoToolsPolicy | undefined;
     targetSession: AgentSession | undefined;
   }): Promise<void> {
-    this.pluginSessions?.sessionLaunchFailed(params.agentId);
+    // The closed agent drops its plugin record; a launch that never closed it leaves the rollback to launchAgent.
     if (params.closedExisting) this.detachPluginTools(params.agentId);
     this.restoreToolPolicyOnSwitchFailure(
       params.agentId,
