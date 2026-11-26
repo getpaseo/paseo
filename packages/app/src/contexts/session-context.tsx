@@ -1,6 +1,7 @@
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { Buffer } from "buffer";
 import { AppState } from "react-native";
+import { isNative } from "@/constants/platform";
 import { observeOpenWorkspaceAgentIds } from "@/stores/workspace-layout-store";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -597,8 +598,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   ]);
 
   useEffect(() => {
+    // Native apps receive plugin alerts via remote push only (`sendOsNotification` is a no-op
+    // on native). Subscribing on native would mark the phone as the active in-app recipient and
+    // suppress its own Expo push without rendering anything in-app.
     // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
-    if (!supportsPluginNotifications) {
+    if (isNative || !supportsPluginNotifications) {
       return;
     }
     const pluginNotificationsFeed = client.observeEvents(["plugin.notification"], {

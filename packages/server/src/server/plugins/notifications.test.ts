@@ -3,6 +3,8 @@ import {
   MAX_PLUGIN_NOTIFICATION_BODY_CHARS,
   MAX_PLUGIN_NOTIFICATION_DATA_BYTES,
   MAX_PLUGIN_NOTIFICATION_KEY_CHARS,
+  MAX_PLUGIN_NOTIFICATION_OPEN_BYTES,
+  MAX_PLUGIN_NOTIFICATION_OPEN_ID_CHARS,
   MAX_PLUGIN_NOTIFICATION_TITLE_CHARS,
   PLUGIN_NOTIFICATION_BURST_CAPACITY,
   PLUGIN_NOTIFICATION_DEDUP_WINDOW_MS,
@@ -41,20 +43,6 @@ describe("PluginNotificationDispatcher", () => {
 
     await expect(
       dispatcher.dispatch("plugin-a", {
-        title: "x".repeat(MAX_PLUGIN_NOTIFICATION_TITLE_CHARS + 1),
-        body: "valid",
-      }),
-    ).rejects.toThrow(`must not exceed ${MAX_PLUGIN_NOTIFICATION_TITLE_CHARS} characters`);
-
-    await expect(
-      dispatcher.dispatch("plugin-a", {
-        title: "valid",
-        body: "y".repeat(MAX_PLUGIN_NOTIFICATION_BODY_CHARS + 1),
-      }),
-    ).rejects.toThrow(`must not exceed ${MAX_PLUGIN_NOTIFICATION_BODY_CHARS} characters`);
-
-    await expect(
-      dispatcher.dispatch("plugin-a", {
         title: "valid",
         body: "valid",
         key: "k".repeat(MAX_PLUGIN_NOTIFICATION_KEY_CHARS + 1),
@@ -67,7 +55,31 @@ describe("PluginNotificationDispatcher", () => {
         body: "valid",
         open: { type: "agent", agentId: "   " },
       }),
-    ).rejects.toThrow("open.agentId must be a non-empty string");
+    ).rejects.toThrow(
+      `open.agentId must be 1 to ${MAX_PLUGIN_NOTIFICATION_OPEN_ID_CHARS} characters`,
+    );
+
+    await expect(
+      dispatcher.dispatch("plugin-a", {
+        title: "valid",
+        body: "valid",
+        open: { type: "agent", agentId: "a".repeat(MAX_PLUGIN_NOTIFICATION_OPEN_ID_CHARS + 1) },
+      }),
+    ).rejects.toThrow(
+      `open.agentId must be 1 to ${MAX_PLUGIN_NOTIFICATION_OPEN_ID_CHARS} characters`,
+    );
+
+    await expect(
+      dispatcher.dispatch("plugin-a", {
+        title: "valid",
+        body: "valid",
+        open: {
+          type: "screen",
+          screenId: "main",
+          params: { log: "z".repeat(MAX_PLUGIN_NOTIFICATION_OPEN_BYTES) },
+        },
+      }),
+    ).rejects.toThrow(`open must not exceed ${MAX_PLUGIN_NOTIFICATION_OPEN_BYTES} UTF-8 bytes`);
 
     await expect(
       dispatcher.dispatch("plugin-a", {
@@ -120,6 +132,16 @@ describe("PluginNotificationDispatcher", () => {
         data: { buildId: 1, ok: true },
       },
     ]);
+
+    const longResult = await dispatcher.dispatch("plugin-a", {
+      title: "T".repeat(MAX_PLUGIN_NOTIFICATION_TITLE_CHARS + 50),
+      body: "Error stack line: ".repeat(120),
+    });
+    expect(longResult).toEqual({ status: "sent", notificationId: "notif-2" });
+    expect(delivered[1]?.title.length).toBe(MAX_PLUGIN_NOTIFICATION_TITLE_CHARS);
+    expect(delivered[1]?.title.endsWith("...")).toBe(true);
+    expect(delivered[1]?.body.length).toBeLessThanOrEqual(MAX_PLUGIN_NOTIFICATION_BODY_CHARS);
+    expect(delivered[1]?.body.endsWith("...")).toBe(true);
   });
 
   it("deduplicates identical (pluginId, key) within 60s and allows different plugins or expired keys", async () => {

@@ -220,8 +220,19 @@ test.describe("Settings → Notifications and OS notification filtering", () => 
         )) as { status: string };
         expect(mutedResult.status).toBe("sent");
 
-        await page.waitForTimeout(300);
-        expect(await readRecordedBrowserNotifications(page)).toEqual([]);
+        // Trigger an unmuted agent error notification so we prove delivery settled and only
+        // the unmuted notification arrived (Build #205 was suppressed).
+        const sentinelErrorAgentId = await runMockAgentTurn(seeded.client, {
+          cwd: seeded.repoPath,
+          workspaceId: seeded.workspaceId,
+          title: "Sentinel unmuted error agent",
+          prompt: ERROR_PROMPT,
+          waitForStatus: "error",
+        });
+
+        await expectRecordedAgentNotifications(page, [
+          { agentId: sentinelErrorAgentId, reason: "error" },
+        ]);
       });
     } finally {
       if (installedPlugin) {

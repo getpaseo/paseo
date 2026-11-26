@@ -47,7 +47,7 @@ const notificationRouter = createNotificationOpenRouter({
           .some((host) => host.serverId === targetServerId),
       focusHost: (targetServerId) => useSidebarViewStore.getState().focusHost(targetServerId),
     }),
-  openRoute: navigateFromNotification,
+  openRoute: (route) => router.navigate(route as Href),
   whenReadyToNavigate: () =>
     ready
       ? Promise.resolve()

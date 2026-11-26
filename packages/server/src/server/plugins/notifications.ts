@@ -8,6 +8,8 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 export const MAX_PLUGIN_NOTIFICATION_TITLE_CHARS = 160;
 export const MAX_PLUGIN_NOTIFICATION_BODY_CHARS = 500;
 export const MAX_PLUGIN_NOTIFICATION_KEY_CHARS = 128;
+export const MAX_PLUGIN_NOTIFICATION_OPEN_ID_CHARS = 256;
+export const MAX_PLUGIN_NOTIFICATION_OPEN_BYTES = 1024;
 export const MAX_PLUGIN_NOTIFICATION_DATA_BYTES = 1024;
 export const PLUGIN_NOTIFICATION_DEDUP_WINDOW_MS = 60_000;
 export const MAX_DEDUP_KEYS_PER_PLUGIN = 512;
@@ -68,63 +70,74 @@ function isJsonValue(value: unknown, seen = new Set<object>()): value is JsonVal
   }
 }
 
+function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const trimmed = text.slice(0, Math.max(0, maxChars - 3)).trimEnd();
+  return trimmed.length > 0 ? `${trimmed}...` : text.slice(0, maxChars);
+}
+
+function validateOpenTargetId(raw: unknown, field: string): string {
+  if (typeof raw !== "string") {
+    throw new Error(`Plugin notification ${field} must be a non-empty string`);
+  }
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_PLUGIN_NOTIFICATION_OPEN_ID_CHARS) {
+    throw new Error(
+      `Plugin notification ${field} must be 1 to ${MAX_PLUGIN_NOTIFICATION_OPEN_ID_CHARS} characters`,
+    );
+  }
+  return trimmed;
+}
+
 function validateOpenTarget(raw: unknown): PluginNotificationOpenTarget {
   if (!isPlainObject(raw) || typeof raw.type !== "string") {
     throw new Error("Invalid plugin notification open target");
   }
+  let target: PluginNotificationOpenTarget;
   if (raw.type === "agent") {
-    if (
-      Object.keys(raw).some((key) => key !== "type" && key !== "agentId") ||
-      typeof raw.agentId !== "string"
-    ) {
+    if (Object.keys(raw).some((key) => key !== "type" && key !== "agentId")) {
       throw new Error("Plugin notification open.agentId must be a non-empty string");
     }
-    const agentId = raw.agentId.trim();
-    if (!agentId) {
-      throw new Error("Plugin notification open.agentId must be a non-empty string");
-    }
-    return { type: "agent", agentId };
-  }
-  if (raw.type === "workspace") {
-    if (
-      Object.keys(raw).some((key) => key !== "type" && key !== "workspaceId") ||
-      typeof raw.workspaceId !== "string"
-    ) {
+    target = { type: "agent", agentId: validateOpenTargetId(raw.agentId, "open.agentId") };
+  } else if (raw.type === "workspace") {
+    if (Object.keys(raw).some((key) => key !== "type" && key !== "workspaceId")) {
       throw new Error("Plugin notification open.workspaceId must be a non-empty string");
     }
-    const workspaceId = raw.workspaceId.trim();
-    if (!workspaceId) {
-      throw new Error("Plugin notification open.workspaceId must be a non-empty string");
-    }
-    return { type: "workspace", workspaceId };
-  }
-  if (raw.type === "screen") {
-    if (
-      Object.keys(raw).some((key) => key !== "type" && key !== "screenId" && key !== "params") ||
-      typeof raw.screenId !== "string"
-    ) {
+    target = {
+      type: "workspace",
+      workspaceId: validateOpenTargetId(raw.workspaceId, "open.workspaceId"),
+    };
+  } else if (raw.type === "screen") {
+    if (Object.keys(raw).some((key) => key !== "type" && key !== "screenId" && key !== "params")) {
       throw new Error("Plugin notification open.screenId must be a non-empty string");
     }
-    const screenId = raw.screenId.trim();
-    if (!screenId) {
-      throw new Error("Plugin notification open.screenId must be a non-empty string");
-    }
+    const screenId = validateOpenTargetId(raw.screenId, "open.screenId");
     if (raw.params === undefined) {
-      return { type: "screen", screenId };
-    }
-    if (!isPlainObject(raw.params)) {
-      throw new Error("Plugin notification open.params must be an object of strings");
-    }
-    const params: Record<string, string> = {};
-    for (const [key, value] of Object.entries(raw.params)) {
-      if (!key.trim() || typeof value !== "string") {
+      target = { type: "screen", screenId };
+    } else {
+      if (!isPlainObject(raw.params)) {
         throw new Error("Plugin notification open.params must be an object of strings");
       }
-      params[key] = value;
+      const params: Record<string, string> = {};
+      for (const [key, value] of Object.entries(raw.params)) {
+        if (!key.trim() || typeof value !== "string") {
+          throw new Error("Plugin notification open.params must be an object of strings");
+        }
+        params[key] = value;
+      }
+      target = { type: "screen", screenId, params };
     }
-    return { type: "screen", screenId, params };
+  } else {
+    throw new Error(`Invalid plugin notification open target type: ${raw.type}`);
   }
-  throw new Error(`Invalid plugin notification open target type: ${raw.type}`);
+  if (Buffer.byteLength(JSON.stringify(target), "utf8") > MAX_PLUGIN_NOTIFICATION_OPEN_BYTES) {
+    throw new Error(
+      `Plugin notification open must not exceed ${MAX_PLUGIN_NOTIFICATION_OPEN_BYTES} UTF-8 bytes`,
+    );
+  }
+  return target;
 }
 
 function validateNotificationKey(raw: unknown): string | undefined {
@@ -173,22 +186,12 @@ export function validatePluginNotificationSendInput(
   if (typeof raw.title !== "string" || !raw.title.trim()) {
     throw new Error("Plugin notification title is required");
   }
-  const title = raw.title.trim();
-  if (title.length > MAX_PLUGIN_NOTIFICATION_TITLE_CHARS) {
-    throw new Error(
-      `Plugin notification title must not exceed ${MAX_PLUGIN_NOTIFICATION_TITLE_CHARS} characters`,
-    );
-  }
+  const title = truncateText(raw.title.trim(), MAX_PLUGIN_NOTIFICATION_TITLE_CHARS);
 
   if (typeof raw.body !== "string") {
     throw new Error("Plugin notification body must be a string");
   }
-  const body = raw.body.trim();
-  if (body.length > MAX_PLUGIN_NOTIFICATION_BODY_CHARS) {
-    throw new Error(
-      `Plugin notification body must not exceed ${MAX_PLUGIN_NOTIFICATION_BODY_CHARS} characters`,
-    );
-  }
+  const body = truncateText(raw.body.trim(), MAX_PLUGIN_NOTIFICATION_BODY_CHARS);
 
   const key = validateNotificationKey(raw.key);
   const open = raw.open !== undefined ? validateOpenTarget(raw.open) : undefined;

@@ -909,10 +909,10 @@ export default function contribute(server: PluginServerContext) {
 
 | Field   | Required | Limit / behavior                                                                                                  |
 | ------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `title` | Yes      | Non-empty string after trimming, up to 160 characters.                                                            |
-| `body`  | Yes      | Trimmed string, up to 500 characters.                                                                             |
+| `title` | Yes      | Non-empty string after trimming; truncated to 160 characters if longer.                                           |
+| `body`  | Yes      | Trimmed string; truncated to 500 characters if longer.                                                            |
 | `key`   | No       | Trimmed string, 1–128 characters. An identical key from the same plugin within 60 seconds returns `deduplicated`. |
-| `open`  | No       | Declarative tap target used when the client has no `onNotificationOpen` handler.                                  |
+| `open`  | No       | Declarative tap target (IDs up to 256 chars, serialized up to 1,024 UTF-8 bytes) used when no handler handles it. |
 | `data`  | No       | Plain JSON object up to 1,024 UTF-8 bytes when serialized, passed to `client.onNotificationOpen`.                 |
 
 Declarative `open` targets require no client entry:
@@ -923,11 +923,11 @@ Declarative `open` targets require no client entry:
 
 `server.notifications.send()` resolves to one of:
 
-- `{ status: "sent", notificationId: string }` when accepted for delivery.
+- `{ status: "sent", notificationId: string }` when accepted by the daemon for delivery (even if muted on a user's device).
 - `{ status: "deduplicated" }` when `key` matched a notification sent by your plugin within the last 60 seconds.
 - `{ status: "rate_limited" }` when your plugin exceeds its per-plugin token bucket (burst of 10, refilling 1 every 6 seconds).
 
-Invalid fields or `data` larger than 1,024 UTF-8 bytes reject the returned promise. Users can mute all plugin notifications or mute individual plugins in **Settings → Notifications**.
+Invalid fields, an empty `title`, or `open`/`data` larger than 1,024 UTF-8 bytes reject the returned promise. Users can mute all plugin notifications or mute individual plugins in **Settings → Notifications**.
 
 ### Handle notification taps on the client
 
@@ -952,7 +952,7 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-The handler receives `PluginCommandCapabilities` (`paseo`, `rpc`, `openScreen`, `composers`, `openSettings`), `navigation.openAgent`, `navigation.openWorkspace`, and `event: { type: "opened", notificationId, data }`. On cold launch from a notification tap, Paseo waits for the target host's plugin catalog to finish loading before invoking your handler; if the plugin has no registered handler or the catalog cannot load in time, Paseo falls back to the notification's declarative `open` target. See `plugin-examples/notifications`.
+The handler receives `PluginCommandCapabilities` (`paseo`, `rpc`, `openScreen`, `composers`, `openSettings`), `navigation.openAgent`, `navigation.openWorkspace`, and `event: { type: "opened", notificationId, data }`. Registering `onNotificationOpen` takes ownership of all notification taps for that plugin. On cold launch from a notification tap, Paseo waits for the target host's plugin catalog to finish loading before invoking your handler; if the plugin has no registered handler, every registered handler throws, or the catalog cannot load in time, Paseo falls back to the notification's declarative `open` target. See `plugin-examples/notifications`.
 
 ## Lifecycle hooks
 

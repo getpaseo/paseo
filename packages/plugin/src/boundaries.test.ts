@@ -708,6 +708,7 @@ describe("plugin notifications SDK boundary", () => {
       } from "@getpaseo/plugin/server";
       import type {
         PluginClientContext,
+        PluginHostNavigationActions,
         PluginNotificationOpenContext,
         PluginNotificationOpenEvent,
         PluginNotificationOpenHandler,
@@ -750,6 +751,8 @@ describe("plugin notifications SDK boundary", () => {
 
       export function contributeClient(client: PluginClientContext) {
         const handler: PluginNotificationOpenHandler = (context: PluginNotificationOpenContext) => {
+          const navigation: PluginHostNavigationActions = context.navigation;
+          void navigation;
           const event: PluginNotificationOpenEvent = context.event;
           const kind: "opened" = event.type;
           const id: string = event.notificationId;

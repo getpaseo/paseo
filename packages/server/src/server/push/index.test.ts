@@ -69,7 +69,7 @@ describe("push notifications", () => {
     expect(deliveries).toEqual([]);
   });
 
-  test("tokens registered without preferences use DEFAULT_NOTIFICATION_PREFERENCES", async () => {
+  test("tokens registered without preferences retain legacy push filtering while explicit defaults apply new defaults", async () => {
     const home = mkdtempSync(path.join(tmpdir(), "paseo-push-notifications-"));
     homes.push(home);
     const deliveries: string[][] = [];
@@ -81,19 +81,23 @@ describe("push notifications", () => {
     });
 
     pushNotifications.renew("ExponentPushToken[legacy-device]");
+    pushNotifications.renew("ExponentPushToken[modern-device]", DEFAULT_NOTIFICATION_PREFERENCES);
 
-    // Default has agentFinished: false, agentPermission: true, agentError: true
+    // Legacy tokens keep finished pushes and skip error pushes; modern defaults flip that.
     await pushNotifications.send(
       { title: "Agent finished", body: "Done" },
       { kind: "agent", reason: "finished" },
     );
-    expect(deliveries).toEqual([]);
+    expect(deliveries).toEqual([["ExponentPushToken[legacy-device]"]]);
 
     await pushNotifications.send(
       { title: "Agent needs attention", body: "Encountered an error." },
       { kind: "agent", reason: "error" },
     );
-    expect(deliveries).toEqual([["ExponentPushToken[legacy-device]"]]);
+    expect(deliveries).toEqual([
+      ["ExponentPushToken[legacy-device]"],
+      ["ExponentPushToken[modern-device]"],
+    ]);
   });
 
   test("per-token filtering delivers to eligible tokens and skips ineligible ones in the same send call", async () => {

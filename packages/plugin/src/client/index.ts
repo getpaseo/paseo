@@ -1,5 +1,6 @@
 export type {
   PluginHostProps,
+  PluginHostNavigationActions,
   PluginTab,
   PluginPanelProps,
   PluginWorkspacePanelParams,

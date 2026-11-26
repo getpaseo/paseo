@@ -702,13 +702,13 @@ export default function contribute(server: PluginServerContext) {
 
 ### 发送输入与限制 {#send-input-and-limits}
 
-| 字段    | 必填 | 限制 / 行为                                                                                   |
-| ------- | ---- | --------------------------------------------------------------------------------------------- |
-| `title` | 是   | 去除首尾空白后的非空字符串，最多 160 个字符。                                                 |
-| `body`  | 是   | 去除首尾空白的字符串，最多 500 个字符。                                                       |
-| `key`   | 否   | 去除首尾空白的字符串，1–128 个字符。同一插件在 60 秒内发送相同 `key` 会返回 `deduplicated`。  |
-| `open`  | 否   | 声明式点击目标，在客户端未注册 `onNotificationOpen` 处理函数时使用。                          |
-| `data`  | 否   | 序列化后不超过 1,024 UTF-8 字节的纯 JSON 对象，点击通知时传递给 `client.onNotificationOpen`。 |
+| 字段    | 必填 | 限制 / 行为                                                                                     |
+| ------- | ---- | ----------------------------------------------------------------------------------------------- |
+| `title` | 是   | 去除首尾空白后的非空字符串；超过 160 个字符时自动截断。                                         |
+| `body`  | 是   | 去除首尾空白的字符串；超过 500 个字符时自动截断。                                               |
+| `key`   | 否   | 去除首尾空白的字符串，1–128 个字符。同一插件在 60 秒内发送相同 `key` 会返回 `deduplicated`。    |
+| `open`  | 否   | 声明式点击目标（ID 最多 256 个字符，序列化后不超过 1,024 UTF-8 字节），在未由处理函数处理时用。 |
+| `data`  | 否   | 序列化后不超过 1,024 UTF-8 字节的纯 JSON 对象，点击通知时传递给 `client.onNotificationOpen`。   |
 
 声明式 `open` 目标无需客户端入口：
 
@@ -718,11 +718,11 @@ export default function contribute(server: PluginServerContext) {
 
 `server.notifications.send()` 会解析为以下结果之一：
 
-- `{ status: "sent", notificationId: string }`：已受理并进入投递流程。
+- `{ status: "sent", notificationId: string }`：daemon 已受理并进入投递流程（即使某台设备静音了该通知）。
 - `{ status: "deduplicated" }`：`key` 与当前插件在过去 60 秒内发送的通知重复。
 - `{ status: "rate_limited" }`：当前插件超出了单插件令牌桶限制（突发容量 10，每 6 秒补充 1 个）。
 
-字段非法或 `data` 超过 1,024 UTF-8 字节会使返回的 Promise 被拒绝。用户可以在 **设置 → 通知** 中关闭全部插件通知或静音单个插件。
+字段非法、`title` 为空，或 `open`/`data` 超过 1,024 UTF-8 字节会使返回的 Promise 被拒绝。用户可以在 **设置 → 通知** 中关闭全部插件通知或静音单个插件。
 
 ### 在客户端处理通知点击 {#handle-notification-taps-on-the-client}
 
@@ -747,7 +747,7 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-处理函数接收 `PluginCommandCapabilities`（`paseo`、`rpc`、`openScreen`、`composers`、`openSettings`）、`navigation.openAgent`、`navigation.openWorkspace` 以及 `event: { type: "opened", notificationId, data }`。通过通知点击冷启动应用时，Paseo 会等待目标主机的插件目录加载完成后再调用你的处理函数；若插件未注册处理函数或目录未能在时限内加载完成，Paseo 会回退到通知的声明式 `open` 目标。完整示例见 `plugin-examples/notifications`。
+处理函数接收 `PluginCommandCapabilities`（`paseo`、`rpc`、`openScreen`、`composers`、`openSettings`）、`navigation.openAgent`、`navigation.openWorkspace` 以及 `event: { type: "opened", notificationId, data }`。注册 `onNotificationOpen` 后，该处理函数会接管此插件的所有通知点击。通过通知点击冷启动应用时，Paseo 会等待目标主机的插件目录加载完成后再调用你的处理函数；若插件未注册处理函数、所有已注册处理函数均抛出错误，或目录未能在时限内加载完成，Paseo 会回退到通知的声明式 `open` 目标。完整示例见 `plugin-examples/notifications`。
 
 ## 生命周期钩子 {#lifecycle-hooks}
 

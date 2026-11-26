@@ -553,10 +553,11 @@ reference tells plugin authors to start such a write without awaiting it.
 
 Server plugins call `server.notifications.send(input)` over the `notification.send` /
 `notification.result` / `notification.error` IPC messages. `PluginNotificationDispatcher` in
-`packages/server/src/server/plugins/notifications.ts` validates inputs (`title` <= 160 chars,
-`body` <= 500 chars, `key` <= 128 chars, `data` <= 1,024 UTF-8 bytes so APNs and FCM envelopes stay
-within 4 KiB), drops duplicate `(pluginId, key)` pairs for 60 seconds, and enforces a per-plugin
-token bucket (burst 10, refill 1 per 6 seconds). Stopping a plugin clears its deduplication and
+`packages/server/src/server/plugins/notifications.ts` trims and truncates `title` (<= 160 chars)
+and `body` (<= 500 chars), validates `key` (<= 128 chars), `open` (IDs <= 256 chars, serialized
+<= 1,024 UTF-8 bytes), and `data` (<= 1,024 UTF-8 bytes so APNs and FCM envelopes stay within
+4 KiB), drops duplicate `(pluginId, key)` pairs for 60 seconds, and enforces a per-plugin token
+bucket (burst 10, refill 1 per 6 seconds). Stopping a plugin clears its deduplication and
 rate-limit state.
 
 `WebSocketServer.sendPluginNotification` stamps the runtime `pluginId`, `serverId`, and

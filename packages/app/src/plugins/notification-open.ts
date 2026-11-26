@@ -198,9 +198,11 @@ export async function openPluginNotification(
       },
     };
 
+    let anySucceeded = false;
     for (const handler of plugin.notificationOpenHandlers) {
       try {
         await handler(context);
+        anySucceeded = true;
       } catch (error) {
         if (deps.onError) {
           deps.onError(error, { serverId: target.serverId, pluginId: target.pluginId });
@@ -212,7 +214,9 @@ export async function openPluginNotification(
         }
       }
     }
-    return;
+    if (anySucceeded) {
+      return;
+    }
   }
 
   applyDeclarativeFallback(target, deps);

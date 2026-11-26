@@ -314,4 +314,31 @@ describe("openPluginNotification", () => {
     expect(harness.errors).toHaveLength(1);
     expect(harness.routes).toEqual(["/h/srv-1/plugin/buggy-plugin/surface/main"]);
   });
+
+  it("falls back to declarative open when every registered onNotificationOpen handler throws", async () => {
+    const harness = createHarness();
+    harness.registry.setCatalogStatus("srv-1", "ready");
+    harness.registry.install(
+      makeInstalledPlugin({
+        serverId: "srv-1",
+        pluginId: "failing-plugin",
+        handlers: [
+          () => {
+            throw new Error("handler boom");
+          },
+        ],
+      }),
+    );
+
+    await harness.dispatch({
+      kind: "plugin",
+      serverId: "srv-1",
+      pluginId: "failing-plugin",
+      notificationId: "n-throw-fallback",
+      open: { type: "agent", agentId: "agent-fallback" },
+    });
+
+    expect(harness.errors).toHaveLength(1);
+    expect(harness.agents).toEqual([{ serverId: "srv-1", agentId: "agent-fallback" }]);
+  });
 });

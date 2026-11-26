@@ -3,6 +3,7 @@ import {
   normalizeNotificationPreferences,
   shouldDeliverNotification,
   type NotificationKind,
+  type NotificationPreferences,
   type NotificationPreferencesInput,
 } from "@getpaseo/protocol/notification-preferences";
 
@@ -12,6 +13,24 @@ import { PushTokenStore } from "./token-store.js";
 export type { PushPayload };
 
 const PUSH_TOKEN_LEASE_MS = 48 * 60 * 60 * 1000;
+
+// COMPAT(pushNotificationPreferences): added in v0.18.0, remove after 2027-06-01.
+// Mobile apps predating notification preferences cannot opt back into finished pushes, so
+// tokens registered without explicit preferences retain the pre-v0.18 push filter.
+const LEGACY_PUSH_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  enabled: true,
+  events: {
+    agentPermission: true,
+    agentError: false,
+    agentFinished: true,
+    terminalNeedsInput: true,
+    terminalFinished: true,
+  },
+  plugins: {
+    enabled: true,
+    muted: [],
+  },
+};
 
 export interface PushNotifications {
   renew(token: string, preferences?: NotificationPreferencesInput): void;
@@ -45,7 +64,10 @@ export function createPushNotifications(options: {
       const subscriptions = store.getActiveSubscriptions();
       const tokens = subscriptions
         .filter((entry) => {
-          const preferences = normalizeNotificationPreferences(entry.preferences);
+          const preferences =
+            entry.preferences !== undefined
+              ? normalizeNotificationPreferences(entry.preferences)
+              : LEGACY_PUSH_NOTIFICATION_PREFERENCES;
           return kind ? shouldDeliverNotification(preferences, kind) : preferences.enabled;
         })
         .map((entry) => entry.token);
