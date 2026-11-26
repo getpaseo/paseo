@@ -9,6 +9,7 @@ import {
 } from "react";
 import React from "react";
 import type { ToastApi } from "@/components/toast-host";
+import type { NavigateToAgentInput } from "@/utils/navigate-to-agent";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import type { InlinePathTarget } from "./parse";
 import type { AssistantFileLinkContext, GetDirectorySuggestions } from "./resolver";
@@ -24,6 +25,8 @@ export interface AssistantFileLinkResolverConfig {
   workspaceRoot?: string;
   relativePathBase?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
+  onNavigateToAgent?: (target: NavigateToAgentInput) => void;
+  onOpenExternalUrl?: (url: string) => void | Promise<void>;
   toast?: ToastApi | null;
 }
 
@@ -57,6 +60,8 @@ export function AssistantFileLinkResolverProvider({
   workspaceRoot,
   relativePathBase,
   onOpenWorkspaceFile,
+  onNavigateToAgent,
+  onOpenExternalUrl,
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
@@ -66,6 +71,8 @@ export function AssistantFileLinkResolverProvider({
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
+    onNavigateToAgent,
+    onOpenExternalUrl,
     toast,
   });
   configRef.current = {
@@ -74,6 +81,8 @@ export function AssistantFileLinkResolverProvider({
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
+    onNavigateToAgent,
+    onOpenExternalUrl,
     toast,
   };
 
