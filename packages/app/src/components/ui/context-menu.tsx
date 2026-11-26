@@ -150,17 +150,17 @@ export function ContextMenuTrigger({
   );
 
   const propsOnLongPress = props.onLongPress;
-  const handleLongPress = useCallback(
+  const handleNativeLongPress = useCallback(
     (event: GestureResponderEvent) => {
-      if (isWeb) {
-        propsOnLongPress?.(event);
-        return;
-      }
       openAtEvent(event);
       propsOnLongPress?.(event);
     },
     [propsOnLongPress, openAtEvent],
   );
+  // The web menu opens on right-click, not long press. Any onLongPress makes react-native-web cancel
+  // the click that ends a held press, and only a later press-in clears that, which Ctrl+click never
+  // gets. So on web, pass the caller's onLongPress through and nothing else.
+  const handleLongPress = isWeb ? propsOnLongPress : handleNativeLongPress;
 
   const handleContextMenu = useCallback(
     (event: unknown) => {

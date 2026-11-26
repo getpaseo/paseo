@@ -38,7 +38,7 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 
 ## 选择模型 {#choose-a-model}
 
-打开 **设置 → 主机 → 元数据**，选择 **自动** 或 **手动**。在手动模式下，选择 Paseo 使用的模型。选择模型会替换 `agents.metadataGeneration.providers` 中的第一项，并保留列表的其余部分。切换回自动会清空该列表。
+打开 **设置 → 主机 → Workspaces**，选择 **自动** 或 **手动**。在手动模式下，选择 Paseo 使用的模型。选择模型会替换 `agents.metadataGeneration.providers` 中的第一项，并保留列表的其余部分。切换回自动会清空该列表。
 
 ## 配置自定义的回退顺序 {#configure-a-custom-fallback-order}
 

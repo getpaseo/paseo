@@ -23,7 +23,7 @@ Paseo 中的 Agent 可以操作真实的浏览器标签页，也就是你在 Pas
 
 浏览器工具默认关闭。按主机开启：
 
-- **在应用中**：打开 **设置 → 你的主机 → Agents**，开启 **Browser tools**。
+- **在应用中**：打开 **设置 → 主机 → 工具与提示词**，开启 **Browser tools**。
 - **在 `config.json` 中**（`~/.paseo/config.json`）：
 
 ```json

@@ -66,7 +66,7 @@ and duplicate-delivery semantics. Concurrent prompts gain no turn attribution.
 
 ## Allow instructions from another host
 
-On the receiving host, open **Settings → Hosts → [host] → Connections → Allow instructions from another host**.
+On the receiving host, open **Settings → [host] → Devices → Allow instructions from another host**.
 Choose a connected sending host and set its default. **Ask each time** holds prompts for approval
 on this page. **Allow unattended** queues them on arrival. A workspace can inherit the default,
 require approval, allow unattended instructions, or block instructions from that sender entirely.

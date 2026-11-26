@@ -167,8 +167,9 @@ export class HostInstructionInbox {
   }
 
   async canDiscover(principal: Principal, target: HostInstruction["target"]): Promise<boolean> {
-    await this.writer.settled();
-    return this.effectivePolicy(this.requireGrant(principal), target) !== "blocked";
+    return this.readSettled(
+      () => this.effectivePolicy(this.requireGrant(principal), target) !== "blocked",
+    );
   }
 
   private hostGrant(sourceId: string) {
@@ -202,17 +203,19 @@ export class HostInstructionInbox {
 
   async authenticate(token: string): Promise<Principal | null> {
     if (!/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(token)) return null;
-    await this.writer.settled();
-    const grant = this.data.grants.find((entry) => entry.id === token.slice(0, 36));
-    if (!grant || !timingSafeEqual(digestToken(token), Buffer.from(grant.tokenDigest, "hex"))) {
-      return null;
-    }
-    return { id: grant.id, sourceId: grant.sourceId };
+    return this.readSettled(() => {
+      const grant = this.data.grants.find((entry) => entry.id === token.slice(0, 36));
+      if (!grant || !timingSafeEqual(digestToken(token), Buffer.from(grant.tokenDigest, "hex"))) {
+        return null;
+      }
+      return { id: grant.id, sourceId: grant.sourceId };
+    });
   }
 
   async listGrants(): Promise<HostInstructionGrant[]> {
-    await this.writer.settled();
-    return this.data.grants.map(({ tokenDigest: _secret, ...grant }) => structuredClone(grant));
+    return this.readSettled(() =>
+      this.data.grants.map(({ tokenDigest: _secret, ...grant }) => structuredClone(grant)),
+    );
   }
 
   async revoke(grantId: string, keepConversationGrants = false): Promise<void> {
@@ -315,11 +318,12 @@ export class HostInstructionInbox {
 
   async status(principal: Principal, instructionId: string) {
     await this.expire();
-    await this.writer.settled();
-    this.requireGrant(principal);
-    const request = this.find(principal.sourceId, instructionId);
-    if (request?.grantId !== principal.id) return null;
-    return { id: instructionId, state: request.state, reply: request.reply };
+    return this.readSettled(() => {
+      this.requireGrant(principal);
+      const request = this.find(principal.sourceId, instructionId);
+      if (request?.grantId !== principal.id) return null;
+      return { id: instructionId, state: request.state, reply: request.reply };
+    });
   }
 
   async cancel(principal: Principal, instructionId: string) {
@@ -344,8 +348,7 @@ export class HostInstructionInbox {
 
   async list(): Promise<InboxRequest[]> {
     await this.expire();
-    await this.writer.settled();
-    return structuredClone(this.data.requests);
+    return this.readSettled(() => structuredClone(this.data.requests));
   }
 
   async claim(
@@ -503,5 +506,14 @@ export class HostInstructionInbox {
   private async commit(data: InboxData): Promise<void> {
     this.data = data;
     await this.writer.persist(data);
+  }
+
+  private async readSettled<T>(read: () => T): Promise<T> {
+    for (;;) {
+      const snapshot = this.data;
+      await this.writer.settled();
+      // Commits publish their snapshots before the serialized writes finish.
+      if (snapshot === this.data) return read();
+    }
   }
 }

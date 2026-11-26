@@ -112,6 +112,27 @@ describe("host instruction inbox", () => {
     ).rejects.toThrow("expiry is outside");
   });
 
+  it("does not report a concurrent cancellation until its snapshot is durable", async () => {
+    const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
+    await inbox.submit(grant, instruction);
+    const write = Promise.withResolvers<void>();
+    const persist = vi
+      .spyOn(privateFiles, "writePrivateFileAtomic")
+      .mockReturnValueOnce(write.promise);
+    try {
+      const cancellation = inbox.cancelDelivery(grant, instruction);
+      const status = inbox.status(grant, instruction.id);
+      const receipts = Promise.allSettled([cancellation, status]);
+      await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce());
+      write.reject(new Error("Could not persist cancellation"));
+      expect((await receipts).map((result) => result.status)).toEqual(["rejected", "rejected"]);
+      const restarted = await HostInstructionInbox.open(home, () => now);
+      expect(await restarted.status(grant, instruction.id)).toMatchObject({ state: "queued" });
+    } finally {
+      persist.mockRestore();
+    }
+  });
+
   it("enforces source identity, conversation exceptions, and workspace scope", async () => {
     const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
     await expect(inbox.submit({ ...grant, sourceId: "stranger" }, instruction)).rejects.toThrow(

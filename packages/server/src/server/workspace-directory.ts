@@ -77,7 +77,9 @@ export interface WorkspaceDirectoryDeps {
   workspaceRegistry: {
     listActive(): Promise<PersistedWorkspaceRecord[]>;
     get(id: string): Promise<PersistedWorkspaceRecord | null>;
+    isPublicationDeferred?(workspaceId: string): boolean;
   };
+  getArchivingAt(workspaceId: string): string | null;
   listAgentPayloads(workspaceIds?: Iterable<string>): Promise<AgentSnapshotPayload[]>;
   workspaceLastUserMessageTimes(
     workspaceIds?: Iterable<string>,
@@ -171,7 +173,6 @@ function activeWorkspaceRecords(
 }
 
 export class WorkspaceDirectory {
-  private readonly archivingByWorkspaceId = new Map<string, string>();
   /**
    * Per-workspace last-seen winning bucket + entered-at. Persists across
    * `buildDescriptorMap` calls inside the daemon process; reset on cold start.
@@ -205,18 +206,6 @@ export class WorkspaceDirectory {
 
   constructor(private readonly deps: WorkspaceDirectoryDeps) {}
 
-  markArchiving(workspaceIds: Iterable<string>, archivingAt: string): void {
-    for (const workspaceId of workspaceIds) {
-      this.archivingByWorkspaceId.set(workspaceId, archivingAt);
-    }
-  }
-
-  clearArchiving(workspaceIds: Iterable<string>): void {
-    for (const workspaceId of workspaceIds) {
-      this.archivingByWorkspaceId.delete(workspaceId);
-    }
-  }
-
   async buildDescriptorMap(options: {
     includeGitData: boolean;
     workspaceIds?: Iterable<string>;
@@ -248,7 +237,9 @@ export class WorkspaceDirectory {
         .filter((project) => !project.archivedAt)
         .map((project) => [project.projectId, project] as const),
     );
-    const activeRecords = activeWorkspaceRecords(persistedWorkspaces, persistedProjects);
+    const activeRecords = activeWorkspaceRecords(persistedWorkspaces, persistedProjects).filter(
+      (workspace) => !this.deps.workspaceRegistry.isPublicationDeferred?.(workspace.workspaceId),
+    );
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>();
     const workspaceIds = requestedIds ? new Set(requestedIds) : null;
     const activeWorkspaceIds = new Set(activeRecords.map((workspace) => workspace.workspaceId));
@@ -273,7 +264,7 @@ export class WorkspaceDirectory {
         ...workspaceDescriptors[i],
         createdAt: includedWorkspaces[i].createdAt,
         lastUserMessageAt: lastUserMessageTimes.get(workspaceId) ?? null,
-        archivingAt: this.archivingByWorkspaceId.get(workspaceId) ?? null,
+        archivingAt: this.deps.getArchivingAt(workspaceId),
       });
     }
 
@@ -590,7 +581,9 @@ export class WorkspaceDirectory {
       persistedWorkspaces
         .filter(
           (workspace) =>
-            !workspace.archivedAt && (options?.includeBackground === true || !workspace.background),
+            !workspace.archivedAt &&
+            !this.deps.workspaceRegistry.isPublicationDeferred?.(workspace.workspaceId) &&
+            (options?.includeBackground === true || !workspace.background),
         )
         .map((workspace) => workspace.projectId),
     );
@@ -616,11 +609,15 @@ export class WorkspaceDirectory {
       this.deps.workspaceRegistry.listActive(),
       this.deps.projectRegistry.list(),
     ]);
-    return activeWorkspaceRecords(workspaces, projects).map((workspace) => ({
-      id: workspace.workspaceId,
-      workspaceDirectory: workspace.cwd,
-      workspaceKind: workspace.kind,
-    }));
+    return activeWorkspaceRecords(workspaces, projects)
+      .filter(
+        (workspace) => !this.deps.workspaceRegistry.isPublicationDeferred?.(workspace.workspaceId),
+      )
+      .map((workspace) => ({
+        id: workspace.workspaceId,
+        workspaceDirectory: workspace.cwd,
+        workspaceKind: workspace.kind,
+      }));
   }
 
   // Every active workspace, background ones included. Callers that answer a

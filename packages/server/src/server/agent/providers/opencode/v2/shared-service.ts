@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Logger } from "pino";
 import type { ProviderRuntimeSettings } from "../../../provider-launch-config.js";
 import type { OpenCodeBridge } from "../bridge.js";
-import { OpenCodeHttpError } from "../http-error.js";
+import { validateOpenCodeResponse } from "./http-response.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { openCodeConfigDirectory, provisionLocalBridge } from "./bridge-provisioning.js";
 import { awaitPaseoPlugin } from "./readiness.js";
@@ -61,12 +61,7 @@ export async function connectSharedService(
         if (isConnectionRefused(error)) markExited(error);
         throw error;
       }
-      const html = response.headers.get("content-type")?.includes("text/html") ?? false;
-      if (!response.ok || html) {
-        const requestUrl = request instanceof Request ? request.url : String(request);
-        throw new OpenCodeHttpError(new URL(requestUrl).pathname, response.status, html);
-      }
-      return response;
+      return validateOpenCodeResponse(request, response);
     },
   });
   const markExited = (cause: unknown) => {
@@ -162,6 +157,11 @@ function validateBridgeAddress(
     );
 }
 
+interface BindOutput {
+  error?: unknown;
+  features?: { mcpTools?: boolean };
+}
+
 export function bridgeBindings(
   client: ReturnType<typeof OpenCode.make>,
   bridge: OpenCodeBridge | undefined,
@@ -187,8 +187,13 @@ export function bridgeBindings(
           { cause: error },
         );
       }
-      if (result.output && typeof result.output === "object" && "error" in result.output)
-        throw new Error(String(result.output.error));
+      const output = result.output as BindOutput | undefined;
+      if (output?.error !== undefined) throw new Error(String(output.error));
+      // An OpenCode older than 2.0.29, or a plugin from an older Paseo, ignores MCP tools.
+      if (bridge.hasMcpTools(sessionId) && output?.features?.mcpTools !== true)
+        throw new Error(
+          `This OpenCode server cannot run the agent's MCP servers. Update OpenCode to 2.0.29 or newer${pluginDirectory ? `, install the Paseo plugin from ${pluginDirectory}, and restart the server` : ""}.`,
+        );
     },
     unbindSession: async (sessionId, cwd) => {
       if (bridge)

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  normalizeNotificationPreferences,
+  type NotificationPreferences,
+} from "./notification-preferences.js";
+import {
   AgentTimelineItemPayloadSchema,
   SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
@@ -629,5 +634,85 @@ describe("terminal collection protocol compatibility", () => {
         },
       }),
     ).toMatchObject({ payload: { terminals: [{ isScript: true, createdAt: null }] } });
+  });
+});
+
+describe("push notification preferences protocol compatibility", () => {
+  test("accepts register_push_token with or without notification preferences", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "register_push_token",
+        token: "ExponentPushToken[legacy]",
+      }),
+    ).toEqual({
+      type: "register_push_token",
+      token: "ExponentPushToken[legacy]",
+    });
+
+    const preferences: NotificationPreferences = {
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      events: {
+        ...DEFAULT_NOTIFICATION_PREFERENCES.events,
+        agentFinished: true,
+      },
+      plugins: {
+        enabled: true,
+        muted: ["review-bot"],
+      },
+    };
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "register_push_token",
+        token: "ExponentPushToken[modern]",
+        preferences,
+      }),
+    ).toEqual({
+      type: "register_push_token",
+      token: "ExponentPushToken[modern]",
+      preferences,
+    });
+
+    const partialParsed = SessionInboundMessageSchema.parse({
+      type: "register_push_token",
+      token: "ExponentPushToken[partial]",
+      preferences: {
+        events: { agentFinished: true },
+        plugins: { muted: ["zeta-plugin", "alpha-plugin"] },
+      },
+    });
+    expect(partialParsed).toEqual({
+      type: "register_push_token",
+      token: "ExponentPushToken[partial]",
+      preferences: {
+        events: { agentFinished: true },
+        plugins: { muted: ["zeta-plugin", "alpha-plugin"] },
+      },
+    });
+    if (partialParsed.type !== "register_push_token") {
+      throw new Error("Expected register_push_token message");
+    }
+    expect(normalizeNotificationPreferences(partialParsed.preferences)).toEqual({
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      events: {
+        ...DEFAULT_NOTIFICATION_PREFERENCES.events,
+        agentFinished: true,
+      },
+      plugins: {
+        enabled: true,
+        muted: ["alpha-plugin", "zeta-plugin"],
+      },
+    });
+  });
+
+  test("parses pushNotificationPreferences feature flag on server_info", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-1",
+      features: {
+        pushNotificationPreferences: true,
+      },
+    });
+    expect(parsed.features?.pushNotificationPreferences).toBe(true);
   });
 });

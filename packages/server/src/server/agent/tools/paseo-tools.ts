@@ -19,7 +19,11 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "../agent-manager.js";
-import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
+import {
+  ActiveTurnBehaviorSchema,
+  AgentActiveTurnBehaviorSchema,
+  AgentProfileSchema,
+} from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
@@ -141,6 +145,10 @@ export interface PaseoToolHostDependencies {
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot" | "invalidateWorktrees"
   >;
   findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
+  worktreeManagers?: ArchiveDependencies["worktreeManagers"];
+  workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
+  assertWorkspaceAutomationAllowed?: ArchiveDependencies["assertWorkspaceAutomationAllowed"];
+  isCheckoutUntrusted?: ArchiveDependencies["isCheckoutUntrusted"];
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
@@ -155,6 +163,7 @@ export interface PaseoToolHostDependencies {
   workspaceScripts?: Pick<WorkspaceScriptsService, "list" | "launch" | "stop">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
+  lifecycle?: ArchiveDependencies["lifecycle"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: (
@@ -405,6 +414,7 @@ interface ScheduleUpdateToolInput {
   model?: string | null;
   mode?: string | null;
   cwd?: string;
+  archiveOnFinish?: boolean;
   expiresIn?: string;
   clearExpires?: boolean;
 }
@@ -538,6 +548,7 @@ function buildScheduleUpdateInput(input: ScheduleUpdateToolInput): UpdateSchedul
     ...(providerModelPatch.model !== undefined ? { model: providerModelPatch.model } : {}),
     ...(input.mode !== undefined ? { modeId: input.mode } : {}),
     ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    ...(input.archiveOnFinish !== undefined ? { archiveOnFinish: input.archiveOnFinish } : {}),
   };
 
   return {
@@ -997,7 +1008,10 @@ function createToolCatalog(
     provider?: string;
     cwd?: string;
     isolation?: "local" | "worktree";
+    archiveOnFinish?: boolean;
   }) => {
+    const archiveOnFinish =
+      params?.archiveOnFinish === undefined ? {} : { archiveOnFinish: params.archiveOnFinish };
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return {
@@ -1005,6 +1019,7 @@ function createToolCatalog(
         config: {
           ...buildCallerAgentScheduleConfig(callerAgent, params),
           ...(params?.isolation ? { isolation: params.isolation } : {}),
+          ...archiveOnFinish,
         },
       };
     }
@@ -1024,6 +1039,7 @@ function createToolCatalog(
         cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(params?.isolation ? { isolation: params.isolation } : {}),
+        ...archiveOnFinish,
       },
     };
   };
@@ -1210,7 +1226,7 @@ function createToolCatalog(
       .boolean()
       .optional()
       .describe(
-        "True creates a background agent: hidden from tabs, default lists, your subagent track and notifications. You still get its finish notification and can address it by id. Omit to inherit your own value (false without a caller); use it for helpers the user does not need to watch.",
+        "Hide the agent from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
       ),
   };
   const legacyCreateAgentPlacementFields = {
@@ -1285,15 +1301,15 @@ function createToolCatalog(
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
-    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
-      'Agent callers: "steer" (default) waits until the current turn ends; "interrupt" replaces it. Human callers: "steer" joins the turn, falling back to interrupt; default is interrupt.',
-    ),
     agentId: z.string(),
     prompt: z.string(),
     sessionMode: z.string().optional().describe("Optional mode to set before running the prompt."),
   };
   const agentToAgentSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional().describe(
+      'Leave this out unless the message cannot wait. Default "queue": the message waits until the agent\'s running turn ends. "steer": the message joins the running turn; a provider that cannot steer interrupts the turn instead. "interrupt": the running turn stops and a new turn starts with the message. A steer or interrupt carries the messages you queued before it, in order.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1304,6 +1320,9 @@ function createToolCatalog(
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
+      'Default "interrupt": the running turn stops and a new turn starts with the prompt. "steer": the prompt joins the running turn; a provider that cannot steer interrupts the turn instead.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1515,7 +1534,7 @@ function createToolCatalog(
           .boolean()
           .optional()
           .describe(
-            "True hides the workspace from default lists and the sidebar while its contents remain durable and accessible; omit background to inherit your own visibility (true when you or your current workspace are background, false without a caller), and override it only when the user explicitly asks.",
+            "Hide the workspace from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
           ),
         mode: z
           .enum(["branch-off", "checkout-branch", "checkout-pr"])
@@ -2070,13 +2089,16 @@ function createToolCatalog(
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient and waits for the current turn to end unless interrupt is requested. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        scope === "agent"
+          ? "Send a message to another agent. The response returns at once. Its guidance says whether the message waits for the running turn to end, joins it, or interrupts it, and how to deliver a waiting message now. Leave activeTurnBehavior out unless the message cannot wait. The recipient reads your messages in the order you sent them. A steer the recipient has not read is lost if its turn stops or is interrupted, along with the messages it carried. Completion reports include the target’s last response by default. Paseo supplies caller identity."
+          : "Send a prompt to an agent. A running turn is interrupted unless activeTurnBehavior is steer.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
         disposition: z.enum(["turn_started", "out_of_band", "steered"]).optional(),
         deliveryStatus: z.literal("queued").optional(),
         messageId: z.string().optional(),
+        activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
         status: AgentStatusEnum,
         guidance: z.string().optional(),
       },
@@ -2086,7 +2108,7 @@ function createToolCatalog(
       prompt,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
-      activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
+      activeTurnBehavior,
     }) => {
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
@@ -2145,15 +2167,17 @@ function createToolCatalog(
             success: true,
             deliveryStatus: receipt.status,
             messageId: receipt.messageId,
+            activeTurnBehavior: receipt.activeTurnBehavior,
             status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
             guidance: notifying
-              ? `Queued for delivery after two quiet seconds and the current turn ends. ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
-              : "Queued for delivery after two quiet seconds and the current turn ends; provider dispatch has not occurred.",
+              ? `${receipt.guidance} ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
+              : receipt.guidance,
           },
         };
       }
 
       const dispatch = await sendPromptToAgent({
+        agentMessages: agentMessages(),
         agentManager,
         agentStorage,
         agentId,
@@ -2641,6 +2665,7 @@ function createToolCatalog(
       const workspaceId = await resolveTerminalWorkspaceId(resolvedCwd);
 
       const terminal = await terminalManager.createTerminal({
+        origin: { source: "agent" },
         cwd: resolvedCwd,
         workspaceId,
         ...(name?.trim() ? { name: name.trim() } : {}),
@@ -2794,13 +2819,30 @@ function createToolCatalog(
           ),
           cwd: z.string().optional(),
           isolation: z.enum(["local", "worktree"]).optional(),
+          archiveOnFinish: z
+            .boolean()
+            .optional()
+            .describe(
+              "Archive each run's workspace and agent when the run ends. Defaults to true; pass false to keep them active.",
+            ),
           maxRuns: z.number().int().positive().optional(),
           expiresIn: scheduleDurationInputSchema.optional(),
         })
         .superRefine(addScheduleCadenceIssue),
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
+    async ({
+      prompt,
+      cron,
+      timezone,
+      name,
+      provider,
+      cwd,
+      isolation,
+      archiveOnFinish,
+      maxRuns,
+      expiresIn,
+    }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2812,7 +2854,7 @@ function createToolCatalog(
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation, archiveOnFinish }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -2827,13 +2869,19 @@ function createToolCatalog(
 
   if (options.changeRequestWatches) {
     const watches = options.changeRequestWatches;
-    const inputSchema = { url: z.string().trim().min(1).describe("URL of a GitHub pull request.") };
+    const inputSchema = {
+      url: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("URL of a pull request or merge request on a supported forge."),
+    };
     registerTool(
       "subscribe_change_request",
       {
         title: "Watch change request",
         description:
-          "Watch a pull request for check failures, passing checks, new comments, reviews, and closure. Returns the current state and sends future updates after your current turn.",
+          "Watch a pull request or merge request for check failures, passing checks, new comments, reviews, approvals, and closure. Returns the current state and sends future updates after your current turn.",
         inputSchema,
         outputSchema: {
           url: z.string(),
@@ -3126,6 +3174,10 @@ function createToolCatalog(
             .optional()
             .describe("New mode for new-agent target (null to clear)."),
           cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
+          archiveOnFinish: z
+            .boolean()
+            .optional()
+            .describe("Archive the workspace and agent of later runs when each run ends."),
           expiresIn: scheduleDurationInputSchema
             .optional()
             .describe("New relative expiry duration (for example: 1h, 2d)."),
@@ -3505,14 +3557,28 @@ function archiveWorktreeDependencies(
   if (!options.clearWorkspaceArchiving) {
     throw new Error("Workspace archiving clearer is required to archive worktrees");
   }
+  if (!options.assertWorkspaceAutomationAllowed) {
+    throw new Error("Workspace automation gate is required to archive worktrees");
+  }
+  if (!options.isCheckoutUntrusted) {
+    throw new Error("Checkout trust lookup is required to archive worktrees");
+  }
   return {
+    lifecycle: options.lifecycle ?? null,
     paseoHome: options.paseoHome,
     paseoWorktreesBaseRoot: options.worktreesRoot,
+    worktreeManagers: options.worktreeManagers,
+    workspaceArchiveOperations: options.workspaceArchiveOperations,
+    assertWorkspaceAutomationAllowed: options.assertWorkspaceAutomationAllowed,
+    isCheckoutUntrusted: options.isCheckoutUntrusted,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
     findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+    ...(options.workspaceRegistry
+      ? { getWorkspace: (workspaceId: string) => options.workspaceRegistry!.get(workspaceId) }
+      : {}),
     listActiveWorkspaces: options.listActiveWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,

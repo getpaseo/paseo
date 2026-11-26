@@ -171,7 +171,7 @@ V2.0.4 also removed the activation endpoint that gated a cold location, and a co
 
 Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. The global manifest must use agent-scoped schemas before a session is bound, because every bridge call executes in an agent session. V2 discovers definitions from each bound session's catalog: plugin-contributed tools can be absent from the global manifest, and an allowlist cannot register a missing definition. Registration is location-wide, so session filtering and caller-scoped execution must remain in place. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
 
-An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. V2 supports session environment, but its MCP configuration remains location-scoped, so separate servers still prevent one agent from changing another agent's MCP setup. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
+No v2 agent gets a dedicated OpenCode server, because a reused server cannot provide one. OpenCode's MCP configuration is location-scoped, so Paseo never calls `mcp.add` for an agent. The daemon connects the agent's MCP servers itself (`v2/session-mcp.ts`), and the v2 plugin exposes their tools under OpenCode's native `<server>_<tool>` names. Each name registers once per location. The plugin's `context` hook gives each session its own definition and removes the tool from other sessions. If the user's own OpenCode configuration registered a tool with the same name first, other sessions keep that tool and its execution. Execution routes to the calling session's root binding. The hook also adds the servers' instructions to each request. OpenCode loads instruction entries before the hook runs, so an entry written when a child is adopted would miss the child's first request. The plugin calls OpenCode's `permission.assert` before each call, so `toolPolicy.preapproved` grants still apply. That API exists from OpenCode 2.0.29. Bind reports `features.mcpTools`, so an older server or a stale plugin fails the session at creation instead of hiding its tools. Per-agent `launch.env` reaches shells through `session.environment`, which child sessions do not inherit. The plugin asks the daemon to adopt each descendant in its first `context` hook, before its first model request.
 
 OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prompt APIs; let OpenCode create `msg*` IDs and record the user timeline item from the `message.updated` event.
 
@@ -221,11 +221,35 @@ Plugin callbacks follow the same contract; see [plugin providers](plugins.md#con
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
 multiple catalog requests must not apply this deadline separately to each request. The manager
-aborts the shared refresh signal at the deadline. Providers name active catalog operations and
+aborts the shared refresh signal at the deadline, and when it stops. Shutdown waits for running
+probes to settle before it shuts down provider clients, so a probe cannot start provider work,
+such as an OpenCode server, after its client has cleaned up. Providers name active catalog operations and
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
-that were still active when the deadline expired.
+that were still active when the deadline expired. A plugin provider's connection is shared with its
+running sessions, so the bridge cannot close it at the deadline; it sends `request.cancel` for the
+abandoned request instead, and the provider stops that request's work
+([provider guide](../public-docs/plugins/providers.md#stop-a-request-paseo-cancels)).
 
-Catalogue results stay cached by identity until explicit refresh or a change to that provider's configuration.
+Catalogue results stay cached by identity until a refresh or a change to that provider's configuration.
+Providers change their model lists on the server without a CLI update, so the daemon refreshes
+each enabled provider about every 30 minutes (`ProviderRefreshSchedule`). One timer ticks
+`30 min / enabled providers` apart, and each tick starts at most one refresh: the provider refreshed
+longest ago, if that was a full interval ago. Ticks do not wait for refreshes, so a provider that
+probes many workspace targets does not delay the others, and provider CLIs never start in a burst.
+Any forced refresh, configuration change, or newly enabled provider counts as a refresh and pushes
+that provider's next one back a full interval.
+The background refresh takes the settings refresh path for one provider, with these differences:
+
+- It joins discovery already in flight.
+- It passes `force: false`, because providers treat `force` as a requested hard refresh. OpenCode
+  rotates its shared server on it.
+- An unchanged catalogue keeps the published record and its `fetchedAt`, so idle clients receive
+  no update.
+- A result that is not ready, or a catalogue the provider marks `incomplete`, keeps a ready
+  catalogue. Plugin status probes report a failed startup as unavailable, so that counts as
+  transient. Set `ProviderCatalog.incomplete` when discovery fails and you fall back to a partial
+  list, as Claude does when model discovery times out. A manual refresh still publishes all three.
+
 Keys are resolved on each read so project configuration can select a different cached catalogue.
 Selector opening may read a loading or stale query, but does not force provider probing.
 

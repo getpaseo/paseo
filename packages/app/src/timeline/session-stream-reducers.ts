@@ -1,8 +1,9 @@
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentMetric, AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
+import { stampTimelineTurnMetrics } from "@/timeline/turn-metrics";
 import {
   applyStreamEvent,
   flushHeadToTail,
@@ -133,6 +134,7 @@ interface TimelineResponseEntry {
   turnId?: string;
   item: AgentTimelineItem;
   timestamp: string;
+  turnMetrics?: AgentMetric[];
 }
 
 export interface ProcessTimelineResponseInput {
@@ -1268,7 +1270,8 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Convert entries to timeline units
   // ------------------------------------------------------------------
-  const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map((entry) => ({
+  const pageEntries = selectEntriesOwnedByTimelinePage(payload);
+  const timelineUnits = pageEntries.map((entry) => ({
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
     sourceSeqRanges:
@@ -1379,8 +1382,8 @@ export function processTimelineResponse(
     });
   }
 
-  const nextTail = timelineResult.tail;
-  const nextHead = timelineResult.head;
+  const nextTail = stampTimelineTurnMetrics(timelineResult.tail, payload.epoch, pageEntries);
+  const nextHead = stampTimelineTurnMetrics(timelineResult.head, payload.epoch, pageEntries);
   const nextCursor = timelineResult.cursor;
   const cursorChanged = timelineResult.cursorChanged;
   sideEffects.push(...timelineResult.sideEffects);
@@ -1542,7 +1545,20 @@ function processTimelineSequencingGate(input: {
       cursorChanged: true,
     };
   }
-  if (decision === "gap") {
+  if (decision === "drop_epoch" && seq === 1) {
+    return {
+      ...base,
+      nextTimelineCursor: { epoch, startSeq: seq, endSeq: seq },
+      cursorChanged: true,
+      resetLiveTimeline: true,
+    };
+  }
+  // A gap and an epoch change both mean the local cursor cannot certify the next row.
+  // The epoch case is a rewind or replacement this client did not observe as an
+  // invalidation; the daemon answers an `after` request carrying the stale epoch with a
+  // reset tail, which installs current history. Dropping those rows would leave the chat
+  // on pre-rewind history while the new epoch streams.
+  if (decision === "gap" || decision === "drop_epoch") {
     return {
       ...base,
       shouldApplyStreamEvent: false,
@@ -1554,14 +1570,6 @@ function processTimelineSequencingGate(input: {
             : { epoch, endSeq: 0 },
         },
       ],
-    };
-  }
-  if (decision === "drop_epoch" && seq === 1) {
-    return {
-      ...base,
-      nextTimelineCursor: { epoch, startSeq: seq, endSeq: seq },
-      cursorChanged: true,
-      resetLiveTimeline: true,
     };
   }
   return {

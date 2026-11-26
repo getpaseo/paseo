@@ -1,4 +1,4 @@
-// Start on Settings > Host > Pair device with relay enabled in the Android app.
+// Start on Settings > Host > Devices with relay enabled in the Android app.
 // node packages/app/e2e/mobile/pair-device/android.mjs <agent-device-session>
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -13,11 +13,7 @@ function ad(...args) {
   });
 }
 
-ad(
-  "press",
-  'label="Pair a device, Scan a QR code or copy a link to connect your phone to this host"',
-  "--settle",
-);
+ad("press", 'label="Relay"', "--settle");
 ad("wait", "text", "Pairing QR code", "10000");
 const { data } = JSON.parse(ad("snapshot", "-i", "--json"));
 const sheet = data.nodes.find((node) => node.label === "Bottom Sheet");

@@ -7,6 +7,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
 import { z } from "zod";
+import { prepareAgentMessage } from "../agent/agent-messages/index.js";
 import { AgentManagerShuttingDownError, type AgentManager } from "../agent/agent-manager.js";
 import {
   AgentTurnBusyError,
@@ -499,9 +500,9 @@ export class HostInstructionsRuntime {
     );
     const targets: ConversationTarget[] = [];
     for (const agent of await this.options.agentStorage.listAll()) {
-      if (!agent.workspaceId || agent.internal || agent.archivedAt) continue;
+      if (!agent.workspaceId || agent.internal || agent.archivedAt || agent.background) continue;
       const workspace = workspaces.get(agent.workspaceId);
-      if (!workspace) continue;
+      if (!workspace || workspace.background) continue;
       const target = { agentId: agent.id, workspaceId: workspace.workspaceId };
       if (await this.inbox.canDiscover(principal, { kind: "conversation", ...target })) {
         targets.push({
@@ -573,18 +574,17 @@ export class HostInstructionsRuntime {
     const claim = await active.claim;
     if (this.stopped || claim?.state !== "dispatching") return;
     try {
+      const { prompt, messageId } = prepareAgentMessage(
+        `Host instruction from ${sourceId}. To send an explicit reply, use reply_host_instruction with sourceId "${sourceId}" and id "${id}".\n\n${instruction.prompt}`,
+        { kind: "host-instruction", serverId: sourceId },
+        claim.messageId,
+      );
       const result = await sendPreparedPromptToAgent({
         agentManager,
         agentStorage,
         agentId: target.agentId,
-        prompt: [
-          {
-            type: "text",
-            text: `Host instruction from ${sourceId}. To send an explicit reply, use reply_host_instruction with sourceId "${sourceId}" and id "${id}".`,
-          },
-          { type: "text", text: instruction.prompt },
-        ],
-        runOptions: { clientMessageId: claim.messageId },
+        prompt,
+        runOptions: { clientMessageId: messageId },
         idleOnly: true,
         unarchive: false,
         allowOutOfBand: false,

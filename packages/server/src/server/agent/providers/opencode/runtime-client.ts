@@ -22,7 +22,6 @@ import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import type { OpenCodeV2AgentClient } from "./v2/agent.js";
 import { resolveExternalOpenCodeServer } from "./v2/external-server.js";
-import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
 import { selectOpenCodeService } from "./v2/service-selection.js";
 import { createCliInstallation } from "../cli-installation.js";
 
@@ -165,9 +164,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
     launch?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ) {
-    const client = await this.client();
-    const session = await client.createSession(config, launch, options);
-    return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2);
+    return (await this.client()).createSession(config, launch, options);
   }
   async resumeSession(
     handle: AgentPersistenceHandle,
@@ -175,9 +172,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
     launch?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
   ) {
-    const client = await this.client();
-    const session = await client.resumeSession(handle, config, launch, options);
-    return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
+    return (await this.client()).resumeSession(handle, config, launch, options);
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
     if (options.force) await this.reprobeLegacySelection();
@@ -202,11 +197,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
     return (await this.client()).listImportableSessions(options);
   }
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const client = await this.client();
-    const imported = await client.importSession(input, context);
-    return client === this.legacy
-      ? imported
-      : { ...imported, session: withOpenCodeRuntimeNotice(imported.session, 2) };
+    return (await this.client()).importSession(input, context);
   }
   async archiveNativeSession(handle: AgentPersistenceHandle) {
     const client = await this.client();

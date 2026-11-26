@@ -162,6 +162,52 @@ test("registration exposes Muse with a daemon-resolved command", () => {
     icon: "icon.svg",
   });
 });
+test("a session's launch wrap starts Muse serve and the session runs through it", async () => {
+  const h = await harness();
+  const launcher = path.join(h.root, "launcher.mjs");
+  const marker = path.join(h.root, "wrapped.json");
+  await writeFile(
+    launcher,
+    [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      "const [command, ...args] = process.argv.slice(2);",
+      "writeFileSync(process.env.MUSE_TEST_WRAP_MARKER, JSON.stringify([command, ...args]));",
+      'const child = spawn(command, args, { stdio: "inherit" });',
+      'child.on("exit", (code) => process.exit(code ?? 1));',
+      "",
+    ].join("\n"),
+  );
+  const from = await h.send({
+    type: "session.open",
+    requestId: "open",
+    sessionId: "paseo-session",
+    config: {
+      cwd: h.root,
+      env: { MUSE_TEST_WRAP_MARKER: marker },
+      settings: {},
+      mcpServers: {},
+      persist: true,
+      mode: "onRequest",
+      model: "meta/muse-spark-1.3",
+      systemPrompt: "Test instructions",
+      wrap: [process.execPath, launcher],
+    },
+    history: "replay",
+  });
+  expect(
+    await h.wait(
+      (event) => event.type === "session.ready" || event.type === "request.failed",
+      from,
+    ),
+  ).toMatchObject({ type: "session.ready" });
+  const wrapped = JSON.parse(await readFile(marker, "utf8")) as string[];
+  expect(wrapped.slice(0, h.launch.args.length + 2)).toEqual([
+    h.launch.command,
+    ...h.launch.args,
+    "serve",
+  ]);
+});
 test("installation links to the Muse guide and reports the installed version", async () => {
   const provider = registration();
   const launch = {
@@ -1505,6 +1551,7 @@ for (const usage of [
       expect(report).toMatchObject({
         status: "available",
         planLabel: "Pro",
+        observedAt: new Date(usage.usage.observedAtMs).toISOString(),
         windows: [
           {
             id: "five_hour",
@@ -1800,7 +1847,10 @@ test("Muse reports belong only to the session's account and remain available glo
   for (const [index, agentId] of ["muse-home", "muse-work"].entries()) {
     const reports = await registry.listReports({ agentId });
     expect(reports.map((report) => report.id)).toEqual([accountIds[index]]);
-    expect(reports[0]!.report.status).toBe("available");
+    expect(reports[0]!.report).toMatchObject({
+      status: "available",
+      observedAt: "2023-11-14T22:13:20.000Z",
+    });
   }
   expect(await registry.listReports({ agentId: "muse-unknown" })).toEqual([]);
   expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);

@@ -30,6 +30,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
 import { AgentManager } from "../agent/agent-manager.js";
+import { parseAgentMessage, projectAgentMessages } from "../agent/agent-messages/index.js";
 import { HostInstructionInbox } from "../host-instructions/inbox.js";
 import * as privateFiles from "../private-files.js";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
@@ -55,6 +56,10 @@ import { WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 
 const nodeMajor = Number((process.versions.node ?? "0").split(".")[0] ?? "0");
 const shouldRunRelayE2e = process.env.FORCE_RELAY_E2E === "1" || nodeMajor < 25;
+
+function lastHumanPrompt(manager: AgentManager, agentId: string) {
+  return manager.getAgent(agentId)?.lastUserMessageAt ?? null;
+}
 
 function createCapturingLogger() {
   const lines: string[] = [];
@@ -422,7 +427,13 @@ async function waitForCapturedLog(
           relayPublicUseTls: false,
           agentClients: createTestAgentClients({
             onStartTurn: (prompt) => {
-              sent.push(JSON.stringify(prompt));
+              sent.push(
+                typeof prompt === "string"
+                  ? prompt
+                  : prompt
+                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                      .join("\n"),
+              );
             },
           }),
         });
@@ -449,6 +460,20 @@ async function waitForCapturedLog(
           config: { provider: "claude/claude-test" },
           title: "Local checks",
         });
+        await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+          background: true,
+        });
+        const hiddenDirectory = await mkdtemp(path.join(destination.staticDir, "background-"));
+        const hiddenWorkspace = await paseo.workspaces.create({
+          source: { kind: "directory", path: hiddenDirectory },
+          background: true,
+        });
+        await hiddenWorkspace.agents.create({
+          config: { provider: "claude/claude-test" },
+          background: false,
+        });
+        const lastPrompt = lastHumanPrompt(destination.daemon.agentManager, agent.id);
         const accessManager = createHostClient(`127.0.0.1:${destination.port}`, {
           clientId: crypto.randomUUID(),
           sessionPermissions: ["access.manage"],
@@ -556,7 +581,10 @@ async function waitForCapturedLog(
           approve: true,
         });
         await expect.poll(() => sent.length, { timeout: 15000 }).toBe(1);
-        expect(sent[0]).toContain("Run the local check");
+        expect(parseAgentMessage(sent[0])).toMatchObject({
+          source: { kind: "host-instruction", serverId: sourceId },
+          text: expect.stringContaining("Run the local check"),
+        });
         await expect
           .poll(
             async () => {
@@ -569,6 +597,16 @@ async function waitForCapturedLog(
             { timeout: 15000 },
           )
           .toBe("completed");
+        const replay = projectAgentMessages({ type: "user_message", text: sent[0] });
+        expect(replay).toEqual([
+          expect.objectContaining({ type: "tool_call", name: "host_instruction" }),
+        ]);
+        const timeline = await destinationClient.fetchAgentTimeline(agent.id, {
+          projection: "canonical",
+          limit: 0,
+        });
+        expect(timeline.entries.map(({ item }) => item)).toEqual(expect.arrayContaining(replay));
+        expect(lastHumanPrompt(destination.daemon.agentManager, agent.id)).toBe(lastPrompt);
         const change = await destinationClient.manageHostInstructions({
           action: "set_policy",
           sourceId,

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import {
   Pressable,
+  View,
   type GestureResponderEvent,
   type StyleProp,
   type ViewStyle,
@@ -19,7 +20,11 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
 
 interface SwitchProps {
-  value: boolean;
+  /**
+   * `null` while the value is not known yet, such as while it loads from a host. The switch's space
+   * stays reserved and empty, so the switch takes it when the value arrives and nothing moves.
+   */
+  value: boolean | null;
   onValueChange?: (value: boolean) => void;
   disabled?: boolean;
   accessibilityLabel?: string;
@@ -109,7 +114,7 @@ export function Switch({
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
-      if (disabled) return;
+      if (disabled || value === null) return;
       onValueChange?.(!value);
     },
     [disabled, onValueChange, value],
@@ -119,16 +124,30 @@ export function Switch({
   const isCompact = useIsCompactFormFactor();
   const geometry = useMemo(() => switchGeometryForLayout(size, isCompact), [size, isCompact]);
 
-  const accessibilityState = useMemo(() => ({ checked: value, disabled }), [value, disabled]);
+  const accessibilityState = useMemo(
+    () => ({ checked: value === true, disabled }),
+    [value, disabled],
+  );
   const pressableStyle = useMemo(
     () => [
       styles.switchControl,
-      { minHeight: geometry.reservedHeight },
+      // The press area is a full control tall and grows out of the track; the layout only sees
+      // the track.
+      {
+        minHeight: geometry.hitHeight,
+        marginVertical: (geometry.trackHeight - geometry.hitHeight) / 2,
+      },
       disabled ? styles.disabled : null,
       style,
     ],
-    [disabled, geometry.reservedHeight, style],
+    [disabled, geometry.hitHeight, geometry.trackHeight, style],
   );
+  const unknownStyle = useMemo(
+    () => [{ width: geometry.trackWidth, minHeight: geometry.trackHeight }, style],
+    [geometry.trackWidth, geometry.trackHeight, style],
+  );
+
+  if (value === null) return <View style={unknownStyle} testID={testID} />;
 
   return (
     <Pressable

@@ -57,7 +57,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
-import { composeAgentSystemPrompt } from "../system-prompt.js";
+import { composeAgentSystemPrompt, composeSystemPromptParts } from "../system-prompt.js";
 import { CodexInstructionSnapshot } from "./codex/instruction-snapshot.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
@@ -92,6 +92,7 @@ import {
   type CodexServiceTier,
 } from "./codex-feature-definitions.js";
 import {
+  CODEX_MCP_STARTUP_STATUS_METHOD,
   CodexAppServerClient,
   CodexAppServerRpcError,
   parseCodexThreadForkResponse,
@@ -2945,6 +2946,32 @@ function isCodexDeltaNotification(
   );
 }
 
+const CodexMcpStartupStatusSchema = z.object({
+  name: z.string(),
+  threadId: z.string().nullish(),
+  status: z.enum(["starting", "ready", "failed", "cancelled"]),
+  error: z.string().nullish(),
+  failureReason: z.string().nullish(),
+});
+
+function summarizeCodexMcpStartupError(
+  error: string | null | undefined,
+  failureReason: string | null | undefined,
+): string {
+  if (failureReason === "reauthenticationRequired") {
+    return "Reauthentication required";
+  }
+  // Codex includes the remote response body in this error. Keep only the HTTP status.
+  const httpStatus = error?.match(/\bunexpected server response: HTTP ([45]\d{2}):/)?.[1];
+  if (httpStatus) {
+    return `HTTP ${httpStatus}`;
+  }
+  if (error?.includes("handshaking with MCP server failed")) {
+    return "MCP handshake failed";
+  }
+  return "Startup error details omitted";
+}
+
 const CodexNotificationSchema = z.union([
   z
     .object({ method: z.literal("thread/started"), params: ThreadStartedNotificationSchema })
@@ -3770,6 +3797,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private resolvedWorkspaceWrite: NonNullable<
     CodexProviderOptions["sandbox_workspace_write"]
   > | null = null;
+  private configuredDeveloperInstructions: string | undefined;
   private resolvedSandboxPolicy: Record<string, unknown> | null = null;
   private currentThreadId: string | null = null;
   // Codex writes a new thread's rollout at its first turn. Until then the thread exists only
@@ -4035,7 +4063,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
       this.normalizeSpeed();
-      await this.loadResolvedWorkspaceWrite();
+      await this.loadResolvedConfig();
       await this.loadCollaborationModes();
       await this.loadSkills();
 
@@ -4066,7 +4094,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private async loadResolvedWorkspaceWrite(): Promise<void> {
+  private async loadResolvedConfig(): Promise<void> {
     if (!this.client) return;
     try {
       const response = toObjectRecord(
@@ -4074,9 +4102,23 @@ export class CodexAppServerAgentSession implements AgentSession {
       );
       const config = toObjectRecord(response?.config);
       this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(config?.sandbox_workspace_write);
+      this.configuredDeveloperInstructions =
+        typeof config?.developer_instructions === "string"
+          ? config.developer_instructions
+          : undefined;
     } catch (error) {
-      this.logger.debug({ error }, "Failed to read resolved Codex workspace-write config");
+      this.logger.debug({ error }, "Failed to read resolved Codex config");
     }
+  }
+
+  /**
+   * Codex uses a thread's developerInstructions in place of the developer_instructions in its
+   * config, so Paseo's instructions carry the configured ones ahead of them.
+   */
+  private threadDeveloperInstructions(): string | undefined {
+    const paseoInstructions = composeAgentSystemPrompt(this.config);
+    if (!paseoInstructions) return undefined;
+    return composeSystemPromptParts(this.configuredDeveloperInstructions, paseoInstructions);
   }
 
   private rememberResolvedSandboxPolicy(response: unknown): void {
@@ -4524,13 +4566,17 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async ensureThreadLoaded(): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     // Paseo reads history only when it replays it; the resume response needs no turns.
-    const params: Record<string, unknown> = { threadId: this.currentThreadId, excludeTurns: true };
+    const params: Record<string, unknown> = {
+      threadId: this.currentThreadId,
+      cwd: this.config.cwd ?? null,
+      excludeTurns: true,
+    };
     if (this.deps.customCodexConfig) {
       // Resume otherwise prefers the provider stored on the thread, including
       // the unnamespaced key emitted by earlier Paseo versions.
       params.modelProvider = this.deps.customCodexConfig.model_provider;
     }
-    const developerInstructions = composeAgentSystemPrompt(this.config);
+    const developerInstructions = this.threadDeveloperInstructions();
     if (developerInstructions) {
       params.developerInstructions = developerInstructions;
     }
@@ -5495,7 +5541,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       model: this.config.model ?? null,
       serviceTier: this.serviceTier,
       config: this.buildCodexInnerConfig(),
-      developerInstructions: composeAgentSystemPrompt(this.config),
+      developerInstructions: this.threadDeveloperInstructions(),
       userMessageTurns: this.codexUserMessageTurns(),
       threadRollbackAvailable: this.threadRollbackAvailable,
       setThreadId: async (threadId) => {
@@ -6051,7 +6097,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandbox = this.hasWorkflowModeOverride ? preset.sandbox : undefined;
     const innerConfig = this.buildCodexInnerConfig();
-    const developerInstructions = composeAgentSystemPrompt(this.config);
+    const developerInstructions = this.threadDeveloperInstructions();
     const params: Record<string, unknown> = {
       model,
       cwd: this.config.cwd ?? null,
@@ -6147,6 +6193,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async processNotification(method: string, params: unknown): Promise<void> {
+    if (method === CODEX_MCP_STARTUP_STATUS_METHOD) {
+      this.logMcpStartupStatus(params);
+      return;
+    }
     const notificationParams = toObjectRecord(params);
     if (method === "serverRequest/resolved" && typeof notificationParams?.requestId === "number") {
       const requestId = this.mcpElicitationPermissionIds.get(notificationParams.requestId);
@@ -7684,6 +7734,30 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
   }
 
+  private logMcpStartupStatus(params: unknown): void {
+    const parsed = CodexMcpStartupStatusSchema.safeParse(params);
+    if (!parsed.success) {
+      this.logger.trace("Invalid Codex MCP server startup status");
+      return;
+    }
+    const { name, threadId, status, error, failureReason } = parsed.data;
+    const context = {
+      agentId: this.agentId,
+      provider: CODEX_PROVIDER,
+      sessionId: threadId ?? this.currentThreadId,
+      serverName: name,
+      status,
+    };
+    if (status === "failed") {
+      this.logger.warn(
+        { ...context, error: summarizeCodexMcpStartupError(error, failureReason) },
+        "Codex MCP server startup failed",
+      );
+      return;
+    }
+    this.logger.debug(context, "Codex MCP server startup status updated");
+  }
+
   private warnUnknownNotificationMethod(method: string, params: unknown): void {
     if (this.warnedUnknownNotificationMethods.has(method)) {
       return;
@@ -8198,6 +8272,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     environment: Record<string, string>;
     goalsEnabled?: boolean;
     agentId?: string;
+    wrap?: AgentLaunchContext["wrap"];
   }): Promise<() => ChildProcessWithoutNullStreams> {
     const processPort = this.deps.appServerProcess ?? defaultCodexAppServerProcess;
     const launchPrefix = await processPort.resolvePrefix({ runtimeSettings: this.runtimeSettings });
@@ -8211,14 +8286,17 @@ export class CodexAppServerAgentClient implements AgentClient {
           agentId: options.agentId,
           provider: CODEX_PROVIDER,
           launchPrefix,
+          wrap: options.wrap,
           goalsEnabled: options.goalsEnabled === true,
         },
         "provider.codex.spawn",
       );
+      // Every spawn from this closure, including reconnects and startup retries, carries the wrap.
       const child = processPort.spawn({
         command: launchPrefix.command,
         args,
         options: {
+          wrap: options.wrap,
           detached: process.platform !== "win32",
           stdio: ["pipe", "pipe", "pipe"],
           baseEnv: options.environment,
@@ -8265,6 +8343,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
+      wrap: launchContext?.wrap,
     });
     const session = new CodexAppServerAgentSession(
       sessionConfig,
@@ -8302,6 +8381,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
+      wrap: launchContext?.wrap,
     });
     const session = new CodexAppServerAgentSession(
       merged,

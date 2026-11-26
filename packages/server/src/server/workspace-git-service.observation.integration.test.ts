@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import {
@@ -41,6 +42,8 @@ function createFacts(cwd: string): CheckoutSnapshotFacts {
     comparisonBaseRef: null,
     branchRemoteName: null,
     branchMergeRef: null,
+    upstreamStatus: { state: "none" },
+    pushTarget: null,
     pullRequestLookupTarget: { headRef: "main" },
   };
 }
@@ -132,6 +135,36 @@ test("a fresh checkout read makes a newly initialized repository available to ca
   expect((await service.getCheckout(repo)).isGit).toBe(true);
   const repoRoot = await service.resolveRepoRoot(repo);
   expect(realpathSync.native(repoRoot)).toBe(realpathSync.native(repo));
+}, 30_000);
+
+test("a checkout read for reconciliation never scans the working tree", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-checkout-read-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git("add", ".");
+  git("commit", "-m", "base");
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+  });
+  cleanup.push(async () => {
+    await service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  startGitCommandMetrics();
+  const checkout = await service.getCheckout(repo, { priority: "background" });
+  const verbs = stopGitCommandMetrics().commands.map((command) => command.args[0]);
+
+  expect(checkout).toMatchObject({ isGit: true, currentBranch: "main" });
+  expect(verbs.length).toBeGreaterThan(0);
+  expect(verbs.filter((verb) => ["status", "ls-files", "rev-list"].includes(verb))).toEqual([]);
 }, 30_000);
 
 test("recursive observation updates tracked state and prunes ignored storms", async () => {
@@ -1575,4 +1608,70 @@ test("a failed parent lookup is not repeated by forced refreshes before the retr
   await service.getSnapshot(repo, { force: true, reason: "forge-web-test" });
 
   expect(lookups).toBe(1);
+}, 30_000);
+
+test("working-tree observation stays responsive with thousands of ignored directories and wide folders", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-large-ignore-")));
+  const repo = path.join(root, "repo");
+  mkdirSync(repo, { recursive: true });
+  cleanup.push(async () => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@paseo.local"], { cwd: repo, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo, stdio: "pipe" });
+  writeFileSync(path.join(repo, ".gitignore"), "ig-*/\n");
+  const trackedDir = path.join(repo, "wide");
+  mkdirSync(trackedDir, { recursive: true });
+  const trackedFile = path.join(trackedDir, "tracked-0.txt");
+  writeFileSync(trackedFile, "initial\n");
+  execFileSync("git", ["add", ".gitignore", "wide/tracked-0.txt"], { cwd: repo, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: repo, stdio: "pipe" });
+
+  // 4,000 ignored directories reported individually by `git ls-files -o -i --directory`
+  // plus 3,000 files in one folder (12M pairs under linear matching).
+  for (let i = 0; i < 4_000; i++) {
+    const ignored = path.join(repo, `ig-${i}`);
+    mkdirSync(ignored);
+    writeFileSync(path.join(ignored, "out.bin"), "x");
+  }
+  for (let i = 1; i < 3_000; i++) {
+    writeFileSync(path.join(trackedDir, `file-${i}.txt`), "x");
+  }
+
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+  });
+  cleanup.push(() => service.dispose());
+
+  let notifications = 0;
+  const eld = monitorEventLoopDelay({ resolution: 10 });
+  eld.enable();
+  let watch: Awaited<ReturnType<WorkspaceGitServiceImpl["requestWorkingTreeWatch"]>> | null = null;
+  try {
+    watch = await service.requestWorkingTreeWatch(repo, () => {
+      notifications += 1;
+    });
+    expect(service.getMetrics().fileObserver.activeObservationCount).toBe(1);
+    // Allow one timer tick to capture any event-loop stall from setup.
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    eld.disable();
+
+    // Even under CI scheduling jitter, setup must not block the event loop for seconds.
+    expect(eld.max / 1e6).toBeLessThan(1_000);
+
+    // Ignored writes stay silent while tracked writes still notify.
+    notifications = 0;
+    writeFileSync(path.join(repo, "ig-0", "out.bin"), "ignored-change");
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    expect(notifications).toBe(0);
+
+    writeFileSync(trackedFile, "updated\n");
+    await expect.poll(() => notifications, { timeout: 5_000 }).toBeGreaterThan(0);
+  } finally {
+    eld.disable();
+    watch?.unsubscribe();
+  }
 }, 30_000);

@@ -33,6 +33,12 @@ function observeState(
     return;
   }
   if (event?.type === "turn_started") return;
+  if (event?.type === "background_work") {
+    // An idle child's work can settle without another turn.
+    if (snapshot.status === "idle")
+      buffer.push({ status: "idle", final: snapshot, lastMessage, error: null, workChanged: true });
+    return;
+  }
   if (event?.type === "permission_requested") {
     buffer.push({
       status: "permission",

@@ -10,6 +10,10 @@ import type {
 const agentIdSchema = z.string().min(1);
 const sourceSchema = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("host-instruction"),
+    serverId: z.string().min(1),
+  }),
+  z.object({
     kind: z.literal("change-request-update"),
     url: z.url({ protocol: /^https?$/ }),
   }),
@@ -24,7 +28,8 @@ const sourceSchema = z.discriminatedUnion("kind", [
     agentId: agentIdSchema,
     serverId: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
-    event: z.enum(["finished", "errored", "permission-required", "closed"]),
+    // "message" reports a child that ended its turn but has not finished its work.
+    event: z.enum(["message", "finished", "errored", "permission-required", "closed"]),
   }),
 ]);
 export type AgentPromptSource = z.infer<typeof sourceSchema>;
@@ -72,6 +77,9 @@ function unescapeXml(value: string): string | null {
 
 export function formatAgentMessage(message: AgentMessage): string {
   const { source } = message;
+  if (source?.kind === "host-instruction") {
+    return `<paseo-system version="1" kind="host-instruction" source-server-id="${escapeXml(source.serverId)}" message-id="${escapeXml(message.id)}">\n${escapeXml(message.text)}\n</paseo-system>`;
+  }
   if (source?.kind === "change-request-update") {
     return `<paseo-system version="1" kind="change-request-update" source-url="${escapeXml(source.url)}" message-id="${escapeXml(message.id)}">\n${escapeXml(message.text)}\n</paseo-system>`;
   }
@@ -150,11 +158,23 @@ export function prepareAgentMessage(
       return { prompt, messageId: id };
     }
   }
+  return envelopeMessage(prompt, source ?? null, id);
+}
+
+/**
+ * Wrap a prompt in its envelope unconditionally. A person's prompt (`source` null) needs one
+ * only when it is quoted or shares a provider prompt with agent messages.
+ */
+export function envelopeMessage(
+  prompt: AgentPromptInput,
+  source: AgentPromptSource | null,
+  id?: string,
+): { prompt: AgentPromptInput; messageId: string } {
   const messageId = id ?? randomUUID();
   const text = typeof prompt === "string" ? prompt : prompt.flatMap(renderMessageText).join("\n\n");
   // Render textual attachments before wrapping, so provider replay still contains one
   // complete envelope instead of an envelope followed by provider-rendered context.
-  const envelope = formatAgentMessage({ id: messageId, source: source ?? null, text });
+  const envelope = formatAgentMessage({ id: messageId, source, text });
   return {
     messageId,
     prompt:
@@ -198,6 +218,16 @@ function projectAgentMessage(item: AgentTimelineItem): AgentTimelineItem | null 
   const { source } = message;
   if (!source) {
     return { ...item, text: message.text, clientMessageId: message.id };
+  }
+  if (source.kind === "host-instruction") {
+    return {
+      type: "tool_call",
+      callId: `paseo-host-instruction:${message.id}`,
+      name: "host_instruction",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text: message.text, icon: "bot" },
+    };
   }
   if (source.kind === "change-request-update") {
     return {

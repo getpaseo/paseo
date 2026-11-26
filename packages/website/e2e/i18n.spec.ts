@@ -9,19 +9,23 @@ async function chooseLanguage(page: Page, language: string) {
   await page.getByRole("menuitemradio", { name: language }).click();
 }
 
-async function withPageScriptsHeld(page: Page, run: (release: () => void) => Promise<void>) {
-  let releaseScripts!: () => void;
-  const scriptsReleased = new Promise<void>((resolve) => {
-    releaseScripts = resolve;
+async function withRequestsHeld(
+  page: Page,
+  pattern: string,
+  run: (release: () => void) => Promise<void>,
+) {
+  let releaseRequests!: () => void;
+  const requestsReleased = new Promise<void>((resolve) => {
+    releaseRequests = resolve;
   });
-  await page.route("**/*.js", async (route) => {
-    await scriptsReleased;
+  await page.route(pattern, async (route) => {
+    await requestsReleased;
     await route.continue();
   });
   try {
-    await run(releaseScripts);
+    await run(releaseRequests);
   } finally {
-    releaseScripts();
+    releaseRequests();
     await page.unrouteAll({ behavior: "wait" });
   }
 }
@@ -109,6 +113,63 @@ test("switches language on the same page, keeping the query and then every link"
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });
 
+async function openHubDoc(page: Page, prefix: string, slug: string, heading: string) {
+  await page.goto(`${prefix}/docs/hub/${slug}`);
+  await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+}
+
+async function expectHubDocRedirect(
+  page: Page,
+  prefix: string,
+  legacySlug: string,
+  slug: string,
+  heading: string,
+) {
+  await page.goto(`${prefix}/docs/hub/${legacySlug}`);
+  await expect(page).toHaveURL(`${prefix}/docs/hub/${slug}`);
+  await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+}
+
+for (const { locale, prefix, linear, linearApp, webhooks, triggers, reference } of [
+  {
+    locale: "English",
+    prefix: "",
+    linear: "Linear triggers",
+    linearApp: "Linear for Hub",
+    webhooks: "Inbound webhooks",
+    triggers: "Triggers",
+    reference: "Trigger YAML reference",
+  },
+  {
+    locale: "Simplified Chinese",
+    prefix: "/zh-CN",
+    linear: "Linear 触发器",
+    linearApp: "为 Hub 配置 Linear",
+    webhooks: "入站 webhook",
+    triggers: "触发器",
+    reference: "触发器 YAML 参考",
+  },
+]) {
+  test(`opens ${locale} Hub guides and redirects legacy bookmarks`, async ({ page }) => {
+    await test.step("opens direct links to the new guides", async () => {
+      await openHubDoc(page, prefix, "triggers/linear", linear);
+      await openHubDoc(page, prefix, "self-hosting/linear-app", linearApp);
+      await openHubDoc(page, prefix, "triggers/webhooks", webhooks);
+    });
+
+    await test.step("redirects legacy guides within the same language", async () => {
+      await expectHubDocRedirect(page, prefix, "workflows", "triggers", triggers);
+      await expectHubDocRedirect(
+        page,
+        prefix,
+        "configuration/hub-yml",
+        "configuration/reference",
+        reference,
+      );
+    });
+  });
+}
+
 test("shows the language as an abbreviation and lists every language by name", async ({ page }) => {
   await page.goto("/docs/cli#running-agents");
   const button = languageButton(page);
@@ -141,13 +202,17 @@ test("switches language from the keyboard", async ({ page }) => {
   await expect(languageButton(page)).toBeFocused();
 
   await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitemradio", { name: "English" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(page.getByRole("menuitemradio", { name: /简体中文/ })).toBeFocused();
-  await page.keyboard.press("Enter");
 
-  await expect(page).toHaveURL(/\/zh-CN$/);
-  await expect(languageButton(page)).toHaveText("ZH");
-  await expect(languageButton(page)).toBeFocused();
+  // A slow plugin count must not delay the new language or lose keyboard focus.
+  await withRequestsHeld(page, "**/_serverFn/**", async () => {
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/zh-CN$/);
+    await expect(languageButton(page)).toHaveText("ZH");
+    await expect(languageButton(page)).toBeFocused();
+  });
 });
 
 test.describe("on a phone", () => {
@@ -203,7 +268,7 @@ test("shows the changelog in Chinese", async ({ page }) => {
 });
 
 test("waits for scripts before enabling the language menu", async ({ page }) => {
-  await withPageScriptsHeld(page, async (releaseScripts) => {
+  await withRequestsHeld(page, "**/*.js", async (releaseScripts) => {
     await page.goto("/docs/cli#running-agents", { waitUntil: "commit" });
     await expect(languageButton(page)).toBeVisible();
     await expect(languageButton(page)).toBeDisabled();
