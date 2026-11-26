@@ -996,7 +996,7 @@ export class VoiceAssistantWebSocketServer {
             logger: this.logger,
             requireProtectedMode: () => true,
           },
-          async ({ socket }) => this.attachSocket(socket, request),
+          async ({ socket: securedSocket }) => this.attachSocket(securedSocket, request),
         );
         return;
       }
