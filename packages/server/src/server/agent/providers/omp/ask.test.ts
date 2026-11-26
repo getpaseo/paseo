@@ -309,3 +309,265 @@ describe("OMP ask RPC UI", () => {
     );
   });
 });
+
+function form(omp: OmpHarness, id: string, html: string | undefined): void {
+  omp.emit({
+    type: "extension_ui_request",
+    id,
+    method: "form",
+    ...(html === undefined ? {} : { html }),
+  });
+}
+
+function questions(omp: OmpHarness): unknown {
+  return omp.pendingPermissions()[0]?.input?.questions;
+}
+
+describe("OMP 19.1 HTML form ask", () => {
+  // Captured from `omp --mode rpc-ui --no-session` 19.1.0 and 19.2.1 (issue #10471).
+  const YES_NO =
+    '<form><label><input type="radio" name="ok" value="yes" checked> Yes</label><label><input type="radio" name="ok" value="no"> No</label></form>';
+  const COLOR =
+    '<form><fieldset><legend>Which color do you prefer?</legend><label><input type="radio" name="color" value="Red" checked> Red</label><label><input type="radio" name="color" value="Blue"> Blue</label></fieldset></form>';
+
+  test("shows a radio form as a question card and returns the chosen value", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(omp, "form-1", YES_NO);
+
+    expect(omp.pendingPermissions()).toMatchObject([
+      { id: "form-1", kind: "question", metadata: { extensionUiMethod: "form" } },
+    ]);
+    expect(questions(omp)).toEqual([
+      {
+        question: "ok",
+        header: "ok",
+        options: [{ label: "Yes", description: "Default" }, { label: "No" }],
+        multiSelect: false,
+        allowOther: true,
+        allowEmpty: true,
+      },
+    ]);
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { answers: { ok: "No" } },
+    });
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { ok: "no" } } },
+    ]);
+  });
+
+  test("submits the preselected default when the question is left unanswered", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(omp, "form-1", COLOR);
+
+    expect(questions(omp)).toMatchObject([
+      { question: "Which color do you prefer?", header: "color" },
+    ]);
+    await omp.respondToPermission("form-1", { behavior: "allow", updatedInput: { answers: {} } });
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { color: "Red" } } },
+    ]);
+  });
+
+  test("passes a typed Other answer as the radio value", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(omp, "form-1", COLOR);
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { answers: { color: "Green" } },
+    });
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "form-1", response: { data: { color: "Green" } } },
+    ]);
+  });
+
+  test("maps a multi-control form to one question per named control", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(
+      omp,
+      "form-1",
+      `<form>
+        <h2>Setup</h2>
+        <p>Pick a store and the tools to install.</p>
+        <label><input type="radio" name="store" value="sqlite" checked>SQLite</label>
+        <label><input type="radio" name="store" value="pg">Postgres</label>
+        <label><input type="radio" name="store" value="other">Other (describe)</label>
+        <p>Which tools?</p>
+        <label><input type="checkbox" name="tools" value="x,y">X, Y</label>
+        <label><input type="checkbox" name="tools" value="z" checked>Z</label>
+        <label><input type="checkbox" name="tools" value="w" disabled>W</label>
+        <label>Days <input type="number" name="days" min="1"></label>
+        <label for="note">Note</label><textarea id="note" name="note" placeholder="Anything else?">keep logs</textarea>
+        <label>Region <select name="region"><option value="eu">Europe</option><option value="us" selected>US</option><option value="ap" disabled>Asia</option></select></label>
+        <label><input type="checkbox" name="agree" value="yes"> I accept the terms</label>
+        <input type="hidden" name="token" value="abc">
+        <input type="text" placeholder="unnamed">
+        <input type="file" name="upload">
+        <button type="submit">Send</button>
+      </form>`,
+    );
+
+    expect(questions(omp)).toEqual([
+      {
+        question: "Setup\n\nPick a store and the tools to install.",
+        header: "store",
+        options: [
+          { label: "SQLite", description: "Default" },
+          { label: "Postgres" },
+          { label: "Other (describe)" },
+        ],
+        multiSelect: false,
+        allowOther: false,
+        allowEmpty: true,
+      },
+      {
+        question: "Which tools?",
+        header: "tools",
+        options: [{ label: "X, Y" }, { label: "Z", description: "Default" }],
+        multiSelect: true,
+        allowOther: true,
+        allowEmpty: true,
+      },
+      {
+        question: "Days",
+        header: "days",
+        options: [],
+        multiSelect: false,
+        allowOther: false,
+        allowEmpty: false,
+      },
+      {
+        question: "Note",
+        header: "note",
+        options: [],
+        multiSelect: false,
+        allowOther: false,
+        allowEmpty: true,
+        placeholder: "Default: keep logs",
+      },
+      {
+        question: "Region",
+        header: "region",
+        options: [{ label: "Europe" }, { label: "US", description: "Default" }],
+        multiSelect: false,
+        allowOther: false,
+        allowEmpty: true,
+      },
+      {
+        question: "I accept the terms",
+        header: "agree",
+        options: [{ label: "Yes" }, { label: "No" }],
+        multiSelect: false,
+        allowOther: false,
+        allowEmpty: false,
+      },
+    ]);
+
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: {
+        answers: {
+          store: "Postgres",
+          tools: "X, Y, Z, hammer",
+          days: "7",
+          note: "",
+          region: "Europe",
+          agree: "No",
+        },
+      },
+    });
+    expect(omp.extensionUiResponses()).toEqual([
+      {
+        id: "form-1",
+        response: {
+          data: {
+            store: "pg",
+            tools: ["x,y", "z", "hammer"],
+            days: "7",
+            note: "keep logs",
+            region: "eu",
+          },
+        },
+      },
+    ]);
+  });
+
+  test("returns cancelled when the user dismisses the form", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(omp, "form-1", YES_NO);
+    await omp.respondToPermission("form-1", { behavior: "deny" });
+    expect(omp.extensionUiResponses()).toEqual([{ id: "form-1", response: { cancelled: true } }]);
+  });
+
+  test("closes the card without a reply when OMP cancels the form", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(omp, "form-1", YES_NO);
+    omp.emit({
+      type: "extension_ui_request",
+      id: "cancel-1",
+      method: "cancel",
+      targetId: "form-1",
+    });
+
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.eventTypes()).toContain("permission_resolved");
+    await expect(omp.respondToPermission("form-1", { behavior: "deny" })).rejects.toThrow();
+    expect(omp.extensionUiResponses()).toEqual([]);
+  });
+
+  test("shows a form without controls as readable text with a Continue answer", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(
+      omp,
+      "form-1",
+      "<form><p>Deploy <b>finished</b>.</p><ul><li>web</li><li>api</li></ul></form>",
+    );
+
+    expect(questions(omp)).toEqual([
+      {
+        question: "Deploy finished.\n\n- web\n- api",
+        header: "Response",
+        options: [{ label: "Continue" }],
+        multiSelect: false,
+        allowOther: false,
+        allowEmpty: false,
+      },
+    ]);
+    await omp.respondToPermission("form-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "Continue" } },
+    });
+    expect(omp.extensionUiResponses()).toEqual([{ id: "form-1", response: { data: {} } }]);
+  });
+
+  test("keeps malformed HTML readable instead of dropping the form", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(
+      omp,
+      "form-1",
+      "<form><p>Pick one<label><input type=radio name=pick value=a>A<label><input type=radio name=pick value=b>B",
+    );
+
+    expect(questions(omp)).toMatchObject([
+      { question: "Pick one", header: "pick", options: [{ label: "A" }, { label: "B" }] },
+    ]);
+  });
+
+  test("cancels a form request without HTML instead of leaving OMP waiting", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    form(omp, "form-1", undefined);
+
+    expect(omp.pendingPermissions()).toEqual([]);
+    expect(omp.extensionUiResponses()).toEqual([{ id: "form-1", response: { cancelled: true } }]);
+  });
+});
