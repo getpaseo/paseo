@@ -1945,6 +1945,11 @@ it("preserves retained terminal output when stopping its foreground process", as
     }),
   );
 
+  await waitForCondition(async () => {
+    const replay = await readReplay(manager!, session.id);
+    return replay !== null && getRenderedTextFromState(replay.state).includes("launch-stop-output");
+  }, 10_000);
+
   await manager.killTerminalAndWait(session.id, {
     gracefulTimeoutMs: 1000,
     forceTimeoutMs: 500,

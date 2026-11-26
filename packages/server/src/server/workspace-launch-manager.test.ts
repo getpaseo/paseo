@@ -111,6 +111,8 @@ describe("WorkspaceLaunchManager", () => {
     expect(terminalManager.killed).toEqual([
       dev.terminalId,
       expect.any(String),
+      // Rollback replaced the stopped dev session and dismissed its retained output.
+      dev.terminalId,
       restoredDev?.terminalId,
     ]);
     expect(terminalManager.manager.getTerminal(restoredDev!.terminalId!)).toBeDefined();

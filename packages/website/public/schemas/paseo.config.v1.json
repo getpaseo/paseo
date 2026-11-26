@@ -350,6 +350,11 @@
             "portScript": {
               "type": "string",
               "minLength": 1
+            },
+            "blockSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
             }
           },
           "additionalProperties": false

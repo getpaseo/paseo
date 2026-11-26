@@ -617,8 +617,12 @@ describe("runWorktreeAutoTerminals", () => {
 
   it("keeps service allocation outside active launch blocks", async () => {
     const reservedPort = 45_678;
-    const portScript = join(repoDir, "portmake");
-    writeFileSync(portScript, `#!/bin/sh\necho ${reservedPort}\n`);
+    const isWindows = process.platform === "win32";
+    const portScript = join(repoDir, isWindows ? "portmake.cmd" : "portmake");
+    writeFileSync(
+      portScript,
+      isWindows ? `@echo off\r\necho ${reservedPort}\r\n` : `#!/bin/sh\necho ${reservedPort}\n`,
+    );
     chmodSync(portScript, 0o755);
     commitPaseoConfig({
       worktree: {

@@ -1301,25 +1301,28 @@ export async function createTerminal(
     const gracefulTimeoutMs = killOptions?.gracefulTimeoutMs ?? 2000;
     const forceTimeoutMs = killOptions?.forceTimeoutMs ?? 1000;
 
-    if (processExited) {
-      kill();
-      return;
-    }
-
-    try {
-      killPtyProcess();
-    } catch {
-      // process may already be gone
-    }
-
-    const exitedGracefully = await waitForProcessExit(gracefulTimeoutMs);
-    if (!exitedGracefully) {
+    if (!processExited) {
       try {
-        killPtyProcess("SIGKILL");
+        killPtyProcess();
       } catch {
         // process may already be gone
       }
-      await waitForProcessExit(forceTimeoutMs);
+      if (!(await waitForProcessExit(gracefulTimeoutMs))) {
+        try {
+          killPtyProcess("SIGKILL");
+        } catch {
+          // process may already be gone
+        }
+        await waitForProcessExit(forceTimeoutMs);
+      }
+    }
+
+    // A stopped launch may retain its terminal. Let the parser finish its
+    // accepted output before the kill fallback disposes it.
+    if (finishNaturalExit) {
+      await new Promise<TerminalExitInfo>((resolve) => {
+        onExit(resolve);
+      });
     }
 
     // Finalize bookkeeping (idempotent if ptyProcess.onExit already fired).
