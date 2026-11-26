@@ -351,6 +351,7 @@ export const useDraftStore = create<DraftStore>()(
       getDraftCreationId: (input) => {
         const ids = get().creationIdByDraftKey;
         const scoped = ids[JSON.stringify([input.serverId, input.draftKey])];
+        // COMPAT(hostScopedDraftCreationIds): added in v0.17.3, remove after 2027-05-27.
         // Missing host entries inherit older shared IDs; null retires one host's claim only.
         return scoped === null ? undefined : (scoped ?? ids[input.draftKey] ?? undefined);
       },

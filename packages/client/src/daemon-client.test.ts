@@ -9208,6 +9208,57 @@ test.each(["agent", "workspace"] as const)(
   },
 );
 
+test.each([false, true])(
+  "classifies output capacity rejection as unsent without reclassifying the active creation (modern: %s)",
+  async (modern) => {
+    const mock = createMockTransport();
+    mock.transport.supportsDrain = false;
+    mock.transport.maxFrameBytes = 100 * 1024 * 1024;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "creation-output-capacity",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { creationLifecycle: modern } });
+    await connected;
+    mock.transport.close = () => mock.triggerClose({ code: 4003, reason: "Transport send failed" });
+    let release!: () => void;
+    const draining = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send = mock.transport.send;
+    mock.transport.send = (frame) => {
+      send(frame);
+      return draining;
+    };
+    const active = client
+      .createAgent({
+        provider: "codex",
+        cwd: "/project",
+        initialPrompt: "x".repeat(55 * 1024 * 1024),
+      })
+      .catch((error: unknown) => error);
+    try {
+      await expect(
+        client.createAgent({
+          provider: "codex",
+          cwd: "/project",
+          initialPrompt: "x".repeat(50 * 1024 * 1024),
+        }),
+      ).rejects.toThrow(CreationNotSentError);
+      expect(mock.sent).toHaveLength(1);
+    } finally {
+      release();
+      await client.close();
+    }
+    expect(await active).toBeInstanceOf(Error);
+    expect(await active).not.toBeInstanceOf(CreationNotSentError);
+  },
+);
+
 test("sends worktree target and autoArchive in create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

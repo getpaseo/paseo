@@ -7,6 +7,7 @@ import {
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
+  ChunkedTransportCapacityError,
 } from "@getpaseo/protocol/chunked-transport";
 import {
   HOST_ROUTE_OPCODE,
@@ -2201,7 +2202,10 @@ export class DaemonClient {
         ...describeRequestIdentity(message),
       });
     const rejectSend = (error: unknown): never => {
-      if (isCreationRequest(messageType) && error instanceof MessageTooLargeError)
+      if (
+        isCreationRequest(messageType) &&
+        (error instanceof MessageTooLargeError || error instanceof ChunkedTransportCapacityError)
+      )
         throw new CreationNotSentError(error);
       throw error;
     };

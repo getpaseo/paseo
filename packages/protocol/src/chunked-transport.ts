@@ -4,6 +4,14 @@ type Frame = string | Uint8Array;
 
 /** A malformed wire frame, distinct from a consumer delivery failure. */
 export class ChunkedTransportProtocolError extends Error {}
+
+/** The logical output budget rejected this frame before admission. */
+export class ChunkedTransportCapacityError extends Error {
+  constructor() {
+    super("Logical output queue exceeded its byte limit");
+    this.name = "ChunkedTransportCapacityError";
+  }
+}
 // Reserved outside the application binary opcode space. Version, kind, flags follow.
 const OPCODE = 0x31;
 const HEADER = 4;
@@ -68,11 +76,11 @@ export class ChunkedTransport {
       });
     };
     if (this.queuedBytes + byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
-      const error = new Error("Logical output queue exceeded its byte limit");
+      const error = new ChunkedTransportCapacityError();
       this.fail(error);
-      const rejected = Promise.reject<void>(error);
-      void rejected.catch(() => {});
-      return rejected;
+      // Admission errors must reach this caller before the socket owner closes
+      // the connection and rejects requests for previously admitted frames.
+      throw error;
     }
     this.queuedBytes += byteLength;
     let result: void | Promise<void>;

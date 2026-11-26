@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ChunkedTransport } from "./chunked-transport.js";
+import { ChunkedTransport, ChunkedTransportCapacityError } from "./chunked-transport.js";
 
 describe("chunked transport", () => {
   it("delivers a large UTF-8 logical message once, preserving order", async () => {
@@ -141,9 +141,8 @@ it("bounds logical messages waiting behind a blocked writer", async () => {
     deliver: () => {},
   });
   const first = transport.send(new Uint8Array(100 * 1024 * 1024));
-  const overflow = transport.send("one more byte");
   try {
-    await expect(overflow).rejects.toThrow("queue");
+    expect(() => transport.send("one more byte")).toThrow(ChunkedTransportCapacityError);
   } finally {
     drain();
     await first;
@@ -196,26 +195,30 @@ it("charges queued ASCII messages by their UTF-8 bytes", async () => {
   ]);
 });
 
-it("notifies the socket owner when an awaited send overflows the queue", async () => {
+it("rejects queue overflow before admission and notifies the socket owner", async () => {
   let drain!: () => void;
   const failures: unknown[] = [];
+  let writes = 0;
   const transport = new ChunkedTransport({
     frameBytes: 32 * 1024 * 1024,
-    send: () =>
-      new Promise<void>((resolve) => {
+    send: () => {
+      writes += 1;
+      return new Promise<void>((resolve) => {
         drain = resolve;
-      }),
+      });
+    },
     deliver: () => {},
     onFailure: (error) => {
       failures.push(error);
     },
   });
   const first = transport.send(new Uint8Array(100 * 1024 * 1024));
-  const overflow = transport.send("extra");
-  await expect(overflow).rejects.toThrow("queue");
+  expect(() => transport.send("extra")).toThrow(ChunkedTransportCapacityError);
+  expect(writes).toBe(1);
   drain();
   await first;
   expect(failures).toHaveLength(1);
+  expect(failures[0]).toBeInstanceOf(ChunkedTransportCapacityError);
 });
 
 it("bounds retained reassembly memory for many one-byte chunks", async () => {
