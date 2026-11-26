@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.17.5 - 2026-11-26
+
+- **批量归档工作区**：在侧边栏按住 Cmd/Ctrl 点击工作区即可多选，一步归档。([#10798](https://github.com/getpaseo/paseo/pull/10798), [#10821](https://github.com/getpaseo/paseo/pull/10821))
+- **复制引用草稿**：一键复制回复中的引用内容，不带 `>` 标记。([#10608](https://github.com/getpaseo/paseo/pull/10608)，贡献者：[@pedrovieira](https://github.com/pedrovieira), [@dinhphieu](https://github.com/dinhphieu))
+- **重新设计的智能体配置文件页面**：智能体配置文件现在有专属的设置页面，模型选择器一键即可保存新的配置文件。([#10789](https://github.com/getpaseo/paseo/pull/10789), [#10824](https://github.com/getpaseo/paseo/pull/10824))
+- **重新设计的添加 project**：“添加 project”直接打开文件夹搜索，克隆和新建文件夹只需切换一个标签页。([#10767](https://github.com/getpaseo/paseo/pull/10767))
+- **选择桌面端的更新方式**：桌面端可以自动下载更新、仅通知你，或完全不检查。([#10785](https://github.com/getpaseo/paseo/pull/10785))
+- **全面支持 Tailscale**：在主机设置或初始设置中为主机开启 Tailscale，无需编辑配置。([#10801](https://github.com/getpaseo/paseo/pull/10801))
+
+### 新增
+
+- 在主机选择器中新增主机图标、连接类型和延迟 ([#10702](https://github.com/getpaseo/paseo/pull/10702)，贡献者：[@artile](https://github.com/artile))
+- 在模型选择器搜索和命令中心中新增智能体配置文件 ([#10774](https://github.com/getpaseo/paseo/pull/10774))
+- 为 `paseo schedule create`、`paseo schedule update` 和定时任务 MCP 工具新增“完成后归档”选项 ([#8479](https://github.com/getpaseo/paseo/pull/8479)，贡献者：[@ArnoldHueteG](https://github.com/ArnoldHueteG))
+- 将 Factory Droid 的目录条目更新到 Droid 1.20.0，新增其较新的模型 ([#10779](https://github.com/getpaseo/paseo/pull/10779)，贡献者：[@dsingal0](https://github.com/dsingal0))
+
+### 变更
+
+- 桌面端稳定版的自动更新改为最多每 6 小时检查一次，每次更新后等待 24 小时 ([#10882](https://github.com/getpaseo/paseo/pull/10882), [#10901](https://github.com/getpaseo/paseo/pull/10901))
+
+### 修复
+
+- 修复 Agent 将自己创建的子 Agent 从标签页和子 Agent 列表中隐藏的问题 ([#10887](https://github.com/getpaseo/paseo/pull/10887))
+- 修复 Claude 子 Agent 等待后台任务时，父 Agent 收到的是中间回复而不是最终回复的问题 ([#10864](https://github.com/getpaseo/paseo/pull/10864))
+- 修复监视 PR 的 Agent 在轮次结束后仍显示为运行中的问题 ([#10740](https://github.com/getpaseo/paseo/pull/10740)，贡献者：[@drgould](https://github.com/drgould))
+- 修复远程名称不是 `origin` 时“变更”面板不显示推送或拉取的问题 ([#10679](https://github.com/getpaseo/paseo/pull/10679))
+- 修复拆分窗格或移出当前标签后，原窗格切换到错误标签的问题 ([#10716](https://github.com/getpaseo/paseo/pull/10716))
+- 修复在“新建工作区”中选择 project 后，焦点停留在 project 按钮上的问题 ([#10632](https://github.com/getpaseo/paseo/pull/10632))
+- 修复已归档的对话在窗口重新加载前一直占用内存的问题 ([#10866](https://github.com/getpaseo/paseo/pull/10866))
+- 修复应用长时间运行后悬停卡片等浮层变慢的问题 ([#10778](https://github.com/getpaseo/paseo/pull/10778)，贡献者：[@maci0](https://github.com/maci0))
+- 修复打开最后一轮包含数百次工具调用的对话时桌面端卡顿的问题 ([#8661](https://github.com/getpaseo/paseo/pull/8661)，贡献者：[@luoph](https://github.com/luoph))
+- 修复在慢速网络上加载大型时间线时直接连接断开的问题 ([#10651](https://github.com/getpaseo/paseo/pull/10651)，贡献者：[@apple-ouyang](https://github.com/apple-ouyang))
+- 修复大型 Git 工作区在文件监视器扫描时阻塞 daemon 的问题 ([#10788](https://github.com/getpaseo/paseo/pull/10788), [#10602](https://github.com/getpaseo/paseo/pull/10602))
+- 修复一个仓库中的 Git 变更导致所有检出重新扫描的问题 ([#10863](https://github.com/getpaseo/paseo/pull/10863)，贡献者：[@viiqswim](https://github.com/viiqswim))
+- 修复待回答问题高于屏幕时 iOS 对话一直空白的问题 ([#10759](https://github.com/getpaseo/paseo/pull/10759))
+- 修复 Android 上在对话中长按选择文本后放大镜卡在屏幕上的问题 ([#10844](https://github.com/getpaseo/paseo/pull/10844))
+- 修复移动端弹窗底部栏在键盘收起时落到系统栏后面的问题 ([#10827](https://github.com/getpaseo/paseo/pull/10827))
+- 修复 macOS 上侧边栏切换按钮遮挡插件页面标题的问题 ([#10773](https://github.com/getpaseo/paseo/pull/10773))
+- 修复 Windows 上盘符前带斜杠的文件链接无法打开的问题 ([#7711](https://github.com/getpaseo/paseo/pull/7711))
+- 修复导入会话在 Provider 响应慢时提前放弃并隐藏 Provider 错误的问题 ([#10516](https://github.com/getpaseo/paseo/pull/10516)，贡献者：[@chirag127](https://github.com/chirag127), [@derek-geekdive](https://github.com/derek-geekdive))
+- 修复 OMP 19.1 的 `ask` 问题不显示问题卡片的问题 ([#10862](https://github.com/getpaseo/paseo/pull/10862)，贡献者：[@gtoxlili](https://github.com/gtoxlili))
+- 修复共享 OpenCode 服务器运行时，带有自己 MCP 服务器的 OpenCode 2 Agent 启动失败的问题。需要 OpenCode 2.0.29 或更高版本 ([#10752](https://github.com/getpaseo/paseo/pull/10752))
+- 修复已删除的 OpenCode 子 Agent 一直留在子 Agent 列表中的问题 ([#8332](https://github.com/getpaseo/paseo/pull/8332))
+- 修复重新打开父 Agent 后，已停止的 Claude 后台子 Agent 显示为运行中的问题 ([#9013](https://github.com/getpaseo/paseo/pull/9013))
+- 修复插件和 Paseo 的指令替换 Codex Agent 自身 `developer_instructions` 的问题 ([#10792](https://github.com/getpaseo/paseo/pull/10792))
+- 修复 Go 密钥保存在 OpenCode 的 `auth.json` 中时 OpenCode Go 用量卡片消失的问题 ([#10678](https://github.com/getpaseo/paseo/pull/10678))
+- 修复 Windows 上 GitHub、GitLab 和 Gitea 命令破坏多行参数并展开 `%VAR%` 文本的问题 ([#10685](https://github.com/getpaseo/paseo/pull/10685))
+- 修复 `paseo hub login` 输出的链接不包含验证码的问题 ([#10751](https://github.com/getpaseo/paseo/pull/10751))
+- 修复 Hub 触发器在 Antigravity 等不支持工具策略的插件 Provider 上运行失败的问题 ([#10889](https://github.com/getpaseo/paseo/pull/10889))
+- 修复 Hub 会话读取 daemon 的 Provider 控件时被拒绝的问题 ([#10794](https://github.com/getpaseo/paseo/pull/10794))
+- 修复模型列表刷新超时后，Hermes 等插件 ACP Provider 留下进程继续运行的问题 ([#10867](https://github.com/getpaseo/paseo/pull/10867))
+- 修复插件在轮次进行中重新加载后，其 Agent 工具返回 `Tool not found` 的问题 ([#10106](https://github.com/getpaseo/paseo/pull/10106)，贡献者：[@tomgrin10](https://github.com/tomgrin10))
+- 修复被时间线插件改写的回复缺少复制、分叉和轮次耗时的问题 ([#10795](https://github.com/getpaseo/paseo/pull/10795)，贡献者：[@Brandon168](https://github.com/Brandon168))
+- 修复空闲的插件会话每 10 秒唤醒一次 daemon 的问题 ([#9363](https://github.com/getpaseo/paseo/pull/9363)，贡献者：[@Brandon168](https://github.com/Brandon168))
+
+### 安全
+
+- Claude Code 2.1.326 或更高版本现在通过 stdin 接收 MCP 服务器令牌，不再放在其他本地用户可读取的进程参数中 ([#10698](https://github.com/getpaseo/paseo/pull/10698)，贡献者：[@mdbraber](https://github.com/mdbraber))
+- 修复归档未批准设置的 PR worktree 时仍运行仓库 teardown 命令的问题 ([#10694](https://github.com/getpaseo/paseo/pull/10694))
+
+### 插件
+
+- 新增启动包装，插件可以在沙箱中运行 Agent、终端和 worktree 命令 ([#10786](https://github.com/getpaseo/paseo/pull/10786)，贡献者：[@clkao](https://github.com/clkao), [@bendavid](https://github.com/bendavid))
+- 在插件的工作区快照中新增父工作区 ([#10781](https://github.com/getpaseo/paseo/pull/10781)，贡献者：[@spatenotte](https://github.com/spatenotte))
+- 将内置的 `paseo-plugin` 技能更新到当前的插件 API ([#10793](https://github.com/getpaseo/paseo/pull/10793))
+
 ## 0.17.4 - 2026-11-23
 
 ### 修复
