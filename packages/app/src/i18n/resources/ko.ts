@@ -312,6 +312,7 @@ export const ko: TranslationResources = {
     archived: {
       callout: "이 에이전트는 보관되었습니다",
       unarchive: "보관 해제",
+      unarchiving: "보관 해제 중...",
     },
   },
   sessions: {
@@ -1573,6 +1574,8 @@ export const ko: TranslationResources = {
       status: {
         checking: "앱 업데이트 확인 중...",
         installing: "앱 업데이트 설치 중...",
+        downloadingVersionProgress: "{{version}} 다운로드 중... {{percent}}%",
+        downloadingProgress: "앱 업데이트 다운로드 중... {{percent}}%",
         upToDate: "앱이 최신 상태입니다.",
         upToDateWithLastChecked: "최신 상태입니다. 마지막 확인: {{time}}.",
         pending: "업데이트가 준비되면 알려드리겠습니다.",
@@ -1581,6 +1584,15 @@ export const ko: TranslationResources = {
         pendingWithVersion: "업데이트 발견: {{version}}. 다운로드 중...",
         pendingWithVersionAndLastChecked:
           "업데이트 발견: {{version}}. 다운로드 중... {{time}}에서 마지막으로 확인했습니다.",
+        pendingWithVersionProgress: "업데이트 발견: {{version}}. 다운로드 중... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "업데이트 발견: {{version}}. 다운로드 중... {{percent}}% {{time}}에서 마지막으로 확인했습니다.",
+        downloadAvailableWithVersion: "사용 가능한 업데이트: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "사용 가능한 업데이트: {{version}}. {{time}}에서 마지막으로 확인했습니다.",
+        downloadAvailable: "사용 가능한 앱 업데이트가 있습니다.",
+        downloadAvailableWithLastChecked:
+          "사용 가능한 앱 업데이트가 있습니다. {{time}}에서 마지막으로 확인했습니다.",
         availableWithVersion: "업데이트 준비됨: {{version}}",
         availableWithVersionAndLastChecked:
           "업데이트 준비됨: {{version}}. {{time}}에서 마지막으로 확인했습니다.",
@@ -1593,14 +1605,21 @@ export const ko: TranslationResources = {
       },
       installError: "데스크톱 앱 업데이트를 설치할 수 없습니다.",
       callout: {
+        downloadingTitle: "업데이트 다운로드 중",
         installingTitle: "업데이트 설치 중",
         failedTitle: "업데이트 실패",
         availableTitle: "업데이트 사용 가능",
         genericError: "문제가 발생했습니다.",
         whatsNew: "새로운 기능",
+        downloadingAction: "다운로드 중...",
         installingAction: "설치 중...",
+        downloadAndRestart: "다운로드",
         installAndRestart: "설치 후 재시작",
+        downloadingVersionDescription: "{{version}} 다운로드 중... {{percent}}%",
+        downloadingDescription: "업데이트 다운로드 중... {{percent}}%",
         installingDescription: "설치 후 재시작 중...",
+        versionAvailable: "{{version}} 버전을 다운로드할 수 있습니다.",
+        newVersionAvailable: "새 버전을 다운로드할 수 있습니다.",
         versionReady: "{{version}} 설치가 준비되었습니다.",
         newVersionReady: "새 버전 설치가 준비되었습니다.",
         restartWarning: "앱을 업그레이드하면 실행 중인 에이전트가 중지되고 터미널 세션이 닫힙니다.",
@@ -1819,12 +1838,6 @@ export const ko: TranslationResources = {
             "모든 기능을 갖춘 네이티브 모바일 앱으로 휴대폰에서 어떤 Paseo 컴퓨터든 제어할 수 있습니다",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "연결 방법 선택",
-          connectDocs: "문서",
-          openConnectDocs: "연결 문서 열기",
-          recommended: "권장",
-          relay: { title: "릴레이", hint: "엔드투엔드 암호화, QR 코드를 스캔하세요" },
-          tailscale: { title: "Tailscale", hint: "약간의 설정이 필요합니다" },
         },
       },
     },
@@ -1901,6 +1914,33 @@ export const ko: TranslationResources = {
       noModelAvailable: "선택한 프로바이더에 사용 가능한 모델이 없습니다",
       workspaceDirectoryNotFound: "워크스페이스 디렉터리를 찾을 수 없습니다",
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
+    },
+  },
+  devices: {
+    title: "기기",
+    waysToConnect: "연결 방법",
+    docs: "문서",
+    docsAccessibility: "연결 문서 열기",
+    relay: { title: "릴레이", hint: "설정 불필요, 엔드투엔드 암호화, QR 코드를 스캔하세요" },
+    tailscale: {
+      hint: "tailnet으로 직접 연결, 주소 입력",
+      unavailable: "이 호스트에서 Tailscale이 실행 중이 아닙니다",
+      install: "Tailscale 받기",
+      refresh: "새로 고침",
+      refreshing: "새로 고치는 중...",
+      waiting: "이 호스트에서 Tailscale이 시작되기를 기다리는 중",
+      alwaysOn: "항상 켜짐. 이 호스트가 이미 Tailscale 연결을 받고 있습니다",
+      socket: "꺼짐. 이 호스트가 로컬 소켓에서 수신 대기 중입니다",
+      launch: "이 호스트를 시작하는 명령이 제어합니다",
+      update: "Tailscale을 사용하려면 이 호스트를 업데이트하세요",
+      updateDocs: "업데이트 방법",
+      address: "Tailscale을 사용하는 휴대전화에서 이 주소로 호스트를 추가하세요",
+      statusError: "Tailscale을 확인하지 못했습니다",
+      turnOnError: "Tailscale을 켜지 못했습니다",
+      turnOffError: "Tailscale을 끄지 못했습니다",
+      confirmTitle: "Tailscale을 끌까요?",
+      confirmMessage: "이 기기는 Tailscale로 연결되어 있어 호스트와의 연결이 끊깁니다.",
+      confirmAction: "끄기",
     },
   },
   pairing: {
@@ -2417,6 +2457,47 @@ export const ko: TranslationResources = {
     },
     notifications: {
       title: "알림",
+      enabled: {
+        label: "알림 사용",
+        description: "이 기기에서 에이전트, 터미널, 플러그인 알림을 받습니다",
+        pausedDescription: "플러그인을 포함한 모든 알림이 이 기기에서 일시 중지되었습니다",
+      },
+      events: {
+        title: "이벤트",
+        agentPermission: {
+          label: "에이전트 권한 필요",
+          description: "승인, 계획 및 질문",
+        },
+        agentError: {
+          label: "에이전트 오류",
+          description: "에이전트가 오류로 중단될 때",
+        },
+        agentFinished: {
+          label: "에이전트 완료",
+          description: "에이전트가 턴을 완료할 때",
+        },
+        terminalNeedsInput: {
+          label: "터미널 입력 대기",
+          description: "터미널 명령이 입력을 기다릴 때",
+        },
+        terminalFinished: {
+          label: "터미널 완료",
+          description: "터미널 명령이 완료될 때",
+        },
+      },
+      plugins: {
+        title: "플러그인",
+        enabled: {
+          label: "플러그인 알림",
+          description: "설치된 플러그인이 알림을 보낼 수 있도록 허용",
+        },
+        empty: "설치된 플러그인이 여기에 표시되어 개별적으로 음소거할 수 있습니다",
+      },
+      legacyHostTitle: "푸시 설정을 위해 호스트 업데이트 필요",
+      legacyHostHint: "이 기기의 맞춤 푸시 알림 설정을 동기화하려면 연결된 호스트를 업데이트하세요",
+      desktop: {
+        title: "시스템",
+      },
       permission: "알림 권한",
       refreshAccessibility: "알림 권한 새로 고침",
       playSound: "소리 재생",
@@ -2653,9 +2734,28 @@ export const ko: TranslationResources = {
         stable: "안정",
         beta: "베타",
       },
+      autoUpdate: {
+        label: "자동 업데이트",
+        options: {
+          automatic: "자동",
+          notify: "알림만",
+          off: "끄기",
+        },
+        descriptions: {
+          automatic: "백그라운드에서 업데이트를 확인하고 다운로드합니다",
+          notify: "업데이트를 확인하지만 선택할 때만 다운로드합니다",
+          off: "자동으로 확인하지 않습니다. 확인 버튼을 누를 때만 확인합니다",
+        },
+      },
       updates: {
         label: "앱 업데이트",
         readyToInstall: "설치 준비됨: {{version}}",
+        downloadTitle: "데스크톱 업데이트 다운로드",
+        downloadMessage: "이 컴퓨터에 Paseo 업데이트를 다운로드하고 설치합니다",
+        downloadConfirm: "다운로드 및 설치",
+        download: "다운로드",
+        downloadTo: "{{version}} 다운로드",
+        downloading: "다운로드 중...",
         installTitle: "데스크톱 업데이트 설치",
         installMessage: "이 컴퓨터의 Paseo를 업데이트합니다",
         installConfirm: "업데이트 설치",
@@ -2926,9 +3026,7 @@ export const ko: TranslationResources = {
         timeout: "시간 초과",
       },
       pairDevices: {
-        title: "기기 페어링",
         rowTitle: "기기 페어링",
-        rowHint: "QR 코드를 스캔하거나 링크를 복사하여 휴대폰을 이 호스트에 연결하세요",
       },
       skills: {
         ...en.settings.host.skills,

@@ -1618,6 +1618,11 @@ export class AgentManager {
     return this.backgroundWork.summary(agentId);
   }
 
+  /** The live session started work that will start another turn by itself. */
+  hasPendingWakeup(agentId: string): boolean {
+    return this.agents.get(agentId)?.session.hasPendingWakeup?.() ?? false;
+  }
+
   private publishBackgroundWork(agentId: string, items: AgentBackgroundWorkItem[] | null): void {
     if (items) this.dispatch({ type: "background_work", agentId, items });
   }
@@ -2348,8 +2353,10 @@ export class AgentManager {
           // releases this barrier, so the waiting prompt keeps the existing runtime.
           this.collectingRuntimes.add(agent.id);
           try {
-            return await this.runLifecycleMutation(agent.id, () =>
-              this.closeAgentRuntime(agent.id, () => isEligible() && revalidate()),
+            return Boolean(
+              await this.runLifecycleMutation(agent.id, () =>
+                this.closeAgentRuntime(agent.id, () => isEligible() && revalidate()),
+              ),
             );
           } finally {
             this.collectingRuntimes.delete(agent.id);
@@ -2397,7 +2404,11 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string, canClose?: () => boolean): Promise<boolean> {
+  private async closeAgentRuntime(
+    agentId: string,
+    canClose?: () => boolean,
+    options?: { emitState?: boolean },
+  ): Promise<ManagedAgentClosed | null> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -2412,7 +2423,7 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
-    if (canClose && !canClose()) return false;
+    if (canClose && !canClose()) return null;
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await agent.session.close();
@@ -2429,7 +2440,10 @@ export class AgentManager {
       persistError = error;
     }
     this.detachPluginTools(agentId);
-    this.emitClosedAgent(closedAgent, { persist: false });
+    this.emitClosedAgent(closedAgent, {
+      persist: false,
+      emitState: persistError !== undefined ? true : options?.emitState,
+    });
     this.logger.trace(
       {
         agentId,
@@ -2442,7 +2456,7 @@ export class AgentManager {
     if (persistError !== undefined) {
       throw persistError;
     }
-    return true;
+    return closedAgent;
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
@@ -3032,6 +3046,9 @@ export class AgentManager {
     const agent = this.agents.get(agentId);
     if (agent) {
       if (agent.attention.requiresAttention) {
+        if ((await this.registry?.get(agentId))?.archivedAt) {
+          return;
+        }
         agent.attention = { requiresAttention: false };
         await this.persistSnapshot(agent);
         this.emitState(agent, { persist: false });
@@ -3158,17 +3175,30 @@ export class AgentManager {
 
     // Close and native restore share the lifecycle lane with persisted resume.
     // No new history or interactive runtime can acquire the writer between them.
-    if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
-    await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
+    // Defer state emission across the close so closing an archived history runtime
+    // does not broadcast a spurious archived removal before the unarchived snapshot lands.
+    const closedAgent = this.agents.has(agentId)
+      ? await this.closeAgentRuntime(agentId, undefined, { emitState: false })
+      : null;
 
-    const nextRecord: StoredAgentRecord = {
-      ...record,
-      ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
-      ...(updates?.labels ? { labels: applyRecordPatch(record.labels, updates.labels) } : {}),
-      archivedAt: null,
-      updatedAt: new Date().toISOString(),
-    };
-    await registry.upsert(nextRecord);
+    let nextRecord: StoredAgentRecord;
+    try {
+      await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
+
+      nextRecord = {
+        ...record,
+        ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
+        ...(updates?.labels ? { labels: applyRecordPatch(record.labels, updates.labels) } : {}),
+        archivedAt: null,
+        updatedAt: new Date().toISOString(),
+      };
+      await registry.upsert(nextRecord);
+    } catch (error) {
+      if (closedAgent) {
+        this.emitState(closedAgent, { persist: false });
+      }
+      throw error;
+    }
 
     if (this.getAgent(agentId)) {
       this.notifyAgentState(agentId);
@@ -5009,8 +5039,13 @@ export class AgentManager {
     this.clearProviderBackgroundWork(agentId);
   }
 
-  private emitClosedAgent(agent: ManagedAgentClosed, options?: { persist?: boolean }): void {
-    this.emitState(agent, options);
+  private emitClosedAgent(
+    agent: ManagedAgentClosed,
+    options?: { persist?: boolean; emitState?: boolean },
+  ): void {
+    if (options?.emitState !== false) {
+      this.emitState(agent, options);
+    }
     if (!agent.internal) {
       this.pluginLifecycle?.emit("agent.close.after", {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),

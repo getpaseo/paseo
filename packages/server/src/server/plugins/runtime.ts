@@ -60,6 +60,7 @@ import {
 import { PluginSessionSocket } from "./session-socket.js";
 import { InternalPluginChild } from "./internal-child.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
+import { PluginNotificationDispatcher, type ValidatedPluginNotification } from "./notifications.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const WORKTREE_MANAGER_TIMEOUT_MS = 120_000;
@@ -278,6 +279,7 @@ export interface PluginPaseoSessionHost {
     pluginId: string,
     socket: PluginSessionSocket,
   ): Promise<{ closed: Promise<void> }>;
+  sendPluginNotification?(notification: ValidatedPluginNotification): void | Promise<void>;
 }
 
 function resolveWorkerUrl(): URL {
@@ -374,6 +376,7 @@ export class PluginRuntime {
   private readonly spawnChild: () => PluginChild;
   private sessionHost: PluginPaseoSessionHost | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
+  private readonly notifications: PluginNotificationDispatcher;
   /** What `agent.open.before` plugins attached to each live session. */
   readonly sessionAttachments: SessionAttachments;
 
@@ -385,6 +388,9 @@ export class PluginRuntime {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
     this.sessionHost = dependencies.sessionHost ?? null;
+    this.notifications = new PluginNotificationDispatcher({
+      deliver: (notification) => this.sessionHost?.sendPluginNotification?.(notification),
+    });
     this.sessionAttachments = new SessionAttachments(
       {
         sessionOpenPlugins: () => this.sessionOpenPlugins(),
@@ -457,6 +463,7 @@ export class PluginRuntime {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) return false;
     this.plugins.delete(pluginId);
+    this.notifications.clearPlugin(pluginId);
     this.rejectPending(loaded, `Plugin stopped: ${pluginId}`);
     await this.stopPlugin(loaded);
     return true;
@@ -1036,6 +1043,7 @@ export class PluginRuntime {
   async stopAll(): Promise<void> {
     const loaded = [...this.plugins.values()];
     this.plugins.clear();
+    this.notifications.clearAll();
     for (const plugin of loaded) {
       this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);
     }
@@ -1306,6 +1314,10 @@ export class PluginRuntime {
       subscription?.closed(message.error);
       return;
     }
+    if (message.type === "notification.send") {
+      void this.handleNotificationSend(loaded, message);
+      return;
+    }
     if (message.type !== "result" && message.type !== "error") return;
     const pending = loaded.pending.get(message.requestId);
     if (!pending) return;
@@ -1313,6 +1325,30 @@ export class PluginRuntime {
     clearTimeout(pending.timeout);
     if (message.type === "result") pending.resolve(message.output);
     else pending.reject(new Error(message.error));
+  }
+
+  private async handleNotificationSend(
+    loaded: LoadedPlugin,
+    message: Extract<PluginProcessMessage, { type: "notification.send" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.notifications.dispatch(loaded.id, message.input);
+      if (loaded.child?.connected) {
+        await send(loaded.child, {
+          type: "notification.result",
+          requestId: message.requestId,
+          result,
+        }).catch(() => undefined);
+      }
+    } catch (error) {
+      if (loaded.child?.connected) {
+        await send(loaded.child, {
+          type: "notification.error",
+          requestId: message.requestId,
+          error: describeError(error),
+        }).catch(() => undefined);
+      }
+    }
   }
 
   private handleProviderMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
@@ -1610,6 +1646,7 @@ export class PluginRuntime {
     if (wasPublished) {
       this.plugins.delete(loaded.id);
     }
+    this.notifications.clearPlugin(loaded.id);
     this.rejectPending(loaded, `Plugin process exited: ${loaded.id}`);
     for (const state of loaded.providerConnections.values()) {
       this.failRemoteProviderConnection(state, new Error(`Plugin process exited: ${loaded.id}`));

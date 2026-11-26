@@ -1,11 +1,21 @@
 import { isElectronRuntime } from "@/desktop/host";
+import { listenToDesktopEvent, type DesktopEventUnlisten } from "@/desktop/electron/events";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import { isWeb } from "@/constants/platform";
 import { i18n } from "@/i18n/i18next";
 
+export interface DesktopAppUpdateDownloadProgress {
+  version: string | null;
+  percent: number;
+  transferred: number;
+  total: number;
+  bytesPerSecond: number;
+}
+
 export interface DesktopAppUpdateCheckResult {
   hasUpdate: boolean;
   readyToInstall: boolean;
+  downloading: boolean;
   currentVersion: string | null;
   latestVersion: string | null;
   body: string | null;
@@ -17,6 +27,7 @@ export interface DesktopAppUpdateInstallResult {
   installed: boolean;
   version: string | null;
   message: string;
+  errorMessage?: string | null;
 }
 
 export interface DesktopRuntimeInfo {
@@ -115,15 +126,49 @@ export async function checkDesktopAppUpdate({
     throw new Error("Unexpected response while checking desktop updates.");
   }
 
+  const hasUpdate = result.hasUpdate === true;
+  const readyToInstall = result.readyToInstall === true;
   return {
-    hasUpdate: result.hasUpdate === true,
-    readyToInstall: result.readyToInstall === true,
+    hasUpdate,
+    readyToInstall,
+    downloading:
+      typeof result.downloading === "boolean" ? result.downloading : hasUpdate && !readyToInstall,
     currentVersion: toStringOrNull(result.currentVersion),
     latestVersion: toStringOrNull(result.latestVersion),
     body: toStringOrNull(result.body),
     date: toStringOrNull(result.date),
     errorMessage: toStringOrNull(result.errorMessage),
   };
+}
+
+export function parseDesktopAppUpdateDownloadProgress(
+  raw: unknown,
+): DesktopAppUpdateDownloadProgress | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const percent = toNumberOr(Number.NaN, raw.percent);
+  if (!Number.isFinite(percent)) {
+    return null;
+  }
+  return {
+    version: toStringOrNull(raw.version),
+    percent: Math.max(0, Math.min(100, percent)),
+    transferred: toNumberOr(0, raw.transferred),
+    total: toNumberOr(0, raw.total),
+    bytesPerSecond: toNumberOr(0, raw.bytesPerSecond),
+  };
+}
+
+export async function subscribeDesktopAppUpdateDownloadProgress(
+  handler: (progress: DesktopAppUpdateDownloadProgress | null) => void,
+): Promise<DesktopEventUnlisten> {
+  if (!shouldShowDesktopUpdateSection()) {
+    return () => {};
+  }
+  return listenToDesktopEvent<unknown>("app-update-download-progress", (payload) => {
+    handler(payload === null ? null : parseDesktopAppUpdateDownloadProgress(payload));
+  });
 }
 
 export async function installDesktopAppUpdate({
@@ -136,10 +181,12 @@ export async function installDesktopAppUpdate({
     throw new Error("Unexpected response while installing desktop update.");
   }
 
+  const errorMessage = toStringOrNull(result.errorMessage);
   return {
     installed: result.installed === true,
     version: toStringOrNull(result.version),
     message: toStringOrNull(result.message) ?? i18n.t("desktop.updates.status.installed"),
+    ...(errorMessage ? { errorMessage } : {}),
   };
 }
 

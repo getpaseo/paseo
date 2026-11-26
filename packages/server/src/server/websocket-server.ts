@@ -580,12 +580,31 @@ interface ServerInfoTarget {
   ws?: WebSocketLike;
 }
 
+function initPushNotifications(
+  logger: pino.Logger,
+  paseoHome: string,
+  pushNotifications?: PushNotifications,
+  pushNotificationSender?: PushNotificationSender,
+): { pushNotifications: PushNotifications; pushNotificationSender: PushNotificationSender } {
+  const notifications =
+    pushNotifications ??
+    createPushNotifications({
+      logger: logger.child({ module: "push" }),
+      filePath: join(paseoHome, "push-tokens.json"),
+    });
+  return {
+    pushNotifications: notifications,
+    pushNotificationSender: pushNotificationSender ?? notifications,
+  };
+}
+
 export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
+  private readonly socketLocalEndpoints = new WeakMap<object, string>();
   private readonly socketIdentities: Map<WebSocketLike, WebSocketConnectionIdentity> = new Map();
   private readonly externalSessionsByKey: Map<string, ReconnectableSessionConnection> = new Map();
   private readonly pluginSocketIds = new WeakMap<WebSocketLike, string>();
@@ -732,6 +751,7 @@ export class VoiceAssistantWebSocketServer {
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
     workspaceArchiveOperations?: WorkspaceArchiveOperations,
+    pushNotifications?: PushNotifications,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -867,12 +887,14 @@ export class VoiceAssistantWebSocketServer {
       unsubscribeChange();
     };
 
-    const pushLogger = this.logger.child({ module: "push" });
-    this.pushNotifications = createPushNotifications({
-      logger: pushLogger,
-      filePath: join(paseoHome, "push-tokens.json"),
-    });
-    this.pushNotificationSender = pushNotificationSender ?? this.pushNotifications;
+    const push = initPushNotifications(
+      this.logger,
+      paseoHome,
+      pushNotifications,
+      pushNotificationSender,
+    );
+    this.pushNotifications = push.pushNotifications;
+    this.pushNotificationSender = push.pushNotificationSender;
 
     this.agentManager.setAgentAttentionCallback((params) => {
       void this.broadcastAgentAttention(params).catch((err) => {
@@ -1563,6 +1585,8 @@ export class VoiceAssistantWebSocketServer {
 
     const requestMetadata = extractSocketRequestMetadata(request);
     const identity = createWebSocketConnectionIdentity(requestMetadata, metadata);
+    if (requestMetadata.localEndpoint)
+      this.socketLocalEndpoints.set(ws, requestMetadata.localEndpoint);
     this.socketIdentities.set(ws, identity);
     const connectionLogger = this.logger.child(toConnectionLogFields(identity));
 
@@ -1698,6 +1722,7 @@ export class VoiceAssistantWebSocketServer {
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
       connectedHosts: this.connectedHosts,
+      getSourceLocalEndpoint: (source) => this.socketLocalEndpoints.get(source),
       getConnectedHostBufferedAmount: () => {
         let total = 0;
         for (const socket of this.sessions.keys()) {
@@ -2147,12 +2172,18 @@ export class VoiceAssistantWebSocketServer {
         ...(this.advertiseDaemonStatusRpc ? { daemonStatusRpc: true } : {}),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: true,
+        // COMPAT(tailscale): added in v0.16.0, remove after 2027-05-25 once daemon floor >= v0.16.0.
+        ...(this.advertiseDaemonStatusRpc && this.daemonRuntimeConfig?.setTailscaleEnabled
+          ? { tailscale: true }
+          : {}),
         // COMPAT(speechSettings): added in v0.12.0, remove gate after 2027-04-18.
         speechSettings: true,
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         ...(this.advertiseRelayConfig ? { relayConfig: true } : {}),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
         pushTokenRevocation: true,
+        // COMPAT(pushNotificationPreferences): added in v0.18.0, remove gate after 2027-06-01.
+        pushNotificationPreferences: true,
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
         plugins: true,
         pluginManagement: true,
@@ -2168,6 +2199,8 @@ export class VoiceAssistantWebSocketServer {
         pluginTimelineItems: true,
         // COMPAT(pluginSubscriptions): added in v0.15.0, remove gate after 2027-05-02.
         pluginSubscriptions: true,
+        // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+        pluginNotifications: true,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -3042,9 +3075,11 @@ export class VoiceAssistantWebSocketServer {
     );
 
     if (plan.shouldPush) {
-      void this.pushNotificationSender.send(notification).catch((err) => {
-        this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
-      });
+      void this.pushNotificationSender
+        .send(notification, { kind: "agent", reason: params.reason })
+        .catch((err) => {
+          this.logger.warn({ err, agentId: params.agentId }, "Failed to send push notification");
+        });
     }
 
     for (const { ws } of clientEntries) {
@@ -3161,16 +3196,19 @@ export class VoiceAssistantWebSocketServer {
 
     if (plan.shouldPush) {
       void this.pushNotificationSender
-        .send({
-          title,
-          body,
-          data: {
-            serverId: this.serverId,
-            terminalId: params.terminalId,
-            cwd: params.cwd,
-            ...(workspaceId ? { workspaceId } : {}),
+        .send(
+          {
+            title,
+            body,
+            data: {
+              serverId: this.serverId,
+              terminalId: params.terminalId,
+              cwd: params.cwd,
+              ...(workspaceId ? { workspaceId } : {}),
+            },
           },
-        })
+          { kind: "terminal", reason: params.reason },
+        )
         .catch((err) => {
           this.logger.warn(
             { err, terminalId: params.terminalId },
@@ -3201,9 +3239,99 @@ export class VoiceAssistantWebSocketServer {
       else this.sendToClient(ws, message);
     }
   }
+
+  public sendPluginNotification(params: {
+    pluginId: string;
+    notificationId: string;
+    title: string;
+    body: string;
+    open?: import("@getpaseo/protocol/messages").PluginNotificationOpenTarget;
+    data?: Record<string, import("@getpaseo/protocol/agent-types").JsonValue>;
+  }): void {
+    const clientEntries: Array<{
+      ws: WebSocketLike;
+      state: ClientPresenceState;
+    }> = [];
+
+    for (const [ws, connection] of this.sessions) {
+      if (this.pluginSocketIds.has(ws)) {
+        continue;
+      }
+      if (!connection.session.wantsSourceEvent(ws, "plugin.notification")) {
+        continue;
+      }
+      clientEntries.push({
+        ws,
+        state: this.getClientActivityState(connection.session, ws),
+      });
+    }
+
+    const notificationEntries = clientEntries.filter(({ ws }) =>
+      this.sessions.get(ws)?.session.wantsSourceNotification(ws, "plugin.notification"),
+    );
+    const allStates = notificationEntries.map((entry) => entry.state);
+    const nowMs = Date.now();
+    const focusTarget =
+      params.open?.type === "agent" ? { kind: "agent" as const, id: params.open.agentId } : null;
+
+    const plan = computeNotificationPlan({
+      allStates,
+      focusTarget,
+      pushEligible: true,
+      nowMs,
+    });
+
+    if (plan.shouldPush) {
+      void this.pushNotificationSender
+        .send(
+          {
+            title: params.title,
+            body: params.body,
+            data: {
+              kind: "plugin",
+              serverId: this.serverId,
+              pluginId: params.pluginId,
+              notificationId: params.notificationId,
+              ...(params.open ? { open: params.open } : {}),
+              ...(params.data ? { data: params.data } : {}),
+            },
+          },
+          { kind: "plugin", pluginId: params.pluginId },
+        )
+        .catch((err) => {
+          this.logger.warn(
+            { err, pluginId: params.pluginId, notificationId: params.notificationId },
+            "Failed to send plugin push notification",
+          );
+        });
+    }
+
+    for (const { ws } of clientEntries) {
+      const shouldNotify =
+        plan.inAppRecipientIndex !== null &&
+        notificationEntries[plan.inAppRecipientIndex]?.ws === ws;
+      const message = wrapSessionMessage({
+        type: "plugin.notification",
+        payload: {
+          serverId: this.serverId,
+          pluginId: params.pluginId,
+          notificationId: params.notificationId,
+          title: params.title,
+          body: params.body,
+          ...(params.open ? { open: params.open } : {}),
+          ...(params.data ? { data: params.data } : {}),
+          shouldNotify,
+        },
+      });
+      if (message.type === "session" && this.sessions.get(ws)?.session.delivery.isModern(ws))
+        this.sessions.get(ws)!.session.publishToSource(ws, message.message);
+      else this.sendToClient(ws, message);
+    }
+  }
 }
 
 interface SocketRequestMetadata {
+  localEndpoint?: string;
   host?: string;
   origin?: string;
   userAgent?: string;
@@ -3281,6 +3409,8 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
     url?: unknown;
     socket?: {
       remoteAddress?: unknown;
+      localAddress?: unknown;
+      localPort?: unknown;
     };
   };
 
@@ -3292,6 +3422,10 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
     typeof record.socket?.remoteAddress === "string" ? record.socket.remoteAddress : undefined;
 
   return {
+    ...(typeof record.socket?.localAddress === "string" &&
+    typeof record.socket.localPort === "number"
+      ? { localEndpoint: `${record.socket.localAddress}:${record.socket.localPort}` }
+      : {}),
     ...(host ? { host } : {}),
     ...(origin ? { origin } : {}),
     ...(userAgent ? { userAgent } : {}),

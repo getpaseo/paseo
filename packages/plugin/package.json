@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/plugin",
-  "version": "0.17.4",
+  "version": "0.17.5",
   "description": "Paseo plugin SDK package",
   "license": "Apache-2.0",
   "files": [
@@ -83,8 +83,8 @@
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.17.4",
-    "@getpaseo/protocol": "0.17.4",
+    "@getpaseo/client": "0.17.5",
+    "@getpaseo/protocol": "0.17.5",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.2.3",
@@ -94,8 +94,8 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@getpaseo/client": "0.17.4",
-    "@getpaseo/protocol": "0.17.4",
+    "@getpaseo/client": "0.17.5",
+    "@getpaseo/protocol": "0.17.5",
     "react": ">=19.1.0 <20",
     "react-native": ">=0.81.5",
     "zod": "^4.4.3"

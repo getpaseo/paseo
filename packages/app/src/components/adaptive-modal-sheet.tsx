@@ -26,6 +26,7 @@ import {
 import { ScrollView } from "@/components/ui/scroll-view";
 import { isWeb } from "@/constants/platform";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
 import { useDismissibleOverlay } from "@/components/ui/overlay-dismissal";
 import { DismissBackdrop } from "@/components/ui/dismiss-backdrop";
@@ -55,6 +56,7 @@ export interface SheetHeaderSearch {
   resetKey?: string | number;
   placeholder?: string;
   autoFocus?: boolean;
+  inputRef?: React.RefObject<EditingTextInputHandle | null>;
   testID?: string;
 }
 
@@ -489,6 +491,7 @@ export function SheetHeaderView({
         <View style={styles.searchRow}>
           <Search size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
           <AdaptiveTextInput
+            ref={search.inputRef}
             // @ts-expect-error - outlineStyle is web-only
             style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
             placeholder={search.placeholder ?? t("common.actions.search")}
@@ -530,6 +533,7 @@ export function InlineHeaderView({ header }: { header: SheetHeader }) {
         <View style={styles.inlineSearchRow}>
           <Search size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
           <AdaptiveTextInput
+            ref={header.search.inputRef}
             // @ts-expect-error - outlineStyle is web-only
             style={[styles.searchInput, isWeb && { outlineStyle: "none" }]}
             placeholder={header.search.placeholder ?? t("common.actions.search")}

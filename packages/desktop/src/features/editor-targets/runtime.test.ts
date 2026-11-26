@@ -139,4 +139,58 @@ describe("editor target runtime", () => {
 
     expect(() => runtime.listDirectory("/repo")).toThrow(readError);
   });
+
+  it("strips AppImage runtime variables from detached Linux editor launches", async () => {
+    const records: SpawnRecord[] = [];
+    const appDir = "/tmp/.mount_Paseo-editor";
+    const callerEnv: NodeJS.ProcessEnv = {
+      APPIMAGE: "/home/user/app/Paseo-x86_64.AppImage",
+      APPDIR: appDir,
+      ARGV0: "/home/user/app/Paseo-x86_64.AppImage",
+      OWD: "/home/user",
+      APPIMAGE_LIBRARY_PATH: `${appDir}/usr/lib`,
+      PATH: `${appDir}:${appDir}/usr/sbin:/usr/local/bin:/usr/bin`,
+      LD_LIBRARY_PATH: `${appDir}/usr/lib:/opt/lib`,
+      XDG_DATA_DIRS: `${appDir}/usr/share:/usr/share`,
+      GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
+      HOME: "/home/user",
+    };
+    const runtime = createEditorTargetRuntime({
+      platform: "linux",
+      env: callerEnv,
+      pathExists: (targetPath) => targetPath === "/usr/local/bin/code",
+      spawn: (command, args, options) => {
+        const record = { command, args, options, unrefed: false };
+        records.push(record);
+        const child = {
+          once(event: "error" | "spawn", handler: (error?: Error) => void) {
+            if (event === "spawn") queueMicrotask(() => handler());
+            return child;
+          },
+          unref() {
+            record.unrefed = true;
+          },
+        };
+        return child;
+      },
+    });
+
+    await runtime.spawnDetached({
+      command: "/usr/local/bin/code",
+      args: ["/repo"],
+    });
+
+    const childEnv = records[0]?.options.env ?? {};
+    expect("APPIMAGE" in childEnv).toBe(false);
+    expect("APPDIR" in childEnv).toBe(false);
+    expect("ARGV0" in childEnv).toBe(false);
+    expect("OWD" in childEnv).toBe(false);
+    expect("APPIMAGE_LIBRARY_PATH" in childEnv).toBe(false);
+    expect(childEnv.PATH).toBe("/usr/local/bin:/usr/bin");
+    expect(childEnv.LD_LIBRARY_PATH).toBe("/opt/lib");
+    expect(childEnv.XDG_DATA_DIRS).toBe("/usr/share");
+    expect("GSETTINGS_SCHEMA_DIR" in childEnv).toBe(false);
+    expect(childEnv.HOME).toBe("/home/user");
+    expect(callerEnv.APPIMAGE).toBe("/home/user/app/Paseo-x86_64.AppImage");
+  });
 });

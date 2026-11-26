@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
+client slash commands, timeline items, notifications, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
@@ -548,6 +548,26 @@ The same holds for a hook that runs inside an agent's lifecycle lane: an `agent.
 `agent.create.before` hook that awaits a write to the agent being opened (`setMetadata`, `setLabels`,
 an option, model, thinking or mode change) waits on the open, which waits on the hook. The hooks
 reference tells plugin authors to start such a write without awaiting it.
+
+## Send notifications
+
+Server plugins call `server.notifications.send(input)` over the `notification.send` /
+`notification.result` / `notification.error` IPC messages. `PluginNotificationDispatcher` in
+`packages/server/src/server/plugins/notifications.ts` trims and truncates `title` (<= 160 chars)
+and `body` (<= 500 chars), validates `key` (<= 128 chars), `open` (IDs <= 256 chars, serialized
+<= 1,024 UTF-8 bytes), and `data` (<= 1,024 UTF-8 bytes so APNs and FCM envelopes stay within
+4 KiB), drops duplicate `(pluginId, key)` pairs for 60 seconds, and enforces a per-plugin token
+bucket (burst 10, refill 1 per 6 seconds). Stopping a plugin clears its deduplication and
+rate-limit state.
+
+`WebSocketServer.sendPluginNotification` stamps the runtime `pluginId`, `serverId`, and
+`notificationId`, runs `computeNotificationPlan` (using `open.agentId` as the focus target when
+`open.type === "agent"`), filters Expo pushes per token with `{ kind: "plugin", pluginId }`, and
+publishes `plugin.notification` to sessions subscribed to that event category. Clients gate their
+`"plugin.notification"` subscription on `server_info.features.pluginNotifications` (`COMPAT(pluginNotifications)`).
+See [notifications.md](notifications.md) for tap routing and cold-launch catalog readiness, and the
+[public notifications reference](../public-docs/plugins/reference.md#notifications) for the author
+contract.
 
 ## Contribute a provider
 

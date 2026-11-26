@@ -74,9 +74,22 @@ Runtime-safe settings include relay enablement, MCP settings, browser tools, hos
 
 New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon whose config already omitted this field when it started keeps the legacy relay-enabled behavior for compatibility. Set `daemon.relay.enabled` explicitly when editing an older config.
 
-Idle runtime cleanup, listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.
+Idle runtime cleanup, the main listen address, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.
 
 Deployment environment variables and legacy supervisor flags remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. This includes startup settings such as listen addresses, passwords, relay endpoints and TLS, service-proxy and web UI settings, logging, speech, and voice configuration. List settings such as hostnames and CORS origins still append across sources, so values from `config.json` continue to apply. Stop and relaunch the deployment without the override to make the file value authoritative.
+
+## Listen addresses
+
+Set `daemon.listen` to one TCP address or a comma-separated list of TCP addresses, such as
+`127.0.0.1:6767,100.101.102.103:6767`. A Unix socket or named pipe path is always one address, even
+if it contains a comma. `PASEO_LISTEN` and `--listen` accept the same forms.
+
+The first address is the main listener. Restart after changing it. Run `paseo reload` to
+apply changes to extra TCP listeners while the daemon is running. The daemon retries
+extra addresses that are unavailable and reports their state in `paseo daemon status`.
+Removing an extra address disconnects clients using it.
+
+Use a single address before downgrading to a daemon version that predates listen lists.
 
 ## Agent providers
 

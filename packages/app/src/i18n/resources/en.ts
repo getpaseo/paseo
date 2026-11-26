@@ -311,6 +311,7 @@ export const en = {
     archived: {
       callout: "This agent is archived",
       unarchive: "Unarchive",
+      unarchiving: "Unarchiving...",
     },
   },
   sessions: {
@@ -1595,6 +1596,8 @@ export const en = {
       status: {
         checking: "Checking for app updates...",
         installing: "Installing app update...",
+        downloadingVersionProgress: "Downloading {{version}}... {{percent}}%",
+        downloadingProgress: "Downloading app update... {{percent}}%",
         upToDate: "App is up to date.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "We'll let you know when the update is ready.",
@@ -1603,6 +1606,14 @@ export const en = {
         pendingWithVersion: "Update found: {{version}}. Downloading...",
         pendingWithVersionAndLastChecked:
           "Update found: {{version}}. Downloading... Last checked at {{time}}.",
+        pendingWithVersionProgress: "Update found: {{version}}. Downloading... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Update found: {{version}}. Downloading... {{percent}}% Last checked at {{time}}.",
+        downloadAvailableWithVersion: "Update available: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Update available: {{version}}. Last checked at {{time}}.",
+        downloadAvailable: "An app update is available.",
+        downloadAvailableWithLastChecked: "An app update is available. Last checked at {{time}}.",
         availableWithVersion: "Update ready: {{version}}",
         availableWithVersionAndLastChecked: "Update ready: {{version}}. Last checked at {{time}}.",
         available: "An app update is ready to install.",
@@ -1613,14 +1624,21 @@ export const en = {
       },
       installError: "Unable to install the desktop app update.",
       callout: {
+        downloadingTitle: "Downloading update",
         installingTitle: "Installing update",
         failedTitle: "Update failed",
         availableTitle: "Update available",
         genericError: "Something went wrong.",
         whatsNew: "What's new",
+        downloadingAction: "Downloading...",
         installingAction: "Installing...",
+        downloadAndRestart: "Download",
         installAndRestart: "Install & restart",
+        downloadingVersionDescription: "Downloading {{version}}... {{percent}}%",
+        downloadingDescription: "Downloading update... {{percent}}%",
         installingDescription: "Installing and restarting...",
+        versionAvailable: "{{version}} is available to download.",
+        newVersionAvailable: "A new version is available to download.",
         versionReady: "{{version}} is ready to install.",
         newVersionReady: "A new version is ready to install.",
         restartWarning: "Upgrading the app will stop running agents and close terminal sessions.",
@@ -1838,12 +1856,6 @@ export const en = {
             "The fully featured native mobile app allows you to control any Paseo computer from your phone",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "Choose how to connect",
-          connectDocs: "Docs",
-          openConnectDocs: "Open connectivity documentation",
-          recommended: "Recommended",
-          relay: { title: "Relay", hint: "End-to-end encrypted, scan a QR code" },
-          tailscale: { title: "Tailscale", hint: "Requires some setup" },
         },
       },
     },
@@ -1920,6 +1932,34 @@ export const en = {
       noModelAvailable: "No model is available for the selected provider",
       workspaceDirectoryNotFound: "Workspace directory not found",
       hostDisconnected: "Host is not connected",
+    },
+  },
+  devices: {
+    title: "Devices",
+    waysToConnect: "Ways to connect",
+    docs: "Docs",
+    docsAccessibility: "Open connectivity documentation",
+    relay: { title: "Relay", hint: "No setup, end-to-end encrypted, scan a QR code" },
+    tailscale: {
+      hint: "Direct over your tailnet, enter an address",
+      unavailable: "Tailscale is not running on this host",
+      install: "Get Tailscale",
+      refresh: "Refresh",
+      refreshing: "Refreshing...",
+      waiting: "Waiting for Tailscale to start on this host",
+      alwaysOn: "Always on, because this host already accepts Tailscale connections",
+      socket: "Off, because this host listens on a local socket",
+      launch: "Controlled by the command that starts this host",
+      update: "Update this host to use Tailscale",
+      updateDocs: "How to update",
+      address: "On a phone with Tailscale, add a host at this address",
+      statusError: "Could not check Tailscale",
+      turnOnError: "Could not turn on Tailscale",
+      turnOffError: "Could not turn off Tailscale",
+      confirmTitle: "Turn off Tailscale?",
+      confirmMessage:
+        "This device is connected through Tailscale and will lose its connection to the host.",
+      confirmAction: "Turn off",
     },
   },
   pairing: {
@@ -2474,6 +2514,48 @@ export const en = {
     },
     notifications: {
       title: "Notifications",
+      enabled: {
+        label: "Enable notifications",
+        description: "Receive notifications from agents, terminals, and plugins on this device",
+        pausedDescription: "All notifications, including plugins, are paused on this device",
+      },
+      events: {
+        title: "Events",
+        agentPermission: {
+          label: "Agent needs permission",
+          description: "Approvals, plans, and questions",
+        },
+        agentError: {
+          label: "Agent errored",
+          description: "When an agent stops with an error",
+        },
+        agentFinished: {
+          label: "Agent finished",
+          description: "When an agent completes a turn",
+        },
+        terminalNeedsInput: {
+          label: "Terminal needs input",
+          description: "When a terminal command is waiting for input",
+        },
+        terminalFinished: {
+          label: "Terminal finished",
+          description: "When a terminal command finishes",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Plugin notifications",
+          description: "Allow installed plugins to send notifications",
+        },
+        empty: "Installed plugins appear here so you can mute them individually",
+      },
+      legacyHostTitle: "Update host for push preferences",
+      legacyHostHint:
+        "Update connected hosts to sync custom push notification preferences from this device",
+      desktop: {
+        title: "System",
+      },
       permission: "Notification permission",
       refreshAccessibility: "Refresh notification permission",
       playSound: "Play sound",
@@ -2772,9 +2854,28 @@ export const en = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "Automatic updates",
+        options: {
+          automatic: "Auto",
+          notify: "Notify",
+          off: "Off",
+        },
+        descriptions: {
+          automatic: "Check and download updates in the background",
+          notify: "Check for updates, but only download when you choose",
+          off: "Never check automatically. Only check when you click Check",
+        },
+      },
       updates: {
         label: "App updates",
         readyToInstall: "Ready to install: {{version}}",
+        downloadTitle: "Download desktop update",
+        downloadMessage: "This downloads and installs the Paseo update on this computer",
+        downloadConfirm: "Download & install",
+        download: "Download",
+        downloadTo: "Download {{version}}",
+        downloading: "Downloading...",
         installTitle: "Install desktop update",
         installMessage: "This updates Paseo on this computer",
         installConfirm: "Install update",
@@ -3044,9 +3145,7 @@ export const en = {
         timeout: "Timeout",
       },
       pairDevices: {
-        title: "Pair devices",
         rowTitle: "Pair a device",
-        rowHint: "Scan a QR code or copy a link to connect your phone to this host",
       },
       skills: {
         sectionTitle: "Orchestration skills",

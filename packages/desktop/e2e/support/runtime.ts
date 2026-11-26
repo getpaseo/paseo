@@ -55,9 +55,12 @@ export async function loadRealDaemonState(): Promise<RealDaemonState> {
 
 export interface DesktopRuntimeConfig {
   serverId: string;
+  updateMode?: "automatic" | "notify" | "off";
   updateAvailable?: boolean;
   latestVersion?: string;
   updateReadyToInstall?: boolean;
+  updateDownloading?: boolean;
+  downloadProgressSteps?: number[];
   manualUpdateBypassesRollout?: boolean;
   slowInstall?: boolean;
   /** Initial PID reported by desktop_daemon_status. Defaults to null. */
@@ -110,6 +113,7 @@ declare global {
   interface Window {
     __capturedDialogCall: ConfirmDialogCall | undefined;
     __capturedDialogOpenCalls: Array<Record<string, unknown> | undefined>;
+    __capturedUpdateChecks?: Array<{ intent: unknown; releaseChannel: unknown }>;
     __recordDesktopEditorOpen?: (input: DesktopEditorOpenRecord) => Promise<void>;
     __desktopDaemonStartRequested?: boolean;
   }
@@ -140,11 +144,22 @@ export async function installDesktopRuntime(
   await page.addInitScript((cfg) => {
     // Mutable state shared across IPC calls within this page
     let manageDaemon = cfg.manageBuiltInDaemon ?? false;
+    let updateMode = cfg.updateMode ?? "automatic";
     let daemonRunning = true;
     let currentPid: number | null = cfg.daemonPid ?? null;
     let ownedByDesktop = cfg.ownedByDesktop ?? false;
     let manualUpdateAdmitted = false;
+    const eventListeners = new Map<string, Set<(payload: unknown) => void>>();
     window.__desktopDaemonStartRequested = false;
+    window.__capturedUpdateChecks = [];
+
+    function emitDesktopEvent(event: string, payload: unknown) {
+      const listeners = eventListeners.get(event);
+      if (!listeners) return;
+      for (const listener of listeners) {
+        listener(payload);
+      }
+    }
 
     function buildDaemonStatus() {
       return {
@@ -182,10 +197,15 @@ export async function installDesktopRuntime(
       }
     }
 
-    function buildAppUpdateCheckResult(hasUpdate: boolean, readyToInstall: boolean) {
+    function buildAppUpdateCheckResult(
+      hasUpdate: boolean,
+      readyToInstall: boolean,
+      downloading = hasUpdate && !readyToInstall,
+    ) {
       return {
         hasUpdate,
         readyToInstall,
+        downloading,
         currentVersion: "1.0.0",
         latestVersion: hasUpdate ? (cfg.latestVersion ?? "1.2.3") : null,
         body: null,
@@ -194,19 +214,78 @@ export async function installDesktopRuntime(
     }
 
     function checkAppUpdate(intent: unknown) {
+      if (intent === "automatic" && updateMode === "off") {
+        return buildAppUpdateCheckResult(false, false, false);
+      }
       if (!cfg.manualUpdateBypassesRollout) {
-        return buildAppUpdateCheckResult(
-          cfg.updateAvailable === true,
-          cfg.updateAvailable === true && (cfg.updateReadyToInstall ?? true),
-        );
+        const hasUpdate = cfg.updateAvailable === true;
+        const readyToInstall =
+          hasUpdate && (cfg.updateReadyToInstall ?? updateMode === "automatic");
+        const downloading =
+          cfg.updateDownloading ?? (hasUpdate && !readyToInstall && updateMode === "automatic");
+        return buildAppUpdateCheckResult(hasUpdate, readyToInstall, downloading);
       }
 
       if (intent === "manual") {
         manualUpdateAdmitted = true;
-        return buildAppUpdateCheckResult(true, false);
+        return buildAppUpdateCheckResult(true, false, updateMode === "automatic");
       }
 
-      return buildAppUpdateCheckResult(manualUpdateAdmitted, manualUpdateAdmitted);
+      return buildAppUpdateCheckResult(manualUpdateAdmitted, manualUpdateAdmitted, false);
+    }
+
+    async function installAppUpdate() {
+      if (cfg.downloadProgressSteps?.length) {
+        for (const percent of cfg.downloadProgressSteps) {
+          emitDesktopEvent("app-update-download-progress", {
+            version: cfg.latestVersion ?? "1.2.3",
+            percent,
+            transferred: percent * 1_000_000,
+            total: 100_000_000,
+            bytesPerSecond: 5_000_000,
+          });
+          await new Promise<void>((resolve) => setTimeout(resolve, 600));
+        }
+      }
+      if (cfg.slowInstall) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+      }
+      emitDesktopEvent("app-update-download-progress", null);
+      return {
+        installed: true,
+        version: cfg.latestVersion ?? "1.2.3",
+        message: "App update installed. Restart required.",
+      };
+    }
+
+    function buildDesktopSettings() {
+      return {
+        releaseChannel: "stable",
+        updates: { mode: updateMode },
+        daemon: { manageBuiltInDaemon: manageDaemon, keepRunningAfterQuit: true },
+      };
+    }
+
+    function patchDesktopSettings(args?: Record<string, unknown>) {
+      const updates = args?.updates;
+      if (
+        updates !== null &&
+        typeof updates === "object" &&
+        "mode" in updates &&
+        (updates.mode === "automatic" || updates.mode === "notify" || updates.mode === "off")
+      ) {
+        updateMode = updates.mode;
+      }
+      const daemon = args?.daemon;
+      if (
+        daemon !== null &&
+        typeof daemon === "object" &&
+        "manageBuiltInDaemon" in daemon &&
+        typeof daemon.manageBuiltInDaemon === "boolean"
+      ) {
+        manageDaemon = daemon.manageBuiltInDaemon;
+      }
+      return buildDesktopSettings();
     }
 
     const desktopBridge: {
@@ -217,7 +296,9 @@ export async function installDesktopRuntime(
         open: (options?: Record<string, unknown>) => Promise<string | string[] | null>;
       };
       getPendingOpenProject: () => Promise<string | null>;
-      events: { on: () => Promise<() => void> };
+      events: {
+        on: (event: string, handler: (payload: unknown) => void) => Promise<() => void>;
+      };
       editor?: {
         listTargets: () => Promise<DesktopEditorTargetConfig[]>;
         openTarget: (input: DesktopEditorOpenRecord) => Promise<void>;
@@ -226,18 +307,15 @@ export async function installDesktopRuntime(
       platform: "darwin",
       invoke: async (command: string, args?: Record<string, unknown>) => {
         if (command === "check_app_update") {
+          window.__capturedUpdateChecks?.push({
+            intent: args?.intent,
+            releaseChannel: args?.releaseChannel,
+          });
           return checkAppUpdate(args?.intent);
         }
 
         if (command === "install_app_update") {
-          if (cfg.slowInstall) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 3000));
-          }
-          return {
-            installed: true,
-            version: cfg.latestVersion ?? "1.2.3",
-            message: "App update installed. Restart required.",
-          };
+          return installAppUpdate();
         }
 
         if (command === "desktop_daemon_status") {
@@ -250,26 +328,11 @@ export async function installDesktopRuntime(
 
         if (command === "get_desktop_settings") {
           await waitForDesktopSettingsResponse();
-          return {
-            releaseChannel: "stable",
-            daemon: { manageBuiltInDaemon: manageDaemon, keepRunningAfterQuit: true },
-          };
+          return buildDesktopSettings();
         }
 
         if (command === "patch_desktop_settings") {
-          const daemon = args?.daemon;
-          if (
-            daemon !== null &&
-            typeof daemon === "object" &&
-            "manageBuiltInDaemon" in daemon &&
-            typeof daemon.manageBuiltInDaemon === "boolean"
-          ) {
-            manageDaemon = daemon.manageBuiltInDaemon;
-          }
-          return {
-            releaseChannel: "stable",
-            daemon: { manageBuiltInDaemon: manageDaemon, keepRunningAfterQuit: true },
-          };
+          return patchDesktopSettings(args);
         }
 
         if (command === "stop_desktop_daemon") {
@@ -299,7 +362,19 @@ export async function installDesktopRuntime(
         },
       },
       getPendingOpenProject: async () => null,
-      events: { on: async () => () => undefined },
+      events: {
+        on: async (event: string, handler: (payload: unknown) => void) => {
+          let listeners = eventListeners.get(event);
+          if (!listeners) {
+            listeners = new Set();
+            eventListeners.set(event, listeners);
+          }
+          listeners.add(handler);
+          return () => {
+            listeners?.delete(handler);
+          };
+        },
+      },
     };
 
     if (cfg.editorTargets) {
