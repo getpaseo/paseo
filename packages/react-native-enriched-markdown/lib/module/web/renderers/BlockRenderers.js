@@ -5,19 +5,23 @@ import { toHeadingLevel } from "../styles.js";
 import { KaTeXRenderer } from "./KaTeXRenderer.js";
 import { ADMONITION_ICON_PATHS, ADMONITION_ICON_VIEWBOX, ADMONITION_TITLES } from "./admonitionIcons.js";
 import { ENRM_ADMONITION_CLASS } from "../globalStyles.js";
+import { resolveNodeDirection } from "../direction.js";
 import { Fragment as _Fragment, jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 function ParagraphRenderer({
   node,
   styles,
   parentType,
+  capabilities,
   renderChildren
 }) {
   const isImageOnly = node.children?.length === 1 && node.children[0]?.type === 'Image';
   if (isImageOnly) return /*#__PURE__*/_jsx(_Fragment, {
     children: renderChildren(node)
   });
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   if (parentType === 'Blockquote' || parentType === 'Admonition') {
     return /*#__PURE__*/_jsx("p", {
+      dir,
       style: styles.paragraphInBlockquote,
       children: renderChildren(node)
     });
@@ -28,6 +32,7 @@ function ParagraphRenderer({
     });
   }
   return /*#__PURE__*/_jsx("p", {
+    dir,
     style: styles.paragraph,
     children: renderChildren(node)
   });
@@ -35,10 +40,13 @@ function ParagraphRenderer({
 function HeadingRenderer({
   node,
   styles,
+  capabilities,
   renderChildren
 }) {
   const Tag = toHeadingLevel(node.attributes?.level ?? '1');
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   return /*#__PURE__*/_jsx(Tag, {
+    dir,
     style: styles[Tag],
     children: renderChildren(node)
   });
@@ -49,16 +57,19 @@ function BlockquoteRenderer({
   renderChildren,
   capabilities
 }) {
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   const CustomBlockquote = capabilities.renderers?.blockquote;
   if (CustomBlockquote) {
     return /*#__PURE__*/_jsx(CustomBlockquote, {
       blockquoteProps: {
+        dir,
         style: styles.blockquote
       },
       children: renderChildren(node)
     });
   }
   return /*#__PURE__*/_jsx("blockquote", {
+    dir,
     style: styles.blockquote,
     children: renderChildren(node)
   });
@@ -67,9 +78,11 @@ function AdmonitionRenderer({
   node,
   style,
   styles,
+  capabilities,
   renderChildren
 }) {
   const type = node.attributes?.admonitionType ?? 'note';
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   const blockquote = style.blockquote;
   const colors = blockquote.admonitions[type] ?? blockquote.admonitions.note;
   const tint = colors.color;
@@ -93,6 +106,7 @@ function AdmonitionRenderer({
   // The data attributes let a copy serializer write `> [!TYPE]` instead of the title.
   return /*#__PURE__*/_jsxs("div", {
     className: ENRM_ADMONITION_CLASS,
+    dir,
     style: boxStyle,
     "data-enrm-admonition-type": type,
     children: [/*#__PURE__*/_jsxs("div", {
@@ -126,6 +140,7 @@ function CodeBlockRenderer({
     // The custom renderer owns the block's look; the library keeps its spacing,
     // including the zeroed trailing margin of the last block.
     return /*#__PURE__*/_jsx("div", {
+      dir: "ltr",
       style: {
         marginTop: styles.codeBlock.marginTop,
         marginBottom: styles.codeBlock.marginBottom
@@ -139,6 +154,7 @@ function CodeBlockRenderer({
   const label = language ? `Code block: ${language}` : 'Code block';
   if (callbacks.onCodeBlockPress == null) {
     return /*#__PURE__*/_jsx("pre", {
+      dir: "ltr",
       style: styles.codeBlock,
       "aria-label": label,
       children: /*#__PURE__*/_jsx("code", {
@@ -166,6 +182,7 @@ function CodeBlockRenderer({
     }
   };
   return /*#__PURE__*/_jsx("pre", {
+    dir: "ltr",
     style: {
       ...styles.codeBlock,
       cursor: 'pointer'

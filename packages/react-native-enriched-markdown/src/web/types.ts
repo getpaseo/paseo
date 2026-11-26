@@ -94,6 +94,8 @@ export interface RenderCapabilities {
   katex: KaTeXInstance | null;
   /** When false, task list checkboxes render read-only and ignore clicks. */
   enableTaskListItemToggle: boolean;
+  /** When true, blocks resolve their own direction from their prose content. */
+  autoDir: boolean;
 }
 
 export interface RendererProps {

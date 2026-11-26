@@ -1,9 +1,19 @@
+import type { CSSProperties } from 'react';
 import type { RendererProps, RendererMap } from '../types';
 import { tableBodyRowStyle } from '../styles';
+import { resolveNodeDirection } from '../direction';
 
-function TableRenderer({ node, styles, renderChildren }: RendererProps) {
+const ISOLATE_STYLE: CSSProperties = { unicodeBidi: 'isolate' };
+
+function TableRenderer({
+  node,
+  styles,
+  capabilities,
+  renderChildren,
+}: RendererProps) {
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   return (
-    <div style={styles.tableWrapper}>
+    <div dir={dir} style={styles.tableWrapper}>
       <table style={styles.table}>{renderChildren(node)}</table>
     </div>
   );
@@ -34,19 +44,41 @@ function TableRowRenderer({ node, renderChildren }: RendererProps) {
 function TableHeaderCellRenderer({
   node,
   styles,
+  capabilities,
   renderChildren,
 }: RendererProps) {
+  const cellDir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
+  const content = renderChildren(node);
   return (
     <th style={styles.tableHeaderCell[node.attributes?.align ?? 'default']}>
-      {renderChildren(node)}
+      {cellDir ? (
+        <span dir={cellDir} style={ISOLATE_STYLE}>
+          {content}
+        </span>
+      ) : (
+        content
+      )}
     </th>
   );
 }
 
-function TableCellRenderer({ node, styles, renderChildren }: RendererProps) {
+function TableCellRenderer({
+  node,
+  styles,
+  capabilities,
+  renderChildren,
+}: RendererProps) {
+  const cellDir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
+  const content = renderChildren(node);
   return (
     <td style={styles.tableCell[node.attributes?.align ?? 'default']}>
-      {renderChildren(node)}
+      {cellDir ? (
+        <span dir={cellDir} style={ISOLATE_STYLE}>
+          {content}
+        </span>
+      ) : (
+        content
+      )}
     </td>
   );
 }

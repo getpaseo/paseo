@@ -24,7 +24,7 @@ function copyRoom(compact: boolean, glyphInset: number) {
   if (compact) {
     return { paddingTop: glyphInset + paneContentToolbarIconSize(compact) + glyphInset };
   }
-  return { paddingRight: smallIconButtonChromeFrameSize(compact) + glyphInset };
+  return { paddingInlineEnd: smallIconButtonChromeFrameSize(compact) + glyphInset };
 }
 
 /** A quote with a control that copies its body, for drafts an agent wrote to be pasted elsewhere. */
@@ -62,6 +62,7 @@ export const WebBlockquote = withUnistyles(
           onCopy={copy}
           visible={hovered || compact}
           label={t("message.actions.copyQuote")}
+          dir={blockquoteProps.dir === "rtl" ? "rtl" : "ltr"}
         />
         {children}
       </blockquote>

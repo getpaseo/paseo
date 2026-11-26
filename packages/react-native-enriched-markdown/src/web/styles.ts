@@ -37,9 +37,9 @@ const normalizeTextAlign = (
 // 'default' is an AST sentinel for "unspecified column alignment".
 function resolveColumnAlign(
   align: 'left' | 'center' | 'right' | 'default' | undefined
-): 'left' | 'center' | 'right' {
-  if (align === 'center' || align === 'right') return align;
-  return 'left';
+): 'start' | 'left' | 'center' | 'right' {
+  if (align === 'left' || align === 'center' || align === 'right') return align;
+  return 'start';
 }
 
 export function zeroTrailingMargins(
@@ -300,7 +300,7 @@ function codeStyle(style: MarkdownStyleInternal): CSSProperties {
     borderRadius: 3,
     padding: '1px 4px',
     direction: 'ltr',
-    unicodeBidi: 'embed',
+    unicodeBidi: 'isolate',
   };
 }
 

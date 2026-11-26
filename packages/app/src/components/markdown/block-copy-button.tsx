@@ -27,6 +27,8 @@ interface BlockCopyButtonProps {
   /** The block's own reveal state. Keyboard focus shows the button regardless. */
   visible: boolean;
   label: string;
+  /** Direction of the parent block; determines which top corner is trailing. */
+  dir?: "ltr" | "rtl";
 }
 
 /**
@@ -37,6 +39,7 @@ export const BlockCopyButton = memo(function BlockCopyButton({
   onCopy,
   visible,
   label,
+  dir = "ltr",
 }: BlockCopyButtonProps) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -76,7 +79,7 @@ export const BlockCopyButton = memo(function BlockCopyButton({
   const shown = visible || focused;
   const Glyph = copied ? ThemedCheck : ThemedCopy;
   return (
-    <View style={styles.corner(compact)} dataSet={markdownCopyDataSet.ignore}>
+    <View style={styles.corner(compact, dir)} dataSet={markdownCopyDataSet.ignore}>
       <ToolbarButton
         compact={compact}
         label={copied ? t("message.actions.copied") : label}
@@ -93,14 +96,14 @@ export const BlockCopyButton = memo(function BlockCopyButton({
 
 const styles = StyleSheet.create((theme) => ({
   // The glyph, not the button frame, sits on the inset; the frame overhangs it.
-  corner: (compact: boolean) => {
+  corner: (compact: boolean, dir: "ltr" | "rtl" = "ltr") => {
     const frameOverhang =
       (smallIconButtonChromeFrameSize(compact) - paneContentToolbarIconSize(compact)) / 2;
     const inset = blockCopyGlyphInset(theme) - frameOverhang;
     return {
       position: "absolute" as const,
       top: inset,
-      right: inset,
+      ...(dir === "rtl" ? { left: inset } : { right: inset }),
       pointerEvents: "box-none" as const,
     };
   },

@@ -7,6 +7,11 @@ import { createForgeShorthand } from "@/git/forge-shorthand";
 
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { markInlineImages } from "react-native-enriched-markdown/src/web/utils";
+import {
+  hasRtlCharacters,
+  isTechnicalLink,
+  resolveNodeDirection,
+} from "react-native-enriched-markdown/src/web/direction";
 import type { ASTNode } from "react-native-enriched-markdown/src/web/types";
 import { QueryClient } from "@tanstack/react-query";
 import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
@@ -1156,5 +1161,67 @@ describe("external Markdown", () => {
     expect(external("![Demo](media/demo.png) ![Shot](https://x/a.png)").render()).toBe(
       "Demo ![Shot](https://x/a.png)",
     );
+  });
+});
+
+describe("bidirectional Markdown direction resolution", () => {
+  async function firstBlock(markdown: string, workspaceRoot?: string): Promise<ASTNode> {
+    const prepared = prepareMarkdownSource(markdown, workspaceRoot);
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { hardSoftBreaks: true, latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const block = tree.children?.[0];
+    if (!block) throw new Error("Expected a parsed block");
+    return block;
+  }
+
+  it("detects RTL letters without matching digits or Latin text", () => {
+    expect(hasRtlCharacters("Hello world 123")).toBe(false);
+    expect(hasRtlCharacters("مرحبا بالعالم")).toBe(true);
+    expect(hasRtlCharacters("שלום עולם")).toBe(true);
+  });
+
+  it.each([
+    ["pure LTR prose", "Hello world", "ltr"],
+    ["pure Arabic prose", "مرحبا بالعالم", "rtl"],
+    ["pure Hebrew prose", "שלום עולם", "rtl"],
+    ["neutral digits and punctuation", "12345 — 67890", undefined],
+    ["inline code only", "`const x = 1`", undefined],
+    ["inline code followed by RTL prose", "`useEffect` يشغل الدالة عند التحميل", "rtl"],
+    ["bare URL followed by RTL prose", "https://example.com يشرح التفاصيل", "rtl"],
+    ["recognized file path followed by RTL prose", "src/index.ts يحتوي على الإعدادات", "rtl"],
+    [
+      "leading Latin term followed by predominantly RTL prose",
+      "agent يقوم بتشغيل الاختبارات الآن",
+      "rtl",
+    ],
+    [
+      "leading RTL word followed by multiple Latin identifiers",
+      "الملف useEffect and renderMarkdown",
+      "rtl",
+    ],
+    ["predominantly LTR prose containing one RTL word", "This prints مرحبا in output", "ltr"],
+    ["authored RTL link label", "[التوثيق](https://example.com) مهم جدا", "rtl"],
+    ["table with RTL prose", "| الاسم | الحالة |\n| --- | --- |\n| index.ts | جاهز |", "rtl"],
+    [
+      "table where adjacent cell boundaries stay separated",
+      "| A | B |\n| --- | --- |\n| مرحبا | بالعالم |",
+      "ltr",
+    ],
+    ["table where RTL body outweighs LTR header", "| A |\n| --- |\n| مرحبا بالعالم |", "rtl"],
+  ] as const)("resolves %s", async (_label, source, expected) => {
+    const block = await firstBlock(source, "/repo");
+    expect(resolveNodeDirection(block)).toBe(expected);
+  });
+
+  it("distinguishes technical links from authored prose links", async () => {
+    const block = await firstBlock(
+      "See src/index.ts, https://example.com, and [التوثيق](https://example.com).",
+      "/repo",
+    );
+    const links = (block.children ?? []).filter((child) => child.type === "Link");
+    expect(links.map((link) => isTechnicalLink(link))).toEqual([true, true, false]);
   });
 });

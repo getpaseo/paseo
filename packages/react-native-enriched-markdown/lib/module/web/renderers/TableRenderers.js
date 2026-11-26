@@ -1,13 +1,20 @@
 "use strict";
 
 import { tableBodyRowStyle } from "../styles.js";
+import { resolveNodeDirection } from "../direction.js";
 import { jsx as _jsx } from "react/jsx-runtime";
+const ISOLATE_STYLE = {
+  unicodeBidi: 'isolate'
+};
 function TableRenderer({
   node,
   styles,
+  capabilities,
   renderChildren
 }) {
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   return /*#__PURE__*/_jsx("div", {
+    dir,
     style: styles.tableWrapper,
     children: /*#__PURE__*/_jsx("table", {
       style: styles.table,
@@ -49,21 +56,35 @@ function TableRowRenderer({
 function TableHeaderCellRenderer({
   node,
   styles,
+  capabilities,
   renderChildren
 }) {
+  const cellDir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
+  const content = renderChildren(node);
   return /*#__PURE__*/_jsx("th", {
     style: styles.tableHeaderCell[node.attributes?.align ?? 'default'],
-    children: renderChildren(node)
+    children: cellDir ? /*#__PURE__*/_jsx("span", {
+      dir: cellDir,
+      style: ISOLATE_STYLE,
+      children: content
+    }) : content
   });
 }
 function TableCellRenderer({
   node,
   styles,
+  capabilities,
   renderChildren
 }) {
+  const cellDir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
+  const content = renderChildren(node);
   return /*#__PURE__*/_jsx("td", {
     style: styles.tableCell[node.attributes?.align ?? 'default'],
-    children: renderChildren(node)
+    children: cellDir ? /*#__PURE__*/_jsx("span", {
+      dir: cellDir,
+      style: ISOLATE_STYLE,
+      children: content
+    }) : content
   });
 }
 export const tableRenderers = {

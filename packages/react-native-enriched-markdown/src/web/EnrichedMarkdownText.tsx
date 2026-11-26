@@ -21,6 +21,7 @@ import { loadKaTeX } from './katex';
 import type { KaTeXInstance } from './katex';
 import { ENRM_TEXT_CLASS, ENRM_SELECTION_BG_VAR } from './globalStyles';
 import { filterNativeOnlyProps } from './nativeProps';
+import { hasRtlCharacters } from './direction';
 
 export const EnrichedMarkdownText = ({
   markdown,
@@ -200,9 +201,12 @@ export const EnrichedMarkdownText = ({
     ]
   );
 
+  const autoDir = dir === 'auto' && hasRtlCharacters(markdown);
+  const rootDir = dir === 'auto' ? undefined : dir;
+
   const capabilities = useMemo<RenderCapabilities>(
-    () => ({ katex, enableTaskListItemToggle, renderers }),
-    [katex, enableTaskListItemToggle, renderers]
+    () => ({ katex, enableTaskListItemToggle, renderers, autoDir }),
+    [katex, enableTaskListItemToggle, renderers, autoDir]
   );
 
   const lastChildStyle = useMemo(
@@ -241,7 +245,7 @@ export const EnrichedMarkdownText = ({
       <div
         className={ENRM_TEXT_CLASS}
         style={wrapperStyle}
-        dir={dir}
+        dir={rootDir}
         data-testid={testID}
         {...domProps}
       >
@@ -258,7 +262,7 @@ export const EnrichedMarkdownText = ({
       aria-busy={visibleParsed?.markdown !== markdown}
       className={ENRM_TEXT_CLASS}
       style={wrapperStyle}
-      dir={dir}
+      dir={rootDir}
       data-testid={testID}
       {...domProps}
     >

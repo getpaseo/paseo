@@ -10,6 +10,7 @@ import { indexTaskItems, markInlineImages } from "./utils.js";
 import { loadKaTeX } from "./katex.js";
 import { ENRM_TEXT_CLASS, ENRM_SELECTION_BG_VAR } from "./globalStyles.js";
 import { filterNativeOnlyProps } from "./nativeProps.js";
+import { hasRtlCharacters } from "./direction.js";
 import { jsx as _jsx } from "react/jsx-runtime";
 export const EnrichedMarkdownText = ({
   markdown,
@@ -127,11 +128,14 @@ export const EnrichedMarkdownText = ({
     onTaskListItemPress,
     onCodeBlockPress
   }), [onLinkPress, onLinkLongPress, onImagePress, onTaskListItemPress, onCodeBlockPress]);
+  const autoDir = dir === 'auto' && hasRtlCharacters(markdown);
+  const rootDir = dir === 'auto' ? undefined : dir;
   const capabilities = useMemo(() => ({
     katex,
     enableTaskListItemToggle,
-    renderers
-  }), [katex, enableTaskListItemToggle, renderers]);
+    renderers,
+    autoDir
+  }), [katex, enableTaskListItemToggle, renderers, autoDir]);
   const lastChildStyle = useMemo(() => allowTrailingMargin ? normalizedStyle : zeroTrailingMargins(normalizedStyle), [normalizedStyle, allowTrailingMargin]);
   const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);
   const lastChildStyles = useMemo(() => buildStyles(lastChildStyle), [lastChildStyle]);
@@ -152,7 +156,7 @@ export const EnrichedMarkdownText = ({
     return /*#__PURE__*/_jsx("div", {
       className: ENRM_TEXT_CLASS,
       style: wrapperStyle,
-      dir: dir,
+      dir: rootDir,
       "data-testid": testID,
       ...domProps,
       children: /*#__PURE__*/_jsx("pre", {
@@ -167,7 +171,7 @@ export const EnrichedMarkdownText = ({
     "aria-busy": visibleParsed?.markdown !== markdown,
     className: ENRM_TEXT_CLASS,
     style: wrapperStyle,
-    dir: dir,
+    dir: rootDir,
     "data-testid": testID,
     ...domProps,
     children: children.map((child, index) => /*#__PURE__*/_jsx(RenderNode, {
