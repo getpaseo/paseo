@@ -3,6 +3,7 @@ import type { ProjectSummary } from "@/utils/projects";
 import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
+  buildScheduleWorkspaceOptions,
   describeScheduleCwd,
 } from "./schedule-project-targets";
 
@@ -59,6 +60,29 @@ describe("buildScheduleProjectTargets", () => {
       }),
     ]);
     expect(targets).toHaveLength(0);
+  });
+});
+
+describe("buildScheduleWorkspaceOptions", () => {
+  it("dedupes by (serverId, cwd), names each, and sorts by label", () => {
+    const options = buildScheduleWorkspaceOptions(
+      [
+        { serverId: "host-1", cwd: "/tmp/beta" },
+        { serverId: "host-1", cwd: "/tmp/alpha" },
+        { serverId: "host-1", cwd: "/tmp/alpha" },
+        { serverId: "host-2", cwd: "/tmp/alpha" },
+      ],
+      new Map([
+        ["host-1:/tmp/alpha", "Alpha"],
+        ["host-1:/tmp/beta", "Beta"],
+        ["host-2:/tmp/alpha", "Gamma"],
+      ]),
+    );
+    expect(options).toEqual([
+      { id: "host-1:/tmp/alpha", label: "Alpha" },
+      { id: "host-1:/tmp/beta", label: "Beta" },
+      { id: "host-2:/tmp/alpha", label: "Gamma" },
+    ]);
   });
 });
 

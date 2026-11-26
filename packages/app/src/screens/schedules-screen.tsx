@@ -16,6 +16,7 @@ import { HostFilter } from "@/components/hosts/host-filter";
 import { ALL_HOSTS_OPTION_ID } from "@/components/hosts/host-picker";
 import { ScheduleFormSheet } from "@/components/schedules/schedule-form-sheet";
 import { SchedulesTable, type ScheduleRowView } from "@/components/schedules/schedules-table";
+import { ALL_WORKSPACES_OPTION_ID, WorkspaceFilter } from "@/components/schedules/workspace-filter";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -37,6 +38,8 @@ import { resolveSchedulesScreenBodyState } from "./schedules-screen-state";
 import {
   buildProjectNameByCwd,
   buildScheduleProjectTargets,
+  buildScheduleWorkspaceOptions,
+  type ScheduleWorkspaceOption,
 } from "@/schedules/schedule-project-targets";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
@@ -48,6 +51,7 @@ type FormState =
 const STATUS_FILTER_OPTIONS: { value: ScheduleBucket; label: string; testID: string }[] = [
   { value: "runnable", label: "Active", testID: "schedules-filter-active" },
   { value: "ended", label: "Ended", testID: "schedules-filter-ended" },
+  { value: "archived", label: "Archived", testID: "schedules-filter-archived" },
 ];
 
 const EMPTY_SCHEDULES: AggregatedSchedule[] = [];
@@ -93,6 +97,7 @@ function SchedulesScreenContent(): ReactElement {
 
   const [form, setForm] = useState<FormState>({ mode: "closed" });
   const [selectedHost, setSelectedHost] = useState(ALL_HOSTS_OPTION_ID);
+  const [selectedWorkspace, setSelectedWorkspace] = useState(ALL_WORKSPACES_OPTION_ID);
   const [statusFilter, setStatusFilter] = useState<ScheduleBucket>("runnable");
 
   useEffect(() => {
@@ -113,7 +118,12 @@ function SchedulesScreenContent(): ReactElement {
   const agentsByKey = useMemo(() => {
     const map = new Map<string, ScheduleTargetAgent>();
     for (const agent of agents) {
-      map.set(`${agent.serverId}:${agent.id}`, { title: agent.title, provider: agent.provider });
+      map.set(`${agent.serverId}:${agent.id}`, {
+        title: agent.title,
+        provider: agent.provider,
+        cwd: agent.cwd,
+        archivedAt: agent.archivedAt,
+      });
     }
     return map;
   }, [agents]);
@@ -141,12 +151,37 @@ function SchedulesScreenContent(): ReactElement {
     }));
   }, [schedules, agentsByKey, projectNameByCwd, agentDirReadyHosts]);
 
+  // Filter options come from the schedules themselves: the workspaces that
+  // actually have one, named like the row's target line.
+  const workspaceOptions = useMemo(
+    () =>
+      buildScheduleWorkspaceOptions(
+        resolvedRows.flatMap(({ schedule, resolved }) =>
+          resolved.cwd ? [{ serverId: schedule.serverId, cwd: resolved.cwd }] : [],
+        ),
+        projectNameByCwd,
+      ),
+    [resolvedRows, projectNameByCwd],
+  );
+
+  useEffect(() => {
+    if (
+      selectedWorkspace !== ALL_WORKSPACES_OPTION_ID &&
+      !workspaceOptions.some((option) => option.id === selectedWorkspace)
+    ) {
+      setSelectedWorkspace(ALL_WORKSPACES_OPTION_ID);
+    }
+  }, [workspaceOptions, selectedWorkspace]);
+
   const visibleRows = useMemo<ScheduleRowView[]>(() => {
     const singleHost = hosts.length <= 1;
     return resolvedRows
       .filter(
         ({ schedule, resolved }) =>
           (selectedHost === ALL_HOSTS_OPTION_ID || schedule.serverId === selectedHost) &&
+          (selectedWorkspace === ALL_WORKSPACES_OPTION_ID ||
+            (resolved.cwd !== null &&
+              `${schedule.serverId}:${resolved.cwd}` === selectedWorkspace)) &&
           resolved.bucket === statusFilter,
       )
       .sort((a, b) => Date.parse(b.schedule.createdAt) - Date.parse(a.schedule.createdAt))
@@ -158,7 +193,7 @@ function SchedulesScreenContent(): ReactElement {
         serverName: schedule.serverName,
         singleHost,
       }));
-  }, [resolvedRows, selectedHost, statusFilter, hosts.length]);
+  }, [resolvedRows, selectedHost, selectedWorkspace, statusFilter, hosts.length]);
 
   const showLoadError = isError && loadState.status !== "loaded";
   const showHostFilter = hosts.length > 1;
@@ -177,6 +212,9 @@ function SchedulesScreenContent(): ReactElement {
         hosts={hosts}
         selectedHost={selectedHost}
         onSelectHost={setSelectedHost}
+        workspaceOptions={workspaceOptions}
+        selectedWorkspace={selectedWorkspace}
+        onSelectWorkspace={setSelectedWorkspace}
         onRetry={refetch}
         onCreate={openCreate}
         onEdit={openEdit}
@@ -203,6 +241,9 @@ function SchedulesScreenBody({
   hosts,
   selectedHost,
   onSelectHost,
+  workspaceOptions,
+  selectedWorkspace,
+  onSelectWorkspace,
   onRetry,
   onCreate,
   onEdit,
@@ -217,6 +258,9 @@ function SchedulesScreenBody({
   hosts: ReturnType<typeof useHosts>;
   selectedHost: string;
   onSelectHost: (serverId: string) => void;
+  workspaceOptions: ScheduleWorkspaceOption[];
+  selectedWorkspace: string;
+  onSelectWorkspace: (id: string) => void;
   onRetry: () => void;
   onCreate: () => void;
   onEdit: (schedule: AggregatedSchedule) => void;
@@ -255,7 +299,9 @@ function SchedulesScreenBody({
   if (rows.length > 0) {
     schedulesContent = <SchedulesTable rows={rows} onEditSchedule={onEdit} />;
   } else if (statusFilter === "ended") {
-    schedulesContent = <SchedulesEndedEmptyState />;
+    schedulesContent = <SchedulesFilterEmptyState title="No ended schedules" />;
+  } else if (statusFilter === "archived") {
+    schedulesContent = <SchedulesFilterEmptyState title="No archived schedules" />;
   } else {
     schedulesContent = (
       <View style={styles.filterEmpty}>
@@ -274,6 +320,14 @@ function SchedulesScreenBody({
               selectedHost={selectedHost}
               onSelectHost={onSelectHost}
               triggerTestID="schedules-host-filter-trigger"
+            />
+          ) : null}
+          {workspaceOptions.length > 1 ? (
+            <WorkspaceFilter
+              options={workspaceOptions}
+              selected={selectedWorkspace}
+              onSelect={onSelectWorkspace}
+              triggerTestID="schedules-workspace-filter-trigger"
             />
           ) : null}
           <SegmentedControl
@@ -323,12 +377,12 @@ function SchedulesEmptyState({
   );
 }
 
-function SchedulesEndedEmptyState(): ReactElement {
+function SchedulesFilterEmptyState({ title }: { title: string }): ReactElement {
   return (
     <View style={styles.filterEmpty}>
       <View style={styles.endedEmptyState}>
         <CalendarClock size={styles.emptyIcon.width} color={styles.emptyIcon.color} />
-        <Text style={styles.emptyTitle}>No ended schedules</Text>
+        <Text style={styles.emptyTitle}>{title}</Text>
       </View>
     </View>
   );

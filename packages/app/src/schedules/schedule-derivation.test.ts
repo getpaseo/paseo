@@ -88,6 +88,44 @@ describe("resolveSchedule state", () => {
     expect(resolve(paused).state).toBe("targetGone");
   });
 
+  it("classifies an archived agent target as archived regardless of status", () => {
+    const archivedAgent: ScheduleTargetAgent = {
+      title: "Fix build",
+      provider: "claude",
+      cwd: "/tmp/project",
+      archivedAt: new Date(NOW),
+    };
+    for (const status of ["active", "paused", "completed"] as const) {
+      const schedule = makeSchedule({ status, target: { type: "agent", agentId: AGENT_ID } });
+      expect(resolve(schedule, { agents: [[`host-1:${AGENT_ID}`, archivedAgent]] }).state).toBe(
+        "archived",
+      );
+    }
+    expect(scheduleBucket("archived")).toBe("archived");
+  });
+
+  it("prefers expiry over an archived agent target", () => {
+    const schedule = makeSchedule({
+      target: { type: "agent", agentId: AGENT_ID },
+      expiresAt: "2026-07-01T00:00:00.000Z",
+    });
+    const result = resolve(schedule, {
+      agents: [
+        [
+          `host-1:${AGENT_ID}`,
+          {
+            title: "Fix build",
+            provider: "claude",
+            cwd: "/tmp/project",
+            archivedAt: new Date(NOW),
+          },
+        ],
+      ],
+    });
+    expect(result.state).toBe("expired");
+    expect(result.bucket).toBe("ended");
+  });
+
   it("never claims a new-agent cwd is gone", () => {
     expect(resolve(makeSchedule({ status: "active" })).state).toBe("active");
   });
@@ -97,16 +135,19 @@ describe("resolveSchedule target line", () => {
   it("names an agent target by its client title and provider", () => {
     const schedule = makeSchedule({ target: { type: "agent", agentId: AGENT_ID } });
     const result = resolve(schedule, {
-      agents: [[`host-1:${AGENT_ID}`, { title: "Fix build", provider: "claude" }]],
+      agents: [
+        [`host-1:${AGENT_ID}`, { title: "Fix build", provider: "claude", cwd: "/tmp/project" }],
+      ],
     });
     expect(result.target).toEqual({ label: "Fix build", provider: "claude" });
     expect(result.state).toBe("active");
+    expect(result.cwd).toBe("/tmp/project");
   });
 
   it("falls back to Untitled agent when the agent has no title", () => {
     const schedule = makeSchedule({ target: { type: "agent", agentId: AGENT_ID } });
     const result = resolve(schedule, {
-      agents: [[`host-1:${AGENT_ID}`, { title: "  ", provider: "codex" }]],
+      agents: [[`host-1:${AGENT_ID}`, { title: "  ", provider: "codex", cwd: "/tmp/project" }]],
     });
     expect(result.target.label).toBe("Untitled agent");
   });
@@ -114,6 +155,7 @@ describe("resolveSchedule target line", () => {
   it("labels a gone agent target as unavailable with no glyph", () => {
     const schedule = makeSchedule({ target: { type: "agent", agentId: AGENT_ID } });
     expect(resolve(schedule).target).toEqual({ label: "Agent unavailable", provider: null });
+    expect(resolve(schedule).cwd).toBeNull();
   });
 
   it("names a new-agent cwd by matched project, else the shortened path", () => {
@@ -124,6 +166,7 @@ describe("resolveSchedule target line", () => {
       label: "My Project",
       provider: "codex",
     });
+    expect(resolve(matched).cwd).toBe("/tmp/project");
 
     const unmatched = makeSchedule({
       target: { type: "new-agent", config: { provider: "codex", cwd: "/Users/alex/work/api" } },

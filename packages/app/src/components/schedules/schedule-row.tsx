@@ -90,6 +90,8 @@ function stateBadge(state: ScheduleDerivedState): {
       return { label: "Finished", variant: "muted" };
     case "targetGone":
       return { label: "Target gone", variant: "error" };
+    case "archived":
+      return { label: "Archived", variant: "muted" };
   }
 }
 

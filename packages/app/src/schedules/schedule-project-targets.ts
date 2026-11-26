@@ -75,3 +75,36 @@ export function describeScheduleCwd(input: {
     input.projectNameByCwd.get(projectNameKey(input.serverId, input.cwd)) ?? shortenPath(input.cwd)
   );
 }
+
+export interface ScheduleWorkspaceOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * The workspaces the schedules list can filter by: one option per distinct
+ * (serverId, cwd) among the schedules, named like the row's target line.
+ */
+export function buildScheduleWorkspaceOptions(
+  targets: ReadonlyArray<{ serverId: string; cwd: string }>,
+  projectNameByCwd: ReadonlyMap<string, string>,
+): ScheduleWorkspaceOption[] {
+  const seen = new Set<string>();
+  const options: ScheduleWorkspaceOption[] = [];
+  for (const target of targets) {
+    const id = `${target.serverId}:${target.cwd}`;
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    options.push({
+      id,
+      label: describeScheduleCwd({
+        serverId: target.serverId,
+        cwd: target.cwd,
+        projectNameByCwd,
+      }),
+    });
+  }
+  return options.sort((a, b) => a.label.localeCompare(b.label));
+}
