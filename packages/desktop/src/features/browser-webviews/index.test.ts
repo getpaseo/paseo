@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
+import { getHostBrowserProxyPartition } from "../browser-proxy/partition.js";
 import {
   getPaseoBrowserIdForWebContents,
   getPaseoBrowserWorkspaceId,
@@ -44,22 +45,67 @@ class FakeBrowserGuest {
 }
 
 describe("browser webview attachment", () => {
-  test("accepts only allowed URLs on the shared profile partition", () => {
+  test("accepts only allowed URLs on the shared profile or registered host proxy partitions", () => {
+    const hostPartition = getHostBrowserProxyPartition("remote-host-a");
+    const unregisteredHostPartition = getHostBrowserProxyPartition("remote-host-b");
+    const isAllowedHostPartition = (partition: string) => partition === hostPartition;
+
     expect(
       isPaseoBrowserWebviewAttach({
         src: "https://example.com",
         partition: PASEO_BROWSER_PROFILE_PARTITION,
+        isAllowedHostPartition,
       }),
     ).toBe(true);
     expect(
       isPaseoBrowserWebviewAttach({
-        src: "https://example.com",
-        partition: "persist:paseo-browser-tab-a",
+        src: "http://localhost:3000",
+        partition: hostPartition,
+        isAllowedHostPartition,
+      }),
+    ).toBe(true);
+    expect(
+      isPaseoBrowserWebviewAttach({
+        src: "http://localhost:3000",
+        partition: unregisteredHostPartition,
+        isAllowedHostPartition,
       }),
     ).toBe(false);
     expect(
-      isPaseoBrowserWebviewAttach({ src: "https://example.com", partition: "persist:foreign" }),
+      isPaseoBrowserWebviewAttach({
+        src: "https://example.com",
+        partition: "persist:paseo-browser-tab-a",
+        isAllowedHostPartition,
+      }),
     ).toBe(false);
+    expect(
+      isPaseoBrowserWebviewAttach({
+        src: "https://example.com",
+        partition: "persist:foreign",
+        isAllowedHostPartition,
+      }),
+    ).toBe(false);
+  });
+
+  test("registers a guest attached to an allowed host proxy session", () => {
+    const localSession = {};
+    const proxiedSession = {};
+    const renderer = new FakeRenderer(9);
+    const guest = new FakeBrowserGuest(901, renderer, proxiedSession);
+
+    const registered = registerAttachedPaseoBrowser({
+      browserId: "browser-proxied",
+      workspaceId: "workspace-remote",
+      webContentsId: guest.id,
+      sender: renderer,
+      profileSession: localSession,
+      isAllowedSession: (session) => session === proxiedSession,
+      findWebContents: () => guest,
+    });
+
+    expect(registered).toBe(true);
+    expect(getPaseoBrowserIdForWebContents(guest)).toBe("browser-proxied");
+    unregisterPaseoBrowser("browser-proxied");
   });
 
   test("binds explicit browser identity to the renderer that hosts the guest", () => {

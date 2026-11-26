@@ -7,6 +7,7 @@ import {
   normalizeBrowserIndexState,
   normalizeBrowserUrl,
   removeBrowserFromIndex,
+  resolveBrowserRoutingMode,
   sanitizeBrowsersForPersist,
 } from "./state";
 
@@ -187,5 +188,24 @@ describe("normalizeBrowserIndexState", () => {
     expect(
       normalizeBrowserIndexState({ browsersById: { b1: legacy } }).browsersById.b1?.viewport,
     ).toEqual({ mode: "responsive" });
+  });
+
+  it("supports optional routingMode and defaults to host for remote workspaces and local for local workspaces", () => {
+    const legacy = createBrowserRecord({
+      browserId: "b1",
+      initialUrl: "http://localhost:3000",
+      now: 0,
+    });
+    expect(legacy.routingMode).toBeUndefined();
+    expect(resolveBrowserRoutingMode(legacy, true)).toBe("host");
+    expect(resolveBrowserRoutingMode(legacy, false)).toBe("local");
+
+    const updated = applyBrowserPatch(withRecords([legacy]), "b1", { routingMode: "local" });
+    expect(updated.browsersById.b1?.routingMode).toBe("local");
+    expect(resolveBrowserRoutingMode(updated.browsersById.b1, true)).toBe("local");
+
+    const persisted = sanitizeBrowsersForPersist(updated);
+    const rehydrated = normalizeBrowserIndexState(persisted);
+    expect(rehydrated.browsersById.b1?.routingMode).toBe("local");
   });
 });

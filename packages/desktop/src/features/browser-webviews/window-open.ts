@@ -166,3 +166,27 @@ function getBrowserWindowFeatureIntent(features: string): {
 function isEnabledWindowFeature(value: string): boolean {
   return value !== "0" && value !== "false" && value !== "no";
 }
+
+export function buildBrowserPopupWebPreferences<TSession>(openerSession: TSession): {
+  session: TSession;
+  nodeIntegration: false;
+  nodeIntegrationInSubFrames: false;
+  nodeIntegrationInWorker: false;
+  contextIsolation: true;
+  sandbox: true;
+  webSecurity: true;
+  webviewTag: false;
+  allowRunningInsecureContent: false;
+} {
+  return {
+    session: openerSession,
+    nodeIntegration: false,
+    nodeIntegrationInSubFrames: false,
+    nodeIntegrationInWorker: false,
+    contextIsolation: true,
+    sandbox: true,
+    webSecurity: true,
+    webviewTag: false,
+    allowRunningInsecureContent: false,
+  };
+}

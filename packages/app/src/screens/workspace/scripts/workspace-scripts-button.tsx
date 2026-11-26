@@ -324,8 +324,11 @@ function ScriptRow({
   const handleOpenService = useCallback(() => {
     if (!selectedLink) return;
     closeMenu();
-    void openServiceUrl(selectedLink.url, { openInApp: onOpenUrlInBrowserTab });
-  }, [selectedLink, closeMenu, onOpenUrlInBrowserTab]);
+    void openServiceUrl(selectedLink.url, {
+      openInApp: onOpenUrlInBrowserTab,
+      serverId: actions.serverId,
+    });
+  }, [actions.serverId, selectedLink, closeMenu, onOpenUrlInBrowserTab]);
 
   const handleView = useCallback(() => {
     if (liveTerminalId) onViewTerminal?.(liveTerminalId);

@@ -144,6 +144,42 @@ export interface DesktopAttachedBrowserRegistration {
   webContentsId: number;
 }
 
+export type DesktopBrowserProxyTarget =
+  | {
+      type: "directTcp";
+      endpoint: string;
+      useTls?: boolean;
+    }
+  | {
+      type: "remoteSsh";
+      host: string;
+      sshPort?: number;
+      daemonPort?: number;
+    }
+  | {
+      type: "relay";
+      serverId: string;
+      relayEndpoint: string;
+      useTls?: boolean;
+      daemonPublicKeyB64: string;
+      minimumSecurityMode?: "protected";
+    };
+
+export type DesktopBrowserProxyStatus = "idle" | "connecting" | "ready" | "reconnecting" | "error";
+
+export interface DesktopBrowserProxyStatusSnapshot {
+  serverId: string;
+  partition: string;
+  status: DesktopBrowserProxyStatus;
+  error: string | null;
+  socksPort: number | null;
+}
+
+export interface DesktopBrowserProxyTicketRequestEvent {
+  requestId: string;
+  serverId: string;
+}
+
 export interface DesktopBrowserBridge {
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
@@ -155,7 +191,23 @@ export interface DesktopBrowserBridge {
   }) => Promise<void>;
   focus?: (browserId: string) => Promise<boolean>;
   openDevTools?: (browserId: string) => Promise<unknown>;
-  clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
+  clearProfile?: (legacyBrowserIds: string[], hostServerIds?: string[]) => Promise<void>;
+  ensureHostProxy?: (input: {
+    serverId: string;
+    target: DesktopBrowserProxyTarget;
+    forceReconnect?: boolean;
+  }) => Promise<DesktopBrowserProxyStatusSnapshot>;
+  updateHostProxyTarget?: (input: {
+    serverId: string;
+    target: DesktopBrowserProxyTarget;
+  }) => Promise<void>;
+  getHostProxyStatus?: (serverId: string) => Promise<DesktopBrowserProxyStatusSnapshot | null>;
+  releaseHostProxy?: (serverId: string) => Promise<void>;
+  deliverProxyTicket?: (input: {
+    requestId: string;
+    ticket?: string;
+    error?: string;
+  }) => Promise<void>;
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;

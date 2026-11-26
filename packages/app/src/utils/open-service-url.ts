@@ -1,4 +1,5 @@
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
+import { shouldRouteWorkspaceUrlToProxiedBrowser } from "@/desktop/browser/proxy";
 import {
   loadAppSettingsFromStorage,
   persistAppSettings,
@@ -9,12 +10,21 @@ import { openExternalUrl } from "@/utils/open-external-url";
 
 export interface OpenServiceUrlOptions {
   openInApp?: (url: string) => void;
+  serverId?: string;
 }
 
 export async function openServiceUrl(url: string, options?: OpenServiceUrlOptions): Promise<void> {
   const openInApp = options?.openInApp;
   if (!openInApp || !isElectronRuntime()) {
     await openExternalUrl(url);
+    return;
+  }
+
+  if (
+    options?.serverId &&
+    shouldRouteWorkspaceUrlToProxiedBrowser({ serverId: options.serverId, url })
+  ) {
+    openInApp(url);
     return;
   }
 

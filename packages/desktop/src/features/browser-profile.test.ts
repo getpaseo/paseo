@@ -1,11 +1,17 @@
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   clearPaseoBrowserProfile,
   getLegacyPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
+  listDiskHostBrowserProxyPartitions,
   listPaseoBrowserProfileGuests,
+  readHostBrowserProxyPartitions,
   readLegacyPaseoBrowserIds,
 } from "./browser-profile.js";
+import { getHostBrowserProxyPartition } from "./browser-proxy/partition.js";
 
 class FakeProfileSession {
   public readonly storageClears: unknown[] = [];
@@ -86,6 +92,57 @@ describe("listPaseoBrowserProfileGuests", () => {
     });
 
     expect(guests).toEqual([firstWindowGuest, secondWindowGuest, popupWindow]);
+  });
+
+  test("returns live guests across both local and host proxy sessions", () => {
+    const localSession = {};
+    const hostSession = {};
+    const localGuest = new FakeWebContents(1, localSession, "webview");
+    const hostGuest = new FakeWebContents(2, hostSession, "webview");
+    const hostPopup = new FakeWebContents(3, hostSession, "window");
+    const foreignGuest = new FakeWebContents(4, {}, "webview");
+
+    const guests = listPaseoBrowserProfileGuests({
+      profileSessions: [localSession, hostSession],
+      webContents: [localGuest, hostGuest, hostPopup, foreignGuest],
+    });
+
+    expect(guests).toEqual([localGuest, hostGuest, hostPopup]);
+  });
+});
+
+describe("host browser proxy partitions cleanup", () => {
+  test("discovers persisted host proxy partitions from userData and includes them in profile sessions", () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "paseo-profile-test-"));
+    try {
+      const diskPartition = getHostBrowserProxyPartition("disk-host");
+      const dirName = diskPartition.replace(/^persist:/, "");
+      mkdirSync(path.join(tmpDir, "Partitions", dirName), { recursive: true });
+      mkdirSync(path.join(tmpDir, "Partitions", "paseo-browser"), { recursive: true });
+      mkdirSync(path.join(tmpDir, "Partitions", "unrelated-partition"), { recursive: true });
+
+      expect(listDiskHostBrowserProxyPartitions(tmpDir)).toEqual([diskPartition]);
+
+      const derived = readHostBrowserProxyPartitions(["runtime-host", diskPartition, "", 42]);
+      const expectedRuntimePartition = getHostBrowserProxyPartition("runtime-host");
+      expect(derived).toEqual([expectedRuntimePartition, diskPartition]);
+
+      const requested: string[] = [];
+      getPaseoBrowserProfileSessions(
+        {
+          fromPartition: (partition) => {
+            requested.push(partition);
+            return new FakeProfileSession();
+          },
+        },
+        [],
+        [...derived, diskPartition, "persist:foreign"],
+      );
+
+      expect(requested).toEqual(["persist:paseo-browser", expectedRuntimePartition, diskPartition]);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
