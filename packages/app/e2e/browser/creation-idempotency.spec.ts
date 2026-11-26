@@ -24,6 +24,8 @@ import {
 import {
   selectLaunchOption,
   submitTerminalLaunch,
+  terminalLaunchSubmit,
+  expectWorkspaceOpensWithTerminalTab,
   seedTerminalProfiles,
   holdTerminalCreationResponse,
   pauseNextImageEncoding,
@@ -60,14 +62,7 @@ test("an uncertain background agent cannot lose its identity through a terminal 
     await page.reload();
     await selectLaunchOption(page, "blank");
     await submitTerminalLaunch(page);
-    await expect(
-      page
-        .getByText(
-          "The previous start may still be running. Check your workspaces and agents before starting another.",
-        )
-        .filter({ visible: true })
-        .first(),
-    ).toBeVisible();
+    await expect(terminalLaunchSubmit(page)).toBeDisabled();
     const created = (await client.fetchWorkspaces()).entries.filter(
       (entry) => !before.has(entry.id),
     );
@@ -80,6 +75,8 @@ test("an uncertain background agent cannot lose its identity through a terminal 
       ).terminals,
     ).toHaveLength(0);
     await startup.release();
+    await expectWorkspaceOpensWithTerminalTab(page);
+    await creation.returnToWorkspaceForm();
     await selectLaunchOption(page, "chat");
     await creation.submitPrompt("Reconcile the original uncertain start", "Create");
     await creation.expectPromptVisible("Reconcile the original uncertain start");

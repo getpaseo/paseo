@@ -9098,6 +9098,61 @@ test.each(["agent", "workspace"] as const)(
   },
 );
 
+test.each(["agent", "workspace", "legacy agent", "legacy workspace"] as const)(
+  "classifies a queue-owned %s disconnect as not sent",
+  async (kind) => {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disconnected-queued-creation",
+      transportFactory: () => [first, second][attempt++]!.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen({ features: { creationLifecycle: !kind.startsWith("legacy") } });
+    await connected;
+    first.triggerClose({ code: 1001 });
+    client.ensureConnected();
+    const creation = kind.endsWith("workspace")
+      ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+      : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(second.sent).toHaveLength(0);
+    second.triggerClose({ code: 1001, reason: "Handshake failed" });
+    expect(await outcome).toBeInstanceOf(CreationNotSentError);
+    expect(second.sent).toHaveLength(0);
+  },
+);
+
+test.each(["agent", "workspace"] as const)(
+  "preserves the uncertain outcome of a transmitted legacy %s after disconnect",
+  async (kind) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disconnected-submitted-creation",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    const creation =
+      kind === "workspace"
+        ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+        : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(mock.sent).toHaveLength(1);
+    mock.triggerClose({ code: 1001 });
+    expect(await outcome).toBeInstanceOf(DaemonConnectionError);
+    expect(await outcome).not.toBeInstanceOf(CreationNotSentError);
+  },
+);
+
 test("sends worktree target and autoArchive in create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

@@ -2293,8 +2293,12 @@ export class DaemonClient {
    * is queued and will be sent once connected (or rejected after timeout).
    * This prevents waiters from hanging forever when called during connection.
    */
-  private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
+  private sendSessionMessageOrThrow(
+    message: SessionInboundMessage,
+    onDispatch?: () => void,
+  ): Promise<void> {
     return this.sendWhenConnected(() => {
+      onDispatch?.();
       const payload = SessionInboundMessageSchema.parse(message);
       return this.sendSessionPayload(payload);
     }, message);
@@ -2411,31 +2415,35 @@ export class DaemonClient {
       { ...params.options, requestId: params.requestId, requestType: params.message.type },
     );
 
+    // Custom transmitters own handoff; only session sends can prove they stayed queued.
+    let dispatched = params.transmit !== undefined;
     // The response deadline still applies while the transport waits for drain.
     void promise.catch(() => undefined);
     try {
       const sent = params.transmit
         ? params.transmit()
-        : this.sendSessionMessageOrThrow(wire.message);
+        : this.sendSessionMessageOrThrow(wire.message, () => {
+            dispatched = true;
+          });
       const result = await Promise.race([promise, sent.then(() => promise)]);
       if (result.kind === "error") throw result.error;
       return result.value;
     } catch (error) {
       let err = error instanceof Error ? error : new Error(String(error));
-      // Legacy creation response deadlines can expire before the connection queue's timer.
-      // Only a frame still owned by that queue is conclusively unsent.
+      // Close clears both waiters and the queue. Keep callback ownership proof locally
+      // so either rejection can release admission without reclassifying a dispatched frame.
       if (
+        !dispatched &&
         isCreationRequest(wire.message.type) &&
-        err instanceof DaemonConnectionError &&
-        err.code === "DAEMON_REQUEST_TIMEOUT"
+        err instanceof DaemonConnectionError
       ) {
+        err = new CreationNotSentError(err);
         const index = this.pendingSendQueue.findIndex(
           (pending) => pending.message === wire.message,
         );
         if (index !== -1) {
           const [pending] = this.pendingSendQueue.splice(index, 1);
           clearTimeout(pending!.timeoutHandle);
-          err = new CreationNotSentError(err);
           pending!.reject(err);
         }
       }
