@@ -567,6 +567,103 @@ describe("workspace registries", () => {
     });
   });
 
+  test("persists a filtered reorder and only uses legacy order for the first drag", async () => {
+    const filePath = path.join(tmpDir, "projects", "workspaces.json");
+    const pinnedAtById = {
+      a: "2026-03-01T00:00:00.000Z",
+      b: "2026-03-02T00:00:00.000Z",
+      c: "2026-03-03T00:00:00.000Z",
+      d: "2026-03-04T00:00:00.000Z",
+    };
+    for (const [workspaceId, pinnedAt] of Object.entries(pinnedAtById)) {
+      await workspaceRegistry.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId,
+          projectId: "p",
+          cwd: "/tmp/repo",
+          kind: "directory",
+          displayName: workspaceId,
+          createdAt: pinnedAt,
+          updatedAt: pinnedAt,
+          pinnedAt,
+        }),
+      );
+    }
+    const updates: WorkspaceMutation[] = [];
+    workspaceRegistry.subscribeToMutations((event) => {
+      updates.push(event);
+    });
+
+    // Base recency is d, c, b, a. Import swaps the hidden d/b slots, then the drag swaps c/a.
+    await workspaceRegistry.setPinnedOrder(["a", "missing", "c"], ["b", "d"]);
+    expect(
+      updates.map(({ workspaceId, workspace }) => [workspaceId, workspace?.pinnedOrder]),
+    ).toEqual([
+      ["b", 0],
+      ["a", 1],
+      ["d", 2],
+      ["c", 3],
+    ]);
+
+    const reopened = new FileBackedWorkspaceRegistry(filePath, logger);
+    expect(
+      Object.fromEntries(
+        (await reopened.listActive()).map((workspace) => [
+          workspace.workspaceId,
+          workspace.pinnedOrder,
+        ]),
+      ),
+    ).toEqual({ a: 1, b: 0, c: 3, d: 2 });
+
+    await reopened.setPinnedOrder(["c", "a"], ["d", "b"]);
+    expect(
+      Object.fromEntries(
+        (await reopened.listActive()).map((workspace) => [
+          workspace.workspaceId,
+          workspace.pinnedOrder,
+        ]),
+      ),
+    ).toEqual({ a: 3, b: 0, c: 1, d: 2 });
+  });
+
+  test("publishes no ranks when the registry cannot persist a reorder", async () => {
+    const filePath = path.join(tmpDir, "projects", "workspaces.json");
+    const pinnedAt = "2026-03-01T00:00:00.000Z";
+    for (const workspaceId of ["a", "b"]) {
+      await workspaceRegistry.upsert(
+        createPersistedWorkspaceRecord({
+          workspaceId,
+          projectId: "p",
+          cwd: "/tmp/repo",
+          kind: "directory",
+          displayName: workspaceId,
+          createdAt: pinnedAt,
+          updatedAt: pinnedAt,
+          pinnedAt,
+        }),
+      );
+    }
+    const failing = new FileBackedWorkspaceRegistry(filePath, logger, {
+      writeRecords: async () => {
+        throw new Error("write unavailable");
+      },
+    });
+    const updates: WorkspaceMutation[] = [];
+    failing.subscribeToMutations((event) => {
+      updates.push(event);
+    });
+
+    await expect(failing.setPinnedOrder(["b", "a"])).rejects.toThrow("write unavailable");
+    expect(updates).toEqual([]);
+    expect((await failing.listActive()).map((workspace) => workspace.pinnedOrder)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(
+      (await new FileBackedWorkspaceRegistry(filePath, logger).get("b"))?.pinnedOrder,
+    ).toBeUndefined();
+  });
+
   test("composes concurrent workspace field updates without losing either change", async () => {
     await workspaceRegistry.initialize();
     await workspaceRegistry.upsert(

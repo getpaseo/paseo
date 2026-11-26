@@ -78,6 +78,34 @@ describe("project icon revision compatibility", () => {
   });
 });
 
+describe("workspace pin order messages", () => {
+  test("round-trips the reorder request and acknowledgement", () => {
+    const request = {
+      type: "workspace.pin.order.set.request",
+      requestId: "request-1",
+      workspaceIds: ["second", "first"],
+      legacyWorkspaceIds: ["first", "second"],
+    };
+    const response = {
+      type: "workspace.pin.order.set.response",
+      payload: { requestId: "request-1", accepted: true, error: null },
+    };
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  });
+
+  test("accepts existing workspace descriptors and carries a numeric pin rank", () => {
+    for (const ranks of [{}, { pinnedOrder: 0 }]) {
+      const parsed = SessionOutboundMessageSchema.parse(
+        fetchWorkspacesResponse(workspaceDescriptor(ranks)),
+      );
+      if (parsed.type !== "fetch_workspaces_response")
+        throw new Error("Expected workspace snapshot");
+      expect(parsed.payload.entries[0]?.pinnedOrder).toBe("pinnedOrder" in ranks ? 0 : undefined);
+    }
+  });
+});
+
 describe("workspace descriptor message compatibility", () => {
   test("old-shaped fetch_workspaces_response without project still parses", () => {
     const parsed = SessionOutboundMessageSchema.parse(

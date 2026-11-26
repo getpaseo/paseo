@@ -1,4 +1,5 @@
-import type { Locator, Page } from "@playwright/test";
+import type { BrowserContext, Locator, Page } from "@playwright/test";
+import { hideDeveloperToasts } from "../support/developer-ui.mjs";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
@@ -127,6 +128,59 @@ test("projects and pinned chats reorder while ordinary workspaces stay newest fi
   } finally {
     await firstProject.cleanup();
     await secondProject.cleanup();
+  }
+});
+
+test("a pinned drag updates another browser session on the same host", async ({
+  page,
+  browser,
+}, testInfo) => {
+  const seed = await seedWorkspace({ repoPrefix: "sidebar-pins-sync-" });
+  let otherContext: BrowserContext | undefined;
+  try {
+    const second = await seed.client.createWorkspace({
+      source: { kind: "directory", path: seed.repoPath, projectId: seed.projectId },
+      title: "Second pinned workspace",
+    });
+    if (!second.workspace) throw new Error(second.error ?? "Failed to seed another workspace");
+    await seed.client.setWorkspacePinned(seed.workspaceId, true);
+    await seed.client.setWorkspacePinned(second.workspace.id, true);
+
+    const serverId = getServerId();
+    const firstRow = `sidebar-workspace-row-${serverId}:${seed.workspaceId}`;
+    const secondRow = `sidebar-workspace-row-${serverId}:${second.workspace.id}`;
+    const rows = (clientPage: Page) =>
+      clientPage.locator(`[data-testid="${firstRow}"], [data-testid="${secondRow}"]`);
+
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    const storageState = await page.context().storageState();
+    // Copy the isolated host registration and onboarding state into a fresh browser profile.
+    for (const origin of storageState.origins) {
+      origin.localStorage = origin.localStorage.filter(({ name }) =>
+        ["@paseo:daemon-registry", "@paseo:e2e", "@paseo:onboarding"].includes(name),
+      );
+    }
+    otherContext = await browser.newContext({ storageState, viewport: page.viewportSize() });
+    const other = await otherContext.newPage();
+    await other.route(/:6767\b/, (route) => route.abort());
+    await other.routeWebSocket(/:6767\b/, (ws) => ws.close());
+    await hideDeveloperToasts(other);
+    await other.goto(page.url());
+    await waitForSidebarHydration(other);
+
+    await expect.poll(() => rowTestIds(rows(page))).toEqual([secondRow, firstRow]);
+    await expect.poll(() => rowTestIds(rows(other))).toEqual([secondRow, firstRow]);
+    await other.screenshot({ path: testInfo.outputPath("pin-sync-before.png") });
+    await quickDragFirstRowAfterSecond(rows(page), pressWorkspaceRow);
+    await expect.poll(() => rowTestIds(rows(other))).toEqual([firstRow, secondRow]);
+    await other.screenshot({ path: testInfo.outputPath("pin-sync-after.png") });
+
+    await reconnectSidebar(other);
+    await expect.poll(() => rowTestIds(rows(other))).toEqual([firstRow, secondRow]);
+  } finally {
+    await otherContext?.close();
+    await seed.cleanup();
   }
 });
 

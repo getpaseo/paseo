@@ -3834,6 +3834,19 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async setWorkspacePinnedOrder(
+    workspaceIds: string[],
+    legacyWorkspaceIds?: string[],
+  ): Promise<void> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.pin.order.set.response">({
+        message: { type: "workspace.pin.order.set.request", workspaceIds, legacyWorkspaceIds },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setWorkspacePinnedOrder rejected");
+    }
+  }
+
   async setWorkspaceBaseBranch(options: {
     workspaceId: string;
     baseRef: string;
