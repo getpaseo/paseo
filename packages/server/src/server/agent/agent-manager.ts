@@ -2756,6 +2756,7 @@ export class AgentManager {
 
     let targetSession: AgentSession | undefined;
     let intent: TimelineProviderSwitchIntent | null = null;
+    let closedExisting = false;
     let committed = false;
     let handedToRegistration = false;
     let switchReservation: { token: string; release: () => void } | null = null;
@@ -2819,6 +2820,7 @@ export class AgentManager {
       });
 
       await this.closeLiveSessionForSwitch(existingLive, agentId);
+      closedExisting = existingLive !== null;
       this.assertAcceptingAgentRegistrations();
 
       const markerItem: ProviderSwitchTimelineItem = {
@@ -2881,15 +2883,33 @@ export class AgentManager {
     } finally {
       switchReservation?.release();
       if (!handedToRegistration) {
-        this.restoreToolPolicyOnSwitchFailure(
+        await this.cleanupFailedProviderSwitch({
           agentId,
+          closedExisting,
           hadPreviousPaseoToolPolicy,
           previousPaseoToolPolicy,
-        );
-        if (targetSession) {
-          await this.closeUnregisteredSession(targetSession);
-        }
+          targetSession,
+        });
       }
+    }
+  }
+
+  private async cleanupFailedProviderSwitch(params: {
+    agentId: string;
+    closedExisting: boolean;
+    hadPreviousPaseoToolPolicy: boolean;
+    previousPaseoToolPolicy: ProviderPaseoToolsPolicy | undefined;
+    targetSession: AgentSession | undefined;
+  }): Promise<void> {
+    this.pluginSessions?.sessionLaunchFailed(params.agentId);
+    if (params.closedExisting) this.detachPluginTools(params.agentId);
+    this.restoreToolPolicyOnSwitchFailure(
+      params.agentId,
+      params.hadPreviousPaseoToolPolicy,
+      params.previousPaseoToolPolicy,
+    );
+    if (params.targetSession) {
+      await this.closeUnregisteredSession(params.targetSession);
     }
   }
 
@@ -5991,22 +6011,7 @@ export class AgentManager {
       this.pluginSessions?.sessionLaunched(resolvedAgentId);
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
-      if (timelineInit.kind === "imported" && timelineInit.subagents.length > 0) {
-        await this.applyProviderSubagentHistory(resolvedAgentId, timelineInit.subagents, {
-          dispatch: false,
-        });
-      }
-      if (session.initialTimeline?.length) {
-        // Opening notices belong once on a newly created timeline; imported and kept histories
-        // already carry them.
-        if (timelineInit.kind === "created") {
-          await this.timeline.append(
-            { agentId: managed.id },
-            projectImportedTimelineEntries(managed.provider, session.initialTimeline),
-          );
-        }
-        this.refreshSessionPersistence(managed);
-      }
+      await this.applyInitialRegisterTimeline(managed, session, timelineInit);
       await this.refreshRuntimeInfo(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       await this.persistSnapshot(
@@ -6039,6 +6044,36 @@ export class AgentManager {
         await this.closeUnregisteredSession(session);
       }
       throw error;
+    }
+  }
+
+  private async applyInitialRegisterTimeline(
+    managed: ActiveManagedAgent,
+    session: AgentSession,
+    timelineInit:
+      | { kind: "created" }
+      | { kind: "kept" }
+      | {
+          kind: "imported";
+          subagents: ProviderSubagentStreamEvent[];
+          sessionMetrics?: AgentMetric[];
+        },
+  ): Promise<void> {
+    if (timelineInit.kind === "imported" && timelineInit.subagents.length > 0) {
+      await this.applyProviderSubagentHistory(managed.id, timelineInit.subagents, {
+        dispatch: false,
+      });
+    }
+    if (session.initialTimeline?.length) {
+      // Opening notices belong once on a newly created timeline; imported and kept histories
+      // already carry them.
+      if (timelineInit.kind === "created") {
+        await this.timeline.append(
+          { agentId: managed.id },
+          projectImportedTimelineEntries(managed.provider, session.initialTimeline),
+        );
+      }
+      this.refreshSessionPersistence(managed);
     }
   }
 
