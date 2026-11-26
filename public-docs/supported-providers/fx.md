@@ -16,7 +16,7 @@ Add fx from Settings in Paseo before you start an agent.
 
 1. [Install fx](https://fx.sh/docs/getting-started/installation) on your daemon host.
 2. [Connect fx to a model provider](https://fx.sh/docs/getting-started/authentication), such as with `fx login`.
-3. In Paseo, open **Settings → Hosts → your host → Providers**, select **+ Provider**, find **fx**, and select **Add**.
+3. In Paseo, open **Settings → Host → Providers**, select **+ Provider**, find **fx**, and select **Add**.
 
 Until fx has credentials, Paseo shows the sign-in message from fx. If `fx` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary) and keep `acp` in the arguments.
 

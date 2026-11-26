@@ -55,7 +55,7 @@ where.exe codex
 1. 安装 [Codex CLI](https://developers.openai.com/codex/cli)。
 2. 使用 `codex login` 或 API key 登录。
 3. 如果安装 CLI 时 Paseo 的 daemon 已在运行，请重启 Paseo。
-4. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers → Codex**，然后选择 **刷新**。
+4. 在 Paseo 中打开 **设置 → 主机 → Providers → Codex**，然后选择 **刷新**。
 
 当 Paseo 能找到并启动 `codex` 命令后，Codex 就会变为可用。
 

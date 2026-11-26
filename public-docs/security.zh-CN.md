@@ -128,7 +128,7 @@ Compose 和反向代理的示例见 [Docker](/docs/docker)。
 
 当两者都不可用时，AppImage 和解压后的 tar 包会在禁用 Chromium 沙盒的情况下启动。如果你需要 Chromium 进程隔离，请使用 `.deb` 或 `.rpm` 软件包。显式传入 `--no-sandbox` 会禁用沙盒。
 
-打开 **设置 → 诊断 → App diagnostic** 查看沙盒状态及原因。[桌面日志](/docs/troubleshooting#reading-the-logs)也会记录同样的决定。
+打开 **设置 → 关于 → App diagnostic** 查看沙盒状态及原因。[桌面日志](/docs/troubleshooting#reading-the-logs)也会记录同样的决定。
 
 ## Agent 身份验证 {#agent-authentication}
 
