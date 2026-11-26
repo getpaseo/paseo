@@ -347,6 +347,7 @@ export function CompactModelSheet({
         onClose={close}
         snapPoints={SNAP_POINTS}
         scrollable={false}
+        keyboard={rootBrowser.keyboard}
         contentStyle={styles.sheetBody}
         contextBridge={contextBridge}
         testID="agent-controls-model-sheet"
@@ -396,6 +397,7 @@ export function CompactModelSheet({
           snapPoints={SNAP_POINTS}
           scrollable={false}
           presentation="push"
+          keyboard={modelBrowser.keyboard}
           contentStyle={styles.sheetBody}
           contextBridge={contextBridge}
           testID="agent-controls-model-browser-sheet"
