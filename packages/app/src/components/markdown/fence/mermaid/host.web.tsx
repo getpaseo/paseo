@@ -14,7 +14,12 @@ import type { MarkdownFenceRendererProps } from "./types";
 import { MermaidFullscreenViewer } from "./fullscreen-viewer.web";
 import { MermaidIframeRuntime, type MermaidRenderedMessage } from "./iframe-runtime.web";
 import { useMermaidRenderModel } from "./use-render-model";
-import { getDiagramBoxStyle } from "./presentation";
+import {
+  getDiagramBoxStyle,
+  getDiagramFit,
+  getDiagramFrameStyle,
+  getDiagramPreviewHeight,
+} from "./presentation";
 
 interface MermaidFenceHostImplProps extends MarkdownFenceRendererProps {
   colorScheme?: "light" | "dark";
@@ -25,6 +30,7 @@ function MermaidFenceHostImpl({
   phase,
   inheritedStyles,
   textStyle,
+  frame,
   colorScheme = "dark",
 }: MermaidFenceHostImplProps) {
   const { t } = useTranslation();
@@ -55,7 +61,8 @@ function MermaidFenceHostImpl({
   const visible = state.visible;
   const canShowDiagram = visible !== null && hasRuntimeContent;
   const diagramVisible = canShowDiagram && !showSource;
-  const runtimeHeight = Math.max(visible?.height ?? 240, 1);
+  const diagramFit = useMemo(() => getDiagramFit(textStyle, frame), [frame, textStyle]);
+  const previewHeight = getDiagramPreviewHeight(visible?.height ?? 240, diagramFit);
   const actions = useMemo(
     () => [
       {
@@ -75,10 +82,11 @@ function MermaidFenceHostImpl({
   const diagramStyle = useMemo(
     () => [
       getDiagramBoxStyle(textStyle),
+      getDiagramFrameStyle(frame),
       containerStyle,
-      { height: Math.min(runtimeHeight, MAX_PREVIEW_HEIGHT), minHeight: MIN_DIAGRAM_BOX_HEIGHT },
+      { height: Math.min(previewHeight, MAX_PREVIEW_HEIGHT), minHeight: MIN_DIAGRAM_BOX_HEIGHT },
     ],
-    [runtimeHeight, textStyle],
+    [frame, previewHeight, textStyle],
   );
   const diagramSize = useMemo(
     () => (visible ? { width: visible.width, height: visible.height } : MEASURING_SIZE),
@@ -130,6 +138,7 @@ function MermaidFenceHostImpl({
           accessibilityLabel={t("message.diagram.diagram")}
           actions={actions}
           contentSize={diagramSize}
+          fit={diagramFit}
           style={viewportStyle}
           testID="mermaid-viewport"
           wheelActivation="modifier"
