@@ -1453,3 +1453,74 @@ it.each(["missing", "unknown"] as const)(
     expect(sends).toBe(0);
   },
 );
+
+it("reconciles a cached ready workspace before switching a pending Chat draft to Terminal", async () => {
+  const disk = storage();
+  await seedWorkspaceAttempt(disk);
+  const restored = creationsFor(disk);
+  const terminalRequest = { source: handedOffRequest.source, launchTarget: { kind: "terminal" } };
+  const observed: string[] = [];
+  expect(
+    await restored.workspaceRetry({
+      ...scope,
+      request: terminalRequest,
+      observe: async (kind, key, onEvent) => {
+        observed.push(kind, key);
+        const receipt = failure({ kind, idempotencyKey: key, unknown: false });
+        onEvent(receipt);
+        return receipt;
+      },
+    }),
+  ).toEqual({ kind: "reuse", workspace: handedOffWorkspace });
+  expect(observed).toEqual(["workspace", draftCreationKey(scope.draftId, handedOffRequest)]);
+  let retired = false;
+  expect(
+    await restored.retireWorkspace({
+      ...scope,
+      workspaceId: handedOffWorkspace.id,
+      retire: () => {
+        retired = true;
+      },
+    }),
+  ).toBe(true);
+  expect(retired).toBe(true);
+  expect(await creationsFor(disk).workspaceRetry({ ...scope, request: terminalRequest })).toEqual({
+    kind: "reuse",
+    workspace: handedOffWorkspace,
+  });
+});
+
+it.each(["missing", "unknown"] as const)(
+  "keeps workspace-only retries protected with cached readiness when the receipt is %s",
+  async (outcome) => {
+    const disk = storage();
+    await seedWorkspaceAttempt(disk);
+    const restored = creationsFor(disk);
+    let observations = 0;
+    await expect(
+      restored.workspaceRetry({
+        ...scope,
+        request: { source: handedOffRequest.source },
+        observe: async (kind, key, onEvent) => {
+          observations += 1;
+          if (outcome === "missing") return null;
+          const receipt = failure({ kind, idempotencyKey: key, unknown: true });
+          onEvent(receipt);
+          return receipt;
+        },
+      }),
+    ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+    expect(observations).toBe(1);
+    let retirements = 0;
+    expect(
+      await restored.retireWorkspace({
+        ...scope,
+        workspaceId: handedOffWorkspace.id,
+        retire: () => {
+          retirements += 1;
+        },
+      }),
+    ).toBe(false);
+    expect(retirements).toBe(0);
+  },
+);

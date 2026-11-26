@@ -120,10 +120,17 @@ function workspaceReceiptToObserve(
 ): Attempt | undefined {
   const prior = record.attempt;
   if (
-    record.workspace ||
     prior?.kind !== "workspace" ||
     prior.outcome === "failed" ||
     prior.key === draftCreationKey(input.draftId, input.request)
+  )
+    return undefined;
+  // Chat retries reconcile separately; cached readiness cannot settle a workspace-only retry.
+  if (
+    record.workspace &&
+    (requestsAgent({ kind: "workspace", request: input.request }) ||
+      prior.agentRequested === false ||
+      (prior.outcome !== "pending" && prior.outcome !== "unknown"))
   )
     return undefined;
   return prior;
