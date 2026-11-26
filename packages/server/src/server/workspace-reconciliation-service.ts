@@ -760,7 +760,7 @@ async function findAffectedCheckoutDirectories(
       result = resolveRealpath(path)
         .catch(() => resolveNativeRealpath(path))
         .then(
-          (path) => ({ path, missing: false }),
+          (resolvedPath) => ({ path: resolvedPath, missing: false }),
           (error) => ({ path, missing: isMissingPathError(error) }),
         );
       resolved.set(path, result);
