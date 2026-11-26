@@ -3369,6 +3369,10 @@ export const ptBR: TranslationResources = {
         title: "Modelos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",
+        setDefault: "Definir como padrão para novas sessões",
+        clearDefault: "Limpar padrão (usar o do provedor)",
+        defaultBadge: "Padrão",
+        setDefaultFailed: "Não foi possível atualizar o modelo padrão",
       },
       installation: {
         title: "Instalação",

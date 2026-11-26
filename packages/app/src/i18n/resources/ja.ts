@@ -3350,6 +3350,10 @@ export const ja: TranslationResources = {
         title: "モデル",
         custom: "カスタムモデル",
         updated: "{{time}}に更新",
+        setDefault: "新しいセッションのデフォルトに設定",
+        clearDefault: "デフォルトを解除（プロバイダーのデフォルトを使用）",
+        defaultBadge: "デフォルト",
+        setDefaultFailed: "デフォルトモデルを更新できませんでした",
       },
       installation: {
         title: "インストール",

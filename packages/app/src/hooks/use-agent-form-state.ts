@@ -34,12 +34,21 @@ import {
   type FormInitialValues,
   type FormState,
   type ProviderModelsByProvider,
+  type UserModifiedFields,
 } from "@/provider-selection/resolve-agent-form";
 import { openAgentForm, type AgentFormCatalog } from "@/provider-selection/agent-form-store";
+import {
+  resolveDraftSelectionSource,
+  type DraftSelectionSourceFlags,
+} from "@/composer/draft/selection-source";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
-export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
+export type {
+  FormInitialValues,
+  UserModifiedFields,
+} from "@/provider-selection/resolve-agent-form";
 
 export interface UseAgentFormStateOptions {
   serverId: string | null;
@@ -60,6 +69,14 @@ export interface UseAgentFormStateResult {
   setModelFromUser: (modelId: string) => void;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string, retainedOptions?: ProviderOptions) => void;
+  /** Tracks which fields the user (or an applied profile) explicitly set. */
+  userModified: UserModifiedFields;
+  /**
+   * Whether each composer selection was explicitly chosen or remembered from
+   * saved preferences. Implicit fields are omitted from create requests so the
+   * provider's own configured default applies (issue #623).
+   */
+  selectionSource: DraftSelectionSourceFlags;
   workingDir: string;
   providerDefinitions: AgentProviderDefinition[];
   providerDefinitionMap: Map<AgentProvider, AgentProviderDefinition>;
@@ -158,11 +175,51 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const { serverId, initialValues, workingDir, isVisible = true, isCreateFlow = true } = options;
 
   const { preferences, isLoading: isPreferencesLoading, updatePreferences } = useFormPreferences();
+  const { config: daemonConfig } = useDaemonConfig(serverId);
   const preferenceOverlayRef = useRef(new OptimisticFormPreferences(preferences));
 
   useEffect(() => {
     preferenceOverlayRef.current.reconcile(preferences);
   }, [preferences]);
+
+  /**
+   * The provider settings sheet mirrors a default-model pin into the daemon
+   * config (additionalModels isDefault) so headless clients honor it too. The
+   * app-side `pinnedModel` preference can be missing (pinned from another
+   * device, or written before this field existed): overlay the daemon-side
+   * pin onto the preferences seen by the form resolution so the composer
+   * seeds and submits the pinned model instead of drifting to last-used.
+   */
+  const preferencesWithDaemonPin = useMemo<FormPreferences>(() => {
+    const daemonProviders = daemonConfig?.providers as
+      | Record<string, { additionalModels?: Array<{ id: string; isDefault?: boolean }> }>
+      | undefined;
+    if (!daemonProviders) {
+      return preferences;
+    }
+    let next: FormPreferences | null = null;
+    for (const [provider, providerConfig] of Object.entries(daemonProviders)) {
+      const daemonPin = providerConfig?.additionalModels?.find(
+        (model) => model.isDefault === true,
+      )?.id;
+      if (!daemonPin) {
+        continue;
+      }
+      const current: FormPreferences = next ?? preferences;
+      const existing = current.providerPreferences?.[provider];
+      if (existing?.pinnedModel) {
+        continue;
+      }
+      next = {
+        ...current,
+        providerPreferences: {
+          ...current.providerPreferences,
+          [provider]: { ...existing, pinnedModel: daemonPin },
+        },
+      };
+    }
+    return next ?? preferences;
+  }, [preferences, daemonConfig]);
 
   const updateCurrentPreferences = useCallback(
     async (
@@ -184,11 +241,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   // The store reads what the host offers when a command runs; each render publishes the latest.
   const catalogRef = useRef<AgentFormCatalog>(EMPTY_CATALOG);
   const [formStore] = useState(() => openAgentForm(() => catalogRef.current));
-  const { form: formState, resolution } = useSyncExternalStore(
-    formStore.subscribe,
-    formStore.getState,
-    formStore.getState,
-  );
+  const {
+    form: formState,
+    userModified,
+    resolution,
+  } = useSyncExternalStore(formStore.subscribe, formStore.getState, formStore.getState);
   const dispatch = formStore.dispatch;
 
   const {
@@ -286,7 +343,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       isPreferencesLoading,
       hasSnapshot: snapshotEntries !== undefined,
       initialValues,
-      preferences,
+      preferences: preferencesWithDaemonPin,
       providerModelsByProvider: snapshotProviderModelsByProvider,
       allowedProviderMap: snapshotResolvableProviderDefinitionMap,
     });
@@ -297,7 +354,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     isPreferencesLoading,
     snapshotEntries,
     initialValues,
-    preferences,
+    preferencesWithDaemonPin,
     snapshotProviderModelsByProvider,
     snapshotResolvableProviderDefinitionMap,
     dispatch,
@@ -484,6 +541,27 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
 
   const workingDirIsEmpty = !workingDir.trim();
 
+  const selectionSource = useMemo<DraftSelectionSourceFlags>(() => {
+    const providerPrefs = formState.provider
+      ? preferencesWithDaemonPin?.providerPreferences?.[formState.provider]
+      : undefined;
+    const savedThinkingOptionId = providerPrefs?.thinkingByModel?.[formState.model]?.trim();
+    return resolveDraftSelectionSource({
+      userModified,
+      initialValues,
+      savedSelection: {
+        model: providerPrefs?.model ?? null,
+        modeId: providerPrefs?.mode ?? null,
+        thinkingOptionId: savedThinkingOptionId ?? null,
+      },
+      // The pinned default as visible to the composer (app-side preference or
+      // the daemon-configured default): when the remembered last-used model
+      // disagrees with it, the model selection is demoted to implicit so the
+      // server resolves the pinned default.
+      providerDefaultModel: providerPrefs?.pinnedModel ?? null,
+    });
+  }, [formState.provider, formState.model, preferencesWithDaemonPin, userModified, initialValues]);
+
   return useMemo(
     () => ({
       selectedServerId: serverId,
@@ -495,6 +573,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
+      userModified,
+      selectionSource,
       workingDir,
       providerDefinitions,
       providerDefinitionMap,
@@ -524,6 +604,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       formState.modeId,
       formState.model,
       formState.thinkingOptionId,
+      userModified,
+      selectionSource,
       workingDir,
       setModeFromUser,
       setModelFromUser,

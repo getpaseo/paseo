@@ -72,6 +72,10 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
     // record.config.modeId.
     modeId: record.lastModeId ?? record.config?.modeId ?? undefined,
     model: record.config?.model ?? undefined,
+    // Resume must honor the create-time selection source: without it, a stored
+    // implicit session (no config.model) is normalized as explicit on reopen
+    // and the first catalog model silently replaces the provider default.
+    selectionSource: record.config?.selectionSource ?? undefined,
     thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
     providerOptions: record.config?.providerOptions ?? undefined,
     toolPolicy: record.config?.toolPolicy ?? undefined,
@@ -93,6 +97,7 @@ export function buildSessionConfig(
     cwd: record.cwd,
     modeId: overrides.modeId,
     model: overrides.model,
+    selectionSource: overrides.selectionSource,
     thinkingOptionId: overrides.thinkingOptionId,
     providerOptions: overrides.providerOptions,
     toolPolicy: overrides.toolPolicy,

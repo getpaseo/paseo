@@ -40,6 +40,7 @@ function buildManagedAgentConfig(
     title: configOverrides.title,
     modeId: configOverrides.modeId ?? "plan",
     model: configOverrides.model ?? "gpt-5.1",
+    selectionSource: configOverrides.selectionSource,
     thinkingOptionId: configOverrides.thinkingOptionId,
     providerOptions: configOverrides.providerOptions,
     toolPolicy: configOverrides.toolPolicy,
@@ -370,6 +371,18 @@ describe("AgentStorage", () => {
     });
   });
 
+  test("buildConfigOverrides carries the stored selection source for resume", async () => {
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-implicit-selection",
+        config: { selectionSource: "implicit" },
+      }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    const persisted = await reloaded.get("agent-implicit-selection");
+    expect(buildConfigOverrides(persisted!).selectionSource).toBe("implicit");
+    expect(buildSessionConfig(persisted!).selectionSource).toBe("implicit");
   test("session metrics survive a daemon restart and follow the latest snapshot", async () => {
     const sessionMetrics = [
       { label: "Cost", value: "$1.23" },

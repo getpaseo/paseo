@@ -3452,6 +3452,10 @@ export const en = {
         title: "Models",
         custom: "Custom models",
         updated: "Updated {{time}}",
+        setDefault: "Set as default for new sessions",
+        clearDefault: "Clear default (use the provider's own default)",
+        defaultBadge: "Default",
+        setDefaultFailed: "Could not update the default model",
       },
       installation: {
         title: "Installation",

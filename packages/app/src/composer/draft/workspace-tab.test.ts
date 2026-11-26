@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { shouldAllowEmptyDraftText, validateDraftSubmission } from "./workspace-tab-core";
+import {
+  resolveDraftSubmitSelection,
+  shouldAllowEmptyDraftText,
+  validateDraftSubmission,
+} from "./workspace-tab-core";
 
 const baseComposerState = {
   providerDefinitions: [{ id: "codewhale" }],
@@ -81,5 +85,78 @@ describe("workspace draft empty text readiness", () => {
         attachments: [],
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveDraftSubmitSelection", () => {
+  const implicitSource = {
+    model: "implicit",
+    modeId: "implicit",
+    thinkingOptionId: "implicit",
+  } as const;
+  const explicitSource = {
+    model: "explicit",
+    modeId: "explicit",
+    thinkingOptionId: "explicit",
+  } as const;
+
+  test("omits implicit model/mode and flags the selection as implicit", () => {
+    expect(
+      resolveDraftSubmitSelection({
+        autoSubmitConfig: null,
+        selectionSource: implicitSource,
+        effectiveModelId: "gpt-5.4",
+        effectiveModeId: "auto",
+        effectiveThinkingOptionId: "high",
+      }),
+    ).toEqual({ selectionSource: "implicit" });
+  });
+
+  test("submits explicitly picked model and mode unchanged", () => {
+    expect(
+      resolveDraftSubmitSelection({
+        autoSubmitConfig: null,
+        selectionSource: explicitSource,
+        effectiveModelId: "gpt-5.4",
+        effectiveModeId: "auto",
+        effectiveThinkingOptionId: "high",
+      }),
+    ).toEqual({ modeId: "auto", model: "gpt-5.4", thinkingOptionId: "high" });
+  });
+
+  test("keeps an explicit mode when only the mode was picked", () => {
+    expect(
+      resolveDraftSubmitSelection({
+        autoSubmitConfig: null,
+        selectionSource: { model: "implicit", modeId: "explicit", thinkingOptionId: "implicit" },
+        effectiveModelId: "gpt-5.4",
+        effectiveModeId: "auto",
+        effectiveThinkingOptionId: "high",
+      }),
+    ).toEqual({ modeId: "auto", selectionSource: "implicit" });
+  });
+
+  test("keeps an explicitly picked thinking option even when the model is implicit", () => {
+    expect(
+      resolveDraftSubmitSelection({
+        autoSubmitConfig: null,
+        selectionSource: { model: "implicit", modeId: "implicit", thinkingOptionId: "explicit" },
+        effectiveModelId: "gpt-5.4",
+        effectiveModeId: "auto",
+        effectiveThinkingOptionId: "high",
+      }),
+    ).toEqual({ thinkingOptionId: "high", selectionSource: "implicit" });
+  });
+
+  test("auto-submit keeps the legacy resolved behavior without the implicit flag", () => {
+    expect(
+      resolveDraftSubmitSelection({
+        autoSubmitConfig: { modeId: null, model: null, thinkingOptionId: null },
+        selectionSource: implicitSource,
+        effectiveModelId: "gpt-5.4",
+        effectiveModeId: "auto",
+        effectiveThinkingOptionId: "high",
+      }),
+    ).toEqual({ modeId: "auto", model: "gpt-5.4", thinkingOptionId: "high" });
   });
 });

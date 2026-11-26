@@ -108,6 +108,7 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedSearch = withUnistyles(Search);
+const ThemedSettings = withUnistyles(Settings);
 
 function ProviderSettingsAction({
   label,

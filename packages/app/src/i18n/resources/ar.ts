@@ -3351,6 +3351,10 @@ export const ar: TranslationResources = {
         title: "النماذج",
         custom: "نماذج مخصصة",
         updated: "تم تحديث{{time}}",
+        setDefault: "تعيين كافتراضي للجلسات الجديدة",
+        clearDefault: "مسح الافتراضي (استخدام افتراضي المزود)",
+        defaultBadge: "افتراضي",
+        setDefaultFailed: "تعذّر تحديث النموذج الافتراضي",
       },
       installation: {
         title: "التثبيت",

@@ -1,9 +1,9 @@
-import { Plus, Trash2 } from "lucide-react-native";
+import { Pin, Plus, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import {
@@ -17,7 +17,9 @@ import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-
 import { SearchField } from "@/components/ui/search-field";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
@@ -29,7 +31,16 @@ import type { ProviderEntry } from "./provider-config";
 import { ProviderRefreshButton, useCheckedLabel, type ProviderRefresh } from "./provider-refresh";
 
 const ThemedTrash = withUnistyles(Trash2);
+const ThemedPin = withUnistyles(Pin, (theme) => ({ size: theme.iconSize.sm }));
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+const activePinMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+  fill: theme.colors.foregroundMuted,
+});
+const inactivePinMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+  fill: "none" as const,
+});
 const ThemedTextInput = withUnistyles(AdaptiveTextInput, (theme: Theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
@@ -65,10 +76,13 @@ export function ProviderModels({
   const { t } = useTranslation();
   const provider = entry.provider;
   const discovered = refresh !== null;
-  const { config, patchConfig } = useDaemonConfig(serverId);
+  const { config, isLoading: configLoading, patchConfig } = useDaemonConfig(serverId);
+  const { preferences, updatePreferences } = useFormPreferences();
+  const toast = useToast();
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
+  const configReady = config !== null && !configLoading;
 
   const additionalModels = useMemo(
     () => config?.providers?.[provider]?.additionalModels ?? [],
@@ -85,6 +99,81 @@ export function ProviderModels({
     previousCache: discoveredCacheRef.current,
   });
   discoveredCacheRef.current = cache;
+
+  const defaultModelId = useMemo(
+    () =>
+      preferences.providerPreferences?.[provider]?.pinnedModel ??
+      additionalModels.find((model) => model.isDefault === true)?.id ??
+      null,
+    [additionalModels, preferences, provider],
+  );
+  const handleToggleDefaultModel = useCallback(
+    async (modelId: string) => {
+      if (!configReady) {
+        return;
+      }
+      const previousPreferences = preferences;
+      const alreadyDefault =
+        preferences.providerPreferences?.[provider]?.pinnedModel === modelId ||
+        additionalModels.some((model) => model.id === modelId && model.isDefault === true);
+      try {
+        // The pin lives in its own preference field (chat model switches write
+        // `model`, and a switch must never override the pin) and is mirrored
+        // into the daemon config so the default also holds for headless
+        // clients: the agent manager's catalog resolution reads isDefault
+        // from the provider's additionalModels.
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider: provider as AgentProvider,
+            updates: { pinnedModel: alreadyDefault ? null : modelId },
+          }),
+        );
+        // Compute the next list before patching: the daemon replaces the
+        // additionalModels array wholesale, so the patch must carry every
+        // existing entry, not just the changed one.
+        const cleared = additionalModels.map((model) =>
+          model.isDefault ? { ...model, isDefault: false } : model,
+        );
+        let nextModels = cleared;
+        if (!alreadyDefault) {
+          const existing = cleared.find((model) => model.id === modelId);
+          const label =
+            existing?.label ??
+            discoveredModels.find((model) => model.id === modelId)?.label ??
+            modelId;
+          nextModels = [
+            ...cleared.filter((model) => model.id !== modelId),
+            { id: modelId, label, isDefault: true },
+          ];
+        }
+        await patchConfig({
+          providers: {
+            [provider]: {
+              additionalModels: nextModels,
+            },
+          },
+        });
+      } catch (error) {
+        console.warn("[ProviderModels] toggle default model failed", error);
+        // Roll the preference back so the app-side pin cannot disagree with
+        // the daemon-side default after a failed save.
+        await updatePreferences(() => previousPreferences).catch(() => undefined);
+        toast.error(t("settings.providers.models.setDefaultFailed"));
+      }
+    },
+    [
+      additionalModels,
+      configReady,
+      discoveredModels,
+      patchConfig,
+      preferences,
+      provider,
+      t,
+      toast,
+      updatePreferences,
+    ],
+  );
 
   // Search shows only beside the provider's own models; a query typed then must not hide custom ones.
   const q = discovered ? query.trim() : "";
@@ -152,7 +241,14 @@ export function ProviderModels({
     discoveredBody = <MutedRow>{t("settings.providers.models.noSearchMatches")}</MutedRow>;
   } else {
     discoveredBody = filteredDiscovered.map((model, index) => (
-      <DiscoveredModelRow key={model.id} model={model} first={index === 0} />
+      <DiscoveredModelRow
+        key={model.id}
+        model={model}
+        first={index === 0}
+        isDefault={model.id === defaultModelId}
+        onToggleDefault={handleToggleDefaultModel}
+        disableToggle={!configReady}
+      />
     ));
   }
 
@@ -238,11 +334,44 @@ function MutedRow({ children }: { children: string }) {
   );
 }
 
-function DiscoveredModelRow({ model, first }: { model: AgentModelDefinition; first: boolean }) {
+function DiscoveredModelRow({
+  model,
+  first,
+  isDefault,
+  onToggleDefault,
+  disableToggle,
+}: {
+  model: AgentModelDefinition;
+  first: boolean;
+  isDefault: boolean;
+  onToggleDefault?: (modelId: string) => void;
+  disableToggle?: boolean;
+}) {
+  const { t } = useTranslation();
+  const handlePress = useCallback(() => onToggleDefault?.(model.id), [model.id, onToggleDefault]);
   return (
     <View style={[styles.modelRow, !first && settingsStyles.rowBorder]}>
+      <ToolbarButton
+        label={
+          isDefault
+            ? t("settings.providers.models.clearDefault")
+            : t("settings.providers.models.setDefault")
+        }
+        onPress={handlePress}
+        disabled={disableToggle}
+        round
+        testID={`provider-model-default-${model.id}`}
+      >
+        <ThemedPin uniProps={isDefault ? activePinMapping : inactivePinMapping} />
+      </ToolbarButton>
       <Text style={styles.modelTitle} numberOfLines={1}>
         {model.label}
+        {isDefault ? (
+          <Text style={styles.defaultBadgeText}>
+            {" "}
+            {t("settings.providers.models.defaultBadge")}
+          </Text>
+        ) : null}
       </Text>
       <Text style={styles.monoHint} numberOfLines={1} selectable dataSet={CODE_SURFACE_DATASET}>
         {model.id}
@@ -420,6 +549,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     flexShrink: 0,
+  },
+  defaultBadgeText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   monoHint: {
     fontFamily: theme.fontFamily.mono,
