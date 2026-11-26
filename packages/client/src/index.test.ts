@@ -2158,6 +2158,213 @@ test("background work asks for a host update when the daemon lacks it", async ()
   await client.close();
 });
 
+const SUBAGENT_FEATURES = { ownedSubscriptions: true };
+function subagent(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    parentAgentId: "agent-a",
+    parentSubagentId: null,
+    provider: "claude",
+    title: `Task ${id}`,
+    description: null,
+    status: "running",
+    createdAt: "2026-10-06T10:00:00.000Z",
+    updatedAt: "2026-10-06T10:00:00.000Z",
+    toolCallId: null,
+    ...overrides,
+  };
+}
+
+function answerProviderSubagentList(
+  ws: FakeWebSocket,
+  subagents: unknown[],
+  error: string | null = null,
+) {
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "agent.provider_subagents.list.request",
+    parentAgentId: "agent-a",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.provider_subagents.list.response",
+      payload: { requestId: request.requestId, parentAgentId: "agent-a", subagents, error },
+    }),
+  );
+}
+
+function subagentUpdate(payload: Record<string, unknown>) {
+  return sessionMessage({
+    type: "agent.provider_subagents.update",
+    payload: { subscriptionId: "subagents-sdk", ...payload },
+  });
+}
+
+test("agent handles list provider sub-agents", async () => {
+  const { client, ws } = await connectClient(SUBAGENT_FEATURES);
+
+  const pending = client.agents.ref("agent-a").providerSubagents.list();
+  answerProviderSubagentList(ws, [subagent("s1")]);
+
+  await expect(pending).resolves.toEqual([subagent("s1")]);
+  await client.close();
+});
+
+test("agent handles reject a failed provider sub-agent list", async () => {
+  const { client, ws } = await connectClient(SUBAGENT_FEATURES);
+
+  const pending = client.agents.ref("agent-a").providerSubagents.list();
+  answerProviderSubagentList(ws, [], "Agent not found");
+
+  await expect(pending).rejects.toThrow("Agent not found");
+  await client.close();
+});
+
+test("provider sub-agent subscriptions list, then follow only their own agent's changes", async () => {
+  const { client, ws } = await connectClient(SUBAGENT_FEATURES);
+  const received: unknown[] = [];
+
+  const unsubscribe = client.agents
+    .ref("agent-a")
+    .providerSubagents.subscribe((subagents) => received.push(subagents));
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["agent.provider_subagents.update"],
+  });
+  acknowledgeObservation(ws, "subagents-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.provider_subagents.list.request",
+    }),
+  );
+  answerProviderSubagentList(ws, [subagent("s1")]);
+  await vi.waitFor(() => expect(received).toEqual([[subagent("s1")]]));
+
+  ws.message(
+    subagentUpdate({ kind: "upsert", subagent: subagent("other", { parentAgentId: "agent-b" }) }),
+  );
+  ws.message(
+    subagentUpdate({
+      kind: "timeline",
+      parentAgentId: "agent-a",
+      subagentId: "s1",
+      provider: "claude",
+      item: { type: "assistant_message", text: "working" },
+      timestamp: "2026-10-06T10:00:01.000Z",
+      seq: 1,
+      epoch: "e1",
+    }),
+  );
+  ws.message(subagentUpdate({ kind: "upsert", subagent: subagent("s1", { status: "completed" }) }));
+  ws.message(subagentUpdate({ kind: "upsert", subagent: subagent("s2") }));
+  ws.message(subagentUpdate({ kind: "remove", parentAgentId: "agent-a", subagentId: "s1" }));
+  await vi.waitFor(() =>
+    expect(received).toEqual([
+      [subagent("s1")],
+      [subagent("s1", { status: "completed" })],
+      [subagent("s1", { status: "completed" }), subagent("s2")],
+      [subagent("s2")],
+    ]),
+  );
+
+  unsubscribe();
+  ws.message(subagentUpdate({ kind: "upsert", subagent: subagent("late") }));
+  expect(received).toHaveLength(4);
+  await client.close();
+});
+
+test("provider sub-agent subscriptions replay changes that overtake their list", async () => {
+  const { client, ws } = await connectClient(SUBAGENT_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").providerSubagents.subscribe((subagents) => received.push(subagents));
+  acknowledgeObservation(ws, "subagents-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.provider_subagents.list.request",
+    }),
+  );
+  ws.message(subagentUpdate({ kind: "upsert", subagent: subagent("s2") }));
+  ws.message(subagentUpdate({ kind: "remove", parentAgentId: "agent-a", subagentId: "s1" }));
+  answerProviderSubagentList(ws, [subagent("s1")]);
+
+  await vi.waitFor(() => expect(received).toEqual([[subagent("s2")]]));
+  await client.close();
+});
+
+test("provider sub-agent subscriptions list again after a reconnect", async () => {
+  const { client, ws } = await connectClient(SUBAGENT_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").providerSubagents.subscribe((subagents) => received.push(subagents));
+  acknowledgeObservation(ws, "subagents-first");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.provider_subagents.list.request",
+    }),
+  );
+  answerProviderSubagentList(ws, [subagent("s1")]);
+  await vi.waitFor(() => expect(received).toEqual([[subagent("s1")]]));
+
+  ws.readyState = 3;
+  ws.onclose?.({ code: 1006, reason: "Connection lost" });
+  const reconnecting = client.connect();
+  const next = FakeWebSocket.instances[1];
+  next.open();
+  next.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv_sdk_test",
+        hostname: null,
+        version: null,
+        features: SUBAGENT_FEATURES,
+      },
+    }),
+  );
+  await reconnecting;
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(next.sent.at(-1))).toMatchObject({
+      type: "session.events.set_subscription.request",
+    }),
+  );
+  acknowledgeObservation(next, "subagents-second");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(next.sent.at(-1))).toMatchObject({
+      type: "agent.provider_subagents.list.request",
+    }),
+  );
+  answerProviderSubagentList(next, []);
+
+  await vi.waitFor(() => expect(received).toEqual([[subagent("s1")], []]));
+  await client.close();
+});
+
+test("provider sub-agent subscriptions report a failed list to onError", async () => {
+  const { client, ws } = await connectClient(SUBAGENT_FEATURES);
+  const received: unknown[] = [];
+  const errors: unknown[] = [];
+
+  client.agents
+    .ref("agent-a")
+    .providerSubagents.subscribe((subagents) => received.push(subagents), {
+      onError: (error) => errors.push(error),
+    });
+  acknowledgeObservation(ws, "subagents-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.provider_subagents.list.request",
+    }),
+  );
+  answerProviderSubagentList(ws, [], "boom");
+
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect((errors[0] as Error).message).toContain("boom");
+  expect(received).toEqual([]);
+  await client.close();
+});
+
 test("background stop sends the live item token and waits for the response", async () => {
   const { client, ws } = await connectClient({
     ...BACKGROUND_WORK_FEATURES,

@@ -61,6 +61,16 @@ Pass `subscribe(listener, { onError })` to receive setup or list errors. After a
 
 `list()` rejects and `subscribe()` throws when the host does not advertise `features.agentBackgroundWork`; ask the user to update the host. For an item with `canStop`, call `backgroundWork.stop(item)` to wait for provider confirmation. Stop requires `features.agentBackgroundWorkStop`.
 
+## Follow an agent's provider sub-agents
+
+Provider sub-agents are the sub-agents and workflows a provider runs inside an agent's turn, such as Claude Code `Task` and `Workflow` agents or Codex sub-threads. They are not Paseo agents and have no handle of their own.
+
+```ts
+const unsubscribe = agent.providerSubagents.subscribe((subagents) => render(subagents));
+```
+
+`subscribe()` calls the listener with the current list once the subscription is established, again after each reconnect, then with the whole list each time a sub-agent is added, changes status, or is removed. Changes that arrive while the list is being read are applied over it. Timeline rows are not delivered; use the sub-agent timeline to read a conversation. Use `list()` for a one-shot read. Each entry has `id`, `parentAgentId`, `parentSubagentId` (or `null`), `provider`, `title`, `description`, `status` (`"running"`, `"completed"`, `"failed"`, or `"canceled"`), `createdAt`, `updatedAt`, and optional `subtitle`. Pass `subscribe(listener, { onError })` to receive setup or list errors.
+
 ## Follow timeline events
 
 ```ts

@@ -65,6 +65,7 @@ import type {
   FetchAgentTimelineDirection,
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
+  ProviderSubagentListPayload,
   SendMessageOptions,
   WaitForFinishResult,
 } from "./daemon-client.js";
@@ -404,6 +405,32 @@ export interface PaseoAgentBackgroundWorkSubscribeOptions {
   onError?: (error: unknown) => void;
 }
 
+/** A sub-agent the provider runs inside an agent's turn, such as a Claude Code Task or a Codex sub-thread. */
+export type PaseoProviderSubagent = ProviderSubagentListPayload["subagents"][number];
+
+export interface PaseoProviderSubagentsHandle {
+  /** Reads the agent's current provider sub-agents once. */
+  list(options?: { requestId?: string; timeout?: number }): Promise<PaseoProviderSubagent[]>;
+  /**
+   * Calls `listener` with the agent's current sub-agents once the subscription is established,
+   * again after each reconnect, then with the full list each time one is added, changes or is
+   * removed. Timeline rows are not delivered. Returns the unsubscribe function.
+   *
+   * When reading the current list fails, `options.onError` receives the error and `listener` is
+   * not called; without `onError` the error is logged. The read is not retried: the next
+   * reconnect reads the list again.
+   */
+  subscribe(
+    listener: (subagents: PaseoProviderSubagent[]) => void,
+    options?: PaseoProviderSubagentsSubscribeOptions,
+  ): () => void;
+}
+
+export interface PaseoProviderSubagentsSubscribeOptions {
+  /** Receives the error when reading the agent's current list fails. */
+  onError?: (error: unknown) => void;
+}
+
 export interface PaseoAgentHandle {
   readonly id: string;
   readonly address: AgentAddress;
@@ -435,6 +462,7 @@ export interface PaseoAgentHandle {
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
   readonly backgroundWork: PaseoAgentBackgroundWorkHandle;
+  readonly providerSubagents: PaseoProviderSubagentsHandle;
   current(): PaseoAgent | null;
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   /**
@@ -703,6 +731,7 @@ export function createPaseoApi(
     listenAgents,
     (agentId, handler) => own(() => daemonClient.subscribeAgentTimeline(agentId, handler)),
     () => own(() => daemonClient.observeAgentBackgroundWork()),
+    () => own(() => daemonClient.observeEvents(["agent.provider_subagents.update"])),
   );
   const createAgent = async (
     options: PaseoAgentCreateOptions,
@@ -1004,6 +1033,7 @@ function createAgentHandleFactory(
   listen: (handler: PaseoAgentUpdateHandler) => () => void,
   subscribeTimeline: DaemonClient["subscribeAgentTimeline"],
   observeBackgroundWork: () => ReturnType<DaemonClient["observeAgentBackgroundWork"]>,
+  observeProviderSubagents: () => ReturnType<DaemonClient["observeEvents"]>,
 ): AgentHandleFactory {
   return (agent) => {
     const id = typeof agent === "string" ? agent : agent.id;
@@ -1088,6 +1118,78 @@ function createAgentHandleFactory(
               .release()
               .catch((error) =>
                 console.error("Background work subscription cleanup failed", error),
+              );
+          };
+        },
+      },
+      providerSubagents: {
+        list: async (options) => (await daemonClient.listProviderSubagents(id, options)).subagents,
+        subscribe: (listener, options) => {
+          const observation = observeProviderSubagents();
+          type Change =
+            | { kind: "upsert"; subagent: PaseoProviderSubagent }
+            | { kind: "remove"; subagentId: string };
+          let subagents = new Map<string, PaseoProviderSubagent>();
+          // Changes that arrive while a list is in flight, replayed over the list when it lands.
+          let buffered: Change[] | null = null;
+          let sequence = 0;
+          let released = false;
+          const apply = (change: Change) => {
+            if (change.kind === "upsert") subagents.set(change.subagent.id, change.subagent);
+            else subagents.delete(change.subagentId);
+          };
+          const reportError = (error: unknown) => {
+            if (released) return;
+            if (options?.onError) options.onError(error);
+            else console.error("Provider sub-agent subscription failed", error);
+          };
+          observation.subscribe({
+            error: reportError,
+            snapshot: () => {
+              const listed = ++sequence;
+              buffered = [];
+              void daemonClient
+                .listProviderSubagents(id)
+                .then((payload) => {
+                  if (released || listed !== sequence) return undefined;
+                  subagents = new Map(payload.subagents.map((subagent) => [subagent.id, subagent]));
+                  for (const change of buffered ?? []) apply(change);
+                  buffered = null;
+                  listener([...subagents.values()]);
+                  return undefined;
+                })
+                .catch((error) => {
+                  if (listed === sequence) buffered = null;
+                  reportError(error);
+                });
+            },
+            update: (message) => {
+              if (message.type !== "agent.provider_subagents.update") return;
+              const payload = message.payload;
+              let change: Change;
+              if (payload.kind === "upsert") {
+                if (payload.subagent.parentAgentId !== id) return;
+                change = { kind: "upsert", subagent: payload.subagent };
+              } else if (payload.kind === "remove") {
+                if (payload.parentAgentId !== id) return;
+                change = { kind: "remove", subagentId: payload.subagentId };
+              } else {
+                return;
+              }
+              if (buffered) {
+                buffered.push(change);
+                return;
+              }
+              apply(change);
+              listener([...subagents.values()]);
+            },
+          });
+          return () => {
+            released = true;
+            void observation
+              .release()
+              .catch((error) =>
+                console.error("Provider sub-agent subscription cleanup failed", error),
               );
           };
         },

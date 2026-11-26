@@ -59,6 +59,16 @@ unsubscribe();
 
 主机未声明 `features.agentBackgroundWork` 时，`list()` 会 reject，`subscribe()` 会抛出错误；请让用户更新主机。对具有 `canStop` 的项目调用 `backgroundWork.stop(item)`，等待提供方确认。停止操作需要 `features.agentBackgroundWorkStop`。
 
+## 跟踪 Agent 的 Provider 子 Agent {#follow-an-agents-provider-sub-agents}
+
+Provider 子 Agent 是 Provider 在 Agent 的回合内运行的子 Agent 和 workflow，例如 Claude Code 的 `Task`、`Workflow` 子 Agent 或 Codex 子线程。它们不是 Paseo Agent，没有自己的句柄。
+
+```ts
+const unsubscribe = agent.providerSubagents.subscribe((subagents) => render(subagents));
+```
+
+订阅建立后，`subscribe()` 会向监听器投递当前列表；每次重连后，以及每次有子 Agent 新增、状态变化或移除时，也会投递完整列表。读取列表期间到达的变化会叠加在列表之上。不投递时间线行；需要读取对话时请使用子 Agent 时间线。用 `list()` 执行单次读取。每项包含 `id`、`parentAgentId`、可为 `null` 的 `parentSubagentId`、`provider`、`title`、`description`、`status`（`"running"`、`"completed"`、`"failed"` 或 `"canceled"`）、`createdAt`、`updatedAt`，以及可选的 `subtitle`。传入 `subscribe(listener, { onError })` 可接收建立订阅或读取列表失败的错误。
+
 ## 跟踪时间线事件 {#follow-timeline-events}
 
 ```ts
