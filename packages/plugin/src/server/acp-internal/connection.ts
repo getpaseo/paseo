@@ -289,33 +289,40 @@ async function dispatch(
 }
 
 /**
- * Runs one request in its own short-lived runtime. Aborting `signal` closes the runtime, which
- * terminates its process and fails whatever the request still awaits.
+ * Runs one request in its own short-lived runtime and publishes its result before shutting the
+ * runtime down, so a slow session close cannot delay the reply. Aborting `signal` until shutdown
+ * ends closes the runtime, which terminates its process and fails whatever the request awaits.
  */
 async function withRequestRuntime<Result>(
   state: AcpConnectionState,
-  start: { boundarySessionId: string; cwd?: string },
-  signal: AbortSignal,
-  run: (runtime: AcpRuntime) => Promise<Result>,
-): Promise<Result> {
+  request: {
+    boundarySessionId: string;
+    cwd?: string;
+    signal: AbortSignal;
+    run(runtime: AcpRuntime): Promise<Result>;
+    publish(result: Result): void;
+  },
+): Promise<void> {
+  const { signal } = request;
   const runtime = await AcpRuntime.start({
     options: state.options,
     launch: state.launch,
+    boundarySessionId: request.boundarySessionId,
+    cwd: request.cwd,
     env: {},
     emit: state.emit,
     signal,
-    ...start,
   });
   const closeOnAbort = () => void runtime.close().catch(() => undefined);
   signal.addEventListener("abort", closeOnAbort, { once: true });
   try {
     signal.throwIfAborted();
-    const result = await run(runtime);
+    const result = await request.run(runtime);
     signal.throwIfAborted();
-    return result;
+    request.publish(result);
   } finally {
-    signal.removeEventListener("abort", closeOnAbort);
     await (signal.aborted ? runtime.close() : runtime.closeSession());
+    signal.removeEventListener("abort", closeOnAbort);
   }
 }
 
@@ -324,22 +331,24 @@ async function discover(
   state: AcpConnectionState,
   signal: AbortSignal,
 ): Promise<void> {
-  const catalog = await withRequestRuntime(
-    state,
-    { boundarySessionId: "catalog", cwd: input.cwd },
+  await withRequestRuntime(state, {
+    boundarySessionId: "catalog",
+    cwd: input.cwd,
     signal,
-    async (runtime) => {
-      let discovered = await runtime.discover(input.cwd);
+    async run(runtime) {
+      let catalog = await runtime.discover(input.cwd);
       const context = runtime.configContext();
       for (const transformer of state.options.transformers ?? []) {
         if (transformer.discover) {
-          discovered = await transformer.discover(discovered, context);
+          catalog = await transformer.discover(catalog, context);
         }
       }
-      return discovered;
+      return catalog;
     },
-  );
-  state.emit({ type: "catalog", requestId: input.requestId, catalog });
+    publish(catalog) {
+      state.emit({ type: "catalog", requestId: input.requestId, catalog });
+    },
+  });
 }
 
 async function listSessions(
@@ -347,21 +356,22 @@ async function listSessions(
   state: AcpConnectionState,
   signal: AbortSignal,
 ): Promise<void> {
-  const selected = await withRequestRuntime(
-    state,
-    { boundarySessionId: "sessions" },
+  await withRequestRuntime(state, {
+    boundarySessionId: "sessions",
     signal,
-    (runtime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit }),
-  );
-  state.emit({
-    type: "sessions",
-    requestId: input.requestId,
-    sessions: selected.map((session) => ({
-      persistence: nativePersistence(session.sessionId),
-      cwd: session.cwd,
-      title: session.title ?? undefined,
-      updatedAt: session.updatedAt ?? undefined,
-    })),
+    run: (runtime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit }),
+    publish(selected) {
+      state.emit({
+        type: "sessions",
+        requestId: input.requestId,
+        sessions: selected.map((session) => ({
+          persistence: nativePersistence(session.sessionId),
+          cwd: session.cwd,
+          title: session.title ?? undefined,
+          updatedAt: session.updatedAt ?? undefined,
+        })),
+      });
+    },
   });
 }
 

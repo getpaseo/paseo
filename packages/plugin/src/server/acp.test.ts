@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -2342,6 +2343,37 @@ describe("runAcpProvider catalogue requests whose session/new never answers", ()
       expect(
         events.filter((event) => "requestId" in event && event.requestId === "catalog-1"),
       ).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("publishes the catalogue before the probe session starts closing", async () => {
+    const closeMarker = path.join(
+      await mkdtemp(path.join(tmpdir(), "paseo-acp-catalog-close-")),
+      "close-started",
+    );
+    temporaryDirectories.push(path.dirname(closeMarker));
+    // session/close never answers, so the probe's shutdown runs into its close timeout.
+    const executable = await fakeAcp(`const fs = require("node:fs");
+const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "catalog-native", modes: null, configOptions: [] } });
+  else if (message.method === "session/close") fs.writeFileSync(${JSON.stringify(closeMarker)}, "started");
+});`);
+    const { connection, events } = await connect(executable, ["prompt.message", "request.cancel"]);
+    let closingWhenPublished: boolean | undefined;
+    connection.onEvent((event) => {
+      if (event.type === "catalog") closingWhenPublished = existsSync(closeMarker);
+    });
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog-1" });
+      await waitForEvent(events, (event) => event.type === "catalog");
+      expect(closingWhenPublished).toBe(false);
     } finally {
       await connection.close();
     }

@@ -177,10 +177,20 @@ if (input.type === "catalog") {
   const controller = new AbortController();
   pending.set(input.requestId, controller);
   void readCatalog({ signal: controller.signal })
-    .then((catalog) => {
-      if (!controller.signal.aborted)
-        emit({ type: "catalog", requestId: input.requestId, catalog });
-    })
+    .then(
+      (catalog) => {
+        if (!controller.signal.aborted)
+          emit({ type: "catalog", requestId: input.requestId, catalog });
+      },
+      (error) => {
+        if (!controller.signal.aborted)
+          emit({
+            type: "request.failed",
+            requestId: input.requestId,
+            error: { message: String(error) },
+          });
+      },
+    )
     .finally(() => pending.delete(input.requestId));
 }
 if (input.type === "request.cancel") {
