@@ -146,6 +146,10 @@ export async function runAttachCommand(
     const unsubscribe = client.subscribeAgentTimeline(resolvedId, (message) => {
       if (message.type === "agent.timeline.replacement") {
         console.log("\n[Timeline replaced; earlier output is no longer current]");
+      } else if (message.type === "agent.timeline.rewind") {
+        console.log(
+          "\n[Conversation rewound; output since the rewound message is no longer current]",
+        );
       } else if (message.type === "agent.timeline.subscription_restored") {
         console.log("\n[Reconnected; live output resumed. Events may have been missed.]");
       } else if (message.type === "agent.timeline.error") {

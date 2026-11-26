@@ -7,7 +7,7 @@ import {
   waitForTimelineToolCall,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import { RewindNotAppliedError, type AgentStreamEvent } from "../agent-sdk-types.js";
 import { AgentManager } from "../agent-manager.js";
 
 const questionItem = {
@@ -170,9 +170,10 @@ test("failed rewind preserves question state", async () => {
   const { session, events } = await setupRewind(true);
   try {
     const before = session.describePersistence();
-    await expect(session.revertConversation({ messageId: "rewind-here" })).rejects.toThrow(
-      "Rewind failed",
-    );
+    const rewind = session.revertConversation({ messageId: "rewind-here" });
+    await expect(rewind).rejects.toThrow("Rewind failed");
+    // The fork was never adopted, so the conversation is known to be unchanged.
+    await expect(rewind).rejects.toBeInstanceOf(RewindNotAppliedError);
     expect(session.describePersistence()).toEqual(before);
     expect(session.getPendingPermissions().map((p) => p.id)).toEqual([
       "permission-earlier-pending",
@@ -184,8 +185,8 @@ test("failed rewind preserves question state", async () => {
   }
 });
 
-async function manage(session: CodexAppServerAgentSession) {
-  const manager = new AgentManager({
+function managerFor(session: CodexAppServerAgentSession): AgentManager {
+  return new AgentManager({
     clients: {
       codex: {
         provider: "codex",
@@ -198,6 +199,10 @@ async function manage(session: CodexAppServerAgentSession) {
     },
     logger: createTestLogger(),
   });
+}
+
+async function manage(session: CodexAppServerAgentSession) {
+  const manager = managerFor(session);
   const agent = await manager.createAgent(
     { provider: "codex", cwd: tmpdir(), model: "gpt-5.4" },
     undefined,
@@ -208,9 +213,20 @@ async function manage(session: CodexAppServerAgentSession) {
 
 test("manager publishes and saves the provider state after rewind", async () => {
   const { session } = await setupRewind();
-  const { manager, agent } = await manage(session);
+  const manager = managerFor(session);
+  // A resumed agent imports the provider history it can rewind.
+  const agent = await manager.resumeAgentFromPersistence(session.describePersistence(), {
+    cwd: tmpdir(),
+    model: "gpt-5.4",
+  });
   try {
     await manager.rewind(agent.id, "rewind-here", "conversation");
+    expect(session.describePersistence().sessionId).toBe("forked-thread");
+    expect(
+      (await manager.fetchTimeline(agent.id, { limit: 0 })).rows.flatMap((row) =>
+        row.item.type === "user_message" ? [row.item.text] : [],
+      ),
+    ).toEqual(["earlier"]);
     const snapshot = manager.getAgent(agent.id)!;
     expect(Array.from(snapshot.pendingPermissions.keys())).toEqual(["permission-earlier-pending"]);
     expect(snapshot.persistence).toEqual(session.describePersistence());
@@ -225,6 +241,7 @@ test("manager snapshots capture pending and answered question state before the t
   const { manager, agent } = await manage(session);
   try {
     await ask();
+    await manager.flush();
     const [permission] = session.getPendingPermissions();
     expect(manager.getAgent(agent.id)?.persistence?.metadata?.asyncQuestions).toEqual([
       {
@@ -258,6 +275,7 @@ test("concurrent answers deliver only one response to the active Codex turn", as
   const { manager, agent } = await manage(session);
   try {
     await ask();
+    await manager.flush();
     const [permission] = session.getPendingPermissions();
     const results = await Promise.allSettled([
       manager.respondToPermission(agent.id, permission.id, answer),
@@ -278,6 +296,7 @@ test("a failed submission releases the request so the user can retry", async () 
   const { manager, agent } = await manage(session);
   try {
     await ask();
+    await manager.flush();
     const [permission] = session.getPendingPermissions();
     await expect(manager.respondToPermission(agent.id, permission.id, answer)).rejects.toThrow(
       "Delivery failed",

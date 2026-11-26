@@ -33,7 +33,7 @@ describe("resolveAssistantTurnForkBoundary", () => {
   it("forks a failed assistant turn from its Paseo timeline cursor without a provider message id", () => {
     const failedTurn = {
       ...assistantMessage("assistant-error", 2),
-      timelineCursor: { epoch: "timeline-1", seq: 42 },
+      timelineCursor: { epoch: "timeline-1", seq: 42, anchorSeq: 42 },
     };
 
     expect(
@@ -50,7 +50,7 @@ describe("resolveAssistantTurnForkBoundary", () => {
   it("includes the provider message id with a supported timeline cursor", () => {
     const selected = {
       ...assistantMessage("assistant-1", 2, "msg-assistant-1"),
-      timelineCursor: { epoch: "timeline-1", seq: 42 },
+      timelineCursor: { epoch: "timeline-1", seq: 42, anchorSeq: 42 },
     };
 
     expect(
@@ -68,7 +68,7 @@ describe("resolveAssistantTurnForkBoundary", () => {
   it("falls back to the provider message id when timeline cursors are unsupported", () => {
     const selected = {
       ...assistantMessage("assistant-1", 2, "msg-assistant-1"),
-      timelineCursor: { epoch: "timeline-1", seq: 42 },
+      timelineCursor: { epoch: "timeline-1", seq: 42, anchorSeq: 42 },
     };
 
     expect(
@@ -116,7 +116,7 @@ describe("resolveAssistantTurnForkBoundary", () => {
   it("resolves a fork boundary from the reply a plugin card replaced", () => {
     const reply = {
       ...assistantMessage("assistant-1", 2, "msg-assistant-1"),
-      timelineCursor: { epoch: "timeline-1", seq: 42 },
+      timelineCursor: { epoch: "timeline-1", seq: 42, anchorSeq: 42 },
     };
     const card: StreamItem = {
       kind: "plugin",
@@ -154,7 +154,7 @@ describe("resolveAssistantTurnForkBoundary", () => {
     const appended: StreamItem = {
       kind: "plugin",
       id: "plugin/card-1",
-      timelineCursor: { epoch: "timeline-1", seq: 42 },
+      timelineCursor: { epoch: "timeline-1", seq: 42, anchorSeq: 42 },
       timestamp: timestamp(2),
       pluginId: "plugin",
       pluginItemId: "card-1",

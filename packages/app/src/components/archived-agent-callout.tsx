@@ -7,6 +7,7 @@ import { FOOTER_HEIGHT } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { KeyboardTranslateView } from "@/keyboard/shift";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/contexts/toast-context";
 import type { Theme } from "@/styles/theme";
 import { toErrorMessage } from "@/utils/error-messages";
 
@@ -19,6 +20,7 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const toast = useToast();
   const [isUnarchiving, setIsUnarchiving] = useState(false);
   const [unarchiveError, setUnarchiveError] = useState<string | null>(null);
 
@@ -27,12 +29,15 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
     setIsUnarchiving(true);
     setUnarchiveError(null);
     try {
-      await client.refreshAgent(agentId);
+      const refreshed = await client.refreshAgent(agentId);
+      if (refreshed.historyDiverged) {
+        toast.show(t("workspace.tabs.toasts.reloadedAgentHistoryDiverged"), { variant: "warning" });
+      }
     } catch (error) {
       setUnarchiveError(toErrorMessage(error));
       setIsUnarchiving(false);
     }
-  }, [client, isConnected, isUnarchiving, agentId]);
+  }, [client, isConnected, isUnarchiving, agentId, toast, t]);
 
   return (
     <KeyboardTranslateView style={styles.container}>

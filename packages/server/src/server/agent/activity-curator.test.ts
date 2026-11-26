@@ -3,7 +3,7 @@ import { buildAgentForkContextAttachment, curateAgentActivity } from "./activity
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { formatAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
-import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { AgentTimeline } from "./timeline/index.js";
 
 function toolCallItem(params: {
   callId: string;
@@ -41,12 +41,15 @@ function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
 }
 
 /** Rows as the daemon hands them to a fork: projected by the timeline store. */
-function storeTimeline(items: readonly AgentTimelineItem[]) {
-  const store = new InMemoryAgentTimelineStore();
-  store.initialize("agent-1");
-  for (const item of items) store.append("agent-1", item);
-  const { epoch, rows } = store.fetch("agent-1", { limit: 0 });
-  return { epoch, rows };
+async function storeTimeline(items: readonly AgentTimelineItem[]) {
+  const store = new AgentTimeline();
+  const scope = { agentId: "agent-1" };
+  await store.create(scope);
+  await store.append(
+    scope,
+    items.map((item) => ({ item })),
+  );
+  return await store.fetch(scope, { limit: 0 });
 }
 
 function backgroundTaskItem(input: { status: "running" | "completed"; log: string }) {
@@ -452,8 +455,8 @@ second line'`,
     expect(result.attachment.text).toContain("[Assistant] Done.");
   });
 
-  it("forks at a response that background work outlives, by message id", () => {
-    const { rows } = storeTimeline([
+  it("forks at a response that background work outlives, by message id", async () => {
+    const { rows } = await storeTimeline([
       { type: "user_message", text: "Audit in the background", messageId: "user-1" },
       backgroundTaskItem({ status: "running", log: "scanning" }),
       { type: "assistant_message", text: "Audit started.", messageId: "assistant-1" },
@@ -473,8 +476,8 @@ second line'`,
     expect(result.attachment.text).not.toContain("Any findings?");
   });
 
-  it("forks at a response that background work outlives, by timeline cursor", () => {
-    const { epoch, rows } = storeTimeline([
+  it("forks at a response that background work outlives, by timeline cursor", async () => {
+    const { epoch, rows } = await storeTimeline([
       { type: "user_message", text: "Audit in the background", messageId: "user-1" },
       backgroundTaskItem({ status: "running", log: "scanning" }),
       { type: "assistant_message", text: "Audit started." },

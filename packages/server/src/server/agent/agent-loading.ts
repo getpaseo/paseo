@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 
 import type { AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
-import type { AgentStorage } from "./agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import {
   buildConfigOverrides,
   extractAttention,
@@ -18,20 +18,11 @@ export class AgentNotFoundError extends Error {
   }
 }
 
-interface PendingAgentInitialization {
-  promise: Promise<ManagedAgent>;
-  options: { broadcastTimeline: boolean };
-}
-
-const pendingAgentInitializations = new Map<string, PendingAgentInitialization>();
+const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 
 export type AgentLoaderManager = Pick<
   AgentManager,
-  | "createAgentFromRecord"
-  | "getAgent"
-  | "getRegisteredProviderIds"
-  | "hydrateTimelineFromProvider"
-  | "resumeAgentFromPersistence"
+  "createAgentFromRecord" | "getAgent" | "getRegisteredProviderIds" | "resumeAgentFromPersistence"
 > &
   Partial<Pick<AgentManager, "waitForAgentClose">>;
 
@@ -39,9 +30,52 @@ export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
   agentStorage: AgentStorage;
   validProviders?: Iterable<AgentProvider>;
-  broadcastTimeline?: boolean;
   purpose?: "history" | "interactive";
   logger: Logger;
+}
+
+/** The agent's history to read: from its runtime, or stored, with no provider session opened. */
+export type AgentHistorySource =
+  | { kind: "live"; agent: ManagedAgent }
+  | { kind: "stored"; record: StoredAgentRecord };
+
+export interface LoadAgentHistoryDeps extends EnsureAgentLoadedDeps {
+  agentManager: AgentLoaderManager & Pick<AgentManager, "hasStoredHistory">;
+}
+
+/**
+ * Resolves an agent for reading its history. A loaded agent is read live. A stored agent whose
+ * history the timeline holds is read without resuming its provider, so it reads even when its
+ * provider is no longer available. Otherwise the provider is resumed, which imports its history
+ * and requires the provider.
+ */
+export async function loadAgentHistory(
+  agentId: string,
+  deps: LoadAgentHistoryDeps,
+): Promise<AgentHistorySource> {
+  const live = deps.agentManager.getAgent(agentId);
+  if (live) return { kind: "live", agent: live };
+  const record = await deps.agentStorage.get(agentId);
+  if (!record) throw new AgentNotFoundError(agentId);
+  if (await deps.agentManager.hasStoredHistory(agentId)) {
+    return { kind: "stored", record };
+  }
+  return { kind: "live", agent: await ensureAgentLoaded(agentId, deps) };
+}
+
+async function requireLoadableRecord(
+  agentId: string,
+  deps: EnsureAgentLoadedDeps,
+): Promise<StoredAgentRecord> {
+  const record = await deps.agentStorage.get(agentId);
+  if (!record) {
+    throw new AgentNotFoundError(agentId);
+  }
+  const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
+  if (!isStoredAgentProviderAvailable(record, validProviders)) {
+    throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+  }
+  return record;
 }
 
 export async function ensureUnarchivedAgentLoaded(
@@ -75,8 +109,7 @@ export async function ensureAgentLoaded(
 
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
-    inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
+    return inflight;
   }
 
   const existing = deps.agentManager.getAgent(agentId);
@@ -91,24 +124,12 @@ export async function ensureAgentLoaded(
 
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
-    laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
+    return laterInflight;
   }
 
-  const pendingOptions = {
-    broadcastTimeline: deps.broadcastTimeline === true,
-  };
   const initPromise = (async () => {
-    const record = await deps.agentStorage.get(agentId);
-    if (!record) {
-      throw new AgentNotFoundError(agentId);
-    }
-
+    const record = await requireLoadableRecord(agentId, deps);
     const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
-    if (!isStoredAgentProviderAvailable(record, validProviders)) {
-      throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
-    }
-
     const handle = toAgentPersistenceHandle(validProviders, record.persistence);
 
     let snapshot: ManagedAgent;
@@ -130,20 +151,16 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
-    });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
-  const pending: PendingAgentInitialization = { promise: initPromise, options: pendingOptions };
-  pendingAgentInitializations.set(agentId, pending);
+  pendingAgentInitializations.set(agentId, initPromise);
 
   try {
     return await initPromise;
   } finally {
     const current = pendingAgentInitializations.get(agentId);
-    if (current === pending) {
+    if (current === initPromise) {
       pendingAgentInitializations.delete(agentId);
     }
   }

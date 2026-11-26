@@ -56,6 +56,7 @@ export function ChatFind({
   agentId,
   serverId,
   epoch,
+  rewindSeq,
   items,
   viewportRef,
   revealLoadedMessage,
@@ -95,8 +96,8 @@ export function ChatFind({
   );
   const state = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
   useEffect(() => {
-    model.updateHistory(epoch, items);
-  }, [model, epoch, items]);
+    model.updateHistory(epoch, items, rewindSeq);
+  }, [model, epoch, items, rewindSeq]);
   useEffect(() => () => model.close(), [model]);
   useEffect(() => {
     if (!active) model.close();

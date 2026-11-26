@@ -246,7 +246,9 @@ export class LegacySubscriptions {
         );
       case "agent.timeline.set_subscription.request":
         return (
-          (message.type === "agent_stream" || message.type === "agent.timeline.replacement") &&
+          (message.type === "agent_stream" ||
+            message.type === "agent.timeline.replacement" ||
+            message.type === "agent.timeline.rewind") &&
           (query.agentIds as string[]).includes(message.payload.agentId)
         );
       case "session.events.set_subscription.request":
