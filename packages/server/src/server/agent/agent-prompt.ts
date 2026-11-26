@@ -301,6 +301,8 @@ export interface SendPromptToAgentParams {
    * schedule fires, notify-on-finish).
    */
   unarchive?: boolean;
+  /** Reject an archived target so any messages joined to this prompt return to the queue. */
+  rejectArchived?: boolean;
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
   logger: Logger;
@@ -438,6 +440,7 @@ export async function sendPreparedPromptToAgent(
   let archivedAtToRestore: string | null = null;
   if (record?.archivedAt) {
     if (!unarchive) {
+      if (params.rejectArchived) throw new Error(`Agent ${params.agentId} is archived`);
       return {
         disposition: "turn_started",
         started: Promise.resolve(),

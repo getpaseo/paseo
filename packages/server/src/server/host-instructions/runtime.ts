@@ -7,7 +7,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import type { Logger } from "pino";
 import { z } from "zod";
-import { prepareAgentMessage } from "../agent/agent-messages/index.js";
+import type { AgentMessageDelivery } from "../agent/agent-messages/index.js";
 import { AgentManagerShuttingDownError, type AgentManager } from "../agent/agent-manager.js";
 import {
   AgentTurnBusyError,
@@ -93,6 +93,7 @@ interface ActiveInstruction {
   id: string;
   admitted: boolean;
   claim?: Promise<InboxRequest | null>;
+  releaseQueueOnShutdown?: () => void;
 }
 
 export class HostInstructionsRuntime {
@@ -117,7 +118,7 @@ export class HostInstructionsRuntime {
     private relayId: string | null,
   ) {}
 
-  start(): void {
+  start(agentMessages: Pick<AgentMessageDelivery, "sendDirect">): void {
     if (this.stopped || this.timer) return;
     const { agentManager } = this.options;
     this.unsubscribeStop = agentManager.onStop((agentId) => {
@@ -133,7 +134,9 @@ export class HostInstructionsRuntime {
       { replayState: false },
     );
     this.timer = setInterval(() => {
-      void this.tick().catch(() => this.options.logger.warn("host_instruction_tick_failed"));
+      void this.tick(agentMessages).catch(() =>
+        this.options.logger.warn("host_instruction_tick_failed"),
+      );
     }, 3000);
     this.timer.unref();
   }
@@ -383,6 +386,7 @@ export class HostInstructionsRuntime {
     // Once admission is closed, these claims cannot run. Release them without
     // waiting for a provider to finish loading a session during shutdown.
     const unadmitted = [...this.active.values()].filter((dispatch) => !dispatch.admitted);
+    for (const dispatch of unadmitted) dispatch.releaseQueueOnShutdown?.();
     this.closing = this.closeRelayAndRelease(unadmitted);
     return this.closing;
   }
@@ -562,7 +566,7 @@ export class HostInstructionsRuntime {
     return targets;
   }
 
-  private async tick() {
+  private async tick(agentMessages: Pick<AgentMessageDelivery, "sendDirect">) {
     if (this.stopped || this.busy) return;
     this.busy = true;
     void Promise.allSettled(
@@ -583,7 +587,7 @@ export class HostInstructionsRuntime {
         if (this.active.has(agentId)) continue;
         const dispatch = { sourceId, id: instruction.id, admitted: false };
         this.active.set(agentId, dispatch);
-        void this.dispatch(dispatch, instruction)
+        void this.dispatch(dispatch, instruction, agentMessages)
           .catch(() =>
             this.options.logger.warn(
               { requestId: instruction.id },
@@ -608,6 +612,7 @@ export class HostInstructionsRuntime {
   private async dispatch(
     active: ActiveInstruction,
     instruction: z.infer<typeof HostInstructionSchema>,
+    agentMessages: Pick<AgentMessageDelivery, "sendDirect">,
   ) {
     const { sourceId } = active;
     const { target, id } = instruction;
@@ -622,33 +627,54 @@ export class HostInstructionsRuntime {
     if (this.stopped || claim?.state !== "dispatching") return;
     let blockedByPermission = false;
     try {
-      const { prompt, messageId } = prepareAgentMessage(
-        `Host instruction from ${sourceId}. To send an explicit reply, use reply_host_instruction with sourceId "${sourceId}" and id "${id}".\n\n${instruction.prompt}`,
-        { kind: "host-instruction", serverId: sourceId },
-        claim.messageId,
-      );
-      const result = await sendPreparedPromptToAgent({
-        agentManager,
-        agentStorage,
-        agentId: target.agentId,
-        prompt,
-        runOptions: { clientMessageId: messageId },
-        idleOnly: true,
-        unarchive: false,
-        allowOutOfBand: false,
-        admit: () => {
-          if (this.stopped || !this.inbox.canDispatch(sourceId, id)) return false;
-          if (agentManager.getAgent(target.agentId)?.pendingPermissions.size) {
-            blockedByPermission = true;
-            return false;
-          }
-          active.admitted = true;
-          return true;
+      const result = await agentMessages.sendDirect(
+        {
+          recipientId: target.agentId,
+          prompt: `Host instruction from ${sourceId}. To send an explicit reply, use reply_host_instruction with sourceId "${sourceId}" and id "${id}".\n\n${instruction.prompt}`,
+          source: { kind: "host-instruction", serverId: sourceId },
+          messageId: claim.messageId,
+          unarchive: false,
         },
-        logger,
-      });
-      if (result.disposition !== "turn_started") throw new Error("Expected an instruction turn");
-      await waitForAgentRunStartWithTimeout(agentManager, target.agentId, result.started);
+        async (joined) => {
+          if (this.stopped) throw new AgentManagerShuttingDownError();
+          // Let the message queue reclaim its riders even if session loading is still blocked.
+          const abandoned = new Promise<never>((_resolve, reject) => {
+            active.releaseQueueOnShutdown = () => reject(new AgentManagerShuttingDownError());
+          });
+          return Promise.race([
+            abandoned,
+            sendPreparedPromptToAgent({
+              agentManager,
+              agentStorage,
+              agentId: target.agentId,
+              prompt: joined.prompt,
+              sessionMode: joined.sessionMode,
+              runOptions: { clientMessageId: claim.messageId },
+              idleOnly: true,
+              // A host instruction cannot reopen an archived conversation.
+              unarchive: false,
+              rejectArchived: true,
+              allowOutOfBand: false,
+              admit: () => {
+                if (this.stopped || !this.inbox.canDispatch(sourceId, id)) return false;
+                if (agentManager.getAgent(target.agentId)?.pendingPermissions.size) {
+                  blockedByPermission = true;
+                  return false;
+                }
+                active.admitted = true;
+                return true;
+              },
+              logger,
+            }).then(async (dispatch) => {
+              if (dispatch.disposition !== "turn_started") {
+                throw new Error("Expected an instruction turn");
+              }
+              await waitForAgentRunStartWithTimeout(agentManager, target.agentId, dispatch.started);
+              return dispatch;
+            }),
+          ]);
+        },
+      );
       await this.inbox.markRunning(sourceId, id, target.agentId);
       await this.inbox.finish(sourceId, id, await result.finished);
       logger.info(

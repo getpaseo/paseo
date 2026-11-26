@@ -30,7 +30,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 
 import { AgentManager } from "../agent/agent-manager.js";
-import { parseAgentMessage, projectAgentMessages } from "../agent/agent-messages/index.js";
+import {
+  parseAgentMessage,
+  parseAgentMessages,
+  projectAgentMessages,
+} from "../agent/agent-messages/index.js";
 import { HostInstructionInbox } from "../host-instructions/inbox.js";
 import * as privateFiles from "../private-files.js";
 import { generateLocalPairingOffer } from "../pairing-offer.js";
@@ -890,7 +894,7 @@ async function waitForCapturedLog(
   );
 
   test(
-    "holds a queued host instruction after Stop until a new prompt starts",
+    "holds a queued host instruction after Stop until a new prompt takes the held agent messages",
     { timeout: 60000 },
     async () => {
       const cleanup: (() => Promise<unknown>)[] = [];
@@ -942,6 +946,9 @@ async function waitForCapturedLog(
         const agent = await workspace.agents.create({
           config: { provider: "claude/claude-test", modeId: "default" },
         });
+        const sender = await workspace.agents.create({
+          config: { provider: "claude/claude-test" },
+        });
         await destinationClient.sendAgentMessage(agent.id, "Please read /etc/hosts");
         const manager = destination.daemon.agentManager;
         await expect.poll(() => manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1);
@@ -966,6 +973,12 @@ async function waitForCapturedLog(
           (await mcp.callTool({ name: "get_host_instruction_status", arguments: { id } }))
             .structuredContent?.state;
         await expect.poll(status, { timeout: 15000 }).toBe("queued");
+        await expect(
+          destinationClient.sendAgentMessage(agent.id, "Older queued message", {
+            sourceAgentId: sender.id,
+            activeTurnBehavior: "queue",
+          }),
+        ).resolves.toMatchObject({ deliveryStatus: "queued" });
         await destinationClient.cancelAgent(agent.id);
 
         const scan = vi.spyOn(HostInstructionInbox.prototype, "list");
@@ -980,9 +993,29 @@ async function waitForCapturedLog(
           scan.mockRestore();
         }
 
-        await destinationClient.sendAgentMessage(agent.id, "Continue the local conversation");
+        await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Continue from the other host",
+          },
+        });
         await expect.poll(status, { timeout: 15000 }).toBe("completed");
         expect(started).toHaveBeenCalledTimes(3);
+        const joined = started.mock.calls[1]?.[0];
+        expect(typeof joined).toBe("string");
+        expect(parseAgentMessages(joined)).toEqual([
+          expect.objectContaining({
+            source: expect.objectContaining({ kind: "agent-message", agentId: sender.id }),
+            text: "Older queued message",
+          }),
+          expect.objectContaining({
+            source: { kind: "host-instruction", serverId: sourceId },
+            text: expect.stringContaining("Continue from the other host"),
+          }),
+        ]);
       } finally {
         for (const close of cleanup.toReversed()) await close();
         await stopRelay();

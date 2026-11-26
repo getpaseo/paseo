@@ -2013,6 +2013,7 @@ export async function createPaseoDaemon(
               relayRuntime?.setEnabled(value === true);
             });
             await hubRelationships.start();
+            hostInstructions.start(wsServer.agentMessages);
           };
 
           logAndResolve().then(resolve, reject);
@@ -2034,10 +2035,10 @@ export async function createPaseoDaemon(
       // model loading doesn't block the server from accepting connections.
       speechService.start();
       scriptHealthMonitor.start();
-      hostInstructions.start();
     } catch (error) {
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);
+      await hostInstructions.close().catch(() => undefined);
       unsubscribePluginProviders();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
