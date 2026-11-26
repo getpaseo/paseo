@@ -19,6 +19,7 @@ const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
 
 const gatedCiJobs = new Map([
   ["quality", { name: "quality", contracts: ["format", "quality", "relay", "sdk"] }],
+  ["sdk-tests-windows", { name: "sdk-tests (windows-latest)", contract: "sdk" }],
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
@@ -437,7 +438,7 @@ test("stable iOS releases upload once and distribute to external testers before 
 test("eight Playwright shards share two-worker coverage", () => {
   const source = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(source);
-  assert.equal(jobs.size, 21);
+  assert.equal(jobs.size, 22);
   for (let shard = 1; shard <= 8; shard++) {
     const job = jobs.get(`playwright-${shard}`).join("\n");
     assert.match(job, new RegExp(`PLAYWRIGHT_SHARD: "${shard}/8"`));
@@ -517,6 +518,13 @@ test("quality preserves commands and routes each domain independently after fail
   assert.equal(accepts(jobCondition, {}, { cancelled: true }), false);
 });
 
+test("plugin SDK tests run on real Windows", () => {
+  const sdk = jobBlocks(readFileSync(ciWorkflowPath, "utf8")).get("sdk-tests-windows").join("\n");
+  assert.match(sdk, /^    runs-on: windows-latest$/m);
+  assert.match(sdk, /run: npm run test --workspace=@getpaseo\/plugin$/m);
+  assert.doesNotMatch(sdk, /continue-on-error/);
+});
+
 test("Windows units and integration run independently with complete routed coverage", () => {
   const source = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(source);
@@ -568,7 +576,7 @@ test("Windows units and integration run independently with complete routed cover
   assert.doesNotMatch(invocations[0], / -t /);
   assert.equal(
     invocations[1],
-    'vitest run --fileParallelism --maxWorkers=3 src/server/agent/providers/omp/history.e2e.test.ts src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts src/server/agent/agent-mcp.e2e.test.ts -t "agent MCP protocol negotiation|merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments|connected hosts|password-protected daemon refuses|replays selected OMP history"',
+    'vitest run --fileParallelism --maxWorkers=3 src/server/agent/providers/omp/history.e2e.test.ts src/server/daemon-e2e/git-operations.e2e.test.ts src/server/session.create-agent-worktree-autoarchive.e2e.test.ts src/server/agent/providers/opencode-bridge.local.e2e.test.ts src/server/daemon-e2e/relay-transport.e2e.test.ts src/server/agent/agent-mcp.e2e.test.ts src/server/plugins/agent-tools.e2e.test.ts -t "agent MCP protocol negotiation|merges into|creates a worktree and auto-archives both|versioned runtime|oversized attachments|connected hosts|password-protected daemon refuses|replays selected OMP history|changes the launch wrap"',
   );
   const serverConfig = readFileSync(new URL("packages/server/vitest.config.ts", repoRoot), "utf8");
   assert.doesNotMatch(serverConfig, /maxWorkers:\s*1\b/);

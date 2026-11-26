@@ -962,6 +962,8 @@ export const ar: TranslationResources = {
         },
         archiveWarning: {
           title: 'الأرشيف "{{workspaceName}}"؟',
+          bulkTitle: "أرشفة {{count}} مساحات عمل؟",
+          bulkWorkspaceReason: "{{workspaceName}}: {{reason}}",
           confirm: "أرشيف",
           cancel: "يلغي",
           uncommittedChanges: "تغييرات غير ملتزم بها",
@@ -1371,6 +1373,7 @@ export const ar: TranslationResources = {
         rename: "إعادة تسمية مساحة العمل",
         pin: "تثبيت في الأعلى",
         unpin: "إلغاء التثبيت",
+        select: "تحديد",
         archive: "أرشيف",
         archiveWorkspace: "أرشفة مساحة العمل",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
@@ -1389,6 +1392,10 @@ export const ar: TranslationResources = {
         submit: "إعادة تسمية",
         invalidBranchName: "اسم الفرع غير صالح",
       },
+      selection: {
+        count: "تم تحديد {{count}}",
+        exit: "إنهاء التحديد",
+      },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متوفر",
         pathCopied: "تم نسخ المسار",
@@ -1396,7 +1403,9 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         hideFailed: "فشل في إخفاء مساحة العمل",
         archiveFailed: "فشل في أرشفة مساحة العمل",
+        archiveMultipleFailed: "فشل في أرشفة {{count}} مساحات عمل",
         archived: "تمت أرشفة مساحة العمل",
+        archivedCount: "تمت أرشفة {{count}} مساحات عمل",
         undoArchive: "تراجع",
         undoArchiveFailed: "تعذّر التراجع عن الأرشفة",
       },

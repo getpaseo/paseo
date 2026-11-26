@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished, test } from "vitest";
+import { createPaseoClient } from "@getpaseo/client";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { resolveDaemonVersion } from "../daemon-version.js";
@@ -523,6 +524,7 @@ test("agent creation hooks change the provider and environment before the sessio
     acknowledgeClose: true,
     hooks: `
   server.addHook("agent.create.before", async ({ request }) => {
+    console.log(JSON.stringify({ hook: "agent.create.before", workspaceId: request.workspaceId }));
     return { ...request, config: { ...request.config, provider: "${PROVIDER_ID}", model: "shutdown-model" }, env: { ...request.env, HOOK_CREATE: "created" } };
   });
   server.addHook("agent.open.before", async ({ request }) => {
@@ -554,9 +556,14 @@ test("agent creation hooks change the provider and environment before the sessio
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(pluginDirectory);
     await client.installDirectoryPlugin(extraPlugin);
+    const workspace = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+    });
+    const workspaceId = workspace.workspace!.id;
     const agent = await client.createAgent({
       provider: "claude",
       cwd: directory,
+      workspaceId,
       title: "Hook test",
       systemPrompt: "Saved instructions",
     });
@@ -577,6 +584,7 @@ test("agent creation hooks change the provider and environment before the sessio
           });
       })
       .toMatchObject([
+        { hook: "agent.create.before", workspaceId },
         {
           hook: "agent.open.before",
           request: { agentId: agent.id, env: { HOOK_CREATE: "created" } },
@@ -616,6 +624,226 @@ test("agent creation hooks change the provider and environment before the sessio
     await rm(directory, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("plugins wrap or refuse terminals and worktree setup and teardown commands", async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "paseo-terminal-hooks-")));
+  const repository = path.join(root, "repository");
+  const pluginDirectory = path.join(root, "plugin");
+  const hookLog = path.join(root, "hooks.jsonl");
+  // Spaces and cmd.exe syntax in the sandbox's install path, as in `C:\Program Files (x86)`.
+  const sandboxDirectory = path.join(root, "sandbox launcher (x86)");
+  await mkdir(sandboxDirectory);
+  const launchLog = path.join(sandboxDirectory, "launches.jsonl");
+  const launcher = path.join(sandboxDirectory, "launcher.cjs");
+  // The sandbox stand-in: records the argv after its own two, marks the environment, runs the rest.
+  await writeFile(
+    launcher,
+    `const { appendFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const [log, tag, command, ...args] = process.argv.slice(2);
+appendFileSync(log, JSON.stringify({ tag, command, args }) + "\\n");
+const child = spawn(command, args, { stdio: "inherit", env: { ...process.env, WRAPPED: tag } });
+for (const signal of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(signal, () => child.kill(signal));
+child.on("exit", (code) => process.exit(code ?? 1));
+`,
+  );
+  // Windows sandboxes ship a `.cmd` entry point, which runs through cmd.exe and forwards `%*`.
+  const commandScript = path.join(sandboxDirectory, "sandbox run.cmd");
+  await writeFile(commandScript, `@"${process.execPath}" "${launcher}" %*\r\n`);
+  const wrapPrefix = process.platform === "win32" ? [commandScript] : [process.execPath, launcher];
+  // Node one-liners read the environment the same way under bash, PowerShell, and cmd.exe.
+  const setupCommand = `node -e "require('fs').writeFileSync('setup.txt', 'setup:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
+  const teardownCommand = `node -e "require('fs').writeFileSync(require('path').join(process.env.PASEO_SOURCE_CHECKOUT_PATH, '..', 'teardown.txt'), 'teardown:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
+  const scriptCommand = `node -e "console.log('script:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED)"`;
+  execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
+  await writeFile(
+    path.join(repository, "paseo.json"),
+    JSON.stringify({
+      worktree: { setup: setupCommand, teardown: teardownCommand },
+      scripts: { greet: { command: scriptCommand } },
+    }),
+  );
+  execFileSync("git", ["add", "paseo.json"], { cwd: repository, stdio: "pipe" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+    ].concat(["commit", "-m", "initial"]),
+    { cwd: repository, stdio: "pipe" },
+  );
+  await mkdir(pluginDirectory);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "terminal-hooks", requirements: { paseo: ">=0.8.0" } }),
+  );
+  await writeFile(
+    path.join(pluginDirectory, "index.server.ts"),
+    `
+import { appendFile } from "node:fs/promises";
+const log = (entry) => appendFile(${JSON.stringify(hookLog)}, JSON.stringify(entry) + "\\n");
+const wrap = (tag) => [...${JSON.stringify(wrapPrefix)}, ${JSON.stringify(launchLog)}, tag];
+export default function contribute(server) {
+  server.addHook("terminal.create.before", async ({ request }) => {
+    await log({ hook: "terminal", request });
+    if (request.name === "Refused") throw new Error("terminals named Refused stay closed");
+    return {
+      ...request,
+      env: { ...request.env, HOOK_MARK: request.source + ":" + request.workspaceId },
+      wrap: wrap("terminal"),
+    };
+  });
+  server.addHook("command.run.before", async ({ request }) => {
+    await log({ hook: "command", request });
+    return {
+      ...request,
+      env: { ...request.env, HOOK_MARK: request.purpose + "-hooked" },
+      wrap: wrap(request.purpose),
+    };
+  });
+  return () => {};
+}
+`,
+  );
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  const sdk = createPaseoClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client.installDirectoryPlugin(pluginDirectory)).status).toBe("running");
+    await sdk.connect();
+    const created = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "hooks", worktreeSlug: "hooks" },
+    });
+    expect(created.error).toBeNull();
+    const workspaceId = created.workspace!.id;
+    const worktree = created.workspace!.workspaceDirectory;
+
+    // Setup runs after creation, behind the wrap, with the hook's environment.
+    await expect
+      .poll(() => readFile(path.join(worktree, "setup.txt"), "utf8").catch(() => ""), {
+        timeout: 30_000,
+      })
+      .toBe("setup:setup-hooked:setup");
+
+    const program = [
+      "-e",
+      "console.log('program:' + process.env.HOOK_MARK + ':' + process.env.WRAPPED); setInterval(() => {}, 1000)",
+    ];
+    const wrapped = await sdk.terminals.create({
+      workspaceId,
+      name: "Wrapped",
+      command: process.execPath,
+      args: program,
+    });
+    await expect
+      .poll(async () => (await wrapped.capture({ stripAnsi: true })).lines.join("\n"))
+      .toContain(`program:client:${workspaceId}:terminal`);
+
+    await expect(sdk.terminals.create({ workspaceId, name: "Refused" })).rejects.toThrow(
+      "Plugin terminal-hooks terminal.create.before failed: terminals named Refused stay closed",
+    );
+
+    // A script's command is typed into a default shell, and that shell runs behind the wrap.
+    await client.startWorkspaceScript(workspaceId, "greet");
+    await expect
+      .poll(async () => {
+        const script = (await sdk.terminals.list({ workspaceId })).entries.find(
+          (entry) => entry.name === "greet",
+        );
+        if (!script) return "";
+        return (await sdk.terminals.ref(script.id).capture({ stripAnsi: true })).lines.join("\n");
+      })
+      .toContain(`script:script:${workspaceId}:terminal`);
+
+    await client.archiveWorkspace(workspaceId);
+    await expect
+      .poll(() => readFile(path.join(root, "teardown.txt"), "utf8").catch(() => ""), {
+        timeout: 30_000,
+      })
+      .toBe("teardown:teardown-hooked:teardown");
+
+    const readJsonLines = async (file: string) =>
+      (await readFile(file, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    const entries = await readJsonLines(hookLog);
+    expect(entries.filter((entry) => entry.hook === "command")).toEqual([
+      {
+        hook: "command",
+        request: {
+          workspaceId,
+          cwd: worktree,
+          purpose: "setup",
+          command: setupCommand,
+          env: expect.any(Object),
+        },
+      },
+      {
+        hook: "command",
+        request: {
+          workspaceId,
+          cwd: worktree,
+          purpose: "teardown",
+          command: teardownCommand,
+          env: expect.any(Object),
+        },
+      },
+    ]);
+    expect(entries.filter((entry) => entry.hook === "terminal")).toEqual([
+      {
+        hook: "terminal",
+        request: {
+          workspaceId,
+          cwd: worktree,
+          source: "client",
+          name: "Wrapped",
+          command: process.execPath,
+          args: program,
+          input: null,
+          env: {},
+        },
+      },
+      {
+        hook: "terminal",
+        request: expect.objectContaining({ source: "client", name: "Refused" }),
+      },
+      {
+        hook: "terminal",
+        request: expect.objectContaining({
+          workspaceId,
+          source: "script",
+          name: "greet",
+          command: null,
+          input: scriptCommand,
+        }),
+      },
+    ]);
+    // Paseo appended what it would have run: the shell for a command, the program, the default shell.
+    const launches = await readJsonLines(launchLog);
+    expect(launches.map(({ tag, command }) => ({ tag, command }))).toEqual([
+      { tag: "setup", command: expect.any(String) },
+      { tag: "terminal", command: process.execPath },
+      { tag: "terminal", command: expect.any(String) },
+      { tag: "teardown", command: expect.any(String) },
+    ]);
+    expect(launches[0].args.at(-1)).toBe(setupCommand);
+    expect(launches[1].args).toEqual(program);
+    expect(launches[3].args.at(-1)).toBe(teardownCommand);
+  } finally {
+    await sdk.close();
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
 
 test("invalid output from an untyped plugin rejects creation before later callbacks run", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-invalid-hook-"));

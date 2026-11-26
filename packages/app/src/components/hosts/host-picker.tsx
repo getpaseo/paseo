@@ -232,6 +232,7 @@ export interface HostPickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   anchorRef: React.RefObject<View | null>;
+  restoreFocusRef?: ComboboxProps["restoreFocusRef"];
   includeAllHost?: boolean;
   includeAddHost?: boolean;
   onAddHost?: () => void;
@@ -254,6 +255,7 @@ export function HostPicker({
   open,
   onOpenChange,
   anchorRef,
+  restoreFocusRef,
   includeAllHost,
   includeAddHost,
   onAddHost,
@@ -404,6 +406,7 @@ export function HostPicker({
         open={open}
         onOpenChange={onOpenChange}
         anchorRef={anchorRef}
+        restoreFocusRef={restoreFocusRef}
         desktopPlacement={desktopPlacement}
         desktopMinWidth={desktopMinWidth}
       />

@@ -68,6 +68,49 @@ export type PluginWorktreeCreateRequest = {
     }
 );
 
+/**
+ * A launcher Paseo starts a process behind: the process runs as `[...wrap, command, ...args]`.
+ * The executable is an absolute path on the daemon host. Each element is one argument; no shell
+ * parses them, except that Windows runs a `.cmd` or `.bat` executable through cmd.exe. A later
+ * hook may omit the wrap or return the same one; a different wrap fails the operation.
+ */
+export type PluginLaunchWrap = readonly [executable: string, ...args: string[]];
+
+/** A terminal Paseo is about to create in a workspace. */
+export interface PluginTerminalCreateRequest {
+  readonly workspaceId: string;
+  readonly cwd: string;
+  /**
+   * `agent`: an agent's Paseo tool. `script`: a `paseo.json` script or service. `worktree`: a
+   * `paseo.json` worktree terminal. `client`: everything else (the app, CLI, SDK, plugins).
+   */
+  readonly source: "client" | "agent" | "script" | "worktree";
+  readonly name: string | null;
+  /** The program the terminal starts, or `null` for the user's default shell. */
+  readonly command: string | null;
+  readonly args: readonly string[];
+  /** What Paseo types into the shell once it starts: the command of a script or worktree terminal. */
+  readonly input: string | null;
+  /** Environment overrides for the terminal; excludes the daemon's inherited environment. */
+  env: Record<string, string>;
+  /** Start the terminal as `[...wrap, command, ...args]`; with no `command`, the default shell. */
+  wrap?: PluginLaunchWrap;
+}
+
+/** A `paseo.json` worktree setup or teardown command Paseo is about to run. */
+export interface PluginCommandRunRequest {
+  /** Null when a worktree is archived by path and no workspace record remains. */
+  readonly workspaceId: string | null;
+  readonly cwd: string;
+  readonly purpose: "setup" | "teardown";
+  /** The command as written in `paseo.json`. Paseo runs it through a shell. */
+  readonly command: string;
+  /** Environment overrides for the command; excludes the daemon's inherited environment. */
+  env: Record<string, string>;
+  /** Start the command's shell as `[...wrap, shell, ...shellArgs]`. */
+  wrap?: PluginLaunchWrap;
+}
+
 export interface PluginHookAgent {
   id: string;
   workspaceId: string | null;
@@ -98,6 +141,12 @@ export interface PluginSessionOpenRequest {
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;
+  /**
+   * Start the provider's harness as `[...wrap, command, ...args]`. Only a provider whose snapshot
+   * entry has `launchWrap: true` applies it; any other provider fails the open. Not saved on the
+   * agent.
+   */
+  wrap?: PluginLaunchWrap;
 }
 
 export type PluginTurnOutcome =
@@ -138,17 +187,27 @@ export interface PluginHookRequests {
     env?: Record<string, string>;
     /** Stored on the new agent. Always present in the payload; return it changed to change it. */
     metadata?: Record<string, JsonValue>;
+    /** The workspace the agent is created in, which `config.cwd` alone does not identify. */
+    readonly workspaceId: string | null;
   };
   "agent.open.before": PluginSessionOpenRequest;
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;
+  "terminal.create.before": PluginTerminalCreateRequest;
+  "command.run.before": PluginCommandRunRequest;
 }
 
-/** What a hook may return. An omitted `metadata` stays as it was. */
-type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
+/** What a hook may return. An omitted `metadata` or `workspaceId` stays as it was. */
+type PluginHookRequestResults = Omit<
+  PluginHookRequests,
+  "agent.open.before" | "agent.create.before"
+> & {
   // Read-only fields added after the first SDK stay optional in a result; omitted means unchanged.
   "agent.open.before": Omit<PluginSessionOpenRequest, "metadata" | "background"> & {
     readonly background?: boolean;
     metadata?: Readonly<Record<string, JsonValue>>;
+  };
+  "agent.create.before": Omit<PluginHookRequests["agent.create.before"], "workspaceId"> & {
+    readonly workspaceId?: string | null;
   };
 };
 
@@ -217,6 +276,8 @@ export const pluginHookRegistry = {
   "agent.turn.after": { waits: false },
   "agent.permission.before": { waits: false },
   "agent.permission.after": { waits: false },
+  "terminal.create.before": { waits: true },
+  "command.run.before": { waits: true },
 } as const satisfies Record<keyof PluginHooks, { waits: boolean }>;
 
 // COMPAT(pluginHookNames): added in v0.14, remove after 2027-04-30

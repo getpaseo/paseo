@@ -435,6 +435,7 @@ function buildResumeStartInput(input: {
     cwd: input.resumeConfig.cwd,
     protocolMode: "rpc-ui",
     env: input.launchContext?.env,
+    wrap: input.launchContext?.wrap,
     session: input.sessionFile,
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
@@ -2362,15 +2363,18 @@ export class OmpAgentClient implements AgentClient {
     runtimeSession: OmpRuntimeSession,
     catalog: PaseoToolCatalog | undefined,
     config: AgentSessionConfig,
-    launchEnv?: NodeJS.ProcessEnv,
+    launch: Pick<OmpStartSessionInput, "env" | "wrap">,
   ): Promise<OmpHostToolRouter | undefined> {
     if (!catalog && !config.mcpServers) {
       return;
     }
-    const bridge = await OmpMcpBridge.connect(config.mcpServers, config.cwd, this.logger, {
-      ...process.env,
-      ...this.runtimeSettings?.env,
-      ...launchEnv,
+    // Paseo starts stdio MCP servers for OMP, so they run behind the agent's wrap as OMP does.
+    const bridge = await OmpMcpBridge.connect({
+      servers: config.mcpServers,
+      cwd: config.cwd,
+      logger: this.logger,
+      env: { ...process.env, ...this.runtimeSettings?.env, ...launch.env },
+      wrap: launch.wrap,
     });
     const router = new OmpHostToolRouter({ runtimeSession, catalog, bridge, logger: this.logger });
     try {
@@ -2413,6 +2417,7 @@ export class OmpAgentClient implements AgentClient {
         ...(config.pluginAppendSystemPrompt ?? []),
       ),
       env: launchContext?.env,
+      wrap: launchContext?.wrap,
     };
     const runtimeSession = await this.resolveRuntime(config.providerOptions).startSession(
       startInput,
@@ -2423,7 +2428,7 @@ export class OmpAgentClient implements AgentClient {
         runtimeSession,
         launchContext?.paseoTools,
         config,
-        startInput.env,
+        startInput,
       );
       const initialState = await this.restoreFastMode(
         runtimeSession,
@@ -2493,7 +2498,7 @@ export class OmpAgentClient implements AgentClient {
         runtimeSession,
         launchContext?.paseoTools,
         resumeConfig.config,
-        startInput.env,
+        startInput,
       );
       const resumedState = await this.applyResumeModel(runtimeSession, resumeConfig.model);
       const config = {
@@ -2572,7 +2577,7 @@ export class OmpAgentClient implements AgentClient {
           next,
           launchContext?.paseoTools,
           config,
-          startInput.env,
+          startInput,
         );
         const state = await next.getState();
         await this.restoreFastMode(next, config, state);

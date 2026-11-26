@@ -988,6 +988,8 @@ export const fr: TranslationResources = {
         },
         archiveWarning: {
           title: "Archiver « {{workspaceName}} » ?",
+          bulkTitle: "Archiver {{count}} espaces de travail ?",
+          bulkWorkspaceReason: "{{workspaceName}} : {{reason}}",
           confirm: "Archiver",
           cancel: "Annuler",
           uncommittedChanges: "Modifications non commitées",
@@ -1401,6 +1403,7 @@ export const fr: TranslationResources = {
         rename: "Renommer l’espace de travail",
         pin: "Épingler en haut",
         unpin: "Désépingler",
+        select: "Sélectionner",
         archive: "Archiver",
         archiveWorkspace: "Archiver l’espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",
@@ -1419,6 +1422,10 @@ export const fr: TranslationResources = {
         submit: "Renommer",
         invalidBranchName: "Nom de branche invalide",
       },
+      selection: {
+        count: "{{count}} sélectionnés",
+        exit: "Quitter la sélection",
+      },
       toasts: {
         workspacePathUnavailable: "Chemin de l’espace de travail indisponible",
         pathCopied: "Chemin copié",
@@ -1426,7 +1433,9 @@ export const fr: TranslationResources = {
         hostDisconnected: "L’hôte n’est pas connecté",
         hideFailed: "Impossible de masquer l’espace de travail",
         archiveFailed: "Impossible d’archiver l’espace de travail",
+        archiveMultipleFailed: "Impossible d’archiver {{count}} espaces de travail",
         archived: "Espace de travail archivé",
+        archivedCount: "{{count}} espaces de travail archivés",
         undoArchive: "Annuler",
         undoArchiveFailed: "Impossible d’annuler l’archivage",
       },

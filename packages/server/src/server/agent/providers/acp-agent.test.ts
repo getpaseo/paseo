@@ -5864,3 +5864,64 @@ describe("custom ACP provider with configured models", () => {
     expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
   });
 });
+
+describe("ACPAgentSession launch wrap against an ACP agent", () => {
+  const fakeAgentPath = fileURLToPath(new URL("./test-utils/fake-acp-agent.mjs", import.meta.url));
+
+  test("starts the agent and its terminals behind the session's wrap", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-acp-wrap-"));
+    const record = path.join(root, "launches.jsonl");
+    const launcher = path.join(root, "launcher.cjs");
+    await writeFile(
+      launcher,
+      `
+      const [, , ...argv] = process.argv;
+      require("node:fs").appendFileSync(${JSON.stringify(record)}, JSON.stringify(argv) + "\\n");
+      const child = require("node:child_process").spawn(argv[0], argv.slice(1), { stdio: "inherit" });
+      child.on("exit", (code) => process.exit(code ?? 1));
+    `,
+    );
+    const session = new ACPAgentSession(
+      { provider: "acp", cwd: root },
+      {
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, fakeAgentPath, "{}"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        wrap: [process.execPath, launcher],
+      },
+    );
+    try {
+      await session.initializeNewSession();
+      const { terminalId } = await session.createTerminal({
+        sessionId: "session-1",
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        cwd: root,
+      });
+      await expect(
+        session.waitForTerminalExit({ sessionId: "session-1", terminalId }),
+      ).resolves.toMatchObject({ exitCode: 0 });
+
+      const launches = (await readFile(record, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(launches).toEqual([
+        [process.execPath, fakeAgentPath, "{}"],
+        [process.execPath, "-e", "process.exit(0)"],
+      ]);
+    } finally {
+      await session.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

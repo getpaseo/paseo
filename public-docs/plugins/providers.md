@@ -99,6 +99,31 @@ const { stdout } = await execCommand(launch.command, [...launch.args, "--version
 });
 ```
 
+### Run sessions behind a launch wrap
+
+A [launch wrap](./hooks.md#launch-wraps) from `agent.open.before` reaches your provider as
+`session.open`'s `config.wrap`. To support it:
+
+1. Set `launchWrap: true` on the registration. Paseo publishes `launchWrap: true` in the provider
+   snapshot, so plugins can choose your provider before it connects.
+2. Add `session.launch_wrap` to the connection's supported capabilities. Paseo sends `config.wrap`
+   only to a connection that negotiated it, and fails a wrapped open on any other connection.
+3. Start the session's process with the `wrap` option. `spawnProcess` then starts
+   `[...wrap, command, ...args]` and handles Windows launchers for the wrap's executable:
+
+```ts
+const child = spawnProcess(launch.command, [...launch.args, "serve"], {
+  wrap: input.config.wrap,
+  env: launch.env,
+  cwd: input.config.cwd,
+  stdio: "pipe",
+});
+```
+
+Start every process that does the session's work behind the wrap. If one process serves several
+sessions, start a separate one for a wrapped session. `runAcpProvider({ command })` does all of this
+for an ACP agent.
+
 ## Return models, modes, and thinking options
 
 Paseo requests the catalog before creating a session. Return the choices needed by the agent form:

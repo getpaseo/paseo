@@ -996,6 +996,8 @@ export const es: TranslationResources = {
         },
         archiveWarning: {
           title: '¿Archivo "{{workspaceName}}"?',
+          bulkTitle: "¿Archivar {{count}} espacios de trabajo?",
+          bulkWorkspaceReason: "{{workspaceName}}: {{reason}}",
           confirm: "Archivo",
           cancel: "Cancelar",
           uncommittedChanges: "Cambios no confirmados",
@@ -1408,6 +1410,7 @@ export const es: TranslationResources = {
         rename: "Cambiar nombre del espacio de trabajo",
         pin: "Anclar arriba",
         unpin: "Desanclar",
+        select: "Seleccionar",
         archive: "Archivo",
         archiveWorkspace: "Archivar espacio de trabajo",
         hideFromSidebar: "Ocultar de la barra lateral",
@@ -1426,6 +1429,10 @@ export const es: TranslationResources = {
         submit: "Rebautizar",
         invalidBranchName: "Nombre de sucursal no válido",
       },
+      selection: {
+        count: "{{count}} seleccionados",
+        exit: "Salir de la selección",
+      },
       toasts: {
         workspacePathUnavailable: "RutaWorkspaceno disponible",
         pathCopied: "Ruta copiada",
@@ -1433,7 +1440,9 @@ export const es: TranslationResources = {
         hostDisconnected: "Hostno está conectado",
         hideFailed: "No se pudo ocultar el espacio de trabajo",
         archiveFailed: "No se pudo archivar el espacio de trabajo",
+        archiveMultipleFailed: "No se pudieron archivar {{count}} espacios de trabajo",
         archived: "Espacio de trabajo archivado",
+        archivedCount: "{{count}} espacios de trabajo archivados",
         undoArchive: "Deshacer",
         undoArchiveFailed: "No se pudo deshacer el archivado",
       },

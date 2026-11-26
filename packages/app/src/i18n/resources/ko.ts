@@ -969,6 +969,8 @@ export const ko: TranslationResources = {
         },
         archiveWarning: {
           title: '"{{workspaceName}}"를 보관하시겠습니까?',
+          bulkTitle: "워크스페이스 {{count}}개를 보관하시겠습니까?",
+          bulkWorkspaceReason: "{{workspaceName}}: {{reason}}",
           confirm: "보관",
           cancel: "취소",
           uncommittedChanges: "커밋되지 않은 변경 사항",
@@ -1378,6 +1380,7 @@ export const ko: TranslationResources = {
         rename: "워크스페이스 이름 변경",
         pin: "상단에 고정",
         unpin: "고정 해제",
+        select: "선택",
         archive: "보관",
         archiveWorkspace: "워크스페이스 보관",
         hideFromSidebar: "사이드바에서 숨기기",
@@ -1396,6 +1399,10 @@ export const ko: TranslationResources = {
         submit: "이름 변경",
         invalidBranchName: "잘못된 브랜치 이름",
       },
+      selection: {
+        count: "{{count}}개 선택됨",
+        exit: "선택 종료",
+      },
       toasts: {
         workspacePathUnavailable: "워크스페이스 경로를 사용할 수 없습니다",
         pathCopied: "경로가 복사되었습니다",
@@ -1403,7 +1410,9 @@ export const ko: TranslationResources = {
         hostDisconnected: "호스트가 연결되어 있지 않습니다",
         hideFailed: "워크스페이스를 숨기지 못했습니다",
         archiveFailed: "워크스페이스를 보관하지 못했습니다.",
+        archiveMultipleFailed: "워크스페이스 {{count}}개를 보관하지 못했습니다",
         archived: "워크스페이스를 보관했습니다",
+        archivedCount: "워크스페이스 {{count}}개를 보관했습니다",
         undoArchive: "실행 취소",
         undoArchiveFailed: "보관을 취소하지 못했습니다",
       },

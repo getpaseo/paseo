@@ -954,6 +954,8 @@ export const zhCN: TranslationResources = {
         },
         archiveWarning: {
           title: "归档「{{workspaceName}}」？",
+          bulkTitle: "归档 {{count}} 个工作区？",
+          bulkWorkspaceReason: "{{workspaceName}}：{{reason}}",
           confirm: "归档",
           cancel: "取消",
           uncommittedChanges: "未 commit 的变更",
@@ -1361,6 +1363,7 @@ export const zhCN: TranslationResources = {
         rename: "重命名 workspace",
         pin: "置顶",
         unpin: "取消置顶",
+        select: "选择",
         archive: "归档",
         archiveWorkspace: "归档工作区",
         hideFromSidebar: "从侧边栏隐藏",
@@ -1378,6 +1381,10 @@ export const zhCN: TranslationResources = {
         submit: "重命名",
         invalidBranchName: "无效的分支名称",
       },
+      selection: {
+        count: "已选 {{count}} 项",
+        exit: "退出选择",
+      },
       toasts: {
         workspacePathUnavailable: "Workspace 路径不可用",
         pathCopied: "路径已复制",
@@ -1385,7 +1392,9 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         hideFailed: "隐藏 workspace 失败",
         archiveFailed: "归档工作区失败",
+        archiveMultipleFailed: "归档 {{count}} 个工作区失败",
         archived: "工作区已归档",
+        archivedCount: "已归档 {{count}} 个工作区",
         undoArchive: "撤销",
         undoArchiveFailed: "无法撤销归档",
       },

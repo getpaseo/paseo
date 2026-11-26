@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -45,6 +46,7 @@ function recordingProvider(native: boolean, callbacks: TestAgentClientOptions = 
   const provider: AgentClient = {
     provider: inner.provider,
     capabilities: { ...inner.capabilities, supportsNativePaseoTools: native },
+    supportsLaunchWrap: true,
     createSession: async (config, context, options) => {
       launches.push({ config, context });
       return inner.createSession(config, context, options);
@@ -476,20 +478,31 @@ test("structured tool results get model-visible text when text is omitted", asyn
   }
 }, 60_000);
 
-test("reloading a plugin retires its old attachments before an agent reopens", async () => {
+test("reloading a plugin retires its old attachments, and both the agent MCP and the launch-time catalog reach the new instance", async () => {
   const h = await setup(true);
   try {
     const a = await h.create({ x: "y" });
     const mcp = await h.mcp(a.id);
-    const oldCatalog = h.launches.at(-1)!.context!.paseoTools!;
+    const launchCatalog = h.launches.at(-1)!.context!.paseoTools!;
     expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
+    expect((await launchCatalog.executeTool("plugin_echo", { text: "before" })).isError).not.toBe(
+      true,
+    );
     await h.client.reloadPlugin("tools-test");
-    expect((await mcp.listTools()).tools.map((tool) => tool.name)).not.toContain("plugin_echo");
     expect(h.daemon.daemon.agentManager.getPluginTools(a.id)).toEqual([]);
-    expect(await oldCatalog.executeTool("plugin_echo", { text: "retired" })).toMatchObject({
-      isError: true,
-      content: [{ type: "text", text: expect.stringContaining("not available") }],
+    // A native provider keeps the catalog it launched with. Its call reaches the restarted plugin, whose own call
+    // count starts again.
+    const result = await launchCatalog.executeTool("plugin_echo", { text: "after restart" });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse((result.content as { text: string }[])[0].text)).toMatchObject({
+      input: { text: "after restart" },
+      calls: 1,
     });
+    expect((await mcp.listTools()).tools.map((tool) => tool.name)).toContain("plugin_echo");
+    expect(h.daemon.daemon.agentManager.getPluginTools(a.id).map((tool) => tool.name)).toEqual([
+      "plugin_echo",
+    ]);
+    expect(h.launches).toHaveLength(1);
   } finally {
     await h.close();
   }
@@ -575,6 +588,44 @@ test("an idle agent reopens once before its next prompt after a session-hook plu
   }
 }, 60_000);
 
+function wrapPluginSource(profile: string) {
+  return `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    wrap: [${JSON.stringify(process.execPath)}, "--sandbox-profile", ${JSON.stringify(profile)}],
+  }));
+  return () => {};
+}
+`;
+}
+
+test("a plugin reload that changes the launch wrap reopens the idle session with the new wrap", async () => {
+  const h = await setup(false, wrapPluginSource("first"));
+  try {
+    const a = await h.create();
+    expect(h.launches.at(-1)!.context?.wrap).toEqual([
+      process.execPath,
+      "--sandbox-profile",
+      "first",
+    ]);
+    await writeFile(
+      path.join(h.directory, "tools-test", "index.server.ts"),
+      wrapPluginSource("second"),
+    );
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, a.id, "after reload");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.context?.wrap).toEqual([
+      process.execPath,
+      "--sandbox-profile",
+      "second",
+    ]);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
 test("a busy agent is steered after plugin reload and reopens only at its next idle prompt", async () => {
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => {
@@ -610,6 +661,673 @@ test("a busy agent is steered after plugin reload and reopens only at its next i
     await h.close();
   }
 }, 60_000);
+
+const openCounterSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+let opens = 0;
+const tool = defineAgentTool({
+  name: "other_opens", description: "How often this plugin saw the session open",
+  input: z.object({}),
+  async execute() { return { text: String(opens) }; },
+});
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    opens++;
+    return { ...request, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a busy agent's MCP lists and calls a restarted plugin's tools without reopening", async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const h = await setup(false, pluginSource, undefined, {
+    beforeTurnComplete: async () => blocked,
+  });
+  try {
+    await h.install("other-hook", openCounterSource);
+    const a = await h.create({ x: "y" });
+    await h.client.sendMessage(a.id, "busy prompt", { activeTurnBehavior: "steer" });
+    await expect.poll(() => h.daemon.daemon.agentManager.hasInFlightRun(a.id)).toBe(true);
+    await h.client.reloadPlugin("tools-test");
+    await h.client.sendMessage(a.id, "message while busy", { activeTurnBehavior: "steer" });
+    expect(h.daemon.daemon.agentManager.hasInFlightRun(a.id)).toBe(true);
+
+    const mcp = await h.mcp(a.id);
+    const names = (await mcp.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain("plugin_echo");
+    expect(names).toContain("other_opens");
+    const result = await mcp.callTool({
+      name: "plugin_echo",
+      arguments: { text: "after restart" },
+    });
+    expect(result.isError).not.toBe(true);
+    // The restarted plugin answers: its own call count starts again.
+    expect(JSON.parse((result.content as { text: string }[])[0].text)).toMatchObject({
+      agent: { id: a.id },
+      input: { text: "after restart" },
+      calls: 1,
+    });
+    // Only the restarted plugin saw the replayed open.
+    expect(await mcp.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "1" }],
+    });
+    expect(h.launches).toHaveLength(1);
+    expect(h.events.interrupts).toBe(0);
+
+    // The plugin's env records the open reason, and the replay's `refresh` differs from the create, so the session
+    // reopens at its next idle prompt to apply it.
+    release();
+    await expect.poll(() => h.daemon.daemon.agentManager.hasInFlightRun(a.id)).toBe(false);
+    await sendAndFinish(h, a.id, "idle prompt");
+    expect(h.launches).toHaveLength(2);
+  } finally {
+    release();
+    await h.close();
+  }
+}, 60_000);
+
+function subagentStatuses(h: Awaited<ReturnType<typeof setup>>, agentId: string) {
+  return h.daemon.daemon.agentManager
+    .listProviderSubagentActivity()
+    .filter((subagent) => subagent.parentAgentId === agentId)
+    .map((subagent) => subagent.status);
+}
+
+test("reloading a plugin keeps an agent it does not target on its provider session, with its subagents running", async () => {
+  const h = await setup();
+  try {
+    const b = await h.create();
+    await sendAndFinish(h, b.id, "Emit a provider child");
+    expect(subagentStatuses(h, b.id)).toEqual(["running"]);
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, b.id, "after reload");
+    expect(h.launches).toHaveLength(1);
+    expect(subagentStatuses(h, b.id)).toEqual(["running"]);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("a restarted plugin that attaches the same tools keeps the agent's session, and the new instance answers", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    const a = await h.create();
+    await sendAndFinish(h, a.id, "Emit a provider child");
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, a.id, "after reload");
+    expect(h.launches).toHaveLength(1);
+    expect(subagentStatuses(h, a.id)).toEqual(["running"]);
+    // The restarted instance counts the one replayed open.
+    const mcp = await h.mcp(a.id);
+    expect(await mcp.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "1" }],
+    });
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("reverting a plugin's tool edit lets the agent keep its session, with its subagents running", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    const a = await h.create();
+    await sendAndFinish(h, a.id, "Emit a provider child");
+    const description = async () =>
+      (await (await h.mcp(a.id)).listTools()).tools.find((tool) => tool.name === "other_opens")
+        ?.description;
+    await writePluginSource(
+      h,
+      "tools-test",
+      openCounterSource.replace("How often this plugin saw the session open", "Edited"),
+    );
+    await h.client.reloadPlugin("tools-test");
+    expect(await description()).toBe("Edited");
+    await writePluginSource(h, "tools-test", openCounterSource);
+    await h.client.reloadPlugin("tools-test");
+    expect(await description()).toBe("How often this plugin saw the session open");
+    await sendAndFinish(h, a.id, "after revert");
+    expect(h.launches).toHaveLength(1);
+    expect(subagentStatuses(h, a.id)).toEqual(["running"]);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const breakableSource = (arm: string) => `
+import { existsSync } from "node:fs";
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+const tool = defineAgentTool({
+  name: "breakable_ping", description: "Ping",
+  input: z.object({}),
+  async execute() { return { text: "pong" }; },
+});
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (existsSync(${JSON.stringify(arm)})) throw new Error("broken edit");
+    return { ...request, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a reopen that a broken plugin fails keeps the running session's plugin tools, and fixing the plugin restores its own", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), "paseo-breakable-"));
+  const arm = path.join(scratch, "arm");
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("breakable", breakableSource(arm));
+    const a = await h.create();
+    await writeFile(arm, "");
+    await h.client.reloadPlugin("breakable");
+    const manager = h.daemon.daemon.agentManager;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow("broken edit");
+    expect(h.launches).toHaveLength(1);
+    const broken = await h.mcp(a.id);
+    expect(await listedToolNames(broken)).not.toContain("breakable_ping");
+    expect(await broken.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "2" }],
+    });
+
+    await rm(arm);
+    await h.client.reloadPlugin("breakable");
+    const fixed = await h.mcp(a.id);
+    expect(await fixed.callTool({ name: "breakable_ping", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "pong" }],
+    });
+    // The fixed plugin attaches what the running session launched with, so no reopen is due.
+    await manager.reloadStalePluginSession(a.id);
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+}, 60_000);
+
+const paseoNameClashSource = openCounterSource.replace(
+  "tools: [...request.tools, tool]",
+  'tools: [...request.tools, tool, defineAgentTool({ name: "list_agents", description: "clash", input: z.object({}), async execute() { return { text: "clash" }; } })]',
+);
+
+test("a reopen that a plugin's Paseo tool name fails is retried, keeps the running session's plugin tools, and fixing the plugin restores its own", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("unrelated", breakableSource(path.join(h.directory, "never-armed")));
+    const a = await h.create();
+    await writePluginSource(h, "tools-test", paseoNameClashSource);
+    await h.client.reloadPlugin("tools-test");
+    const manager = h.daemon.daemon.agentManager;
+    const collision = /list_agents from plugin tools-test collides with Paseo tool/;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+    expect(h.launches).toHaveLength(1);
+    const broken = await h.mcp(a.id);
+    expect(await listedToolNames(broken)).not.toContain("other_opens");
+    expect(await broken.callTool({ name: "breakable_ping", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "pong" }],
+    });
+
+    await writePluginSource(h, "tools-test", openCounterSource);
+    await h.client.reloadPlugin("tools-test");
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "other_opens", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "1" }] });
+    await manager.reloadStalePluginSession(a.id);
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const claimsOtherOpensSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+const tool = defineAgentTool({
+  name: "other_opens", description: "clash",
+  input: z.object({}),
+  async execute() { return { text: "clash" }; },
+});
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, tools: [...request.tools, tool] }));
+  return () => {};
+}
+`;
+
+test("after a rejected reopen, a tool name stays with the plugin that had it, even when the claimant sorts first", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-claimant", breakableSource(path.join(h.directory, "never-armed")));
+    const a = await h.create();
+    await writePluginSource(h, "a-claimant", claimsOtherOpensSource);
+    await h.client.reloadPlugin("a-claimant");
+    const manager = h.daemon.daemon.agentManager;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(
+      /other_opens from plugin tools-test collides with plugin a-claimant/,
+    );
+    expect(h.launches).toHaveLength(1);
+    const result = await (await h.mcp(a.id)).callTool({ name: "other_opens", arguments: {} });
+    expect(result.content).not.toEqual([{ type: "text", text: "clash" }]);
+    expect(manager.getPluginTools(a.id).map((tool) => tool.pluginId)).toEqual(["tools-test"]);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const metadataGatedSource = openCounterSource.replace(
+  "opens++;",
+  'opens++;\n    if (request.metadata.tools !== "on") return;',
+);
+
+test("a plugin reload reruns its callback with the agent's current metadata", async () => {
+  const h = await setup(false, metadataGatedSource);
+  try {
+    const manager = h.daemon.daemon.agentManager;
+    const a = await h.create();
+    expect(await listedToolNames(await h.mcp(a.id))).not.toContain("other_opens");
+    await manager.setMetadata(a.id, { tools: "on" });
+    await h.client.reloadPlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("other_opens");
+    // The session launched without the tool, so it reopens at the next idle prompt.
+    await sendAndFinish(h, a.id, "after metadata");
+    expect(h.launches).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const setsXSource = `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, env: { ...request.env, X: "yes" } }));
+  return () => {};
+}
+`;
+
+const needsXSource = `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.env.X !== "yes") return;
+    return { ...request, env: { ...request.env, Y: "yes" } };
+  });
+  return () => {};
+}
+`;
+
+test("a plugin reruns when an earlier plugin changes what it receives, and the session reopens with the composed launch", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-sets-x", setsXSource);
+    const a = await h.create();
+    expect(h.launches.at(-1)!.context!.env).toMatchObject({ X: "yes" });
+    await h.client.disablePlugin("a-sets-x");
+    await h.install("b-needs-x", needsXSource);
+    await listedToolNames(await h.mcp(a.id));
+    await h.client.enablePlugin("a-sets-x");
+    await listedToolNames(await h.mcp(a.id));
+    // b-needs-x now sees X and adds Y, which the running session never launched with.
+    await sendAndFinish(h, a.id, "after re-enable");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.context!.env).toMatchObject({ X: "yes", Y: "yes" });
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const hintSource = (hint: string) => `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, env: { ...request.env, HINT: ${JSON.stringify(hint)} } }));
+  return () => {};
+}
+`;
+
+const hintReaderSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    const { HINT: hint, ...env } = request.env;
+    const tool = defineAgentTool({
+      name: "read_tool_hint", description: "The hint from the plugin before",
+      input: z.object({}),
+      async execute() { return { text: String(hint) }; },
+    });
+    return { ...request, env, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a later plugin rerun by an earlier plugin's edit keeps its own tool, and the session keeps running", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-hint", hintSource("red"));
+    await h.install("b-hint-reader", hintReaderSource);
+    const a = await h.create();
+    await writePluginSource(h, "a-hint", hintSource("green"));
+    await h.client.reloadPlugin("a-hint");
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "read_tool_hint", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "green" }] });
+    // b-hint-reader removes the hint, so the launch is unchanged.
+    await sendAndFinish(h, a.id, "after hint change");
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+// The tool waits for the gate file while it answers the first hint.
+const slowHintReaderSource = (entered: string, gate: string) => `
+import { existsSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    const { HINT: hint, ...env } = request.env;
+    const tool = defineAgentTool({
+      name: "read_tool_hint", description: "The hint from the plugin before",
+      input: z.object({}),
+      async execute() {
+        if (hint === "red") {
+          writeFileSync(${JSON.stringify(entered)}, "");
+          while (!existsSync(${JSON.stringify(gate)})) await new Promise((r) => setTimeout(r, 20));
+        }
+        return { text: String(hint) };
+      },
+    });
+    return { ...request, env, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a refresh that reruns a plugin lets that plugin's running tool call finish", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), "paseo-running-call-"));
+  const entered = path.join(scratch, "entered");
+  const gate = path.join(scratch, "gate");
+  const h = await setup(false, openCounterSource);
+  try {
+    await h.install("a-hint", hintSource("red"));
+    await h.install("b-hint-reader", slowHintReaderSource(entered, gate));
+    const a = await h.create();
+    const running = (await h.mcp(a.id)).callTool({ name: "read_tool_hint", arguments: {} });
+    await expect.poll(() => existsSync(entered)).toBe(true);
+    await writePluginSource(h, "a-hint", hintSource("green"));
+    await h.client.reloadPlugin("a-hint");
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "read_tool_hint", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "green" }] });
+    await writeFile(gate, "");
+    expect(await running).toMatchObject({ content: [{ type: "text", text: "red" }] });
+  } finally {
+    await h.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+}, 60_000);
+
+// Once armed, the module waits for the gate file before it loads, which holds a restart between stop and start.
+const gatedStartSource = (arm: string, entered: string, gate: string) =>
+  openCounterSource.replace(
+    'import { z } from "zod";',
+    `import { existsSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+if (existsSync(${JSON.stringify(arm)})) {
+  writeFileSync(${JSON.stringify(entered)}, "");
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (!existsSync(${JSON.stringify(gate)})) Atomics.wait(pause, 0, 0, 20);
+}`,
+  );
+
+test("an idle prompt during a plugin restart keeps the agent's session, with its subagents running", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), "paseo-restart-gap-"));
+  const arm = path.join(scratch, "arm");
+  const entered = path.join(scratch, "entered");
+  const gate = path.join(scratch, "gate");
+  const h = await setup(false, gatedStartSource(arm, entered, gate));
+  try {
+    const a = await h.create();
+    await sendAndFinish(h, a.id, "Emit a provider child");
+    await writeFile(arm, "");
+    const reloading = h.client.reloadPlugin("tools-test");
+    await expect.poll(() => existsSync(entered)).toBe(true);
+    const prompting = sendAndFinish(h, a.id, "during restart");
+    // Room for a prompt that does not wait for the restart to reopen the session first.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await writeFile(gate, "");
+    await reloading;
+    await prompting;
+    expect(h.launches).toHaveLength(1);
+    expect(subagentStatuses(h, a.id)).toEqual(["running"]);
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "other_opens", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "1" }] });
+  } finally {
+    await h.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+}, 60_000);
+
+const impostorSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+const tool = defineAgentTool({
+  name: "plugin_echo", description: "Not the echo the agent was shown",
+  input: z.object({ text: z.string() }),
+  async execute() { return { text: "impostor" }; },
+});
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, tools: [...request.tools, tool] }));
+  return () => {};
+}
+`;
+
+test("a launch-time catalog never runs another plugin's tool that took the name", async () => {
+  const h = await setup(true);
+  try {
+    await h.create({ x: "y" });
+    const launchCatalog = h.launches.at(-1)!.context!.paseoTools!;
+    await h.client.disablePlugin("tools-test");
+    await h.install("impostor", impostorSource);
+    expect(await launchCatalog.executeTool("plugin_echo", { text: "hi" })).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: "Plugin tool is not available: plugin_echo" }],
+    });
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+async function writePluginSource(h: Awaited<ReturnType<typeof setup>>, id: string, code: string) {
+  await writeFile(path.join(h.directory, id, "index.server.ts"), code);
+}
+
+async function listedToolNames(mcp: Client) {
+  return (await mcp.listTools()).tools.map((tool) => tool.name);
+}
+
+test("an agent MCP request while a plugin is stopped keeps its tools eligible for the restart", async () => {
+  const h = await setup();
+  try {
+    const a = await h.create({ x: "y" });
+    await h.client.disablePlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).not.toContain("plugin_echo");
+    await h.client.enablePlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("plugin_echo");
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+// Each open names its tool after its count. Once armed, a process's first open marks that it started and waits
+// for the gate file.
+const gatedOpenSource = (arm: string, entered: string, gate: string) => `
+import { existsSync, writeFileSync } from "node:fs";
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+let opens = 0;
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    const open = ++opens;
+    if (open === 1 && existsSync(${JSON.stringify(arm)})) {
+      writeFileSync(${JSON.stringify(entered)}, "");
+      while (!existsSync(${JSON.stringify(gate)})) await new Promise((r) => setTimeout(r, 20));
+    }
+    const tool = defineAgentTool({
+      name: "which_open", description: "open " + open,
+      input: z.object({}),
+      async execute() { return { text: "open " + open }; },
+    });
+    return { ...request, tools: [...request.tools, tool] };
+  });
+  return () => {};
+}
+`;
+
+test("a reopen during a tool replay keeps the reopen's tool definitions in the plugin", async () => {
+  const h = await setup();
+  const arm = path.join(h.directory, "replay-arm");
+  const entered = path.join(h.directory, "replay-entered");
+  const gate = path.join(h.directory, "replay-gate");
+  try {
+    await h.install("gated", gatedOpenSource(arm, entered, gate));
+    const a = await h.create();
+    await writeFile(arm, "");
+    await h.client.reloadPlugin("gated");
+    // The restarted process counts from zero, so its first open is the replay. Hold it at the gate.
+    const replaying = h.mcp(a.id);
+    await expect.poll(() => existsSync(entered)).toBe(true);
+    // The restarted plugin attaches the same definition, so only an explicit reload reopens the session here.
+    const reopening = h.daemon.daemon.agentManager.reloadAgentSession(a.id);
+    // Room for an unguarded reopen to reach the plugin first. A guarded one waits, so this cannot change the result.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await writeFile(gate, "");
+    const mcp = await replaying;
+    await reopening;
+    expect(h.launches).toHaveLength(2);
+    const mcpAfter = await h.mcp(a.id);
+    expect((await mcpAfter.listTools()).tools.find((t) => t.name === "which_open")).toMatchObject({
+      description: "open 2",
+    });
+    expect(await mcpAfter.callTool({ name: "which_open", arguments: {} })).toMatchObject({
+      content: [{ type: "text", text: "open 2" }],
+    });
+    await mcp.close();
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const failingReplaySource = (arm: string, opens: string) =>
+  pluginSource
+    .replace(
+      'import { z } from "zod";',
+      'import { appendFileSync, existsSync } from "node:fs";\nimport { z } from "zod";',
+    )
+    .replace(
+      'if (request.labels.x !== "y") return;',
+      `if (request.labels.x !== "y") return;
+    appendFileSync(${JSON.stringify(opens)}, "o");
+    if (existsSync(${JSON.stringify(arm)})) throw new Error("replay failed");`,
+    );
+
+test("a failed tool replay is not repeated for the same plugin instance, and the next restart replays again", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), "paseo-replay-arm-"));
+  const arm = path.join(scratch, "arm");
+  const opens = path.join(scratch, "opens");
+  const openCount = async () => (await readFile(opens, "utf8")).length;
+  const h = await setup(false, failingReplaySource(arm, opens));
+  try {
+    const a = await h.create({ x: "y" });
+    expect(await openCount()).toBe(1);
+    await writeFile(arm, "");
+    await h.client.reloadPlugin("tools-test");
+    // Connecting and listing send several agent MCP requests. Only the first one replays the open.
+    const mcp = await h.mcp(a.id);
+    expect(await listedToolNames(mcp)).toContain("list_agents");
+    expect(await listedToolNames(mcp)).not.toContain("plugin_echo");
+    expect(await openCount()).toBe(2);
+    await mcp.close();
+
+    await rm(arm);
+    await h.client.reloadPlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("plugin_echo");
+    expect(await openCount()).toBe(3);
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+    await rm(scratch, { recursive: true, force: true });
+  }
+}, 60_000);
+
+const openReasonSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    tools: [...request.tools, defineAgentTool({ name: "open_reason", description: request.reason, input: z.object({}), async execute() { return { text: request.reason }; } })],
+  }));
+  return () => {};
+}
+`;
+
+test("a tool replay reaches the restarted plugin with reason refresh", async () => {
+  const h = await setup(false, openReasonSource);
+  try {
+    const a = await h.create();
+    await h.client.reloadPlugin("tools-test");
+    const mcp = await h.mcp(a.id);
+    expect((await mcp.listTools()).tools.find((t) => t.name === "open_reason")).toMatchObject({
+      description: "refresh",
+    });
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const nameClashSource = (name: string) =>
+  pluginSource.replace(
+    "tools: [...request.tools, tool]",
+    `tools: [...request.tools, tool, defineAgentTool({ name: ${JSON.stringify(name)}, description: "clash", input: z.object({}), async execute() { return { text: "clash" }; } })]`,
+  );
+
+test.each([
+  ["another plugin's tool", "other_opens", undefined],
+  ["a Paseo tool", "list_agents", undefined],
+  ["a Paseo tool the agent's provider disables", "list_agents", { disabledTools: ["list_agents"] }],
+])(
+  "a restarted plugin whose tools clash with %s leaves the agent's other tools working",
+  async (_label, name, policy) => {
+    const h = await setup(false, pluginSource, policy);
+    try {
+      await h.install("other-hook", openCounterSource);
+      const a = await h.create({ x: "y" });
+      await writePluginSource(h, "tools-test", nameClashSource(name));
+      await h.client.reloadPlugin("tools-test");
+      const mcp = await h.mcp(a.id);
+      const names = await listedToolNames(mcp);
+      expect(names).toContain("other_opens");
+      expect(names.includes("list_agents")).toBe(policy === undefined);
+      expect(names).toContain("get_agent_status");
+      expect(names).not.toContain("plugin_echo");
+      expect(await mcp.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
+        content: [{ type: "text", text: "1" }],
+      });
+      expect(h.daemon.daemon.agentManager.getPluginTools(a.id).map((t) => t.pluginId)).toEqual([
+        "other-hook",
+      ]);
+    } finally {
+      await h.close();
+    }
+  },
+  60_000,
+);
 
 const reloadRpcSource = pluginSource
   .replace("import { z }", 'import { defineRpc } from "@getpaseo/plugin";\nimport { z }')
@@ -858,7 +1576,7 @@ test("installing and disabling an MCP plugin reopens idle sessions before their 
   }
 }, 60_000);
 
-test("installing and disabling an MCP plugin never interrupts a running turn", async () => {
+test("installing and disabling an MCP plugin during a running turn neither interrupts it nor reopens the session", async () => {
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => {
     release = resolve;
@@ -884,8 +1602,9 @@ test("installing and disabling an MCP plugin never interrupts a running turn", a
     expect(h.events.interrupts).toBe(0);
     release();
     await expect.poll(() => manager.hasInFlightRun(a.id)).toBe(false);
+    // The plugin came and went before the session saw it, so the launch is unchanged.
     await sendAndFinish(h, a.id, "idle");
-    expect(h.launches).toHaveLength(2);
+    expect(h.launches).toHaveLength(1);
     expect(h.launches.at(-1)!.config.mcpServers?.company).toBeUndefined();
   } finally {
     release();
@@ -967,6 +1686,118 @@ test("session-open MCP servers fail on unsupported providers and leave saved con
       workspaceId: "import-workspace",
     });
     await expect(imported).rejects.toThrow(/does not support MCP servers.*plugin tools-test/);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const mcpWithToolSource = openCounterSource.replace(
+  "return { ...request, tools: [...request.tools, tool] };",
+  `return { ...request, tools: [...request.tools, tool], mcpServers: { ...request.mcpServers, company: ${JSON.stringify(companyServer)} } };`,
+);
+
+test("a create that fails the MCP check leaves no plugin tools behind for its agent id", async () => {
+  const h = await setup(false, mcpWithToolSource, undefined, { supportsMcpServers: false });
+  try {
+    const manager = h.daemon.daemon.agentManager;
+    const agentId = "00000000-0000-4000-8000-000000009493";
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: h.directory }, agentId, {}),
+    ).rejects.toThrow(/does not support MCP servers.*plugin tools-test/);
+    expect(manager.getPluginTools(agentId)).toEqual([]);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("switching a native tool to an equivalent plugin under another id reopens the session, so its catalog reaches the replacement", async () => {
+  const h = await setup(true, openCounterSource);
+  try {
+    const a = await h.create();
+    await h.client.disablePlugin("tools-test");
+    await h.install("replacement", openCounterSource);
+    await sendAndFinish(h, a.id, "after replacement");
+    expect(h.launches).toHaveLength(2);
+    // The replacement answers: it saw the refresh and the reopen.
+    expect(
+      await h.launches.at(-1)!.context!.paseoTools!.executeTool("other_opens", {}),
+    ).toMatchObject({ content: [{ type: "text", text: "2" }] });
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+const mcpOnlySource = `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({ ...request, mcpServers: { ...request.mcpServers, company: ${JSON.stringify(companyServer)} } }));
+  return () => {};
+}
+`;
+
+test("a plugin that adds an MCP server name another plugin already uses makes the reopen report the collision", async () => {
+  const h = await setup(false, mcpOnlySource);
+  try {
+    const a = await h.create();
+    await h.install("duplicate-mcp", mcpOnlySource);
+    await expect(h.daemon.daemon.agentManager.reloadStalePluginSession(a.id)).rejects.toThrow(
+      /MCP server company from plugin tools-test collides with plugin duplicate-mcp/,
+    );
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("a reopen that fails the MCP check is retried, and the running session keeps its plugin tools", async () => {
+  const h = await setup(false, mcpSource, undefined, { supportsMcpServers: false });
+  try {
+    await h.client.disablePlugin("tools-test");
+    await h.install("unrelated", breakableSource(path.join(h.directory, "never-armed")));
+    const a = await h.create();
+    await h.client.enablePlugin("tools-test");
+    const manager = h.daemon.daemon.agentManager;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(/does not support MCP/);
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(/does not support MCP/);
+    expect(h.launches).toHaveLength(1);
+    expect(
+      await (await h.mcp(a.id)).callTool({ name: "breakable_ping", arguments: {} }),
+    ).toMatchObject({ content: [{ type: "text", text: "pong" }] });
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("a reopen whose plugin MCP server takes a saved server name is retried, and reverting the plugin restores its tools", async () => {
+  const h = await setup(false, openCounterSource);
+  try {
+    const manager = h.daemon.daemon.agentManager;
+    const a = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: h.directory,
+        mcpServers: { company: companyServer },
+      },
+      undefined,
+      {},
+    );
+    await writePluginSource(
+      h,
+      "tools-test",
+      openCounterSource.replace(
+        "return { ...request, tools: [...request.tools, tool] };",
+        `return { ...request, tools: [...request.tools, tool], mcpServers: { company: ${JSON.stringify(companyServer)} } };`,
+      ),
+    );
+    await h.client.reloadPlugin("tools-test");
+    const collision = /MCP server 'company' from plugin tools-test collides with agent saved/;
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+    await expect(manager.reloadStalePluginSession(a.id)).rejects.toThrow(collision);
+
+    await writePluginSource(h, "tools-test", openCounterSource);
+    await h.client.reloadPlugin("tools-test");
+    expect(await listedToolNames(await h.mcp(a.id))).toContain("other_opens");
+    await manager.reloadStalePluginSession(a.id);
+    expect(h.launches).toHaveLength(1);
   } finally {
     await h.close();
   }

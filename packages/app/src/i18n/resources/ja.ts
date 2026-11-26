@@ -976,6 +976,8 @@ export const ja: TranslationResources = {
         },
         archiveWarning: {
           title: '"{{workspaceName}}"をアーカイブしますか？',
+          bulkTitle: "{{count}}件のワークスペースをアーカイブしますか？",
+          bulkWorkspaceReason: "{{workspaceName}}：{{reason}}",
           confirm: "アーカイブ",
           cancel: "キャンセル",
           uncommittedChanges: "未コミットの変更",
@@ -1386,6 +1388,7 @@ export const ja: TranslationResources = {
         rename: "ワークスペースの名前を変更",
         pin: "上部に固定",
         unpin: "固定解除",
+        select: "選択",
         archive: "アーカイブ",
         archiveWorkspace: "ワークスペースをアーカイブ",
         hideFromSidebar: "サイドバーから非表示",
@@ -1404,6 +1407,10 @@ export const ja: TranslationResources = {
         submit: "名前を変更",
         invalidBranchName: "無効なブランチ名",
       },
+      selection: {
+        count: "{{count}}件選択中",
+        exit: "選択を終了",
+      },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスが利用できません",
         pathCopied: "パスをコピーしました",
@@ -1411,7 +1418,9 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
+        archiveMultipleFailed: "{{count}}件のワークスペースのアーカイブに失敗しました",
         archived: "ワークスペースをアーカイブしました",
+        archivedCount: "{{count}}件のワークスペースをアーカイブしました",
         undoArchive: "元に戻す",
         undoArchiveFailed: "アーカイブを元に戻せませんでした",
       },
