@@ -1114,7 +1114,7 @@ export class DaemonConnectionError extends Error {
   }
 }
 
-/** Local creation preflight failed before handing any creation to the transport. */
+/** Creation failed locally before handing any creation to the transport. */
 export class CreationNotSentError extends Error {
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
@@ -1340,7 +1340,16 @@ function toReasonCode(reason: string | null | undefined): string | null {
   return "unknown";
 }
 
+function isCreationRequest(messageType: string): boolean {
+  return (
+    messageType === "agent.create.request" ||
+    messageType === "create_agent_request" ||
+    messageType === "workspace.create.request"
+  );
+}
+
 interface PendingSend {
+  message?: SessionInboundMessage;
   send: () => void | Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
@@ -2188,11 +2197,8 @@ export class DaemonClient {
         ...describeRequestIdentity(message),
       });
     const rejectSend = (error: unknown): never => {
-      const creation =
-        messageType === "agent.create.request" ||
-        messageType === "create_agent_request" ||
-        messageType === "workspace.create.request";
-      if (creation && error instanceof MessageTooLargeError) throw new CreationNotSentError(error);
+      if (isCreationRequest(messageType) && error instanceof MessageTooLargeError)
+        throw new CreationNotSentError(error);
       throw error;
     };
     try {
@@ -2291,7 +2297,7 @@ export class DaemonClient {
     return this.sendWhenConnected(() => {
       const payload = SessionInboundMessageSchema.parse(message);
       return this.sendSessionPayload(payload);
-    });
+    }, message);
   }
 
   /** Resolves once connected, waiting out a connection that is still being established. */
@@ -2299,7 +2305,10 @@ export class DaemonClient {
     return this.sendWhenConnected(() => undefined);
   }
 
-  private sendWhenConnected(send: () => void | Promise<void>): Promise<void> {
+  private sendWhenConnected(
+    send: () => void | Promise<void>,
+    message?: SessionInboundMessage,
+  ): Promise<void> {
     const status = this.connectionState.status;
 
     // If connected, send immediately
@@ -2316,15 +2325,16 @@ export class DaemonClient {
           if (idx !== -1) {
             this.pendingSendQueue.splice(idx, 1);
           }
+          const error = new DaemonConnectionError(
+            "Timed out waiting for connection to send message",
+            "DAEMON_REQUEST_TIMEOUT",
+          );
           reject(
-            new DaemonConnectionError(
-              "Timed out waiting for connection to send message",
-              "DAEMON_REQUEST_TIMEOUT",
-            ),
+            message && isCreationRequest(message.type) ? new CreationNotSentError(error) : error,
           );
         }, DEFAULT_SEND_QUEUE_TIMEOUT_MS);
 
-        this.pendingSendQueue.push({ send, resolve, reject, timeoutHandle });
+        this.pendingSendQueue.push({ send, resolve, reject, timeoutHandle, message });
       });
     }
 
@@ -2411,7 +2421,24 @@ export class DaemonClient {
       if (result.kind === "error") throw result.error;
       return result.value;
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
+      let err = error instanceof Error ? error : new Error(String(error));
+      // Legacy creation response deadlines can expire before the connection queue's timer.
+      // Only a frame still owned by that queue is conclusively unsent.
+      if (
+        isCreationRequest(wire.message.type) &&
+        err instanceof DaemonConnectionError &&
+        err.code === "DAEMON_REQUEST_TIMEOUT"
+      ) {
+        const index = this.pendingSendQueue.findIndex(
+          (pending) => pending.message === wire.message,
+        );
+        if (index !== -1) {
+          const [pending] = this.pendingSendQueue.splice(index, 1);
+          clearTimeout(pending!.timeoutHandle);
+          err = new CreationNotSentError(err);
+          pending!.reject(err);
+        }
+      }
       cancel(err);
       throw err;
     } finally {

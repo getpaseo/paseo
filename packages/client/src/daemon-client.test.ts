@@ -9039,6 +9039,65 @@ test.each(["agent", "workspace", "legacy agent"] as const)(
   },
 );
 
+test.each(["agent", "workspace", "legacy agent", "legacy workspace"] as const)(
+  "classifies a %s creation that expires before dispatch as not sent",
+  async (kind) => {
+    useHeartbeatClock();
+    const first = createMockTransport();
+    const second = createMockTransport();
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "expired-creation",
+      connectTimeoutMs: 120_000,
+      transportFactory: () => [first, second][attempt++]!.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen({ features: { creationLifecycle: !kind.startsWith("legacy") } });
+    await connected;
+    first.triggerClose({ code: 1001 });
+    client.ensureConnected();
+    const creation = kind.endsWith("workspace")
+      ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+      : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await outcome).toBeInstanceOf(CreationNotSentError);
+    expect(second.sent).toHaveLength(0);
+    second.triggerOpen({ features: { creationLifecycle: !kind.startsWith("legacy") } });
+    expect(second.sent).toHaveLength(0);
+  },
+);
+
+test.each(["agent", "workspace"] as const)(
+  "does not classify a transmitted legacy %s response timeout as not sent",
+  async (kind) => {
+    useHeartbeatClock();
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "submitted-creation-timeout",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    const creation =
+      kind === "workspace"
+        ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+        : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(mock.sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await outcome).toBeInstanceOf(DaemonConnectionError);
+    expect(await outcome).not.toBeInstanceOf(CreationNotSentError);
+  },
+);
+
 test("sends worktree target and autoArchive in create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
