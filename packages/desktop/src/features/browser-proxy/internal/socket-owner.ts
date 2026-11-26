@@ -1,4 +1,8 @@
-import { execFile as nodeExecFile } from "node:child_process";
+import {
+  execFile as nodeExecFile,
+  spawn as nodeSpawn,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
 import { readFile as nodeReadFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
@@ -9,7 +13,15 @@ export interface SocketOwnerCheckInput {
   serverPort: number;
 }
 
-export type SocketOwnerVerifier = (input: SocketOwnerCheckInput) => Promise<boolean>;
+export interface SocketOwnerVerifier {
+  (input: SocketOwnerCheckInput): Promise<boolean>;
+  dispose?: () => void;
+}
+
+export interface WindowsSocketOwnerWorker {
+  lookup: (input: SocketOwnerCheckInput) => Promise<boolean>;
+  dispose: () => void;
+}
 
 export interface OsSocketOwnerVerifierDeps {
   platform?: NodeJS.Platform;
@@ -20,11 +32,40 @@ export interface OsSocketOwnerVerifierDeps {
     args: string[],
     options?: { timeout?: number; windowsHide?: boolean },
   ) => Promise<{ stdout: string }>;
+  createWindowsWorker?: () => WindowsSocketOwnerWorker;
 }
 
 const LINUX_LOOPBACK_IPV4_HEX = "0100007F";
 const LINUX_LOOPBACK_IPV4_MAPPED_IPV6_HEX = "0000000000000000FFFF00000100007F";
 const LOOKUP_TIMEOUT_MS = 3_000;
+const WINDOWS_WORKER_SCRIPT = [
+  "$selfSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;",
+  "$cache = @{};",
+  "while (($line = [Console]::In.ReadLine()) -ne $null) {",
+  "  $parts = $line.Trim().Split(' ');",
+  "  if ($parts.Length -ne 2) { [Console]::Out.WriteLine('0'); continue }",
+  "  $cp = [int]$parts[0]; $sp = [int]$parts[1];",
+  "  $conn = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $cp -RemoteAddress 127.0.0.1 -RemotePort $sp -ErrorAction SilentlyContinue | Select-Object -First 1;",
+  "  if (-not $conn) { [Console]::Out.WriteLine('0'); continue }",
+  "  $pidKey = [int]$conn.OwningProcess;",
+  "  $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();",
+  "  $entry = $cache[$pidKey];",
+  "  if ($entry -and ($now - $entry.ts) -lt 10000) {",
+  "    [Console]::Out.WriteLine($(if ($entry.ok) { '1' } else { '0' }));",
+  "    continue",
+  "  }",
+  "  $ok = $false;",
+  "  try {",
+  '    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$pidKey" -ErrorAction SilentlyContinue;',
+  "    if ($proc) {",
+  "      $sid = (Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid).Sid;",
+  "      $ok = ($sid -eq $selfSid);",
+  "    }",
+  "  } catch { $ok = $false }",
+  "  $cache[$pidKey] = @{ ok = $ok; ts = $now };",
+  "  [Console]::Out.WriteLine($(if ($ok) { '1' } else { '0' }));",
+  "}",
+].join(" ");
 
 function formatHexPort(port: number): string {
   return port.toString(16).toUpperCase().padStart(4, "0");
@@ -100,6 +141,138 @@ export function parseWindowsLoopbackSocketOwner(output: string): string | null {
   return /^S-1-\d+(?:-\d+)+$/u.test(sid) ? sid : null;
 }
 
+/**
+ * Keeps a single warm PowerShell worker on Windows so parallel browser
+ * connections do not each pay PowerShell startup + NetTCPIP/WMI cold boot.
+ * Serializes line-delimited `<clientPort> <serverPort>` lookups and resets
+ * cleanly on timeout or process exit.
+ */
+function createPersistentWindowsPowerShellWorker(): WindowsSocketOwnerWorker {
+  let child: ChildProcessWithoutNullStreams | null = null;
+  let stdoutBuffer = "";
+  let disposed = false;
+
+  interface QueuedLookup {
+    input: SocketOwnerCheckInput;
+    resolve: (allowed: boolean) => void;
+    timer: ReturnType<typeof setTimeout> | null;
+  }
+
+  let active: QueuedLookup | null = null;
+  const queue: QueuedLookup[] = [];
+
+  const failActiveAndReset = () => {
+    const current = active;
+    active = null;
+    if (current) {
+      if (current.timer) clearTimeout(current.timer);
+      current.resolve(false);
+    }
+    const oldChild = child;
+    child = null;
+    stdoutBuffer = "";
+    if (oldChild && !oldChild.killed) {
+      try {
+        oldChild.kill();
+      } catch {
+        // ignore
+      }
+    }
+    if (!disposed) {
+      pumpQueue();
+    }
+  };
+
+  const ensureChild = (): ChildProcessWithoutNullStreams | null => {
+    if (disposed) return null;
+    if (child && !child.killed && child.exitCode === null) {
+      return child;
+    }
+    const proc = nodeSpawn(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_WORKER_SCRIPT],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    child = proc;
+    stdoutBuffer = "";
+
+    proc.stdin.on("error", () => {
+      if (child === proc) failActiveAndReset();
+    });
+    proc.stdout.on("data", (chunk: Buffer | string) => {
+      if (child !== proc) return;
+      stdoutBuffer += chunk.toString();
+      let newlineIndex = stdoutBuffer.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const line = stdoutBuffer.slice(0, newlineIndex).trim();
+        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+        const current = active;
+        active = null;
+        if (current) {
+          if (current.timer) clearTimeout(current.timer);
+          current.resolve(line === "1");
+        }
+        pumpQueue();
+        newlineIndex = stdoutBuffer.indexOf("\n");
+      }
+    });
+    proc.on("error", () => {
+      if (child === proc) failActiveAndReset();
+    });
+    proc.on("exit", () => {
+      if (child === proc) failActiveAndReset();
+    });
+    return proc;
+  };
+
+  const pumpQueue = () => {
+    if (disposed || active || queue.length === 0) return;
+    const next = queue.shift()!;
+    const proc = ensureChild();
+    if (!proc) {
+      next.resolve(false);
+      return;
+    }
+    active = next;
+    next.timer = setTimeout(() => {
+      if (active === next) {
+        failActiveAndReset();
+      }
+    }, LOOKUP_TIMEOUT_MS);
+    next.timer.unref?.();
+
+    try {
+      proc.stdin.write(`${next.input.clientPort} ${next.input.serverPort}\n`);
+    } catch {
+      failActiveAndReset();
+    }
+  };
+
+  return {
+    lookup: (input) =>
+      new Promise<boolean>((resolve) => {
+        if (disposed) {
+          resolve(false);
+          return;
+        }
+        queue.push({ input, resolve, timer: null });
+        pumpQueue();
+      }),
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      for (const queued of queue.splice(0)) {
+        if (queued.timer) clearTimeout(queued.timer);
+        queued.resolve(false);
+      }
+      failActiveAndReset();
+    },
+  };
+}
+
 export function createOsSocketOwnerVerifier(
   deps: OsSocketOwnerVerifierDeps = {},
 ): SocketOwnerVerifier {
@@ -118,27 +291,18 @@ export function createOsSocketOwnerVerifier(
       return { stdout: result.stdout };
     });
 
-  let cachedWindowsCurrentSid: Promise<string | null> | null = null;
-
-  const getWindowsCurrentSid = (): Promise<string | null> => {
-    if (!cachedWindowsCurrentSid) {
-      cachedWindowsCurrentSid = execFile(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-        ],
-        { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true },
-      )
-        .then((res) => parseWindowsLoopbackSocketOwner(res.stdout))
-        .catch(() => null);
+  let windowsWorker: WindowsSocketOwnerWorker | null = null;
+  const getWindowsWorker = (): WindowsSocketOwnerWorker => {
+    if (!windowsWorker) {
+      windowsWorker = (deps.createWindowsWorker ?? createPersistentWindowsPowerShellWorker)();
     }
-    return cachedWindowsCurrentSid;
+    return windowsWorker;
   };
 
-  return async ({ clientPort, serverPort }: SocketOwnerCheckInput): Promise<boolean> => {
+  const verify: SocketOwnerVerifier = async ({
+    clientPort,
+    serverPort,
+  }: SocketOwnerCheckInput): Promise<boolean> => {
     if (!isValidPort(clientPort) || !isValidPort(serverPort)) {
       return false;
     }
@@ -177,23 +341,8 @@ export function createOsSocketOwnerVerifier(
     }
 
     if (platform === "win32") {
-      const expectedSid = await getWindowsCurrentSid();
-      if (!expectedSid) return false;
       try {
-        const script = [
-          `$conn = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ${clientPort} -RemoteAddress 127.0.0.1 -RemotePort ${serverPort} -ErrorAction SilentlyContinue | Select-Object -First 1;`,
-          "if ($conn) {",
-          '  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($conn.OwningProcess)" -ErrorAction SilentlyContinue;',
-          "  if ($proc) { (Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid).Sid }",
-          "}",
-        ].join(" ");
-        const { stdout } = await execFile(
-          "powershell.exe",
-          ["-NoProfile", "-NonInteractive", "-Command", script],
-          { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true },
-        );
-        const ownerSid = parseWindowsLoopbackSocketOwner(stdout);
-        return ownerSid !== null && ownerSid === expectedSid;
+        return await getWindowsWorker().lookup({ clientPort, serverPort });
       } catch {
         return false;
       }
@@ -201,4 +350,11 @@ export function createOsSocketOwnerVerifier(
 
     return false;
   };
+
+  verify.dispose = () => {
+    windowsWorker?.dispose();
+    windowsWorker = null;
+  };
+
+  return verify;
 }

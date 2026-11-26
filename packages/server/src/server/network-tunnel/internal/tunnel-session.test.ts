@@ -351,4 +351,35 @@ describe("TunnelSession binary TCP multiplexer", () => {
     await allReceived;
     expect(Buffer.compare(Buffer.concat(receivedChunks), totalPayload)).toBe(0);
   });
+
+  it("closes an idle tunnel session and tears down active TCP sockets after liveness timeout", async () => {
+    const serverSockets: Socket[] = [];
+    const { port } = await startTcpServer((socket) => attachKeepOpenHandler(serverSockets, socket));
+
+    const ws = new InMemoryTunnelSocket();
+    const session = new TunnelSession({
+      ws,
+      principalId: "owner",
+      logger,
+      idleTimeoutMs: 80,
+      idleCheckIntervalMs: 20,
+    });
+    sessions.push(session);
+
+    ws.receiveFrame({ type: "open", streamId: 1, host: "127.0.0.1", port });
+    await ws.waitForFrame((frame) => frame.type === "opened" && frame.streamId === 1);
+    expect(session.activeStreamCount).toBe(1);
+
+    // Keep alive briefly with a ping; session must stay open while pings arrive.
+    await new Promise((r) => setTimeout(r, 45));
+    ws.receiveFrame({ type: "ping" });
+    await ws.waitForFrame((frame) => frame.type === "pong");
+    expect(session.isClosed).toBe(false);
+
+    // Stop sending frames -> session closes and tears down the upstream TCP socket.
+    await waitForSocketClose(serverSockets[0]!);
+    expect(session.isClosed).toBe(true);
+    expect(session.activeStreamCount).toBe(0);
+    expect(ws.closes.at(-1)).toMatchObject({ code: 1001 });
+  });
 });

@@ -276,4 +276,40 @@ describe("TunnelMuxClient", () => {
       1,
     );
   });
+
+  test("sends heartbeat pings and closes a silent half-open wire after heartbeatTimeoutMs", async () => {
+    const fake = createFakeWire();
+    const mux = new TunnelMuxClient(fake.wire, {
+      heartbeatIntervalMs: 25,
+      heartbeatTimeoutMs: 65,
+    });
+
+    const closed = new Promise<Error | undefined>((resolve) => {
+      mux.onClose((err) => resolve(err));
+    });
+
+    const closeErr = await closed;
+    expect(mux.isClosed()).toBe(true);
+    expect(fake.sentFrames.some((f) => f.type === "ping")).toBe(true);
+    expect(closeErr?.message).toMatch(/heartbeat/i);
+  });
+
+  test("closes an unresponsive wire when openStream times out with zero inbound frames", async () => {
+    const fake = createFakeWire();
+    const mux = new TunnelMuxClient(fake.wire, {
+      heartbeatIntervalMs: 0,
+      heartbeatTimeoutMs: 0,
+    });
+    const { server } = createSocketPair();
+
+    const result = await mux.openStream({
+      host: "localhost",
+      port: 3000,
+      socket: server,
+      timeoutMs: 30,
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: NetworkTunnelCloseReason.Timeout });
+    expect(mux.isClosed()).toBe(true);
+  });
 });

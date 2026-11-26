@@ -62,22 +62,27 @@ describe("OS loopback socket owner verification", () => {
     expect(await failingVerify({ clientPort: 50000, serverPort: 8080 })).toBe(false);
   });
 
-  test("admits matching SID and rejects foreign SID on Windows", async () => {
+  test("reuses one persistent worker across lookups on Windows and disposes cleanly", async () => {
+    let workersCreated = 0;
+    let disposedCount = 0;
     const verify = createOsSocketOwnerVerifier({
       platform: "win32",
-      execFile: async (_cmd, args) => {
-        const script = args.join(" ");
-        if (script.includes("GetCurrent")) {
-          return { stdout: "S-1-5-21-1-2-3-1000\r\n" };
-        }
-        if (script.includes("50000")) {
-          return { stdout: "S-1-5-21-1-2-3-1000\r\n" };
-        }
-        return { stdout: "S-1-5-21-1-2-3-9999\r\n" };
+      createWindowsWorker: () => {
+        workersCreated += 1;
+        return {
+          lookup: async ({ clientPort }) => clientPort === 50000,
+          dispose: () => {
+            disposedCount += 1;
+          },
+        };
       },
     });
 
     expect(await verify({ clientPort: 50000, serverPort: 8080 })).toBe(true);
     expect(await verify({ clientPort: 50001, serverPort: 8080 })).toBe(false);
+    expect(workersCreated).toBe(1);
+
+    verify.dispose?.();
+    expect(disposedCount).toBe(1);
   });
 });

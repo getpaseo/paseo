@@ -18,6 +18,8 @@ export interface NetworkTunnelServiceOptions {
   initialStreamWindowBytes?: number;
   initialConnectionWindowBytes?: number;
   connectTimeoutMs?: number;
+  idleTimeoutMs?: number;
+  idleCheckIntervalMs?: number;
   resolveHost?: HostResolver;
 }
 
@@ -62,6 +64,8 @@ export class NetworkTunnelService {
       initialStreamWindowBytes: this.options.initialStreamWindowBytes,
       initialConnectionWindowBytes: this.options.initialConnectionWindowBytes,
       connectTimeoutMs: this.options.connectTimeoutMs,
+      idleTimeoutMs: this.options.idleTimeoutMs,
+      idleCheckIntervalMs: this.options.idleCheckIntervalMs,
       resolveHost: this.options.resolveHost,
       onClose: () => {
         this.activeSessions.delete(session);

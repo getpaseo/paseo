@@ -21,6 +21,8 @@ import {
 } from "./destination-policy.js";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
+const DEFAULT_IDLE_CHECK_INTERVAL_MS = 15_000;
 const MAX_WINDOW_BYTES = 0x7fffffff;
 
 export interface TunnelSocketLike {
@@ -45,6 +47,8 @@ export interface TunnelSessionOptions {
   initialStreamWindowBytes?: number;
   initialConnectionWindowBytes?: number;
   connectTimeoutMs?: number;
+  idleTimeoutMs?: number;
+  idleCheckIntervalMs?: number;
   resolveHost?: HostResolver;
   onClose?: () => void;
 }
@@ -138,6 +142,7 @@ export class TunnelSession {
   private readonly streamWindowUpdateThreshold: number;
   private readonly connectionWindowUpdateThreshold: number;
   private readonly connectTimeoutMs: number;
+  private readonly idleTimeoutMs: number;
   private readonly resolveHost: HostResolver | undefined;
   private readonly onCloseCallback: (() => void) | undefined;
 
@@ -145,6 +150,8 @@ export class TunnelSession {
   private connectionSendWindowBytes: number;
   private connectionRecvWindowBytes: number;
   private uncreditedConnectionRecvBytes = 0;
+  private lastInboundAt = Date.now();
+  private idleTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
 
   constructor(options: TunnelSessionOptions) {
@@ -166,6 +173,10 @@ export class TunnelSession {
       Math.floor(this.initialConnectionWindowBytes / 4),
     );
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+    this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    const idleCheckIntervalMs =
+      options.idleCheckIntervalMs ??
+      Math.min(DEFAULT_IDLE_CHECK_INTERVAL_MS, Math.max(10, Math.floor(this.idleTimeoutMs / 3)));
     this.resolveHost = options.resolveHost;
     this.onCloseCallback = options.onClose;
 
@@ -174,6 +185,20 @@ export class TunnelSession {
 
     this.bindSocket();
     this.sendReadyHandshake();
+
+    if (!this.closed && this.idleTimeoutMs > 0) {
+      this.idleTimer = setInterval(() => {
+        if (this.closed) return;
+        if (Date.now() - this.lastInboundAt >= this.idleTimeoutMs) {
+          this.logger.warn(
+            { idleTimeoutMs: this.idleTimeoutMs },
+            "Closing idle network tunnel session after liveness timeout",
+          );
+          this.close(1001, "Tunnel liveness timeout");
+        }
+      }, idleCheckIntervalMs);
+      this.idleTimer.unref?.();
+    }
   }
 
   get activeStreamCount(): number {
@@ -223,6 +248,7 @@ export class TunnelSession {
         this.close(1002, message);
         return;
       }
+      this.lastInboundAt = Date.now();
       this.handleFrame(frame);
     });
 
@@ -787,6 +813,10 @@ export class TunnelSession {
   private teardown(): void {
     if (this.closed) return;
     this.closed = true;
+    if (this.idleTimer) {
+      clearInterval(this.idleTimer);
+      this.idleTimer = null;
+    }
     for (const stream of Array.from(this.streams.values())) {
       this.cleanupStream(stream);
     }

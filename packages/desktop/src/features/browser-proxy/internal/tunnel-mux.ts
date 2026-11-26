@@ -32,21 +32,35 @@ interface ActiveStream {
 }
 
 const DEFAULT_OPEN_TIMEOUT_MS = 15_000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000;
+
+export interface TunnelMuxClientOptions {
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
+}
 
 export class TunnelMuxClient {
   private readonly streams = new Map<number, ActiveStream>();
   private readonly maxFramePayloadBytes: number;
   private readonly initialStreamWindowBytes: number;
   private readonly initialConnectionWindowBytes: number;
+  private readonly heartbeatTimeoutMs: number;
   private sendConnWindow: number;
   private recvConnConsumed = 0;
   private nextStreamId = 1;
   private closed = false;
+  private lastInboundAt = Date.now();
+  private inboundFrameSeq = 0;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly unsubBinary: () => void;
   private readonly unsubClose: () => void;
   private readonly closeListeners = new Set<(error?: Error) => void>();
 
-  public constructor(private readonly wire: TunnelWireConnection) {
+  public constructor(
+    private readonly wire: TunnelWireConnection,
+    options?: TunnelMuxClientOptions,
+  ) {
     this.maxFramePayloadBytes = Math.max(
       1,
       Math.min(wire.ready.maxFramePayloadBytes, NETWORK_TUNNEL_MAX_DATA_PAYLOAD_BYTES),
@@ -55,12 +69,29 @@ export class TunnelMuxClient {
     this.initialConnectionWindowBytes = Math.max(1, wire.ready.initialConnectionWindowBytes);
     this.sendConnWindow = this.initialConnectionWindowBytes;
 
+    const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    this.heartbeatTimeoutMs = options?.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
+
     this.unsubBinary = wire.onBinary((bytes) => {
       this.handleInboundBytes(bytes);
     });
     this.unsubClose = wire.onClose((error) => {
       this.handleWireClosed(error);
     });
+
+    if (heartbeatIntervalMs > 0 && this.heartbeatTimeoutMs > 0) {
+      this.heartbeatTimer = setInterval(() => {
+        if (this.closed) return;
+        if (Date.now() - this.lastInboundAt >= this.heartbeatTimeoutMs) {
+          const timeoutError = new Error("Tunnel heartbeat timed out");
+          this.handleWireClosed(timeoutError);
+          this.wire.close();
+          return;
+        }
+        this.sendFrameBestEffort({ type: "ping" });
+      }, heartbeatIntervalMs);
+      this.heartbeatTimer.unref?.();
+    }
   }
 
   public isClosed(): boolean {
@@ -126,6 +157,7 @@ export class TunnelMuxClient {
       resolveOpen(result);
     };
 
+    const openInboundSeq = this.inboundFrameSeq;
     const timer = setTimeout(() => {
       if (stream.state !== "opening") return;
       this.streams.delete(streamId);
@@ -140,6 +172,13 @@ export class TunnelMuxClient {
         reason: NetworkTunnelCloseReason.Timeout,
         message: "Timed out opening remote tunnel stream",
       });
+      // If zero inbound frames arrived from the daemon during the entire open timeout,
+      // treat the underlying tunnel wire as dead so the next request opens a fresh one.
+      if (this.inboundFrameSeq === openInboundSeq) {
+        const err = new Error("Tunnel became unresponsive during stream open");
+        this.handleWireClosed(err);
+        this.wire.close();
+      }
     }, timeoutMs);
     timer.unref?.();
 
@@ -201,6 +240,8 @@ export class TunnelMuxClient {
   }
 
   private handleInboundBytes(bytes: Uint8Array): void {
+    this.lastInboundAt = Date.now();
+    this.inboundFrameSeq += 1;
     let frame: DecodedNetworkTunnelFrame;
     try {
       frame = decodeNetworkTunnelFrame(bytes);
@@ -533,6 +574,10 @@ export class TunnelMuxClient {
       return;
     }
     this.closed = true;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     this.unsubBinary();
     this.unsubClose();
 

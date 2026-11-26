@@ -509,6 +509,7 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
   async function disposeAll(): Promise<void> {
     const entries = [...entriesByServerId.values()];
     await Promise.all(entries.map((entry) => disposeEntry(entry)));
+    verifySocketOwner.dispose?.();
   }
 
   return {

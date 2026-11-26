@@ -56,7 +56,51 @@ export type BrowserProxyPaneState =
       retry: () => void;
     };
 
-function resolveBrowserProxyPaneState(input: {
+function resolveRemoteUnavailablePaneState(
+  support: Exclude<
+    Extract<ReturnType<typeof classifyHostBrowserRouting>, { kind: "remote" }>["support"],
+    "supported"
+  >,
+  hostLabel: string,
+  proxyStatusSnapshot: ReturnType<typeof getCachedBrowserProxyStatus>,
+): BrowserProxyPaneState {
+  // Once Electron main has verified and bound this host's fixed SOCKS5 partition,
+  // keep the webview mounted across transient host disconnects/reconnects so SPA
+  // state, forms, scroll, and DevTools survive. Requests still fail closed at the
+  // local SOCKS5 listener while the tunnel is down.
+  const isTransientDisconnect = support === "host_connecting" || support === "host_offline";
+  if (
+    isTransientDisconnect &&
+    proxyStatusSnapshot?.partition &&
+    proxyStatusSnapshot.socksPort !== null
+  ) {
+    return {
+      kind: "ready",
+      partition: proxyStatusSnapshot.partition,
+      isRemoteHost: true,
+      effectiveRoutingMode: "host",
+      hostLabel,
+      proxyStatus: "reconnecting",
+    };
+  }
+  if (support === "host_connecting") {
+    return {
+      kind: "connecting",
+      isRemoteHost: true,
+      effectiveRoutingMode: "host",
+      hostLabel,
+      isReconnecting: false,
+    };
+  }
+  return {
+    kind: support,
+    isRemoteHost: true,
+    effectiveRoutingMode: "host",
+    hostLabel,
+  };
+}
+
+export function resolveBrowserProxyPaneState(input: {
   routing: ReturnType<typeof classifyHostBrowserRouting>;
   effectiveRoutingMode: BrowserRoutingMode;
   localPartition: string;
@@ -87,21 +131,7 @@ function resolveBrowserProxyPaneState(input: {
   }
 
   if (routing.support !== "supported") {
-    if (routing.support === "host_connecting") {
-      return {
-        kind: "connecting",
-        isRemoteHost: true,
-        effectiveRoutingMode: "host",
-        hostLabel,
-        isReconnecting: false,
-      };
-    }
-    return {
-      kind: routing.support,
-      isRemoteHost: true,
-      effectiveRoutingMode: "host",
-      hostLabel,
-    };
+    return resolveRemoteUnavailablePaneState(routing.support, hostLabel, proxyStatusSnapshot);
   }
 
   if (proxyStatusSnapshot?.status === "ready") {

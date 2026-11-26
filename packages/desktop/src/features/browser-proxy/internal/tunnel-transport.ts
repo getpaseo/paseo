@@ -1,5 +1,3 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createServer, type Server, type Socket } from "node:net";
 import {
   buildRelayWebSocketUrl,
   shouldUseTlsForDefaultHostedRelay,
@@ -9,17 +7,12 @@ import {
   type WSTunnelHandshakeResponse,
 } from "@getpaseo/protocol/messages";
 import {
-  buildSshTunnelArgs,
-  DEFAULT_SSH_DAEMON_PORT,
-  validatePort,
-  validateSshHost,
-} from "@getpaseo/protocol/ssh-transport";
-import {
   openClientSecureChannel,
   type SecureChannel,
   type Transport as RelayClientTransport,
 } from "@getpaseo/relay/e2ee";
 import { WebSocket, type RawData } from "ws";
+import { createSshProxy } from "../../../daemon/ssh-proxy.js";
 
 export type BrowserProxyTarget =
   | {
@@ -67,7 +60,6 @@ export class TunnelHandshakeError extends Error {
 }
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
-const SSH_STDERR_LIMIT = 8192;
 const WS_ENDPOINT_PATH = "/ws";
 
 function rawDataToUint8Array(data: RawData): Uint8Array {
@@ -93,100 +85,6 @@ function buildDirectTcpWebSocketUrl(
   }
   const scheme = target.useTls ? "wss" : "ws";
   return `${scheme}://${trimmed}${WS_ENDPOINT_PATH}`;
-}
-
-function createSshLoopbackEndpoint(
-  target: Extract<BrowserProxyTarget, { type: "remoteSsh" }>,
-): Promise<{ url: string; close: () => void; failureDetail: () => string | null }> {
-  const host = validateSshHost(target.host);
-  const sshPort =
-    target.sshPort !== undefined ? validatePort(target.sshPort, "SSH port") : undefined;
-  const daemonPort =
-    target.daemonPort !== undefined
-      ? validatePort(target.daemonPort, "Daemon port")
-      : DEFAULT_SSH_DAEMON_PORT;
-
-  const sshArgs = buildSshTunnelArgs({
-    host,
-    ...(sshPort !== undefined ? { sshPort } : {}),
-    daemonPort,
-  });
-
-  let server: Server | null = null;
-  let socket: Socket | null = null;
-  let child: ChildProcessWithoutNullStreams | null = null;
-  let stderr = "";
-  let failure: string | null = null;
-
-  const close = () => {
-    server?.close();
-    server = null;
-    socket?.destroy();
-    socket = null;
-    if (child && !child.killed) {
-      child.kill();
-    }
-    child = null;
-  };
-
-  return new Promise((resolve, reject) => {
-    server = createServer((acceptedSocket) => {
-      socket = acceptedSocket;
-      server?.close();
-      server = null;
-
-      child = spawn("ssh", sshArgs, {
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      child.stderr.on("data", (chunk: Buffer | string) => {
-        stderr = `${stderr}${chunk.toString()}`.slice(-SSH_STDERR_LIMIT);
-      });
-      child.on("error", (error) => {
-        failure = error.message;
-        acceptedSocket.destroy(error);
-      });
-      child.on("exit", (code, signal) => {
-        if (code !== 0 || signal) {
-          const detail = stderr.trim();
-          failure =
-            detail ||
-            (signal
-              ? `ssh exited with signal ${signal}`
-              : `ssh exited with code ${code ?? "unknown"}`);
-        }
-        acceptedSocket.destroy(failure ? new Error(failure) : undefined);
-      });
-
-      acceptedSocket.on("error", () => undefined);
-      acceptedSocket.on("close", () => {
-        if (child && !child.killed) {
-          child.kill();
-        }
-      });
-      acceptedSocket.pipe(child.stdin);
-      child.stdout.pipe(acceptedSocket);
-    });
-
-    server.once("error", (error) => {
-      close();
-      reject(error);
-    });
-
-    server.listen(0, "127.0.0.1", () => {
-      const address = server?.address();
-      if (!address || typeof address === "string") {
-        close();
-        reject(new Error("Failed to allocate SSH tunnel proxy port"));
-        return;
-      }
-      resolve({
-        url: `ws://127.0.0.1:${address.port}${WS_ENDPOINT_PATH}`,
-        close,
-        failureDetail: () => failure ?? (stderr.trim() || null),
-      });
-    });
-  });
 }
 
 function waitForWebSocketOpen(
@@ -666,7 +564,11 @@ export async function openTunnelWireConnection(input: {
   }
 
   if (target.type === "remoteSsh") {
-    const sshEndpoint = await createSshLoopbackEndpoint(target);
+    const sshEndpoint = await createSshProxy({
+      host: target.host,
+      ...(target.sshPort !== undefined ? { sshPort: target.sshPort } : {}),
+      ...(target.daemonPort !== undefined ? { daemonPort: target.daemonPort } : {}),
+    });
     return await openPlainWebSocketTunnel({
       url: sshEndpoint.url,
       ticket,

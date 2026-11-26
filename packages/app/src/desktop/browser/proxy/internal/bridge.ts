@@ -16,6 +16,7 @@ import {
 const statusByServerId = new Map<string, DesktopBrowserProxyStatusSnapshot>();
 const statusListenersByServerId = new Map<string, Set<() => void>>();
 const trackedHostIds = new Set<string>();
+const lastHostConnectionStatus = new Map<string, string>();
 let bridgeInstalled = false;
 
 function notifyStatusListeners(serverId: string): void {
@@ -108,16 +109,31 @@ export function installBrowserProxyRendererBridge(): void {
     for (const serverId of trackedHostIds) {
       if (!currentHosts.has(serverId)) {
         trackedHostIds.delete(serverId);
+        lastHostConnectionStatus.delete(serverId);
         statusByServerId.delete(serverId);
         notifyStatusListeners(serverId);
         void desktop.browser?.releaseHostProxy?.(serverId).catch(() => {});
         continue;
       }
+      const nextConnectionStatus = store.getSnapshot(serverId)?.connectionStatus ?? "offline";
+      const prevConnectionStatus = lastHostConnectionStatus.get(serverId);
+      lastHostConnectionStatus.set(serverId, nextConnectionStatus);
+
       const routing = readHostBrowserRouting(serverId);
       if (routing.kind === "remote" && routing.support === "supported") {
-        void desktop.browser
-          ?.updateHostProxyTarget?.({ serverId, target: routing.target })
-          .catch(() => {});
+        if (prevConnectionStatus !== undefined && prevConnectionStatus !== "online") {
+          // Control session just recovered after a drop; replace any half-open tunnel socket
+          // immediately while keeping the fixed local SOCKS5 port and mounted webview intact.
+          void ensureHostBrowserProxy({
+            serverId,
+            target: routing.target,
+            forceReconnect: true,
+          }).catch(() => {});
+        } else {
+          void desktop.browser
+            ?.updateHostProxyTarget?.({ serverId, target: routing.target })
+            .catch(() => {});
+        }
       }
     }
   });
@@ -190,6 +206,10 @@ export async function ensureHostBrowserProxy(input: {
     return null;
   }
   trackedHostIds.add(input.serverId);
+  const currentStatus = getHostRuntimeStore().getSnapshot(input.serverId)?.connectionStatus;
+  if (currentStatus) {
+    lastHostConnectionStatus.set(input.serverId, currentStatus);
+  }
   const snapshot = await ensureHostProxy(input);
   setCachedStatus(snapshot);
   return snapshot;
