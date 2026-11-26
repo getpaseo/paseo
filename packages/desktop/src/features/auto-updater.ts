@@ -19,18 +19,14 @@ import {
   type RuntimeUpdateCheckResult,
   type RuntimeUpdateInfo,
 } from "./app-update-service.js";
+import { createAppUpdatePacing } from "./app-update-pacing.js";
 import {
-  bucketFromStagingUserId,
-  rolloutManifestSchema,
-  shouldAdmitAppUpdate,
+  rolloutBucket,
   type AppReleaseChannel,
   type AppUpdateCheckIntent,
 } from "./app-update-rollout.js";
 
 export {
-  bucketFromStagingUserId,
-  rolloutManifestSchema,
-  shouldAdmitAppUpdate,
   type AppReleaseChannel,
   type AppUpdateCheckIntent,
   type AppUpdateCheckResult,
@@ -91,16 +87,6 @@ function isUpdateChannelNotPublished(error: unknown): boolean {
     "code" in error &&
     error.code === UPDATE_CHANNEL_NOT_PUBLISHED_CODE
   );
-}
-
-export function shouldAdmitToRollout(args: {
-  channel: AppReleaseChannel;
-  rolloutHours: number | undefined;
-  releaseDate: string | undefined;
-  now: number;
-  bucket: number;
-}): boolean {
-  return shouldAdmitAppUpdate({ ...args, intent: "automatic" });
 }
 
 export async function resolveStagingUserId(filePath: string): Promise<string> {
@@ -377,11 +363,21 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 }
 
+const appUpdatePacing = createAppUpdatePacing({
+  filePath: () => path.join(app.getPath("userData"), "app-update-pacing.json"),
+  currentVersion: () => app.getVersion(),
+  now: () => Date.now(),
+  reportError: (error) => {
+    console.warn("[auto-updater] Update pacing state is unavailable, not pacing updates:", error);
+  },
+});
+
 const appUpdateService = createAppUpdateService({
   runtime: new ElectronAppUpdateRuntime(),
   isPackaged: () => app.isPackaged,
   now: () => Date.now(),
-  bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
+  bucket: async (version) => rolloutBucket(await getStagingUserId(), version),
+  pacing: appUpdatePacing,
   updateMode: async () => (await getDesktopSettingsStore().get()).updates.mode,
   onDownloadProgress: broadcastDownloadProgress,
   reportSettingsError: (error) => {
@@ -392,6 +388,9 @@ const appUpdateService = createAppUpdateService({
   },
   reportCheckError: (error) => {
     console.error("[auto-updater] Failed to check for updates:", error);
+  },
+  reportAdmissionError: (error) => {
+    console.warn("[auto-updater] Failed to place this install in the rollout, admitting:", error);
   },
   reportRuntimeError: (error) => {
     console.error("[auto-updater] Updater event failed:", error);
@@ -404,6 +403,15 @@ const appUpdateService = createAppUpdateService({
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Notes the running version, so the launch that follows an update starts the
+ * update cooldown. Call once when the app is ready. Never rejects.
+ */
+export function startAppUpdatePacing(): Promise<void> {
+  if (!app.isPackaged) return Promise.resolve();
+  return appUpdatePacing.start();
+}
 
 export async function checkForAppUpdate({
   currentVersion,

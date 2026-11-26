@@ -40,7 +40,9 @@ When the release is ready, the final stable tag is `v0.1.92` — not `v0.1.93`. 
 
 ## Stable channel
 
-The stable channel is the default. Stable desktop releases roll out gradually over **36 hours** so that if something unexpected slips through, it doesn't hit everyone at once. Automatic update checks pick up the release as the rollout progresses; clicking **Check** in the app bypasses the rollout and installs immediately.
+The stable channel is the default. Stable desktop releases roll out gradually over **18 hours**: a small group of installs gets the release first, then everyone else over the following hours. If something unexpected slips through, it doesn't hit everyone at once.
+
+After the desktop app updates, it waits **3 days** before it takes the next regular release, so frequent releases don't mean frequent restarts. Urgent fixes skip the wait. Clicking **Check** in the app skips both the rollout and the wait and installs immediately.
 
 Stable releases are what most users should run.
 

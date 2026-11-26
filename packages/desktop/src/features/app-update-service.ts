@@ -1,10 +1,13 @@
 import type { DesktopUpdateMode } from "../settings/desktop-settings.js";
+import type { AppUpdatePacing } from "./app-update-pacing.js";
 import {
+  isPacedRelease,
   rolloutManifestSchema,
   shouldAdmitAppUpdate,
   type AppReleaseChannel,
   type AppUpdateCheckIntent,
 } from "./app-update-rollout.js";
+import { isNextPatchRelease } from "./app-update-version.js";
 
 export interface AppUpdateDownloadProgress {
   version: string | null;
@@ -107,11 +110,14 @@ export interface AppUpdateServiceDeps {
   runtime: AppUpdateRuntime;
   isPackaged(): boolean;
   now(): number;
-  bucket(): Promise<number>;
+  /** Position of this install in the rollout of `version`, in [0, 1). */
+  bucket(version: string): Promise<number>;
+  pacing: AppUpdatePacing;
   updateMode?: () => DesktopUpdateMode | Promise<DesktopUpdateMode>;
   onDownloadProgress?(progress: AppUpdateDownloadProgress | null): void;
   reportSettingsError?(error: unknown): void;
   reportCheckError?(error: unknown): void;
+  reportAdmissionError?(error: unknown): void;
   reportRuntimeError?(error: unknown): void;
   reportInstallError?(message: string): void;
 }
@@ -189,6 +195,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   let configuredReleaseChannel: AppReleaseChannel | null = null;
   let preparationError: { version: string; message: string } | null = null;
   let preparingUpdateVersion: string | null = null;
+  // The newest release seen in an unbroken run of paced releases since the
+  // staged update became ready. Null whenever nothing is staged.
+  let stagedChainHead: string | null = null;
   let currentAutoDownload = true;
   let checkQueue: Promise<void> = Promise.resolve();
 
@@ -196,21 +205,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     return downloadedUpdateVersion === version;
   }
 
+  function setStagedUpdate(version: string | null): void {
+    downloadedUpdateVersion = version;
+    stagedChainHead = version;
+  }
+
   function clearUpdateState(): void {
     cachedUpdateInfo = null;
-    downloadedUpdateVersion = null;
+    setStagedUpdate(null);
     preparationError = null;
     preparingUpdateVersion = null;
     deps.onDownloadProgress?.(null);
   }
 
-  function buildPreviouslyAdmittedUpdateResult(
-    currentVersion: string,
-    checkedInfo: RuntimeUpdateInfo,
-  ): AppUpdateCheckResult | null {
+  /** What is already known about an update, without asking the release feed. */
+  function buildKnownUpdateResult(currentVersion: string): AppUpdateCheckResult {
     const info = cachedUpdateInfo;
-    if (!info || info.version === currentVersion || info.version !== checkedInfo.version) {
-      return null;
+    if (!info || info.version === currentVersion) {
+      return buildCheckResult({ currentVersion, hasUpdate: false, readyToInstall: false });
     }
 
     const readyToInstall = isReadyToInstallVersion(info.version);
@@ -222,6 +234,78 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       info,
       errorMessage: preparationError?.version === info.version ? preparationError.message : null,
     });
+  }
+
+  function buildPreviouslyAdmittedUpdateResult(
+    currentVersion: string,
+    checkedInfo: RuntimeUpdateInfo,
+  ): AppUpdateCheckResult | null {
+    const info = cachedUpdateInfo;
+    if (!info || info.version === currentVersion || info.version !== checkedInfo.version) {
+      return null;
+    }
+    return buildKnownUpdateResult(currentVersion);
+  }
+
+  /**
+   * A staged update is not replaced by the paced release that follows it, so
+   * an install that is slow to restart does not download every release. The
+   * hold covers only a run of paced releases seen one after the other: a gap
+   * means a release was missed, and the missed one may have been the fix for
+   * the staged one. Emergency releases and manual checks always replace it.
+   */
+  function stagedUpdateHoldsAgainst(
+    info: RuntimeUpdateInfo,
+    releaseChannel: AppReleaseChannel,
+  ): boolean {
+    const staged = downloadedUpdateVersion;
+    if (staged === null || stagedChainHead === null) return false;
+    if (cachedUpdateInfo?.version !== staged || info.version === staged) return false;
+
+    const { rolloutHours } = rolloutManifestSchema.parse(info);
+    if (!isPacedRelease({ channel: releaseChannel, rolloutHours })) return false;
+
+    return info.version === stagedChainHead || isNextPatchRelease(stagedChainHead, info.version);
+  }
+
+  /**
+   * Whether an automatic check may take this release now. Any failure to
+   * decide admits the release: an install is never refused an update because
+   * its own rollout state could not be read.
+   */
+  async function admitsAutomatically(
+    info: RuntimeUpdateInfo,
+    releaseChannel: AppReleaseChannel,
+  ): Promise<boolean> {
+    try {
+      const { rolloutHours, releaseDate } = rolloutManifestSchema.parse(info);
+      if (!isPacedRelease({ channel: releaseChannel, rolloutHours })) return true;
+      if (stagedUpdateHoldsAgainst(info, releaseChannel)) return false;
+      if (await deps.pacing.isInUpdateCooldown()) return false;
+
+      return shouldAdmitAppUpdate({
+        channel: releaseChannel,
+        intent: "automatic",
+        rolloutHours,
+        releaseDate,
+        now: deps.now(),
+        bucket: await deps.bucket(info.version),
+      });
+    } catch (error) {
+      deps.reportAdmissionError?.(error);
+      return true;
+    }
+  }
+
+  /** An admitted update that is neither downloaded nor downloading. */
+  function hasUnpreparedUpdate(currentVersion: string): boolean {
+    const info = cachedUpdateInfo;
+    return (
+      info !== null &&
+      info.version !== currentVersion &&
+      !isReadyToInstallVersion(info.version) &&
+      preparingUpdateVersion !== info.version
+    );
   }
 
   async function resolveUpdateMode(): Promise<DesktopUpdateMode> {
@@ -256,20 +340,15 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       releaseChannel,
       autoDownload: initialAutoDownload,
       shouldAdmitUpdate: async (info) => {
-        const parsed = rolloutManifestSchema.parse(info);
-        const bucket = await deps.bucket();
+        // A manual check needs no rollout or pacing state, so nothing that
+        // breaks that state can stop the user from updating by hand.
+        const admitted = intent === "manual" || (await admitsAutomatically(info, releaseChannel));
+        // Read the mode after every other await, so a mode saved during the
+        // check is the one that decides.
         const liveMode = await resolveUpdateMode();
         if (intent === "automatic" && liveMode === "off") {
           return false;
         }
-        const admitted = shouldAdmitAppUpdate({
-          channel: releaseChannel,
-          intent,
-          rolloutHours: parsed.rolloutHours,
-          releaseDate: parsed.releaseDate,
-          now: deps.now(),
-          bucket,
-        });
         if (admitted) {
           currentAutoDownload = resolveAutoDownload(liveMode, autoDownloadOverride);
           deps.runtime.setAutoDownload?.(currentAutoDownload);
@@ -279,7 +358,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       onUpdateAvailable(info) {
         const alreadyReady = downloadedUpdateVersion === info.version;
         cachedUpdateInfo = info;
-        downloadedUpdateVersion = alreadyReady ? info.version : null;
+        if (!alreadyReady) setStagedUpdate(null);
         if (!alreadyReady && currentAutoDownload && preparingUpdateVersion === null) {
           preparingUpdateVersion = info.version;
         }
@@ -300,7 +379,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         // A superseded download can finish after a newer manifest check. Keep
         // the validated manifest as the install target in that case.
         cachedUpdateInfo ??= info;
-        downloadedUpdateVersion = info.version;
+        setStagedUpdate(info.version);
         if (preparingUpdateVersion === info.version) {
           preparingUpdateVersion = null;
         }
@@ -374,17 +453,68 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     });
   }
 
-  async function checkForAppUpdate({
-    currentVersion,
-    releaseChannel,
-    intent,
-    autoDownload,
-  }: {
+  /**
+   * The release feed answered with a release this check may not take. An
+   * update admitted earlier survives only when the feed still names it, or
+   * when it is staged and holds against the release the feed names now.
+   */
+  function resolveUnavailableUpdateResult(
+    check: {
+      currentVersion: string;
+      releaseChannel: AppReleaseChannel;
+      intent: AppUpdateCheckIntent;
+    },
+    info: RuntimeUpdateInfo,
+  ): AppUpdateCheckResult {
+    const admittedUpdate = buildPreviouslyAdmittedUpdateResult(check.currentVersion, info);
+    if (admittedUpdate) {
+      return admittedUpdate;
+    }
+
+    if (check.intent === "automatic" && stagedUpdateHoldsAgainst(info, check.releaseChannel)) {
+      stagedChainHead = info.version;
+      return buildKnownUpdateResult(check.currentVersion);
+    }
+
+    clearUpdateState();
+    return buildCheckResult({
+      currentVersion: check.currentVersion,
+      hasUpdate: false,
+      readyToInstall: false,
+    });
+  }
+
+  /**
+   * Reasons to ask the release feed before the next check is due: a change of
+   * channel makes the known update stale, and an update that should be
+   * downloading but is not needs the check to start it again.
+   */
+  function mustCheckNow(
+    currentVersion: string,
+    releaseChannel: AppReleaseChannel,
+    autoDownload: boolean,
+  ): boolean {
+    const channelChanged =
+      configuredReleaseChannel !== null && configuredReleaseChannel !== releaseChannel;
+    return channelChanged || (autoDownload && hasUnpreparedUpdate(currentVersion));
+  }
+
+  interface UpdateCheckInput {
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
     intent: AppUpdateCheckIntent;
     autoDownload?: boolean;
-  }): Promise<AppUpdateCheckResult> {
+  }
+
+  /**
+   * `spaced` checks are the background ones the app makes on its own. On the
+   * stable channel they ask the release feed at most once per pacing interval
+   * and answer from what is already known in between.
+   */
+  async function runUpdateCheck(
+    { currentVersion, releaseChannel, intent, autoDownload }: UpdateCheckInput,
+    { spaced }: { spaced: boolean },
+  ): Promise<AppUpdateCheckResult> {
     if (!deps.isPackaged()) {
       return buildCheckResult({
         currentVersion,
@@ -394,6 +524,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     return runCheckExclusively(async () => {
+      const respectsInterval = spaced && intent === "automatic" && releaseChannel === "stable";
+      const checkIsDue = respectsInterval ? await deps.pacing.isAutomaticCheckDue() : true;
+
       const mode = deps.updateMode ? await resolveUpdateMode() : "automatic";
       if (intent === "automatic" && mode === "off") {
         return buildCheckResult({
@@ -402,18 +535,25 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           readyToInstall: false,
         });
       }
+
+      const initialAutoDownload = resolveAutoDownload(mode, autoDownload);
+      if (!checkIsDue && !mustCheckNow(currentVersion, releaseChannel, initialAutoDownload)) {
+        return buildKnownUpdateResult(currentVersion);
+      }
+
       if (intent === "manual") {
         preparationError = null;
       }
-      configureRuntime(
-        releaseChannel,
-        intent,
-        resolveAutoDownload(mode, autoDownload),
-        autoDownload,
-      );
+      configureRuntime(releaseChannel, intent, initialAutoDownload, autoDownload);
 
       try {
         const result = await deps.runtime.checkForUpdates();
+        // Only a check that read the release feed counts. A failed check
+        // throws, and an unreadable feed answers null: both run again at the
+        // next opportunity.
+        if (respectsInterval && result) {
+          await deps.pacing.recordAutomaticCheck();
+        }
         if (intent === "automatic" && deps.updateMode && (await resolveUpdateMode()) === "off") {
           return buildCheckResult({
             currentVersion,
@@ -431,20 +571,10 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         }
 
         if (!result.isUpdateAvailable) {
-          const admittedUpdate = buildPreviouslyAdmittedUpdateResult(
-            currentVersion,
+          return resolveUnavailableUpdateResult(
+            { currentVersion, releaseChannel, intent },
             result.updateInfo,
           );
-          if (admittedUpdate) {
-            return admittedUpdate;
-          }
-
-          clearUpdateState();
-          return buildCheckResult({
-            currentVersion,
-            hasUpdate: false,
-            readyToInstall: false,
-          });
         }
 
         return resolveAvailableUpdateResult(currentVersion, result.updateInfo);
@@ -458,6 +588,10 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         });
       }
     });
+  }
+
+  function checkForAppUpdate(input: UpdateCheckInput): Promise<AppUpdateCheckResult> {
+    return runUpdateCheck(input, { spaced: true });
   }
 
   async function downloadAndInstallUpdate(
@@ -478,12 +612,10 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
-    const check = await checkForAppUpdate({
-      currentVersion,
-      releaseChannel,
-      intent: "manual",
-      autoDownload: false,
-    });
+    const check = await runUpdateCheck(
+      { currentVersion, releaseChannel, intent: "manual", autoDownload: false },
+      { spaced: false },
+    );
     if (!check.hasUpdate) {
       return {
         installed: false,
@@ -542,7 +674,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       // event clears that version, then the next iteration starts the newly
       // validated release instead of treating the stale artifact as ready.
       if (attemptedVersion === readyVersion && !isReadyToInstallVersion(readyVersion)) {
-        downloadedUpdateVersion = readyVersion;
+        setStagedUpdate(readyVersion);
         clearPreparingVersion(readyVersion);
       } else if (preparingUpdateVersion === attemptedVersion) {
         clearPreparingVersion(attemptedVersion);
@@ -631,11 +763,12 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       return false;
     }
 
-    const check = await checkForAppUpdate({
-      currentVersion,
-      releaseChannel,
-      intent: "automatic",
-    });
+    // The staged update is validated against the release feed before every
+    // install, however recently the app last checked.
+    const check = await runUpdateCheck(
+      { currentVersion, releaseChannel, intent: "automatic" },
+      { spaced: false },
+    );
     if (signal.aborted || !check.hasUpdate) {
       return false;
     }
