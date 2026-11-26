@@ -196,7 +196,7 @@ describe("Claude SDK env", () => {
       await resumed.run("after disable");
       expect(prompts).toEqual([
         { type: "preset", preset: "claude_code", append: "Plugin instructions" },
-        { type: "preset", preset: "claude_code", append: "" },
+        { type: "preset", preset: "claude_code", append: "", snapshot: false },
       ]);
     } finally {
       await resumed.close();

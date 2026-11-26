@@ -1,12 +1,15 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pino from "pino";
 import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import type { AgentClient, AgentSessionConfig } from "../agent/agent-sdk-types.js";
+import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
-import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 test("the configuration example saves Codex options and injects launch-only MCP servers while preserving other configuration", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-config-example-"));
@@ -69,6 +72,132 @@ test("the configuration example saves Codex options and injects launch-only MCP 
   } finally {
     await client.close();
     await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("Claude sends the current plugin system prompt after refreshing a session", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-claude-append-"));
+  const configDir = path.join(directory, "claude");
+  const pluginId = "claude-append-test";
+  const requests: { markers: string[]; hasPriorTurn: boolean }[] = [];
+  const model = "claude-haiku-4-5-20251001";
+  // Run Claude Code's real prompt assembly and resume logic with a local Messages endpoint.
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    if (!request.url?.match(/^\/v1\/messages(?:\?|$)/)) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+      return;
+    }
+    const payload = JSON.parse(body);
+    const system = JSON.stringify(payload.system ?? "");
+    requests.push({
+      markers: ["PASEO-APPEND-ALPHA", "PASEO-APPEND-BETA"].filter((marker) =>
+        system.includes(marker),
+      ),
+      hasPriorTurn: JSON.stringify(payload.messages).includes("First turn of the append test."),
+    });
+    const events = [
+      {
+        type: "message_start",
+        message: {
+          id: `msg_append_${requests.length}`,
+          type: "message",
+          role: "assistant",
+          model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 100, output_tokens: 0 },
+        },
+      },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "OK" } },
+      { type: "content_block_stop", index: 0 },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
+      { type: "message_stop" },
+    ];
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(
+      events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+    );
+  });
+
+  async function writeHook(marker: string) {
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `export default function contribute(server) {
+        return server.addHook("agent.open.before", ({ request }) => ({
+          ...request,
+          appendSystemPrompt: [${JSON.stringify(marker)}],
+        }));
+      }`,
+    );
+  }
+
+  let daemon: TestPaseoDaemon | undefined;
+  let client: DaemonClient | undefined;
+  try {
+    await mkdir(configDir);
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: pluginId, requirements: { paseo: ">=0.17.0" } }),
+    );
+    await writeHook("PASEO-APPEND-ALPHA");
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Fixture has no TCP address");
+    const logger = pino({ level: "silent" });
+    daemon = await createTestPaseoDaemon({
+      daemonVersion: "0.17.5",
+      agentClients: {
+        claude: new ClaudeAgentClient({
+          logger,
+          runtimeSettings: {
+            env: {
+              ANTHROPIC_BASE_URL: `http://127.0.0.1:${address.port}`,
+              ANTHROPIC_AUTH_TOKEN: "fixture-token",
+              ANTHROPIC_API_KEY: "",
+              CLAUDE_CODE_OAUTH_TOKEN: "",
+              CLAUDE_CONFIG_DIR: configDir,
+              CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+            },
+          },
+        }),
+      },
+      mcpEnabled: false,
+    });
+    client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.17.5" });
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client.installDirectoryPlugin(directory)).status).toBe("running");
+    const agent = await client.createAgent({ provider: "claude", cwd: directory, model });
+
+    await client.sendMessage(agent.id, "First turn of the append test.");
+    expect((await client.waitForFinish(agent.id, 15_000)).status).toBe("idle");
+    expect(requests.at(-1)?.markers).toEqual(["PASEO-APPEND-ALPHA"]);
+
+    await writeHook("PASEO-APPEND-BETA");
+    expect((await client.reloadPlugin(pluginId)).status).toBe("running");
+    await client.refreshAgent(agent.id);
+    await client.sendMessage(agent.id, "Second turn of the append test.");
+    expect((await client.waitForFinish(agent.id, 15_000)).status).toBe("idle");
+    expect(requests.at(-1)).toEqual({ markers: ["PASEO-APPEND-BETA"], hasPriorTurn: true });
+
+    await client.disablePlugin(pluginId);
+    await client.refreshAgent(agent.id);
+    await client.sendMessage(agent.id, "Third turn of the append test.");
+    expect((await client.waitForFinish(agent.id, 15_000)).status).toBe("idle");
+    expect(requests.at(-1)).toEqual({ markers: [], hasPriorTurn: true });
+    expect(requests).toHaveLength(3);
+  } finally {
+    await client?.close();
+    await daemon?.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
   }
 }, 60_000);
