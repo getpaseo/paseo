@@ -1,4 +1,6 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
+import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -34,6 +36,7 @@ export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   workspaceId?: string;
   projectId?: string;
   title?: string;
+  metadata?: Record<string, JsonValue>;
   background?: boolean;
   callerWorkspaceId?: string;
 }
@@ -61,6 +64,10 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
   lifecycle?: Pick<PluginLifecycle, "wait" | "before">;
+  worktreeManagers?: Pick<
+    PluginWorktreeManagerRuntime,
+    "hasWorktreeManager" | "createWorktree" | "removeWorktree"
+  >;
   workspaceGitService: WorkspaceGitService;
   workspaceProvisioning: Pick<WorkspaceProvisioningService, "createWorkspaceForWorktree">;
 }
@@ -88,7 +95,7 @@ async function createPaseoWorktreeWithPriority(
         },
       });
     }
-    await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree, input });
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
       relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
       targetWorktreePath: createdWorktree.worktree.worktreePath,
@@ -112,21 +119,13 @@ async function createPaseoWorktreeWithPriority(
       worktreeRoot: createdWorktree.worktree.worktreePath,
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: createdWorktree.worktree.comparisonBaseRef,
+      worktreeManagerPluginId: createdWorktree.worktree.worktreeManagerPluginId ?? null,
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      metadata: input.metadata,
       expectsInitialAgent: Boolean(input.firstAgentContext),
       background: input.background,
       callerWorkspaceId: input.callerWorkspaceId,
-      ...(createdWorktree.intent.kind === "checkout-change-request" &&
-      createdWorktree.intent.headRepository
-        ? {
-            untrustedSource: {
-              kind: "change_request" as const,
-              forge: createdWorktree.intent.forge,
-              number: createdWorktree.intent.changeRequestNumber,
-              headRepository: createdWorktree.intent.headRepository,
-            },
-          }
-        : {}),
+      untrustedSource: createdWorktree.untrustedSource,
     });
 
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
@@ -149,6 +148,10 @@ async function createPaseoWorktreeWithPriority(
         teardownCwds: [],
         paseoHome: input.paseoHome,
         worktreesBaseRoot: input.worktreesRoot,
+        worktreeManagers: deps.worktreeManagers,
+        worktreeManagerPluginId: createdWorktree.worktree.worktreeManagerPluginId ?? null,
+        removeReason: "rollback",
+        untrusted: Boolean(createdWorktree.untrustedSource),
       },
       error,
     );
@@ -277,9 +280,18 @@ async function findAvailableBranchName(options: {
 
 async function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   createdWorktree: Awaited<ReturnType<typeof createWorktreeCore>>;
+  input: Pick<CreatePaseoWorktreeInput, "branchName">;
 }): Promise<void> {
-  const { createdWorktree } = options;
+  const { createdWorktree, input } = options;
   if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
+    return;
+  }
+  // A worktree manager plugin owns branch and directory naming, so skip silent renames.
+  if (createdWorktree.worktree.worktreeManagerPluginId) {
+    return;
+  }
+  // A branch the caller named is their choice; only a placeholder slug is replaced.
+  if (input.branchName !== undefined) {
     return;
   }
 

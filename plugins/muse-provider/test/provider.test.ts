@@ -19,6 +19,7 @@ import {
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server";
 import { execCommand } from "@getpaseo/plugin/server";
 import contribute from "../index.server.js";
+import { createMuseProvider } from "../server/provider.js";
 
 const connections: ProviderConnection[] = [];
 const roots: string[] = [];
@@ -160,6 +161,113 @@ test("registration exposes Muse with a daemon-resolved command", () => {
     command: ["muse"],
     icon: "icon.svg",
   });
+});
+test("a session's launch wrap starts Muse serve and the session runs through it", async () => {
+  const h = await harness();
+  const launcher = path.join(h.root, "launcher.mjs");
+  const marker = path.join(h.root, "wrapped.json");
+  await writeFile(
+    launcher,
+    [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      "const [command, ...args] = process.argv.slice(2);",
+      "writeFileSync(process.env.MUSE_TEST_WRAP_MARKER, JSON.stringify([command, ...args]));",
+      'const child = spawn(command, args, { stdio: "inherit" });',
+      'child.on("exit", (code) => process.exit(code ?? 1));',
+      "",
+    ].join("\n"),
+  );
+  const from = await h.send({
+    type: "session.open",
+    requestId: "open",
+    sessionId: "paseo-session",
+    config: {
+      cwd: h.root,
+      env: { MUSE_TEST_WRAP_MARKER: marker },
+      settings: {},
+      mcpServers: {},
+      persist: true,
+      mode: "onRequest",
+      model: "meta/muse-spark-1.3",
+      systemPrompt: "Test instructions",
+      wrap: [process.execPath, launcher],
+    },
+    history: "replay",
+  });
+  expect(
+    await h.wait(
+      (event) => event.type === "session.ready" || event.type === "request.failed",
+      from,
+    ),
+  ).toMatchObject({ type: "session.ready" });
+  const wrapped = JSON.parse(await readFile(marker, "utf8")) as string[];
+  expect(wrapped.slice(0, h.launch.args.length + 2)).toEqual([
+    h.launch.command,
+    ...h.launch.args,
+    "serve",
+  ]);
+});
+test("installation links to the Muse guide and reports the installed version", async () => {
+  const provider = registration();
+  const launch = {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
+    env: { MUSE_TEST_VERSION: "1.7.2" },
+  };
+  const signal = new AbortController().signal;
+  expect(provider.installation?.installUrl).toBe("https://paseo.sh/docs/muse-code");
+  await expect(
+    provider.installation?.inspect?.({ launch: { ...launch, resolved: true }, signal }),
+  ).resolves.toEqual({ status: "installed", version: "1.7.2" });
+  await expect(
+    provider.installation?.inspect?.({
+      launch: { ...launch, command: "muse", resolved: false },
+      signal,
+    }),
+  ).resolves.toEqual({ status: "not_installed" });
+});
+test("installation reports the build as the installed version", async () => {
+  const provider = registration();
+  const launch = {
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
+    env: { MUSE_TEST_VERSION: "1.4.18 (1.4.18-R8600.1)" },
+    resolved: true,
+  };
+  await expect(
+    provider.installation?.inspect?.({ launch, signal: new AbortController().signal }),
+  ).resolves.toEqual({ status: "installed", version: "1.4.18-R8600.1" });
+});
+test("update check compares the installed build with the launcher's channel", async () => {
+  const channels: string[] = [];
+  const provider = createMuseProvider(new MuseUsage(), {
+    async readChannelRelease({ channel }) {
+      channels.push(channel);
+      return channel === "muse-beta"
+        ? { version: "1.5.0-R9000.2", notificationText: "Faster startup" }
+        : { version: "1.4.18-R8587.1", notificationText: "" };
+    },
+  });
+  const signal = new AbortController().signal;
+  const check = (installedVersion: string, env: Record<string, string> = {}) =>
+    provider.installation?.checkForUpdates?.({
+      launch: { command: "muse", args: [], env, resolved: true },
+      installedVersion,
+      signal,
+    });
+
+  await expect(check("1.4.18-R8587.1")).resolves.toEqual({ status: "current" });
+  await expect(check("1.4.18-R8587.1", { MUSE_CHANNEL: "muse-beta" })).resolves.toEqual({
+    status: "available",
+    versions: ["1.5.0-R9000.2"],
+    message: "Faster startup",
+  });
+  await expect(check("1.4.1")).resolves.toEqual({
+    status: "unknown",
+    message: "This Muse Code does not report its build",
+  });
+  expect(channels).toEqual(["muse-stable", "muse-beta"]);
 });
 test("catalog uses model effort variants, modes, and bounded cached discovery", async () => {
   const h = await harness("catalog-controls");
@@ -1443,6 +1551,7 @@ for (const usage of [
       expect(report).toMatchObject({
         status: "available",
         planLabel: "Pro",
+        observedAt: new Date(usage.usage.observedAtMs).toISOString(),
         windows: [
           {
             id: "five_hour",
@@ -1738,7 +1847,10 @@ test("Muse reports belong only to the session's account and remain available glo
   for (const [index, agentId] of ["muse-home", "muse-work"].entries()) {
     const reports = await registry.listReports({ agentId });
     expect(reports.map((report) => report.id)).toEqual([accountIds[index]]);
-    expect(reports[0]!.report.status).toBe("available");
+    expect(reports[0]!.report).toMatchObject({
+      status: "available",
+      observedAt: "2023-11-14T22:13:20.000Z",
+    });
   }
   expect(await registry.listReports({ agentId: "muse-unknown" })).toEqual([]);
   expect((await registry.listReports()).map((report) => report.id)).toEqual(accountIds);

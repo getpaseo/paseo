@@ -1,10 +1,19 @@
+import { queryClient } from "@/data/query-client";
+import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "@/hooks/agent-history-query-key";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import {
-  clearWorkspaceArchivePending,
+  getWorkspaceArchiveUndoArchivedAgentIds,
+  isWorkspaceArchiveIntentCurrent,
   markWorkspaceArchivePending,
+  markWorkspaceArchiveUndoPending,
+  settleWorkspaceArchiveIntent,
+  type WorkspaceArchiveIntent,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import {
+  normalizeWorkspaceOpaqueId,
+  resolveWorkspaceMapKeyByIdentity,
+} from "@/utils/workspace-identity";
 import { i18n } from "@/i18n/i18next";
 
 export interface WorkspaceArchiveTarget {
@@ -12,12 +21,53 @@ export interface WorkspaceArchiveTarget {
   workspaceId: string;
 }
 
+const pendingArchiveAttempts = new Set<string>();
+
+/** Checks and starts one archive at a time for a workspace. */
+export async function runWorkspaceArchiveAttempt(input: {
+  workspace: WorkspaceArchiveTarget;
+  confirm?: () => Promise<boolean>;
+  archive: () => Promise<void>;
+}): Promise<void> {
+  const { serverId, workspaceId } = input.workspace;
+  const key = JSON.stringify([serverId, workspaceId]);
+  if (pendingArchiveAttempts.has(key)) return;
+
+  pendingArchiveAttempts.add(key);
+  try {
+    if (input.confirm && !(await input.confirm())) return;
+    if (!isWorkspaceListed(input.workspace)) return;
+    // Archive hides the row synchronously. Undo can restore it and start a new
+    // archive while the previous daemon request is still settling.
+    return input.archive();
+  } finally {
+    pendingArchiveAttempts.delete(key);
+  }
+}
+
 interface WorkspaceArchiveClient {
-  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null }>;
+  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null; canceled?: boolean }>;
+}
+
+interface WorkspaceArchiveUndoClient {
+  undoWorkspaceArchive: (workspaceId: string) => Promise<void>;
+}
+
+/** `canceled`: an undo stopped the archive on the host before it finished. */
+export type WorkspaceArchiveOutcome = "archived" | "canceled";
+
+export interface OptimisticWorkspaceArchive {
+  /** The row as it was before the archive hid it, for undo to put back. */
+  hidden: WorkspaceDescriptor | null;
+  /** Active agents in this workspace at archive time, so undo only marks them as unarchiving. */
+  archivedAgentIds: ReadonlySet<string>;
+  done: Promise<WorkspaceArchiveOutcome>;
 }
 
 interface OptimisticWorkspaceArchiveSnapshot {
   workspace: WorkspaceDescriptor | null;
+  archivedAgentIds: ReadonlySet<string>;
+  intent: WorkspaceArchiveIntent;
 }
 
 export interface WorkspaceArchiveFailure {
@@ -38,65 +88,152 @@ function isWorkspaceArchiveFailure(error: unknown): error is WorkspaceArchiveFai
   );
 }
 
-function hideWorkspaceOptimistically(
-  workspace: WorkspaceArchiveTarget,
-): OptimisticWorkspaceArchiveSnapshot {
+function findListedWorkspace(workspace: WorkspaceArchiveTarget): WorkspaceDescriptor | null {
   const workspaces = useSessionStore.getState().sessions[workspace.serverId]?.workspaces;
   const workspaceKey = resolveWorkspaceMapKeyByIdentity({
     workspaces,
     workspaceId: workspace.workspaceId,
   });
-  const snapshot = workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null;
-  markWorkspaceArchivePending({
+  return workspaceKey ? (workspaces?.get(workspaceKey) ?? null) : null;
+}
+
+/** True when the workspace is in this client's list, for example after another client restored it. */
+export function isWorkspaceListed(workspace: WorkspaceArchiveTarget): boolean {
+  return findListedWorkspace(workspace) !== null;
+}
+
+function listActiveWorkspaceAgentIds(workspace: WorkspaceArchiveTarget): Set<string> {
+  const agents = useSessionStore.getState().sessions[workspace.serverId]?.agents;
+  const activeAgentIds = new Set<string>();
+  const targetWorkspaceId = normalizeWorkspaceOpaqueId(workspace.workspaceId);
+  if (!agents || !targetWorkspaceId) return activeAgentIds;
+  for (const agent of agents.values()) {
+    if (normalizeWorkspaceOpaqueId(agent.workspaceId) === targetWorkspaceId && !agent.archivedAt) {
+      activeAgentIds.add(agent.id);
+    }
+  }
+  return activeAgentIds;
+}
+
+function hideWorkspaceOptimistically(
+  workspace: WorkspaceArchiveTarget,
+): OptimisticWorkspaceArchiveSnapshot {
+  const snapshot = findListedWorkspace(workspace);
+  const archivedAgentIds = listActiveWorkspaceAgentIds(workspace);
+  const pendingUndoArchivedAgentIds = getWorkspaceArchiveUndoArchivedAgentIds(workspace);
+  if (pendingUndoArchivedAgentIds) {
+    for (const agentId of pendingUndoArchivedAgentIds) {
+      archivedAgentIds.add(agentId);
+    }
+  }
+  const intent = markWorkspaceArchivePending({
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
   });
   getHostRuntimeStore().removeWorkspaceSnapshot(workspace.serverId, workspace.workspaceId);
-  return { workspace: snapshot };
+  return { workspace: snapshot, archivedAgentIds, intent };
 }
 
+/**
+ * Puts back a row whose archive did not happen. Skipped when a newer request on this client
+ * (an undo, or another archive) owns the row by now.
+ */
 function restoreOptimisticallyHiddenWorkspace(input: {
   serverId: string;
-  workspaceId: string;
   snapshot: OptimisticWorkspaceArchiveSnapshot;
 }): void {
-  clearWorkspaceArchivePending({
-    serverId: input.serverId,
-    workspaceId: input.workspaceId,
-  });
+  if (!isWorkspaceArchiveIntentCurrent(input.snapshot.intent)) return;
+  settleWorkspaceArchiveIntent(input.snapshot.intent);
   if (input.snapshot.workspace) {
     getHostRuntimeStore().acceptWorkspaceSnapshots(input.serverId, [input.snapshot.workspace]);
   }
 }
 
+/** History fetched before the archive still lists the workspace's agents as active. */
+function invalidateAgentHistory(serverId: string): void {
+  void queryClient.invalidateQueries({ queryKey: agentHistoryQueryKey(serverId) });
+  void queryClient.invalidateQueries({ queryKey: allAgentHistoryQueryRootKey() });
+}
+
 async function archiveWorkspaceOrThrow(input: {
   client: WorkspaceArchiveClient;
   workspaceId: string;
-}): Promise<void> {
+}): Promise<WorkspaceArchiveOutcome> {
   const payload = await input.client.archiveWorkspace(input.workspaceId);
+  if (payload.canceled) {
+    return "canceled";
+  }
   if (payload.error) {
     throw new Error(payload.error);
   }
+  return "archived";
+}
+
+/**
+ * Hides the row now and archives it on the host. A failed archive puts the row back, and so
+ * does a canceled one: an undo from another client stopped it, so the workspace stays.
+ */
+export function beginOptimisticWorkspaceArchive(input: {
+  client: WorkspaceArchiveClient;
+  workspace: WorkspaceArchiveTarget;
+}): OptimisticWorkspaceArchive {
+  const snapshot = hideWorkspaceOptimistically(input.workspace);
+  const done = (async () => {
+    try {
+      const outcome = await archiveWorkspaceOrThrow({
+        client: input.client,
+        workspaceId: input.workspace.workspaceId,
+      });
+      if (outcome === "canceled") {
+        restoreOptimisticallyHiddenWorkspace({ serverId: input.workspace.serverId, snapshot });
+      } else {
+        invalidateAgentHistory(input.workspace.serverId);
+      }
+      return outcome;
+    } catch (error) {
+      restoreOptimisticallyHiddenWorkspace({ serverId: input.workspace.serverId, snapshot });
+      throw error;
+    }
+  })();
+  return { hidden: snapshot.workspace, archivedAgentIds: snapshot.archivedAgentIds, done };
 }
 
 export async function archiveWorkspaceOptimistically(input: {
   client: WorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
-}): Promise<void> {
-  const snapshot = hideWorkspaceOptimistically(input.workspace);
+}): Promise<WorkspaceArchiveOutcome> {
+  return beginOptimisticWorkspaceArchive(input).done;
+}
 
+/**
+ * Puts the archived row back now and asks the host to undo the archive, whether it is still
+ * running or already finished. A failed undo hides the row again, unless the user archived
+ * it again in the meantime.
+ */
+export async function undoWorkspaceArchiveOptimistically(input: {
+  client: WorkspaceArchiveUndoClient;
+  workspace: WorkspaceArchiveTarget;
+  hidden: WorkspaceDescriptor | null;
+  archivedAgentIds?: ReadonlySet<string>;
+}): Promise<void> {
+  const { serverId, workspaceId } = input.workspace;
+  const intent = markWorkspaceArchiveUndoPending({
+    serverId,
+    workspaceId,
+    archivedAgentIds: input.archivedAgentIds,
+  });
+  if (input.hidden) {
+    getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [input.hidden]);
+  }
   try {
-    await archiveWorkspaceOrThrow({
-      client: input.client,
-      workspaceId: input.workspace.workspaceId,
-    });
+    await input.client.undoWorkspaceArchive(workspaceId);
   } catch (error) {
-    restoreOptimisticallyHiddenWorkspace({
-      serverId: input.workspace.serverId,
-      workspaceId: input.workspace.workspaceId,
-      snapshot,
-    });
+    if (isWorkspaceArchiveIntentCurrent(intent)) {
+      getHostRuntimeStore().removeWorkspaceSnapshot(serverId, workspaceId);
+    }
     throw error;
+  } finally {
+    settleWorkspaceArchiveIntent(intent);
   }
 }
 

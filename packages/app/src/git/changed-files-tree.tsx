@@ -13,10 +13,10 @@ import {
   type DiffTreeRow,
 } from "@/git/diff-tree";
 import { FileHeader } from "@/git/file-header";
-import type { ParsedDiffFile } from "@/git/use-diff-query";
+import type { DiffFileHeader } from "@/git/diff-snapshot";
 
 export interface ChangedFilesTreeProps {
-  files: ParsedDiffFile[];
+  files: DiffFileHeader[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
   collapsedFolderPaths: string[];

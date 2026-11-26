@@ -11,6 +11,11 @@ import {
   startGitCommandTrace,
   submitGitCommandTrace,
 } from "./git-command-trace.js";
+import {
+  readRepositoryRootGitDir,
+  readSafeBareRepositorySupport,
+  resolveGitDiscovery,
+} from "./git-repository-discovery.js";
 import { spawnProcess } from "./spawn.js";
 import {
   GitProcessScheduler,
@@ -20,7 +25,7 @@ import {
 } from "./git-process-scheduler.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
+export const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
 const DEFAULT_STDERR_LIMIT = 2048;
 
 let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
@@ -67,8 +72,17 @@ export type RunGitCommand = (
   options: GitCommandOptions,
 ) => Promise<GitCommandResult>;
 
-export function createRunGitCommand(provenance: string): RunGitCommand {
-  return (args, options) => runGitCommandWithProvenance(args, options, provenance);
+export interface GitCommandRunnerOptions {
+  /** Overrides the ambient `runWithGitCommandPriority` lane for every command this runner starts. */
+  priority?: GitProcessPriority;
+}
+
+export function createRunGitCommand(
+  provenance: string,
+  runnerOptions: GitCommandRunnerOptions = {},
+): RunGitCommand {
+  return (args, options) =>
+    executeGitCommand(args, options, decodeUtf8, { provenance, priority: runnerOptions.priority });
 }
 
 export interface GitCommandMetric {
@@ -97,6 +111,7 @@ export interface GitCommandMetricsSnapshot {
 export interface GitCommandSubmissionMetric {
   args: string[];
   cwd: string;
+  priority: GitProcessPriority;
 }
 
 interface GitCommandMetricsState {
@@ -188,8 +203,8 @@ function snapshotGitCommandMetricsState(state: GitCommandMetricsState): GitComma
   return {
     commands: [...state.commands],
     submissions: state.submissions.map((submission) => ({
+      ...submission,
       args: [...submission.args],
-      cwd: submission.cwd,
     })),
     submitted: state.submitted,
     started: state.started,
@@ -209,12 +224,16 @@ export function snapshotGitCommandRuntimeMetrics(): GitCommandRuntimeMetricsSnap
   });
 }
 
-function submitGitCommandMetric(args: string[], cwd: string): GitCommandMetricsState | null {
+function submitGitCommandMetric(
+  args: string[],
+  cwd: string,
+  priority: GitProcessPriority,
+): GitCommandMetricsState | null {
   const state = gitCommandMetricsState;
   if (!state) {
     return null;
   }
-  state.submissions.push({ args: [...args], cwd });
+  state.submissions.push({ args: [...args], cwd, priority });
   state.submitted += 1;
   state.lastSubmittedAtMs = Date.now();
   return state;
@@ -258,12 +277,13 @@ function getEnvOverlayKeys(envOverlay: ProcessEnvRecord | undefined): string[] {
   return Object.keys(envOverlay ?? {}).sort();
 }
 
-function runGitCommandWithProvenance(
-  args: string[],
-  options: GitCommandOptions,
-  provenance?: string,
-): Promise<GitCommandResult> {
-  return executeGitCommand(args, options, (output) => output.toString("utf8"), provenance);
+function decodeUtf8(output: Buffer): string {
+  return output.toString("utf8");
+}
+
+interface GitCommandSubmission {
+  provenance?: string;
+  priority?: GitProcessPriority;
 }
 
 /** Binary stdout preserves cat-file byte framing before text decoding. */
@@ -271,22 +291,25 @@ export function runGitCommandBytes(
   args: string[],
   options: GitCommandOptions,
 ): Promise<GitCommandResult<Buffer>> {
-  return executeGitCommand(args, options, (output) => output);
+  return executeGitCommand(args, options, (output) => output, {});
 }
 
 function executeGitCommand<Output>(
   args: string[],
   options: GitCommandOptions,
   decode: (output: Buffer) => Output,
-  provenance?: string,
+  submission: GitCommandSubmission,
 ): Promise<GitCommandResult<Output>> {
-  const metricsState = submitGitCommandMetric(args, options.cwd);
+  const priority = submission.priority ?? gitCommandPriority.getStore() ?? "normal";
+  // Read at submission: the scheduler may start the process from another async context.
+  const repositoryRootGitDir = readRepositoryRootGitDir(options.cwd);
+  const metricsState = submitGitCommandMetric(args, options.cwd, priority);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
     pending: gitProcessScheduler.pendingCount,
   });
-  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), provenance);
-  const startCommand = () => {
+  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), submission.provenance);
+  const spawnCommand = (launch: GitLaunch) => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
@@ -301,7 +324,10 @@ function executeGitCommand<Output>(
       const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
       const acceptExitCodes = options.acceptExitCodes ?? [0];
       const command = formatGitCommand(args);
-      const envOverlay = mergeEnvOverlays(options.env, options.envOverlay);
+      const envOverlay = mergeEnvOverlays(
+        mergeEnvOverlays(options.env, options.envOverlay),
+        launch.envOverlay,
+      );
       const startedAt = Date.now();
       beginGitCommandMetric(metricsState);
       const logger = typeof options.logger?.trace === "function" ? options.logger : undefined;
@@ -391,19 +417,12 @@ function executeGitCommand<Output>(
 
       let child: ReturnType<typeof spawnProcess>;
       try {
-        // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
-        // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
-        // `core.fsmonitor=false` prevents repository config from launching a command.
-        child = spawnProcess(
-          "git",
-          ["-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
-          {
-            cwd: options.cwd,
-            envOverlay,
-            shell: false,
-            stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-          },
-        );
+        child = spawnProcess("git", [...launch.configArgs, ...args], {
+          cwd: options.cwd,
+          envOverlay,
+          shell: false,
+          stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+        });
         spawnGitCommandTrace(commandTrace, child.pid);
       } catch (error) {
         rejectSpawnFailure(error);
@@ -558,9 +577,16 @@ function executeGitCommand<Output>(
     });
     return { result: resultPromise, exited };
   };
-  const promise = gitProcessScheduler.run(startCommand, {
-    priority: gitCommandPriority.getStore() ?? "normal",
-  });
+  // The process slot stays held through the launch lookup because `exited`
+  // settles only after the spawned process exits. `resolveGitLaunch` never rejects.
+  const startCommand = () => {
+    const spawned = resolveGitLaunch(options, repositoryRootGitDir).then(spawnCommand);
+    return {
+      result: spawned.then((scheduled) => scheduled.result),
+      exited: spawned.then((scheduled) => scheduled.exited),
+    };
+  };
+  const promise = gitProcessScheduler.run(startCommand, { priority });
   gitRuntimeMetrics.observeLimiter(
     gitProcessScheduler.activeCount,
     gitProcessScheduler.pendingCount,
@@ -568,7 +594,38 @@ function executeGitCommand<Output>(
   return promise;
 }
 
-export const runGitCommand: RunGitCommand = runGitCommandWithProvenance;
+interface GitLaunch {
+  configArgs: string[];
+  envOverlay: ProcessEnvRecord;
+}
+
+// `core.quotepath=false` makes git emit raw UTF-8 paths instead of
+// octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
+// `core.fsmonitor=false` prevents repository config from launching a command.
+async function resolveGitLaunch(
+  options: GitCommandOptions,
+  repositoryRootGitDir: string | null,
+): Promise<GitLaunch> {
+  const discovery = await resolveGitDiscovery({
+    cwd: options.cwd,
+    repositoryRootGitDir,
+    gitDirSet: Boolean(options.envOverlay?.GIT_DIR ?? options.env?.GIT_DIR ?? process.env.GIT_DIR),
+    safeBareRepositorySupported: await readSafeBareRepositorySupport(),
+  });
+  return {
+    configArgs: [
+      "-c",
+      "core.quotepath=false",
+      "-c",
+      "core.fsmonitor=false",
+      ...discovery.configArgs,
+    ],
+    envOverlay: discovery.envOverlay,
+  };
+}
+
+export const runGitCommand: RunGitCommand = (args, options) =>
+  executeGitCommand(args, options, decodeUtf8, {});
 
 function formatGitCommand(args: string[]): string {
   return ["git", ...args].join(" ");

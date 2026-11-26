@@ -24,9 +24,13 @@ function plugin(input: {
     cleanup: () => {},
     settingsScreens: [],
     surfaces: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowBadgeItems: [],
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -43,6 +47,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
 }
 

@@ -18,6 +18,7 @@ function makeAgent(input: {
   archivedAt?: Date | null;
   createdAt?: Date;
   lastActivityAt?: Date;
+  background?: boolean;
 }): Agent {
   const createdAt = input.createdAt ?? new Date("2026-03-04T00:00:00.000Z");
   const lastActivityAt = input.lastActivityAt ?? createdAt;
@@ -58,6 +59,7 @@ function makeAgent(input: {
     attentionReason: null,
     attentionTimestamp: null,
     archivedAt: input.archivedAt ?? null,
+    background: input.background ?? false,
   };
 }
 
@@ -129,6 +131,33 @@ describe("workspace agent visibility", () => {
         .filter((tab) => tab.target.kind === "agent"),
     ).toEqual([]);
     expect(restored.getState().pinnedAgentIdsByWorkspace["srv:ws-b"]).toBeUndefined();
+  });
+
+  it("keeps a background agent active without auto-opening its tab", () => {
+    const visible = makeAgent({ id: "visible", cwd: "/repo", workspaceId: WORKSPACE_ID });
+    const classifier = makeAgent({
+      id: "classifier",
+      cwd: "/repo",
+      workspaceId: WORKSPACE_ID,
+      background: true,
+    });
+    const result = deriveWorkspaceAgentVisibility({
+      workspaceId: WORKSPACE_ID,
+      sessionAgents: new Map([
+        [visible.id, visible],
+        [classifier.id, classifier],
+      ]),
+    });
+
+    expect(result.autoOpenAgentIds).toEqual(new Set([visible.id]));
+    expect(result.activeAgentIds).toEqual(new Set([visible.id, classifier.id]));
+    expect(
+      shouldPruneWorkspaceAgentTab({
+        agentId: classifier.id,
+        agentsHydrated: true,
+        activeAgentIds: result.activeAgentIds,
+      }),
+    ).toBe(false);
   });
 
   it("uses directory ownership before historical details when identifying foreign agents", () => {

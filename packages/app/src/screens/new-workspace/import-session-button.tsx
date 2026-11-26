@@ -33,11 +33,12 @@ export function ImportSessionButton({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // The composer sits spacing[4] in from the dock and leaves spacing[4] below itself; the pill's
-  // border lines up with the composer's border.
+  // The composer sits spacing[4] in from the dock; the pill's border lines up with the
+  // composer's border, spacing[4] below it.
   wide: {
     alignItems: "flex-start",
     paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[4],
   },
   pill: {
     borderRadius: theme.borderRadius.full,

@@ -124,6 +124,23 @@ const workspace = await client.workspaces.create({
 
 后台 Agent 会保留历史记录，并在 daemon 重启后继续存在。默认的发现结果会隐藏它们；使用 `client.agents.list({ filter: { includeBackground: true } })` 可以包含它们。精确 ID 的句柄可以正常使用。默认值和调用方继承规则见[创建工作区](./workspaces.md#create-a-fresh-workspace)。
 
+## 以后台 Agent 运行辅助任务 {#run-a-helper-as-a-background-agent}
+
+传入 `background: true`，可以在用户可能正打开的工作区中运行辅助 Agent。后台 Agent 不会打开标签页，不会出现在父 Agent 的子 Agent 列表和侧边栏状态中，也不会触发通知。默认列表不包含它。
+
+```ts
+const helper = await client.workspaces.ref(workspaceId).agents.create({
+  config: { provider: "codex/gpt-5.5" },
+  prompt: "Summarize the last turn in one line.",
+  background: true,
+});
+const result = await helper.waitForFinish();
+console.log(result.lastMessage);
+await helper.archive();
+```
+
+在后台 `parent` 下创建的 Agent 默认也是后台 Agent，除非传入 `background: false`。位于其他主机的父 Agent 只有以句柄传入时才会传递该设置；只传地址时，请显式传入 `background`。把后台 Agent 放到已有工作区或某个父 Agent 下需要 `features.backgroundAgents`；在较旧的主机上，SDK 会在发送前抛出 "Update the host to use background agents."。
+
 ## 请求结构化输出 {#request-structured-output}
 
 ```ts

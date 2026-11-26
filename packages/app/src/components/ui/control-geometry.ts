@@ -1,5 +1,14 @@
 import type { StyleProp, ViewStyle } from "react-native";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE, ICON_STROKE_WIDTH, type Theme } from "@/styles/theme";
+import {
+  bySizing,
+  controlSizingForLayout,
+  mapLayout,
+  TOUCH_TARGET,
+  type ControlSizing,
+  type LayoutValue,
+  type SizingValue,
+} from "./control-sizing";
 
 /**
  * Controls come in two sizes. `md` is the default and the right size almost everywhere;
@@ -26,46 +35,181 @@ export interface ControlInteractionStyleMap {
   controlDisabled?: StyleProp<ViewStyle>;
 }
 
-const SMALL_CONTROL_HEIGHT = 28;
-// The default control keeps a full touch target in the compact layout and tightens where a
-// pointer drives it.
-const DEFAULT_CONTROL_HEIGHT_COMPACT_LAYOUT = 44;
-const DEFAULT_CONTROL_HEIGHT_WIDE_LAYOUT = 32;
-export const HEADER_CONTROL_HEIGHT = 26;
+export {
+  bySizing,
+  controlSizingForLayout,
+  mapLayout,
+  resolveControlSizing,
+  TOUCH_TARGET,
+  type ControlSizing,
+  type ControlSizingFacts,
+  type LayoutValue,
+  type SizingValue,
+} from "./control-sizing";
+
+// Touch `md` is the iOS HIG's 44pt default control; touch `sm` stays above its 28pt minimum.
+const CONTROL_SIZES = {
+  sm: { touch: 32, pointer: 28 },
+  md: { touch: TOUCH_TARGET, pointer: 32 },
+} satisfies Record<ControlSize, SizingValue>;
+
+/** Pointer-sized header controls run tighter than `sm` so they fit the 36pt header. */
+const POINTER_HEADER_CONTROL_HEIGHT = 26;
 const SEGMENTED_INSET = 2;
 const CONTROL_FOCUS_RING_WIDTH = 2;
 const CONTROL_FOCUS_RING_OFFSET = 1;
 const FIELD_TEXT_LINE_HEIGHT_RATIO = 1.4;
 
-/** A Unistyles breakpoint value: one number in the compact layout, another from `md` up. */
-// A mapped type, not an interface: Unistyles checks breakpoint objects against an index
-// signature, which interfaces never satisfy.
-export type LayoutValue = Record<"xs" | "md", number>;
-
-function byLayout(compact: number, wide: number): LayoutValue {
-  return { xs: compact, md: wide };
-}
-
-function mapLayout(value: LayoutValue, map: (height: number) => number): LayoutValue {
-  return byLayout(map(value.xs), map(value.md));
-}
-
 /**
  * The height of every button, field, and segmented control of a size. Exported so a row that
  * hosts one of those controls can size itself from the same numbers instead of guessing a
- * height the control then outgrows. `md` depends on the layout, so it only works inside a
- * Unistyles stylesheet.
+ * height the control then outgrows. Breakpoint values, so they only work inside a Unistyles
+ * stylesheet.
  */
 export const CONTROL_HEIGHTS = {
-  sm: SMALL_CONTROL_HEIGHT,
-  md: byLayout(DEFAULT_CONTROL_HEIGHT_COMPACT_LAYOUT, DEFAULT_CONTROL_HEIGHT_WIDE_LAYOUT),
-} satisfies Record<ControlSize, number | LayoutValue>;
+  sm: bySizing(CONTROL_SIZES.sm),
+  md: bySizing(CONTROL_SIZES.md),
+} satisfies Record<ControlSize, LayoutValue>;
+
+/** A framed control in a header row, such as a split button. Touch-sized it is an `sm` control. */
+export const HEADER_CONTROL_HEIGHT = bySizing({
+  touch: CONTROL_SIZES.sm.touch,
+  pointer: POINTER_HEADER_CONTROL_HEIGHT,
+});
+
+/**
+ * Square icon-only buttons. Touch-sized, every icon button is one touch target; pointer-sized,
+ * header buttons are larger than toolbar buttons.
+ */
+export const ICON_BUTTON_SIZES = {
+  large: { touch: TOUCH_TARGET, pointer: POINTER_HEADER_CONTROL_HEIGHT },
+  small: { touch: TOUCH_TARGET, pointer: 20 },
+} satisfies Record<"large" | "small", SizingValue>;
+
+/**
+ * The height of a dense toolbar row, such as the composer's. Touch-sized it is one touch target;
+ * its controls are disc-sized and centre in it.
+ */
+export const TOOLBAR_CONTROL_SIZES = { touch: TOUCH_TARGET, pointer: 28 } satisfies SizingValue;
+export const TOOLBAR_CONTROL_HEIGHT = bySizing(TOOLBAR_CONTROL_SIZES);
+
+/**
+ * The disc of a filled toolbar control, such as the composer's send and stop, and the frame and
+ * highlight of every other toolbar control (`toolbarSlot`). Pointer-sized it fills the row.
+ */
+export const TOOLBAR_DISC_SIZES = { touch: 36, pointer: 28 } satisfies SizingValue;
+export const TOOLBAR_DISC_SIZE = bySizing(TOOLBAR_DISC_SIZES);
+
+/**
+ * The space between adjacent toolbar controls. Touch-sized there is none: each control lays out at
+ * its fully rounded highlight, so neighbouring highlights touch and never overlap.
+ */
+export const TOOLBAR_CONTROL_GAPS = { touch: 0, pointer: 4 } satisfies SizingValue;
+export const TOOLBAR_CONTROL_GAP = bySizing(TOOLBAR_CONTROL_GAPS);
+
+/** A labelled toolbar control's padding on each side of its content. */
+export const TOOLBAR_LABEL_PADDING = 8;
+
+/** An icon-only toolbar control's frame: a disc-sized circle, which is also its highlight. */
+export function toolbarSlot(): { width: LayoutValue; height: LayoutValue } {
+  return { width: TOOLBAR_DISC_SIZE, height: TOOLBAR_DISC_SIZE };
+}
+
+/** A toolbar control as wide as its content, such as a labelled picker: a disc-tall pill. */
+export function toolbarContentSlot(): { height: LayoutValue; paddingHorizontal: number } {
+  return { height: TOOLBAR_DISC_SIZE, paddingHorizontal: TOOLBAR_LABEL_PADDING };
+}
+
+/**
+ * Glyph sizes. Pointer glyphs sit beside 13-14pt text; touch glyphs sit beside iOS's 17pt body
+ * text, so each step is larger.
+ */
+export type IconSize = keyof typeof ICON_SIZE;
+export const TOUCH_ICON_SIZE: Record<IconSize, number> = { xs: 14, sm: 18, md: 20, lg: 24 };
+
+export function iconSizeFor(size: IconSize): SizingValue {
+  return { touch: TOUCH_ICON_SIZE[size], pointer: ICON_SIZE[size] };
+}
+
+/**
+ * The glyph a toolbar control paints. Touch-sized every toolbar glyph is 20pt at the app's 1.5px
+ * stroke. An icon-only control's glyph matches the header icons and rests at `foreground`; a glyph
+ * paired with a label rests muted so the control reads as one quiet unit with its label.
+ * Pointer-sized it is the `md` glyph at the same stroke and rests muted until hovered.
+ */
+export type ToolbarGlyphTone = "foreground" | "muted";
+
+export interface ToolbarGlyph {
+  size: number;
+  strokeWidth: number;
+  /** The tone at rest; a hovering pointer brightens it to `foreground`. */
+  tone: ToolbarGlyphTone;
+}
+
+/** `icon` is an icon-only control's glyph; `label` is a glyph paired with a label. */
+export interface ToolbarGlyphs {
+  icon: ToolbarGlyph;
+  label: ToolbarGlyph;
+}
+
+const POINTER_TOOLBAR_GLYPH: ToolbarGlyph = {
+  size: ICON_SIZE.md,
+  strokeWidth: ICON_STROKE_WIDTH,
+  tone: "muted",
+};
+
+const TOOLBAR_GLYPHS: Record<ControlSizing, ToolbarGlyphs> = {
+  touch: {
+    icon: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "foreground" },
+    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "muted" },
+  },
+  pointer: { icon: POINTER_TOOLBAR_GLYPH, label: POINTER_TOOLBAR_GLYPH },
+};
+
+export function toolbarGlyphsFor(sizing: ControlSizing): ToolbarGlyphs {
+  return TOOLBAR_GLYPHS[sizing];
+}
+
+/** The slot each toolbar glyph sits in, as stylesheet values. */
+export const TOOLBAR_GLYPH_SIZES = {
+  icon: bySizing({ touch: TOOLBAR_GLYPHS.touch.icon.size, pointer: POINTER_TOOLBAR_GLYPH.size }),
+  label: bySizing({ touch: TOOLBAR_GLYPHS.touch.label.size, pointer: POINTER_TOOLBAR_GLYPH.size }),
+} satisfies Record<keyof ToolbarGlyphs, LayoutValue>;
+
+/**
+ * The context ring in a toolbar row. A full circle fills its box while an outline glyph's ink
+ * sits inset, so touch-sized the ring is 18pt, the height of a 20pt glyph's ink. Its 2px stroke
+ * is half a pixel over the glyphs' so the thin circle does not read lighter than them.
+ * Pointer-sized it is the `md` glyph.
+ */
+export interface ToolbarRing {
+  size: number;
+  strokeWidth: number;
+}
+
+export const TOOLBAR_RINGS = {
+  touch: { size: 18, strokeWidth: 2 },
+  pointer: { size: ICON_SIZE.md, strokeWidth: 2 },
+} satisfies Record<ControlSizing, ToolbarRing>;
+
+export function toolbarGlyphTone(glyph: ToolbarGlyph, hovered: boolean): ToolbarGlyphTone {
+  return hovered ? "foreground" : glyph.tone;
+}
+
+export function toolbarGlyphColor(theme: Theme, tone: ToolbarGlyphTone): string {
+  return tone === "foreground" ? theme.colors.foreground : theme.colors.foregroundMuted;
+}
+
+/**
+ * The solid glyph inside a toolbar disc, such as the stop square. It stays at the `md` glyph
+ * size: at the toolbar glyph size the square would fill half its disc. Send's outline arrow
+ * takes the toolbar glyph.
+ */
+export const TOOLBAR_DISC_GLYPH_SIZES = iconSizeFor("md");
 
 /** The height of a control of `size`, for code that has to compute with it outside a stylesheet. */
 export function controlHeightForLayout(size: ControlSize, isCompact: boolean): number {
-  const height = CONTROL_HEIGHTS[size];
-  if (typeof height === "number") return height;
-  return isCompact ? height.xs : height.md;
+  return CONTROL_SIZES[size][controlSizingForLayout(isCompact)];
 }
 
 export const controlIconSize: Record<ControlSize, number> = {
@@ -79,8 +223,11 @@ export interface SwitchGeometry {
   thumbSize: number;
   /** How far the thumb slides between off and on. */
   thumbTravel: number;
-  /** The control height the switch reserves, so its row lines up with one holding a button. */
-  reservedHeight: number;
+  /**
+   * The height of the area that takes the press: the control height of the switch's size. The
+   * switch itself is only as tall as its track, so it never makes a row taller.
+   */
+  hitHeight: number;
 }
 
 function switchSize(trackWidth: number, trackHeight: number, thumbSize: number) {
@@ -92,12 +239,22 @@ const SWITCH_POINTER = switchSize(34, 20, 16);
 const SWITCH_TOUCH = switchSize(44, 26, 22);
 
 /**
+ * The height of a default switch. Exported so a row can be as tall as one holding a switch whether
+ * or not it holds one. A breakpoint value, so it only works inside a Unistyles stylesheet.
+ */
+export const SWITCH_HEIGHT = bySizing({
+  touch: SWITCH_TOUCH.trackHeight,
+  pointer: SWITCH_POINTER.trackHeight,
+});
+
+/**
  * A switch follows the same two sizes as every other control. Its thumb travel feeds an
  * animation, so the size is resolved to plain numbers here instead of a stylesheet breakpoint.
  */
 export function switchGeometryForLayout(size: ControlSize, isCompact: boolean): SwitchGeometry {
-  const track = size === "md" && isCompact ? SWITCH_TOUCH : SWITCH_POINTER;
-  return { ...track, reservedHeight: controlHeightForLayout(size, isCompact) };
+  const touchSized = controlSizingForLayout(isCompact) === "touch";
+  const track = size === "md" && touchSized ? SWITCH_TOUCH : SWITCH_POINTER;
+  return { ...track, hitHeight: controlHeightForLayout(size, isCompact) };
 }
 
 function fieldLineHeight(fontSize: number): number {
@@ -225,10 +382,8 @@ export function createControlGeometry(theme: Theme) {
   const fieldControlSm = {
     minHeight: CONTROL_HEIGHTS.sm,
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: fieldVerticalPadding(
-      CONTROL_HEIGHTS.sm,
-      fieldTextSmLineHeight,
-      controlBorderWidth,
+    paddingVertical: mapLayout(CONTROL_HEIGHTS.sm, (height) =>
+      fieldVerticalPadding(height, fieldTextSmLineHeight, controlBorderWidth),
     ),
     borderRadius: theme.borderRadius.md,
   };
@@ -258,7 +413,7 @@ export function createControlGeometry(theme: Theme) {
     },
     buttonMd: {
       minHeight: CONTROL_HEIGHTS.md,
-      paddingHorizontal: byLayout(theme.spacing[6], theme.spacing[4]),
+      paddingHorizontal: bySizing({ touch: theme.spacing[6], pointer: theme.spacing[4] }),
       borderRadius: theme.borderRadius.full,
     },
     // A button with only an icon is a circle of its size's height.
@@ -314,7 +469,7 @@ export function createControlGeometry(theme: Theme) {
       padding: 0,
     },
     segmentedSegmentSm: {
-      minHeight: CONTROL_HEIGHTS.sm - SEGMENTED_INSET * 2,
+      minHeight: mapLayout(CONTROL_HEIGHTS.sm, (height) => height - SEGMENTED_INSET * 2),
       paddingHorizontal: theme.spacing[2],
       borderRadius: theme.borderRadius.full,
     },

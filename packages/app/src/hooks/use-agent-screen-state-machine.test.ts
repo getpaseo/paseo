@@ -455,6 +455,60 @@ describe("deriveAgentScreenViewState", () => {
     expect(ready.sync).toEqual({ status: "idle" });
   });
 
+  it("stays silent over cached content while the freshness check is unanswered", () => {
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgentWithStatus({ id: "agent-1", status: "idle" }),
+      visibilityCatchUpStatus: "checking",
+      hasHydratedHistoryBefore: true,
+    };
+
+    const checking = expectReadyState(
+      deriveAgentScreenViewState({ input, memory: createBaseMemory() }).state,
+    );
+    const behind = expectReadyState(
+      deriveAgentScreenViewState({
+        input: { ...input, visibilityCatchUpStatus: "pending" },
+        memory: createBaseMemory(),
+      }).state,
+    );
+
+    expect(checking.sync).toEqual({ status: "catching_up", ui: "silent" });
+    expect(behind.sync).toEqual({ status: "catching_up", ui: "status" });
+  });
+
+  it("keeps reconnecting until the daemon answers the check made after a reconnect", () => {
+    const ready = expectReadyState(
+      deriveAgentScreenViewState({
+        input: {
+          ...createBaseInput(),
+          agent: createAgentWithStatus({ id: "agent-1", status: "idle" }),
+          isConnected: true,
+          visibilityCatchUpStatus: "reattaching",
+          hasHydratedHistoryBefore: true,
+        },
+        memory: createBaseMemory(),
+      }).state,
+    );
+
+    expect(ready.sync).toEqual({ status: "reconnecting" });
+  });
+
+  it("keeps the blocking overlay while a chat with nothing cached is checked", () => {
+    const input: AgentScreenMachineInput = {
+      ...createBaseInput(),
+      agent: createAgentWithStatus({ id: "agent-1", status: "idle" }),
+      visibilityCatchUpStatus: "checking",
+      hasHydratedHistoryBefore: false,
+    };
+
+    const ready = expectReadyState(
+      deriveAgentScreenViewState({ input, memory: createBaseMemory() }).state,
+    );
+
+    expect(ready.sync).toEqual({ status: "catching_up", ui: "overlay" });
+  });
+
   it("keeps optimistic create non-blocking while timeline and authoritative history catch up", () => {
     const memory = createBaseMemory();
     const input: AgentScreenMachineInput = {
@@ -626,5 +680,57 @@ describe("deriveAgentScreenViewState", () => {
 
     expect(sync.ui).toBe("status");
     expect(result.memory.hadInitialSyncFailure).toBe(false);
+  });
+
+  it("stays ready without reverting to boot when an archived agent unarchives", () => {
+    const archivedAgent = {
+      ...createAgent("agent-1"),
+      archivedAt: new Date("2026-02-19T00:01:00.000Z"),
+    };
+    const archivedResult = deriveAgentScreenViewState({
+      input: {
+        ...createBaseInput(),
+        agent: archivedAgent,
+        isArchived: true,
+        hasHydratedHistoryBefore: false,
+        needsAuthoritativeSync: true,
+        isHistorySyncing: true,
+        visibilityCatchUpStatus: "pending",
+      },
+      memory: createBaseMemory(),
+    });
+    expectReadyState(archivedResult.state);
+    expect(archivedResult.memory.hasRenderedReady).toBe(true);
+
+    const unarchivedAgent = {
+      ...createAgent("agent-1"),
+      archivedAt: null,
+    };
+    const unarchivedInput = {
+      ...createBaseInput(),
+      agent: unarchivedAgent,
+      isArchived: false,
+      hasHydratedHistoryBefore: false,
+      needsAuthoritativeSync: true,
+      isHistorySyncing: true,
+      visibilityCatchUpStatus: "pending" as const,
+    };
+
+    // Without prior ready render, the same unarchived input stays in boot.
+    const freshBoot = deriveAgentScreenViewState({
+      input: unarchivedInput,
+      memory: createBaseMemory(),
+    });
+    expect(freshBoot.state.tag).toBe("boot");
+
+    // Because this screen already rendered ready while archived, unarchiving stays ready.
+    const unarchivedResult = deriveAgentScreenViewState({
+      input: unarchivedInput,
+      memory: archivedResult.memory,
+    });
+    const ready = expectReadyState(unarchivedResult.state);
+    expect(ready.agent.id).toBe("agent-1");
+    expect(ready.source).toBe("authoritative");
+    expect(ready.sync).toEqual({ status: "catching_up", ui: "overlay" });
   });
 });

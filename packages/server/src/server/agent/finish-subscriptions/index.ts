@@ -7,10 +7,17 @@ import type { FinishObservationResult } from "./internal/observation-buffer.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
+  endsSubscription,
   formatFinishNotificationBody,
   finishNotificationEvents,
   type FinishNotificationReason,
 } from "./internal/notification.js";
+import {
+  createFollowing,
+  FOLLOW_LIMIT,
+  type FollowOutcome,
+  type Notice,
+} from "./internal/following.js";
 export { createJsonFinishSubscriptionStore } from "./internal/json-store.js";
 
 export interface FinishSubscription {
@@ -20,7 +27,17 @@ export interface FinishSubscription {
   serverId?: string;
   /** Creation subscriptions stop reporting after the child is detached. */
   requireParentOwnership?: boolean;
+  /**
+   * Set once the child ended a turn while it was still working and the caller was told so.
+   * The subscription then follows the child until it settles or the follow limit passes.
+   */
+  followingSince?: string;
 }
+/**
+ * Work that will start the child's next turn without a new prompt from the caller.
+ * Recurring triggers such as heartbeats are not pending work: they never settle.
+ */
+export type PendingWork = "turn" | "background work" | "queued messages" | "delegated agents";
 export interface FinishSubscriptionStore {
   list(): Promise<FinishSubscription[]>;
   put(subscription: FinishSubscription): Promise<void>;
@@ -32,6 +49,8 @@ export interface FinishObservationSession {
 }
 export interface FinishObservation {
   open(subscription: FinishSubscription, signal: AbortSignal): Promise<FinishObservationSession>;
+  /** The child's own pending work. Empty when its host cannot tell, as for remote children. */
+  pendingWork(subscription: FinishSubscription): readonly PendingWork[];
 }
 interface Dependencies extends FinishObservation {
   store: FinishSubscriptionStore;
@@ -40,6 +59,8 @@ interface Dependencies extends FinishObservation {
   serverId: string;
   logger: Logger;
   retryDelayMs?: number;
+  /** How long a child that is still working is followed before the subscription gives up. */
+  followLimitMs?: number;
 }
 export interface FinishRegistration {
   /** The prompt was accepted. Replaces preceding registrations for this pair. */
@@ -64,10 +85,13 @@ interface Watch {
   decide(accepted: boolean): void;
   pending: boolean;
   task?: Promise<void>;
+  /** Decides a followed child's state again; see `createFollowing`. */
+  recheck?(): void;
 }
 function key(record: FinishSubscription): string {
   return JSON.stringify([record.callerAgentId, record.childAgentId, record.serverId]);
 }
+const DEFAULT_FOLLOW_LIMIT_MS = 24 * 60 * 60_000;
 
 /** Owns durable intent, live observation, supersession, and dispatch acknowledgment. */
 export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptions {
@@ -108,6 +132,18 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     group.delete(watch);
     if (!group.size && watches.get(key(watch.records[0]!)) === group)
       watches.delete(key(watch.records[0]!));
+  }
+  /**
+   * A watch that ends without telling its caller leaves that caller's own watchers with no event:
+   * the caller may have no work left now.
+   */
+  function recheckCallerOf(watch: Watch): void {
+    const { callerAgentId } = watch.records[0]!;
+    for (const group of watches.values())
+      for (const watcher of group) {
+        const record = watcher.records[0]!;
+        if (record.childAgentId === callerAgentId && !record.serverId) watcher.recheck?.();
+      }
   }
   async function remove(watch: Watch): Promise<void> {
     // Only IDs captured by this observer are eligible; newer registrations survive.
@@ -169,19 +205,19 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   }
   async function deliver(
     record: FinishSubscription,
-    result: FinishObservationResult,
+    notice: Notice,
     permissions: Set<string>,
     signal: AbortSignal,
-  ): Promise<boolean> {
-    const requests = result.final?.pendingPermissions ?? [];
-    const reason = reasonFor(result);
+  ): Promise<void> {
+    const { reason, result } = notice;
+    const requests = result?.final?.pendingPermissions ?? [];
     for (const id of permissions)
       if (!requests.some((request) => request.id === id)) permissions.delete(id);
     const acknowledgments: Promise<unknown>[] = [];
     for (const request of reason === "needs permission" ? requests : [undefined]) {
-      if (signal.aborted) return false;
+      if (signal.aborted) return;
       if (request && permissions.has(request.id)) continue;
-      const title = result.final?.title ?? record.childAgentId;
+      const title = result?.final?.title ?? record.childAgentId;
       const receipt = deps.messages().enqueue({
         recipientId: record.callerAgentId,
         prompt: formatFinishNotificationBody({
@@ -189,8 +225,9 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           serverId: record.serverId ?? deps.serverId,
           title,
           reason,
-          lastAssistantMessage: result.lastMessage,
+          lastAssistantMessage: result?.lastMessage ?? null,
           permissionRequest: request,
+          pendingWork: notice.work,
         }),
         source: {
           kind: "agent-notification",
@@ -199,7 +236,8 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           title,
           event: finishNotificationEvents[reason],
         },
-        activeTurnBehavior: "steer",
+        // A finish report never enters a running turn.
+        activeTurnBehavior: "queue",
         unarchive: false,
       });
       acknowledgments.push(
@@ -210,9 +248,42 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       );
     }
     await abortable(Promise.all(acknowledgments), signal);
-    if (signal.aborted) return false;
-    if (reason !== "needs permission") return true;
-    return false;
+  }
+  function delegations(agentId: string): FinishSubscription[] {
+    const records: FinishSubscription[] = [];
+    for (const group of watches.values())
+      for (const watch of group)
+        if (watch.records[0]!.callerAgentId === agentId) records.push(watch.records[0]!);
+    return records;
+  }
+  function delegates(agentId: string): boolean {
+    return registering.has(agentId) || delegations(agentId).length > 0;
+  }
+  /**
+   * Whether one of the agent's delegations can still bring it a notice. A delegate that has settled
+   * is about to report; a delegate that only waits on agents in `chain` never will, so agents that
+   * wait on each other settle together.
+   */
+  function awaitsDelegates(agentId: string, chain: Set<string>): boolean {
+    if (registering.has(agentId)) return true;
+    chain.add(agentId);
+    return delegations(agentId).some((delegation) => {
+      // A remote delegate's work is known only to its host.
+      if (delegation.serverId) return true;
+      const delegate = delegation.childAgentId;
+      if (chain.has(delegate)) return false;
+      if (deps.pendingWork(delegation).length > 0 || delegations(delegate).length === 0)
+        return true;
+      return awaitsDelegates(delegate, chain);
+    });
+  }
+  /** Everything that will start the child's next turn by itself. */
+  function pendingWork(record: FinishSubscription): PendingWork[] {
+    const work = [...deps.pendingWork(record)];
+    // A remote child's own subscriptions live on its host.
+    if (!record.serverId && awaitsDelegates(record.childAgentId, new Set()))
+      work.push("delegated agents");
+    return work;
   }
   async function run(watch: Watch, group: Set<Watch>): Promise<void> {
     const signal = watch.controller.signal;
@@ -223,17 +294,27 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         (intent) => intent.requireParentOwnership === true,
       ),
     };
+    const following = createFollowing({
+      records: watch.records,
+      store: deps.store,
+      limitMs: deps.followLimitMs ?? DEFAULT_FOLLOW_LIMIT_MS,
+      pendingWork: () => pendingWork(record),
+      reasonFor,
+    });
+    watch.recheck = following.recheck;
     const permissions = new Set<string>();
     let observation: FinishObservationSession | undefined;
-    let pending: FinishObservationResult | undefined;
-    let acknowledged = false;
+    /** One outcome and how far it got. Retries resume it: nothing is lost or sent twice. */
+    let current:
+      | { outcome: FollowOutcome; decided: boolean; notice?: Notice; sent: boolean }
+      | undefined;
     let remoteFailures = 0;
     let retries = 0;
     let warned = false;
-    async function observeNext(): Promise<FinishObservationResult | undefined> {
+    async function observeNext(): Promise<FollowOutcome | undefined> {
       try {
         observation ??= await deps.open(record, signal);
-        const result = await abortable(observation.next(), signal);
+        const result = await following.next(abortable(observation.next(), signal), signal);
         remoteFailures = 0;
         return result;
       } catch (error) {
@@ -253,37 +334,56 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         };
       }
     }
+    async function end(notified: boolean): Promise<true> {
+      await remove(watch);
+      stop(watch, group);
+      if (!notified) recheckCallerOf(watch);
+      return true;
+    }
+    async function decide(outcome: FollowOutcome): Promise<Notice | undefined | "suppressed"> {
+      // A queued follow-up cannot start until the current permission is answered.
+      // Its pending registration must not hold the running turn's checkpoint.
+      if (outcome === FOLLOW_LIMIT || outcome.status !== "permission" || watch.pending)
+        await decisions(group);
+      signal.throwIfAborted();
+      if (await suppressed(record, outcome === FOLLOW_LIMIT ? undefined : outcome))
+        return "suppressed";
+      return following.decide(outcome);
+    }
+    /** Handles one outcome. Returns true once the subscription has ended. */
+    async function step(): Promise<boolean> {
+      if (await suppressed(record)) return end(false);
+      if (!current) {
+        const outcome = await observeNext();
+        if (!outcome) {
+          await delay(signal, retries++);
+          return false;
+        }
+        current = { outcome, decided: false, sent: false };
+      }
+      signal.throwIfAborted();
+      if (!current.decided) {
+        const notice = await decide(current.outcome);
+        if (notice === "suppressed") return end(false);
+        current = { ...current, decided: true, notice };
+      }
+      const { notice } = current;
+      if (notice && !current.sent) {
+        await deliver(record, notice, permissions, signal);
+        signal.throwIfAborted();
+        current.sent = true;
+      }
+      // A removal failure retries only the commit, never the already accepted callback.
+      if (notice && endsSubscription(notice.reason)) return end(true);
+      current = undefined;
+      retries = 0;
+      warned = false;
+      return false;
+    }
     try {
       while (!signal.aborted) {
         try {
-          if (await suppressed(record)) {
-            await remove(watch);
-            stop(watch, group);
-            return;
-          }
-          if (!pending) pending = await observeNext();
-          if (!pending) {
-            await delay(signal, retries++);
-            continue;
-          }
-          if (signal.aborted) return;
-          await decisions(group);
-          if (signal.aborted) return;
-          if (await suppressed(record, pending)) {
-            await remove(watch);
-            stop(watch, group);
-            return;
-          }
-          if (!acknowledged) acknowledged = await deliver(record, pending, permissions, signal);
-          if (acknowledged) {
-            // A removal failure retries only the commit, never the already accepted callback.
-            await remove(watch);
-            stop(watch, group);
-            return;
-          }
-          pending = undefined;
-          retries = 0;
-          warned = false;
+          if (await step()) return;
         } catch (error) {
           if (signal.aborted) return;
           // Delivery and storage failures retain the captured outcome and durable intent.
@@ -305,11 +405,7 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
 
   return {
     hasPendingForCaller(agentId) {
-      if (recovering || registering.has(agentId)) return true;
-      for (const group of watches.values()) {
-        for (const watch of group) if (watch.records[0]!.callerAgentId === agentId) return true;
-      }
-      return false;
+      return recovering || delegates(agentId);
     },
     start: () =>
       serialize(async () => {

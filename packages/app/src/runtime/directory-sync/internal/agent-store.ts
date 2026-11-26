@@ -6,6 +6,7 @@ import { buildAgentDirectoryState, type AgentDirectoryDelta } from "@/utils/agen
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
+import { clearUnarchiveAgentPending } from "@/stores/unarchive-agent-store";
 import { queryClient } from "@/data/query-client";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
@@ -19,6 +20,26 @@ function withoutAgent(agentId: string) {
     next.delete(agentId);
     return next;
   };
+}
+
+/**
+ * Every update arrives as a whole new agent, so each nested value (capabilities, modes, labels) is
+ * a new object even when it did not change. Keep the stored value for every field that is equal,
+ * and the stored agent when nothing changed, so a reader of one field sees a new value only when
+ * that field changes.
+ */
+function keepUnchangedFields(stored: Agent, incoming: Agent): Agent {
+  const next = { ...incoming };
+  let changed = Object.keys(stored).length !== Object.keys(next).length;
+  for (const key of Object.keys(next) as (keyof Agent)[]) {
+    if (next[key] === stored[key]) continue;
+    if (key in stored && equal(next[key], stored[key])) {
+      Object.assign(next, { [key]: stored[key] });
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? next : stored;
 }
 
 function mergeSnapshotTurn(previous: Agent | undefined, incoming: Agent): Agent {
@@ -57,14 +78,20 @@ export class AgentStoreProjection {
 
   accept(agent: Agent): Agent {
     let accepted = agent;
-    useSessionStore.getState().setAgents(this.serverId, (current) => {
+    const store = useSessionStore.getState();
+    store.setAgents(this.serverId, (current) => {
       const previous = current.get(agent.id);
-      accepted = acceptAgentDirectoryUpdate(previous, mergeSnapshotTurn(previous, agent));
+      const winner = acceptAgentDirectoryUpdate(previous, mergeSnapshotTurn(previous, agent));
+      accepted = previous ? keepUnchangedFields(previous, winner) : winner;
       if (accepted === previous) return current;
       const next = new Map(current);
       next.set(agent.id, accepted);
       return next;
     });
+    if (!accepted.archivedAt) {
+      clearUnarchiveAgentPending({ serverId: this.serverId, agentId: accepted.id });
+      store.setAgentDetails(this.serverId, withoutAgent(accepted.id));
+    }
     return accepted;
   }
 
@@ -117,9 +144,11 @@ export class AgentStoreProjection {
     for (const [agentId, fetchedAgent] of fetched) {
       const existing = current.get(agentId);
       const merged = mergeSnapshotTurn(existing, fetchedAgent);
-      agents.set(agentId, existing && equal(existing, merged) ? existing : merged);
+      agents.set(agentId, existing ? keepUnchangedFields(existing, merged) : merged);
       if (fetchedAgent.archivedAt) {
         clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
+      } else {
+        clearUnarchiveAgentPending({ serverId: this.serverId, agentId });
       }
     }
     store.setAgents(this.serverId, agents);
@@ -155,7 +184,15 @@ export class AgentStoreProjection {
     const removeKey = withoutAgent(agentId);
     clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
     store.setAgents(this.serverId, removeKey);
-    store.setAgentDetails(this.serverId, removeKey);
+    // Leaving the active directory (for example an archived agent loaded for history) must not
+    // wipe an archived detail snapshot that an open pane is currently displaying.
+    store.setAgentDetails(this.serverId, (current) => {
+      const existing = current.get(agentId);
+      if (!existing || existing.archivedAt != null) return current;
+      const next = new Map(current);
+      next.delete(agentId);
+      return next;
+    });
     store.setQueuedMessages(this.serverId, removeKey);
     store.setInitializingAgents(this.serverId, removeKey);
     store.setPendingPermissions(this.serverId, (current) => {
@@ -169,9 +206,6 @@ export class AgentStoreProjection {
       agentLastActivity.delete(agentId);
       return { ...state, agentLastActivity };
     });
-    useDraftStore.getState().clearDraftInput({
-      draftKey: buildDraftStoreKey({ serverId: this.serverId, agentId }),
-    });
     const initKey = getInitKey(this.serverId, agentId);
     if (getInitDeferred(initKey)) {
       rejectInitDeferred(initKey, new Error("Agent was removed during initialization"));
@@ -180,14 +214,13 @@ export class AgentStoreProjection {
 
   remove(agentId: string): void {
     this.removeFromDirectory(agentId);
-    // Only entity deletion destroys the transcript. A filtered active-list
-    // response can arrive after a fresh history response for an archived agent.
-    const store = useSessionStore.getState();
-    const removeKey = withoutAgent(agentId);
-    store.setAgentTimelineCursor(this.serverId, removeKey);
-    store.setAgentAuthoritativeHistoryApplied(this.serverId, agentId, false);
-    store.setAgentStreamTail(this.serverId, removeKey);
-    store.clearAgentStreamHead(this.serverId, agentId);
+    useSessionStore.getState().setAgentDetails(this.serverId, withoutAgent(agentId));
+    useDraftStore.getState().clearDraftInput({
+      draftKey: buildDraftStoreKey({ serverId: this.serverId, agentId }),
+    });
+    // Leaving the active list does not release the transcript: an archived chat open in
+    // History stays readable. The viewed timeline owner releases it once nobody shows it.
+    useSessionStore.getState().releaseAgentTimeline(this.serverId, agentId);
   }
 
   archive(agentId: string, archivedAt: string): Agent | null {

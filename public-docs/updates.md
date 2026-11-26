@@ -40,7 +40,9 @@ When the release is ready, the final stable tag is `v0.1.92` — not `v0.1.93`. 
 
 ## Stable channel
 
-The stable channel is the default. Stable desktop releases roll out gradually over **36 hours** so that if something unexpected slips through, it doesn't hit everyone at once. Automatic update checks pick up the release as the rollout progresses; clicking **Check** in the app bypasses the rollout and installs immediately.
+The stable channel is the default. Stable desktop releases roll out gradually over **18 hours**: a small group of installs gets the release first, then everyone else over the following hours. If something unexpected slips through, it doesn't hit everyone at once.
+
+After the desktop app updates, it waits **24 hours** before it takes the next regular release, so frequent releases don't mean frequent restarts. Urgent fixes skip the wait. Clicking **Check** in the app skips both the rollout and the wait and installs immediately.
 
 Stable releases are what most users should run.
 
@@ -52,19 +54,20 @@ Betas are the best way to get fixes and features early. If you hit a bug, report
 
 ### How to join the beta channel
 
-In the desktop app:
+| Platform       | How to get betas                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------- |
+| iOS and iPadOS | Join the [Paseo TestFlight beta](https://testflight.apple.com/join/Y5HpSQjJ).                                 |
+| Android        | Download the APK from a prerelease on the [GitHub releases page](https://github.com/getpaseo/paseo/releases). |
+| Desktop        | Open **Settings → About** and select **Beta** under **Release channel**.                                      |
+| CLI            | Run `npm install -g @getpaseo/cli@beta`. Plain `npm install -g @getpaseo/cli` stays on stable.                |
 
-1. Open **Settings**
-2. Go to **About**
-3. Under **Release channel**, select **Beta**
-
-The app will check for beta updates from then on.
+The desktop app checks for beta updates from the moment you select **Beta**.
 
 ## App stores
 
 Desktop releases and the CLI are usually available first. App Store and Play Store releases can lag behind because they go through review.
 
-There is no beta channel in the app stores right now — only stable builds are submitted. If you want early Android builds, download the APK from the [GitHub releases page](https://github.com/getpaseo/paseo/releases).
+The App Store and Play Store listings carry stable builds only. On iOS, the [TestFlight beta](https://testflight.apple.com/join/Y5HpSQjJ) is the beta channel. Every beta is uploaded to it after Apple's beta review, and stable releases are uploaded to it as well, so TestFlight testers stay on the latest build. On Android there is no Play Store beta, so install beta APKs from GitHub.
 
 ## What to do if something breaks
 

@@ -34,6 +34,7 @@ test.each(["existing", "new"])(
         metrics: observer.getDiagnostics(),
         isActive: () => active,
         isIgnored: () => false,
+        isIgnoredRoot: () => false,
         isPathInside: paths.isInside,
         queueEvent: (type, path) => events.push({ type, path }),
         fail: (error) => {
@@ -60,6 +61,7 @@ test.each(["existing", "new"])(
       await Promise.all(removed.map((path) => rm(path)));
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
       for (const path of removed) notifications.emit("change", "change", path);
+      // The file-only event uses the eight-second optional audit debounce.
       await vi.advanceTimersByTimeAsync(8_000);
       vi.useRealTimers();
       await expect
@@ -95,6 +97,7 @@ test("a file announced only as changed remains visible to coalesced deletion sca
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -149,6 +152,7 @@ test("a native ignore update drains classifications queued below the new exclude
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: (path) => ignoreGenerated && paths.isInside(ignored, path),
+      isIgnoredRoot: (path) => ignoreGenerated && path === ignored,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => {
         if (type === "create") delivered.push(path);
@@ -199,6 +203,7 @@ test("a rename burst does not spawn one stat per event", async () => {
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: () => {},
       fail: () => {},
@@ -245,6 +250,7 @@ test("a classification shed onto the scoped audit still recovers the file", asyn
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -309,79 +315,99 @@ test("a classification shed onto the scoped audit still recovers the file", asyn
 // re-link `directory` itself back into its parent -- walkSubtree only
 // descends through that link, so without the re-link a later ancestor
 // removal can no longer reach anything below the reconciled directory.
-test("a recursive-scope reconcile re-links its directory so an ancestor removal still finds nested files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "native-relink-"));
-  const paths = createObserverPaths(process.platform);
-  const deepDirectory = join(root, "a", "b", "c");
-  const deepFile = join(deepDirectory, "deep.txt");
-  await mkdir(deepDirectory, { recursive: true });
-  await writeFile(deepFile, "content");
-  const events: FileChange[] = [];
-  const notifications = new EventEmitter();
-  const observer = createFileObserver();
-  let active = true;
-  const backend = createNativeRecursiveBackend(
-    {
-      root,
-      metrics: observer.getDiagnostics(),
-      isActive: () => active,
-      isIgnored: () => false,
-      isPathInside: paths.isInside,
-      queueEvent: (type, path) => events.push({ type, path }),
-      fail: (error) => {
-        throw error;
-      },
-    },
-    paths,
-    (_root, listener) => {
-      notifications.on("change", listener);
-      return {
-        close: () => notifications.removeAllListeners(),
-        on: (event, onError) => notifications.on(event, onError),
-      };
-    },
-  );
-  const settled = () =>
-    expect
-      .poll(
-        () => {
-          const diagnostics = backend.getDiagnostics();
-          return (
-            diagnostics.pendingReconciliationWorkCount === 0 && !diagnostics.reconciliationInFlight
-          );
+test.each([
+  { notification: "ancestor", deletedPath: ["a"] },
+  { notification: "file", deletedPath: ["a", "b", "c", "deep.txt"] },
+])(
+  "a recursive-scope reconcile preserves nested deletions announced by $notification",
+  async ({ deletedPath }) => {
+    const root = await mkdtemp(join(tmpdir(), "native-relink-"));
+    const paths = createObserverPaths(process.platform);
+    const deepDirectory = join(root, "a", "b", "c");
+    const deepFile = join(deepDirectory, "deep.txt");
+    await mkdir(deepDirectory, { recursive: true });
+    await writeFile(deepFile, "content");
+    const events: FileChange[] = [];
+    const notifications = new EventEmitter();
+    const observer = createFileObserver();
+    let active = true;
+    const backend = createNativeRecursiveBackend(
+      {
+        root,
+        metrics: observer.getDiagnostics(),
+        isActive: () => active,
+        isIgnored: () => false,
+        isIgnoredRoot: () => false,
+        isPathInside: paths.isInside,
+        queueEvent: (type, path) => events.push({ type, path }),
+        fail: (error) => {
+          throw error;
         },
-        { timeout: 10_000 },
-      )
-      .toBe(true);
-  try {
-    await backend.start(); // Tracks a, a/b, a/b/c, and deep.txt.
-
-    // A rename event landing on the already-known directory a/b produces a
-    // local scope on its parent "a" (rebuilding a's DirectoryEntry from a
-    // fresh shallow scan) and, once classify()'s real stat() confirms a/b is
-    // still a directory, a recursive scope on a/b itself -- the same "known
-    // directory changes in place" shape the directory-churn benchmark
-    // exercises via atomic replace.
-    notifications.emit("change", "rename", join(root, "a", "b"));
-    await settled();
-
-    // Remove the ancestor while the native event names only a deleted file.
-    // The scoped scan must report its missing directory as well as that file.
-    await rm(join(root, "a"), { recursive: true, force: true });
-    notifications.emit("change", "rename", deepFile);
-    await settled();
-
-    expect(events.filter((event) => event.type === "delete").map((event) => event.path)).toContain(
-      deepFile,
+      },
+      paths,
+      (_root, listener) => {
+        notifications.on("change", listener);
+        return {
+          close: () => notifications.removeAllListeners(),
+          on: (event, onError) => notifications.on(event, onError),
+        };
+      },
     );
-    expect(events).toContainEqual({ type: "delete", path: deepDirectory });
-  } finally {
-    active = false;
-    await backend.close();
-    await observer.close();
-    await rm(root, { recursive: true, force: true });
-  }
-}, 15_000);
+    const settled = async () => {
+      // Classification uses real filesystem I/O and can request another audit.
+      // Drain it before advancing the debounce clock so no later classification
+      // leaves a fresh timer behind.
+      await expect
+        .poll(() => backend.getDiagnostics().pendingClassificationCount, { timeout: 10_000 })
+        .toBe(0);
+      // The file-only event uses the eight-second optional audit debounce.
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect
+        .poll(
+          () => {
+            const diagnostics = backend.getDiagnostics();
+            return (
+              diagnostics.pendingReconciliationWorkCount === 0 &&
+              !diagnostics.reconciliationInFlight
+            );
+          },
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+    };
+    try {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      await backend.start(); // Tracks a, a/b, a/b/c, and deep.txt.
+
+      // A rename event landing on the already-known directory a/b produces a
+      // local scope on its parent "a" (rebuilding a's DirectoryEntry from a
+      // fresh shallow scan) and, once classify()'s real stat() confirms a/b is
+      // still a directory, a recursive scope on a/b itself -- the same "known
+      // directory changes in place" shape the directory-churn benchmark
+      // exercises via atomic replace.
+      notifications.emit("change", "rename", join(root, "a", "b"));
+      await settled();
+
+      // An ancestor notification must walk the re-linked subtree. A file-only
+      // notification must also recover the missing directory from its scoped scan.
+      await rm(join(root, "a"), { recursive: true, force: true });
+      notifications.emit("change", "rename", join(root, ...deletedPath));
+      await settled();
+
+      expect(
+        events.filter((event) => event.type === "delete").map((event) => event.path),
+      ).toContain(deepFile);
+      expect(events).toContainEqual({ type: "delete", path: deepDirectory });
+    } finally {
+      vi.useRealTimers();
+      active = false;
+      await backend.close();
+      await observer.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  15_000,
+);
 
 test("a full native inventory audit reports a removed directory", async () => {
   const root = await mkdtemp(join(tmpdir(), "native-full-audit-"));
@@ -397,6 +423,7 @@ test("a full native inventory audit reports a removed directory", async () => {
       metrics: observer.getDiagnostics(),
       isActive: () => true,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -438,6 +465,7 @@ test("a file classified with no parent bucket yet still gets its delete emitted"
       metrics: observer.getDiagnostics(),
       isActive: () => active,
       isIgnored: () => false,
+      isIgnoredRoot: () => false,
       isPathInside: paths.isInside,
       queueEvent: (type, path) => events.push({ type, path }),
       fail: (error) => {
@@ -480,6 +508,159 @@ test("a file classified with no parent bucket yet still gets its delete emitted"
       })
       .toBe(true);
     expect(backend.getDiagnostics().nativeTrackedFileCount).toBe(0);
+  } finally {
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scanTree yields to the event loop and aborts mid-directory when the observation closes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "native-scan-yield-"));
+  const totalFiles = 700;
+  await Promise.all(
+    Array.from({ length: totalFiles }, (_, index) =>
+      writeFile(join(root, `file-${index}.txt`), "x"),
+    ),
+  );
+  const paths = createObserverPaths(process.platform);
+  const observer = createFileObserver();
+  let active = true;
+  let inspected = 0;
+  let yieldedBeforeFinish = false;
+  let scheduledYieldProbe = false;
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isIgnoredRoot: () => {
+        inspected += 1;
+        if (!scheduledYieldProbe && inspected === 260) {
+          scheduledYieldProbe = true;
+          // Push past the scan slice budget so the next stride boundary must yield.
+          const until = performance.now() + 15;
+          while (performance.now() < until) {
+            // busy wait
+          }
+          setImmediate(() => {
+            if (inspected < totalFiles) {
+              yieldedBeforeFinish = true;
+            }
+            active = false;
+          });
+        }
+        return false;
+      },
+      isPathInside: paths.isInside,
+      queueEvent: () => {},
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    () => ({ close: () => {}, on: () => {} }),
+  );
+  try {
+    await backend.start();
+    expect(yieldedBeforeFinish).toBe(true);
+    expect(inspected).toBeLessThan(totalFiles);
+    expect(backend.getDiagnostics().nativeTrackedFileCount).toBe(0);
+  } finally {
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readDirectory yields mid-directory and emits no deletes if the directory becomes ignored while yielded", async () => {
+  const root = await mkdtemp(join(tmpdir(), "native-readdir-yield-"));
+  const sub = join(root, "sub");
+  const childDir = join(sub, "child-dir");
+  await mkdir(childDir, { recursive: true });
+  const totalFiles = 700;
+  await Promise.all(
+    Array.from({ length: totalFiles }, (_, index) =>
+      writeFile(join(sub, `file-${index}.txt`), "x"),
+    ),
+  );
+  const paths = createObserverPaths(process.platform);
+  const notifications = new EventEmitter();
+  const observer = createFileObserver();
+  const metrics = observer.getDiagnostics();
+  const events: FileChange[] = [];
+  let active = true;
+  let subIgnored = false;
+  let armProbe = false;
+  let inspected = 0;
+  let yieldedBeforeFinish = false;
+  let scheduledYieldProbe = false;
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics,
+      isActive: () => active,
+      isIgnored: (path) => subIgnored && paths.isInside(sub, path),
+      isIgnoredRoot: (path) => {
+        if (armProbe && path.startsWith(sub)) {
+          inspected += 1;
+          if (!scheduledYieldProbe && inspected === 260) {
+            scheduledYieldProbe = true;
+            const until = performance.now() + 15;
+            while (performance.now() < until) {
+              // busy wait
+            }
+            setImmediate(() => {
+              if (inspected < totalFiles) {
+                yieldedBeforeFinish = true;
+              }
+              subIgnored = true;
+            });
+          }
+        }
+        return subIgnored && path === sub;
+      },
+      isPathInside: paths.isInside,
+      queueEvent: (type, path) => events.push({ type, path }),
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    (_root, listener) => {
+      notifications.on("change", listener);
+      return {
+        close: () => notifications.removeAllListeners(),
+        on: (event, onError) => notifications.on(event, onError),
+      };
+    },
+  );
+  try {
+    await backend.start();
+    events.length = 0;
+    armProbe = true;
+    // A rename on a known subdirectory queues a local shallow scan (`readDirectory`)
+    // of its parent `sub` on the 500ms mandatory audit timer.
+    notifications.emit("change", "rename", childDir);
+    await expect
+      .poll(
+        () => {
+          const diagnostics = backend.getDiagnostics();
+          return (
+            metrics.nativeShallowScanCount >= 1 &&
+            diagnostics.pendingReconciliationWorkCount === 0 &&
+            !diagnostics.reconciliationInFlight
+          );
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    expect(yieldedBeforeFinish).toBe(true);
+    expect(inspected).toBeLessThan(totalFiles);
+    expect(events.filter((event) => event.type === "delete")).toEqual([]);
   } finally {
     active = false;
     await backend.close();

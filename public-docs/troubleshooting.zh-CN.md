@@ -31,7 +31,7 @@ Paseo 启动的是你已经安装的 Agent CLI，它并不自带这些 CLI（参
 
 ### 查看 Paseo 看到的内容 {#see-what-paseo-sees}
 
-打开 **设置 → 你的主机 → Providers**，点击该 Provider，然后点击 **诊断**。重要的几行：
+打开 **设置 → 你的主机 → Providers**，点击该 Provider，然后点击 **诊断报告**。重要的几行：
 
 - **Resolved path**：Paseo 找到二进制文件的位置，或 `not found`。
 - **Daemon PATH**：Paseo 正在搜索的 `PATH`。把它和新终端中 `echo $PATH` 的结果进行比较。
@@ -105,7 +105,7 @@ paseo reload
 
 Paseo 会应用可以在运行时安全生效的设置，并列出需要重启的路径。JSON 无效或 schema 错误时，不会应用任何内容；修复报告的错误后再次运行该命令。如果某个改动的设置由启动时的环境变量或参数决定，reload 会单独报告它。
 
-只有当 reload 要求时才运行 `paseo daemon restart`。在应用中，打开 **设置 → 你的主机 → 概览** 并使用 **重启 Daemon**。正在运行的 Agent 会继续运行，客户端会自动重连。
+只有当 reload 要求时才运行 `paseo daemon restart`。在应用中，打开 **设置 → 主机 → 守护进程** 并使用 **重启 Daemon**。正在运行的 Agent 会继续运行，客户端会自动重连。
 
 ## 仍然无法解决？ {#still-stuck}
 

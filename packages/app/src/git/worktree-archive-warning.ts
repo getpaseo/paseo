@@ -1,3 +1,4 @@
+import type { CheckoutStatusClient } from "@/git/checkout-status-cache";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { i18n } from "@/i18n/i18next";
 
@@ -48,6 +49,21 @@ export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabe
       ? i18n.t("workspace.git.actions.archiveWarning.unpushedCommit", { count })
       : i18n.t("workspace.git.actions.archiveWarning.unpushedCommits", { count }),
 };
+
+/**
+ * Reads the worktree's uncommitted changes and unpushed commits from its host. A directory the
+ * host no longer reads as a git checkout has neither. Rejects when the host can't read it.
+ */
+export async function readWorktreeArchiveRisk(
+  client: CheckoutStatusClient,
+  workspaceDirectory: string,
+): Promise<Pick<WorktreeArchiveRisk, "isDirty" | "aheadOfOrigin">> {
+  const status = await client.getCheckoutStatus(workspaceDirectory);
+  if (status.error) {
+    throw new Error(status.error.message);
+  }
+  return { isDirty: status.isDirty ?? false, aheadOfOrigin: status.aheadOfOrigin };
+}
 
 export function toWorktreeArchiveRisk(input: WorktreeArchiveRiskInput): WorktreeArchiveRisk {
   return {
@@ -125,6 +141,44 @@ export async function confirmRiskyWorktreeArchive(
   return await confirmDialog({
     title: labels.title(input.workspaceName),
     message,
+    confirmLabel: labels.confirm,
+    cancelLabel: labels.cancel,
+    destructive: true,
+  });
+}
+
+export async function confirmRiskyBulkWorktreeArchive(
+  input: {
+    totalCount: number;
+    riskyWorkspaces: readonly WorktreeArchiveConfirmationInput[];
+  },
+  labels: WorktreeArchiveWarningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
+): Promise<boolean> {
+  const lines: string[] = [];
+  let singleRisky: WorktreeArchiveConfirmationInput | null = null;
+  for (const workspace of input.riskyWorkspaces) {
+    const reasons = buildWorktreeArchiveRiskReasons(workspace, labels);
+    if (reasons.length === 0) continue;
+    singleRisky = workspace;
+    lines.push(
+      i18n.t("workspace.git.actions.archiveWarning.bulkWorkspaceReason", {
+        workspaceName: workspace.workspaceName,
+        reason: reasons.join(", "),
+      }),
+    );
+  }
+  if (lines.length === 0) {
+    return true;
+  }
+  if (input.totalCount === 1 && singleRisky) {
+    return await confirmRiskyWorktreeArchive(singleRisky, labels);
+  }
+
+  return await confirmDialog({
+    title: i18n.t("workspace.git.actions.archiveWarning.bulkTitle", {
+      count: input.totalCount,
+    }),
+    message: lines.join("\n"),
     confirmLabel: labels.confirm,
     cancelLabel: labels.cancel,
     destructive: true,

@@ -6,16 +6,36 @@ import {
   type SqliteValue,
 } from "@/runtime/replica-cache/row-store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentSnapshotPayload,
+  AgentStreamEventPayload,
+  WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
+import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
+import { AgentDirectoryReplica } from "@/runtime/directory-sync/agent-replica";
+import { WorkspaceDirectoryReplica } from "@/runtime/directory-sync/workspace-replica";
 import type { CachedTimeline } from "@/runtime/replica-cache";
-import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
+import {
+  normalizeWorkspaceDescriptor,
+  selectAgentTimelineState,
+  selectAgentTimelineTurnPresentation,
+  selectAgentTurnPresentation,
+  useSessionStore,
+  type Agent,
+} from "@/stores/session-store";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { StreamItem } from "@/types/stream";
+import type { AgentStreamReducerEvent } from "./session-stream-reducers";
+import type { ProjectedTimelineForwardFetchPlan } from "./timeline-sync-plan";
+import { reduceTurnLiveness, type TurnLivenessTransition } from "./turn-liveness";
 import {
   createTimelineReplica,
   createViewedTimelineOwner,
   type TimelineReplicaStorage,
+  type TimelineResponsePayload,
   type ViewedTimelineOwner,
+  type ViewedTimelineOwnerPorts,
 } from "./viewed-timeline-sync";
 
 const SERVER_ID = "timeline-replica-host";
@@ -40,7 +60,22 @@ function cachedTimeline(): CachedTimeline {
   };
 }
 
-function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
+function createOwner(
+  storage: TimelineReplicaStorage,
+  applyTurnLiveness: (
+    agentId: string,
+    transitions: readonly TurnLivenessTransition[],
+  ) => void = () => undefined,
+  fetchPage: ViewedTimelineOwnerPorts["fetchPage"] = async () => ({
+    hasNewer: false,
+    endCursor: null,
+  }),
+  observe: ViewedTimelineOwnerPorts["observe"] = () => ({
+    ready: Promise.resolve(),
+    release: async () => undefined,
+  }),
+  checksFreshness = false,
+): ViewedTimelineOwner {
   const replica = createTimelineReplica({
     serverId: SERVER_ID,
     storage,
@@ -51,10 +86,19 @@ function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
     replica,
     replaceDemandedAgentIds: () => undefined,
     drainQueuedAgentMessage: () => undefined,
+    applyTurnLiveness,
     ports: {
-      observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
-      readCursor: () => undefined,
-      fetchPage: async () => ({ hasNewer: false, endCursor: null }),
+      canCheckFreshness: () => checksFreshness,
+      observe,
+      readCursor: () => {
+        if (!checksFreshness) return undefined;
+        const session = useSessionStore.getState().sessions[SERVER_ID];
+        const timeline = selectAgentTimelineState(session, AGENT_ID);
+        return timeline.status === "synced" && timeline.range
+          ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq }
+          : undefined;
+      },
+      fetchPage,
       fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
       reportError: () => undefined,
     },
@@ -98,7 +142,7 @@ describe("viewed timeline persistence", () => {
               .status,
         )
         .toBe("painted");
-      owner.enqueueStreamEvent(AGENT_ID, {
+      owner.applyStreamEvent(AGENT_ID, {
         event: {
           type: "timeline",
           provider: "codex",
@@ -147,7 +191,7 @@ describe("viewed timeline persistence", () => {
           .map((entry) => entry.text);
       };
       expect.soft(replyTexts()).toEqual([complete]);
-      owner.enqueueStreamEvent(AGENT_ID, {
+      owner.applyStreamEvent(AGENT_ID, {
         event: { type: "turn_completed", provider: "codex" } as AgentStreamEventPayload,
         seq: 7,
         epoch: "epoch-1",
@@ -155,6 +199,112 @@ describe("viewed timeline persistence", () => {
       });
       owner.flushStreamAgent(AGENT_ID);
       expect.soft(replyTexts()).toEqual([complete]);
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it("replaces pre-rewind history when a live row arrives in a new epoch", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 5);
+    const readTimelineState = () => {
+      const timeline = selectAgentTimelineState(
+        useSessionStore.getState().sessions[SERVER_ID],
+        AGENT_ID,
+      );
+      return {
+        status: timeline.status,
+        texts:
+          timeline.status === "cold"
+            ? []
+            : timeline.items.flatMap((entry) =>
+                entry.kind === "assistant_message" ? [entry.text] : [],
+              ),
+      };
+    };
+    const fetches: Array<{
+      direction: string;
+      cursor?: { epoch: string; seq: number };
+    }> = [];
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      prepareAgent: async () => undefined,
+    });
+    const owner = createViewedTimelineOwner({
+      serverId: SERVER_ID,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+      applyTurnLiveness: () => undefined,
+      ports: {
+        canCheckFreshness: () => false,
+        observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+        readCursor: () => undefined,
+        fetchPage: async (_agentId, request) => {
+          fetches.push(request);
+          if (request.direction !== "after") return { hasNewer: false, endCursor: null };
+          // A cursor from the pre-rewind epoch makes the daemon reset to its current tail.
+          owner.applyTimelineResponse({
+            requestId: "rewind-reset",
+            agentId: AGENT_ID,
+            agent: null,
+            direction: "tail",
+            projection: "projected",
+            epoch: "epoch-2",
+            reset: true,
+            staleCursor: true,
+            gap: false,
+            window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+            startCursor: { epoch: "epoch-2", seq: 1 },
+            endCursor: { epoch: "epoch-2", seq: 2 },
+            entries: [
+              {
+                provider: "codex",
+                item: { type: "assistant_message", text: "after rewind" },
+                timestamp: "2026-08-26T10:05:00.000Z",
+                seqStart: 1,
+                seqEnd: 2,
+                sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
+                collapsed: [],
+              },
+            ],
+            hasOlder: false,
+            hasNewer: false,
+            error: null,
+          });
+          return { hasNewer: false, endCursor: { epoch: "epoch-2", seq: 2 } };
+        },
+        fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
+        reportError: () => undefined,
+      },
+    });
+    try {
+      owner.setConnected(true);
+      owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+      await expect.poll(() => fetches.length).toBe(1);
+
+      owner.applyStreamEvent(AGENT_ID, {
+        event: {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: "new prompt reply" },
+        } as AgentStreamEventPayload,
+        seq: 6,
+        epoch: "epoch-2",
+        timestamp: new Date("2026-08-26T10:06:00.000Z"),
+      });
+      owner.flushStreamAgent(AGENT_ID);
+
+      await expect.poll(() => fetches.length).toBe(2);
+      expect(fetches[1]).toMatchObject({
+        direction: "after",
+        cursor: { epoch: "epoch-1", seq: 5 },
+      });
+      await expect.poll(readTimelineState).toEqual({
+        status: "synced",
+        texts: ["after rewind"],
+      });
     } finally {
       owner.dispose();
     }
@@ -281,7 +431,7 @@ describe("viewed timeline persistence", () => {
       )
       .toMatchObject({ status: "painted" });
 
-    first.enqueueStreamEvent(AGENT_ID, {
+    first.applyStreamEvent(AGENT_ID, {
       event: {
         type: "timeline",
         provider: "codex",
@@ -460,7 +610,7 @@ describe("viewed timeline persistence", () => {
       readTimeline: async () => undefined,
       commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
     });
-    owner.enqueueStreamEvent(AGENT_ID, {
+    owner.applyStreamEvent(AGENT_ID, {
       event: {
         type: "timeline",
         provider: "codex",
@@ -525,7 +675,7 @@ describe("viewed timeline persistence", () => {
       [AGENT_ID, 9],
       ["agent-2", 4],
     ] as const) {
-      owner.enqueueStreamEvent(agentId, {
+      owner.applyStreamEvent(agentId, {
         event: {
           type: "timeline",
           provider: "codex",
@@ -539,6 +689,695 @@ describe("viewed timeline persistence", () => {
     }
 
     expect(keys).toEqual([AGENT_ID, "agent-2"]);
+    owner.dispose();
+  });
+});
+
+describe("turn boundaries", () => {
+  it("commits a turn's final reply before the turn stops running", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 8);
+    const committedKinds = () => {
+      const session = useSessionStore.getState().sessions[SERVER_ID];
+      return [
+        ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+        ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+      ]
+        .filter((entry) => entry.id !== `network-${AGENT_ID}`)
+        .map((entry) => entry.kind);
+    };
+    const livenessChanges: { type: string; committed: string[] }[] = [];
+    const owner = createOwner(
+      { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      (_agentId, transitions) => {
+        for (const transition of transitions) {
+          livenessChanges.push({ type: transition.type, committed: committedKinds() });
+        }
+      },
+    );
+    const at = (second: number) => new Date(`2026-08-26T10:00:0${second}.000Z`);
+
+    // One frame's worth of live events: the frame flush that would commit them never runs.
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "turn_started", provider: "codex", turnId: "turn-1" },
+      seq: undefined,
+      epoch: undefined,
+      timestamp: at(1),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-1",
+        item: {
+          type: "tool_call",
+          callId: "call-1",
+          name: "Bash",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "ls" },
+        },
+      } as AgentStreamEventPayload,
+      seq: 9,
+      epoch: "epoch-1",
+      timestamp: at(2),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-1",
+        item: { type: "assistant_message", text: "Done.", messageId: "reply-1" },
+      } as AgentStreamEventPayload,
+      seq: 10,
+      epoch: "epoch-1",
+      timestamp: at(3),
+    });
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "turn_completed", provider: "codex", turnId: "turn-1" },
+      seq: undefined,
+      epoch: undefined,
+      timestamp: at(4),
+    });
+
+    expect(livenessChanges.at(-1)).toEqual({
+      type: "stream_close",
+      committed: ["tool_call", "assistant_message"],
+    });
+    owner.dispose();
+  });
+});
+
+describe("the turn footer changes together with its messages", () => {
+  const OPEN_TURN = { turnId: "turn-1", startedAt: new Date("2026-08-26T09:59:00.000Z") };
+
+  function setTurn(transition: TurnLivenessTransition): void {
+    useSessionStore.getState().setAgents(SERVER_ID, (agents) => {
+      const agent =
+        agents.get(AGENT_ID) ??
+        ({
+          id: AGENT_ID,
+          turn: { phase: "idle", cancellationRequestId: null },
+        } as Agent);
+      const next = new Map(agents);
+      next.set(AGENT_ID, { ...agent, turn: reduceTurnLiveness(agent.turn, transition) });
+      return next;
+    });
+  }
+  const agentIsRunning = () => setTurn({ type: "snapshot", activeTurn: OPEN_TURN });
+  const idleSnapshotArrives = () => setTurn({ type: "snapshot", activeTurn: null });
+
+  type Footer = "running" | "settled";
+  function footer(): Footer {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    const turn = selectAgentTimelineTurnPresentation(session, AGENT_ID);
+    return turn.isActive ? "running" : "settled";
+  }
+  function timerStart(): Date | null {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    return selectAgentTimelineTurnPresentation(session, AGENT_ID).startedAt;
+  }
+  function replies(): string[] {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    return [
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ]
+      .filter((entry) => entry.kind === "assistant_message")
+      .map((entry) => entry.text);
+  }
+
+  // A chat that was current when the connection dropped, holding `cachedReply` if given.
+  function createChat(
+    cachedReply: string | null,
+    fetchPage?: ViewedTimelineOwnerPorts["fetchPage"],
+  ): ViewedTimelineOwner {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    useSessionStore.getState().applyAgentTimelineResponseState(SERVER_ID, AGENT_ID, {
+      items: cachedReply ? [item("reply-1", cachedReply, 4)] : [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+    return createOwner(
+      { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      undefined,
+      fetchPage,
+    );
+  }
+
+  async function connectAndCatchUp(owner: ViewedTimelineOwner): Promise<void> {
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    owner.setConnected(true);
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+  }
+
+  function catchUpPage(input: {
+    replyThroughSeq: number | null;
+    reply?: string;
+  }): TimelineResponsePayload {
+    const end = input.replyThroughSeq ?? 4;
+    return {
+      requestId: "catch-up",
+      agentId: AGENT_ID,
+      agent: null,
+      direction: "after",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: end, nextSeq: end + 1 },
+      startCursor: input.reply ? { epoch: "epoch-1", seq: 5 } : null,
+      endCursor: input.reply ? { epoch: "epoch-1", seq: end } : null,
+      entries: input.reply
+        ? [
+            {
+              provider: "mock",
+              item: { type: "assistant_message", text: input.reply },
+              timestamp: "2026-08-26T10:00:02.000Z",
+              seqStart: 5,
+              seqEnd: end,
+              sourceSeqRanges: [{ startSeq: 5, endSeq: end }],
+              collapsed: [],
+            },
+          ]
+        : [],
+      error: null,
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    };
+  }
+
+  function recordCommits(): { commits: { footer: Footer; replies: string[] }[]; stop(): void } {
+    const commits: { footer: Footer; replies: string[] }[] = [
+      { footer: footer(), replies: replies() },
+    ];
+    const stop = useSessionStore.subscribe(() => {
+      commits.push({ footer: footer(), replies: replies() });
+    });
+    return { commits, stop };
+  }
+
+  it.each([
+    ["only the prompt cached", null, ["Done."]],
+    ["a partial reply cached", "Half", ["HalfDone."]],
+  ])("snapshot before messages, %s: running until messages land", async (_name, cached, final) => {
+    const owner = createChat(cached);
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    expect(footer()).toBe("running");
+
+    owner.setConnected(false);
+    expect(footer()).toBe("running");
+    owner.setConnected(true);
+    const recorder = recordCommits();
+
+    idleSnapshotArrives();
+    expect(footer()).toBe("running");
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    recorder.stop();
+
+    expect(footer()).toBe("settled");
+    expect(replies()).toEqual(final);
+    // The messages and the settled footer arrive in one commit, with no state between.
+    const previous = recorder.commits.at(-2);
+    expect(previous?.footer).toBe("running");
+    expect(previous?.replies).not.toEqual(final);
+    expect(
+      recorder.commits.filter(
+        (commit) => commit.footer === "settled" && commit.replies.join() !== final.join(),
+      ),
+    ).toEqual([]);
+    owner.dispose();
+  });
+
+  it("messages before snapshot: running stays until the idle snapshot, then completes", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    expect(replies()).toEqual(["HalfDone."]);
+    expect(footer()).toBe("running");
+
+    idleSnapshotArrives();
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a turn that ended with no new messages settles when the empty catch-up lands", async () => {
+    const owner = createChat("Done.");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+    expect(footer()).toBe("running");
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: null }));
+
+    expect(footer()).toBe("settled");
+    expect(replies()).toEqual(["Done."]);
+    owner.dispose();
+  });
+
+  it("keeps the true idle status for every surface outside the timeline", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+
+    expect(footer()).toBe("running");
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect(selectAgentTurnPresentation(session, AGENT_ID).isActive).toBe(false);
+    owner.dispose();
+  });
+
+  it("keeps the running turn's identity and timer start when the idle status arrives", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect(selectAgentTimelineTurnPresentation(session, AGENT_ID)).toEqual({
+      isActive: true,
+      isCancelling: false,
+      startedAt: OPEN_TURN.startedAt,
+      turnId: "turn-1",
+    });
+    owner.dispose();
+  });
+
+  it("an agent still running on return keeps its running footer", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    owner.setConnected(true);
+    agentIsRunning();
+
+    expect(footer()).toBe("running");
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 6, reply: " more" }));
+    expect(footer()).toBe("running");
+    owner.dispose();
+  });
+
+  it("applies a snapshot at once when the chat is current", async () => {
+    const owner = createChat("Done.");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+
+    idleSnapshotArrives();
+
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a reconnect that finds nothing changed never leaves the settled footer", async () => {
+    const owner = createChat("Done.");
+    await connectAndCatchUp(owner);
+    const recorder = recordCommits();
+
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: null }));
+    recorder.stop();
+
+    expect(recorder.commits.map((commit) => commit.footer)).not.toContain("running");
+    owner.dispose();
+  });
+
+  type Answer = "current" | "behind";
+
+  // A chat whose subscribes wait for the test to answer them, and whose fetches are recorded.
+  function createCheckedChat(cachedReply: string | null) {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    useSessionStore.getState().applyAgentTimelineResponseState(SERVER_ID, AGENT_ID, {
+      items: cachedReply ? [item("reply-1", cachedReply, 4)] : [],
+      head: [],
+      range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+      older: "none",
+      newer: false,
+      synchronized: true,
+      acknowledgedClientMessageIds: [],
+    });
+    const unanswered: ((answer: Answer, beforeAnswer?: () => void) => void)[] = [];
+    let fetches = 0;
+    let finishFetch = () => {};
+    const owner = createOwner(
+      { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      undefined,
+      () => {
+        fetches += 1;
+        return new Promise((resolve) => {
+          finishFetch = () => resolve({ hasNewer: false, endCursor: null });
+        });
+      },
+      () => ({
+        // The host runtime keeps the answer's agent rows in this same continuation.
+        ready: new Promise((resolve) => {
+          unanswered.push((answer, beforeAnswer) => {
+            beforeAnswer?.();
+            resolve({ timelines: { [AGENT_ID]: answer } });
+          });
+        }),
+        release: async () => undefined,
+      }),
+      true,
+    );
+    const answer = async (value: Answer, beforeAnswer?: () => void) => {
+      await expect.poll(() => unanswered.length).toBeGreaterThan(0);
+      unanswered.shift()?.(value, beforeAnswer);
+    };
+    const open = async () => {
+      owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+      owner.setConnected(true);
+      await answer("current");
+      await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+    };
+    return { owner, answer, open, fetchCount: () => fetches, finishFetch: () => finishFetch() };
+  }
+
+  function leaveAndReturn(owner: ViewedTimelineOwner, way: "reconnect" | "foreground"): void {
+    if (way === "reconnect") {
+      owner.setConnected(false);
+      owner.setConnected(true);
+      return;
+    }
+    owner.setActive(false);
+    owner.setActive(true);
+  }
+
+  it.each([
+    ["reconnect", "reattaching"],
+    ["foreground", "checking"],
+  ] as const)(
+    "freshness check on %s: the held turn stays through the check and current settles it",
+    async (way, status) => {
+      const chat = createCheckedChat("Done.");
+      agentIsRunning();
+      await chat.open();
+
+      leaveAndReturn(chat.owner, way);
+      idleSnapshotArrives();
+      expect(chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe(status);
+      expect(footer()).toBe("running");
+
+      const recorder = recordCommits();
+      await chat.answer("current");
+      await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+      recorder.stop();
+
+      expect(footer()).toBe("settled");
+      expect(replies()).toEqual(["Done."]);
+      expect(chat.fetchCount()).toBe(0);
+      expect(recorder.commits.map((commit) => commit.footer).slice(0, 2)).toEqual([
+        "running",
+        "settled",
+      ]);
+      chat.owner.dispose();
+    },
+  );
+
+  it("freshness check: an idle row carried by the current answer settles the footer in the same step", async () => {
+    const chat = createCheckedChat("Done.");
+    agentIsRunning();
+    await chat.open();
+    leaveAndReturn(chat.owner, "reconnect");
+
+    let footerAfterRow: Footer | null = null;
+    await chat.answer("current", () => {
+      idleSnapshotArrives();
+      footerAfterRow = footer();
+    });
+    await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+
+    expect(footerAfterRow).toBe("running");
+    expect(footer()).toBe("settled");
+    chat.owner.dispose();
+  });
+
+  it("freshness check: an agent still running keeps its footer after current", async () => {
+    const chat = createCheckedChat("Half");
+    agentIsRunning();
+    await chat.open();
+    leaveAndReturn(chat.owner, "reconnect");
+
+    await chat.answer("current");
+    await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+
+    expect(footer()).toBe("running");
+    idleSnapshotArrives();
+    expect(footer()).toBe("settled");
+    chat.owner.dispose();
+  });
+
+  it("freshness check: behind holds the turn until the fetched rows land with the completed footer", async () => {
+    const chat = createCheckedChat("Half");
+    agentIsRunning();
+    await chat.open();
+    leaveAndReturn(chat.owner, "reconnect");
+    idleSnapshotArrives();
+
+    await chat.answer("behind");
+    await expect.poll(() => chat.fetchCount()).toBe(1);
+    expect(footer()).toBe("running");
+
+    const recorder = recordCommits();
+    chat.owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    recorder.stop();
+
+    expect(footer()).toBe("settled");
+    expect(replies()).toEqual(["HalfDone."]);
+    expect(recorder.commits.at(-2)).toMatchObject({ footer: "running", replies: ["Half"] });
+    expect(recorder.commits.at(-1)).toMatchObject({ footer: "settled", replies: ["HalfDone."] });
+    chat.finishFetch();
+    await expect.poll(() => chat.owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+    chat.owner.dispose();
+  });
+
+  it("catch-up failure gives the footer the true status", async () => {
+    let failNext = false;
+    const owner = createChat("Half", async () => {
+      if (failNext) throw new Error("catch-up failed");
+      return { hasNewer: false, endCursor: null };
+    });
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    failNext = true;
+    owner.setConnected(false);
+    owner.setConnected(true);
+    idleSnapshotArrives();
+
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("error");
+
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a catch-up that completes without a page still releases the footer", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.setConnected(false);
+    idleSnapshotArrives();
+    expect(footer()).toBe("running");
+
+    owner.setConnected(true);
+
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("ready");
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("a chat closed while running and reopened after it finished keeps the running footer", async () => {
+    const owner = createChat("Half");
+    agentIsRunning();
+    await connectAndCatchUp(owner);
+    owner.replaceVisibleAgentIds("test", []);
+    owner.replaceOpenTabAgentIds([]);
+    idleSnapshotArrives();
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    expect(footer()).toBe("running");
+
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it.each([
+    { host: "that reports turn ids", olderTurnId: "turn-1", newerTurnId: "turn-2" },
+    { host: "without turn ids", olderTurnId: null, newerTurnId: null },
+  ])("on a host $host, a newer turn replaces the held one so the timer follows it", async (ids) => {
+    const newerTurn = { turnId: ids.newerTurnId, startedAt: new Date("2026-08-26T09:59:30.000Z") };
+    const owner = createChat("Half");
+    setTurn({
+      type: "snapshot",
+      activeTurn: { turnId: ids.olderTurnId, startedAt: OPEN_TURN.startedAt },
+    });
+    await connectAndCatchUp(owner);
+    owner.replaceVisibleAgentIds("test", []);
+    owner.replaceOpenTabAgentIds([]);
+    idleSnapshotArrives();
+
+    setTurn({ type: "snapshot", activeTurn: newerTurn });
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    idleSnapshotArrives();
+
+    expect(footer()).toBe("running");
+    expect(timerStart()).toEqual(newerTurn.startedAt);
+    owner.dispose();
+  });
+
+  function paintChat(unsettledTurn: CachedTimeline["unsettledTurn"]): ViewedTimelineOwner {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    idleSnapshotArrives();
+    return createOwner({
+      readTimeline: async () => ({
+        agentId: AGENT_ID,
+        items: [item("reply-1", "Half", 4)],
+        range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+        hasOlder: false,
+        ...(unsettledTurn ? { unsettledTurn } : {}),
+      }),
+      commitTimeline: () => undefined,
+    });
+  }
+
+  it("first paint from cache: shows the running footer in the first frame when the cached messages were from an open turn", async () => {
+    const owner = paintChat({ turnId: "turn-1", startedAt: OPEN_TURN.startedAt });
+    const recorder = recordCommits();
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect.poll(() => replies()).toEqual(["Half"]);
+    recorder.stop();
+
+    expect(recorder.commits.find((commit) => commit.replies.length > 0)?.footer).toBe("running");
+    expect(timerStart()).toEqual(OPEN_TURN.startedAt);
+    owner.applyTimelineResponse(catchUpPage({ replyThroughSeq: 8, reply: "Done." }));
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  async function subscriptionRefusedDuringCacheRead(): Promise<{
+    owner: ViewedTimelineOwner;
+    finishCacheRead(): void;
+  }> {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    idleSnapshotArrives();
+    let resolveRead: (timeline: CachedTimeline) => void = () => undefined;
+    const owner = createOwner(
+      {
+        readTimeline: () => new Promise((resolve) => (resolveRead = resolve)),
+        commitTimeline: () => undefined,
+      },
+      undefined,
+      undefined,
+      () => ({
+        ready: Promise.reject(new Error("subscription refused")),
+        release: async () => undefined,
+      }),
+    );
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    owner.setConnected(true);
+    await expect.poll(() => owner.getAgentTimelineStatus(AGENT_ID)).toBe("error");
+    return {
+      owner,
+      finishCacheRead: () =>
+        resolveRead({
+          agentId: AGENT_ID,
+          items: [item("reply-1", "Half", 4)],
+          range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+          hasOlder: false,
+          unsettledTurn: { turnId: "turn-1", startedAt: OPEN_TURN.startedAt },
+        }),
+    };
+  }
+
+  it("first paint from cache: a catch-up that failed during the cache read keeps the true status", async () => {
+    const { owner, finishCacheRead } = await subscriptionRefusedDuringCacheRead();
+
+    finishCacheRead();
+    await expect.poll(() => replies()).toEqual(["Half"]);
+
+    expect(owner.getAgentTimelineStatus(AGENT_ID)).toBe("error");
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("first paint from cache: a catch-up owed again during the cache read keeps the running footer", async () => {
+    const { owner, finishCacheRead } = await subscriptionRefusedDuringCacheRead();
+    owner.setConnected(false);
+
+    finishCacheRead();
+    await expect.poll(() => replies()).toEqual(["Half"]);
+
+    expect(footer()).toBe("running");
+    owner.dispose();
+  });
+
+  it("first paint from cache: shows the settled footer at once when the cached messages were from a finished turn", async () => {
+    const owner = paintChat(undefined);
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect.poll(() => replies()).toEqual(["Half"]);
+
+    expect(footer()).toBe("settled");
+    owner.dispose();
+  });
+
+  it("first paint from cache: records the open turn with the messages and drops it once the turn ends", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    applySynced(AGENT_ID, 8);
+    agentIsRunning();
+    const commits: CachedTimeline[] = [];
+    const owner = createOwner(
+      {
+        readTimeline: async () => undefined,
+        commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+      },
+      (_agentId, transitions) => {
+        for (const transition of transitions) setTurn(transition);
+      },
+    );
+    owner.applyStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Working" },
+      } as AgentStreamEventPayload,
+      seq: 9,
+      epoch: "epoch-1",
+      timestamp: new Date("2026-08-26T10:00:01.000Z"),
+    });
+    owner.flushStreamAgent(AGENT_ID);
+    expect(commits.at(-1)?.unsettledTurn).toEqual({
+      turnId: "turn-1",
+      startedAt: expect.any(Date),
+    });
+
+    owner.applyStreamEvent(AGENT_ID, {
+      event: { type: "turn_completed", provider: "codex", turnId: "turn-1" },
+      seq: undefined,
+      epoch: undefined,
+      timestamp: new Date("2026-08-26T10:00:02.000Z"),
+    });
+
+    expect(commits.at(-1)?.unsettledTurn).toBeUndefined();
     owner.dispose();
   });
 });
@@ -606,7 +1445,9 @@ describe("create handoff lifetime", () => {
       replica,
       replaceDemandedAgentIds: () => undefined,
       drainQueuedAgentMessage: () => undefined,
+      applyTurnLiveness: () => undefined,
       ports: {
+        canCheckFreshness: () => false,
         observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
         readCursor: () => undefined,
         fetchPage: async () => {
@@ -652,6 +1493,318 @@ describe("create handoff lifetime", () => {
     expect(createHandoff()).toBeUndefined();
     release();
     owner.dispose();
+  });
+});
+
+describe("a chat that was empty when it went offline", () => {
+  const EPOCH = "epoch-1";
+  const PROMPT = "stream through a reconnect";
+  const THOUGHT = "Thinking before the reply.";
+  const TURN_ID = "turn-1";
+  const TIMESTAMP = "2026-10-31T10:00:00.000Z";
+
+  /** The daemon's timeline: one row per flushed chunk, read back as projected pages. */
+  class DaemonTimeline {
+    private readonly rows: Array<{ seq: number; item: AgentTimelineItem }> = [];
+
+    record(timelineItem: AgentTimelineItem): AgentStreamReducerEvent {
+      const seq = this.rows.length + 1;
+      this.rows.push({ seq, item: timelineItem });
+      return {
+        event: { type: "timeline", provider: "mock", turnId: TURN_ID, item: timelineItem },
+        seq,
+        epoch: EPOCH,
+        timestamp: new Date(TIMESTAMP),
+      };
+    }
+
+    page(request: ProjectedTimelineForwardFetchPlan): TimelineResponsePayload {
+      const maxSeq = this.rows.at(-1)?.seq ?? 0;
+      const after = request.direction === "after" ? request.cursor.seq : 0;
+      const entries = this.projected().filter((entry) => entry.seqEnd > after);
+      const first = entries[0];
+      const startSeq = request.direction === "after" ? after + 1 : first?.seqStart;
+      return {
+        requestId: `${request.direction}-${after}`,
+        agentId: AGENT_ID,
+        agent: null,
+        direction: request.direction,
+        projection: "projected",
+        reset: false,
+        epoch: EPOCH,
+        window: { minSeq: this.rows[0]?.seq ?? 0, maxSeq, nextSeq: maxSeq + 1 },
+        startCursor: first && startSeq !== undefined ? { epoch: EPOCH, seq: startSeq } : null,
+        endCursor: first ? { epoch: EPOCH, seq: maxSeq } : null,
+        entries,
+        error: null,
+        hasNewer: false,
+        hasOlder: after > 0,
+        staleCursor: false,
+        gap: false,
+      };
+    }
+
+    /** Contiguous reply and thought chunks read back as one row, like the daemon's projection. */
+    private projected(): TimelineResponsePayload["entries"] {
+      const entries: TimelineResponsePayload["entries"] = [];
+      for (const { seq, item: row } of this.rows) {
+        const previous = entries.at(-1);
+        const continues =
+          previous !== undefined &&
+          ((row.type === "assistant_message" &&
+            previous.item.type === "assistant_message" &&
+            previous.item.messageId === row.messageId) ||
+            (row.type === "reasoning" && previous.item.type === "reasoning"));
+        if (
+          continues &&
+          (previous.item.type === "assistant_message" || previous.item.type === "reasoning") &&
+          (row.type === "assistant_message" || row.type === "reasoning")
+        ) {
+          previous.item = { ...previous.item, text: `${previous.item.text}${row.text}` };
+          previous.seqEnd = seq;
+          previous.sourceSeqRanges = [{ startSeq: previous.seqStart, endSeq: seq }];
+          previous.collapsed = [
+            row.type === "assistant_message" ? "assistant_merge" : "reasoning_merge",
+          ];
+          continue;
+        }
+        entries.push({
+          provider: "mock",
+          item: row,
+          timestamp: TIMESTAMP,
+          seqStart: seq,
+          seqEnd: seq,
+          sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+          collapsed: [],
+          turnId: TURN_ID,
+        });
+      }
+      return entries;
+    }
+  }
+
+  interface PendingFetch {
+    request: ProjectedTimelineForwardFetchPlan;
+    /** Delivers a page the way the host runtime does: queued live chunks first, then the page. */
+    deliver(page: TimelineResponsePayload): void;
+  }
+
+  function openChat(storage: TimelineReplicaStorage) {
+    const fetches: PendingFetch[] = [];
+    const errors: unknown[] = [];
+    const fetch = (request: ProjectedTimelineForwardFetchPlan) =>
+      new Promise<{ hasNewer: boolean; endCursor: { epoch: string; seq: number } | null }>(
+        (resolve) => {
+          fetches.push({
+            request,
+            deliver: (page) => {
+              owner.flushStreamAgent(AGENT_ID);
+              owner.applyTimelineResponse(page);
+              resolve({ hasNewer: page.hasNewer, endCursor: page.endCursor });
+            },
+          });
+        },
+      );
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage,
+      prepareAgent: async () => undefined,
+    });
+    const owner = createViewedTimelineOwner({
+      serverId: SERVER_ID,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+      applyTurnLiveness: () => undefined,
+      ports: {
+        canCheckFreshness: () => true,
+        observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+        readCursor: (agentId) => {
+          const timeline = selectAgentTimelineState(
+            useSessionStore.getState().sessions[SERVER_ID],
+            agentId,
+          );
+          return timeline.status === "synced" && timeline.range
+            ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq }
+            : undefined;
+        },
+        fetchPage: (_agentId, request) => fetch(request),
+        fetchLatestTail: () =>
+          fetch({ direction: "tail", limit: 40, projection: "projected", wholeTurns: true }),
+        reportError: (error) => errors.push(error),
+      },
+    });
+    owner.setConnected(true);
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    return {
+      owner,
+      async nextFetch(): Promise<PendingFetch> {
+        await expect.poll(() => fetches.length).toBeGreaterThan(0);
+        return fetches.shift()!;
+      },
+      live(event: AgentStreamReducerEvent): void {
+        owner.applyStreamEvent(AGENT_ID, event);
+        owner.flushStreamAgent(AGENT_ID);
+      },
+      /** Answers every catch-up the chat still asks for until it reports itself current. */
+      async settle(daemon: DaemonTimeline): Promise<void> {
+        for (let turn = 0; turn < 20; turn += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(errors).toEqual([]);
+          const next = fetches.shift();
+          if (next) next.deliver(daemon.page(next.request));
+          else if (owner.getAgentTimelineStatus(AGENT_ID) === "ready") return;
+        }
+        throw new Error("The chat never caught up");
+      },
+    };
+  }
+
+  function rows(): Array<{ kind: StreamItem["kind"]; text: string }> {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    return [
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ].map((entry) => ({
+      kind: entry.kind,
+      text: "text" in entry && typeof entry.text === "string" ? entry.text : "",
+    }));
+  }
+
+  const reply = (words: number) =>
+    Array.from({ length: words }, (_unused, index) => `word${index}`).join(" ");
+  const chunk = (index: number) => `${index === 0 ? "" : " "}word${index}`;
+  const replyChunk = (index: number): AgentTimelineItem => ({
+    type: "assistant_message",
+    text: chunk(index),
+    messageId: "reply-1",
+  });
+
+  /**
+   * Opens the chat while its timeline is empty, then drops the connection while the prompt,
+   * an optional thought and the first three reply chunks are recorded.
+   */
+  async function goOfflineWhileTheReplyStarts(input: {
+    reasoning: boolean;
+    storage: TimelineReplicaStorage;
+  }) {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const daemon = new DaemonTimeline();
+    const chat = openChat(input.storage);
+    const opened = await chat.nextFetch();
+    opened.deliver(daemon.page(opened.request));
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+    ).toEqual({ status: "synced", items: [], range: null, older: "none", newer: "none" });
+
+    chat.owner.setConnected(false);
+    daemon.record({ type: "user_message", text: PROMPT, messageId: "prompt-1" });
+    if (input.reasoning) daemon.record({ type: "reasoning", text: THOUGHT });
+    for (const index of [0, 1, 2]) daemon.record(replyChunk(index));
+    chat.owner.setConnected(true);
+    const catchUp = await chat.nextFetch();
+    return { daemon, chat, catchUp };
+  }
+
+  function expectedRows(reasoning: boolean, words: number) {
+    return [
+      { kind: "user_message", text: PROMPT },
+      ...(reasoning ? [{ kind: "thought", text: THOUGHT }] : []),
+      { kind: "assistant_message", text: reply(words) },
+    ];
+  }
+
+  /** A saved range that starts after the prompt claims history the chat never received. */
+  function expectCoverageFromTheFirstRow(commits: CachedTimeline[]): void {
+    expect(commits.map((commit) => commit.range?.startSeq ?? 1)).toEqual(commits.map(() => 1));
+  }
+
+  it.each([true, false])(
+    "keeps the prompt and the whole reply when live chunks arrive before a page that holds them (reasoning=%s)",
+    async (reasoning) => {
+      const commits: CachedTimeline[] = [];
+      const { daemon, chat, catchUp } = await goOfflineWhileTheReplyStarts({
+        reasoning,
+        storage: {
+          readTimeline: async () => undefined,
+          commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+        },
+      });
+      try {
+        chat.live(daemon.record(replyChunk(3)));
+        chat.live(daemon.record(replyChunk(4)));
+        catchUp.deliver(daemon.page(catchUp.request));
+        chat.live(daemon.record(replyChunk(5)));
+        await chat.settle(daemon);
+
+        expect(rows()).toEqual(expectedRows(reasoning, 6));
+        expectCoverageFromTheFirstRow(commits);
+      } finally {
+        chat.owner.dispose();
+      }
+
+      // The saved chat paints the same rows after a reload.
+      const saved = commits.at(-1);
+      useSessionStore.getState().clearSession(SERVER_ID);
+      useSessionStore.getState().initializeSession(SERVER_ID, null);
+      const reopened = createOwner({
+        readTimeline: async () => saved,
+        commitTimeline: () => undefined,
+      });
+      try {
+        reopened.replaceVisibleAgentIds("test", [AGENT_ID]);
+        await expect.poll(rows).toEqual(expectedRows(reasoning, 6));
+      } finally {
+        reopened.dispose();
+      }
+    },
+  );
+
+  it("keeps the prompt when the page already holds a chunk the chat has not seen live", async () => {
+    const commits: CachedTimeline[] = [];
+    const { daemon, chat, catchUp } = await goOfflineWhileTheReplyStarts({
+      reasoning: true,
+      storage: {
+        readTimeline: async () => undefined,
+        commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+      },
+    });
+    try {
+      chat.live(daemon.record(replyChunk(3)));
+      const notYetLive = daemon.record(replyChunk(4));
+      catchUp.deliver(daemon.page(catchUp.request));
+      chat.live(notYetLive);
+      chat.live(daemon.record(replyChunk(5)));
+      await chat.settle(daemon);
+
+      expect(rows()).toEqual(expectedRows(true, 6));
+      expectCoverageFromTheFirstRow(commits);
+    } finally {
+      chat.owner.dispose();
+    }
+  });
+
+  it("finishes the reply when its last chunks arrive while an older page is in flight", async () => {
+    const commits: CachedTimeline[] = [];
+    const { daemon, chat, catchUp } = await goOfflineWhileTheReplyStarts({
+      reasoning: true,
+      storage: {
+        readTimeline: async () => undefined,
+        commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+      },
+    });
+    try {
+      const olderPage = daemon.page(catchUp.request);
+      chat.live(daemon.record(replyChunk(3)));
+      chat.live(daemon.record(replyChunk(4)));
+      catchUp.deliver(olderPage);
+      await chat.settle(daemon);
+
+      expect(rows()).toEqual(expectedRows(true, 5));
+      expectCoverageFromTheFirstRow(commits);
+    } finally {
+      chat.owner.dispose();
+    }
   });
 });
 
@@ -761,5 +1914,367 @@ describe("SQLite baseline restoration", () => {
       await preparation;
       database.close();
     }
+  });
+});
+
+describe("archived timeline lifetime", () => {
+  const ACTIVE = "active-agent";
+  const OTHER = "other-agent";
+  const ARCHIVED = "archived-agent";
+  /** An agent whose row never got its archive timestamp, in a workspace that was archived. */
+  const IN_ARCHIVED_WORKSPACE = "agent-in-archived-workspace";
+  const WORKSPACE = "workspace";
+  const ARCHIVED_WORKSPACE = "archived-workspace";
+  const openOwners: ViewedTimelineOwner[] = [];
+  afterEach(() => {
+    for (const owner of openOwners.splice(0)) owner.dispose();
+  });
+
+  function agentPayload(
+    id: string,
+    archivedAt?: string,
+    workspaceId: string = WORKSPACE,
+  ): AgentSnapshotPayload {
+    return {
+      id,
+      workspaceId,
+      provider: "codex",
+      cwd: "/repo",
+      model: null,
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-17T00:01:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: id,
+      labels: {},
+      ...(archivedAt ? { archivedAt } : {}),
+    };
+  }
+
+  function directoryEntry(id: string): FetchAgentsEntry {
+    return {
+      agent: agentPayload(id),
+      project: {
+        projectKey: "/repo",
+        projectName: "repo",
+        checkout: {
+          cwd: "/repo",
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    };
+  }
+
+  function historyPage(agentId: string): TimelineResponsePayload {
+    return {
+      requestId: `tail-${agentId}`,
+      agentId,
+      agent: null,
+      direction: "tail",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
+      startCursor: { epoch: "epoch-1", seq: 1 },
+      endCursor: { epoch: "epoch-1", seq: 1 },
+      entries: [
+        {
+          provider: "codex",
+          item: { type: "assistant_message", text: `history of ${agentId}` },
+          timestamp: "2026-08-26T10:00:00.000Z",
+          seqStart: 1,
+          seqEnd: 1,
+          sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+          collapsed: [],
+        },
+      ],
+      error: null,
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    };
+  }
+
+  /**
+   * A host with an active directory and a viewed-timeline owner. Fetches reach the store the
+   * way the host runtime delivers them: the agent row first, then the page, whether or not
+   * the catch-up that asked for it is still current.
+   */
+  function openHost(
+    activeAgentIds: string[],
+    storage: TimelineReplicaStorage = {
+      readTimeline: async () => undefined,
+      commitTimeline: () => undefined,
+    },
+  ) {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const directory = new AgentDirectoryReplica(
+      SERVER_ID,
+      () => undefined,
+      () => undefined,
+    );
+    const workspaces = new WorkspaceDirectoryReplica(SERVER_ID);
+    workspaces.commitSnapshot(
+      {
+        workspaces: new Map([[WORKSPACE, normalizeWorkspaceDescriptor(workspaceDescriptor())]]),
+        projects: new Map(),
+      },
+      [],
+    );
+    directory.commitSnapshot(activeAgentIds.map(directoryEntry), []);
+    const fetches: string[] = [];
+    const held = new Map<string, () => void>();
+    const holding = new Set<string>();
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage,
+      prepareAgent: async () => undefined,
+    });
+    const owner: ViewedTimelineOwner = createViewedTimelineOwner({
+      serverId: SERVER_ID,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+      applyTurnLiveness: () => undefined,
+      ports: {
+        canCheckFreshness: () => false,
+        observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+        readCursor: () => undefined,
+        fetchPage: async (agentId) => {
+          fetches.push(agentId);
+          if (holding.has(agentId)) {
+            await new Promise<void>((resolve) => held.set(agentId, resolve));
+          }
+          if (agentId === ARCHIVED) {
+            directory.submitTimelineAgent(
+              directory.captureTimeline(agentId),
+              agentPayload(agentId, "2026-09-11T00:00:00.000Z"),
+            );
+          }
+          if (agentId === IN_ARCHIVED_WORKSPACE) {
+            directory.submitTimelineAgent(
+              directory.captureTimeline(agentId),
+              agentPayload(agentId, undefined, ARCHIVED_WORKSPACE),
+            );
+          }
+          owner.applyTimelineResponse(historyPage(agentId));
+          return { hasNewer: false, endCursor: null };
+        },
+        fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
+        reportError: () => undefined,
+      },
+    });
+    owner.setConnected(true);
+    openOwners.push(owner);
+    return {
+      directory,
+      workspaces,
+      owner,
+      fetches,
+      view(agentIds: string[]) {
+        owner.replaceVisibleAgentIds("workspace", agentIds);
+      },
+      hold(agentId: string) {
+        holding.add(agentId);
+      },
+      async deliverHeld(agentId: string) {
+        await expect.poll(() => held.has(agentId)).toBe(true);
+        held.get(agentId)?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+    };
+  }
+
+  function workspaceDescriptor(): WorkspaceDescriptorPayload {
+    return {
+      id: WORKSPACE,
+      projectId: "project",
+      projectDisplayName: "project",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: WORKSPACE,
+      title: WORKSPACE,
+      status: "done",
+      activityAt: null,
+      statusEnteredAt: null,
+      archivingAt: null,
+      diffStat: null,
+      scripts: [],
+    };
+  }
+
+  function timelineStatus(agentId: string): string {
+    return selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], agentId).status;
+  }
+
+  function residentAgentIds(): string[] {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    if (!session) return [];
+    return [
+      ...new Set([
+        ...session.agentStreamTail.keys(),
+        ...session.agentStreamHead.keys(),
+        ...session.agentTimelineCursor.keys(),
+        ...session.agentAuthoritativeHistoryApplied.keys(),
+        ...session.agentTimelineHasOlder.keys(),
+        ...session.agentTimelineHasNewer.keys(),
+        ...session.agentHistorySyncGeneration.keys(),
+      ]),
+    ].sort();
+  }
+
+  it("keeps hidden active chats cached and switches back without a fetch", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+    host.view([ACTIVE]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(timelineStatus(ACTIVE)).toBe("synced");
+    expect(timelineStatus(OTHER)).toBe("synced");
+    expect(host.fetches).toEqual([ACTIVE, OTHER]);
+  });
+
+  it("releases a hidden chat's timeline when its agent is archived", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+
+    host.directory.applyDelta({ kind: "remove", agentId: ACTIVE });
+
+    expect(timelineStatus(ACTIVE)).toBe("cold");
+    expect(residentAgentIds()).toEqual([OTHER]);
+  });
+
+  it("releases an archived chat's timeline once its tab is no longer shown", async () => {
+    const host = openHost([ACTIVE]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+
+    host.directory.archive(ACTIVE, "2026-09-11T00:00:00.000Z");
+    expect(timelineStatus(ACTIVE)).toBe("synced");
+    host.view([]);
+
+    expect(timelineStatus(ACTIVE)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+  });
+
+  it("releases every timeline of a workspace when the active list drops its agents", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+    host.view([]);
+
+    host.directory.commitSnapshot([], []);
+
+    expect(residentAgentIds()).toEqual([]);
+  });
+
+  it("releases hidden timelines of a removed workspace whose agent rows still look active", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+
+    host.workspaces.removeWorkspaceSnapshot(WORKSPACE);
+
+    expect(timelineStatus(OTHER)).toBe("synced");
+    expect(residentAgentIds()).toEqual([OTHER]);
+    host.view([]);
+    expect(residentAgentIds()).toEqual([]);
+  });
+
+  it("releases a History chat whose unarchived row belongs to an archived workspace", async () => {
+    const host = openHost([ACTIVE]);
+    host.view([IN_ARCHIVED_WORKSPACE]);
+    await expect.poll(() => timelineStatus(IN_ARCHIVED_WORKSPACE)).toBe("synced");
+
+    host.view([]);
+
+    expect(timelineStatus(IN_ARCHIVED_WORKSPACE)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+  });
+
+  it("keeps an archived chat open from History through active-list syncs and releases it on leave", async () => {
+    const host = openHost([ACTIVE]);
+    host.view([ARCHIVED]);
+    await expect.poll(() => timelineStatus(ARCHIVED)).toBe("synced");
+
+    host.directory.commitSnapshot([directoryEntry(ACTIVE)], []);
+    host.directory.applyDelta({ kind: "remove", agentId: ARCHIVED });
+    expect(timelineStatus(ARCHIVED)).toBe("synced");
+
+    host.view([]);
+    expect(timelineStatus(ARCHIVED)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+
+    host.view([ARCHIVED]);
+    await expect.poll(() => timelineStatus(ARCHIVED)).toBe("synced");
+    expect(host.fetches).toEqual([ARCHIVED, ARCHIVED]);
+  });
+
+  it("ignores a History read that answers after the archived chat was left", async () => {
+    const host = openHost([ACTIVE]);
+    host.hold(ARCHIVED);
+    host.view([ARCHIVED]);
+    await expect.poll(() => host.fetches).toEqual([ARCHIVED]);
+
+    host.view([]);
+    await host.deliverHeld(ARCHIVED);
+
+    expect(timelineStatus(ARCHIVED)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
+  });
+
+  it("does not paint a cached archived chat back after it was left", async () => {
+    let finishRead!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      finishRead = resolve;
+    });
+    let reading = false;
+    const host = openHost([ACTIVE], {
+      readTimeline: async (_serverId, agentId) => {
+        reading = true;
+        await readStarted;
+        return { ...cachedTimeline(), agentId };
+      },
+      commitTimeline: () => undefined,
+    });
+    host.view([ARCHIVED]);
+    await expect.poll(() => reading).toBe(true);
+
+    host.view([]);
+    finishRead();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(timelineStatus(ARCHIVED)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
   });
 });

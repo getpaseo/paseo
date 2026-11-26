@@ -87,6 +87,7 @@ export class Session {
     this.config = options.config;
     this.host = new MspConnection({
       launch: { ...options.launch, env: { ...options.launch.env, ...options.config.env } },
+      wrap: options.config.wrap,
       cwd: options.config.cwd,
       serveArgs: options.serveArgs,
     });

@@ -12,6 +12,7 @@ import { Composer } from "@/composer";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
+import { draftCreationKey } from "@/composer/draft/creation-key";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -96,13 +97,16 @@ async function callWorkspaceCreation({
   worktreeSlug: string;
   input: { cwd: string; agent?: CreateWorkspaceRequestOptions["agent"] };
 }) {
-  return connectedClient.createWorkspace({
-    idempotencyKey: creationId,
+  const request: Omit<CreateWorkspaceRequestOptions, "idempotencyKey"> = {
     agent: input.agent,
     source:
       creationMethod === "create_worktree"
         ? { kind: "worktree", cwd: input.cwd, worktreeSlug }
         : { kind: "directory", path: input.cwd },
+  };
+  return connectedClient.createWorkspace({
+    ...request,
+    idempotencyKey: draftCreationKey(creationId, request),
   });
 }
 
@@ -363,7 +367,9 @@ export function WorkspaceSetupDialog() {
       } catch (error) {
         const message = toErrorMessage(error);
         setErrorMessage(message);
-        toast.error(message);
+        if (!getIsStillActive()) {
+          toast.error(message);
+        }
       } finally {
         if (getIsStillActive()) {
           setPendingAction(null);
@@ -436,7 +442,7 @@ export function WorkspaceSetupDialog() {
       desktopMaxWidth={640}
     >
       <FileDropZone style={styles.section}>
-        <KeyboardTranslateView>
+        <KeyboardTranslateView style={styles.composerSlot}>
           <Composer
             agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
             serverId={serverId}
@@ -455,11 +461,10 @@ export function WorkspaceSetupDialog() {
             commandDraft={composerState?.commandDraft}
             agentControls={agentControlsWithDisabled}
             inputWrapperStyle={styles.composerInputWrapper}
+            error={errorMessage}
           />
         </KeyboardTranslateView>
       </FileDropZone>
-
-      {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>
   );
 }
@@ -482,10 +487,8 @@ const styles = StyleSheet.create((theme) => ({
     marginHorizontal: -theme.spacing[6],
     marginVertical: -theme.spacing[2],
   },
-  errorText: {
-    fontSize: theme.fontSize.base,
-    color: theme.colors.destructive,
-    lineHeight: 20,
+  composerSlot: {
+    paddingBottom: theme.spacing[4],
   },
   composerInputWrapper: {
     backgroundColor: theme.colors.surface2,

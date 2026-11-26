@@ -1,3 +1,10 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationKind,
+} from "@getpaseo/protocol/notification-preferences";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +18,11 @@ import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { asInternals, createStub } from "./test-utils/class-mocks.js";
 import { createProviderSnapshotManagerStub } from "./test-utils/session-stubs.js";
-import type { PushNotificationSender, PushPayload } from "./push/index.js";
+import {
+  createPushNotifications,
+  type PushNotificationSender,
+  type PushPayload,
+} from "./push/index.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 
 const WORKSPACE_ID = "workspace-1";
@@ -77,16 +88,23 @@ function createWorkspaceAutoNameStub(): WorkspaceAutoName {
 
 class RecordingPushNotificationSender implements PushNotificationSender {
   readonly sent: PushPayload[] = [];
+  readonly sentWithKind: Array<{ payload: PushPayload; kind?: NotificationKind }> = [];
 
-  async send(payload: PushPayload): Promise<void> {
+  async send(payload: PushPayload, kind?: NotificationKind): Promise<void> {
     this.sent.push(payload);
+    this.sentWithKind.push({ payload, kind });
   }
 }
 
-function createServer(agentManagerOverrides?: Record<string, unknown>) {
+function createServer(
+  agentManagerOverrides?: Record<string, unknown>,
+  customPushSender?: PushNotificationSender,
+) {
   const pushNotifications = new RecordingPushNotificationSender();
+  const sender = customPushSender ?? pushNotifications;
   const agentManager = {
     subscribe: vi.fn(() => () => {}),
+    onStop: () => () => {},
     setAgentAttentionCallback: vi.fn(),
     getAgent: vi.fn(() => ({ workspaceId: WORKSPACE_ID, pendingPermissions: new Map() })),
     getLastAssistantMessage: vi.fn(async () => null),
@@ -147,7 +165,7 @@ function createServer(agentManagerOverrides?: Record<string, unknown>) {
     undefined,
     undefined,
     undefined,
-    pushNotifications,
+    sender,
     createProviderSnapshotManagerStub().manager,
   );
 
@@ -246,6 +264,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(unsubscribed.send).not.toHaveBeenCalled();
@@ -270,6 +289,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(pushNotifications.sent).toEqual([
@@ -304,6 +324,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-2",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(pushNotifications.sent).toHaveLength(1);
@@ -330,6 +351,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-X",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(electronWs).shouldNotify).toBe(true);
@@ -345,13 +367,14 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "finished",
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
     expect(pushNotifications.sent).toHaveLength(1);
   });
 
-  it("does not push error attention when the only connected client has never sent a heartbeat", async () => {
+  it("pushes error attention with agent error NotificationKind when the only connected client has never sent a heartbeat", async () => {
     const { server, pushNotifications } = createServer();
     const ws = connectClient(server, null);
 
@@ -359,9 +382,129 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "error",
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
+    expect(pushNotifications.sentWithKind).toEqual([
+      {
+        payload: {
+          title: "Agent needs attention",
+          body: "Encountered an error.",
+          data: {
+            serverId: "srv-test",
+            workspaceId: WORKSPACE_ID,
+            agentId: "agent-no-heartbeat",
+            reason: "error",
+          },
+        },
+        kind: { kind: "agent", reason: "error" },
+      },
+    ]);
+  });
+
+  it("filters agent finished, permission, and error pushes per token preferences", async () => {
+    const home = mkdtempSync(path.join(tmpdir(), "paseo-ws-agent-prefs-"));
+    try {
+      const deliveries: Array<{ tokens: string[]; payload: PushPayload }> = [];
+      const realPush = createPushNotifications({
+        logger: createStub<pino.Logger>(createLogger()),
+        filePath: path.join(home, "push-tokens.json"),
+        deliver: async (tokens, payload) => {
+          deliveries.push({ tokens, payload });
+        },
+      });
+      // Phone A: explicit default preferences (permission: true, error: true, finished: false)
+      realPush.renew("ExponentPushToken[phone-default]", DEFAULT_NOTIFICATION_PREFERENCES);
+      // Phone B: finished enabled, error disabled
+      realPush.renew("ExponentPushToken[phone-finished-only]", {
+        ...DEFAULT_NOTIFICATION_PREFERENCES,
+        events: {
+          ...DEFAULT_NOTIFICATION_PREFERENCES.events,
+          agentPermission: false,
+          agentError: false,
+          agentFinished: true,
+        },
+      });
+
+      const { server } = createServer(undefined, realPush);
+
+      await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "finished",
+        attentionTimestamp: new Date(1_000),
+      });
+      await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "permission",
+        attentionTimestamp: new Date(2_000),
+      });
+      await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "error",
+        attentionTimestamp: new Date(3_000),
+      });
+
+      expect(deliveries.map((d) => ({ tokens: d.tokens, reason: d.payload.data.reason }))).toEqual([
+        { tokens: ["ExponentPushToken[phone-finished-only]"], reason: "finished" },
+        { tokens: ["ExponentPushToken[phone-default]"], reason: "permission" },
+        { tokens: ["ExponentPushToken[phone-default]"], reason: "error" },
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+  it("notifies once while an agent's finish stays unread", async () => {
+    const { server, pushNotifications } = createServer();
+    const broadcast = (attentionTimestamp: Date) =>
+      asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "finished",
+        attentionTimestamp,
+      });
+    const firstUnreadFinish = new Date(1_000);
+
+    await broadcast(firstUnreadFinish);
+    await broadcast(firstUnreadFinish);
+    await broadcast(firstUnreadFinish);
+    expect(pushNotifications.sent).toHaveLength(1);
+
+    // After the user reads the agent (or marks it unread), its next unread finish is new.
+    await broadcast(new Date(2_000));
+    expect(pushNotifications.sent).toHaveLength(2);
+  });
+
+  it("notifies a repeated finish when the user had the agent on screen for the first one", async () => {
+    const { server, pushNotifications } = createServer();
+    const activity = {
+      deviceType: "web" as const,
+      appVisible: true,
+      focusedAgentId: "agent-1" as string | null,
+      lastActivityAt: new Date(),
+    };
+    connectClient(server, activity);
+    const unreadFinish = new Date(1_000);
+    const broadcast = () =>
+      asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "finished",
+        attentionTimestamp: unreadFinish,
+      });
+
+    await broadcast();
     expect(pushNotifications.sent).toEqual([]);
+
+    // The user leaves; the agent keeps finishing turns it starts on its own.
+    activity.appVisible = false;
+    activity.focusedAgentId = null;
+    activity.lastActivityAt = new Date(Date.now() - 600_000);
+    await broadcast();
+    await broadcast();
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 });

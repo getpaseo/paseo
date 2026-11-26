@@ -126,6 +126,23 @@ describe("agent directory reconciliation", () => {
     }).toEqual({ title: "newer page", status: "running", projectName: "repo" });
   });
 
+  it("takes the project of a newer buffered upsert", () => {
+    const snapshotEntry = entry("agent", "idle");
+    const newerProject = { ...snapshotEntry.project, projectName: "renamed project" };
+    const result = reconcileAgentDirectory({
+      snapshot: [snapshotEntry],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: { ...snapshot("agent", "idle"), updatedAt: "2026-07-12T11:00:00.000Z" },
+          project: newerProject,
+        },
+      ],
+    });
+
+    expect(result[0]?.project.projectName).toBe("renamed project");
+  });
+
   it("clears a snapshot stop when a newer buffered upsert is running", () => {
     const result = reconcileAgentDirectory({
       snapshot: [entry("agent", "idle")],
@@ -179,6 +196,44 @@ describe("agent directory reconciliation", () => {
       title: "newer page",
       status: "idle",
       usage: { inputTokens: 20, outputTokens: 8 },
+    });
+  });
+
+  it("accepts session metrics from a stale buffered upsert without regressing metadata", () => {
+    const result = reconcileAgentDirectory({
+      snapshot: [
+        {
+          ...entry("agent", "idle"),
+          agent: {
+            ...snapshot("agent", "idle"),
+            title: "newer page",
+            updatedAt: "2026-07-12T12:00:00.000Z",
+            sessionMetrics: [{ label: "Cost", value: "$0.10" }],
+          },
+        },
+      ],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: {
+            ...snapshot("agent", "running"),
+            title: "stale live",
+            updatedAt: "2026-07-12T11:00:00.000Z",
+            sessionMetrics: [{ label: "Cost", value: "$0.42" }],
+          },
+          project: entry("agent", "idle").project,
+        },
+      ],
+    });
+
+    expect({
+      title: result[0]?.agent.title,
+      status: result[0]?.agent.status,
+      sessionMetrics: result[0]?.agent.sessionMetrics,
+    }).toEqual({
+      title: "newer page",
+      status: "idle",
+      sessionMetrics: [{ label: "Cost", value: "$0.42" }],
     });
   });
 

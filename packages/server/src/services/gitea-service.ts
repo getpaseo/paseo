@@ -18,6 +18,7 @@ import {
   CLI_AUTH_PROBE_TIMEOUT_MS,
   defaultResolveRemoteUrl,
   parseCliJsonOutput,
+  runWithResolvedCliPath,
   ForgeCommandError,
   type ForgeCommandFailureParams,
 } from "./forge-cli-command.js";
@@ -26,11 +27,13 @@ import {
   compareTimelineItems,
   createUnavailableSearchResult,
   normalizeForgeSearchKinds,
+  isOnDefaultBranch,
   parseOptionalTime,
 } from "./forge-service.js";
 import type {
   CheckDetails,
   CreatePullRequestOptions,
+  CurrentPullRequestLookup,
   CurrentPullRequestStatus,
   DisablePullRequestAutoMergeOptions,
   EnablePullRequestAutoMergeOptions,
@@ -59,6 +62,23 @@ import type {
   SearchIssuesAndPrsOptions,
   SearchResult,
 } from "./forge-service.js";
+import {
+  findTeaLoginNameForHost,
+  getGiteaActionRunIdFromUrl,
+  getGiteaActionTaskName,
+  getUrlOrigin,
+  GITEA_ACTION_MAX_PAGES,
+  GITEA_ACTION_PAGE_LIMIT,
+  GiteaActionsListResponseSchema,
+  GiteaCombinedCommitStatusSchema,
+  isGiteaActionShadowStatus,
+  latestGiteaActionTasksByWorkflow,
+  parseGiteaActionTasks,
+  type GiteaActionTask,
+  type GiteaCombinedCommitStatus,
+  type GiteaCommitStatus,
+} from "./gitea-checks.js";
+import { createGiteaChangeRequestSource } from "./gitea-change-requests.js";
 import { isGiteaStatusFacts, type GiteaStatusFacts } from "./gitea-facts.js";
 
 const TEA_ENV = {
@@ -75,10 +95,6 @@ const reviewCommentsLimit = pLimit(REVIEW_COMMENTS_FAN_OUT_CONCURRENCY);
 // short cache, each poll re-derives the PR head SHA from scratch (branch name +
 // PR lookup + PR view). The TTL keeps a new push visible within one poll cycle.
 const CURRENT_PR_HEAD_SHA_CACHE_TTL_MS = 30_000;
-// 50 is the page-size cap Gitea enforces on list endpoints; five pages bounds
-// the sweep to the 250 most recent Actions tasks.
-const GITEA_ACTION_PAGE_LIMIT = 50;
-const GITEA_ACTION_MAX_PAGES = 5;
 // PullRequestFlowAGit in forgejo models/issues/pull.go
 const GITEA_PULL_REQUEST_FLOW_AGIT = 1;
 
@@ -122,6 +138,7 @@ export class TeaCommandError extends ForgeCommandError {
 export interface TeaCommandRunnerOptions {
   cwd: string;
   envOverlay?: Record<string, string>;
+  executablePath?: string;
 }
 
 export interface TeaCommandResult {
@@ -140,6 +157,8 @@ export interface CreateGiteaServiceOptions {
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
   resolveCurrentBranch?: (cwd: string) => Promise<string | null>;
   now?: () => number;
+  watchPollMs?: number;
+  watchInitialDelayMs?: number;
 }
 
 /**
@@ -175,14 +194,6 @@ const GiteaIssueListItemSchema = z
     body: z.string().optional().default(""),
     labels: z.string().optional(),
     updated: z.string().optional(),
-  })
-  .passthrough();
-
-const GiteaLoginSchema = z
-  .object({
-    name: z.string().optional(),
-    url: z.string().optional(),
-    ssh_host: z.string().optional(),
   })
   .passthrough();
 
@@ -247,6 +258,15 @@ const GiteaPullRequestApiSchema = z
   })
   .passthrough();
 
+// `full_name` is required so an HTTP error body, which `tea api` returns with exit code 0, fails the parse.
+const GiteaRepositoryApiSchema = z
+  .object({
+    full_name: z.string(),
+    default_branch: z.string().nullish(),
+    parent: z.object({ full_name: z.string().optional() }).nullable().optional(),
+  })
+  .passthrough();
+
 const GiteaCurrentPullRequestApiSchema = z
   .object({
     number: z.number(),
@@ -274,55 +294,6 @@ const GiteaCurrentPullRequestApiSchema = z
         repo: GiteaPullRequestRepoSchema.nullable().optional(),
       })
       .passthrough(),
-  })
-  .passthrough();
-
-const GiteaCommitStatusSchema = z
-  .object({
-    id: z.number(),
-    status: z.string(),
-    target_url: z.string().nullable().optional(),
-    description: z.string().nullable().optional(),
-    url: z.string().nullable().optional(),
-    context: z.string().optional().default(""),
-    creator: z.unknown().nullable().optional(),
-  })
-  .passthrough();
-
-const GiteaCombinedCommitStatusSchema = z
-  .object({
-    state: z.string().optional().default(""),
-    sha: z.string().optional(),
-    total_count: z.number().optional(),
-    statuses: z.array(GiteaCommitStatusSchema).optional().default([]),
-  })
-  .passthrough();
-
-const GiteaActionTaskSchema = z
-  .object({
-    id: z.number(),
-    name: z.string().nullable().optional(),
-    head_branch: z.string().nullable().optional(),
-    head_sha: z.string(),
-    run_number: z.number().optional(),
-    event: z.string().nullable().optional(),
-    display_title: z.string().nullable().optional(),
-    status: z.string(),
-    need_approval: z.boolean().optional().default(false),
-    workflow_id: z.string().nullable().optional(),
-    url: z.string().nullable().optional(),
-    created_at: z.string().nullable().optional(),
-    run_started_at: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-// The item shape is validated per-task rather than as `z.array(GiteaActionTaskSchema)`
-// so one malformed task (missing id/status/head_sha) drops only itself instead of
-// throwing out the whole page and zeroing every Actions check for the PR.
-const GiteaActionsListResponseSchema = z
-  .object({
-    workflow_runs: z.array(z.unknown()).optional().default([]),
-    total_count: z.number().optional(),
   })
   .passthrough();
 
@@ -399,9 +370,6 @@ type GiteaPrListItem = z.infer<typeof GiteaPrListItemSchema>;
 type GiteaIssueListItem = z.infer<typeof GiteaIssueListItemSchema>;
 type GiteaPullRequestView = z.infer<typeof GiteaPullRequestViewSchema>;
 type GiteaCurrentPullRequestApi = z.infer<typeof GiteaCurrentPullRequestApiSchema>;
-type GiteaCommitStatus = z.infer<typeof GiteaCommitStatusSchema>;
-type GiteaCombinedCommitStatus = z.infer<typeof GiteaCombinedCommitStatusSchema>;
-type GiteaActionTask = z.infer<typeof GiteaActionTaskSchema>;
 type GiteaIssueComment = z.infer<typeof GiteaIssueCommentSchema>;
 type GiteaReview = z.infer<typeof GiteaReviewSchema>;
 type GiteaReviewComment = z.infer<typeof GiteaReviewCommentSchema>;
@@ -786,10 +754,6 @@ function deriveGiteaActionRequiredRunIds(runs: unknown[], sha: string): Set<numb
   return runIds;
 }
 
-function getGiteaActionTaskName(task: GiteaActionTask): string {
-  return task.name || task.display_title || task.workflow_id || `actions-${task.id}`;
-}
-
 function toGiteaActionTaskCheck(task: GiteaActionTask): PullRequestCheck {
   const rawStatus = task.status.toLowerCase();
   return {
@@ -801,136 +765,6 @@ function toGiteaActionTaskCheck(task: GiteaActionTask): PullRequestCheck {
     url: task.url ?? null,
     workflowRunId: task.id,
   };
-}
-
-function getGiteaActionWorkflowIdentity(task: GiteaActionTask): string {
-  if (task.workflow_id) {
-    return `workflow\u0000${task.workflow_id}`;
-  }
-  // Instances that omit workflow_id (older Gitea/Forgejo payloads) still need
-  // reruns of the same job collapsed to the latest execution, so fall back to
-  // the job name before treating the task as its own group.
-  const name = task.name || task.display_title;
-  if (name) {
-    return `name\u0000${name}`;
-  }
-  return `task\u0000${getGiteaActionExecutionIdentity(task)}`;
-}
-
-function getGiteaActionExecutionIdentity(task: GiteaActionTask): string {
-  if (task.run_number !== undefined) return `run-number\u0000${task.run_number}`;
-  const runId = getGiteaActionRunIdFromUrl(task.url);
-  if (runId !== null) return `run-id\u0000${runId}`;
-  if (task.url) return `url\u0000${task.url}`;
-  return `task\u0000${task.id}`;
-}
-
-function parseGiteaActionTaskTime(task: GiteaActionTask): number {
-  const timestamp = task.created_at ?? task.run_started_at ?? null;
-  if (!timestamp) {
-    return 0;
-  }
-  const time = Date.parse(timestamp);
-  return Number.isNaN(time) ? 0 : time;
-}
-
-function compareGiteaActionTaskRecency(left: GiteaActionTask, right: GiteaActionTask): number {
-  const leftRunNumber = left.run_number ?? 0;
-  const rightRunNumber = right.run_number ?? 0;
-  if (leftRunNumber !== rightRunNumber) {
-    return leftRunNumber - rightRunNumber;
-  }
-
-  const leftTime = parseGiteaActionTaskTime(left);
-  const rightTime = parseGiteaActionTaskTime(right);
-  if (leftTime !== rightTime) {
-    return leftTime - rightTime;
-  }
-
-  return left.id - right.id;
-}
-
-function parseGiteaActionTasks(rawTasks: unknown[]): GiteaActionTask[] {
-  const tasks: GiteaActionTask[] = [];
-  for (const raw of rawTasks) {
-    const parsed = GiteaActionTaskSchema.safeParse(raw);
-    if (parsed.success) {
-      tasks.push(parsed.data);
-    }
-  }
-  return tasks;
-}
-
-function latestGiteaActionTasksByWorkflow(tasks: GiteaActionTask[]): GiteaActionTask[] {
-  const latestExecutions = new Map<string, GiteaActionTask>();
-  for (const task of tasks) {
-    const identity = getGiteaActionWorkflowIdentity(task);
-    const current = latestExecutions.get(identity);
-    if (!current || compareGiteaActionTaskRecency(current, task) < 0) {
-      latestExecutions.set(identity, task);
-    }
-  }
-  return tasks.filter((task) => {
-    const latest = latestExecutions.get(getGiteaActionWorkflowIdentity(task));
-    return (
-      latest !== undefined &&
-      getGiteaActionExecutionIdentity(task) === getGiteaActionExecutionIdentity(latest)
-    );
-  });
-}
-
-function getUrlOrigin(value: string | null | undefined): string | null {
-  if (!value) return null;
-  try {
-    return new URL(value).origin;
-  } catch {
-    return null;
-  }
-}
-
-const GITEA_RELATIVE_URL_ORIGIN = "https://gitea.invalid";
-
-function getGiteaActionRunIdFromUrl(value: string | null | undefined): number | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value, GITEA_RELATIVE_URL_ORIGIN);
-    const match = url.pathname.match(/\/actions\/runs\/(\d+)(?:\/jobs\/\d+)?\/?$/);
-    return match?.[1] ? Number.parseInt(match[1], 10) : null;
-  } catch {
-    return null;
-  }
-}
-
-function isNativeActionJobUrl(
-  targetUrl: string | null | undefined,
-  nativeOrigins: ReadonlySet<string>,
-  nativeRunIds: ReadonlySet<number>,
-): boolean {
-  if (!targetUrl) return false;
-  try {
-    const url = new URL(targetUrl, GITEA_RELATIVE_URL_ORIGIN);
-    if (!/\/actions\/runs\/\d+\/jobs\/\d+\/?$/.test(url.pathname)) return false;
-    if (url.origin !== GITEA_RELATIVE_URL_ORIGIN && !nativeOrigins.has(url.origin)) return false;
-    const runId = getGiteaActionRunIdFromUrl(targetUrl);
-    return runId !== null && nativeRunIds.has(runId);
-  } catch {
-    return false;
-  }
-}
-
-// A "shadow" is the commit status Gitea synthesizes to mirror one of its own
-// Actions jobs; keeping both would double-report every job. Detection is purely
-// structural: Gitea always creates these statuses with a target_url of the form
-// "<run link>/jobs/<job id>" (services/actions/commit_status.go upstream), so a
-// status is a shadow exactly when its URL points at a job of a run we actually
-// fetched from the Actions API. Anything else - external CI, URL-less statuses,
-// contexts that merely look like "<workflow> / <job> (<event>)" - is kept.
-function isGiteaActionShadowStatus(
-  status: GiteaCommitStatus,
-  nativeOrigins: ReadonlySet<string>,
-  nativeRunIds: ReadonlySet<number>,
-): boolean {
-  return isNativeActionJobUrl(status.target_url, nativeOrigins, nativeRunIds);
 }
 
 function combineGiteaChecks(
@@ -1198,7 +1032,7 @@ export async function probeGiteaHost(host: string): Promise<boolean> {
     return false;
   }
   try {
-    const { stdout } = await execCommand("tea", ["login", "list", "-o", "json"], {
+    const { stdout } = await execCommand(teaPath, ["login", "list", "-o", "json"], {
       envOverlay: TEA_ENV,
       timeout: CLI_AUTH_PROBE_TIMEOUT_MS,
     });
@@ -1206,32 +1040,6 @@ export async function probeGiteaHost(host: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function findTeaLoginNameForHost(stdout: string, host: string): string | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  const parsed = z.array(GiteaLoginSchema).safeParse(data);
-  if (!parsed.success) {
-    return null;
-  }
-  const target = host.toLowerCase();
-  const match = parsed.data.find((login) => {
-    const candidates = [login.ssh_host, login.name];
-    if (login.url) {
-      try {
-        candidates.push(new URL(login.url).hostname);
-      } catch {
-        // ignore malformed login url
-      }
-    }
-    return candidates.some((candidate) => candidate?.toLowerCase() === target);
-  });
-  return match?.name ?? null;
 }
 
 function hostHasLogin(stdout: string, host: string): boolean {
@@ -1255,12 +1063,19 @@ export interface DetectGiteaFamilyOptions {
   runTea?: TeaApiRunner;
 }
 
-async function defaultRunTea(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  const { stdout, stderr } = await execCommand("tea", args, {
-    envOverlay: TEA_ENV,
-    timeout: GITEA_SOFTWARE_PROBE_TIMEOUT_MS,
-  });
-  return { stdout, stderr };
+function createDefaultRunTea(): TeaApiRunner {
+  const resolveTea = createCachedCliPathResolver(resolveTeaPath);
+  return async (args: string[]): Promise<{ stdout: string; stderr: string }> => {
+    const teaPath = await resolveTea();
+    if (!teaPath) {
+      throw new TeaCliMissingError();
+    }
+    const { stdout, stderr } = await execCommand(teaPath, args, {
+      envOverlay: TEA_ENV,
+      timeout: GITEA_SOFTWARE_PROBE_TIMEOUT_MS,
+    });
+    return { stdout, stderr };
+  };
 }
 
 const HTTP_STATUS_LINE = /^HTTP\/\d(?:\.\d)?\s+(\d{3})/m;
@@ -1323,7 +1138,7 @@ export async function detectGiteaFamilySoftware(
   host: string,
   options: DetectGiteaFamilyOptions = {},
 ): Promise<GiteaFamilySoftware> {
-  const runTea = options.runTea ?? defaultRunTea;
+  const runTea = options.runTea ?? createDefaultRunTea();
 
   const viaTea = await probeForgejoNamespaceByTea(host, runTea);
   if (viaTea !== null) {
@@ -1398,18 +1213,34 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   const now = options.now ?? Date.now;
   const currentPrHeadShaCache = new Map<string, { sha: string; expiresAt: number }>();
 
-  async function run(args: string[], runOptions: TeaCommandRunnerOptions): Promise<string> {
-    const teaPath = await resolveTea();
-    if (!teaPath) {
-      throw new TeaCliMissingError();
-    }
+  async function runRaw(
+    args: string[],
+    runOptions: TeaCommandRunnerOptions,
+  ): Promise<TeaCommandResult> {
     try {
-      const result = await runner(args, runOptions);
-      return result.stdout.trim();
+      return await runWithResolvedCliPath({
+        resolvePath: resolveTea,
+        createMissingError: () => new TeaCliMissingError(),
+        run: (teaPath) => runner(args, { ...runOptions, executablePath: teaPath }),
+      });
     } catch (error) {
       throw teaCliRunner.normalizeError(error, { args: redactTeaArgs(args), cwd: runOptions.cwd });
     }
   }
+
+  async function run(args: string[], runOptions: TeaCommandRunnerOptions): Promise<string> {
+    const result = await runRaw(args, runOptions);
+    return result.stdout.trim();
+  }
+
+  const changeRequests = createGiteaChangeRequestSource({
+    runCommand: runRaw,
+    createAuthError: (stderr) => new TeaAuthenticationError({ stderr }),
+    createCommandError: (params) => new TeaCommandError(params),
+    now,
+    pollIntervalMs: options.watchPollMs,
+    initialDelayMs: options.watchInitialDelayMs,
+  });
 
   function runJsonParse<T>(
     args: string[],
@@ -1577,11 +1408,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return { items, truncated: true };
   }
 
-  async function loadCurrentPullRequestStatus(input: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-  }): Promise<CurrentPullRequestStatus | null> {
+  async function loadCurrentPullRequestStatus(
+    input: CurrentPullRequestLookup,
+  ): Promise<CurrentPullRequestStatus | null> {
     const match = await findCurrentPullRequestForHeadRef(input);
     if (!match) {
       return null;
@@ -1605,11 +1434,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return identity ? { owner: identity.owner, name: identity.name } : null;
   }
 
-  async function findCurrentPullRequestForHeadRef(input: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-  }): Promise<GiteaPrListItem | null> {
+  function readRepository(cwd: string, repoPath: string) {
+    return runJson(["api", repoPath], { cwd }, GiteaRepositoryApiSchema);
+  }
+
+  function repositoryApiPath(repo: { owner: string; name: string } | null): string {
+    return repo
+      ? `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`
+      : "repos/{owner}/{repo}";
+  }
+
+  async function findCurrentPullRequestForHeadRef(
+    input: CurrentPullRequestLookup,
+  ): Promise<GiteaPrListItem | null> {
     const repoIdentity = await resolveCurrentRepoIdentity(input.cwd);
     const expectedHeadOwner = repoIdentity?.owner ?? null;
     const openMatch = await findOpenPullRequestForHeadRef(input, expectedHeadOwner);
@@ -1620,9 +1457,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     // tea discovers repository context from any configured git remote, while
     // the default remote resolver reads origin only. Preserve that broader
     // discovery for repositories whose primary remote has another name.
-    const repoPath = repoIdentity
-      ? `repos/${encodeURIComponent(repoIdentity.owner)}/${encodeURIComponent(repoIdentity.name)}`
-      : "repos/{owner}/{repo}";
+    const repoPath = repositoryApiPath(repoIdentity);
     const recentItems = await runJsonArray(
       [
         "api",
@@ -1658,6 +1493,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       ) ??
       candidates[0] ??
       null;
+    if (match && mapGiteaState(match.state) !== "open") {
+      const repository = await readRepository(input.cwd, repoPath).catch(() => null);
+      if (isOnDefaultBranch(input, repository?.default_branch)) {
+        return null;
+      }
+    }
     return match ? currentPullRequestApiToListItem(match) : null;
   }
 
@@ -2007,12 +1848,17 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       }
     },
 
+    async getReferenceRepository(input): Promise<string | null> {
+      const repo = await resolveCurrentRepoIdentity(input.cwd);
+      if (!repo) {
+        return null;
+      }
+      const repository = await readRepository(input.cwd, repositoryApiPath(repo));
+      return repository.parent?.full_name ?? null;
+    },
+
     getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
-      return loadCurrentPullRequestStatus({
-        cwd: input.cwd,
-        headRef: input.headRef,
-        headSha: input.headSha,
-      });
+      return loadCurrentPullRequestStatus(input);
     },
 
     async getPullRequest(input: GetPullRequestOptions): Promise<PullRequestSummary> {
@@ -2333,6 +2179,8 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       return notSupported("disablePullRequestAutoMerge");
     },
 
+    changeRequests,
+
     invalidate(input: { cwd: string }): void {
       const prefix = `${input.cwd}:`;
       for (const key of currentPrHeadShaCache.keys()) {
@@ -2340,6 +2188,10 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
           currentPrHeadShaCache.delete(key);
         }
       }
+    },
+
+    dispose(): void {
+      changeRequests.dispose();
     },
   };
 }

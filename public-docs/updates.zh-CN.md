@@ -38,7 +38,9 @@ v0.1.92-beta.3
 
 ## 稳定版渠道 {#stable-channel}
 
-稳定版渠道是默认渠道。桌面端稳定版会在 **36 小时**内逐步推送，这样即使有意外问题漏网，也不会同时影响所有人。自动更新检查会随着推送进度获取新版本；在应用中点击 **检查** 会跳过分批推送，立即安装。
+稳定版渠道是默认渠道。桌面端稳定版会在 **18 小时**内逐步推送：先推送给一小部分用户，再在随后的几小时内推送给所有人。这样即使有意外问题漏网，也不会同时影响所有人。
+
+桌面应用更新后，会等待 **24 小时**再接收下一个常规版本，因此频繁发版不会带来频繁重启。紧急修复不受这段等待限制。在应用中点击 **检查** 会跳过分批推送和等待，立即安装。
 
 大多数用户应该使用稳定版。
 
@@ -50,19 +52,20 @@ v0.1.92-beta.3
 
 ### 如何加入测试版渠道 {#how-to-join-the-beta-channel}
 
-在桌面应用中：
+| 平台          | 获取测试版的方式                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| iOS 和 iPadOS | 加入 [Paseo TestFlight 测试版](https://testflight.apple.com/join/Y5HpSQjJ)。                     |
+| Android       | 从 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)的预发布版本下载 APK。      |
+| 桌面端        | 打开 **设置 → 关于**，在 **发布通道** 下选择 **Beta**。                                          |
+| CLI           | 运行 `npm install -g @getpaseo/cli@beta`。直接运行 `npm install -g @getpaseo/cli` 仍使用稳定版。 |
 
-1. 打开 **设置**
-2. 进入 **关于**
-3. 在 **发布通道** 下选择 **Beta**
-
-之后应用就会检查测试版更新。
+在桌面应用中选择 **Beta** 后，应用就会检查测试版更新。
 
 ## 应用商店 {#app-stores}
 
 桌面端版本和 CLI 通常最先提供。App Store 和 Play Store 的版本需要经过审核，可能会滞后。
 
-应用商店目前没有测试版渠道，只提交稳定版构建。如果你想提前使用 Android 构建，请从 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)下载 APK。
+App Store 和 Play Store 的商店页面只提供稳定版构建。在 iOS 上，[TestFlight 测试版](https://testflight.apple.com/join/Y5HpSQjJ)就是测试版渠道。每个测试版都会在通过 Apple 的测试版审核后上传到 TestFlight，稳定版也会上传到那里，所以 TestFlight 测试者始终使用最新构建。Android 没有 Play Store 测试版，请从 GitHub 安装测试版 APK。
 
 ## 出现问题怎么办 {#what-to-do-if-something-breaks}
 

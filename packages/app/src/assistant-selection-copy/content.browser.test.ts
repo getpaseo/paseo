@@ -1,5 +1,20 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createAssistantSelectionClipboardContent } from "./content.web";
+import { createElement as h } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { flushSync } from "react-dom";
+import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/dom";
+import { EnrichedMarkdownText } from "react-native-enriched-markdown";
+import { I18nextProvider } from "react-i18next";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { WEB_RENDERERS } from "@/components/markdown/renderers.web";
+import type { ToastApi } from "@/components/toast-host";
+import { ToastApiProvider } from "@/contexts/toast-api-context";
+import { i18n } from "@/i18n/i18next";
+import {
+  createAssistantSelectionClipboardContent,
+  createElementClipboardContent,
+} from "./content.web";
+import { MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE } from "./markup";
 
 const fixture = `
   <div data-testid="assistant-message">
@@ -759,6 +774,56 @@ describe("assistant selection copy inside highlighted code", () => {
       "```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
     );
   });
+
+  it("keeps line breaks when a quote selection ends partway through code", () => {
+    const message = mountHighlighted();
+    const quote = document.createElement("div");
+    quote.setAttribute("data-paseo-markdown-tag", "blockquote");
+    quote.textContent = "Quoted context";
+    message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(quote);
+
+    const content = copyBetween(
+      [tokenText(message, "Quoted context"), 0],
+      [tokenText(message, " (answer)"), 9],
+    );
+
+    expect(content?.plainText).toBe(
+      "> Quoted context\n\n```typescript\nconst answer = 1;\n  if (answer)\n```",
+    );
+  });
+
+  it("keeps indented code lines inside their list item", () => {
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<div data-testid="assistant-message">',
+      '<div data-paseo-markdown-tag="ol" data-paseo-markdown-list-start="1">',
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">1.</div>',
+      '<div><div data-paseo-markdown-tag="p"><span>Item text</span></div>',
+      highlightedCodeBlock("typescript"),
+      "</div></div></div></div>",
+    ].join("");
+    document.body.append(host);
+
+    const content = copyBetween([tokenText(host, "1."), 0], [tokenText(host, " (answer)"), 9]);
+
+    expect(content?.plainText).toBe(
+      "1. Item text\n\n    ```typescript\n    const answer = 1;\n      if (answer)\n    ```",
+    );
+  });
+
+  it("keeps line breaks when a selection starts partway through code", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween(
+      [tokenText(message, " answer"), 1],
+      [tokenText(message, "After the block."), "After the block.".length],
+    );
+
+    expect(content?.plainText).toBe(
+      "```typescript\nanswer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
+    );
+  });
 });
 
 describe("semantic library output", () => {
@@ -801,6 +866,94 @@ it("copies a selection inside semantic inline code without Markdown escaping", (
   );
 });
 
+it("keeps intraword underscores in prose unescaped", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Set max_retries and snake_case before the call.</p>";
+  const paragraph = fixtureElement(message, "p");
+  expect(createAssistantSelectionClipboardContent(selectNodeContents(paragraph))?.plainText).toBe(
+    "Set max_retries and snake_case before the call.",
+  );
+});
+
+it("copies literal paired underscores raw in text/plain and escaped in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>literal _word_ stays literal</p>";
+  const paragraph = fixtureElement(message, "p");
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(paragraph));
+  expect(content?.plainText).toBe("literal _word_ stays literal");
+  expect(content?.html).toContain("literal _word_ stays literal");
+});
+
+it("copies a path the renderer recognized as text, and an authored link as a link", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>See <a href="src/index.ts" data-paseo-markdown-recognized-link="true">src/index.ts</a> and <a href="https://example.test/doc">the doc</a>.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("See src/index.ts and [the doc](https://example.test/doc).");
+  expect(content?.html).not.toContain('href="src/index.ts"');
+});
+
+it("copies a recognized inline-code path without its link", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Edited <a href="src/app.tsx" data-paseo-markdown-recognized-link="true"><code>src/app.tsx</code></a> today.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Edited `src/app.tsx` today.");
+  expect(content?.html).not.toContain('href="src/app.tsx"');
+});
+
+it("copies a recognized web link as its text in text/plain and as a link in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Fixed in <a href="https://github.com/o/r/issues/12" data-paseo-markdown-recognized-link="true">#12</a> today.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Fixed in #12 today.");
+  expect(content?.html).toContain('<a href="https://github.com/o/r/issues/12">#12</a>');
+});
+
+it("copies a recognized Windows drive path as text in both clipboard flavors", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Open <a href="C:%5Crepo%5Csrc%5Cx.ts" data-paseo-markdown-recognized-link="true">C:\\repo\\src\\x.ts</a> now.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Open C:\\repo\\src\\x.ts now.");
+  expect(content?.html).not.toContain("<a ");
+});
+
+it("keeps literal angle brackets around a URL in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Open &lt;http://localhost:3000&gt; before the call.</p>";
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Open <http://localhost:3000> before the call.");
+  expect(content?.html).toContain("<p>Open &lt;http://localhost:3000&gt; before the call.</p>");
+});
+
+it("keeps a heading marker split across inline elements literal in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Use <strong>C#</strong> for the service layer.</p>";
+  const paragraph = fixtureElement(message, "p");
+  const range = document.createRange();
+  range.setStart(textNode(fixtureElement(message, "strong")), 1);
+  range.setEnd(paragraph.lastChild!, paragraph.lastChild!.textContent!.length);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const content = createAssistantSelectionClipboardContent(selection);
+  expect(content?.plainText).toBe("# for the service layer.");
+  expect(content?.html).toContain("<p># for the service layer.</p>");
+});
+
+it("keeps table cell pipes escaped in text/plain table syntax and literal in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    "<table><thead><tr><th>Header | label</th></tr></thead><tbody><tr><td>Value | detail</td></tr></tbody></table>";
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toContain("Header \\| label");
+  expect(content?.plainText).toContain("Value \\| detail");
+  expect(content?.html).toContain("<th>Header | label</th>");
+  expect(content?.html).toContain("<td>Value | detail</td>");
+});
+
 it("copies a workspace image path instead of its temporary display URL", () => {
   const message = mountFixture();
   const sources = JSON.stringify({ "blob:preview": "assets/chart.png" });
@@ -814,4 +967,159 @@ it("copies a workspace image path instead of its temporary display URL", () => {
   expect(createAssistantSelectionClipboardContent(selection)?.plainText).toBe(
     "![chart](assets/chart.png)",
   );
+});
+
+describe("quote copy", () => {
+  let root: Root | undefined;
+  let host: HTMLDivElement | undefined;
+  const toast: ToastApi = { show: () => () => {}, copied: () => {}, error: () => {} };
+  const queryClient = new QueryClient();
+
+  afterEach(() => {
+    const mounted = root;
+    if (mounted) flushSync(() => mounted.unmount());
+    root = undefined;
+    host?.remove();
+    host = undefined;
+  });
+
+  /** Renders Markdown through the web engine with the app's renderers, as a message does. */
+  async function renderMarkdown(markdown: string, lastText: string): Promise<HTMLElement> {
+    if (!host || !root) {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+    }
+    const mounted = root;
+    flushSync(() =>
+      mounted.render(
+        h(
+          QueryClientProvider,
+          { client: queryClient },
+          h(
+            I18nextProvider,
+            { i18n },
+            h(ToastApiProvider, {
+              api: toast,
+              children: h(EnrichedMarkdownText, {
+                markdown,
+                flavor: "github",
+                md4cFlags: { latexMath: false, admonitions: true },
+                renderers: WEB_RENDERERS,
+              }),
+            }),
+          ),
+        ),
+      ),
+    );
+    const rendered = host;
+    await vi.waitFor(() => expect(rendered.textContent).toContain(lastText));
+    return rendered;
+  }
+
+  it("copies a quote's body with its formatting and without the quote marker", async () => {
+    const rendered = await renderMarkdown(
+      "> Hello **team**, see [the PR](https://example.test/pr).\n>\n> - Review\n>\n> > Nested reply",
+      "Nested reply",
+    );
+
+    const content = createElementClipboardContent(fixtureElement(rendered, "blockquote"));
+
+    expect(content?.plainText).toBe(
+      "Hello **team**, see [the PR](https://example.test/pr).\n\n- Review\n\n> Nested reply",
+    );
+    expect(content?.html).toContain("<strong>team</strong>");
+    expect(content?.html).toContain("<blockquote>");
+    expect(content?.html).not.toContain("Copy quote");
+  });
+
+  it("gives a nested quote its own control that copies only the nested quote", async () => {
+    const rendered = await renderMarkdown("> Outer\n>\n> > Nested reply", "Nested reply");
+    const nested = fixtureElement(rendered, "blockquote", 1);
+
+    expect(within(rendered).getAllByRole("button", { name: "Copy quote" })).toHaveLength(2);
+    expect(within(nested).getAllByRole("button", { name: "Copy quote" })).toHaveLength(1);
+    expect(createElementClipboardContent(nested)?.plainText).toBe("Nested reply");
+  });
+
+  it("copies a code block inside a quote as its fence and keeps the code's own control", async () => {
+    const rendered = await renderMarkdown("> Run:\n>\n> ```sh\n> npm test\n> ```", "npm test");
+    const quote = fixtureElement(rendered, "blockquote");
+
+    expect(within(quote).getByRole("button", { name: "Copy code" })).toBeTruthy();
+    expect(createElementClipboardContent(quote)?.plainText).toBe("Run:\n\n```sh\nnpm test\n```");
+  });
+
+  it("copies what a streaming quote shows at the time of the copy", async () => {
+    const first = await renderMarkdown("> First draft", "First draft");
+    const quote = fixtureElement(first, "blockquote");
+
+    const revised = await renderMarkdown("> First draft, revised", "revised");
+
+    expect(fixtureElement(revised, "blockquote")).toBe(quote);
+    expect(createElementClipboardContent(quote)?.plainText).toBe("First draft, revised");
+  });
+
+  it("copies literal Markdown characters raw in text/plain and escaped in text/html", async () => {
+    const rendered = await renderMarkdown("> literal \\_word\\_ stays literal", "stays literal");
+
+    const content = createElementClipboardContent(fixtureElement(rendered, "blockquote"));
+
+    expect(content?.plainText).toBe("literal _word_ stays literal");
+    expect(content?.html).toContain("literal _word_ stays literal");
+    expect(content?.html).not.toContain("<em>");
+  });
+
+  it("gives an admonition no copy control", async () => {
+    const rendered = await renderMarkdown("> [!NOTE]\n> Heads up", "Heads up");
+
+    expect(within(rendered).queryByRole("button", { name: "Copy quote" })).toBeNull();
+  });
+
+  it("copies a nested admonition as its callout source", async () => {
+    const rendered = await renderMarkdown(
+      "> Before\n>\n> > [!WARNING]\n> > Do not deploy.\n>\n> After",
+      "After",
+    );
+
+    const content = createElementClipboardContent(fixtureElement(rendered, "blockquote"));
+
+    expect(content?.plainText).toBe("Before\n\n> [!WARNING]\n> Do not deploy.\n\nAfter");
+  });
+
+  it("copies a selection across an admonition as the text it shows, without a callout marker", async () => {
+    const rendered = await renderMarkdown(
+      "> Before\n>\n> > [!WARNING]\n> > Do not deploy.\n>\n> After",
+      "After",
+    );
+    rendered.setAttribute("data-testid", "assistant-message");
+    const body = tokenText(rendered, "Do not deploy.");
+
+    expect(
+      copyBetween([body, "Do not ".length], [tokenText(rendered, "After"), 5])?.plainText,
+    ).toBe("deploy.\n\nAfter");
+    expect(
+      copyBetween([tokenText(rendered, "Before"), 0], [tokenText(rendered, "Warning"), 4])
+        ?.plainText,
+    ).toBe("Before\n\nWarn");
+    expect(
+      copyBetween([tokenText(rendered, "Before"), 0], [body, "Do not".length])?.plainText,
+    ).not.toContain("[!WARNING]");
+  });
+
+  it("copies a rendered Mermaid diagram as its fence", () => {
+    const quote = document.createElement("blockquote");
+    quote.innerHTML = `<p>Before</p><div ${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}="graph TD; A-->B" data-paseo-markdown-language="mermaid"><svg aria-label="diagram"></svg></div><p>After</p>`;
+
+    expect(createElementClipboardContent(quote)?.plainText).toBe(
+      "Before\n\n```mermaid\ngraph TD; A-->B\n```\n\nAfter",
+    );
+  });
+
+  it("copies nothing from a quote that holds only its control", () => {
+    const quote = document.createElement("blockquote");
+    quote.innerHTML = '<button data-paseo-markdown-ignore="true">Copy quote</button>';
+
+    expect(createElementClipboardContent(quote)).toBeNull();
+  });
 });

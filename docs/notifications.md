@@ -10,10 +10,20 @@ Agent payloads name a host and agent. Ignore their workspace hint when opening:
 the agent can move after a notification is sent. Use `navigateToAgent`, which
 uses the current store record or the agent route to resolve the workspace from
 the host. Terminal payloads name their workspace and use `navigateToWorkspace`.
+Plugin payloads carry `kind: "plugin"`, `serverId`, `pluginId`, `notificationId`,
+and optional `open` and `data`; `openPluginNotification` in
+`packages/app/src/plugins/notification-open.ts` waits up to 8 seconds for the
+target host's plugin catalog to settle on cold launch, runs registered
+`client.onNotificationOpen` handlers with caught error isolation, and falls back
+to declarative `open` (`agent`, `workspace`, `screen`) or the host root route.
 
 See [agent targets and deferred opens](expo-router.md#agent-targets) for route
-ownership and workspace recovery. Notification generation, presence, and push
-eligibility remain daemon concerns.
+ownership and workspace recovery. Per-device two-knob notification preferences
+(`@getpaseo/protocol/notification-preferences`) sync with mobile push tokens via
+`register_push_token` (gated on `server_info.features.pushNotificationPreferences`)
+so the daemon filters Expo pushes per token, while desktop and web clients filter
+in-app OS notifications locally before calling `sendOsNotification`. Notification
+generation and presence remain daemon concerns.
 
 ## Native delivery
 

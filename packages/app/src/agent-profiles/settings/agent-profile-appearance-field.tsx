@@ -1,16 +1,19 @@
 import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
-import { Pressable, View, type PressableStateCallbackType } from "react-native";
+import { View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check, ChevronDown } from "lucide-react-native";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import {
+  bySizing,
   createControlGeometry,
   resolveControlInteractionStyles,
+  TOUCH_TARGET,
   type ControlSize,
 } from "@/components/ui/control-geometry";
-import { Field } from "@/components/ui/form-field";
+import { mutedIconColorMapping } from "@/components/ui/icon-color";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { identityForeground } from "@/styles/identity-colors";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { AgentProfileGlyph } from "../internal/agent-profile-glyph";
@@ -37,7 +40,6 @@ const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedCheck = withUnistyles(Check);
 
-const foregroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const onIdentityMapping = (theme: Theme) => ({ color: theme.colors.background });
 
 /**
@@ -56,39 +58,43 @@ function IconCell({
   iconKey,
   selected,
   color,
+  provider,
+  serverId,
   onSelect,
 }: {
   iconKey: AgentProfileIconKey | null;
   selected: boolean;
   color: AgentProfileColor;
+  provider?: string;
+  serverId?: string | null;
   onSelect: (iconKey: AgentProfileIconKey | null) => void;
 }) {
   const handlePress = useCallback(() => onSelect(iconKey), [iconKey, onSelect]);
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
   const cellStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+    ({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.cell,
       Boolean(hovered) && styles.cellHovered,
-      pressed && styles.cellPressed,
       selected && styles.cellSelected,
     ],
     [selected],
   );
   return (
-    <Pressable
+    <PressHighlight
       onPress={handlePress}
       style={cellStyle}
+      highlightStyle={styles.cellPressed}
       accessibilityRole="button"
       accessibilityState={accessibilityState}
       accessibilityLabel={iconKey ?? "default"}
       testID={`agent-profile-icon-cell-${iconKey ?? "default"}`}
     >
       <AgentProfileGlyph
-        {...(iconKey ? { icon: iconKey } : {})}
+        {...(iconKey ? { icon: iconKey } : { provider, serverId })}
         color={color}
         size={ICON_SIZE.lg}
       />
-    </Pressable>
+    </PressHighlight>
   );
 }
 
@@ -104,58 +110,54 @@ function ColorCell({
   const { t } = useTranslation();
   const handlePress = useCallback(() => onSelect(color), [color, onSelect]);
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
-  const swatchStyle = useMemo(
-    () => [styles.swatch, color === "none" ? styles.swatchNone : identitySwatch(color)],
-    [color],
-  );
-  const cellStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [styles.colorCell, pressed && styles.cellPressed],
-    [],
-  );
   return (
-    <Pressable
+    <PressHighlight
       onPress={handlePress}
-      style={cellStyle}
+      style={styles.colorCell}
+      highlightStyle={styles.cellPressed}
       accessibilityRole="button"
       accessibilityState={accessibilityState}
       accessibilityLabel={colorLabel(t, color)}
       testID={`agent-profile-color-cell-${color}`}
     >
-      <View style={swatchStyle}>
+      <View style={[styles.swatch, color === "none" ? styles.swatchNone : identitySwatch(color)]}>
         {selected ? (
           <ThemedCheck
             size={ICON_SIZE.sm}
-            uniProps={color === "none" ? foregroundMutedMapping : onIdentityMapping}
+            uniProps={color === "none" ? mutedIconColorMapping : onIdentityMapping}
           />
         ) : null}
       </View>
-    </Pressable>
+    </PressHighlight>
   );
 }
 
 /**
- * Icon and colour in one popover rather than two fields: the pair is a single
- * visual decision, and picking them apart means never seeing the result until
- * both are closed. The grid redraws in the chosen colour as you switch colours,
- * so the swatch row sits above it.
+ * Compact clickable icon+color tile that opens the appearance popover without
+ * requiring a separate labeled field box. Used inline beside the Name input
+ * and in the inspector drawer header.
  */
-export function AgentProfileAppearanceField({
+export function AgentProfileIconButton({
   label,
   icon,
   color,
+  provider,
+  serverId,
   onChange,
   size = "md",
+  variant = "field",
   disabled = false,
-  testID,
   triggerTestID,
 }: {
   label: string;
   icon: string;
   color: string;
+  provider?: string;
+  serverId?: string | null;
   onChange: (next: { icon: string; color: string }) => void;
   size?: ControlSize;
+  variant?: "field" | "hero";
   disabled?: boolean;
-  testID?: string;
   triggerTestID?: string;
 }): ReactElement {
   const { t } = useTranslation();
@@ -188,8 +190,10 @@ export function AgentProfileAppearanceField({
   const triggerStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.trigger,
-      size === "sm" ? styles.triggerSm : styles.triggerMd,
-      styles.triggerIconOnly,
+      variant === "hero" && styles.triggerHero,
+      variant !== "hero" && size === "sm" && styles.triggerSm,
+      variant !== "hero" && size !== "sm" && styles.triggerMd,
+      variant === "field" && styles.triggerIconOnly,
       resolveControlInteractionStyles(
         {
           controlRest: styles.controlRest,
@@ -200,29 +204,36 @@ export function AgentProfileAppearanceField({
         { hovered: Boolean(hovered), active: pressed || open, disabled },
       ),
     ],
-    [disabled, open, size],
+    [disabled, open, size, variant],
   );
 
   const header = useMemo(() => ({ title: label }), [label]);
 
   return (
-    <Field label={label} testID={testID}>
+    <>
       <View ref={anchorRef} collapsable={false}>
-        <Pressable
+        <PressHighlight
           onPress={handleTriggerPress}
           disabled={disabled}
           style={triggerStyle}
+          highlightStyle={styles.triggerPressed}
           accessibilityRole="button"
           accessibilityLabel={`${label} (${colorLabel(t, selectedColor)})`}
           testID={triggerTestID}
         >
           <AgentProfileGlyph
-            {...(selectedIcon ? { icon: selectedIcon } : {})}
+            {...(selectedIcon ? { icon: selectedIcon } : { provider, serverId })}
             color={selectedColor}
-            size={ICON_SIZE.md}
+            size={variant === "hero" ? ICON_SIZE.lg : ICON_SIZE.md}
           />
-          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
-        </Pressable>
+          {variant === "hero" ? (
+            <View style={styles.heroCaretBadge}>
+              <ThemedChevronDown size={ICON_SIZE.xs} uniProps={mutedIconColorMapping} />
+            </View>
+          ) : (
+            <ThemedChevronDown size={ICON_SIZE.xs} uniProps={mutedIconColorMapping} />
+          )}
+        </PressHighlight>
       </View>
       <Combobox
         options={EMPTY_COMBOBOX_OPTIONS}
@@ -251,6 +262,8 @@ export function AgentProfileAppearanceField({
               iconKey={null}
               selected={selectedIcon === null}
               color={selectedColor}
+              provider={provider}
+              serverId={serverId}
               onSelect={handleIconSelect}
             />
             {AGENT_PROFILE_ICON_KEYS.map((key) => (
@@ -265,7 +278,7 @@ export function AgentProfileAppearanceField({
           </View>
         </View>
       </Combobox>
-    </Field>
+    </>
   );
 }
 
@@ -278,6 +291,8 @@ function noop() {}
 function identitySwatch(color: Exclude<AgentProfileColor, "none">) {
   return styles[IDENTITY_SWATCH_STYLE_KEYS[color]];
 }
+
+const HERO_BUTTON_SIZE = bySizing({ touch: TOUCH_TARGET, pointer: 40 });
 
 const styles = StyleSheet.create((theme) => {
   const geometry = createControlGeometry(theme);
@@ -292,6 +307,29 @@ const styles = StyleSheet.create((theme) => {
     },
     triggerSm: { ...geometry.fieldControlSm },
     triggerMd: { ...geometry.fieldControlMd },
+    triggerHero: {
+      width: HERO_BUTTON_SIZE,
+      height: HERO_BUTTON_SIZE,
+      borderRadius: theme.borderRadius.lg,
+      paddingHorizontal: 0,
+      position: "relative",
+    },
+    triggerPressed: {
+      backgroundColor: theme.colors.surface3,
+    },
+    heroCaretBadge: {
+      position: "absolute",
+      right: -theme.spacing[1],
+      bottom: -theme.spacing[1],
+      width: theme.spacing[4],
+      height: theme.spacing[4],
+      borderRadius: theme.borderRadius.full,
+      backgroundColor: theme.colors.surface1,
+      borderWidth: theme.borderWidth[1],
+      borderColor: theme.colors.borderAccent,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     // The field geometry pads for a line of text. This trigger holds a glyph and
     // a chevron, so it keeps the shared height and drops the text-sized inset.
     triggerIconOnly: {
@@ -339,7 +377,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: theme.colors.surface2,
     },
     cellPressed: {
-      opacity: 0.7,
+      opacity: theme.opacity[50],
     },
     cellSelected: {
       backgroundColor: theme.colors.surface2,

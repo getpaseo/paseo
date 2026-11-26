@@ -1,6 +1,7 @@
 import { usesDesktopBindings } from "./internal/conventions";
 import { createKeyboardPipeline } from "./internal/pipeline";
 import { overlays } from "./internal/overlays";
+import { heldModifiers } from "./internal/press-modifiers";
 import { attachKeyboardSources, publishKeyboardPolicy } from "./internal/sources";
 import type { KeyboardSourceInput } from "./internal/sources/contract";
 import type { KeyboardInputEvent } from "./internal/overlays";
@@ -62,7 +63,7 @@ export function useKeyboardShortcuts({
   const keyboardWorkspaceSelectionRef = useRef<ActiveWorkspaceSelection | null>(null);
   const publishBrowserShortcutPolicy = useCallback(
     (chordState?: ChordState) => {
-      publishKeyboardPolicy({ bindings, chordState, isMac, enabled });
+      publishKeyboardPolicy({ bindings, chordState, isMac, usesDesktopBindings, enabled });
     },
     [bindings, enabled, isMac],
   );
@@ -152,9 +153,7 @@ export function useKeyboardShortcuts({
         if (action.nextOpen) {
           captureFocusRestore();
         }
-        useKeyboardShortcutsStore
-          .getState()
-          .setCommandCenterOpen(action.nextOpen, action.scope ?? null);
+        useKeyboardShortcutsStore.getState().setCommandCenterOpen(action.nextOpen, action.tab);
         return true;
       }
       case "shortcuts-dialog-toggle":
@@ -251,24 +250,40 @@ export function useKeyboardShortcuts({
     [getContext, getBindings, isCapturing, dispatchMatch, beforeResolve, chordChanged],
   );
 
+  const handleKeyDown = useStableEvent((input: KeyboardSourceInput) => {
+    heldModifiers.handleKeyDown(input.event);
+    return pipeline.keyDown(input);
+  });
+
   const handleKeyUp = useStableEvent((event: KeyboardInputEvent) => {
+    heldModifiers.handleKeyUp(event);
     const key = event.key ?? "";
     if (key === badgeModifierKey) {
       setBadgeModifierDown(false);
     }
   });
 
+  const handleBlur = useStableEvent(() => {
+    heldModifiers.reset();
+    resetModifiers();
+  });
+
   useEffect(() => {
     if (!enabled) return;
     const detach = attachKeyboardSources({
-      keyDown: pipeline.keyDown,
+      keyDown: handleKeyDown,
       keyUp: handleKeyUp,
-      blur: resetModifiers,
+      blur: handleBlur,
       commandCenterOpen: () => useKeyboardShortcutsStore.getState().commandCenterOpen,
+      subscribeCommandCenter: (listener) =>
+        useKeyboardShortcutsStore.subscribe((state, previous) => {
+          if (state.commandCenterOpen !== previous.commandCenterOpen) listener();
+        }),
     });
     return () => {
       detach();
+      heldModifiers.reset();
       pipeline.dispose();
     };
-  }, [enabled, pipeline, handleKeyUp, resetModifiers]);
+  }, [enabled, pipeline, handleKeyDown, handleKeyUp, handleBlur]);
 }

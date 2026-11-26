@@ -3,16 +3,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { shortenPath } from "../../src/utils/shorten-path";
 import { expect, test } from "../support/fixtures";
 import {
-  addProjectFlowBack,
-  addProjectFlowHost,
   addProjectFlowInput,
-  chooseAddProjectMethod,
-  expectAddProjectPage,
+  chooseAddProjectHost,
+  chooseAddProjectTab,
+  chooseAddProjectLocation,
   expectNewWorkspaceForAddedProject,
-  openAddProjectHostSelection,
+  openAddProjectFlow,
 } from "../support/helpers/add-project-flow";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
@@ -25,7 +23,7 @@ for (const viewport of [
   { width: 1280, height: 900, repositoryInput: "acme/api.git" },
   { width: 390, height: 844, repositoryInput: "https://github.invalid/acme/api.git" },
 ]) {
-  test(`clone folder name at ${viewport.width}px: defaults, validation, Back, collision, retry`, async ({
+  test(`clone folder name at ${viewport.width}px: defaults, validation, tab drafts, collision, keyboard retry`, async ({
     page,
   }, testInfo) => {
     test.setTimeout(180_000);
@@ -81,44 +79,39 @@ for (const viewport of [
       });
       if (viewport.width === 390)
         await page.getByRole("button", { name: "Open menu", exact: true }).click();
-      await openAddProjectHostSelection(page);
-      await addProjectFlowHost(page, host.serverId).click();
-      await chooseAddProjectMethod(page, "github");
+      await openAddProjectFlow(page);
+      await chooseAddProjectHost(page, host.serverId);
+      await chooseAddProjectTab(page, "clone");
       await addProjectFlowInput(page).fill(viewport.repositoryInput);
-      await page.keyboard.press("Enter");
-      await expectAddProjectPage(page, "github-location");
-      await addProjectFlowInput(page).fill(parent);
-      await page.keyboard.press("Enter");
-      await expectAddProjectPage(page, "github-name");
+      await chooseAddProjectLocation(page, parent);
       const folderNameInput = page.getByRole("textbox", { name: "Folder name", exact: true });
       await expect(folderNameInput).toHaveValue("api");
-      const preview = page.getByTestId("add-project-flow-path-preview");
-      await expect(preview).toHaveText(shortenPath(path.join(parent, "api")));
-      await page.getByRole("button", { name: "Clone", exact: true }).click();
+      const preview = page.getByTestId("add-project-flow-location");
+      await expect(preview).toContainText("api");
+      await page.getByRole("button", { name: "Clone project", exact: true }).click();
       await expect(page.getByTestId("add-project-flow-error")).toHaveText(
         `Checkout path already exists: ${path.join(parent, "api")}`,
       );
 
       await folderNameInput.fill("../escape");
-      await page.keyboard.press("Enter");
-      await expect(page.getByTestId("add-project-flow-error")).toContainText("single folder name");
+      await expect(page.getByRole("button", { name: "Clone project", exact: true })).toBeDisabled();
+      await expect(page.getByText("Use a name without slashes", { exact: true })).toBeVisible();
       await folderNameInput.fill("acme-api");
-      await addProjectFlowBack(page).click();
-      await expectAddProjectPage(page, "github-location");
+      await chooseAddProjectTab(page, "existing");
+      await chooseAddProjectTab(page, "clone");
       const otherParent = path.join(parent, "other");
       await mkdir(otherParent);
-      await addProjectFlowInput(page).fill(otherParent);
-      await page.keyboard.press("Enter");
-      await expectAddProjectPage(page, "github-name");
+      await chooseAddProjectLocation(page, otherParent);
       await expect(folderNameInput).toHaveValue("acme-api");
       const checkout = path.join(otherParent, "acme-api");
-      await expect(preview).toHaveText(shortenPath(checkout));
+      await expect(preview).toContainText("other/acme-api");
       await page.screenshot({ path: testInfo.outputPath("clone-folder.png") });
       await testInfo.attach("Clone folder form", {
         path: testInfo.outputPath("clone-folder.png"),
         contentType: "image/png",
       });
-      await page.getByRole("button", { name: "Clone", exact: true }).click();
+      await folderNameInput.focus();
+      await page.keyboard.press("Enter");
       const projectId = await expectOpenedProject(page, "acme-api");
       await expectNewWorkspaceForAddedProject(page, {
         serverId: host.serverId,

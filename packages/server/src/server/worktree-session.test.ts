@@ -331,7 +331,8 @@ function createPaseoWorktreeForTest(options: {
   const workspaceRegistry: WorkspaceRegistry = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => Array.from(workspaces.values()),
+    listAll: async () => Array.from(workspaces.values()),
+    listActive: async () => Array.from(workspaces.values()).filter((w) => !w.archivedAt),
     get: async (workspaceId) => workspaces.get(workspaceId) ?? null,
     update: async (workspaceId, updater) => {
       const workspace = workspaces.get(workspaceId);
@@ -353,6 +354,7 @@ function createPaseoWorktreeForTest(options: {
     },
   };
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
@@ -477,9 +479,9 @@ describe("create-agent worktree setup boundary", () => {
   });
 });
 
-function createAgentStorageStub(): Pick<AgentStorage, "list"> {
+function createAgentStorageStub(): Pick<AgentStorage, "listAll"> {
   return {
-    list: async (): Promise<StoredAgentRecord[]> => [],
+    listAll: async (): Promise<StoredAgentRecord[]> => [],
   };
 }
 
@@ -1754,6 +1756,8 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         markWorkspaceArchiving: vi.fn(),
         clearWorkspaceArchiving: vi.fn(),
         killTerminalsForWorkspace: vi.fn(async () => {}),
+        assertWorkspaceAutomationAllowed: async () => {},
+        isCheckoutUntrusted: async () => false,
         sessionLogger: createLogger(),
       },
       {
@@ -1830,6 +1834,8 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         markWorkspaceArchiving: vi.fn(),
         clearWorkspaceArchiving: vi.fn(),
         killTerminalsForWorkspace: vi.fn(async () => {}),
+        assertWorkspaceAutomationAllowed: async () => {},
+        isCheckoutUntrusted: async () => false,
         sessionLogger: createLogger(),
       },
       {
@@ -1907,6 +1913,8 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
         markWorkspaceArchiving: vi.fn(),
         clearWorkspaceArchiving: vi.fn(),
         killTerminalsForWorkspace: vi.fn(async () => {}),
+        assertWorkspaceAutomationAllowed: async () => {},
+        isCheckoutUntrusted: async () => false,
         sessionLogger: createLogger(),
       },
       {
@@ -1980,6 +1988,8 @@ describe("handlePaseoWorktreeArchiveRequest worktree scope", () => {
       markWorkspaceArchiving: vi.fn(),
       clearWorkspaceArchiving: vi.fn(),
       killTerminalsForWorkspace: vi.fn(async () => {}),
+      assertWorkspaceAutomationAllowed: async () => {},
+      isCheckoutUntrusted: async () => false,
       sessionLogger: createLogger(),
     };
 

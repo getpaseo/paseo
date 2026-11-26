@@ -1,13 +1,13 @@
 import { create } from "zustand";
+import type { CommandCenterTab } from "@/command-center/tabs";
 import type { SidebarShortcutWorkspaceTarget } from "@/utils/sidebar-shortcuts";
 
 const SHORTCUT_BADGE_DELAY_MS = 150;
 
-export type CommandCenterScope = "files" | null;
-
 interface KeyboardShortcutsState {
   commandCenterOpen: boolean;
-  commandCenterScope: CommandCenterScope;
+  /** The tab the open command center shows. Every opening starts on the tab it asks for. */
+  commandCenterTab: CommandCenterTab;
   shortcutsDialogOpen: boolean;
   capturingShortcut: boolean;
   altDown: boolean;
@@ -16,8 +16,8 @@ interface KeyboardShortcutsState {
   /** Sidebar-visible workspace targets (up to 9), in top-to-bottom visual order. */
   sidebarShortcutWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
 
-  setCommandCenterOpen: (open: boolean, scope?: CommandCenterScope) => void;
-  setCommandCenterScope: (scope: CommandCenterScope) => void;
+  setCommandCenterOpen: (open: boolean, tab?: CommandCenterTab) => void;
+  setCommandCenterTab: (tab: CommandCenterTab) => void;
   setShortcutsDialogOpen: (open: boolean) => void;
   setCapturingShortcut: (capturing: boolean) => void;
   setAltDown: (down: boolean) => void;
@@ -51,7 +51,7 @@ function updateBadgeTimer(
 
 export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, get) => ({
   commandCenterOpen: false,
-  commandCenterScope: null,
+  commandCenterTab: "all",
   shortcutsDialogOpen: false,
   capturingShortcut: false,
   altDown: false,
@@ -59,9 +59,9 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   showShortcutBadges: false,
   sidebarShortcutWorkspaceTargets: [],
 
-  setCommandCenterOpen: (open, scope = null) =>
-    set({ commandCenterOpen: open, commandCenterScope: open ? scope : null }),
-  setCommandCenterScope: (scope) => set({ commandCenterScope: scope }),
+  setCommandCenterOpen: (open, tab = "all") =>
+    set({ commandCenterOpen: open, commandCenterTab: open ? tab : "all" }),
+  setCommandCenterTab: (tab) => set({ commandCenterTab: tab }),
   setShortcutsDialogOpen: (open) => set({ shortcutsDialogOpen: open }),
   setCapturingShortcut: (capturing) => set({ capturingShortcut: capturing }),
   setAltDown: (down) => {

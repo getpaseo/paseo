@@ -234,21 +234,16 @@ export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<
 }
 
 /**
- * Offset that aligns a glyph's visible ink with the Send arrow's ink when both sit in
- * equal controls on the same right rail. In Lucide's 24px viewBox ArrowUp ends at
- * x19 while Maximize2/Minimize2 end at x21, so equal boxes leave the fullscreen
- * glyphs visibly past the arrow.
+ * Put the fullscreen glyph's visible right edge on the text rail, letting its
+ * hit area extend into the padding. Both Lucide glyphs reach x21 of 24 and use
+ * the default 2-unit stroke (one viewBox unit beyond the path).
  */
 export function resolveGlyphRailOffset(input: {
   controlSize: number;
-  sendIconSize: number;
   glyphIconSize: number;
 }): number {
-  const arrowInkInset =
-    (input.controlSize - input.sendIconSize) / 2 + (5 * input.sendIconSize) / 24;
-  const glyphInkInset =
-    (input.controlSize - input.glyphIconSize) / 2 + (3 * input.glyphIconSize) / 24;
-  return arrowInkInset - glyphInkInset;
+  const inkInset = (input.controlSize - input.glyphIconSize) / 2 + (2 * input.glyphIconSize) / 24;
+  return -inkInset;
 }
 
 export function resolveComposerSurfaceText(

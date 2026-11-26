@@ -3,6 +3,7 @@ import type { StreamItem } from "@/types/stream";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import { findMountedWindowStart } from "./history-window";
 import { buildAgentStreamRenderModel } from "./model";
+import { MAX_MOUNTED_WEB_WINDOW_ITEMS } from "./web-virtualization";
 
 function createTimestamp(seed: number): Date {
   return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
@@ -47,7 +48,7 @@ describe("buildAgentStreamRenderModel", () => {
       historyStart: 2,
     });
 
-    expect(model.history.map((item) => item.id)).toEqual(["a3", "u3", "a2", "u2"]);
+    expect(model.history.map((item) => item.id)).toEqual(["u2", "a2", "u3", "a3"]);
     expect(model.segments.historyVirtualized).toHaveLength(0);
   });
 
@@ -98,7 +99,7 @@ describe("buildAgentStreamRenderModel", () => {
       historyStart,
     });
 
-    expect(model.history.map((item) => item.id)).toEqual(["visible-a", "visible-u"]);
+    expect(model.history.map((item) => item.id)).toEqual(["visible-u", "visible-a"]);
   });
 
   it("keeps head separate from committed history on desktop web", () => {
@@ -123,6 +124,30 @@ describe("buildAgentStreamRenderModel", () => {
     expect(model.segments.historyMounted.length).toBeGreaterThan(0);
     expect(model.segments.liveHead.map((item) => item.id)).toEqual(["live-a"]);
     expect(model.history).not.toContain(head[0]);
+  });
+
+  it("virtualizes a desktop web turn that runs past the mounted cap", () => {
+    const length = MAX_MOUNTED_WEB_WINDOW_ITEMS + 80;
+    const tail = Array.from({ length }, (_, index) => ({
+      ...userMessage(`row-${index}`, index % 60),
+      turnId: "long-run",
+    }));
+
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail,
+      head: [],
+      platform: "web",
+      isMobileBreakpoint: false,
+    });
+
+    expect(model.segments.historyMounted).toHaveLength(MAX_MOUNTED_WEB_WINDOW_ITEMS);
+    expect(model.segments.historyVirtualized).toHaveLength(80);
+    expect(model.segments.historyMounted[0]?.id).toBe(
+      `row-${length - MAX_MOUNTED_WEB_WINDOW_ITEMS}`,
+    );
+    expect(model.segments.historyVirtualized[0]?.id).toBe("row-0");
   });
 
   it("keeps the full committed tail mounted on mobile web", () => {
@@ -207,7 +232,7 @@ describe("buildAgentStreamRenderModel", () => {
     });
   });
 
-  it("derives the same timing for native inverted rendering", () => {
+  it("derives the same timing on native", () => {
     const tail = [userMessage("u1", 1), assistantMessage("a1", 4)];
 
     const model = buildAgentStreamRenderModel({
@@ -219,7 +244,7 @@ describe("buildAgentStreamRenderModel", () => {
       isMobileBreakpoint: false,
     });
 
-    expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["a1", "u1"]);
+    expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["u1", "a1"]);
     expect(model.turnTiming.byItemId.get("a1")).toEqual({
       completedAt: tail[1]?.timestamp,
       durationMs: 3000,

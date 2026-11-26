@@ -13,6 +13,7 @@ import {
   toAgentConfigApply,
   type MaterializedAgentProfile,
 } from "./materialize-profile";
+import { selectApplicableProfiles } from "./applicable-profiles";
 import { buildAgentProfileTags } from "./profile-summary";
 import { useAgentProfiles } from "./use-agent-profiles";
 
@@ -80,8 +81,7 @@ export function useAgentProfilePicker(
     if (!isSupported || !profiles) {
       return [];
     }
-    const available = new Set(availableProviders);
-    return profiles.filter((profile) => available.has(profile.provider));
+    return selectApplicableProfiles(profiles, availableProviders);
   }, [availableProviders, isSupported, profiles]);
 
   const formatFeatureCount = useCallback(
@@ -117,9 +117,7 @@ export function useAgentProfilePicker(
           modelId: resolved.modelId,
           modeId: resolved.modeId,
           thinkingOptionId: resolved.thinkingOptionId,
-          ...(Object.keys(resolved.featureValues).length > 0
-            ? { featureValues: resolved.featureValues }
-            : {}),
+          ...(Object.keys(resolved.options).length > 0 ? { options: resolved.options } : {}),
         }),
       ).catch((error) => {
         console.warn("[useAgentProfilePicker] persist profile selection failed", error);

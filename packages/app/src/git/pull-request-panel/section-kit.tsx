@@ -1,8 +1,9 @@
-import React, { type ReactNode } from "react";
+import React, { useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { CountedCheckPresentation } from "@/git/check-presentation";
-import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import { CONTROL_HEIGHTS, mapLayout } from "@/components/ui/control-geometry";
+import { isWeb } from "@/constants/platform";
 import {
   CheckPresentationIcon,
   getCheckPresentationTone,
@@ -21,39 +22,57 @@ export const successColorMapping = (theme: Theme) => ({ color: theme.colors.stat
 export const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 export const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
 
-interface SectionProps {
+interface SectionHeaderProps {
   title: string;
   open: boolean;
   onToggle: () => void;
   summary: ReactNode;
-  children: ReactNode;
   accessibilityLabel?: string;
 }
 
-export function Section({
+interface SectionProps extends SectionHeaderProps {
+  children: ReactNode;
+}
+
+/** The disclosure row of a section, for layouts that place the section's body themselves. */
+export function SectionHeader({
   title,
   open,
   onToggle,
   summary,
-  children,
   accessibilityLabel,
-}: SectionProps) {
+}: SectionHeaderProps) {
+  const accessibilityState = useMemo(() => ({ expanded: open }), [open]);
+  // React Native Web does not map `accessibilityState.expanded` to `aria-expanded`.
+  const webExpandedProps = useMemo(
+    () => (isWeb ? ({ "aria-expanded": open } as const) : null),
+    [open],
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityState={accessibilityState}
+      {...webExpandedProps}
+      style={sectionKitStyles.sectionHeader}
+      onPress={onToggle}
+    >
+      {open ? (
+        <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
+      ) : (
+        <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />
+      )}
+      <Text style={sectionKitStyles.sectionTitle}>{title}</Text>
+      <View style={sectionKitStyles.summaryWrap}>{summary}</View>
+    </Pressable>
+  );
+}
+
+export function Section({ children, ...header }: SectionProps) {
   return (
     <View>
-      <Pressable
-        accessibilityLabel={accessibilityLabel}
-        style={sectionKitStyles.sectionHeader}
-        onPress={onToggle}
-      >
-        {open ? (
-          <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
-        ) : (
-          <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />
-        )}
-        <Text style={sectionKitStyles.sectionTitle}>{title}</Text>
-        <View style={sectionKitStyles.summaryWrap}>{summary}</View>
-      </Pressable>
-      {open ? <View style={sectionKitStyles.sectionBody}>{children}</View> : null}
+      <SectionHeader {...header} />
+      {header.open ? <View style={sectionKitStyles.sectionBody}>{children}</View> : null}
     </View>
   );
 }
@@ -164,10 +183,10 @@ export const sectionKitStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     // Fixed, not minHeight plus padding. A row's trailing slot holds an sm Button
-    // (28pt), which stacked on the vertical padding and made rows with an
+    // , which stacked on the vertical padding and made rows with an
     // "Add to chat" button taller than rows without one. The row is single-line by
     // construction, so it declares a height the button fits inside instead.
-    height: CONTROL_HEIGHTS.sm + theme.spacing[1],
+    height: mapLayout(CONTROL_HEIGHTS.sm, (height) => height + theme.spacing[1]),
   },
   checkName: {
     fontSize: theme.fontSize.base,

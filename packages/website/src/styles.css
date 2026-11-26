@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/plus-jakarta-sans";
 
 * {
   scrollbar-color: var(--color-scrollbar-handle) transparent;
@@ -46,13 +47,8 @@
 }
 
 .social-proof-marquee {
-  margin-inline: calc(50% - 50cqw);
   overflow-x: clip;
   position: relative;
-}
-
-.landing-content {
-  container-type: inline-size;
 }
 
 .social-proof-marquee::before,
@@ -61,7 +57,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: max(4rem, 8vw);
+  width: 4.5rem;
   z-index: 1;
   pointer-events: none;
 }
@@ -112,7 +108,7 @@
 
 /* Title font - centralized for easy changes */
 .font-title {
-  font-family: inherit;
+  font-family: var(--font-display);
 }
 
 /* Inline code styling - scoped to prose content */
@@ -275,6 +271,52 @@
   padding: 0.125rem 0.375rem;
   color: var(--color-foreground);
   font-size: 0.875em;
+}
+
+.changelog-all-changes {
+  margin-top: 1rem;
+}
+
+.changelog-all-changes-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--color-muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.changelog-all-changes-summary::-webkit-details-marker {
+  display: none;
+}
+
+.changelog-all-changes-summary::before {
+  content: "+";
+  color: rgba(255, 255, 255, 0.4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.changelog-all-changes-summary:hover {
+  color: var(--color-foreground);
+}
+
+.changelog-all-changes[open] > .changelog-all-changes-summary::before {
+  content: "−";
+}
+
+.changelog-all-changes[open] > .changelog-all-changes-summary {
+  margin-bottom: 1.25rem;
+}
+
+.changelog-all-changes-hide,
+.changelog-all-changes[open] .changelog-all-changes-show {
+  display: none;
+}
+
+.changelog-all-changes[open] .changelog-all-changes-hide {
+  display: inline;
 }
 
 /* Docs page prose styles — mirrors the original docs/*.tsx components */
@@ -671,6 +713,8 @@
 
 @theme {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display:
+    "Plus Jakarta Sans Variable", "Geist Variable", ui-sans-serif, system-ui, sans-serif;
 
   --color-background: #101615;
   --color-foreground: #fafafa;
@@ -682,6 +726,8 @@
   --color-scrollbar-handle: #717574;
   --color-primary: #239956;
   --color-primary-foreground: #ffffff;
+  --color-accent-text: #6cb17b;
+  --color-brand-green: #20744a;
   --color-secondary: #252b2a;
   --color-secondary-foreground: #fafafa;
 
@@ -724,7 +770,11 @@
   --color-mock-tile-violet: #7a6aa8;
   --color-mock-tile-amber: #8f7838;
   --color-mock-tile-teal: #368080;
+  /* Host badge ink — the identity colors as foreground, IDENTITY_FOREGROUND_DARK in the
+     same file. */
   --color-mock-host-teal: #6cacab;
+  --color-mock-host-violet: #a392d5;
+  --color-mock-host-orange: #cc8f64;
 
   /* Status *dot* band (dark: L=0.72, chroma 90%). Sidebar row state dots only.
      theme.ts:198-204. */

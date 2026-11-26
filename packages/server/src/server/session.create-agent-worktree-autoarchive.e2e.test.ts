@@ -14,6 +14,7 @@ import {
 import type { CreateAgentOptions } from "./test-utils/index.js";
 import type { CreateAgentWorktreeTarget } from "./messages.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 
 let ctx: DaemonTestContext;
 const tempRoots: string[] = [];
@@ -477,7 +478,7 @@ test("background workspaces keep durable agents addressable through restart and 
     ),
   ).toContain(hidden.id);
   const child = await ctx.client.createAgent({ config, callerAgentId: hidden.id });
-  expect(child.workspaceId).toBe(hidden.workspaceId);
+  expect(child).toMatchObject({ workspaceId: hidden.workspaceId, background: true });
   const inherited = await ctx.client.createWorkspace({
     source: { kind: "directory", path: cwd },
     callerAgentId: hidden.id,
@@ -509,9 +510,16 @@ test("background workspaces keep durable agents addressable through restart and 
     false,
   );
 
-  await expect(
-    ctx.client.createAgent({ config, workspaceId: hidden.workspaceId, background: false }),
-  ).rejects.toThrow("workspace creation intent");
+  expect(hidden.background).toBe(true);
+  const visibleInHidden = await ctx.client.createAgent({
+    config,
+    workspaceId: hidden.workspaceId,
+    background: false,
+  });
+  expect(visibleInHidden.background).toBeUndefined();
+  expect((await ctx.client.fetchAgents()).entries.map((entry) => entry.agent.id)).not.toContain(
+    visibleInHidden.id,
+  );
   await ctx.client.sendAgentMessage(hidden.id, "Say done.");
   await ctx.client.waitForFinish(hidden.id, 10_000);
   expect(
@@ -614,5 +622,113 @@ test("default and inclusive observers retain independent snapshots, live updates
     await ordinaryWorkspaces.release();
   } finally {
     await otherClient.close();
+  }
+}, 30_000);
+
+test("a background agent in a visible workspace is hidden from default discovery through restart", async () => {
+  const cwd = createGitRepo();
+  const config = { ...getFullAccessConfig("codex"), cwd };
+  const visible = await ctx.client.createAgent({ config });
+  const hidden = await ctx.client.createAgent({
+    config,
+    workspaceId: visible.workspaceId,
+    background: true,
+  });
+  expect(hidden).toMatchObject({ workspaceId: visible.workspaceId, background: true });
+  expect(visible.background).toBeUndefined();
+  const defaultIds = async () =>
+    (await ctx.client.fetchAgents()).entries.map((entry) => entry.agent.id);
+  const inclusiveIds = async () =>
+    (await ctx.client.fetchAgents({ filter: { includeBackground: true } })).entries.map(
+      (entry) => entry.agent.id,
+    );
+  expect(await defaultIds()).toEqual([visible.id]);
+  expect(await inclusiveIds()).toEqual(expect.arrayContaining([visible.id, hidden.id]));
+  expect((await ctx.client.fetchWorkspaces()).entries).toContainEqual(
+    expect.objectContaining({ id: visible.workspaceId, background: false }),
+  );
+
+  await ctx.client.sendAgentMessage(hidden.id, "Say done.");
+  await ctx.client.waitForFinish(hidden.id, 10_000);
+  expect((await ctx.client.fetchAgent(hidden.id))?.agent).toMatchObject({
+    background: true,
+    requiresAttention: false,
+  });
+
+  const homeRoot = path.dirname(ctx.daemon.paseoHome);
+  tempRoots.push(ctx.daemon.staticDir);
+  await ctx.client.close();
+  await ctx.daemon.daemon.stop();
+  await ctx.daemon.daemon.agentManager.flush();
+  ctx = await createDaemonTestContext({ paseoHomeRoot: homeRoot });
+
+  expect(await defaultIds()).toEqual([visible.id]);
+  expect(await inclusiveIds()).toContain(hidden.id);
+  await ctx.client.sendAgentMessage(hidden.id, "Say done again.");
+  await ctx.client.waitForFinish(hidden.id, 10_000);
+  expect((await ctx.client.fetchAgent(hidden.id))?.agent.background).toBe(true);
+  expect(await defaultIds()).toEqual([visible.id]);
+  await ctx.client.archiveAgent(hidden.id);
+  expect(
+    (await ctx.client.fetchAgentHistory()).entries.map((entry) => entry.agent.id),
+  ).not.toContain(hidden.id);
+  expect(
+    (await ctx.client.fetchAgentHistory({ filter: { includeBackground: true } })).entries.map(
+      (entry) => entry.agent.id,
+    ),
+  ).toContain(hidden.id);
+}, 30_000);
+
+test("a client without background_agents never receives background agents, even in inclusive reads", async () => {
+  const oldApp = new DaemonClient({
+    url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    capabilities: { [CLIENT_CAPS.backgroundAgents]: false },
+  });
+  await oldApp.connect();
+  try {
+    const cwd = createGitRepo();
+    const config = { ...getFullAccessConfig("codex"), cwd };
+    const visible = await ctx.client.createAgent({ config });
+    const hidden = await ctx.client.createAgent({
+      config,
+      workspaceId: visible.workspaceId,
+      background: true,
+    });
+    const backgroundWorkspace = await ctx.client.createWorkspace({
+      source: { kind: "directory", path: cwd },
+      background: true,
+    });
+    const workspaceAgent = await ctx.client.createAgent({
+      config,
+      workspaceId: backgroundWorkspace.workspace?.id,
+    });
+    const observed = oldApp.observeAgents({ scope: "active", sync: {}, includeBackground: true });
+    const snapshot = await observed.ready;
+    expect(snapshot.entries.map((entry) => entry.agent.id).toSorted()).toEqual(
+      [visible.id, workspaceAgent.id].toSorted(),
+    );
+    const upserts: string[] = [];
+    observed.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type === "agent_update" && message.payload.kind === "upsert")
+          upserts.push(message.payload.agent.id);
+      },
+    });
+    await ctx.client.sendAgentMessage(hidden.id, "Say done.");
+    await ctx.client.waitForFinish(hidden.id, 10_000);
+    await ctx.client.sendAgentMessage(visible.id, "Say done.");
+    await ctx.client.waitForFinish(visible.id, 10_000);
+    await expect.poll(() => upserts).toContain(visible.id);
+    expect(upserts).not.toContain(hidden.id);
+    expect(
+      (await oldApp.fetchAgents({ filter: { includeBackground: true } })).entries.map(
+        (entry) => entry.agent.id,
+      ),
+    ).not.toContain(hidden.id);
+    expect((await oldApp.fetchAgent(hidden.id))?.agent.id).toBe(hidden.id);
+    await observed.release();
+  } finally {
+    await oldApp.close();
   }
 }, 30_000);

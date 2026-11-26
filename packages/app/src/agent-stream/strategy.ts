@@ -1,6 +1,6 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import type { StreamItem } from "@/types/stream";
+import { getAssistantReply, type StreamItem } from "@/types/stream";
 import type { ReadingRowReplacements } from "./reading-anchor";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
@@ -13,11 +13,6 @@ type EdgeSlot = "header" | "footer";
 type NeighborRelation = "above" | "below";
 type AssistantTurnTraversalStep = -1 | 1;
 export type StreamFrameChildOrder = "content-then-footer" | "footer-then-content";
-
-export type MaintainVisibleContentPositionConfig = Readonly<{
-  minIndexForVisible: number;
-  autoscrollToTopThreshold: number;
-}>;
 
 export type BottomAnchorTransportBehavior = Readonly<{
   verificationDelayFrames: number;
@@ -51,13 +46,23 @@ export interface ScrollToMessageOccurrence {
   targetTop(): number | null;
 }
 
+/**
+ * The edge of its row a disclosure's trigger sits on. A header trigger sits on the top: the content
+ * it opens grows below it. A trigger under the content it opens, such as a long message's show
+ * more, sits on the bottom.
+ */
+export type DisclosureTriggerEdge = "top" | "bottom";
+
 export interface StreamViewportHandle {
   /** Give keyboard navigation back to the scrolling surface on web. */
   focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
-  /** Stop following output so the rows on screen stay put while rows below them open or close. */
-  holdReadingPosition: () => void;
+  /**
+   * Run a disclosure's state change so the row that owns its trigger keeps the edge the trigger
+   * sits on in place. Following output stops; it resumes if the change leaves the list at its end.
+   */
+  holdRow: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 
@@ -87,11 +92,13 @@ export interface StreamRenderInput {
   viewportRef: RefObject<StreamViewportHandle | null>;
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
+  isInitialHistoryLoading?: boolean;
+  revealInitialHistory?: boolean;
   onNearBottomChange: (value: boolean) => void;
   // The history row under the top of the viewport, for surfaces that mark where the reader
   // is in the transcript. Only the web viewport measures it today.
   onReadingPositionChange?: (rowId: string | null) => void;
-  onNearHistoryStart: () => boolean | Promise<boolean>;
+  onNearHistoryStart: () => Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
   olderHistoryProgressKey: string | null;
@@ -100,7 +107,8 @@ export interface StreamRenderInput {
   baseListContentContainerStyle: StyleProp<ViewStyle>;
   forwardListContentContainerStyle: StyleProp<ViewStyle>;
   // The chat column's max width. The web viewport estimates unmeasured row heights with it.
-  contentMaxWidth: number;
+  contentMaxWidth: number | undefined;
+  outlineInset?: number;
 }
 
 export interface ResolveStreamRenderStrategyInput {
@@ -125,14 +133,11 @@ export interface StreamStrategy {
     component: ReactElement | ComponentType<unknown> | null,
     gapSize: number,
   ) => StreamEdgeSlotProps;
-  getMaintainVisibleContentPosition: () => MaintainVisibleContentPositionConfig | undefined;
   getBottomAnchorTransportBehavior: () => BottomAnchorTransportBehavior;
   getHistoryLiveBoundaryIndex: (history: StreamItem[]) => number | null;
   getLiveHeadHistoryBoundaryIndex: (liveHead: StreamItem[]) => number | null;
   getLatestItemIndex: (items: StreamItem[]) => number | null;
   getFrameChildOrder: () => StreamFrameChildOrder;
-  getFlatListInverted: () => boolean;
-  getOverlayScrollbarInverted: () => boolean;
   shouldDisableParentScrollOnInlineDetailsExpansion: () => boolean;
   shouldAnchorBottomOnContentSizeChange: () => boolean;
   shouldAnimateManualScrollToBottom: () => boolean;
@@ -148,9 +153,6 @@ interface StreamStrategyConfig {
   historyLiveBoundaryEdge: "first" | "last";
   liveHeadHistoryBoundaryEdge: "first" | "last";
   frameChildOrder: StreamFrameChildOrder;
-  flatListInverted: boolean;
-  overlayScrollbarInverted: boolean;
-  maintainVisibleContentPosition?: MaintainVisibleContentPositionConfig;
   bottomAnchorTransportBehavior: BottomAnchorTransportBehavior;
   disableParentScrollOnInlineDetailsExpansion: boolean;
   anchorBottomOnContentSizeChange: boolean;
@@ -159,8 +161,6 @@ interface StreamStrategyConfig {
   isNearBottom: (input: StreamNearBottomInput) => boolean;
   getBottomOffset: (metrics: StreamViewportMetrics) => number;
 }
-
-const NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES = 4;
 
 export function createStreamStrategy(config: StreamStrategyConfig): StreamStrategy {
   return {
@@ -185,6 +185,7 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
     },
     collectAssistantResponseContent: (items, startIndex) => {
       const messages: string[] = [];
+      const seenReplies = new Set<StreamItem>();
       let laterItem: StreamItem | null = null;
       for (
         let index = startIndex;
@@ -195,8 +196,11 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
         if (!currentItem || (laterItem && !continuesResponse(currentItem, laterItem))) {
           break;
         }
-        if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
+        // A transformer can split one reply into several cards; copy the reply once.
+        const reply = getAssistantReply(currentItem);
+        if (reply && !seenReplies.has(reply)) {
+          seenReplies.add(reply);
+          messages.push(reply.text);
         }
         laterItem = currentItem;
       }
@@ -216,7 +220,6 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
         ListFooterComponentStyle: { marginTop: gapSize },
       };
     },
-    getMaintainVisibleContentPosition: () => config.maintainVisibleContentPosition,
     getBottomAnchorTransportBehavior: () => config.bottomAnchorTransportBehavior,
     getHistoryLiveBoundaryIndex: (history) => {
       if (history.length === 0) {
@@ -237,30 +240,11 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
       return config.historyLiveBoundaryEdge === "first" ? 0 : items.length - 1;
     },
     getFrameChildOrder: () => config.frameChildOrder,
-    getFlatListInverted: () => config.flatListInverted,
-    getOverlayScrollbarInverted: () => config.overlayScrollbarInverted,
     shouldDisableParentScrollOnInlineDetailsExpansion: () =>
       config.disableParentScrollOnInlineDetailsExpansion,
     shouldAnchorBottomOnContentSizeChange: () => config.anchorBottomOnContentSizeChange,
     shouldAnimateManualScrollToBottom: () => config.animateManualScrollToBottom,
     shouldUseVirtualizedList: () => config.useVirtualizedList,
-  };
-}
-
-export function resolveBottomAnchorTransportBehavior(input: {
-  strategy: StreamStrategy;
-  isViewportSettling: boolean;
-}): BottomAnchorTransportBehavior {
-  const baseBehavior = input.strategy.getBottomAnchorTransportBehavior();
-  if (!input.isViewportSettling || !input.strategy.getFlatListInverted()) {
-    return baseBehavior;
-  }
-  return {
-    verificationDelayFrames: Math.max(
-      baseBehavior.verificationDelayFrames,
-      NATIVE_SETTLING_VERIFICATION_DELAY_FRAMES,
-    ),
-    verificationRetryMode: "recheck",
   };
 }
 

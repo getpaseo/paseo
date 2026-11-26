@@ -1,9 +1,10 @@
 import type {
-  AgentFeature,
   AgentMode,
+  AgentOptionControl,
   AgentProvider,
   AgentSelectOption,
 } from "@getpaseo/protocol/agent-types";
+import { readToggleOption, type ComposerOptionControls } from "@/agent-controls/option-controls";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
 import {
@@ -15,6 +16,7 @@ import {
 import type { CommandCenterContribution, CommandCenterIcon } from "./contributions";
 
 const GROUP_RANK = {
+  profiles: 0.9,
   models: 1,
   thinking: 1.1,
   modes: 1.2,
@@ -23,6 +25,7 @@ const GROUP_RANK = {
 } as const;
 
 export interface AgentControlContributionLabels {
+  profile: string;
   model: string;
   thinking: string;
   mode: string;
@@ -30,6 +33,7 @@ export interface AgentControlContributionLabels {
   fast: string;
   on: string;
   off: string;
+  profileKeywords: string;
   modelKeywords: string;
   thinkingKeywords: string;
   modeKeywords: string;
@@ -41,6 +45,7 @@ export function buildAgentControlContributionLabels(
   t: (key: string) => string,
 ): AgentControlContributionLabels {
   return {
+    profile: t("shell.commandCenter.profileGroupLabel"),
     model: t("shell.commandCenter.modelGroupLabel"),
     thinking: t("shell.commandCenter.thinkingGroupLabel"),
     mode: t("shell.commandCenter.modeGroupLabel"),
@@ -48,6 +53,7 @@ export function buildAgentControlContributionLabels(
     fast: t("shell.commandCenter.fastModeGroupLabel"),
     on: t("shell.commandCenter.settingOn"),
     off: t("shell.commandCenter.settingOff"),
+    profileKeywords: t("shell.commandCenter.profileSearchKeywords"),
     modelKeywords: t("shell.commandCenter.modelSearchKeywords"),
     thinkingKeywords: t("shell.commandCenter.thinkingSearchKeywords"),
     modeKeywords: t("shell.commandCenter.modeSearchKeywords"),
@@ -57,11 +63,12 @@ export function buildAgentControlContributionLabels(
 }
 
 export interface AgentControlContributionIcons {
+  profile(profile: AgentControlProfile): CommandCenterIcon;
   provider(provider: AgentProvider): CommandCenterIcon;
   thinking: CommandCenterIcon;
   planMode: CommandCenterIcon;
   mode(modeId: string): CommandCenterIcon;
-  feature(feature: AgentFeature): CommandCenterIcon;
+  control(control: AgentOptionControl): CommandCenterIcon;
 }
 
 interface CommandCenterChoice {
@@ -82,12 +89,27 @@ interface CommandCenterChoiceGroup {
   choices: readonly CommandCenterChoice[];
 }
 
+/** A profile as the command center offers it: applied in one step, never "selected". */
+export interface AgentControlProfile {
+  id: string;
+  name: string;
+  /** "Claude Code · Opus 5 · Plan · Think hard" */
+  summary: string;
+  icon: string;
+  color: string;
+}
+
 export interface AgentControlContributionSource {
   serverId: string;
   ownerKey: string;
   provider: string | null;
   labels: AgentControlContributionLabels;
   icons: AgentControlContributionIcons;
+  /** Absent when the host has no profiles to offer this surface. */
+  profiles?: {
+    rows: readonly AgentControlProfile[];
+    apply(profileId: string): void;
+  };
   models: {
     providers: readonly ProviderSelectorProvider[];
     selectedProvider: string | null;
@@ -105,10 +127,7 @@ export interface AgentControlContributionSource {
     defaultModeId: string | null;
     select(modeId: string): void | Promise<void>;
   };
-  features: {
-    list: readonly AgentFeature[];
-    set(featureId: string, value: unknown): void | Promise<void>;
-  };
+  optionControls: ComposerOptionControls;
 }
 
 function buildContributions(
@@ -138,6 +157,30 @@ function buildContributions(
     }
   }
   return contributions;
+}
+
+function buildProfileGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
+  const profiles = source.profiles;
+  const choices = (profiles?.rows ?? []).map(
+    (profile): CommandCenterChoice => ({
+      id: profile.id,
+      path: [profile.name],
+      keywords: [profile.summary],
+      icon: source.icons.profile(profile),
+      // Applying a profile writes its values and leaves nothing bound to it,
+      // so no profile is ever the current choice.
+      selected: false,
+      testId: `command-center-profile-${source.serverId}:${source.ownerKey}:${profile.id}`,
+      select: () => profiles?.apply(profile.id),
+    }),
+  );
+  return {
+    id: "profiles",
+    rank: GROUP_RANK.profiles,
+    label: source.labels.profile,
+    keywords: [source.labels.profileKeywords],
+    choices,
+  };
 }
 
 function buildModelGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
@@ -242,18 +285,19 @@ function toggleChoices(input: {
 }
 
 function buildPlanModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
-  const planFeature = source.features.list.find(
-    (feature) => feature.id === PLAN_MODE_FEATURE_ID && feature.type === "toggle",
+  const { controls, options, onSetOption } = source.optionControls;
+  const planControl = controls.find(
+    (control) => control.key === PLAN_MODE_FEATURE_ID && control.type === "toggle",
   );
   let choices: CommandCenterChoice[] = [];
-  if (planFeature?.type === "toggle") {
+  if (planControl?.type === "toggle") {
     choices = toggleChoices({
       source,
       key: "plan",
-      icon: source.icons.feature(planFeature),
-      isOn: planFeature.value,
-      turnOn: () => source.features.set(PLAN_MODE_FEATURE_ID, true),
-      turnOff: () => source.features.set(PLAN_MODE_FEATURE_ID, false),
+      icon: source.icons.control(planControl),
+      isOn: readToggleOption(planControl, options),
+      turnOn: () => onSetOption(PLAN_MODE_FEATURE_ID, true),
+      turnOff: () => onSetOption(PLAN_MODE_FEATURE_ID, false),
     });
   } else if (source.modes) {
     const modes = source.modes;
@@ -280,18 +324,19 @@ function buildPlanModeGroup(source: AgentControlContributionSource): CommandCent
 }
 
 function buildFastModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {
-  const fastFeature = source.features.list.find(
-    (feature) => feature.id === FAST_MODE_FEATURE_ID && feature.type === "toggle",
+  const { controls, options, onSetOption } = source.optionControls;
+  const fastControl = controls.find(
+    (control) => control.key === FAST_MODE_FEATURE_ID && control.type === "toggle",
   );
   const choices =
-    fastFeature?.type === "toggle"
+    fastControl?.type === "toggle"
       ? toggleChoices({
           source,
           key: "fast",
-          icon: source.icons.feature(fastFeature),
-          isOn: fastFeature.value,
-          turnOn: () => source.features.set(FAST_MODE_FEATURE_ID, true),
-          turnOff: () => source.features.set(FAST_MODE_FEATURE_ID, false),
+          icon: source.icons.control(fastControl),
+          isOn: readToggleOption(fastControl, options),
+          turnOn: () => onSetOption(FAST_MODE_FEATURE_ID, true),
+          turnOff: () => onSetOption(FAST_MODE_FEATURE_ID, false),
         })
       : [];
   return {
@@ -306,7 +351,7 @@ function buildFastModeGroup(source: AgentControlContributionSource): CommandCent
 export function buildAgentControlContributions(
   source: AgentControlContributionSource,
 ): CommandCenterContribution[] {
-  const groups = [buildModelGroup(source)];
+  const groups = [buildProfileGroup(source), buildModelGroup(source)];
   if (source.provider) {
     groups.push(
       buildThinkingGroup(source),

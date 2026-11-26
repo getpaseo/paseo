@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  normalizeNotificationPreferences,
+  type NotificationPreferences,
+} from "./notification-preferences.js";
+import {
   AgentTimelineItemPayloadSchema,
   SendAgentMessageRequestSchema,
   FileExplorerRequestSchema,
@@ -492,6 +497,26 @@ describe("daemon update messages", () => {
 });
 
 describe("viewed timeline subscription messages", () => {
+  test("carries a cursor per chat and a freshness answer per chat", () => {
+    const cursors = { "agent-a": { epoch: "epoch-1", seq: 42 } };
+    const timelines = { "agent-a": "current", "agent-b": "behind" };
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.timeline.set_subscription.request",
+        agentIds: ["agent-a"],
+        requestId: "timeline-subscription-2",
+        cursors,
+      }),
+    ).toMatchObject({ cursors });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.timeline.set_subscription.response",
+        payload: { agentIds: ["agent-a"], requestId: "timeline-subscription-2", timelines },
+      }),
+    ).toMatchObject({ payload: { timelines } });
+  });
+
   test("parses a complete viewed-agent set and its acknowledgement", () => {
     const request = SessionInboundMessageSchema.parse({
       type: "agent.timeline.set_subscription.request",
@@ -571,3 +596,123 @@ test.each(["all", "base", "uncommitted"] as const)(
     expect(parsed.attachments).toEqual([attachment]);
   },
 );
+
+describe("terminal collection protocol compatibility", () => {
+  test("accepts released directory observations and their snapshots", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "subscribe_terminals_request",
+        cwd: "/repo",
+        requestId: "old",
+      }),
+    ).toMatchObject({ cwd: "/repo" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "terminals_changed",
+        payload: { cwd: "/repo", terminals: [{ id: "terminal", name: "Shell" }] },
+      }),
+    ).toMatchObject({ payload: { cwd: "/repo" } });
+  });
+  test("accepts capability-gated host observations and additive metadata", () => {
+    expect(
+      SessionInboundMessageSchema.parse({ type: "subscribe_terminals_request", requestId: "host" }),
+    ).toMatchObject({ requestId: "host" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "terminals_changed",
+        payload: {
+          terminals: [
+            {
+              id: "terminal",
+              name: "Shell",
+              cwd: "/repo",
+              workspaceId: "workspace",
+              createdAt: null,
+              isScript: true,
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ payload: { terminals: [{ isScript: true, createdAt: null }] } });
+  });
+});
+
+describe("push notification preferences protocol compatibility", () => {
+  test("accepts register_push_token with or without notification preferences", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "register_push_token",
+        token: "ExponentPushToken[legacy]",
+      }),
+    ).toEqual({
+      type: "register_push_token",
+      token: "ExponentPushToken[legacy]",
+    });
+
+    const preferences: NotificationPreferences = {
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      events: {
+        ...DEFAULT_NOTIFICATION_PREFERENCES.events,
+        agentFinished: true,
+      },
+      plugins: {
+        enabled: true,
+        muted: ["review-bot"],
+      },
+    };
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "register_push_token",
+        token: "ExponentPushToken[modern]",
+        preferences,
+      }),
+    ).toEqual({
+      type: "register_push_token",
+      token: "ExponentPushToken[modern]",
+      preferences,
+    });
+
+    const partialParsed = SessionInboundMessageSchema.parse({
+      type: "register_push_token",
+      token: "ExponentPushToken[partial]",
+      preferences: {
+        events: { agentFinished: true },
+        plugins: { muted: ["zeta-plugin", "alpha-plugin"] },
+      },
+    });
+    expect(partialParsed).toEqual({
+      type: "register_push_token",
+      token: "ExponentPushToken[partial]",
+      preferences: {
+        events: { agentFinished: true },
+        plugins: { muted: ["zeta-plugin", "alpha-plugin"] },
+      },
+    });
+    if (partialParsed.type !== "register_push_token") {
+      throw new Error("Expected register_push_token message");
+    }
+    expect(normalizeNotificationPreferences(partialParsed.preferences)).toEqual({
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
+      events: {
+        ...DEFAULT_NOTIFICATION_PREFERENCES.events,
+        agentFinished: true,
+      },
+      plugins: {
+        enabled: true,
+        muted: ["alpha-plugin", "zeta-plugin"],
+      },
+    });
+  });
+
+  test("parses pushNotificationPreferences feature flag on server_info", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-1",
+      features: {
+        pushNotificationPreferences: true,
+      },
+    });
+    expect(parsed.features?.pushNotificationPreferences).toBe(true);
+  });
+});

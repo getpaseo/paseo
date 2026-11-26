@@ -1,4 +1,5 @@
 import { ACP_PROVIDER_ICON_SVGS } from "@/assets/acp-provider-icons";
+import type { HostFeatureName } from "@/runtime/host-features";
 
 export interface AcpProviderCatalogEntry {
   id: string;
@@ -8,7 +9,7 @@ export interface AcpProviderCatalogEntry {
   iconSvg: string | null;
   installLink: string;
   command: readonly [string, ...string[]];
-  bundledProvider?: boolean;
+  bundledProvider?: { readonly hostFeature: HostFeatureName };
   env?: Readonly<Record<string, string>>;
   params?: Readonly<Record<string, unknown>>;
 }
@@ -160,10 +161,10 @@ const CATALOG_DATA = [
     id: "factory-droid",
     title: "Factory Droid",
     description: "Factory Droid - AI coding agent powered by Factory AI",
-    version: "0.249.0",
+    version: "1.20.0",
     iconId: "factory-droid",
     installLink: "https://factory.ai/product/cli",
-    command: ["npx", "-y", "droid@0.249.0", "exec", "--output-format", "acp-daemon"],
+    command: ["npx", "-y", "droid@1.20.0", "exec", "--output-format", "acp-daemon"],
     env: {
       DROID_DISABLE_AUTO_UPDATE: "true",
       FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
@@ -178,6 +179,16 @@ const CATALOG_DATA = [
     iconId: "fast-agent",
     installLink: "https://fast-agent.ai/acp/",
     command: ["uvx", "--from", "fast-agent-acp==0.10.47", "fast-agent-acp", "-x"],
+  },
+  {
+    id: "fx",
+    bundledProvider: { hostFeature: "fxProvider" },
+    title: "fx",
+    description: "Vercel Labs' tiny, open, native coding agent",
+    version: "manual",
+    iconId: "fx",
+    installLink: "https://fx.sh/docs/getting-started/installation",
+    command: ["fx", "acp"],
   },
   {
     id: "gemini",
@@ -213,6 +224,7 @@ const CATALOG_DATA = [
   },
   {
     id: "goose",
+    bundledProvider: { hostFeature: "gooseProvider" },
     title: "goose",
     description: "A local, extensible, open source AI agent that automates engineering tasks",
     version: "1.33.1",
@@ -232,6 +244,7 @@ const CATALOG_DATA = [
   },
   {
     id: "hermes",
+    bundledProvider: { hostFeature: "hermesProvider" },
     title: "Hermes",
     description: "Nous Research self-improving AI agent",
     version: "manual",
@@ -241,7 +254,7 @@ const CATALOG_DATA = [
   },
   {
     id: "hoplite",
-    bundledProvider: true,
+    bundledProvider: { hostFeature: "hopliteProvider" },
     title: "Hoplite",
     description: "Cloud coding agent through the local hoplite acp bridge",
     version: "manual",

@@ -6,19 +6,25 @@ import {
   addProjectFromSetup,
   continueSetup,
   expectSetupStep,
+  expectSheetCoversSetupCard,
   finishSetup,
   goToSetupStep,
   hostGivesAgentsPaseoTools,
   openAppAsNewUser,
   openRelayPairingFromSetup,
   closeRelayPairing,
-  openTailscaleDocsFromSetup,
+  emptyHome,
+  loadingScreen,
+  expectTailscaleSwitchDisabled,
   paseoToolsSwitch,
   pickTheme,
   projectSuggestion,
   projectSuggestionRow,
+  readFirstLaunch,
+  recordFirstLaunch,
   setupModal,
   setupPrimaryButton,
+  setupSheet,
   showSetupAgainFromSettings,
   skipSetup,
   startSetupHost,
@@ -31,7 +37,11 @@ import {
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { enableRelayAndExpectOffer } from "../support/helpers/pair-device";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { openSettingsHostSection } from "../support/helpers/settings";
+import {
+  installAcpCatalogProvider,
+  openAddProvider,
+  openSettingsHostSection,
+} from "../support/helpers/settings";
 import { createTempDirectory, createTempGitRepo } from "../support/helpers/workspace";
 
 // Midnight's muted foreground (#9a9db0), which the step description is drawn in.
@@ -55,9 +65,26 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
 
     await test.step("Providers shows the same provider list as Settings", async () => {
       await continueSetup(page);
-      await expectSetupStep(page, "Your agents");
+      await expectSetupStep(page, "Your providers");
       await expect(setupModal(page).getByTestId("host-page-providers-card")).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("2-providers.png") });
+    });
+
+    await test.step("a provider's detail and Add provider cover the setup card and lead back to it", async () => {
+      await setupModal(page)
+        .getByRole("button", { name: "Claude provider details", exact: true })
+        .click();
+      const detail = setupSheet(page, "provider-settings-sheet");
+      await expectSheetCoversSetupCard(page, detail);
+      await detail.getByRole("button", { name: "Back to providers", exact: true }).click();
+      await expect(detail).toHaveCount(0);
+
+      await setupModal(page).getByTestId("provider-list-add").click();
+      const add = setupSheet(page, "add-provider-sheet");
+      await expectSheetCoversSetupCard(page, add);
+      await page.keyboard.press("Escape");
+      await expect(add).toHaveCount(0);
+      await expectSetupStep(page, "Your providers");
     });
 
     await test.step("with no agent history, Add project opens the regular flow and the folder shows as added", async () => {
@@ -78,7 +105,7 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
       await expectSetupStep(page, "Let agents use Paseo");
       await expect(paseoToolsSwitch(setupModal(page))).toBeChecked();
       await expect(
-        setupModal(page).getByRole("switch", { name: "Orchestration skills", exact: true }),
+        setupModal(page).getByRole("switch", { name: "Paseo skills", exact: true }),
       ).toBeChecked();
       await page.screenshot({ path: testInfo.outputPath("4-orchestration.png") });
     });
@@ -97,6 +124,166 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
     await host.close();
     await repo.cleanup();
   }
+});
+
+test("a provider removed in setup can be added back and removed again", async ({ page }) => {
+  test.setTimeout(180_000);
+  const host = await startSetupHost("re-add");
+  const detail = setupSheet(page, "provider-settings-sheet");
+  const remove = detail.getByTestId("provider-remove");
+  page.on("dialog", (dialog) => void dialog.accept());
+
+  try {
+    await openAppAsNewUser(page, host);
+    await continueSetup(page);
+    await expectSetupStep(page, "Your providers");
+
+    await openAddProvider(page);
+    await installAcpCatalogProvider(page, "Junie");
+    await remove.click();
+    await expect(detail).toHaveCount(0);
+
+    // Adding it back opens the same provider's sheet, which must not still be removing it.
+    await openAddProvider(page);
+    await installAcpCatalogProvider(page, "Junie");
+    await expect(remove).toHaveText("Remove");
+    await expect(remove).toBeEnabled();
+  } finally {
+    await host.close();
+  }
+});
+
+test("a new user goes from the loading screen straight into setup", async ({ page }) => {
+  const host = await startSetupHost("first-launch");
+
+  try {
+    await recordFirstLaunch(page);
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+
+    const launch = await readFirstLaunch(page);
+    expect(launch.appBeforeSetup).toBe(false);
+    expect(launch.setupOpacityOnArrival).toBeLessThan(1);
+    await expect(setupModal(page)).toHaveCSS("opacity", "1");
+  } finally {
+    await host.close();
+  }
+});
+
+test("with reduced motion, setup appears without fading in", async ({ page }) => {
+  const host = await startSetupHost("reduced-motion");
+
+  try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await recordFirstLaunch(page);
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+
+    expect((await readFirstLaunch(page)).setupOpacityOnArrival).toBe(1);
+  } finally {
+    await host.close();
+  }
+});
+
+test("changing the theme keeps the setup window in place on every step", async ({ page }) => {
+  const host = await startSetupHost("theme-change");
+
+  try {
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+    const setupWindow = await setupModal(page).elementHandle();
+
+    for (const title of [
+      "Welcome to Paseo",
+      "Your providers",
+      "Add your projects",
+      "Let agents use Paseo",
+      "Take your agents with you",
+    ]) {
+      if (title !== "Welcome to Paseo") await continueSetup(page);
+      await expectSetupStep(page, title);
+      const heading = setupModal(page).getByRole("heading", { name: title });
+      const headingNode = await heading.elementHandle();
+      const lightColor = await heading.evaluate((node) => getComputedStyle(node).color);
+      await page.emulateMedia({ colorScheme: "dark" });
+      await expect(heading).not.toHaveCSS("color", lightColor);
+      await page.emulateMedia({ colorScheme: "light" });
+      await expect(heading).toHaveCSS("color", lightColor);
+      expect(await setupWindow?.evaluate((node) => node.isConnected), title).toBe(true);
+      expect(await headingNode?.evaluate((node) => node.isConnected), title).toBe(true);
+    }
+
+    await goToSetupStep(page, "Appearance");
+    await pickTheme(page, "Midnight");
+    await pickTheme(page, "Light");
+    expect(await setupWindow?.evaluate((node) => node.isConnected)).toBe(true);
+  } finally {
+    await host.close();
+  }
+});
+
+test("the loading screen stays up while the setup host loads its workspaces", async ({ page }) => {
+  const host = await startSetupHost("slow-workspaces");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
+
+  try {
+    await recordFirstLaunch(page);
+    gate.holdNextClientRequest("fetch_workspaces_request");
+    await openAppAsNewUser(page, host);
+    await gate.waitForHeldClientRequest();
+    await expect(loadingScreen(page)).toBeVisible();
+    await expect(emptyHome(page)).toHaveCount(0);
+
+    gate.releaseHeldClientRequest();
+    await expectSetupStep(page, "Welcome to Paseo");
+    expect((await readFirstLaunch(page)).appBeforeSetup).toBe(false);
+  } finally {
+    await host.close();
+  }
+});
+
+test("a setup host that never loads its workspaces still lands on the home", async ({ page }) => {
+  const host = await startSetupHost("stuck-workspaces");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
+
+  try {
+    gate.holdNextClientRequest("fetch_workspaces_request");
+    await openAppAsNewUser(page, host);
+    await gate.waitForHeldClientRequest();
+    await expect(emptyHome(page)).toBeVisible({ timeout: 15_000 });
+    await expect(setupModal(page)).toHaveCount(0);
+
+    // Setup still opens once the host answers.
+    gate.releaseHeldClientRequest();
+    await expectSetupStep(page, "Welcome to Paseo");
+  } finally {
+    await host.close();
+  }
+});
+
+test("a setup host that drops while loading still lands on the home", async ({ page }) => {
+  const host = await startSetupHost("dropped-workspaces");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
+
+  try {
+    gate.holdNextClientRequest("fetch_workspaces_request");
+    await openAppAsNewUser(page, host);
+    await gate.waitForHeldClientRequest();
+    await gate.drop();
+    await expect(emptyHome(page)).toBeVisible({ timeout: 15_000 });
+    await expect(setupModal(page)).toHaveCount(0);
+  } finally {
+    await host.close();
+  }
+});
+
+test("an unreachable setup host lands on the home without setup", async ({ page }) => {
+  const host = await startSetupHost("unreachable");
+  await host.close();
+
+  await openAppAsNewUser(page, host);
+  await expect(emptyHome(page)).toBeVisible({ timeout: 15_000 });
+  await expect(setupModal(page)).toHaveCount(0);
 });
 
 test("setup suggests the repos the user already ran agents in", async ({ page }, testInfo) => {
@@ -216,12 +403,10 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
       await continueSetup(page);
     });
 
-    await test.step("Phone offers Tailscale docs and pairs over relay in its own modal", async () => {
+    await test.step("Phone shows a disabled Tailscale switch and pairs over relay", async () => {
       await expectSetupStep(page, "Take your agents with you");
       await page.screenshot({ path: testInfo.outputPath("5-phone.png") });
-      expect(await openTailscaleDocsFromSetup(page)).toBe(
-        "https://paseo.sh/docs/connectivity#tailscale",
-      );
+      await expectTailscaleSwitchDisabled(page);
       const pairing = await openRelayPairingFromSetup(page);
       await expect(pairing.getByText("Enable relay?", { exact: true })).toBeVisible();
       await enableRelayAndExpectOffer(page);
@@ -232,7 +417,7 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
     await test.step("Finish closes setup and Settings shows the same Paseo tools value", async () => {
       await finishSetup(page);
       await page.locator('[data-testid="sidebar-settings"]:visible').first().click();
-      await openSettingsHostSection(page, host.serverId, "agents");
+      await openSettingsHostSection(page, host.serverId, "tools");
       await expect(paseoToolsSwitch(page)).toBeChecked();
       await page.screenshot({ path: testInfo.outputPath("7-settings-agents.png") });
     });
@@ -254,7 +439,7 @@ test("with no skills picked, skills read as off and Continue moves on", async ({
     await chooseCustomSkills(page, []);
     await saveSkillSelection(page);
     const skillsSwitch = setupModal(page).getByRole("switch", {
-      name: "Orchestration skills",
+      name: "Paseo skills",
       exact: true,
     });
     await expect(skillsSwitch).not.toBeChecked();
@@ -281,7 +466,7 @@ test("in the compact layout, Finish on Orchestration applies its switches", asyn
     await openAppAsNewUser(page, host);
     await step("Welcome to Paseo");
     await primary("Continue").click();
-    await step("Your agents");
+    await step("Your providers");
     await primary("Continue").click();
     await step("Add your projects");
     await primary("Continue").click();
@@ -291,7 +476,7 @@ test("in the compact layout, Finish on Orchestration applies its switches", asyn
     await step("Let agents use Paseo");
     await expect(paseoToolsSwitch(page)).toBeChecked();
     // Skills are not installed, so leaving them off has nothing to apply.
-    const skillsSwitch = page.getByRole("switch", { name: "Orchestration skills", exact: true });
+    const skillsSwitch = page.getByRole("switch", { name: "Paseo skills", exact: true });
     await skillsSwitch.click();
     await expect(skillsSwitch).not.toBeChecked();
     gate.holdNextClientRequest("set_daemon_config_request");

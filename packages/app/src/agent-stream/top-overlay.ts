@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 import { isNative } from "@/constants/platform";
 
-/** The native inverted viewport reserves visual-top clearance; web stays in flow. */
+/** The native viewport reserves top clearance under the overlay; web stays in flow. */
 export const supportsStreamTopOverlay = isNative;
 
 const StreamTopOverlayContext = createContext(0);

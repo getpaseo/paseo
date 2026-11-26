@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type {
+  AgentMetric,
   AgentProvider,
   AgentTimelineItem,
   JsonValue,
@@ -8,6 +9,8 @@ import type {
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
+import type { OverviewSummary } from "@/tool-calls/detail-level/overview/model";
+import { stampCompletedTurnMetrics } from "@/timeline/turn-metrics";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
 
 /**
@@ -86,7 +89,8 @@ export type StreamItem =
   | TodoListItem
   | NotificationItem
   | CompactionItem
-  | PluginTimelineStreamItem;
+  | PluginTimelineStreamItem
+  | TurnSummaryItem;
 
 export type UserMessageImageAttachment = AttachmentMetadata;
 
@@ -713,6 +717,8 @@ export interface AssistantMessageItem {
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
+  /** Set when this message carries its turn's footer. */
+  turnMetrics?: AgentMetric[];
   /** Display-only fields, assigned after source-item plugin transforms. */
 }
 
@@ -767,6 +773,8 @@ export interface ToolCallItem {
   turnId?: string;
   timestamp: Date;
   payload: ToolCallPayload;
+  /** Set when this call carries its turn's footer. */
+  turnMetrics?: AgentMetric[];
 }
 
 export type AgentToolCallItem = ToolCallItem & {
@@ -775,12 +783,21 @@ export type AgentToolCallItem = ToolCallItem & {
 
 /** Find and scrolling address a plugin row by the source it replaces. */
 export function getStreamItemMessageId(item: StreamItem): string {
-  if (item.kind === "plugin") return item.sourceId ?? item.id;
+  if (item.kind === "plugin") return item.source?.id ?? item.id;
   return item.id;
 }
 
 export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem {
   return item.kind === "tool_call" && item.payload.source === "agent";
+}
+
+/** The assistant reply a row shows: the row itself, or the reply a timeline plugin replaced. */
+export function getAssistantReply(
+  item: StreamItem | null | undefined,
+): AssistantMessageItem | null {
+  if (item?.kind === "assistant_message") return item;
+  if (item?.kind === "plugin" && item.source?.kind === "assistant_message") return item.source;
+  return null;
 }
 
 type NotificationLevel = "info" | "warning" | "error";
@@ -810,8 +827,12 @@ export interface CompactionItem {
 export interface PluginTimelineStreamItem {
   kind: "plugin";
   id: string;
-  /** The id of the stream item a timeline transformer replaced; set only by projection. */
-  sourceId?: string;
+  /**
+   * The row a timeline transformer replaced; set only by projection. Turn folding, timing, and the
+   * turn footer read the replaced row through it, so a transformed reply keeps its copy, fork,
+   * duration, and stats.
+   */
+  source?: StreamItem;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
@@ -820,6 +841,25 @@ export interface PluginTimelineStreamItem {
   itemKind: string;
   version: number;
   data: JsonValue;
+}
+
+/**
+ * The row a folded turn leaves between its host and its reply, standing in for the work it
+ * hides. Turn collapse produces it from the loaded rows; it is never stored.
+ */
+export interface TurnSummaryItem {
+  kind: "turn_summary";
+  id: string;
+  timelineCursor?: TimelinePosition;
+  turnId?: string;
+  timestamp: Date;
+  /**
+   * The prompt the turn folds under, or its first loaded tool call when the prompt is above the
+   * loaded history. Keys the reader's expanded turns.
+   */
+  hostId: string;
+  expanded: boolean;
+  tools: OverviewSummary;
 }
 
 export interface TodoEntry {
@@ -1607,9 +1647,10 @@ export function reduceStreamUpdate(
       );
       return event.item.type === "reasoning" ? updated : finalizeActiveThoughts(updated);
     }
+    case "turn_completed":
+      return stampCompletedTurnMetrics(finalizeActiveThoughts(state), event.metrics, event.turnId);
     case "thread_started":
     case "turn_started":
-    case "turn_completed":
     case "turn_failed":
     case "turn_canceled":
     case "permission_requested":

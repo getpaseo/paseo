@@ -6,6 +6,7 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
+  expectOnlyWorkspaceHoverCardFor,
   expectWorkspaceHoverCardClosed,
   expectWorkspaceHoverCardOpen,
   expectWorkspaceHoverCardStaysOpen,
@@ -13,6 +14,8 @@ import {
   movePointerAwayFromWorkspaceHoverCard,
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
+  scrollWorkspaceList,
+  sweepPointerAcrossWorkspaceRows,
 } from "../support/helpers/sidebar";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
@@ -22,6 +25,10 @@ import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { escapeRegex } from "../support/helpers/regex";
 import { openFilesPanel } from "../support/helpers/workspace-tabs";
 import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  readSharedStylesheetChanges,
+  rememberSharedStylesheet,
+} from "../support/helpers/shared-stylesheet";
 
 const GITHUB_REMOTE_URL = "https://github.com/test-owner/test-repo.git";
 
@@ -77,6 +84,22 @@ async function openWorkspaceHoverCard(page: import("@playwright/test").Page, wor
   const hoverCard = page.getByRole("menu", { name: "Workspace scripts" });
   await expect(hoverCard).toBeVisible({ timeout: 30_000 });
   return hoverCard;
+}
+
+async function sortWorkspacesBySidebarOrder<T extends { workspaceId: string }>(
+  page: Page,
+  workspaces: T[],
+): Promise<T[]> {
+  const positioned = await Promise.all(
+    workspaces.map(async (workspace) => {
+      const bounds = await page
+        .getByTestId(getWorkspaceRowTestId(workspace.workspaceId))
+        .boundingBox();
+      if (!bounds) throw new Error(`Could not measure the row of ${workspace.workspaceId}`);
+      return { workspace, y: bounds.y };
+    }),
+  );
+  return positioned.sort((left, right) => left.y - right.y).map(({ workspace }) => workspace);
 }
 
 interface PaseoOwnedWorktree {
@@ -187,13 +210,14 @@ async function simulateDamagedLegacyDirectoryCache(
               return;
             }
             const stored = JSON.parse(checkpoint.payload);
-            // Accept either writer so this fixture also reproduces on the unfixed client.
-            const cursors = stored.version === 1 ? stored.cursors : stored;
-            if (!cursors.workspaces?.generation) {
+            // Read the cursors from whichever version wrote them, then store them as version 2:
+            // the format whose writer could keep a checkpoint after another tab evicted its rows.
+            const cursors = typeof stored.version === "number" ? stored.cursors : stored;
+            if (!cursors?.workspaces?.generation) {
               transaction.abort();
               return;
             }
-            store.put({ ...checkpoint, payload: JSON.stringify(cursors) });
+            store.put({ ...checkpoint, payload: JSON.stringify({ version: 2, cursors }) });
             for (const row of rows) {
               if (
                 row.serverId === serverId &&
@@ -409,6 +433,32 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
+  test("workspace hover card opens and closes without rebuilding the shared stylesheet", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-stylesheet-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await rememberSharedStylesheet(page);
+
+      await openWorkspaceHoverCard(page, workspace.workspaceId);
+      const opened = await readSharedStylesheetChanges(page);
+      // The card brings styles nothing else on screen uses, so the stylesheet has to grow.
+      expect(opened.added).toBeGreaterThan(0);
+      expect(opened.rebuilt).toBe(0);
+
+      await rememberSharedStylesheet(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+      expect((await readSharedStylesheetChanges(page)).rebuilt).toBe(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("workspace hover card closes when the pointer leaves a clicked row", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-click-leave-" });
 
@@ -426,6 +476,38 @@ test.describe("Sidebar workspace list", () => {
       await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
+    }
+  });
+
+  test("scanning up the workspace rows leaves only the resting row's hover card open", async ({
+    page,
+  }) => {
+    const workspaces = await Promise.all(
+      [1, 2, 3, 4, 5].map((index) =>
+        seedWorkspace({
+          repoPrefix: `sidebar-hover-scan-${index}-`,
+          title: `Hover scan ${index}`,
+        }),
+      ),
+    );
+
+    try {
+      await gotoAppShell(page);
+      for (const workspace of workspaces) {
+        await waitForSidebarWorkspace(page, workspace.workspaceId);
+      }
+      const rowsTopToBottom = await sortWorkspacesBySidebarOrder(page, workspaces);
+      const top = rowsTopToBottom[0]!;
+
+      for (let scan = 0; scan < 3; scan += 1) {
+        await sweepPointerAcrossWorkspaceRows(
+          page,
+          rowsTopToBottom.map((workspace) => workspace.workspaceId).toReversed(),
+        );
+        await expectOnlyWorkspaceHoverCardFor(page, top.workspaceName);
+      }
+    } finally {
+      await Promise.all(workspaces.map((workspace) => workspace.cleanup()));
     }
   });
 
@@ -582,6 +664,12 @@ test.describe("Half-screen desktop layout", () => {
       await page.getByTestId("menu-button").click();
       await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
       await expect(sidebarScroll).toHaveJSProperty("scrollTop", scrollTop);
+
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await focusWorkspaceRowWithKeyboard(page, lastWorkspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await scrollWorkspaceList(page);
+      await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
     }
@@ -645,6 +733,9 @@ test.describe("Half-screen desktop layout", () => {
           .locator('[data-testid^="workspace-pane-"]')
           .getByTestId("workspace-tabs-row")
           .filter({ visible: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId("workspace-tab-switcher-trigger").filter({ visible: true }),
       ).toHaveCount(1);
 
       await explorerToggle.click();

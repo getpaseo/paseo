@@ -3,6 +3,7 @@ import {
   createLifecycleRegistration,
   pluginHookRegistry,
 } from "@getpaseo/plugin/internal/lifecycle";
+import { isAbsolute } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   serializeAgentTool,
@@ -13,6 +14,7 @@ import {
 import type { AgentToolDefinition } from "@getpaseo/plugin/server";
 import type { AgentStreamEvent } from "../../agent/agent-sdk-types.js";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { CreateAgentRequestMessageSchema } from "@getpaseo/protocol/messages";
 import type {
   PluginHookAgent,
@@ -33,10 +35,11 @@ export type PluginWireBeforeRequests = Omit<PluginHookRequests, "agent.open.befo
   "agent.open.before": SessionOpenWireRequest;
 };
 
-/** Daemon-only results; ownership never crosses the plugin process boundary. */
-export type PluginBeforeResults = PluginWireBeforeRequests & {
-  "agent.open.before": SessionOpenWireRequest & { mcpServerOwners?: Record<string, string> };
-};
+/** Session opens run through the plugin runtime's session attachments, which record each plugin's contribution. */
+export type PluginLifecycleBeforeName = Exclude<
+  keyof PluginWireBeforeRequests,
+  "agent.open.before"
+>;
 
 const worktreeRequestFields = {
   repoRoot: z.string(),
@@ -56,7 +59,12 @@ const changeRequestFields = {
 };
 const worktreeRequestSchema = z.discriminatedUnion("kind", [
   z
-    .object({ ...worktreeRequestFields, kind: z.literal("branch-off"), baseRef: z.string().min(1) })
+    .object({
+      ...worktreeRequestFields,
+      kind: z.literal("branch-off"),
+      baseRef: z.string().min(1),
+      startPoint: z.string().min(1).optional(),
+    })
     .strict(),
   z
     .object({
@@ -86,12 +94,20 @@ const worktreeRequestSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+const launchWrapSchema = z
+  .tuple([z.string().refine(isAbsolute, "wrap executable must be an absolute path")], z.string())
+  .optional();
+
 const beforeSchemas = {
   "worktree.create.before": worktreeRequestSchema,
   "agent.create.before": CreateAgentRequestMessageSchema.pick({
     config: true,
     env: true,
-  }).strict(),
+    metadata: true,
+  })
+    // A plugin built before the field may omit it from its result; it can't change it.
+    .extend({ workspaceId: z.string().nullable().optional() })
+    .strict(),
   "agent.open.before": z
     .object({
       agentId: z.string(),
@@ -101,17 +117,85 @@ const beforeSchemas = {
       reason: z.enum(["create", "resume", "refresh", "import"]),
       purpose: z.enum(["interactive", "history"]),
       title: z.string().nullable(),
+      // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
+      background: z.boolean().optional(),
       labels: z.record(z.string(), z.string()),
+      // Optional so a plugin that returns its own object keeps working; omitted means unchanged.
+      metadata: z.record(z.string(), z.custom<JsonValue>()).optional(),
+      appendSystemPrompt: z.array(z.string()).optional(),
       tools: z.array(agentToolMetadataSchema),
       env: z.record(z.string(), z.string()),
       mcpServers: CreateAgentRequestMessageSchema.shape.config.shape.mcpServers.unwrap(),
+      wrap: launchWrapSchema,
     })
     .strict(),
   "workspace.create.before": WorkspaceCreateRequestSchema.omit({
     type: true,
     requestId: true,
   }).strict(),
+  "terminal.create.before": z
+    .object({
+      workspaceId: z.string(),
+      cwd: z.string(),
+      source: z.enum(["client", "agent", "script", "worktree"]),
+      name: z.string().nullable(),
+      command: z.string().nullable(),
+      args: z.array(z.string()),
+      input: z.string().nullable(),
+      env: z.record(z.string(), z.string()),
+      wrap: launchWrapSchema,
+    })
+    .strict(),
+  "command.run.before": z
+    .object({
+      workspaceId: z.string().nullable(),
+      cwd: z.string(),
+      purpose: z.enum(["setup", "teardown"]),
+      command: z.string(),
+      env: z.record(z.string(), z.string()),
+      wrap: launchWrapSchema,
+    })
+    .strict(),
 };
+
+// Request fields a hook reads but can't change, with the error a changed one gets.
+const readOnlyRequestFields = {
+  "terminal.create.before": {
+    fields: ["workspaceId", "cwd", "source", "name", "command", "args", "input"],
+    message: "terminal.create.before hooks can only change env and wrap",
+  },
+  "command.run.before": {
+    fields: ["workspaceId", "cwd", "purpose", "command"],
+    message: "command.run.before hooks can only change env and wrap",
+  },
+} as const;
+
+function assertReadOnlyFields(name: string, input: unknown, result: unknown): void {
+  if (!Object.hasOwn(readOnlyRequestFields, name)) return;
+  const { fields, message } = readOnlyRequestFields[name as keyof typeof readOnlyRequestFields];
+  const previous = input as Record<string, unknown>;
+  const next = result as Record<string, unknown>;
+  if (fields.some((field) => !isDeepStrictEqual(previous[field], next[field])))
+    throw new Error(message);
+}
+
+type LaunchWrap = z.infer<typeof launchWrapSchema>;
+
+/**
+ * One wrap per operation: the first hook that selects a wrap owns it. A later hook may omit it or
+ * repeat it; a different wrap fails, so two sandboxes never silently stack or replace each other.
+ */
+function keepSelectedWrap(name: string, previous: LaunchWrap, next: LaunchWrap): LaunchWrap {
+  if (previous && next && !isDeepStrictEqual(previous, next)) {
+    throw new Error(`${name} hooks cannot change a wrap an earlier hook selected`);
+  }
+  return previous ?? next;
+}
+
+function withWrap<Result extends object>(result: Result, wrap: LaunchWrap): Result {
+  const { wrap: _replaced, ...rest } = result as Result & { wrap?: LaunchWrap };
+  return (wrap ? { ...rest, wrap } : rest) as Result;
+}
 
 const sessionOpenLocalResultSchema = beforeSchemas["agent.open.before"].extend({
   tools: z.array(
@@ -132,10 +216,10 @@ export interface PluginLifecycle {
     payload: PluginHookPayload<"worktree.create.after">,
   ): Promise<void>;
   emit<Name extends keyof PluginHookEvents>(name: Name, event: PluginHookEvents[Name]): void;
-  before<Name extends keyof PluginWireBeforeRequests>(
+  before<Name extends PluginLifecycleBeforeName>(
     name: Name,
     request: PluginWireBeforeRequests[Name],
-  ): Promise<PluginBeforeResults[Name]>;
+  ): Promise<PluginWireBeforeRequests[Name]>;
 }
 
 export function validateBeforeRequest<Name extends keyof PluginWireBeforeRequests>(
@@ -152,6 +236,7 @@ export function describeHookWorkspace(workspace: PersistedWorkspaceRecord): Plug
     cwd: workspace.cwd,
     name: workspace.title,
     archivedAt: workspace.archivedAt,
+    metadata: workspace.metadata,
   };
 }
 
@@ -161,7 +246,9 @@ export function describeHookAgent(agent: {
   provider: string;
   cwd: string;
   title?: string | null;
+  background?: boolean;
   labels: Record<string, string>;
+  metadata: Record<string, JsonValue>;
 }): PluginHookAgent {
   return {
     id: agent.id,
@@ -170,6 +257,8 @@ export function describeHookAgent(agent: {
     provider: agent.provider,
     cwd: agent.cwd,
     title: agent.title ?? null,
+    background: agent.background === true,
+    metadata: agent.metadata,
   };
 }
 
@@ -184,21 +273,18 @@ export function publishAgentStream(
     lifecycle.emit("agent.turn.after", {
       agent,
       turnId: event.turnId ?? null,
-      timeline: [],
       outcome: { kind: "completed" },
     });
   } else if (event.type === "turn_failed") {
     lifecycle.emit("agent.turn.after", {
       agent,
       turnId: event.turnId ?? null,
-      timeline: [],
       outcome: { kind: "failed", error: { message: event.error, code: event.code } },
     });
   } else if (event.type === "turn_canceled") {
     lifecycle.emit("agent.turn.after", {
       agent,
       turnId: event.turnId ?? null,
-      timeline: [],
       outcome: { kind: "canceled", reason: event.reason },
     });
   } else if (event.type === "permission_requested") {
@@ -212,6 +298,46 @@ export function publishAgentStream(
   }
 }
 
+type SessionOpenRequest = z.infer<(typeof beforeSchemas)["agent.open.before"]>;
+
+// Omitted `background` and `metadata` mean unchanged, so a hook returning its own object keeps working.
+function changesSessionOpenTarget(previous: SessionOpenRequest, next: SessionOpenRequest): boolean {
+  return (
+    previous.agentId !== next.agentId ||
+    previous.workspaceId !== next.workspaceId ||
+    previous.provider !== next.provider ||
+    previous.cwd !== next.cwd ||
+    previous.reason !== next.reason ||
+    previous.purpose !== next.purpose ||
+    previous.title !== next.title ||
+    (next.background !== undefined && previous.background !== next.background) ||
+    !isDeepStrictEqual(previous.labels, next.labels) ||
+    (next.metadata !== undefined && !isDeepStrictEqual(previous.metadata, next.metadata))
+  );
+}
+
+type WorktreeBeforeRequest = z.infer<(typeof beforeSchemas)["worktree.create.before"]>;
+
+function validateWorktreeBeforeResult(
+  previous: WorktreeBeforeRequest,
+  next: WorktreeBeforeRequest,
+): WorktreeBeforeRequest {
+  if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
+    throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
+  }
+  if (previous.kind === "branch-off" && next.kind === "branch-off") {
+    if (next.startPoint !== undefined && next.startPoint !== previous.startPoint) {
+      throw new Error("worktree.create.before hooks cannot change startPoint");
+    }
+    if (next.startPoint === undefined && previous.startPoint !== undefined) {
+      return { ...next, startPoint: previous.startPoint };
+    }
+  } else if (next.kind === "branch-off" && next.startPoint !== undefined) {
+    throw new Error("worktree.create.before hooks cannot change startPoint");
+  }
+  return next;
+}
+
 export async function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
   input: PluginWireBeforeRequests[Name],
@@ -221,18 +347,19 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
   if (name === "agent.open.before") {
     const previous = beforeSchemas["agent.open.before"].parse(input);
     const next = beforeSchemas["agent.open.before"].parse(result);
-    if (
-      previous.agentId !== next.agentId ||
-      previous.workspaceId !== next.workspaceId ||
-      previous.provider !== next.provider ||
-      previous.cwd !== next.cwd ||
-      previous.reason !== next.reason ||
-      previous.purpose !== next.purpose ||
-      previous.title !== next.title ||
-      !isDeepStrictEqual(previous.labels, next.labels)
-    ) {
-      throw new Error("agent.open.before hooks can only change env, tools, and mcpServers");
+    if (changesSessionOpenTarget(previous, next)) {
+      throw new Error(
+        "agent.open.before hooks can only change env, tools, mcpServers, appendSystemPrompt, and wrap",
+      );
     }
+    return {
+      ...withWrap(result, keepSelectedWrap(name, previous.wrap, next.wrap)),
+      background: previous.background,
+      metadata: previous.metadata,
+      ...(next.appendSystemPrompt === undefined && previous.appendSystemPrompt !== undefined
+        ? { appendSystemPrompt: previous.appendSystemPrompt }
+        : {}),
+    };
   }
   if (name === "agent.create.before") {
     const previous = beforeSchemas["agent.create.before"].parse(input);
@@ -240,13 +367,33 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create.before hooks cannot change the workspace directory");
     }
+    if ((next.workspaceId ?? previous.workspaceId ?? null) !== (previous.workspaceId ?? null)) {
+      throw new Error("agent.create.before hooks cannot change the workspace");
+    }
+    // Omitted means unchanged: the next hook sees what this one was handed.
+    return {
+      ...result,
+      metadata: next.metadata ?? previous.metadata,
+      workspaceId: previous.workspaceId ?? null,
+    };
+  }
+  if (name === "workspace.create.before") {
+    const previous = beforeSchemas["workspace.create.before"].parse(input);
+    const next = beforeSchemas["workspace.create.before"].parse(result);
+    // Omitted means unchanged; an explicit {} still replaces.
+    return { ...result, metadata: next.metadata ?? previous.metadata };
+  }
+  if (name === "terminal.create.before" || name === "command.run.before") {
+    assertReadOnlyFields(name, input, result);
+    const schema = beforeSchemas[name as "terminal.create.before" | "command.run.before"];
+    const previous = schema.parse(input);
+    const next = schema.parse(result);
+    return withWrap(result, keepSelectedWrap(name, previous.wrap, next.wrap));
   }
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);
     const next = beforeSchemas["worktree.create.before"].parse(result);
-    if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
-      throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
-    }
+    return validateWorktreeBeforeResult(previous, next) as PluginWireBeforeRequests[Name];
   }
   return result;
 }
@@ -329,7 +476,8 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     context: PluginHookContext,
   ): Promise<SessionOpenWireRequest> {
     let request = validateBeforeRequest("agent.open.before", input);
-    this.agentTools?.detach(request.agentId);
+    // Attaching replaces the session's definitions for later calls; calls already running finish. The daemon detaches
+    // the session before an open that replaces the provider session.
     let tools: AgentToolDefinition[] = [];
     for (const handler of this.handlers.get("agent.open.before") ?? []) {
       context.signal.throwIfAborted();
@@ -350,6 +498,7 @@ export class PluginHookHandlers implements PluginLifecycleRegistration {
     if (request.purpose === "history") {
       request.tools = [];
       request.mcpServers = {};
+      delete request.appendSystemPrompt;
     } else this.agentTools?.attach(request.agentId, tools);
     return request;
   }
