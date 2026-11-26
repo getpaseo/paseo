@@ -32,6 +32,7 @@ export function LatestTurnDiff({
   enabled: boolean;
 }) {
   const { t } = useTranslation();
+  const [selection, setSelection] = useState(defaultAgentId);
   const agents = useSessionStore(
     useShallow((state) =>
       [...(state.sessions[serverId]?.agents.values() ?? [])].filter(
@@ -39,9 +40,16 @@ export function LatestTurnDiff({
       ),
     ),
   );
-  const [selection, setSelection] = useState(defaultAgentId);
-  const agent =
-    agents.find(({ id }) => id === selection) ?? (agents.length === 1 ? agents[0] : undefined);
+  const selectedAgent = useSessionStore((state) => {
+    if (selection === undefined) return undefined;
+    const session = state.sessions[serverId];
+    const selected = session?.agents.get(selection) ?? session?.agentDetails.get(selection);
+    return selected?.workspaceId === workspaceId && !selected.background ? selected : undefined;
+  });
+  const agent = selection === undefined && agents.length === 1 ? agents[0] : selectedAgent;
+  const showAgentPicker =
+    agents.length > 1 ||
+    (agents.length === 1 && selection !== undefined && agents[0]?.id !== selection);
   const changes = agent?.latestTurnChanges;
   const running = agent?.status === "running" || (agent != null && agent.turn.phase !== "idle");
   const label = (candidate: (typeof agents)[number]) => candidate.title || candidate.id.slice(0, 8);
@@ -63,7 +71,10 @@ export function LatestTurnDiff({
       />
     );
   } else {
-    const message = agents.length > 1 && !agent ? "latestTurnChooseAgent" : "latestTurnUnavailable";
+    const message =
+      agents.length > 1 && selection === undefined
+        ? "latestTurnChooseAgent"
+        : "latestTurnUnavailable";
     body = <Text style={styles.message}>{t(`workspace.git.diff.${message}`)}</Text>;
   }
 
@@ -71,7 +82,7 @@ export function LatestTurnDiff({
     <View style={styles.container} testID="latest-turn-changes">
       <View style={styles.context}>
         <Text style={styles.message}>{t("workspace.git.diff.latestTurnDescription")}</Text>
-        {agents.length > 1 && (
+        {showAgentPicker && (
           <DropdownMenu>
             <DropdownMenuTrigger testID="latest-turn-agent-picker" style={styles.picker}>
               <Text style={styles.pickerLabel}>

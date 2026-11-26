@@ -91,12 +91,12 @@ export async function retainTurnComparison(
 
 export async function releaseTurnComparison(cwd: string, agentId: string, includePending = false) {
   const ref = refPrefix(agentId);
-  const query = await git(["rev-parse", "--is-inside-work-tree"], {
+  const query = await git(["rev-parse", "--git-dir"], {
     cwd,
     timeout: 2_000,
     acceptExitCodes: [0, 128],
   });
-  if (query.exitCode !== 0 || query.stdout.trim() !== "true") return;
+  if (query.exitCode !== 0) return;
   await git(["update-ref", "--stdin"], {
     cwd,
     timeout: 2_000,

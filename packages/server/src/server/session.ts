@@ -234,6 +234,7 @@ import {
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
+import { runWithRepositoryRoot } from "../utils/git-repository-discovery.js";
 import {
   createGitMutationService,
   type GitMutationService,
@@ -3862,21 +3863,30 @@ export class Session {
     }
   }
 
-  private async turnSnapshotCleanupRoot(
+  private async deleteAgentState(
+    agentId: string,
     agent: Pick<ManagedAgent, "cwd" | "workspaceId" | "latestTurnChanges"> | null,
-  ): Promise<string | undefined> {
-    if (!agent || !(agent.latestTurnChanges || this.agentManager.latestTurnChangesEnabled)) return;
-    if (
-      !agent.workspaceId ||
-      (await stat(agent.cwd).then(
+  ): Promise<void> {
+    if (!agent || !(agent.latestTurnChanges || this.agentManager.latestTurnChangesEnabled)) {
+      return this.agentManager.deleteAgentState(agentId);
+    }
+    if (agent.workspaceId) {
+      const checkoutExists = await stat(agent.cwd).then(
         () => true,
         () => false,
-      ))
-    )
-      return agent.cwd;
-    // An archived linked worktree is gone, but its private refs live in the common repo.
-    const workspace = await this.workspaceRegistry.get(agent.workspaceId);
-    return workspace?.mainRepoRoot ?? agent.cwd;
+      );
+      if (!checkoutExists) {
+        // An archived linked worktree's private refs live in the recorded common repository.
+        const workspace = await this.workspaceRegistry.get(agent.workspaceId);
+        const root = workspace?.mainRepoRoot;
+        if (root) {
+          return runWithRepositoryRoot(root, () =>
+            this.agentManager.deleteAgentState(agentId, root),
+          );
+        }
+      }
+    }
+    return this.agentManager.deleteAgentState(agentId, agent.cwd);
   }
 
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
@@ -3903,10 +3913,7 @@ export class Session {
 
     try {
       await this.agentStorage.remove(agentId);
-      await this.agentManager.deleteAgentState(
-        agentId,
-        await this.turnSnapshotCleanupRoot(knownAgent),
-      );
+      await this.deleteAgentState(agentId, knownAgent);
       // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
       if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
     } catch (error) {
