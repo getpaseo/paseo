@@ -1,6 +1,6 @@
 import { isTurnBoundary } from "./turn-membership";
 import type { ChatDisplay } from "@/hooks/use-settings";
-import type { TimelineItemTransform } from "@/plugins/timeline/model";
+import type { TimelineItemFilter, TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import {
   prepareToolCallHistory,
@@ -17,6 +17,7 @@ interface PresentationInput {
   tail: StreamItem[];
   head: StreamItem[];
   transform: TimelineItemTransform | undefined;
+  filter?: TimelineItemFilter;
   display: ChatDisplay;
   autoExpandReasoning?: boolean;
   /** User messages whose collapsed turn the reader opened. */
@@ -74,6 +75,7 @@ export function createStreamPresentation() {
 
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
+  let historyFilter: TimelineItemFilter | undefined;
   let historyRows: StreamItem[] = [];
   let preparedTail: StreamItem[] | undefined;
   let preparedAutoExpandReasoning: boolean | undefined;
@@ -162,15 +164,22 @@ export function createStreamPresentation() {
   return (input: PresentationInput): StreamPresentation => {
     const level: ToolCallDetailLevel = input.display === "full" ? "detailed" : "overview";
     // Retained history is not reprojected or regrouped on each live text update.
-    if (historySource !== input.tail || historyTransform !== input.transform) {
-      historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
+    if (
+      historySource !== input.tail ||
+      historyTransform !== input.transform ||
+      historyFilter !== input.filter
+    ) {
+      const projected = projectPluginTimelineItems(input.tail, input.transform);
+      historyRows = (input.filter ? input.filter(projected) : projected).flatMap<StreamItem>(
         (item) => presentRows(item),
       );
       historySource = input.tail;
       historyTransform = input.transform;
+      historyFilter = input.filter;
     }
     const head: StreamItem[] = [];
-    for (const item of projectPluginTimelineItems(input.head, input.transform, "streaming")) {
+    const projectedHead = projectPluginTimelineItems(input.head, input.transform, "streaming");
+    for (const item of input.filter ? input.filter(projectedHead) : projectedHead) {
       const blocks = presentRows(item);
       head.push(...blocks);
     }

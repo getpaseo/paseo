@@ -145,6 +145,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    timelineFooters: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarViewIds = new Set<string>();
@@ -164,6 +165,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const timelineFooterIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -545,6 +547,25 @@ export function runPluginClientBundle(
         timelineTransformerIds.delete(normalizedId),
       );
     },
+    addTimelineFooter(contribution) {
+      const normalizedId = requireId(contribution.id, "timeline footer id");
+      if (timelineFooterIds.has(normalizedId))
+        throw new Error(`Duplicate timeline footer: ${normalizedId}`);
+      if (!isComponentType(contribution.Component))
+        throw new Error(`Timeline footer ${normalizedId} is not a component`);
+      const replaces = contribution.replaces?.map((replaced) => {
+        const kind = requireId(replaced.kind, "timeline footer kind");
+        if (!Number.isInteger(replaced.version) || replaced.version < 1)
+          throw new Error(`Timeline footer ${normalizedId} has invalid version`);
+        return { kind, version: replaced.version };
+      });
+      timelineFooterIds.add(normalizedId);
+      return register(
+        collector.timelineFooters,
+        { ...contribution, id: normalizedId, replaces },
+        () => timelineFooterIds.delete(normalizedId),
+      );
+    },
     addTimelineRenderer(contribution: PluginTimelineRendererContribution) {
       const kind = requireId(contribution.kind, "timeline renderer kind");
       if (!Number.isInteger(contribution.version) || contribution.version < 1) {
@@ -665,5 +686,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    timelineFooters: collector.timelineFooters,
   };
 }

@@ -4,6 +4,7 @@ import type {
   PluginTimelineTransformResult,
 } from "@getpaseo/plugin";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { StreamItem } from "@/types/stream";
 import type { InstalledPlugin } from "../types";
 
 export interface InstalledPluginTimelineItem extends PluginTimelineItem {
@@ -102,4 +103,30 @@ export function transformTimelineItem(
     }
   }
   return undefined;
+}
+
+export type TimelineItemFilter = (items: StreamItem[]) => StreamItem[];
+
+/** Remove replaced rows before grouping, pagination, and spacing are computed. */
+export function filterReplacedTimelineItems(
+  items: StreamItem[],
+  plugins: readonly InstalledPlugin[],
+): StreamItem[] {
+  const replacements = new Map<string, Set<string>>();
+  for (const plugin of plugins) {
+    const keys = new Set<string>();
+    for (const footer of plugin.timelineFooters) {
+      for (const replacement of footer.replaces ?? []) {
+        keys.add(`${replacement.kind}/${replacement.version}`);
+      }
+    }
+    if (keys.size > 0) replacements.set(plugin.id, keys);
+  }
+  if (replacements.size === 0) return items;
+  const filtered = items.filter(
+    (item) =>
+      item.kind !== "plugin" ||
+      !replacements.get(item.pluginId)?.has(`${item.itemKind}/${item.version}`),
+  );
+  return filtered.length === items.length ? items : filtered;
 }

@@ -67,6 +67,7 @@ function installation(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    timelineFooters: [],
   };
 }
 
