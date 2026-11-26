@@ -294,6 +294,7 @@ export const ar: TranslationResources = {
     archived: {
       callout: "تمت أرشفة هذا الوكيل",
       unarchive: "إلغاء الأرشفة",
+      unarchiving: "جارٍ إلغاء الأرشفة...",
     },
   },
   sessions: {
@@ -1578,6 +1579,8 @@ export const ar: TranslationResources = {
       status: {
         checking: "جارٍ التحقق من وجود تحديثات للتطبيق...",
         installing: "جارٍ تثبيت تحديث التطبيق...",
+        downloadingVersionProgress: "جارٍ تنزيل {{version}}... {{percent}}%",
+        downloadingProgress: "جارٍ تنزيل تحديث التطبيق... {{percent}}%",
         upToDate: "التطبيق محدث.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "سنخبرك عندما يصبح التحديث جاهزًا.",
@@ -1585,6 +1588,14 @@ export const ar: TranslationResources = {
         pendingWithVersion: "تم العثور على تحديث: {{version}}. جارٍ التنزيل...",
         pendingWithVersionAndLastChecked:
           "تم العثور على تحديث: {{version}}. جارٍ التنزيل... آخر فحص في {{time}}.",
+        pendingWithVersionProgress: "تم العثور على تحديث: {{version}}. جارٍ التنزيل... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "تم العثور على تحديث: {{version}}. جارٍ التنزيل... {{percent}}% آخر فحص في {{time}}.",
+        downloadAvailableWithVersion: "التحديث متاح: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "التحديث متاح: {{version}}. آخر فحص في {{time}}.",
+        downloadAvailable: "يتوفر تحديث للتطبيق.",
+        downloadAvailableWithLastChecked: "يتوفر تحديث للتطبيق. آخر فحص في {{time}}.",
         availableWithVersion: "التحديث جاهز:{{version}}",
         availableWithVersionAndLastChecked: "التحديث جاهز:{{version}}. آخر فحص في {{time}}.",
         available: "تحديث التطبيق جاهز للتثبيت.",
@@ -1595,14 +1606,21 @@ export const ar: TranslationResources = {
       },
       installError: "غير قادر على تثبيت تحديث تطبيق سطح المكتب.",
       callout: {
+        downloadingTitle: "جارٍ تنزيل التحديث",
         installingTitle: "تثبيت التحديث",
         failedTitle: "فشل التحديث",
         availableTitle: "التحديث متاح",
         genericError: "حدث خطأ ما.",
         whatsNew: "ما هو الجديد",
+        downloadingAction: "جارٍ التنزيل...",
         installingAction: "جارٍ التثبيت...",
+        downloadAndRestart: "تنزيل",
         installAndRestart: "التثبيت وإعادة التشغيل",
+        downloadingVersionDescription: "جارٍ تنزيل {{version}}... {{percent}}%",
+        downloadingDescription: "جارٍ تنزيل التحديث... {{percent}}%",
         installingDescription: "التثبيت وإعادة التشغيل...",
+        versionAvailable: "{{version}} متاح للتنزيل.",
+        newVersionAvailable: "يتوفر إصدار جديد للتنزيل.",
         versionReady: "{{version}}جاهز للتثبيت.",
         newVersionReady: "إصدار جديد جاهز للتثبيت.",
         restartWarning: "ستؤدي ترقية التطبيق إلى إيقاف تشغيل الوكلاء وإغلاق الجلسات الطرفية.",
@@ -1819,12 +1837,6 @@ export const ar: TranslationResources = {
             "يتيح لك تطبيق الجوال الأصلي كامل الميزات التحكم في أي كمبيوتر يعمل عليه Paseo من هاتفك",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "اختر طريقة الاتصال",
-          connectDocs: "الوثائق",
-          openConnectDocs: "افتح وثائق الاتصال",
-          recommended: "موصى به",
-          relay: { title: "التتابع", hint: "مشفّر من طرف إلى طرف، امسح رمز QR" },
-          tailscale: { title: "Tailscale", hint: "يتطلب بعض الإعداد" },
         },
       },
     },
@@ -1901,6 +1913,33 @@ export const ar: TranslationResources = {
       noModelAvailable: "لا يوجد نموذج متاح للموفر المحدد",
       workspaceDirectoryNotFound: "لم يتم العثور على دليل Workspace",
       hostDisconnected: "Host غير متصل",
+    },
+  },
+  devices: {
+    title: "الأجهزة",
+    waysToConnect: "طرق الاتصال",
+    docs: "الوثائق",
+    docsAccessibility: "افتح وثائق الاتصال",
+    relay: { title: "التتابع", hint: "دون إعداد، مشفّر من طرف إلى طرف، امسح رمز QR" },
+    tailscale: {
+      hint: "اتصال مباشر عبر شبكة tailnet الخاصة بك، أدخل عنوانًا",
+      unavailable: "Tailscale لا يعمل على هذا المضيف",
+      install: "احصل على Tailscale",
+      refresh: "تحديث",
+      refreshing: "جارٍ التحديث...",
+      waiting: "في انتظار بدء Tailscale على هذا المضيف",
+      alwaysOn: "مفعّل دائمًا، لأن هذا المضيف يقبل اتصالات Tailscale بالفعل",
+      socket: "متوقف، لأن هذا المضيف يستمع على مقبس محلي",
+      launch: "يتحكم فيه الأمر الذي يشغّل هذا المضيف",
+      update: "حدّث هذا المضيف لاستخدام Tailscale",
+      updateDocs: "طريقة التحديث",
+      address: "على هاتف متصل بـ Tailscale، أضف مضيفًا بهذا العنوان",
+      statusError: "تعذّر التحقق من Tailscale",
+      turnOnError: "تعذّر تشغيل Tailscale",
+      turnOffError: "تعذّر إيقاف Tailscale",
+      confirmTitle: "إيقاف Tailscale؟",
+      confirmMessage: "هذا الجهاز متصل عبر Tailscale وسيفقد اتصاله بالمضيف.",
+      confirmAction: "إيقاف",
     },
   },
   pairing: {
@@ -2405,7 +2444,7 @@ export const ar: TranslationResources = {
     title: "إعدادات",
     loading: "جارٍ تحميل الإعدادات...",
     groups: {
-      app: "برنامج",
+      app: "هذا الجهاز",
       host: "Host",
     },
     hostPicker: {
@@ -2423,7 +2462,9 @@ export const ar: TranslationResources = {
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",
+      hosts: "المضيفون",
       chat: "الدردشة",
+      chatAndPanes: "الدردشة والأجزاء",
       appearance: "مظهر",
       sidebar: "الشريط الجانبي",
       terminal: "الطرفية",
@@ -2436,6 +2477,16 @@ export const ar: TranslationResources = {
       permissions: "الأذونات",
       diagnostics: "التشخيص",
       about: "عن",
+    },
+    clientHosts: {
+      title: "المضيفون المحفوظون",
+      info: "المضيفون الذين يتصل بهم هذا الجهاز. الأسماء والأيقونات والشارات والمسارات هنا تؤثر على هذا الجهاز فقط.",
+      backToHosts: "العودة إلى المضيفين",
+      routesTitle: "كيف يتصل هذا الجهاز",
+      routesInfo:
+        "المسارات المحفوظة التي يستخدمها هذا الجهاز للوصول إلى هذا المضيف. يختار Paseo أسرع مسار متاح.",
+      addRoute: "إضافة مسار",
+      activeRoute: "نشط",
     },
     layout: en.settings.layout,
     editor: {
@@ -2453,6 +2504,47 @@ export const ar: TranslationResources = {
     },
     notifications: {
       title: "الإشعارات",
+      enabled: {
+        label: "تفعيل الإشعارات",
+        description: "تلقّي الإشعارات من الوكلاء والطرفيات والإضافات على هذا الجهاز",
+        pausedDescription: "جميع الإشعارات، بما في ذلك الإضافات، متوقفة مؤقتًا على هذا الجهاز",
+      },
+      events: {
+        title: "الأحداث",
+        agentPermission: {
+          label: "الوكيل يحتاج إلى إذن",
+          description: "الموافقات والخطط والأسئلة",
+        },
+        agentError: {
+          label: "تعطّل الوكيل بخطأ",
+          description: "عندما يتوقف الوكيل بسبب خطأ",
+        },
+        agentFinished: {
+          label: "انتهى الوكيل",
+          description: "عندما يكمل الوكيل دورة عمل",
+        },
+        terminalNeedsInput: {
+          label: "الطرفية تنتظر إدخالًا",
+          description: "عندما ينتظر أمر الطرفية إدخالًا",
+        },
+        terminalFinished: {
+          label: "انتهى أمر الطرفية",
+          description: "عندما ينتهي أمر في الطرفية",
+        },
+      },
+      plugins: {
+        title: "الإضافات",
+        enabled: {
+          label: "إشعارات الإضافات",
+          description: "السماح للإضافات المثبتة بإرسال إشعارات",
+        },
+        empty: "تظهر الإضافات المثبتة هنا لكتمها بشكل فردي",
+      },
+      legacyHostTitle: "حدّث المضيف لتفضيلات الإشعارات الفورية",
+      legacyHostHint: "حدّث المضيفين المتصلين لمزامنة تفضيلات الإشعارات المخصصة من هذا الجهاز",
+      desktop: {
+        title: "النظام",
+      },
       permission: "إذن الإشعارات",
       refreshAccessibility: "تحديث إذن الإشعارات",
       playSound: "تشغيل صوت",
@@ -2470,6 +2562,7 @@ export const ar: TranslationResources = {
       projects: "المشاريع",
       connections: "اتصالات",
       agents: "Agents",
+      tools: "الأدوات والتعليمات",
       agentProfiles: "ملفات الوكيل",
       metadata: "البيانات الوصفية",
       voice: "الصوت",
@@ -2479,6 +2572,7 @@ export const ar: TranslationResources = {
       terminals: "Terminals",
       plugins: "Plugins",
       host: "نظرة عامة",
+      daemon: "الخدمة",
     },
     plugins: pluginSettings.ar,
     metadataGeneration: {
@@ -2684,9 +2778,28 @@ export const ar: TranslationResources = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "التحديثات التلقائية",
+        options: {
+          automatic: "تلقائي",
+          notify: "إشعار",
+          off: "إيقاف",
+        },
+        descriptions: {
+          automatic: "التحقق من التحديثات وتنزيلها في الخلفية",
+          notify: "التحقق من التحديثات وتنزيلها فقط عند اختيارك",
+          off: "عدم التحقق تلقائيًا. يتم التحقق فقط عند النقر على فحص",
+        },
+      },
       updates: {
         label: "تحديثات التطبيق",
         readyToInstall: "جاهز للتثبيت:{{version}}",
+        downloadTitle: "تنزيل تحديث سطح المكتب",
+        downloadMessage: "سيؤدي هذا إلى تنزيل تحديث Paseo وتثبيته على هذا الكمبيوتر",
+        downloadConfirm: "تنزيل وتثبيت",
+        download: "تنزيل",
+        downloadTo: "تنزيل {{version}}",
+        downloading: "جارٍ التنزيل...",
         installTitle: "تثبيت تحديث سطح المكتب",
         installMessage: "يؤدي هذا إلى تحديث Paseo على هذا الكمبيوتر",
         installConfirm: "تثبيت التحديث",
@@ -2957,9 +3070,7 @@ export const ar: TranslationResources = {
         timeout: "نفذ الوقت",
       },
       pairDevices: {
-        title: "إقران الأجهزة",
         rowTitle: "إقران جهاز",
-        rowHint: "امسح رمز QR ضوئيًا أو انسخ رابطًا لتوصيل هاتفك بهذا المضيف",
       },
       skills: {
         ...en.settings.host.skills,
@@ -2998,6 +3109,10 @@ export const ar: TranslationResources = {
           update: "تحديث المهارة",
           delete: "حذف المهارة",
         },
+      },
+      tools: {
+        instructionsTitle: "التعليمات",
+        toolsTitle: "أدوات الوكلاء",
       },
       orchestration: {
         title: "التنسيق",
@@ -3125,6 +3240,7 @@ export const ar: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "بيئة تشغيل الوكلاء",
         rename: {
           editLabel: "تحرير التسمية",
           title: "إعادة تسمية المضيف",

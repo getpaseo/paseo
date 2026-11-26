@@ -81,7 +81,7 @@ import {
   formatProviderDiagnostic,
   type DiagnosticEntry,
 } from "./providers/diagnostic-utils.js";
-import { LaunchWrapUnsupportedError } from "./provider-options.js";
+import { LaunchWrapUnsupportedError, ToolPolicyUnsupportedError } from "./provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -349,6 +349,12 @@ class ProviderRuntime {
       throw new Error(`Provider session already exists: ${input.sessionId}`);
     }
     const connection = await this.getConnection();
+    if (input.config.toolPolicy && !connection.capabilities.includes("permission.tool_policy")) {
+      throw new ToolPolicyUnsupportedError(
+        this.registration.id,
+        `Provider '${this.registration.id}' cannot preapprove exact MCP tools: its connection does not offer permission.tool_policy`,
+      );
+    }
     requireProviderCapabilities(connection.capabilities, {
       type: "session.open",
       requestId: "capability-check",
@@ -447,6 +453,12 @@ class ProviderRuntime {
       pending.reject(
         signal?.reason instanceof Error ? signal.reason : new Error("Provider request aborted"),
       );
+      // Without the cancel, a provider keeps the abandoned work and whatever it spawned (#10734).
+      if (connection.capabilities.includes("request.cancel")) {
+        void connection
+          .send({ type: "request.cancel", requestId: input.requestId })
+          .catch(() => undefined);
+      }
     };
     signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -1057,6 +1069,8 @@ function createPluginProviderDefinition(
     requiresConfiguration: registration.requiresConfiguration,
     defaultModeId: null,
     modes: [],
+    // Each connection negotiates permission.tool_policy, so the registry lets a policy through and
+    // ProviderRuntime.openSession refuses it with ToolPolicyUnsupportedError when it is not offered.
     supportsExactMcpPreapproval: true,
     supportsLaunchWrap: registration.launchWrap === true,
     createClient,

@@ -298,6 +298,7 @@ export const ptBR: TranslationResources = {
     archived: {
       callout: "Este agente está arquivado",
       unarchive: "Desarquivar",
+      unarchiving: "Desarquivando...",
     },
   },
   sessions: {
@@ -1605,6 +1606,8 @@ export const ptBR: TranslationResources = {
       status: {
         checking: "Verificando atualizações do app...",
         installing: "Instalando atualização do app...",
+        downloadingVersionProgress: "Baixando {{version}}... {{percent}}%",
+        downloadingProgress: "Baixando atualização do app... {{percent}}%",
         upToDate: "O app está atualizado.",
         upToDateWithLastChecked: "Atualizado. Última verificação às {{time}}.",
         pending: "Avisaremos quando a atualização estiver pronta.",
@@ -1613,6 +1616,15 @@ export const ptBR: TranslationResources = {
         pendingWithVersion: "Atualização encontrada: {{version}}. Baixando...",
         pendingWithVersionAndLastChecked:
           "Atualização encontrada: {{version}}. Baixando... Última verificação às {{time}}.",
+        pendingWithVersionProgress: "Atualização encontrada: {{version}}. Baixando... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Atualização encontrada: {{version}}. Baixando... {{percent}}% Última verificação às {{time}}.",
+        downloadAvailableWithVersion: "Atualização disponível: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Atualização disponível: {{version}}. Última verificação às {{time}}.",
+        downloadAvailable: "Há uma atualização do app disponível.",
+        downloadAvailableWithLastChecked:
+          "Há uma atualização do app disponível. Última verificação às {{time}}.",
         availableWithVersion: "Atualização pronta: {{version}}",
         availableWithVersionAndLastChecked:
           "Atualização pronta: {{version}}. Última verificação às {{time}}.",
@@ -1625,14 +1637,21 @@ export const ptBR: TranslationResources = {
       },
       installError: "Não foi possível instalar a atualização do app desktop.",
       callout: {
+        downloadingTitle: "Baixando atualização",
         installingTitle: "Instalando atualização",
         failedTitle: "Falha na atualização",
         availableTitle: "Atualização disponível",
         genericError: "Algo deu errado.",
         whatsNew: "Novidades",
+        downloadingAction: "Baixando...",
         installingAction: "Instalando...",
+        downloadAndRestart: "Baixar",
         installAndRestart: "Instalar e reiniciar",
+        downloadingVersionDescription: "Baixando {{version}}... {{percent}}%",
+        downloadingDescription: "Baixando atualização... {{percent}}%",
         installingDescription: "Instalando e reiniciando...",
+        versionAvailable: "{{version}} está disponível para download.",
+        newVersionAvailable: "Uma nova versão está disponível para download.",
         versionReady: "{{version}} está pronta para instalar.",
         newVersionReady: "Uma nova versão está pronta para instalar.",
         restartWarning:
@@ -1852,12 +1871,6 @@ export const ptBR: TranslationResources = {
             "O app móvel nativo completo permite controlar qualquer computador com Paseo pelo seu celular",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "Escolha como se conectar",
-          connectDocs: "Docs",
-          openConnectDocs: "Abrir documentação de conectividade",
-          recommended: "Recomendado",
-          relay: { title: "Relay", hint: "Criptografia de ponta a ponta, escaneie um código QR" },
-          tailscale: { title: "Tailscale", hint: "Requer alguma configuração" },
         },
       },
     },
@@ -1934,6 +1947,37 @@ export const ptBR: TranslationResources = {
       noModelAvailable: "Nenhum modelo disponível para o provedor selecionado",
       workspaceDirectoryNotFound: "Diretório do workspace não encontrado",
       hostDisconnected: "Host não está conectado",
+    },
+  },
+  devices: {
+    title: "Dispositivos",
+    waysToConnect: "Formas de conexão",
+    docs: "Docs",
+    docsAccessibility: "Abrir documentação de conectividade",
+    relay: {
+      title: "Relay",
+      hint: "Sem configuração, criptografia de ponta a ponta, escaneie um código QR",
+    },
+    tailscale: {
+      hint: "Conexão direta pela sua tailnet, digite um endereço",
+      unavailable: "O Tailscale não está em execução neste host",
+      install: "Baixar o Tailscale",
+      refresh: "Atualizar",
+      refreshing: "Atualizando...",
+      waiting: "Aguardando o Tailscale iniciar neste host",
+      alwaysOn: "Sempre ativado, porque este host já aceita conexões do Tailscale",
+      socket: "Desativado, porque este host escuta em um socket local",
+      launch: "Controlado pelo comando que inicia este host",
+      update: "Atualize este host para usar o Tailscale",
+      updateDocs: "Como atualizar",
+      address: "Em um celular com Tailscale, adicione um host com este endereço",
+      statusError: "Não foi possível verificar o Tailscale",
+      turnOnError: "Não foi possível ativar o Tailscale",
+      turnOffError: "Não foi possível desativar o Tailscale",
+      confirmTitle: "Desativar o Tailscale?",
+      confirmMessage:
+        "Este dispositivo está conectado pelo Tailscale e perderá a conexão com o host.",
+      confirmAction: "Desativar",
     },
   },
   pairing: {
@@ -2404,7 +2448,7 @@ export const ptBR: TranslationResources = {
     title: "Configurações",
     loading: "Carregando configurações...",
     groups: {
-      app: "App",
+      app: "Este dispositivo",
       host: "Host",
     },
     hostPicker: {
@@ -2422,7 +2466,9 @@ export const ptBR: TranslationResources = {
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat e painéis",
       appearance: "Aparência",
       sidebar: "Barra lateral",
       terminal: "Terminal",
@@ -2435,6 +2481,16 @@ export const ptBR: TranslationResources = {
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
       about: "Sobre",
+    },
+    clientHosts: {
+      title: "Hosts salvos",
+      info: "Hosts aos quais este dispositivo se conecta. Nomes, ícones, selos e rotas aqui afetam apenas este dispositivo.",
+      backToHosts: "Voltar para hosts",
+      routesTitle: "Como este dispositivo se conecta",
+      routesInfo:
+        "Rotas salvas que este dispositivo usa para alcançar este host. O Paseo escolhe a mais rápida disponível.",
+      addRoute: "Adicionar rota",
+      activeRoute: "Ativa",
     },
     layout: en.settings.layout,
     editor: {
@@ -2452,6 +2508,50 @@ export const ptBR: TranslationResources = {
     },
     notifications: {
       title: "Notificações",
+      enabled: {
+        label: "Ativar notificações",
+        description: "Receba notificações de agentes, terminais e plugins neste dispositivo",
+        pausedDescription:
+          "Todas as notificações, incluindo as de plugins, estão pausadas neste dispositivo",
+      },
+      events: {
+        title: "Eventos",
+        agentPermission: {
+          label: "Agente precisa de permissão",
+          description: "Aprovações, planos e perguntas",
+        },
+        agentError: {
+          label: "Erro no agente",
+          description: "Quando um agente para com erro",
+        },
+        agentFinished: {
+          label: "Agente concluiu",
+          description: "Quando um agente conclui um turno",
+        },
+        terminalNeedsInput: {
+          label: "Terminal aguarda entrada",
+          description: "Quando um comando do terminal aguarda entrada",
+        },
+        terminalFinished: {
+          label: "Terminal concluiu",
+          description: "Quando um comando do terminal termina",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Notificações de plugins",
+          description: "Permitir que plugins instalados enviem notificações",
+        },
+        empty:
+          "Os plugins instalados aparecem aqui para que você possa silenciá-los individualmente",
+      },
+      legacyHostTitle: "Atualize o host para preferências de push",
+      legacyHostHint:
+        "Atualize os hosts conectados para sincronizar as preferências de notificações push deste dispositivo",
+      desktop: {
+        title: "Sistema",
+      },
       permission: "Permissão de notificações",
       refreshAccessibility: "Atualizar permissão de notificações",
       playSound: "Reproduzir som",
@@ -2469,6 +2569,7 @@ export const ptBR: TranslationResources = {
       projects: "Projetos",
       connections: "Conexões",
       agents: "Agentes",
+      tools: "Ferramentas e instruções",
       agentProfiles: "Perfis de agente",
       metadata: "Metadados",
       voice: "Voz",
@@ -2478,6 +2579,7 @@ export const ptBR: TranslationResources = {
       terminals: "Terminais",
       plugins: "Plugins",
       host: "Visão geral",
+      daemon: "Daemon",
     },
     plugins: pluginSettings["pt-BR"],
     metadataGeneration: {
@@ -2687,9 +2789,28 @@ export const ptBR: TranslationResources = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "Atualizações automáticas",
+        options: {
+          automatic: "Auto",
+          notify: "Notificar",
+          off: "Desativado",
+        },
+        descriptions: {
+          automatic: "Verificar e baixar atualizações em segundo plano",
+          notify: "Verificar atualizações, mas baixar apenas quando você escolher",
+          off: "Nunca verificar automaticamente. Verificar apenas ao clicar em Verificar",
+        },
+      },
       updates: {
         label: "Atualizações do app",
         readyToInstall: "Pronta para instalar: {{version}}",
+        downloadTitle: "Baixar atualização desktop",
+        downloadMessage: "Isso baixa e instala a atualização do Paseo neste computador",
+        downloadConfirm: "Baixar e instalar",
+        download: "Baixar",
+        downloadTo: "Baixar {{version}}",
+        downloading: "Baixando...",
         installTitle: "Instalar atualização desktop",
         installMessage: "Isso atualiza o Paseo neste computador",
         installConfirm: "Instalar atualização",
@@ -2962,9 +3083,7 @@ export const ptBR: TranslationResources = {
         timeout: "Timeout",
       },
       pairDevices: {
-        title: "Parear dispositivos",
         rowTitle: "Parear um dispositivo",
-        rowHint: "Escaneie um QR code ou copie um link para conectar seu celular a este host",
       },
       skills: {
         ...en.settings.host.skills,
@@ -3004,6 +3123,10 @@ export const ptBR: TranslationResources = {
           update: "Atualizar skill",
           delete: "Excluir skill",
         },
+      },
+      tools: {
+        instructionsTitle: "Instruções",
+        toolsTitle: "Ferramentas de agentes",
       },
       orchestration: {
         title: "Orquestração",
@@ -3133,6 +3256,7 @@ export const ptBR: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "Execução de agentes",
         rename: {
           editLabel: "Editar rótulo",
           title: "Renomear host",

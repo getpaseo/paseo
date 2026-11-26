@@ -294,6 +294,7 @@ export const zhCN: TranslationResources = {
     archived: {
       callout: "此 Agent 已归档",
       unarchive: "取消归档",
+      unarchiving: "正在取消归档...",
     },
   },
   sessions: {
@@ -1565,6 +1566,8 @@ export const zhCN: TranslationResources = {
       status: {
         checking: "正在检查 app 更新...",
         installing: "正在安装 app 更新...",
+        downloadingVersionProgress: "正在下载 {{version}}... {{percent}}%",
+        downloadingProgress: "正在下载 app 更新... {{percent}}%",
         upToDate: "App 已是最新版本。",
         upToDateWithLastChecked: "已是最新版本。上次检查时间：{{time}}。",
         pending: "更新准备好后会通知你。",
@@ -1572,6 +1575,14 @@ export const zhCN: TranslationResources = {
         pendingWithVersion: "发现更新：{{version}}。正在下载...",
         pendingWithVersionAndLastChecked:
           "发现更新：{{version}}。正在下载... 上次检查时间：{{time}}。",
+        pendingWithVersionProgress: "发现更新：{{version}}。正在下载... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "发现更新：{{version}}。正在下载... {{percent}}% 上次检查时间：{{time}}。",
+        downloadAvailableWithVersion: "有可用更新：{{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "有可用更新：{{version}}。上次检查时间：{{time}}。",
+        downloadAvailable: "有 app 更新可用。",
+        downloadAvailableWithLastChecked: "有 app 更新可用。上次检查时间：{{time}}。",
         availableWithVersion: "更新已就绪：{{version}}",
         availableWithVersionAndLastChecked: "更新已就绪：{{version}}。上次检查时间：{{time}}。",
         available: "有 app 更新可安装。",
@@ -1582,14 +1593,21 @@ export const zhCN: TranslationResources = {
       },
       installError: "无法安装 desktop app 更新。",
       callout: {
+        downloadingTitle: "正在下载更新",
         installingTitle: "正在安装更新",
         failedTitle: "更新失败",
         availableTitle: "有可用更新",
         genericError: "出了点问题。",
         whatsNew: "更新内容",
+        downloadingAction: "正在下载...",
         installingAction: "正在安装...",
+        downloadAndRestart: "下载",
         installAndRestart: "安装并重启",
+        downloadingVersionDescription: "正在下载 {{version}}... {{percent}}%",
+        downloadingDescription: "正在下载更新... {{percent}}%",
         installingDescription: "正在安装并重启...",
+        versionAvailable: "{{version}} 可供下载。",
+        newVersionAvailable: "有新版本可供下载。",
         versionReady: "{{version}} 已准备好安装。",
         newVersionReady: "新版本已准备好安装。",
         restartWarning: "升级 app 会停止正在运行的 agents，并关闭 terminal 会话。",
@@ -1801,12 +1819,6 @@ export const zhCN: TranslationResources = {
           description: "功能完整的原生移动应用让你可以在手机上控制任意一台 Paseo 电脑",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "选择连接方式",
-          connectDocs: "文档",
-          openConnectDocs: "打开连接文档",
-          recommended: "推荐",
-          relay: { title: "中继", hint: "端到端加密，扫描二维码" },
-          tailscale: { title: "Tailscale", hint: "需要一些设置" },
         },
       },
     },
@@ -1883,6 +1895,33 @@ export const zhCN: TranslationResources = {
       noModelAvailable: "所选 provider 没有可用模型",
       workspaceDirectoryNotFound: "Workspace 目录未找到",
       hostDisconnected: "Host 未连接",
+    },
+  },
+  devices: {
+    title: "设备",
+    waysToConnect: "连接方式",
+    docs: "文档",
+    docsAccessibility: "打开连接文档",
+    relay: { title: "中继", hint: "无需配置，端到端加密，扫描二维码" },
+    tailscale: {
+      hint: "通过你的 tailnet 直连，输入地址即可",
+      unavailable: "此主机未运行 Tailscale",
+      install: "获取 Tailscale",
+      refresh: "刷新",
+      refreshing: "刷新中...",
+      waiting: "正在等待此主机上的 Tailscale 启动",
+      alwaysOn: "始终开启，因为此主机已接受 Tailscale 连接",
+      socket: "已关闭，因为此主机监听的是本地套接字",
+      launch: "由启动此主机的命令控制",
+      update: "更新此主机以使用 Tailscale",
+      updateDocs: "如何更新",
+      address: "在已连接 Tailscale 的手机上，用此地址添加主机",
+      statusError: "无法检查 Tailscale",
+      turnOnError: "无法开启 Tailscale",
+      turnOffError: "无法关闭 Tailscale",
+      confirmTitle: "关闭 Tailscale？",
+      confirmMessage: "此设备通过 Tailscale 连接，关闭后将与主机断开连接。",
+      confirmAction: "关闭",
     },
   },
   pairing: {
@@ -2346,7 +2385,7 @@ export const zhCN: TranslationResources = {
     title: "设置",
     loading: "正在加载设置...",
     groups: {
-      app: "应用",
+      app: "此设备",
       host: "主机",
     },
     hostPicker: {
@@ -2364,7 +2403,9 @@ export const zhCN: TranslationResources = {
     groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",
+      hosts: "主机",
       chat: "聊天",
+      chatAndPanes: "聊天与面板",
       appearance: "外观",
       sidebar: "侧边栏",
       terminal: "终端",
@@ -2377,6 +2418,15 @@ export const zhCN: TranslationResources = {
       permissions: "权限",
       diagnostics: "诊断",
       about: "关于",
+    },
+    clientHosts: {
+      title: "已保存的主机",
+      info: "此设备连接的主机。这里的名称、图标、徽章和连接路径仅影响此设备。",
+      backToHosts: "返回主机",
+      routesTitle: "此设备的连接方式",
+      routesInfo: "此设备连接到该主机的已保存路径。Paseo 会自动选择最快的可用路径。",
+      addRoute: "添加路径",
+      activeRoute: "当前使用",
     },
     layout: en.settings.layout,
     editor: {
@@ -2394,6 +2444,47 @@ export const zhCN: TranslationResources = {
     },
     notifications: {
       title: "通知",
+      enabled: {
+        label: "启用通知",
+        description: "在此设备上接收来自智能体、终端和插件的通知",
+        pausedDescription: "此设备上的所有通知（包括插件通知）均已暂停",
+      },
+      events: {
+        title: "事件",
+        agentPermission: {
+          label: "智能体需要权限",
+          description: "审批、计划与提问",
+        },
+        agentError: {
+          label: "智能体出错",
+          description: "当智能体因错误停止时",
+        },
+        agentFinished: {
+          label: "智能体已完成",
+          description: "当智能体完成一轮回复时",
+        },
+        terminalNeedsInput: {
+          label: "终端等待输入",
+          description: "当终端命令正在等待输入时",
+        },
+        terminalFinished: {
+          label: "终端命令完成",
+          description: "当终端命令执行结束时",
+        },
+      },
+      plugins: {
+        title: "插件",
+        enabled: {
+          label: "插件通知",
+          description: "允许已安装的插件发送通知",
+        },
+        empty: "已安装的插件会显示在这里，方便你单独静音",
+      },
+      legacyHostTitle: "更新主机以同步推送偏好",
+      legacyHostHint: "更新已连接的主机，以同步此设备上的自定义推送通知偏好设置",
+      desktop: {
+        title: "系统",
+      },
       permission: "通知权限",
       refreshAccessibility: "刷新通知权限",
       playSound: "播放声音",
@@ -2411,6 +2502,7 @@ export const zhCN: TranslationResources = {
       projects: "项目",
       connections: "连接",
       agents: "Agents",
+      tools: "工具与提示词",
       agentProfiles: "智能体配置文件",
       metadata: "元数据",
       voice: "语音",
@@ -2420,6 +2512,7 @@ export const zhCN: TranslationResources = {
       terminals: "Terminals",
       plugins: "插件",
       host: "概览",
+      daemon: "守护进程",
     },
     plugins: pluginSettings["zh-CN"],
     metadataGeneration: {
@@ -2621,9 +2714,28 @@ export const zhCN: TranslationResources = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "自动更新",
+        options: {
+          automatic: "自动",
+          notify: "仅通知",
+          off: "关闭",
+        },
+        descriptions: {
+          automatic: "在后台检查并下载更新",
+          notify: "检查更新，但仅在你选择时才下载",
+          off: "从不自动检查，仅在点击检查时检查更新",
+        },
+      },
       updates: {
         label: "应用更新",
         readyToInstall: "可安装：{{version}}",
+        downloadTitle: "下载桌面版更新",
+        downloadMessage: "这会在此电脑上下载并安装 Paseo 更新",
+        downloadConfirm: "下载并安装",
+        download: "下载",
+        downloadTo: "下载 {{version}}",
+        downloading: "正在下载...",
         installTitle: "安装桌面版更新",
         installMessage: "这会更新此电脑上的 Paseo",
         installConfirm: "安装更新",
@@ -2891,9 +3003,7 @@ export const zhCN: TranslationResources = {
         timeout: "超时",
       },
       pairDevices: {
-        title: "配对设备",
         rowTitle: "配对设备",
-        rowHint: "扫描二维码或复制链接，将手机连接到这个 Host",
       },
       skills: {
         ...en.settings.host.skills,
@@ -2932,6 +3042,10 @@ export const zhCN: TranslationResources = {
           update: "更新 skill",
           delete: "删除 skill",
         },
+      },
+      tools: {
+        instructionsTitle: "指令",
+        toolsTitle: "代理工具",
       },
       orchestration: {
         title: "编排",
@@ -3059,6 +3173,7 @@ export const zhCN: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "代理运行时",
         rename: {
           editLabel: "编辑标签",
           title: "重命名 Host",

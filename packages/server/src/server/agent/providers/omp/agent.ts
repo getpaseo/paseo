@@ -1604,6 +1604,10 @@ export class OmpAgentSession implements AgentSession {
   private handleExtensionUiRequest(
     event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
+    if (event.method === "cancel") {
+      if (event.targetId) this.closeExtensionUiRequest(event.targetId);
+      return;
+    }
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
       this.emit({
@@ -1646,6 +1650,19 @@ export class OmpAgentSession implements AgentSession {
       type: "permission_requested",
       provider: this.provider,
       request,
+      turnId: this.currentTurnIdForEvent(),
+    });
+  }
+
+  /** OMP aborted or timed out a dialog: close its card without a reply OMP would reject. */
+  private closeExtensionUiRequest(requestId: string): void {
+    if (!this.pendingExtensionUiRequests.delete(requestId)) return;
+    this.questionUi.forget(requestId);
+    this.emit({
+      type: "permission_resolved",
+      provider: this.provider,
+      requestId,
+      resolution: { behavior: "deny", message: "OMP closed the question." },
       turnId: this.currentTurnIdForEvent(),
     });
   }

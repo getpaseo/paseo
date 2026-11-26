@@ -1,14 +1,26 @@
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-const { autoUpdaterMock } = vi.hoisted(() => {
-  const handlers = new Map<string, (value: unknown) => void>();
+const { autoUpdaterMock, getAllWindowsMock, desktopSettingsMock } = vi.hoisted(() => {
+  const handlers = new Map<string, Set<(value: unknown) => void>>();
   return {
+    getAllWindowsMock: vi.fn<() => unknown[]>(() => []),
+    desktopSettingsMock: {
+      mode: "automatic" as "automatic" | "notify" | "off",
+      error: null as Error | null,
+    },
     autoUpdaterMock: {
-      handlers,
+      handlers: {
+        get: (event: string) => (value: unknown) => {
+          for (const listener of handlers.get(event) ?? []) {
+            listener(value);
+          }
+        },
+      },
       logger: {
         debug: vi.fn(),
         error: vi.fn((message: unknown) => console.error(message)),
@@ -18,7 +30,15 @@ const { autoUpdaterMock } = vi.hoisted(() => {
       checkForUpdates: vi.fn(),
       downloadUpdate: vi.fn(),
       on: vi.fn((event: string, handler: (value: unknown) => void) => {
-        handlers.set(event, handler);
+        let set = handlers.get(event);
+        if (!set) {
+          set = new Set();
+          handlers.set(event, set);
+        }
+        set.add(handler);
+      }),
+      removeListener: vi.fn((event: string, handler: (value: unknown) => void) => {
+        handlers.get(event)?.delete(handler);
       }),
       quitAndInstall: vi.fn(),
     },
@@ -27,9 +47,30 @@ const { autoUpdaterMock } = vi.hoisted(() => {
 
 vi.mock("electron", () => ({
   app: {
+    // No userData path: update pacing has no state file here, so it paces nothing.
     getPath: vi.fn(),
     isPackaged: true,
   },
+  autoUpdater: undefined,
+  BrowserWindow: {
+    getAllWindows: getAllWindowsMock,
+  },
+}));
+
+vi.mock("../settings/desktop-settings-electron.js", () => ({
+  getDesktopSettingsStore: () => ({
+    get: async () => {
+      if (desktopSettingsMock.error) {
+        throw desktopSettingsMock.error;
+      }
+      return {
+        releaseChannel: "stable",
+        updates: { mode: desktopSettingsMock.mode },
+        notifications: { playSound: true },
+        daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: true },
+      };
+    },
+  }),
 }));
 
 vi.mock("electron-updater", () => ({
@@ -37,13 +78,13 @@ vi.mock("electron-updater", () => ({
 }));
 
 import {
-  bucketFromStagingUserId,
   checkForAppUpdate,
   createAppUpdateLifecycleLogger,
+  downloadAndInstallUpdate,
   resolveStagingUserId,
-  rolloutManifestSchema,
-  shouldAdmitToRollout,
+  runElectronQuitAndInstall,
   shouldInstallAppUpdateOnQuit,
+  shouldUseWindowProgressBar,
 } from "./auto-updater";
 
 describe("checkForAppUpdate", () => {
@@ -67,6 +108,7 @@ describe("checkForAppUpdate", () => {
     expect(result).toEqual({
       hasUpdate: false,
       readyToInstall: false,
+      downloading: false,
       currentVersion: "1.2.3",
       latestVersion: "1.2.3",
       body: null,
@@ -95,6 +137,319 @@ describe("checkForAppUpdate", () => {
     expect(result.errorMessage).toBe("network down");
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  it("configures electron-updater autoDownload from checkForAppUpdate options", async () => {
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: { version: "1.2.5" },
+    });
+
+    const result = await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+      autoDownload: false,
+    });
+
+    expect((autoUpdaterMock as unknown as { autoDownload?: boolean }).autoDownload).toBe(false);
+    expect(result).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      downloading: false,
+      latestVersion: "1.2.5",
+    });
+  });
+
+  it("forwards download-progress to window progress bars on non-darwin platforms and avoids idle clears", async () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const setProgressBar = vi.fn();
+    const send = vi.fn();
+    try {
+      getAllWindowsMock.mockReturnValue([
+        { isDestroyed: () => false, setProgressBar, webContents: { send } },
+      ]);
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.6" },
+      });
+
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+        autoDownload: true,
+      });
+      expect(setProgressBar).not.toHaveBeenCalled();
+
+      autoUpdaterMock.handlers.get("download-progress")?.({
+        percent: 42,
+        transferred: 420,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
+
+      expect(setProgressBar).toHaveBeenCalledWith(0.42);
+      expect(send).toHaveBeenCalledWith("paseo:event:app-update-download-progress", {
+        version: "1.2.6",
+        percent: 42,
+        transferred: 420,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
+
+      autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.6" });
+      expect(setProgressBar).toHaveBeenLastCalledWith(-1);
+      expect(setProgressBar).toHaveBeenCalledTimes(2);
+      expect(send).toHaveBeenLastCalledWith("paseo:event:app-update-download-progress", null);
+
+      // A subsequent idle clear (e.g., switching channels) must not call setProgressBar(-1) again.
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: false,
+        updateInfo: { version: "1.2.3" },
+      });
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "beta",
+        intent: "manual",
+      });
+      expect(setProgressBar).toHaveBeenCalledTimes(2);
+    } finally {
+      getAllWindowsMock.mockReturnValue([]);
+      platformSpy.mockRestore();
+    }
+  });
+
+  it("skips window progress bars on darwin while still forwarding renderer events", async () => {
+    expect(shouldUseWindowProgressBar("darwin")).toBe(false);
+    expect(shouldUseWindowProgressBar("win32")).toBe(true);
+    expect(shouldUseWindowProgressBar("linux")).toBe(true);
+
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const setProgressBar = vi.fn();
+    const send = vi.fn();
+    try {
+      getAllWindowsMock.mockReturnValue([
+        { isDestroyed: () => false, setProgressBar, webContents: { send } },
+      ]);
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.11" },
+      });
+
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+        autoDownload: true,
+      });
+      autoUpdaterMock.handlers.get("download-progress")?.({
+        percent: 55,
+        transferred: 550,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
+      autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.11" });
+
+      expect(setProgressBar).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledWith("paseo:event:app-update-download-progress", {
+        version: "1.2.11",
+        percent: 55,
+        transferred: 550,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
+      expect(send).toHaveBeenLastCalledWith("paseo:event:app-update-download-progress", null);
+    } finally {
+      getAllWindowsMock.mockReturnValue([]);
+      platformSpy.mockRestore();
+    }
+  });
+
+  it("gates automatic checks and autoDownload from desktop settings and falls back to automatic on read failure", async () => {
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      autoUpdaterMock.checkForUpdates.mockClear();
+      desktopSettingsMock.mode = "off";
+      const offAuto = await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+      });
+      expect(offAuto.hasUpdate).toBe(false);
+      expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled();
+
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.9" },
+      });
+      const offManual = await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "manual",
+      });
+      expect(offManual).toMatchObject({
+        hasUpdate: true,
+        downloading: false,
+        latestVersion: "1.2.9",
+      });
+
+      desktopSettingsMock.mode = "automatic";
+      desktopSettingsMock.error = new SyntaxError("Unexpected token } in JSON");
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.10" },
+      });
+      const fallbackResult = await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+      });
+      expect(fallbackResult).toMatchObject({
+        hasUpdate: true,
+        downloading: true,
+        latestVersion: "1.2.10",
+      });
+      expect(consoleWarn).toHaveBeenCalled();
+      autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.10" });
+    } finally {
+      desktopSettingsMock.mode = "automatic";
+      desktopSettingsMock.error = null;
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it("does not fail update events when setProgressBar throws", async () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const send = vi.fn();
+    try {
+      getAllWindowsMock.mockReturnValue([
+        {
+          isDestroyed: () => false,
+          setProgressBar: () => {
+            throw new Error("unsupported desktop environment");
+          },
+          webContents: { send },
+        },
+      ]);
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.7" },
+      });
+
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+        autoDownload: true,
+      });
+      expect(() => {
+        autoUpdaterMock.handlers.get("download-progress")?.({
+          percent: 50,
+          transferred: 50,
+          total: 100,
+          bytesPerSecond: 10,
+        });
+      }).not.toThrow();
+      expect(send).toHaveBeenCalledWith(
+        "paseo:event:app-update-download-progress",
+        expect.objectContaining({ version: "1.2.7", percent: 50 }),
+      );
+    } finally {
+      getAllWindowsMock.mockReturnValue([]);
+      platformSpy.mockRestore();
+    }
+  });
+
+  it("reports a failure when quitAndInstall emits an installer error and returns normally", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+      isUpdateAvailable: true,
+      updateInfo: { version: "1.2.8" },
+    });
+    autoUpdaterMock.downloadUpdate.mockResolvedValueOnce(undefined);
+    autoUpdaterMock.quitAndInstall.mockImplementationOnce(() => {
+      autoUpdaterMock.handlers.get("error")?.(new Error("EROFS: read-only file system"));
+    });
+
+    const result = await downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+
+    expect(result).toMatchObject({
+      installed: false,
+      errorMessage: "EROFS: read-only file system",
+    });
+    consoleError.mockRestore();
+  });
+
+  it("waits on macOS explicit installs until Squirrel reports an error or signals quit, while returning immediately on quit-time handoff", async () => {
+    const updater = Object.assign(new EventEmitter(), {
+      quitAndInstall: vi.fn(),
+    });
+    const nativeUpdater = new EventEmitter();
+
+    const failedInstall = runElectronQuitAndInstall({
+      platform: "darwin",
+      updater,
+      nativeUpdater,
+      isSilent: false,
+      isForceRunAfter: true,
+    });
+    expect(
+      await Promise.race([failedInstall.then(() => "settled"), Promise.resolve("pending")]),
+    ).toBe("pending");
+
+    nativeUpdater.emit("error", new Error("Code signature invalid"));
+    await expect(failedInstall).resolves.toEqual({
+      started: false,
+      errorMessage: "Code signature invalid",
+    });
+    expect(updater.listenerCount("error")).toBe(0);
+    expect(nativeUpdater.listenerCount("error")).toBe(0);
+    expect(nativeUpdater.listenerCount("before-quit-for-update")).toBe(0);
+
+    const restartInstall = runElectronQuitAndInstall({
+      platform: "darwin",
+      updater,
+      nativeUpdater,
+      isSilent: false,
+      isForceRunAfter: true,
+    });
+    nativeUpdater.emit("before-quit-for-update");
+    await expect(restartInstall).resolves.toEqual({ started: true });
+
+    // Quit-time install (isForceRunAfter: false) returns immediately so
+    // quit-lifecycle owns its separate handoff deadline.
+    await expect(
+      runElectronQuitAndInstall({
+        platform: "darwin",
+        updater,
+        nativeUpdater,
+        isSilent: true,
+        isForceRunAfter: false,
+      }),
+    ).resolves.toEqual({ started: true });
+    expect(nativeUpdater.listenerCount("before-quit-for-update")).toBe(0);
+
+    // Explicit install times out cleanly instead of hanging forever if Squirrel never emits.
+    await expect(
+      runElectronQuitAndInstall({
+        platform: "darwin",
+        updater,
+        nativeUpdater,
+        isSilent: false,
+        isForceRunAfter: true,
+        timeoutMs: 10,
+      }),
+    ).resolves.toEqual({
+      started: false,
+      errorMessage: "Timed out waiting for the update installer to start.",
+    });
+    expect(updater.listenerCount("error")).toBe(0);
+    expect(nativeUpdater.listenerCount("error")).toBe(0);
+    expect(nativeUpdater.listenerCount("before-quit-for-update")).toBe(0);
   });
 
   it("logs the update handoff with current and selected target versions", () => {
@@ -151,156 +506,7 @@ describe("shouldInstallAppUpdateOnQuit", () => {
   });
 });
 
-describe("shouldAdmitToRollout", () => {
-  it("admits beta, missing rollout hours, zero-hour rollout, and missing release date", () => {
-    expect(
-      shouldAdmitToRollout({
-        channel: "beta",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-28T01:00:00.000Z"),
-        bucket: 0.99,
-      }),
-    ).toBe(true);
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: undefined,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-28T01:00:00.000Z"),
-        bucket: 0.99,
-      }),
-    ).toBe(true);
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 0,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-28T01:00:00.000Z"),
-        bucket: 0.99,
-      }),
-    ).toBe(true);
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: undefined,
-        now: Date.parse("2026-04-28T01:00:00.000Z"),
-        bucket: 0.99,
-      }),
-    ).toBe(true);
-  });
-
-  it("blocks future releases and respects the linear threshold mid-rollout", () => {
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T02:00:00.000Z",
-        now: Date.parse("2026-04-28T01:00:00.000Z"),
-        bucket: 0,
-      }),
-    ).toBe(false);
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-28T12:00:00.000Z"),
-        bucket: 0.49,
-      }),
-    ).toBe(true);
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-28T12:00:00.000Z"),
-        bucket: 0.51,
-      }),
-    ).toBe(false);
-  });
-
-  it("blocks the bucket-zero client at exact release time, admits as soon as time advances", () => {
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-28T00:00:00.000Z"),
-        bucket: 0,
-      }),
-    ).toBe(false);
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-28T00:00:00.001Z"),
-        bucket: 0,
-      }),
-    ).toBe(true);
-  });
-
-  it("admits the highest-bucket client at and past the rollout end", () => {
-    const maxBucket = (0x100000000 - 1) / 0x100000000;
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2026-04-29T00:00:00.000Z"),
-        bucket: maxBucket,
-      }),
-    ).toBe(true);
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "2026-04-28T00:00:00.000Z",
-        now: Date.parse("2027-04-28T00:00:00.000Z"),
-        bucket: maxBucket,
-      }),
-    ).toBe(true);
-  });
-
-  it("admits when releaseDate is unparseable", () => {
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: 24,
-        releaseDate: "not a date",
-        now: Date.parse("2026-04-28T12:00:00.000Z"),
-        bucket: 0.99,
-      }),
-    ).toBe(true);
-  });
-
-  it("treats garbage manifest rollout fields as missing and admits", () => {
-    const parsed = rolloutManifestSchema.parse({
-      rolloutHours: "not a number",
-      releaseDate: 12345,
-    });
-
-    expect(
-      shouldAdmitToRollout({
-        channel: "stable",
-        rolloutHours: parsed.rolloutHours,
-        releaseDate: parsed.releaseDate,
-        now: Date.parse("2026-04-28T12:00:00.000Z"),
-        bucket: 0.99,
-      }),
-    ).toBe(true);
-  });
-
-  it("maps the maximum 32-bit slot to a bucket strictly less than 1", () => {
-    const allOnes = "ffffffff-ffff-ffff-ffff-ffffffffffff";
-    const allZeros = "00000000-0000-0000-0000-000000000000";
-    expect(bucketFromStagingUserId(allOnes)).toBeLessThan(1);
-    expect(bucketFromStagingUserId(allOnes)).toBeGreaterThan(0.999);
-    expect(bucketFromStagingUserId(allZeros)).toBe(0);
-  });
-
+describe("resolveStagingUserId", () => {
   it("creates and then reuses the on-disk staging user id", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "paseo-updater-id-"));
     const filePath = path.join(tempDir, ".updaterId");

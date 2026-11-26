@@ -342,6 +342,8 @@ jobs:
         run: |
           npm run test:unit --workspace=@getpaseo/server -- \
             src/server/file-observer \
+            src/server/workspace-reconciliation-observation.test.ts \
+            src/utils/checkout-git-identity.test.ts \
             src/server/workspace-git-service.observation.test.ts \
             src/server/workspace-git-service.observation.integration.test.ts \
             --bail=1

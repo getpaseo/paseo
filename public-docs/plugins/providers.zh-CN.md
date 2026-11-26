@@ -142,6 +142,42 @@ if (input.type === "catalog") {
 
 目录描述的是会话存在之前可用的选项。会话专属的控件之后通过 `session.config` 提供。
 
+### 停止 Paseo 取消的请求 {#stop-a-request-paseo-cancels}
+
+Paseo 为每次目录刷新设置期限。Paseo 不再等待某个请求时，会发送带有该请求 `requestId` 的 `request.cancel`。停止这项工作，并释放它启动的资源，例如为读取目录而启动的进程。之后你为该请求发出的事件都会被 Paseo 忽略。同一连接上的会话继续运行。
+
+把 `request.cancel` 加入你支持的能力。Paseo 只向提供该能力的连接发送这个输入：
+
+```ts
+const pending = new Map<string, AbortController>();
+
+if (input.type === "catalog") {
+  const controller = new AbortController();
+  pending.set(input.requestId, controller);
+  void readCatalog({ signal: controller.signal })
+    .then(
+      (catalog) => {
+        if (!controller.signal.aborted)
+          emit({ type: "catalog", requestId: input.requestId, catalog });
+      },
+      (error) => {
+        if (!controller.signal.aborted)
+          emit({
+            type: "request.failed",
+            requestId: input.requestId,
+            error: { message: String(error) },
+          });
+      },
+    )
+    .finally(() => pending.delete(input.requestId));
+}
+if (input.type === "request.cancel") {
+  pending.get(input.requestId)?.abort();
+}
+```
+
+取消可能在请求完成之后才到达。忽略你已不再跟踪的 `requestId`。`runAcpProvider` 提供这项能力，并会停止目录探测进程。
+
 ## 打开会话 {#open-a-session}
 
 `session.open` 包含完整的启动配置：工作目录、环境变量、系统提示词、MCP 服务器、工具策略、模型、模式、`providerOptions` 以及持久化偏好。

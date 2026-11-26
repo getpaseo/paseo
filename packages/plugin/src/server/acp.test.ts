@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -2256,6 +2257,150 @@ lines.on("line", (line) => {
     await connection.close();
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
     expect(Date.now() - startedAt).toBeLessThan(2_500);
+  });
+});
+
+async function hangingCatalogAgent(): Promise<{ executable: string; catalogCwd: string }> {
+  const catalogCwd = await mkdtemp(path.join(tmpdir(), "paseo-acp-hanging-catalog-"));
+  temporaryDirectories.push(catalogCwd);
+  // The catalogue probe records its PID and stays resident like an agent that ignores EOF.
+  const executable = await fakeAcp(`const fs = require("node:fs");
+const path = require("node:path");
+const readline = require("node:readline");
+const catalogCwd = ${JSON.stringify(catalogCwd)};
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new" && message.params.cwd === catalogCwd) {
+    setInterval(() => undefined, 1_000);
+    fs.writeFileSync(path.join(catalogCwd, "probe.pid"), String(process.pid));
+  }
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", modes: null, configOptions: [] } });
+  else if (message.method === "session/prompt") send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+});`);
+  return { executable, catalogCwd };
+}
+
+function readIfPresent(file: string): Promise<string> {
+  return readFile(file, "utf8").catch(() => "");
+}
+
+async function probePid(catalogCwd: string): Promise<number> {
+  const file = path.join(catalogCwd, "probe.pid");
+  await expect.poll(() => readIfPresent(file), { timeout: 5_000 }).not.toBe("");
+  return Number(await readFile(file, "utf8"));
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+describe("runAcpProvider catalogue requests whose session/new never answers", () => {
+  it("offers request cancellation", async () => {
+    const { executable } = await hangingCatalogAgent();
+    const { connection } = await connect(executable, ["prompt.message", "request.cancel"]);
+    try {
+      expect(connection.capabilities).toContain("request.cancel");
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("stops the probe process when Paseo cancels the request and keeps open sessions running", async () => {
+    const { executable, catalogCwd } = await hangingCatalogAgent();
+    const { connection, events } = await connect(executable, ["prompt.message", "request.cancel"]);
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+
+      await connection.send({ type: "catalog", requestId: "catalog-1", cwd: catalogCwd });
+      const pid = await probePid(catalogCwd);
+      expect(isRunning(pid)).toBe(true);
+
+      await connection.send({ type: "request.cancel", requestId: "catalog-1" });
+      await expect.poll(() => isRunning(pid), { timeout: 3_000 }).toBe(false);
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "after-cancel",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "still there?" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      expect(
+        events.filter((event) => "requestId" in event && event.requestId === "catalog-1"),
+      ).toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("publishes the catalogue before the probe session starts closing", async () => {
+    const closeMarker = path.join(
+      await mkdtemp(path.join(tmpdir(), "paseo-acp-catalog-close-")),
+      "close-started",
+    );
+    temporaryDirectories.push(path.dirname(closeMarker));
+    // session/close never answers, so the probe's shutdown runs into its close timeout.
+    const executable = await fakeAcp(`const fs = require("node:fs");
+const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "catalog-native", modes: null, configOptions: [] } });
+  else if (message.method === "session/close") fs.writeFileSync(${JSON.stringify(closeMarker)}, "started");
+});`);
+    const { connection, events } = await connect(executable, ["prompt.message", "request.cancel"]);
+    let closingWhenPublished: boolean | undefined;
+    connection.onEvent((event) => {
+      if (event.type === "catalog") closingWhenPublished = existsSync(closeMarker);
+    });
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog-1" });
+      await waitForEvent(events, (event) => event.type === "catalog");
+      expect(closingWhenPublished).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("ignores cancellation of a request that already finished", async () => {
+    const executable = await fakeAcp(basicAgent);
+    const { connection, events } = await connect(executable, ["prompt.message", "request.cancel"]);
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog-1" });
+      await waitForEvent(events, (event) => event.type === "catalog");
+      await expect(
+        connection.send({ type: "request.cancel", requestId: "catalog-1" }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("stops the probe process when the connection closes", async () => {
+    const { executable, catalogCwd } = await hangingCatalogAgent();
+    const { connection } = await connect(executable, ["prompt.message", "request.cancel"]);
+    await connection.send({ type: "catalog", requestId: "catalog-1", cwd: catalogCwd });
+    const pid = await probePid(catalogCwd);
+
+    await connection.close();
+    expect(isRunning(pid)).toBe(false);
   });
 });
 

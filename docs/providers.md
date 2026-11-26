@@ -225,7 +225,10 @@ aborts the shared refresh signal at the deadline, and when it stops. Shutdown wa
 probes to settle before it shuts down provider clients, so a probe cannot start provider work,
 such as an OpenCode server, after its client has cleaned up. Providers name active catalog operations and
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
-that were still active when the deadline expired.
+that were still active when the deadline expired. A plugin provider's connection is shared with its
+running sessions, so the bridge cannot close it at the deadline; it sends `request.cancel` for the
+abandoned request instead, and the provider stops that request's work
+([provider guide](../public-docs/plugins/providers.md#stop-a-request-paseo-cancels)).
 
 Catalogue results stay cached by identity until a refresh or a change to that provider's configuration.
 Providers change their model lists on the server without a CLI update, so the daemon refreshes

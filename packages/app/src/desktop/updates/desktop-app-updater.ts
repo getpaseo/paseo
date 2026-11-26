@@ -1,6 +1,7 @@
 import type {
   DesktopAppUpdateCheckResult,
   DesktopAppUpdateCheckIntent,
+  DesktopAppUpdateDownloadProgress,
   DesktopAppUpdateInstallResult,
   DesktopReleaseChannel,
 } from "@/desktop/updates/desktop-updates";
@@ -21,6 +22,7 @@ export const PENDING_RECHECK_MS = 10_000;
 export interface DesktopAppUpdaterSnapshot {
   status: DesktopAppUpdateStatus;
   availableUpdate: DesktopAppUpdateCheckResult | null;
+  downloadProgress: DesktopAppUpdateDownloadProgress | null;
   errorMessage: string | null;
   installMessage: string | null;
   lastCheckedAt: number | null;
@@ -53,6 +55,7 @@ export interface DesktopAppUpdaterDeps {
 export interface DesktopAppUpdater {
   getSnapshot(): DesktopAppUpdaterSnapshot;
   subscribe(listener: () => void): () => void;
+  setDownloadProgress(progress: DesktopAppUpdateDownloadProgress | null): void;
   checkForUpdates(options?: {
     releaseChannel: DesktopReleaseChannel;
     intent?: DesktopAppUpdateCheckIntent;
@@ -66,6 +69,7 @@ export interface DesktopAppUpdater {
 interface InternalState {
   status: DesktopAppUpdateStatus;
   availableUpdate: DesktopAppUpdateCheckResult | null;
+  downloadProgress: DesktopAppUpdateDownloadProgress | null;
   errorMessage: string | null;
   installMessage: string | null;
   lastCheckedAt: number | null;
@@ -76,6 +80,7 @@ interface InternalState {
 const INITIAL_STATE: InternalState = {
   status: "idle",
   availableUpdate: null,
+  downloadProgress: null,
   errorMessage: null,
   installMessage: null,
   lastCheckedAt: null,
@@ -87,6 +92,7 @@ function buildSnapshot(state: InternalState): DesktopAppUpdaterSnapshot {
   return {
     status: state.status,
     availableUpdate: state.availableUpdate,
+    downloadProgress: state.downloadProgress,
     errorMessage: state.errorMessage,
     installMessage: state.installMessage,
     lastCheckedAt: state.lastCheckedAt,
@@ -102,9 +108,113 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function formatInstallingStatusText(input: {
+  availableUpdate: DesktopAppUpdateCheckResult | null;
+  downloadProgress: DesktopAppUpdateDownloadProgress | null;
+  formatVersion: (version: string | null | undefined) => string;
+}): string {
+  const { availableUpdate, downloadProgress, formatVersion } = input;
+  if (downloadProgress == null) {
+    return i18n.t("desktop.updates.status.installing");
+  }
+  const percent = Math.round(downloadProgress.percent);
+  const version = downloadProgress.version ?? availableUpdate?.latestVersion;
+  if (version) {
+    return i18n.t("desktop.updates.status.downloadingVersionProgress", {
+      version: formatVersion(version),
+      percent,
+    });
+  }
+  return i18n.t("desktop.updates.status.downloadingProgress", { percent });
+}
+
+function formatPendingStatusText(input: {
+  availableUpdate: DesktopAppUpdateCheckResult | null;
+  downloadProgress: DesktopAppUpdateDownloadProgress | null;
+  lastCheckedAt: number | null;
+  formatVersion: (version: string | null | undefined) => string;
+  formatLastCheckedAt: (timestamp: number) => string;
+}): string {
+  const { availableUpdate, downloadProgress, lastCheckedAt, formatVersion, formatLastCheckedAt } =
+    input;
+  const time = lastCheckedAt != null ? formatLastCheckedAt(lastCheckedAt) : undefined;
+  if (availableUpdate?.latestVersion) {
+    const version = formatVersion(availableUpdate.latestVersion);
+    if (downloadProgress != null) {
+      return i18n.t(
+        time !== undefined
+          ? "desktop.updates.status.pendingWithVersionProgressAndLastChecked"
+          : "desktop.updates.status.pendingWithVersionProgress",
+        { version, percent: Math.round(downloadProgress.percent), time },
+      );
+    }
+    return i18n.t(
+      time !== undefined
+        ? "desktop.updates.status.pendingWithVersionAndLastChecked"
+        : "desktop.updates.status.pendingWithVersion",
+      { version, time },
+    );
+  }
+  if (time !== undefined) {
+    return i18n.t("desktop.updates.status.pendingWithLastChecked", { time });
+  }
+  return i18n.t("desktop.updates.status.pending");
+}
+
+function formatAvailableStatusText(input: {
+  availableUpdate: DesktopAppUpdateCheckResult | null;
+  lastCheckedAt: number | null;
+  formatVersion: (version: string | null | undefined) => string;
+  formatLastCheckedAt: (timestamp: number) => string;
+}): string {
+  const { availableUpdate, lastCheckedAt, formatVersion, formatLastCheckedAt } = input;
+  const time = lastCheckedAt != null ? formatLastCheckedAt(lastCheckedAt) : undefined;
+  const isDownloadRequired =
+    availableUpdate?.hasUpdate === true && availableUpdate.readyToInstall === false;
+  if (availableUpdate?.latestVersion) {
+    const version = formatVersion(availableUpdate.latestVersion);
+    if (isDownloadRequired) {
+      return i18n.t(
+        time !== undefined
+          ? "desktop.updates.status.downloadAvailableWithVersionAndLastChecked"
+          : "desktop.updates.status.downloadAvailableWithVersion",
+        { version, time },
+      );
+    }
+    return i18n.t(
+      time !== undefined
+        ? "desktop.updates.status.availableWithVersionAndLastChecked"
+        : "desktop.updates.status.availableWithVersion",
+      { version, time },
+    );
+  }
+  if (isDownloadRequired) {
+    return time !== undefined
+      ? i18n.t("desktop.updates.status.downloadAvailableWithLastChecked", { time })
+      : i18n.t("desktop.updates.status.downloadAvailable");
+  }
+  return time !== undefined
+    ? i18n.t("desktop.updates.status.availableWithLastChecked", { time })
+    : i18n.t("desktop.updates.status.available");
+}
+
+function resolveCheckOutcome(result: DesktopAppUpdateCheckResult): {
+  status: DesktopAppUpdateStatus;
+  availableUpdate: DesktopAppUpdateCheckResult | null;
+} {
+  if (result.readyToInstall || (result.hasUpdate && !result.downloading)) {
+    return { status: "available", availableUpdate: result };
+  }
+  if (result.hasUpdate) {
+    return { status: "pending", availableUpdate: result };
+  }
+  return { status: "up-to-date", availableUpdate: null };
+}
+
 export function formatStatusText(input: {
   status: DesktopAppUpdateStatus;
   availableUpdate: DesktopAppUpdateCheckResult | null;
+  downloadProgress?: DesktopAppUpdateDownloadProgress | null;
   installMessage: string | null;
   lastCheckedAt: number | null;
   formatVersion: (version: string | null | undefined) => string;
@@ -113,79 +223,45 @@ export function formatStatusText(input: {
   const {
     status,
     availableUpdate,
+    downloadProgress = null,
     installMessage,
     lastCheckedAt,
     formatVersion,
     formatLastCheckedAt,
   } = input;
 
-  if (status === "checking") {
-    return i18n.t("desktop.updates.status.checking");
-  }
-
+  if (status === "checking") return i18n.t("desktop.updates.status.checking");
   if (status === "installing") {
-    return i18n.t("desktop.updates.status.installing");
+    return formatInstallingStatusText({ availableUpdate, downloadProgress, formatVersion });
   }
-
   if (status === "up-to-date") {
-    if (lastCheckedAt != null) {
-      return i18n.t("desktop.updates.status.upToDateWithLastChecked", {
-        time: formatLastCheckedAt(lastCheckedAt),
-      });
-    }
-    return i18n.t("desktop.updates.status.upToDate");
+    return lastCheckedAt != null
+      ? i18n.t("desktop.updates.status.upToDateWithLastChecked", {
+          time: formatLastCheckedAt(lastCheckedAt),
+        })
+      : i18n.t("desktop.updates.status.upToDate");
   }
-
   if (status === "pending") {
-    if (availableUpdate?.latestVersion) {
-      return i18n.t(
-        lastCheckedAt != null
-          ? "desktop.updates.status.pendingWithVersionAndLastChecked"
-          : "desktop.updates.status.pendingWithVersion",
-        {
-          version: formatVersion(availableUpdate.latestVersion),
-          time: lastCheckedAt != null ? formatLastCheckedAt(lastCheckedAt) : undefined,
-        },
-      );
-    }
-
-    if (lastCheckedAt != null) {
-      return i18n.t("desktop.updates.status.pendingWithLastChecked", {
-        time: formatLastCheckedAt(lastCheckedAt),
-      });
-    }
-    return i18n.t("desktop.updates.status.pending");
+    return formatPendingStatusText({
+      availableUpdate,
+      downloadProgress,
+      lastCheckedAt,
+      formatVersion,
+      formatLastCheckedAt,
+    });
   }
-
   if (status === "available") {
-    if (availableUpdate?.latestVersion) {
-      return i18n.t(
-        lastCheckedAt != null
-          ? "desktop.updates.status.availableWithVersionAndLastChecked"
-          : "desktop.updates.status.availableWithVersion",
-        {
-          version: formatVersion(availableUpdate.latestVersion),
-          time: lastCheckedAt != null ? formatLastCheckedAt(lastCheckedAt) : undefined,
-        },
-      );
-    }
-
-    if (lastCheckedAt != null) {
-      return i18n.t("desktop.updates.status.availableWithLastChecked", {
-        time: formatLastCheckedAt(lastCheckedAt),
-      });
-    }
-    return i18n.t("desktop.updates.status.available");
+    return formatAvailableStatusText({
+      availableUpdate,
+      lastCheckedAt,
+      formatVersion,
+      formatLastCheckedAt,
+    });
   }
-
   if (status === "installed") {
     return installMessage ?? i18n.t("desktop.updates.status.installed");
   }
-
-  if (status === "error") {
-    return i18n.t("desktop.updates.status.failed");
-  }
-
+  if (status === "error") return i18n.t("desktop.updates.status.failed");
   return i18n.t("desktop.updates.status.idle");
 }
 
@@ -202,6 +278,16 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
     }
   }
 
+  function setDownloadProgress(progress: DesktopAppUpdateDownloadProgress | null): void {
+    if (progress === null && state.downloadProgress === null) {
+      return;
+    }
+    commit({
+      ...state,
+      downloadProgress: progress,
+    });
+  }
+
   async function checkForUpdates(options?: {
     releaseChannel: DesktopReleaseChannel;
     intent?: DesktopAppUpdateCheckIntent;
@@ -211,7 +297,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       return null;
     }
     const { releaseChannel, intent = "manual", silent = false } = options;
-    if (silent && state.status === "checking") {
+    if (silent && (state.status === "checking" || state.isInstalling)) {
       return null;
     }
 
@@ -241,6 +327,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
           ...state,
           status: "error",
           availableUpdate: null,
+          downloadProgress: null,
           errorMessage: result.errorMessage,
           installMessage: null,
           lastCheckedAt: nextLastCheckedAt,
@@ -248,24 +335,13 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         return result;
       }
 
-      let nextStatus: DesktopAppUpdateStatus;
-      let nextAvailable: DesktopAppUpdateCheckResult | null;
-
-      if (result.readyToInstall) {
-        nextStatus = "available";
-        nextAvailable = result;
-      } else if (result.hasUpdate) {
-        nextStatus = "pending";
-        nextAvailable = result;
-      } else {
-        nextStatus = "up-to-date";
-        nextAvailable = null;
-      }
+      const outcome = resolveCheckOutcome(result);
 
       commit({
         ...state,
-        status: nextStatus,
-        availableUpdate: nextAvailable,
+        status: outcome.status,
+        availableUpdate: outcome.availableUpdate,
+        downloadProgress: outcome.status === "pending" ? state.downloadProgress : null,
         errorMessage: null,
         installMessage: null,
         lastCheckedAt: nextLastCheckedAt,
@@ -284,6 +360,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         commit({
           ...state,
           status: "error",
+          downloadProgress: null,
           errorMessage: message,
           lastCheckedAt: intent === "manual" ? deps.now() : state.lastCheckedAt,
         });
@@ -295,6 +372,10 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
   async function installUpdate(options: {
     releaseChannel: DesktopReleaseChannel;
   }): Promise<DesktopAppUpdateInstallResult | null> {
+    if (state.isInstalling) {
+      return null;
+    }
+
     commit({
       ...state,
       status: "installing",
@@ -307,10 +388,23 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         releaseChannel: options.releaseChannel,
       });
       const nextLastCheckedAt = deps.now();
+      if (!result.installed && result.errorMessage) {
+        commit({
+          ...state,
+          status: "error",
+          downloadProgress: null,
+          errorMessage: result.errorMessage,
+          installMessage: null,
+          lastCheckedAt: nextLastCheckedAt,
+          isInstalling: false,
+        });
+        return result;
+      }
       commit({
         ...state,
         status: result.installed ? "installed" : "up-to-date",
         availableUpdate: null,
+        downloadProgress: null,
         installMessage: result.message,
         lastCheckedAt: nextLastCheckedAt,
         isInstalling: false,
@@ -326,6 +420,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
       commit({
         ...state,
         status: "error",
+        downloadProgress: null,
         errorMessage: message,
         isInstalling: false,
       });
@@ -341,6 +436,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
         listeners.delete(listener);
       };
     },
+    setDownloadProgress,
     checkForUpdates,
     installUpdate,
   };

@@ -491,8 +491,12 @@ describe("ReplicaCache", () => {
       (checkpoint: DirectoryCheckpoint): unknown => ({ version: 1, cursors: checkpoint }),
     ],
     [
-      "before launch persistence",
+      "before the cross-tab eviction fix",
       (checkpoint: DirectoryCheckpoint): unknown => ({ version: 2, cursors: checkpoint }),
+    ],
+    [
+      "before launch persistence",
+      (checkpoint: DirectoryCheckpoint): unknown => ({ version: 3, cursors: checkpoint }),
     ],
   ])(
     "rejects checkpoints written %s without discarding cached rows or timelines",

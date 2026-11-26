@@ -34,6 +34,7 @@ import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
+import type { NotificationPreferences } from "@getpaseo/protocol/notification-preferences";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -123,6 +124,7 @@ import type {
   ProviderInstallationCheckUpdatesResponseMessage,
   UsageReportEntry,
   DaemonGetStatusResponse,
+  DaemonTailscaleSetResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
   DiagnosticsResponse,
@@ -842,6 +844,7 @@ export interface ShutdownServerOptions {
   keepTerminals?: boolean;
 }
 export interface DaemonStatusOptions {
+  includeProviders?: boolean;
   requestId?: string;
   timeout?: number;
 }
@@ -2590,10 +2593,11 @@ export class DaemonClient {
     });
   }
 
-  registerPushToken(token: string): void {
+  registerPushToken(token: string, preferences?: NotificationPreferences): void {
     this.sendSessionMessage({
       type: "register_push_token",
       token,
+      ...(preferences !== undefined ? { preferences } : {}),
     });
   }
 
@@ -6165,6 +6169,17 @@ export class DaemonClient {
     });
   }
 
+  async setTailscaleEnabled(
+    enabled: boolean,
+    confirmed = false,
+  ): Promise<DaemonTailscaleSetResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "daemon.tailscale.set.request", enabled, confirmed },
+      responseType: "daemon.tailscale.set.response",
+    });
+  }
+
+  /** The Tailscale disconnect flag describes the connection used for this request. */
   async getDaemonStatus(options?: DaemonStatusOptions): Promise<DaemonStatusPayload> {
     if (!this.lastServerInfoMessage) throw new DaemonConnectionError("Transport not connected");
     if (this.lastServerInfoMessage?.features?.daemonStatusRpc !== true) {
@@ -6174,6 +6189,7 @@ export class DaemonClient {
       requestId: options?.requestId,
       message: {
         type: "daemon.get_status.request",
+        includeProviders: options?.includeProviders,
       },
       responseType: "daemon.get_status.response",
       timeout: options?.timeout,
