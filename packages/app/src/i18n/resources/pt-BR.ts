@@ -2438,7 +2438,7 @@ export const ptBR: TranslationResources = {
     title: "Configurações",
     loading: "Carregando configurações...",
     groups: {
-      app: "App",
+      app: "Este dispositivo",
       host: "Host",
     },
     hostPicker: {
@@ -2456,7 +2456,9 @@ export const ptBR: TranslationResources = {
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat e painéis",
       appearance: "Aparência",
       sidebar: "Barra lateral",
       terminal: "Terminal",
@@ -2469,6 +2471,16 @@ export const ptBR: TranslationResources = {
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
       about: "Sobre",
+    },
+    clientHosts: {
+      title: "Hosts salvos",
+      info: "Hosts aos quais este dispositivo se conecta. Nomes, ícones, selos e rotas aqui afetam apenas este dispositivo.",
+      backToHosts: "Voltar para hosts",
+      routesTitle: "Como este dispositivo se conecta",
+      routesInfo:
+        "Rotas salvas que este dispositivo usa para alcançar este host. O Paseo escolhe a mais rápida disponível.",
+      addRoute: "Adicionar rota",
+      activeRoute: "Ativa",
     },
     layout: en.settings.layout,
     editor: {
@@ -2547,6 +2559,7 @@ export const ptBR: TranslationResources = {
       projects: "Projetos",
       connections: "Conexões",
       agents: "Agentes",
+      tools: "Ferramentas e instruções",
       agentProfiles: "Perfis de agente",
       metadata: "Metadados",
       voice: "Voz",
@@ -2556,6 +2569,7 @@ export const ptBR: TranslationResources = {
       terminals: "Terminais",
       plugins: "Plugins",
       host: "Visão geral",
+      daemon: "Daemon",
     },
     plugins: pluginSettings["pt-BR"],
     metadataGeneration: {
@@ -3101,6 +3115,10 @@ export const ptBR: TranslationResources = {
           delete: "Excluir skill",
         },
       },
+      tools: {
+        instructionsTitle: "Instruções",
+        toolsTitle: "Ferramentas de agentes",
+      },
       orchestration: {
         title: "Orquestração",
         unavailable: "Conecte-se a este host para gerenciar a orquestração",
@@ -3229,6 +3247,7 @@ export const ptBR: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "Execução de agentes",
         rename: {
           editLabel: "Editar rótulo",
           title: "Renomear host",

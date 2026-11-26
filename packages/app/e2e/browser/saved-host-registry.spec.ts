@@ -3,7 +3,7 @@ import { test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { renameHostFromSettings } from "../support/helpers/hosts";
 import { getServerId } from "../support/helpers/server-id";
-import { openHostSection, selectSettingsHost } from "../support/helpers/settings";
+import { openClientHostSettings } from "../support/helpers/settings";
 
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
@@ -87,8 +87,7 @@ test("saved hosts survive a registry entry this build can't read, and saving kee
 
   await test.step("renaming a host keeps its password and the entries it can't read", async () => {
     await openSettings(page);
-    await selectSettingsHost(page, OFFLINE_HOST.serverId);
-    await openHostSection(page, OFFLINE_HOST.serverId, "host");
+    await openClientHostSettings(page, OFFLINE_HOST.serverId);
     await renameHostFromSettings(page, "Renamed offline host");
 
     await expect

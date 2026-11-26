@@ -38,8 +38,13 @@ function createExternalCliInvocation(args: string[]): NodeEntrypointInvocation {
   });
 }
 
+const DEFAULT_EXTERNAL_CLI_TIMEOUT_MS = 15_000;
+const EXTERNAL_CLI_KILL_GRACE_MS = 2_000;
+
 function spawnExternalCli(
   invocation: NodeEntrypointInvocation,
+  args: string[],
+  timeoutMs = DEFAULT_EXTERNAL_CLI_TIMEOUT_MS,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawnProcess(invocation.command, invocation.args, {
@@ -50,6 +55,44 @@ function spawnExternalCli(
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanupTimers = () => {
+      clearTimeout(timeoutTimer);
+      if (killTimer !== null) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
+    };
+
+    const timeoutTimer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      log.warn("[desktop external-cli]", "CLI command timed out", {
+        args,
+        timeoutMs,
+        command: invocation.command,
+        stdout: stdout.trim().slice(0, 500),
+        stderr: stderr.trim().slice(0, 500),
+      });
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Ignore kill failures if the process already exited.
+      }
+      killTimer = setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Ignore kill failures if the process already exited.
+        }
+      }, EXTERNAL_CLI_KILL_GRACE_MS);
+      killTimer.unref?.();
+      reject(new Error(`CLI command timed out after ${timeoutMs}ms: ${args.join(" ")}`));
+    }, timeoutMs);
 
     child.stdout!.on("data", (data: Buffer) => {
       stdout += data.toString();
@@ -58,8 +101,21 @@ function spawnExternalCli(
       stderr += data.toString();
     });
 
-    child.on("error", reject);
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanupTimers();
+      reject(error);
+    });
     child.on("close", (exitCode) => {
+      if (settled) {
+        cleanupTimers();
+        return;
+      }
+      settled = true;
+      cleanupTimers();
       resolve({ stdout, stderr, exitCode });
     });
   });
@@ -79,7 +135,7 @@ function externalCliFailureMessage(
 
 export async function runExternalCliTextCommand(args: string[]): Promise<string> {
   const invocation = createExternalCliInvocation(args);
-  const result = await spawnExternalCli(invocation);
+  const result = await spawnExternalCli(invocation, args);
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
@@ -98,7 +154,7 @@ export async function runExternalCliTextCommand(args: string[]): Promise<string>
 
 export async function runExternalCliJsonCommand(args: string[]): Promise<unknown> {
   const invocation = createExternalCliInvocation(args);
-  const result = await spawnExternalCli(invocation);
+  const result = await spawnExternalCli(invocation, args);
 
   if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();

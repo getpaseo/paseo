@@ -272,13 +272,15 @@ test.describe("Agent profiles settings", () => {
       await test.step("switching Settings sections asks before discarding an edited draft", async () => {
         await fillAgentProfileName(page, "Unsaved sidebar edit");
 
-        await switchSettingsSectionWithConfirm(page, "Agents", "dismiss");
+        await switchSettingsSectionWithConfirm(page, "Tools & prompts", "dismiss");
         await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
         await expectAgentProfileNameDraft(page, "Unsaved sidebar edit");
 
-        await switchSettingsSectionWithConfirm(page, "Agents", "accept");
+        await switchSettingsSectionWithConfirm(page, "Tools & prompts", "accept");
         await expect(page.getByTestId("agent-profile-drawer")).toHaveCount(0, { timeout: 30_000 });
-        await expect(page.getByTestId("settings-detail-header-title")).toHaveText("Agents");
+        await expect(page.getByTestId("settings-detail-header-title")).toHaveText(
+          "Tools & prompts",
+        );
       });
 
       await test.step("confirming browser Back leaves Agent profiles and discards the draft", async () => {

@@ -17,7 +17,7 @@ nav: 技能
 
 ## 安装 {#installation}
 
-- **在 Paseo 中**：打开 **设置 → 你的主机 → Agents → 编排 skills**，选择要在该主机上安装的技能。
+- **在 Paseo 中**：打开 **设置 → 主机 → 工具与提示词 → Paseo skills**，选择要在该主机上安装的技能。
 - **在终端中**：在运行 Agent 的机器上执行 `npx skills add getpaseo/paseo`。
 
 使用同一张设置卡片更新或卸载技能。主机启动时也会刷新已选择安装的 Paseo 技能。
