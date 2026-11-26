@@ -106,7 +106,7 @@ import {
 import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
-import { installAppUpdateOnQuit } from "./features/auto-updater.js";
+import { installAppUpdateOnQuit, startAppUpdatePacing } from "./features/auto-updater.js";
 import {
   buildAgentDeepLinkRoute,
   parseAgentDeepLink,
@@ -945,6 +945,7 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.whenReady();
+  void startAppUpdatePacing();
 
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {

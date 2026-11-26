@@ -626,6 +626,18 @@ test("desktop release creates release-manifests before entering it and uses the 
   assert.match(workflow, /mkdir -p release-manifests\s*\n\s+cd release-manifests/);
 });
 
+test("desktop release stamps an 18-hour rollout on a tag push and by default on a manual run", () => {
+  const workflow = readFileSync(new URL(".github/workflows/desktop-release.yml", repoRoot), "utf8");
+  const manualRunDefault = /\n {6}rollout_hours:\n(?: {8}.*\n)*? {8}default: "(\d+)"/.exec(
+    workflow,
+  );
+  const tagPushDefault =
+    /\n {2}ROLLOUT_HOURS: \$\{\{.*inputs\.rollout_hours \|\| '(\d+)' \}\}/.exec(workflow);
+
+  assert.equal(manualRunDefault?.[1], "18");
+  assert.equal(tagPushDefault?.[1], "18");
+});
+
 test("macOS release xcrun wrapper retries transient stapling and notarization failures without rebuilding", async (t) => {
   const wrapperSource = readFileSync(new URL("scripts/macos-xcrun-retry.sh", repoRoot), "utf8");
   const networkLostError =
