@@ -4,7 +4,13 @@ import {
   execCommand as execCli,
   type SpawnProcessOptions as CliSpawnOptions,
 } from "@getpaseo/plugin/server";
-import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
+import {
+  createExternalCommandProcessEnv,
+  stripAppImageRuntimeEnv,
+  type ProcessEnvRecord,
+} from "../server/paseo-env.js";
+
+export { stripAppImageRuntimeEnv };
 
 interface ExternalEnvOptions {
   baseEnv?: ProcessEnvRecord;
