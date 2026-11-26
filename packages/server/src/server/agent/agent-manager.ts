@@ -1749,9 +1749,10 @@ export class AgentManager {
     config: AgentSessionConfig,
     resolvedAgentId: string,
     options: CreateAgentOptions,
+    historyOptions: { history: "discard" | "keep" } = { history: "discard" },
   ): Promise<ManagedAgent> {
     return this.launchAgent(resolvedAgentId, () =>
-      this.createAgentSession(config, resolvedAgentId, options),
+      this.createAgentSession(config, resolvedAgentId, options, historyOptions),
     );
   }
 
