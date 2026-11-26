@@ -6,10 +6,13 @@ import { Download } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useFileHandle, useFileHandleSnapshot } from "@/file-panels/file";
 import { FilePanelLoading } from "@/file-panels/loading";
 import { FilePanelPicker, FilePanelView, useFilePanelChoice, type FilePanel } from "@/file-panels";
+import { FilePathBreadcrumb } from "@/file-panels/source/path-breadcrumb";
+import { panelOwnsBreadcrumbToolbar } from "@/file-panels/source/path-breadcrumb-model";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import { useFileDownload } from "@/hooks/use-file-download";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
@@ -38,9 +41,15 @@ export function FilePane({
   navigationRevision: number;
 }) {
   const { t } = useTranslation();
+  const { openFileInWorkspace } = usePaneContext();
   const connected = useSessionStore((state) => Boolean(state.sessions[serverId]?.client));
   const root = workspaceRoot.trim();
   const path = location.path.trim();
+  const handleOpenFile = useCallback(
+    (openPath: string) =>
+      openFileInWorkspace({ location: { path: openPath }, disposition: "main" }),
+    [openFileInWorkspace],
+  );
   const target = useMemo(
     () => (path ? resolveFilePreviewReadTarget({ path, workspaceRoot: root }) : null),
     [path, root],
@@ -89,6 +98,21 @@ export function FilePane({
     [location.lineEnd, location.lineStart, path],
   );
 
+  const breadcrumbBar =
+    path && root ? (
+      <PaneContentToolbar testID="file-panel-bar">
+        <View style={styles.breadcrumbRow}>
+          <FilePathBreadcrumb
+            embedded
+            serverId={serverId}
+            workspaceRoot={root}
+            path={path}
+            onOpenFile={handleOpenFile}
+          />
+        </View>
+      </PaneContentToolbar>
+    ) : null;
+
   let body;
   if (!connected && target) {
     body = <Text style={styles.errorText}>{t("workspace.terminal.hostDisconnected")}</Text>;
@@ -123,6 +147,7 @@ export function FilePane({
     return (
       <View style={styles.container} testID="workspace-file-pane">
         <FilePanelPicker choice={choice} />
+        {panelOwnsBreadcrumbToolbar(panel) ? null : breadcrumbBar}
         <MountedFilePanel
           key={`${panel.id}:${targetKey}`}
           panel={panel}
@@ -136,6 +161,7 @@ export function FilePane({
   }
   return (
     <View style={styles.container} testID="workspace-file-pane">
+      {breadcrumbBar}
       <View style={styles.centerState}>{body}</View>
     </View>
   );
@@ -173,6 +199,12 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     backgroundColor: theme.colors.surface0,
+  },
+  breadcrumbRow: {
+    height: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: theme.spacing[3],
   },
   centerState: {
     flex: 1,

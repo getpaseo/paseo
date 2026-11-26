@@ -169,3 +169,15 @@ export function toWorkspaceFileOpenPath(absolutePath: string, workspaceRoot: str
   const breadcrumb = resolveFileBreadcrumb({ filePath: absolutePath, workspaceRoot });
   return breadcrumb?.insideWorkspace ? breadcrumb.displayPath : normalizeSlashes(absolutePath);
 }
+
+/**
+ * Built-in text panels (source, markdown, HTML) render `TextFileToolbar`, which
+ * embeds the breadcrumb inline with file metrics. Other panels (PDF/Office
+ * plugins, images, binary fallback, error states) get a standalone toolbar row
+ * from `FilePane`.
+ */
+export function panelOwnsBreadcrumbToolbar(
+  panel: { builtin: boolean; fileKind?: string } | null | undefined,
+): boolean {
+  return Boolean(panel && panel.builtin && panel.fileKind === "text");
+}

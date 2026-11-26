@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -43,6 +44,11 @@ export function TextFileToolbar({
   const { t } = useTranslation();
   const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const workspaceRoot = useWorkspaceDirectory(serverId, workspaceId);
+  const handleOpenFile = useCallback(
+    (openPath: string) =>
+      openFileInWorkspace({ location: { path: openPath }, disposition: "main" }),
+    [openFileInWorkspace],
+  );
   const views = [
     {
       value: "preview" as const,
@@ -61,9 +67,7 @@ export function TextFileToolbar({
               serverId={serverId}
               workspaceRoot={workspaceRoot}
               path={target.path}
-              onOpenFile={(openPath) =>
-                openFileInWorkspace({ location: { path: openPath }, disposition: "main" })
-              }
+              onOpenFile={handleOpenFile}
             />
           ) : (
             <View style={styles.breadcrumbPlaceholder} />

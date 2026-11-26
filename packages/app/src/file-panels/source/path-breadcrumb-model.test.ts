@@ -4,6 +4,7 @@ import {
   isDirectoryWithin,
   joinAbsolutePath,
   normalizeSlashes,
+  panelOwnsBreadcrumbToolbar,
   resolveFileBreadcrumb,
   toWorkspaceFileOpenPath,
 } from "./path-breadcrumb-model";
@@ -161,5 +162,13 @@ describe("path helpers", () => {
   it("checks directory containment", () => {
     expect(isDirectoryWithin("/repo/src", "/repo")).toBe(true);
     expect(isDirectoryWithin("/repo2", "/repo")).toBe(false);
+  });
+
+  it("identifies which panels already embed the breadcrumb in TextFileToolbar", () => {
+    expect(panelOwnsBreadcrumbToolbar({ builtin: true, fileKind: "text" })).toBe(true);
+    expect(panelOwnsBreadcrumbToolbar({ builtin: true, fileKind: "image" })).toBe(false);
+    expect(panelOwnsBreadcrumbToolbar({ builtin: false })).toBe(false);
+    expect(panelOwnsBreadcrumbToolbar(null)).toBe(false);
+    expect(panelOwnsBreadcrumbToolbar(undefined)).toBe(false);
   });
 });
