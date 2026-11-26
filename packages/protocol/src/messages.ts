@@ -4197,10 +4197,6 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceMarkUnread: z.boolean().optional(),
         // COMPAT(agentFollowUp): added in v0.17.2, remove gate after 2027-05-22.
         agentFollowUp: z.boolean().optional(),
-        // COMPAT(agentRestoreFollowUp): added in v0.17.2, remove gate after 2027-05-25.
-        agentRestoreFollowUp: z.boolean().optional(),
-        // COMPAT(agentMarkUnread): added in v0.17.2, remove gate after 2027-05-25.
-        agentMarkUnread: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
         hubRelationship: z.boolean().optional(),
         // COMPAT(relayProtectedSecurity): added in v0.13.0. A capable daemon always advertises

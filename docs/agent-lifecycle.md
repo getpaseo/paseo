@@ -375,7 +375,8 @@ Use **Mark for follow-up** in the chat tab menu to restore the reminder for a re
 done. The action is available until the chat takes a new turn.
 
 Use **Mark as unread** in the chat tab menu to bring back the unread indicator for a finished or failed
-chat without sending a new notification. Opening a workspace restores its selected tab. Use
+chat without sending a new notification. On older hosts that support workspace-level unread, use
+**Mark as unread** in the workspace row menu. Opening a workspace restores its selected tab. Use
 **Mark as read** in another chat's tab menu to acknowledge that chat without switching tabs. Use
 **Mark all as read** in the workspace row menu to acknowledge all unread completions and failures
 in the workspace. Marking a result unread keeps its reminder. Marking a resolved chat unread only

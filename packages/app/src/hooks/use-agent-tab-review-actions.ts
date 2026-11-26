@@ -5,7 +5,6 @@ import { useShallow } from "zustand/shallow";
 import { useToast } from "@/contexts/toast-context";
 import { useMarkAgentDone } from "@/hooks/use-mark-agent-done";
 import { i18n } from "@/i18n/i18next";
-import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { useSessionStore } from "@/stores/session-store";
@@ -27,13 +26,9 @@ export function useAgentTabReviewActions({
   workspaceId: string;
   tab: WorkspaceTabDescriptor;
 }): AgentTabReviewActions {
-  const agentId = tab.target.kind === "agent" ? tab.target.agentId : undefined;
-  const tabId = tab.tabId;
   const markDone = useMarkAgentDone(serverId);
-  // COMPAT(agentMarkUnread): added in v0.17.2, remove gate after 2027-05-25.
-  const supportsUnread = useHostFeature(serverId, "agentMarkUnread");
-  // COMPAT(agentRestoreFollowUp): added in v0.17.2, remove gate after 2027-05-25.
-  const supportsFollowUp = useHostFeature(serverId, "agentRestoreFollowUp");
+  const agentId = markDone && tab.target.kind === "agent" ? tab.target.agentId : undefined;
+  const tabId = tab.tabId;
   const { resultId, reopenableResultId, readAttentionKey, canMarkUnread } = useSessionStore(
     useShallow((state) => {
       const session = state.sessions[serverId];
@@ -79,7 +74,7 @@ export function useAgentTabReviewActions({
           ? () => void run((client) => client.clearAgentAttention(agentId, readAttentionKey))
           : undefined,
       markAsUnread:
-        agentId && supportsUnread && canMarkUnread
+        agentId && canMarkUnread
           ? () => {
               void run(async (client) => {
                 const workspaceKey = `${serverId}:${workspaceId}`;
@@ -101,7 +96,7 @@ export function useAgentTabReviewActions({
       markDone:
         agentId && resultId && markDone ? () => void markDone(agentId, resultId) : undefined,
       markForFollowUp:
-        agentId && reopenableResultId && supportsFollowUp
+        agentId && reopenableResultId
           ? () => void run((client) => client.markAgentForFollowUp(agentId, reopenableResultId))
           : undefined,
     }),
@@ -114,8 +109,6 @@ export function useAgentTabReviewActions({
       resultId,
       run,
       serverId,
-      supportsFollowUp,
-      supportsUnread,
       tabId,
       workspaceId,
     ],

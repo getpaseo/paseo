@@ -2243,8 +2243,6 @@ export class VoiceAssistantWebSocketServer {
         workspaceMarkUnread: true,
         // COMPAT(agentFollowUp): added in v0.17.2, remove gate after 2027-05-22.
         agentFollowUp: true,
-        agentRestoreFollowUp: true,
-        agentMarkUnread: true,
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
         hubRelationship: true,
         // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.

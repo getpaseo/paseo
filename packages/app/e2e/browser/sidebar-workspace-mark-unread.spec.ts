@@ -517,6 +517,42 @@ test("a cached read chat acknowledges a completion that arrived while the app wa
   await expectStatus(page, workspaces.subject.workspaceId, "needs_follow_up");
 });
 
+test("workspace unread stays available on a legacy daemon", async ({ page, workspaces }) => {
+  const { subject } = workspaces;
+  // Keep review data from the modern daemon so this test exercises the app's capability gate.
+  const gate = await installDaemonWebSocketGate(page, { stripFeatures: ["agentFollowUp"] });
+  await openAgentRoute(page, subject);
+  await expectSelectedAgent(page, subject.agentId);
+  await expectStatus(page, subject.workspaceId, "needs_follow_up");
+
+  const tabId = `agent_${subject.agentId}`;
+  const tab = page.getByTestId(`workspace-tab-${tabId}`).filter({ visible: true });
+  await expect(tab.getByTestId("agent-status-dot")).toBeVisible();
+  await expect(page.getByTestId("composer-mark-done")).toHaveCount(0);
+
+  const tabMenu = `workspace-tab-context-${tabId}`;
+  await tab.click({ button: "right" });
+  await expect(
+    page.getByTestId(`${tabMenu}-copy-agent-id`).filter({ visible: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId(`${tabMenu}-mark-done`)).toHaveCount(0);
+  await expect(page.getByTestId(`${tabMenu}-mark-as-unread`)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await workspaceRow(page, subject.workspaceId).hover();
+  await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
+  await page.getByRole("menuitem", { name: "Mark as unread", exact: true }).click();
+  await expectStatus(page, subject.workspaceId, "attention");
+  expect(gate.getClientRequestCount("workspace.mark_unread.request")).toBe(1);
+  expect(gate.getClientRequestCount("agent.review.mark_unread.request")).toBe(0);
+
+  await chooseWorkspaceMarkAsRead(page, subject.workspaceId);
+  await expectStatus(page, subject.workspaceId, "needs_follow_up");
+  const requests = gate.getClientRequests("workspace.clear_attention.request");
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).not.toHaveProperty("observedAttentionKeys");
+});
+
 test("review actions affect only the chat chosen in the tab menu", async ({ page, workspaces }) => {
   const { subject } = workspaces;
   await openAgentRoute(page, subject);
