@@ -696,6 +696,7 @@ export interface AgentHistoryReadContext {
   cwd: string;
   agentId?: string;
   env?: Record<string, string>;
+  wrap?: AgentLaunchContext["wrap"];
 }
 
 /**

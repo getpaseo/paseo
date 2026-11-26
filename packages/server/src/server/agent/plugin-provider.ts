@@ -28,6 +28,7 @@ import {
   type ProviderError,
   type ProviderEvent,
   type ProviderHistoryChild,
+  type ProviderHistoryReadRequest,
   type ProviderHistoryReadResult,
   type ProviderInput,
   type ProviderPersistence,
@@ -341,7 +342,7 @@ class ProviderRuntime {
 
   async readSessionHistory(
     persistence: ProviderPersistence,
-    context: { cwd: string; env?: Readonly<Record<string, string>> },
+    context: Pick<ProviderHistoryReadRequest, "cwd" | "env" | "wrap">,
   ): Promise<ProviderHistoryReadResult> {
     const reader = this.registration.readSessionHistory;
     if (!reader) {
@@ -352,6 +353,7 @@ class ProviderRuntime {
         persistence,
         cwd: context.cwd,
         env: context.env,
+        wrap: context.wrap,
         launch: await this.resolveLaunch(),
       }),
     );
@@ -1199,6 +1201,7 @@ class PluginAgentClient implements AgentClient {
     const result = await this.runtime.readSessionHistory(decodePersistence(handle), {
       cwd,
       env: context?.env,
+      wrap: context?.wrap,
     });
     const snapshots = new Map<string, TimelineTextSnapshot>();
     const events: AgentStreamEvent[] = [];

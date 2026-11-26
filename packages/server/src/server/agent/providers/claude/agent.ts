@@ -1764,6 +1764,8 @@ export class ClaudeAgentClient implements AgentClient {
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
+      independentUltracode: false,
+      resolveMcpServersDelivery: (launch) => this.resolveMcpServersDelivery(launch),
     });
     try {
       const events: AgentStreamEvent[] = [];

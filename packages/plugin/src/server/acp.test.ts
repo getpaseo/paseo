@@ -957,7 +957,7 @@ describe("runAcpProvider", () => {
               content: { type: "text", text: "next question" },
             },
           });
-        }, 0);
+        }, 25);
         return true;
       },
     });
@@ -965,6 +965,7 @@ describe("runAcpProvider", () => {
       id: "history-acp",
       label: "History ACP",
       connector: harness.connector,
+      acpOptions: { loadReplayQuietPeriodMs: 50 },
     });
     const history = await registration.readSessionHistory!({
       persistence: { version: 1, data: { sessionId: "saved-session" } },
@@ -975,7 +976,7 @@ describe("runAcpProvider", () => {
         {
           item: {
             type: "user_message",
-            id: "history-user",
+            id: JSON.stringify(["user_message_chunk", "history-user"]),
             messageId: "history-user",
             text: "saved ",
           },
@@ -983,7 +984,7 @@ describe("runAcpProvider", () => {
         {
           item: {
             type: "user_message",
-            id: "history-user",
+            id: JSON.stringify(["user_message_chunk", "history-user"]),
             messageId: "history-user",
             text: "saved question",
           },
@@ -991,7 +992,7 @@ describe("runAcpProvider", () => {
         {
           item: {
             type: "assistant_message",
-            id: "history-message",
+            id: JSON.stringify(["agent_message_chunk", "history-message"]),
             messageId: "history-message",
             text: "archived",
           },
@@ -999,7 +1000,7 @@ describe("runAcpProvider", () => {
         {
           item: {
             type: "user_message",
-            id: "history-followup",
+            id: JSON.stringify(["user_message_chunk", "history-followup"]),
             messageId: "history-followup",
             text: "next question",
           },

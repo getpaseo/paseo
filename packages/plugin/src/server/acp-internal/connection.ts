@@ -190,7 +190,9 @@ export async function readAcpProviderHistory(
     options,
     launch: request.launch,
     boundarySessionId: "history-read",
+    cwd: request.cwd,
     env: request.env ?? {},
+    wrap: request.wrap,
     emit: (event) => {
       if (event.type === "timeline.item") {
         items.push({
@@ -804,6 +806,8 @@ class AcpRuntime {
           mcpServers: [],
         }),
       );
+      const quietPeriod = this.options.options.acpOptions?.loadReplayQuietPeriodMs;
+      if (quietPeriod && quietPeriod > 0) await this.waitForLoadReplay(quietPeriod, () => false);
       await this.drainNotifications();
     } finally {
       this.replayWindow = null;

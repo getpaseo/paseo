@@ -5,7 +5,6 @@ import type {
   AgentSessionConfig,
   AgentLaunchContext,
   AgentCreateSessionOptions,
-  AgentResumeSessionOptions,
   AgentPersistenceHandle,
   AgentResumeSessionOptions,
   AgentHistoryReadContext,

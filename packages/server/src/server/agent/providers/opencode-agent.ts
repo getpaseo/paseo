@@ -1671,8 +1671,8 @@ export class OpenCodeAgentClient implements AgentClient {
       : null;
     const acquisition =
       registeredAcquisition ??
-      (context?.env
-        ? await this.serverManager.acquireDedicated(context.env)
+      (context?.env || context?.wrap
+        ? await this.serverManager.acquireDedicated({ env: context.env ?? {}, wrap: context.wrap })
         : await this.serverManager.acquireCurrent());
     try {
       const client = this.createOpenCodeClient({

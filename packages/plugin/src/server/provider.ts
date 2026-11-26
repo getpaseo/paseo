@@ -720,6 +720,7 @@ export interface ProviderHistoryReadRequest {
   cwd: string;
   env?: Readonly<Record<string, string>>;
   launch?: ProviderLaunch;
+  wrap?: readonly [string, ...string[]];
 }
 
 export interface ProviderHistoryItem {

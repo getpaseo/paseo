@@ -707,6 +707,23 @@ function limitAgentStreamEventContent(event: AgentStreamEvent): AgentStreamEvent
     : event;
 }
 
+async function collectProviderHistoryEvents(
+  events: AsyncIterable<AgentStreamEvent> | Iterable<AgentStreamEvent>,
+  preserveRootTimeline = false,
+) {
+  const historyEntries: ProviderHistoryEntry[] = [];
+  const historySubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+  for await (const rawEvent of events) {
+    const event = limitAgentStreamEventContent(rawEvent);
+    if (event.type === "provider_subagent") {
+      historySubagentEvents.push(event);
+    } else if (!preserveRootTimeline || event.type === "session_metrics_updated") {
+      historyEntries.push(...providerHistoryEntries(event));
+    }
+  }
+  return { historyEntries, historySubagentEvents };
+}
+
 interface WriteLabelsResult {
   record: StoredAgentRecord | null;
   live: boolean;
@@ -2059,7 +2076,7 @@ export class AgentManager {
 
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
     const workspaceId = resolveResumeWorkspaceId({ options, record });
-    const historyEnv = await this.resolveHistoryReadEnv(
+    const launch = await this.resolveHistoryReadLaunch(
       {
         agentId: resolvedAgentId,
         provider: client.provider,
@@ -2069,16 +2086,18 @@ export class AgentManager {
         purpose: "history",
         env: { ...record?.launchEnv },
         title: record?.title ?? storedConfig.title ?? null,
+        background: record?.background === true,
         ...agentEntityData(record ?? options),
         tools: [],
         mcpServers: {},
       },
       record?.launchEnv,
     );
+    if (launch.wrap) await requireLaunchWrap(client);
     const history = await client.readSessionHistory(handle, {
       agentId: resolvedAgentId,
       cwd: storedConfig.cwd,
-      ...(historyEnv ? { env: historyEnv } : {}),
+      ...launch,
     });
     this.assertAcceptingAgentRegistrations();
 
@@ -5629,16 +5648,8 @@ export class AgentManager {
     broadcast: boolean,
     broadcastTimeline: boolean,
   ): Promise<void> {
-    const historyEntries: ProviderHistoryEntry[] = [];
-    const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const rawEvent of agent.session.streamHistory()) {
-      const event = limitAgentStreamEventContent(rawEvent);
-      if (event.type === "provider_subagent") {
-        providerSubagentEvents.push(event);
-      } else {
-        historyEntries.push(...providerHistoryEntries(event));
-      }
-    }
+    const { historyEntries, historySubagentEvents: providerSubagentEvents } =
+      await collectProviderHistoryEvents(agent.session.streamHistory());
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
@@ -5730,20 +5741,10 @@ export class AgentManager {
       return;
     }
     const deferredBroadcast = typeof broadcast === "function";
-    const historyEntries: ProviderHistoryEntry[] = [];
-    const historySubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    let history: Awaited<ReturnType<typeof collectProviderHistoryEvents>>;
     try {
-      // Collect the whole replay before touching either store. A stream that fails
-      // halfway then leaves the committed timeline as it was, instead of a partial
-      // copy the next attempt would append to.
-      for await (const rawEvent of events) {
-        const event = limitAgentStreamEventContent(rawEvent);
-        if (event.type === "provider_subagent") {
-          historySubagentEvents.push(event);
-          continue;
-        }
-        historyEntries.push(...providerHistoryEntries(event));
-      }
+      // Collect a complete replay before replacing the timeline or provider subagents.
+      history = await collectProviderHistoryEvents(events, options?.preserveRootTimeline);
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
       throw error;
@@ -5765,7 +5766,7 @@ export class AgentManager {
         deferredEvents: providerSubagentEvents,
       });
     }
-    for (const event of historySubagentEvents) {
+    for (const event of history.historySubagentEvents) {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
       if (deferredBroadcast) {
@@ -5774,8 +5775,7 @@ export class AgentManager {
         this.dispatch(managerEvent);
       }
     }
-    for (const entry of historyEntries) {
-      if (options?.preserveRootTimeline && entry.type !== "session_metrics") continue;
+    for (const entry of history.historyEntries) {
       const replayed = this.replayProviderHistoryEntry(agent, entry, writeDurableTimeline);
       if (!replayed) continue;
       if (deferredBroadcast) {
@@ -5789,7 +5789,10 @@ export class AgentManager {
       }
     }
     agent.historyPrimed = true;
-    if (writeDurableTimeline && historyEntries.some((entry) => entry.type === "session_metrics")) {
+    if (
+      writeDurableTimeline &&
+      history.historyEntries.some((entry) => entry.type === "session_metrics")
+    ) {
       this.emitState(agent);
     }
 
@@ -7000,13 +7003,13 @@ export class AgentManager {
    * Without a plugin there is nothing to apply, so providers keep their default
    * environment rather than being handed a synthetic one.
    */
-  private async resolveHistoryReadEnv(
+  private async resolveHistoryReadLaunch(
     request: PluginWireBeforeRequests["agent.open.before"],
     storedEnv?: Record<string, string>,
-  ): Promise<Record<string, string> | undefined> {
-    if (!this.pluginLifecycle) return storedEnv;
-    const transformed = await this.pluginLifecycle.before("agent.open.before", request);
-    return transformed.env;
+  ): Promise<Pick<AgentLaunchContext, "env" | "wrap">> {
+    if (!this.pluginSessions) return storedEnv ? { env: storedEnv } : {};
+    const { env, wrap } = await this.pluginSessions.openSession(request);
+    return wrap ? { env, wrap } : { env };
   }
 
   private async buildLaunchContext(

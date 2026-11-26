@@ -73,9 +73,12 @@ export class SessionAttachments {
       // Each plugin attaches its tools again below, and a plugin that left the chain keeps none. Until the launch
       // takes over, the running session's record stays, and its plugins attach again on its next refresh if the
       // launch fails.
-      this.plugins.detachEverywhere(request.agentId);
-      for (const contribution of this.attachments.get(request.agentId)?.contributions ?? []) {
-        contribution.synced = false;
+      const interactive = request.purpose === "interactive";
+      if (interactive) {
+        this.plugins.detachEverywhere(request.agentId);
+        for (const contribution of this.attachments.get(request.agentId)?.contributions ?? []) {
+          contribution.synced = false;
+        }
       }
       const base: SessionOpenWireRequest = { ...request, tools: [], mcpServers: {} };
       const contributions: Contribution[] = [];
@@ -97,7 +100,7 @@ export class SessionAttachments {
           });
           current = output;
         } catch (error) {
-          this.plugins.detachEverywhere(request.agentId);
+          if (interactive) this.plugins.detachEverywhere(request.agentId);
           throw new Error(`Plugin ${plugin.id} agent.open.before failed: ${describeError(error)}`, {
             cause: error,
           });
@@ -107,10 +110,10 @@ export class SessionAttachments {
       try {
         launch = composeLaunch(base, contributions);
       } catch (error) {
-        this.plugins.detachEverywhere(request.agentId);
+        if (interactive) this.plugins.detachEverywhere(request.agentId);
         throw error;
       }
-      if (request.purpose === "interactive") {
+      if (interactive) {
         this.pending.set(request.agentId, {
           base,
           launched: contributions,

@@ -244,9 +244,10 @@ export class OpenCodeV2AgentClient implements AgentClient {
     if (typeof cwd !== "string")
       throw new Error("OpenCode history read requires the original working directory");
     const sessionID = handle.nativeHandle ?? handle.sessionId;
+    const dedicated =
+      context?.wrap || context?.env ? { wrap: context.wrap, env: context.env } : undefined;
     const connection =
-      this.connections.get(sessionID)?.retain() ??
-      (await this.runtime.acquire({ dedicated: dedicatedLaunch(context) }));
+      this.connections.get(sessionID)?.retain() ?? (await this.runtime.acquire({ dedicated }));
     try {
       const info = await connection.client.session.get({ sessionID });
       const timeline = new V2Timeline(false);

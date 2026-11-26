@@ -732,7 +732,8 @@ export function createPluginWorker(options: {
         );
       })().then(
         (output) => send({ type: "result", requestId: message.requestId, output }),
-        (error) => send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       );
       return true;
     }

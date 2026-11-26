@@ -302,6 +302,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
             cwd: z.string(),
             env: z.record(z.string(), z.string()).optional(),
             launch: ProviderLaunchSchema.optional(),
+            wrap: z.tuple([z.string().min(1)], z.string()).optional(),
           })
           .strict(),
       })

@@ -121,6 +121,7 @@ export function createMuseProvider(
           env: { ...requireLaunch(request.launch).env, ...request.env },
         },
         cwd: request.cwd,
+        wrap: request.wrap,
         serveArgs: [],
       });
       try {

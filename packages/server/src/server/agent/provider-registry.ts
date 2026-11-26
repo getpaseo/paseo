@@ -508,6 +508,18 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
   } satisfies ForwardedAgentSession;
 }
 
+function wrapHistoryReader(
+  provider: AgentProvider,
+  inner: AgentClient,
+): AgentClient["readSessionHistory"] {
+  const read = inner.readSessionHistory?.bind(inner);
+  if (!read) return undefined;
+  return async (handle, context) => {
+    const result = await read({ ...handle, provider: inner.provider }, context);
+    return { ...result, events: result.events.map((event) => mapStreamEvent(provider, event)) };
+  };
+}
+
 function wrapClientProvider(
   provider: AgentProvider,
   inner: AgentClient,
@@ -529,7 +541,6 @@ function wrapClientProvider(
     convertLegacyOptions({ provider: inner.provider, options: configuredOptions });
   const withDefaults = (own: ProviderOptions | undefined) =>
     mergeProviderOptions(configuredDefaults(), own);
-  const readSessionHistory = inner.readSessionHistory?.bind(inner);
 
   return {
     provider,
@@ -568,21 +579,7 @@ function wrapClientProvider(
           { ...options, configuredModelIds },
         ),
       ),
-    readSessionHistory: readSessionHistory
-      ? async (handle, context) => {
-          const result = await readSessionHistory(
-            {
-              ...handle,
-              provider: inner.provider,
-            },
-            context,
-          );
-          return {
-            ...result,
-            events: result.events.map((event) => mapStreamEvent(provider, event)),
-          };
-        }
-      : undefined,
+    readSessionHistory: wrapHistoryReader(provider, inner),
     fetchCatalog: async (options, context) => {
       const catalog = await inner.fetchCatalog(
         { ...options, providerOptions: configuredDefaults() },
