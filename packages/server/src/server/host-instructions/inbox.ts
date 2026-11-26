@@ -167,7 +167,7 @@ export class HostInstructionInbox {
   }
 
   async canDiscover(principal: Principal, target: HostInstruction["target"]): Promise<boolean> {
-    return this.readSettled(
+    return this.writer.readSettled(
       () => this.effectivePolicy(this.requireGrant(principal), target) !== "blocked",
     );
   }
@@ -203,7 +203,7 @@ export class HostInstructionInbox {
 
   async authenticate(token: string): Promise<Principal | null> {
     if (!/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(token)) return null;
-    return this.readSettled(() => {
+    return this.writer.readSettled(() => {
       const grant = this.data.grants.find((entry) => entry.id === token.slice(0, 36));
       if (!grant || !timingSafeEqual(digestToken(token), Buffer.from(grant.tokenDigest, "hex"))) {
         return null;
@@ -213,7 +213,7 @@ export class HostInstructionInbox {
   }
 
   async listGrants(): Promise<HostInstructionGrant[]> {
-    return this.readSettled(() =>
+    return this.writer.readSettled(() =>
       this.data.grants.map(({ tokenDigest: _secret, ...grant }) => structuredClone(grant)),
     );
   }
@@ -318,7 +318,7 @@ export class HostInstructionInbox {
 
   async status(principal: Principal, instructionId: string) {
     await this.expire();
-    return this.readSettled(() => {
+    return this.writer.readSettled(() => {
       this.requireGrant(principal);
       const request = this.find(principal.sourceId, instructionId);
       if (request?.grantId !== principal.id) return null;
@@ -348,7 +348,7 @@ export class HostInstructionInbox {
 
   async list(): Promise<InboxRequest[]> {
     await this.expire();
-    return this.readSettled(() => structuredClone(this.data.requests));
+    return this.writer.readSettled(() => structuredClone(this.data.requests));
   }
 
   async claim(
@@ -506,14 +506,5 @@ export class HostInstructionInbox {
   private async commit(data: InboxData): Promise<void> {
     this.data = data;
     await this.writer.persist(data);
-  }
-
-  private async readSettled<T>(read: () => T): Promise<T> {
-    for (;;) {
-      const snapshot = this.data;
-      await this.writer.settled();
-      // Commits publish their snapshots before the serialized writes finish.
-      if (snapshot === this.data) return read();
-    }
   }
 }

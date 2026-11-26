@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as privateFiles from "../private-files.js";
 import { HostInstructionInbox } from "./inbox.js";
 import { HostInstructionOutbox, type HostInstructionTransport } from "./outbox.js";
 
@@ -125,5 +126,37 @@ describe("host instruction outbox", () => {
       cancellationPending: false,
     });
     expect(await inbox.list()).toHaveLength(1);
+  });
+
+  it("does not report a local cancellation whose write failed", async () => {
+    const initial = await outbox.submit(registration, request);
+    const { id } = initial;
+    const write = Promise.withResolvers<void>();
+    const persist = vi
+      .spyOn(privateFiles, "writePrivateFileAtomic")
+      .mockReturnValueOnce(write.promise);
+    // Resume cancel from its initial status check while the next read awaits the old write.
+    const status = vi.spyOn(outbox, "status").mockResolvedValueOnce(initial);
+    try {
+      const cancellation = outbox.cancel(id);
+      const receipts = Promise.allSettled([cancellation, outbox.status(id)]);
+      await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce());
+      write.reject(new Error("Could not persist cancellation"));
+      expect((await receipts).map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    } finally {
+      status.mockRestore();
+      persist.mockRestore();
+    }
+
+    outbox = await HostInstructionOutbox.open(path.join(home, "source"), transport, now);
+    expect(await outbox.status(id)).toMatchObject({ state: "waiting_for_host" });
+    expect(await outbox.cancel(id)).toMatchObject({
+      state: "cancelled",
+      cancellationPending: false,
+    });
+    outbox = await HostInstructionOutbox.open(path.join(home, "source"), transport, now);
+    online = true;
+    await outbox.flush(registration);
+    expect(await inbox.list()).toEqual([]);
   });
 });

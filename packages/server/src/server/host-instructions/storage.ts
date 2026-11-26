@@ -32,6 +32,15 @@ export class InstructionFileWriter {
     return this.tail;
   }
 
+  async readSettled<T>(read: () => T): Promise<T> {
+    for (;;) {
+      const tail = this.tail;
+      await tail;
+      // A commit can publish a new snapshot while this read is waiting.
+      if (tail === this.tail) return read();
+    }
+  }
+
   persist(value: unknown): Promise<void> {
     const snapshot = JSON.stringify(value);
     this.tail = this.tail.then(() =>

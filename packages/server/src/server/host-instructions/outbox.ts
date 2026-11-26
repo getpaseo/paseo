@@ -81,18 +81,19 @@ export class HostInstructionOutbox {
   }
 
   async status(id: string) {
-    await this.writer.settled();
-    const request = this.requireRequest(id);
-    if (!request.attempted && !request.receipt && this.now() >= request.instruction.expiresAt) {
-      await this.update(id, { receipt: { id, state: "expired" } });
-      return { id, state: "expired" as const, cancellationPending: false };
-    }
-    return {
-      id,
-      state: request.receipt?.state ?? "waiting_for_host",
-      cancellationPending: request.cancellationPending,
-      reply: request.receipt?.reply,
-    };
+    return this.writer.readSettled(async () => {
+      const request = this.requireRequest(id);
+      if (!request.attempted && !request.receipt && this.now() >= request.instruction.expiresAt) {
+        await this.update(id, { receipt: { id, state: "expired" } });
+        return { id, state: "expired" as const, cancellationPending: false };
+      }
+      return {
+        id,
+        state: request.receipt?.state ?? "waiting_for_host",
+        cancellationPending: request.cancellationPending,
+        reply: request.receipt?.reply,
+      };
+    });
   }
 
   async cancel(id: string) {
