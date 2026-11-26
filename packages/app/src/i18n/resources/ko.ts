@@ -295,6 +295,7 @@ export const ko: TranslationResources = {
     archived: {
       callout: "이 에이전트는 보관되었습니다",
       unarchive: "보관 해제",
+      unarchiving: "보관 해제 중...",
     },
   },
   sessions: {

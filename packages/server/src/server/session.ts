@@ -754,6 +754,16 @@ interface ClientActivity {
   appVisibilityChangedAt: Date;
 }
 
+function resolveAgentSubscriptionSnapshotIds(
+  synced: { snapshotAgentIds: Iterable<string> } | null,
+  payload: { entries: ReadonlyArray<{ agent: { id: string } }>; pageInfo: { hasMore: boolean } },
+  request: { page?: { cursor?: string } },
+): Iterable<string> | null {
+  if (synced) return synced.snapshotAgentIds;
+  if (payload.pageInfo.hasMore || Boolean(request.page?.cursor)) return null;
+  return payload.entries.map((entry) => entry.agent.id);
+}
+
 export class Session {
   private readonly connectedHostSession: ConnectedHostSession | null;
   private routed = false;
@@ -847,6 +857,7 @@ export class Session {
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
+  private unsubscribeBeforeWorkspacePublish: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
   private projectUpdateQueue: Promise<void> = Promise.resolve();
   private isCleanedUp = false;
@@ -1068,6 +1079,8 @@ export class Session {
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
+      waitForDeferredPublication: (workspaceId) =>
+        this.workspaceRegistry.waitForDeferredPublication?.(workspaceId) ?? Promise.resolve(false),
       isCheckoutUntrusted: (checkoutPath) =>
         isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
       syncCheckoutWorktreeManager: async ({
@@ -1735,6 +1748,7 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
   ): Promise<void> {
     try {
+      await this.agentUpdates.flushPendingUpdates();
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       if (workspace.kind !== "directory" && this.wantsEvent("checkout_status_update")) {
         // Recovery can refresh Git before this session starts observing again.
@@ -1943,6 +1957,10 @@ export class Session {
         this.workspaceRegistry.subscribeToMutations?.((mutation) =>
           this.enqueueRegistryMutation(() => this.handleWorkspaceMutation(mutation)),
         ) ?? null;
+      this.unsubscribeBeforeWorkspacePublish ??=
+        this.workspaceRegistry.subscribeBeforePublish?.(() =>
+          this.agentUpdates.flushPendingUpdates(),
+        ) ?? null;
       this.unsubscribeTerminalWorkspaceContributionEvents ??=
         this.terminalManager?.subscribeTerminalWorkspaceContributionChanged((event) => {
           void this.emitWorkspaceUpdateForTerminalContribution(event).catch((error) =>
@@ -1957,6 +1975,8 @@ export class Session {
       this.unsubscribeProjectMutations = null;
       this.unsubscribeWorkspaceMutations?.();
       this.unsubscribeWorkspaceMutations = null;
+      this.unsubscribeBeforeWorkspacePublish?.();
+      this.unsubscribeBeforeWorkspacePublish = null;
       this.unsubscribeTerminalWorkspaceContributionEvents?.();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
     }
@@ -2005,6 +2025,7 @@ export class Session {
       if (this.isCleanedUp) {
         return;
       }
+      await this.agentUpdates.flushPendingUpdates();
       await this.emitWorkspaceUpdatesForWorkspaceIds(
         [mutation.workspaceId],
         mutation.expectsInitialAgent ? { optimisticStatus: "running" } : undefined,
@@ -2064,7 +2085,11 @@ export class Session {
         return;
       }
       const projectWorkspaceIds = (await this.workspaceRegistry.listActive())
-        .filter((workspace) => workspace.projectId === mutation.projectId)
+        .filter(
+          (workspace) =>
+            workspace.projectId === mutation.projectId &&
+            !this.workspaceRegistry.isBroadcastDeferred?.(workspace.workspaceId),
+        )
         .map((workspace) => workspace.workspaceId);
 
       if (mutation.kind === "remove") {
@@ -6771,7 +6796,11 @@ export class Session {
     workspaceIds: Iterable<string>,
     options?: WorkspaceUpdateOptions,
   ): Promise<void> {
-    const uniqueWorkspaceIds = new Set(workspaceIds);
+    const uniqueWorkspaceIds = new Set<string>();
+    for (const workspaceId of workspaceIds) {
+      if (this.workspaceRegistry.isBroadcastDeferred?.(workspaceId)) continue;
+      uniqueWorkspaceIds.add(workspaceId);
+    }
     if (uniqueWorkspaceIds.size === 0) return;
     for (const subscription of this.workspaceUpdatesSubscriptions.values()) {
       await this.enqueueWorkspaceUpdates(uniqueWorkspaceIds, subscription, options);
@@ -6984,9 +7013,13 @@ export class Session {
         this.refreshObservationProducers();
       }
 
-      const payload = request.sync
+      const synced = request.sync
         ? await this.readAgentDirectorySync(request, backgroundVisibility)
+        : null;
+      const payload = synced
+        ? synced.payload
         : await this.listFetchAgentsEntries(request, backgroundVisibility);
+      const snapshotAgentIds = resolveAgentSubscriptionSnapshotIds(synced, payload, request);
       const snapshotUpdatedAtByAgentId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedUpdatedAt = Date.parse(entry.agent.updatedAt);
@@ -7005,7 +7038,10 @@ export class Session {
       });
 
       if (subscriptionId) {
-        this.agentUpdates.flushBootstrapped(owner!.id, { snapshotUpdatedAtByAgentId });
+        this.agentUpdates.flushBootstrapped(owner!.id, {
+          snapshotUpdatedAtByAgentId,
+          snapshotAgentIds,
+        });
       }
     } catch (error) {
       if (subscriptionId) {
@@ -7416,12 +7452,24 @@ export class Session {
       request.sync ?? {},
       backgroundVisibility,
     );
+    const snapshotAgentIds = (
+      await Promise.all(
+        snapshot.entries.map(async (entry) =>
+          (await this.agentDirectory.includes(entry.agent, backgroundVisibility))
+            ? entry.agent.id
+            : null,
+        ),
+      )
+    ).filter((id): id is string => id !== null);
     const entries = await Promise.all(
       result.entries.map(async (entry) =>
         (await this.agentDirectory.includes(entry.agent, backgroundVisibility)) ? entry : null,
       ),
     );
-    return { ...result, entries: entries.filter((entry) => entry !== null) };
+    return {
+      payload: { ...result, entries: entries.filter((entry) => entry !== null) },
+      snapshotAgentIds,
+    };
   }
 
   private async readWorkspaceDirectorySync(
@@ -9672,6 +9720,8 @@ export class Session {
     this.unsubscribePluginChanges = null;
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations = null;
+    this.unsubscribeBeforeWorkspacePublish?.();
+    this.unsubscribeBeforeWorkspacePublish = null;
     this.agentUpdates.dispose();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {

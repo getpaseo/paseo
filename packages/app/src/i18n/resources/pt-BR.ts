@@ -298,6 +298,7 @@ export const ptBR: TranslationResources = {
     archived: {
       callout: "Este agente está arquivado",
       unarchive: "Desarquivar",
+      unarchiving: "Desarquivando...",
     },
   },
   sessions: {
