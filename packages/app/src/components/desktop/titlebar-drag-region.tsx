@@ -11,7 +11,7 @@ import { isNative } from "@/constants/platform";
  *
  * VS Code's drag region is a static DOM element — no z-index, no pointer-events,
  * no state, no event listeners. Interactive elements get no-drag from their own
- * CSS (global backstop in index.html). The drag region never re-renders.
+ * CSS (scoped backstop in index.html). The drag region never re-renders.
  *
  * The resizer is Windows/Linux only (titlebarpart.css:249 scopes to .windows/.linux).
  * On macOS, Electron handles edge resize natively.
@@ -26,6 +26,16 @@ export const WINDOW_CONTENT_DATASET = { "window-content": "" };
 
 /** Reserves a clickable area for a control mounted outside the titlebar rail. */
 export const WINDOW_NO_DRAG_DATASET = { "window-no-drag": "" };
+
+/**
+ * Marks the container hosting a drag surface so the no-drag backstop in
+ * public/index.html applies to its controls. Electron's draggable region is
+ * geometric (drag rects minus no-drag rects), so every control inside the host
+ * overlaps the overlay's drag rect and has to subtract itself.
+ */
+const markDragHost = (overlay: HTMLDivElement | null) => {
+  overlay?.parentElement?.setAttribute("data-window-drag", "");
+};
 
 export const titlebarDragSurfaceStyle: React.CSSProperties = {
   cursor: "default",
@@ -64,7 +74,7 @@ export function TitlebarDragRegion() {
   return (
     <>
       {/* Drag overlay — VS Code .titlebar-drag-region (titlebarpart.css:57-64) */}
-      <div style={DRAG_OVERLAY_STYLE} />
+      <div style={DRAG_OVERLAY_STYLE} ref={markDragHost} />
       {/* Top-edge resizer — VS Code .resizer (titlebarpart.css:249-256) */}
       <div style={TOP_RESIZER_STYLE} />
     </>
