@@ -15,11 +15,13 @@ import type {
 } from "../utils/checkout-git.js";
 import {
   BACKGROUND_GIT_FETCH_INTERVAL_MS,
+  BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS,
   WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS,
   WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
   WORKSPACE_GIT_REFRESH_CONCURRENCY,
   WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS,
   WorkspaceGitServiceImpl,
+  computeBackgroundGitFetchDelayMs,
   type WorkspaceGitRuntimeSnapshot,
   workspaceFolderExists,
 } from "./workspace-git-service.js";
@@ -261,6 +263,7 @@ function createGitHubServiceStub(): ForgeService {
 }
 
 interface CreateServiceTestOptions {
+  logger?: ReturnType<typeof createLogger>;
   subscribe?: ReturnType<typeof vi.fn>;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutSnapshotFacts?: (cwd: string) => Promise<CheckoutSnapshotFacts>;
@@ -334,7 +337,7 @@ function createService(options?: CreateServiceTestOptions) {
       };
     });
   return new WorkspaceGitServiceImpl({
-    logger: createLogger() as unknown as pino.Logger,
+    logger: (options?.logger ?? createLogger()) as unknown as pino.Logger,
     paseoHome: "/tmp/paseo-test",
     deps,
   });
@@ -2757,5 +2760,202 @@ describe("WorkspaceGitServiceImpl with workspace folders that no longer exist", 
     expect(await workspaceFolderExists(folder)).toBe(true);
     expect(await workspaceFolderExists(join(folder, "missing"))).toBe(false);
     expect(await workspaceFolderExists(join(file, "nested"))).toBe(false);
+  });
+});
+
+describe("WorkspaceGitServiceImpl background fetch backoff", () => {
+  const temporaryFolders: string[] = [];
+
+  async function createTemporaryFolder(): Promise<string> {
+    const folder = await mkdtemp(join(os.tmpdir(), "paseo-git-fetch-backoff-"));
+    temporaryFolders.push(folder);
+    return folder;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await Promise.all(
+      temporaryFolders.splice(0).map((folder) => rm(folder, { recursive: true, force: true })),
+    );
+  });
+
+  test("pauses periodic background fetches on auth failure and resumes on forced refresh, state change, or remoteUrl change", async () => {
+    const workspace = await createTemporaryFolder();
+    const logger = createLogger();
+    const git = createFolderBackedGit();
+    let currentRemoteUrl = "https://github.com/acme/repo.git";
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+    git.deps.runGitFetch.mockResolvedValue({
+      changes: [],
+      error: new Error(
+        "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      ),
+    });
+
+    const service = createService({ ...git.deps, logger });
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(1);
+    });
+
+    // Advancing through many intervals must not repeat failing auth fetches.
+    await vi.advanceTimersByTimeAsync(10 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    expect(git.fetchesIn(workspace)).toBe(1);
+    expect(
+      logger.warn.mock.calls.filter(([, message]) =>
+        String(message).includes("paused due to authentication failure"),
+      ),
+    ).toHaveLength(1);
+
+    // 1. Forced getSnapshot resumes fetching.
+    await service.getSnapshot(workspace, { force: true, reason: "user-refresh" });
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(5 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    expect(git.fetchesIn(workspace)).toBe(2);
+
+    // 2. onWorkspaceStateMayHaveChanged resumes fetching.
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(3);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(5 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    expect(git.fetchesIn(workspace)).toBe(3);
+
+    // 3. Changing remoteUrl and refreshing resumes fetching and restores periodic cadence on success.
+    git.deps.runGitFetch.mockResolvedValue({ changes: [], error: null });
+    currentRemoteUrl = "git@github.com:acme/repo.git";
+    await service.refresh(workspace);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(4);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(5);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("pauses when runGitFetch rejects with an auth error and honors resume signals received in flight", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+        throw new Error("git@github.com: Permission denied (publickey).");
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+
+    // A resume signal during the in-flight failing attempt must schedule a follow-up fetch
+    // rather than letting the stale error leave background fetch paused.
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    releaseFirstFetch.resolve();
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+
+    // After the retry succeeds, normal periodic cadence is active.
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(3);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("backs off transient background fetch failures exponentially and resets on success", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    git.deps.runGitFetch.mockResolvedValue({
+      changes: [],
+      error: new Error(
+        "fatal: unable to access 'https://github.com/acme/repo.git/': The requested URL returned error: 503",
+      ),
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(1);
+    });
+
+    const expectedDelays = [
+      computeBackgroundGitFetchDelayMs(1),
+      computeBackgroundGitFetchDelayMs(2),
+      computeBackgroundGitFetchDelayMs(3),
+      computeBackgroundGitFetchDelayMs(4),
+      computeBackgroundGitFetchDelayMs(5),
+      computeBackgroundGitFetchDelayMs(6),
+    ];
+    expect(expectedDelays).toEqual([
+      360_000,
+      720_000,
+      1_440_000,
+      2_880_000,
+      BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS,
+      BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS,
+    ]);
+
+    for (let index = 0; index < expectedDelays.length; index += 1) {
+      const delayMs = expectedDelays[index]!;
+      const countBefore = git.fetchesIn(workspace);
+      await vi.advanceTimersByTimeAsync(delayMs - 1);
+      expect(git.fetchesIn(workspace)).toBe(countBefore);
+
+      if (index === expectedDelays.length - 1) {
+        git.deps.runGitFetch.mockResolvedValue({ changes: [], error: null });
+      }
+      await vi.advanceTimersByTimeAsync(1);
+      await settle(() => {
+        expect(git.fetchesIn(workspace)).toBe(countBefore + 1);
+        expect(service.getMetrics().fetchInFlightCount).toBe(0);
+      });
+    }
+
+    // Success resets the next fetch delay back to BACKGROUND_GIT_FETCH_INTERVAL_MS.
+    const countAfterSuccess = git.fetchesIn(workspace);
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS - 1);
+    expect(git.fetchesIn(workspace)).toBe(countAfterSuccess);
+    await vi.advanceTimersByTimeAsync(1);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(countAfterSuccess + 1);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
   });
 });
