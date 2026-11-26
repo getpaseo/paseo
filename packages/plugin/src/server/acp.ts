@@ -85,6 +85,14 @@ export interface AcpContext {
   sessionId: string;
 }
 
+export interface AcpTurnEndContext extends AcpContext {
+  stopReason: string;
+  /** Final assistant message text accumulated in this turn before it ended, if any. */
+  lastAssistantMessage?: string;
+  /** Final `agent_message_chunk` text emitted in this turn before it ended, if any. */
+  lastAssistantChunk?: string;
+}
+
 export interface AcpConfigAccess {
   read(): Promise<Readonly<Record<string, JsonValue>>>;
   set(id: string, value: JsonValue): Promise<void>;
@@ -164,6 +172,13 @@ export interface AcpTransformer {
       previous?: AcpToolCallSnapshot;
     },
   ): AcpToolCallSnapshot;
+  /**
+   * Inspects a turn that resolved normally (for example with `stopReason: "end_turn"`).
+   * Return `{ state: "failed", error }` to mark the turn failed instead of completed.
+   */
+  turnEnd?(
+    context: AcpTurnEndContext,
+  ): { state: "failed"; error: { message: string } } | null | undefined;
 }
 
 export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistration {

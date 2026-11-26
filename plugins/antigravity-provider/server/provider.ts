@@ -16,6 +16,29 @@ const systemPromptCapability = z.object({
   antigravity: z.object({ systemPrompt: z.object({ append: z.literal(true) }) }),
 });
 
+// agy 1.5.17 formats internal executor failures as "\n⚠ agent executor error: ...\n"
+// (or "\n⚠ failed to construct executor: ...\n") in an agent_message_chunk and settles
+// session/prompt with stopReason: "end_turn".
+const standaloneExecutorError =
+  /^(?:⚠\ufe0f?\s*)?((?:agent executor error|failed to construct executor):\s*[^\r\n]+)$/i;
+const chunkExecutorError =
+  /^\n?⚠\ufe0f?\s*((?:agent executor error|failed to construct executor):\s*[^\r\n]+)\n?$/i;
+
+function extractSilentExecutorError(
+  lastAssistantMessage: string | undefined,
+  lastAssistantChunk: string | undefined,
+): string | null {
+  if (lastAssistantMessage) {
+    const standalone = standaloneExecutorError.exec(lastAssistantMessage.trim());
+    if (standalone?.[1]) return standalone[1].trim();
+  }
+  if (lastAssistantChunk) {
+    const chunk = chunkExecutorError.exec(lastAssistantChunk);
+    if (chunk?.[1]) return chunk[1].trim();
+  }
+  return null;
+}
+
 // agy 1.5.13 advertises these built-in commands and its invocable skills in one ACP list.
 const builtInCommands = new Set([
   "goal",
@@ -34,6 +57,11 @@ const antigravity: AcpTransformer = {
     return { ...command, kind: builtInCommands.has(command.name) ? "command" : "skill" };
   },
   toolCall: mapToolCall,
+  turnEnd({ stopReason, lastAssistantMessage, lastAssistantChunk }) {
+    if (stopReason !== "end_turn") return null;
+    const message = extractSilentExecutorError(lastAssistantMessage, lastAssistantChunk);
+    return message ? { state: "failed", error: { message } } : null;
+  },
   sessionOpen({ persistence, systemPrompt, agentMetadata }) {
     // COMPAT(antigravityStreamJson): added in v0.16.2, remove after 2027-11-19.
     const saved = legacySession.safeParse(persistence);

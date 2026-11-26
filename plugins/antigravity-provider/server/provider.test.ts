@@ -958,3 +958,212 @@ child.on("exit", (code) => process.exit(code ?? 1));
     await connection.close();
   }
 });
+
+it("marks a turn failed when agy streams a silent agent executor error and resolves with end_turn", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    let turn = 0;
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1 } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "native", configOptions: [
+            { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+              options: [{ value: "default", name: "Default" }] },
+          ] } });
+          send({ method: "session/update", params: { sessionId: "native", update: {
+            sessionUpdate: "available_commands_update", availableCommands: [],
+          } } });
+          break;
+        case "session/prompt":
+          turn += 1;
+          if (turn === 1) {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "\\n⚠ agent executor error: expected pending tool step at index 67, got status CORTEX_STEP_STATUS_DONE\\n" },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+          } else if (turn === 2) {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Checking files." },
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "\\n⚠ agent executor error: generating and executing: Error 404, Message: model not exist, Status: NOT_FOUND, Details: []\\n" },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+          } else if (turn === 3) {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "\\n⚠ failed to construct executor: plan model not specified; you must specify a valid model\\n" },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+          } else {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "text",
+                text: "I investigated:\\n⚠ agent executor error: expected pending tool step at index 67, got status CORTEX_STEP_STATUS_DONE\\nRoot cause is fixed.",
+              },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+          }
+          break;
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+  const provider = createAntigravityProvider();
+  const connection = await provider.connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open-1",
+      sessionId: "agy-exec-err",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+      .toBeDefined();
+
+    // Turn 1: standalone executor error chunk -> failed
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-exec-err",
+      prompt: {
+        clientMessageId: "exec-err-1",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "run step" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:exec-err-1" &&
+              event.state !== "started",
+          ),
+        { timeout: 3_000 },
+      )
+      .toEqual({
+        type: "session.turn",
+        sessionId: "agy-exec-err",
+        turnId: "acp:exec-err-1",
+        state: "failed",
+        error: {
+          message:
+            "agent executor error: expected pending tool step at index 67, got status CORTEX_STEP_STATUS_DONE",
+        },
+      });
+
+    // Turn 2: prose chunk followed by executor error chunk -> failed
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-exec-err",
+      prompt: {
+        clientMessageId: "exec-err-2",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "stream crash" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:exec-err-2" &&
+              event.state !== "started",
+          ),
+        { timeout: 3_000 },
+      )
+      .toEqual({
+        type: "session.turn",
+        sessionId: "agy-exec-err",
+        turnId: "acp:exec-err-2",
+        state: "failed",
+        error: {
+          message:
+            "agent executor error: generating and executing: Error 404, Message: model not exist, Status: NOT_FOUND, Details: []",
+        },
+      });
+
+    // Turn 3: executor construction error chunk -> failed
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-exec-err",
+      prompt: {
+        clientMessageId: "exec-err-3",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "missing model" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:exec-err-3" &&
+              event.state !== "started",
+          ),
+        { timeout: 3_000 },
+      )
+      .toEqual({
+        type: "session.turn",
+        sessionId: "agy-exec-err",
+        turnId: "acp:exec-err-3",
+        state: "failed",
+        error: {
+          message:
+            "failed to construct executor: plan model not specified; you must specify a valid model",
+        },
+      });
+
+    // Turn 4: multi-line explanation quoting the error -> completed
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "agy-exec-err",
+      prompt: {
+        clientMessageId: "exec-prose-3",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "explain error" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:exec-prose-3" &&
+              event.state !== "started",
+          ),
+        { timeout: 3_000 },
+      )
+      .toEqual({
+        type: "session.turn",
+        sessionId: "agy-exec-err",
+        turnId: "acp:exec-prose-3",
+        state: "completed",
+      });
+  } finally {
+    await connection.close();
+  }
+});

@@ -29,6 +29,7 @@ import type {
   AcpRequest,
   AcpToolCallSnapshot,
   AcpTransformer,
+  AcpTurnEndContext,
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
@@ -471,6 +472,8 @@ interface ActivePrompt {
   crossedEndTurn: boolean;
   replyState: DeferredReplyState;
   deferred: DeferredTurnState | null;
+  lastAssistantMessage?: string;
+  lastAssistantChunk?: string;
 }
 
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
@@ -886,21 +889,15 @@ class AcpRuntime {
       async (response): Promise<void> => {
         await this.drainNotifications();
         activePrompt.wirePromptsInFlight -= 1;
-        if (response.usage) {
-          this.lastUsage = {
-            ...this.lastUsage,
-            inputTokens: response.usage.inputTokens,
-            outputTokens: response.usage.outputTokens,
-            cachedInputTokens: response.usage.cachedReadTokens ?? undefined,
-          };
-          this.emit({
-            type: "session.usage",
-            sessionId: this.options.boundarySessionId,
-            turnId,
-            usage: this.lastUsage,
-          });
-        }
+        if (response.usage) this.recordTurnUsage(turnId, response.usage);
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
+        if (state === "completed") {
+          const turnFailure = this.evaluateTurnEnd(activePrompt, response.stopReason);
+          if (turnFailure) {
+            this.finishPromptTurn(turnId, "failed", turnFailure.error);
+            return undefined;
+          }
+        }
         if (response.stopReason === "end_turn" && this.shouldDeferTurn(activePrompt)) {
           await this.settleDeferredPrompt(activePrompt);
           return undefined;
@@ -1482,6 +1479,11 @@ class AcpRuntime {
       const id = this.resolveChunkId(update.sessionUpdate, update.messageId);
       const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
       this.messages.set(id, text);
+      if (update.sessionUpdate === "agent_message_chunk") {
+        this.recordTurnAssistantText(text, update.content.text);
+      } else {
+        this.recordTurnAssistantText();
+      }
       this.emit({
         type: "timeline.item",
         sessionId: this.options.boundarySessionId,
@@ -1498,11 +1500,17 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
-      if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
+      if (update.sessionUpdate === "tool_call") {
+        this.fallbackChunkIds.clear();
+        this.recordTurnAssistantText();
+      }
       this.reduceToolCall(update, wireSeq);
       return;
     }
-    if (update.sessionUpdate === "plan") this.fallbackChunkIds.clear();
+    if (update.sessionUpdate === "plan") {
+      this.fallbackChunkIds.clear();
+      this.recordTurnAssistantText();
+    }
     this.reduceStateUpdate(update, wireSeq);
   }
 
@@ -1894,33 +1902,16 @@ class AcpRuntime {
         }
         this.fallbackChunkIds.clear();
         active.lastPromptResponseWireSeq = null;
+        active.lastAssistantMessage = undefined;
+        active.lastAssistantChunk = undefined;
         if (active.replyState === "settled_with_open_tools") active.replyState = "idle";
         const response = await this.call(
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
         await this.drainNotifications();
         if (this.closing || this.deferredRetirement || active.deferred !== deferred) return;
-        if (response.usage) {
-          this.lastUsage = {
-            ...this.lastUsage,
-            inputTokens: response.usage.inputTokens,
-            outputTokens: response.usage.outputTokens,
-            cachedInputTokens: response.usage.cachedReadTokens ?? undefined,
-          };
-          this.emit({
-            type: "session.usage",
-            sessionId: this.options.boundarySessionId,
-            turnId: active.turnId,
-            usage: this.lastUsage,
-          });
-        }
-        if (response.stopReason === "cancelled") {
-          this.finishDeferredTurn(active, { type: "cancel" });
-          return;
-        }
-        if (response.stopReason !== "end_turn" && active.wirePromptsInFlight === 1) {
-          this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
-        }
+        if (response.usage) this.recordTurnUsage(active.turnId, response.usage);
+        this.settleSteerResponse(active, response.stopReason);
       } catch (error) {
         await this.drainNotifications();
         if (this.closing || this.deferredRetirement || active.deferred !== deferred) return;
@@ -2082,7 +2073,68 @@ class AcpRuntime {
     ) {
       return;
     }
+    const turnFailure = this.evaluateTurnEnd(active, "end_turn");
+    if (turnFailure) {
+      this.finishDeferredTurn(active, { type: "fail", error: turnFailure.error });
+      return;
+    }
     this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
+  }
+
+  private recordTurnUsage(
+    turnId: string,
+    usage: { inputTokens?: number; outputTokens?: number; cachedReadTokens?: number | null },
+  ): void {
+    this.lastUsage = {
+      ...this.lastUsage,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedInputTokens: usage.cachedReadTokens ?? undefined,
+    };
+    this.emit({
+      type: "session.usage",
+      sessionId: this.options.boundarySessionId,
+      turnId,
+      usage: this.lastUsage,
+    });
+  }
+
+  private recordTurnAssistantText(message?: string, chunk?: string): void {
+    if (this.replayWindow !== null || !this.activePrompt) return;
+    this.activePrompt.lastAssistantMessage = message;
+    this.activePrompt.lastAssistantChunk = chunk;
+  }
+
+  private settleSteerResponse(active: ActivePrompt, stopReason: string): void {
+    if (stopReason === "cancelled") {
+      this.finishDeferredTurn(active, { type: "cancel" });
+      return;
+    }
+    const turnFailure = this.evaluateTurnEnd(active, stopReason);
+    if (turnFailure) {
+      this.finishDeferredTurn(active, { type: "fail", error: turnFailure.error });
+      return;
+    }
+    if (stopReason !== "end_turn" && active.wirePromptsInFlight === 1) {
+      this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
+    }
+  }
+
+  private evaluateTurnEnd(
+    active: ActivePrompt,
+    stopReason: string,
+  ): { state: "failed"; error: { message: string } } | null {
+    const context: AcpTurnEndContext = {
+      sessionId: this.options.boundarySessionId,
+      stopReason,
+      lastAssistantMessage: active.lastAssistantMessage,
+      lastAssistantChunk: active.lastAssistantChunk,
+    };
+    for (const transformer of this.transformers) {
+      const outcome = transformer.turnEnd?.(context);
+      if (outcome?.state === "failed") return outcome;
+    }
+    return null;
   }
 
   private waitForInitialCommands(): Promise<void> {

@@ -7455,3 +7455,146 @@ lines.on("line", (line) => {
     await connection.close();
   });
 });
+
+describe("turnEnd transformer hook", () => {
+  it("fails an end_turn prompt when turnEnd reports a failure and clears prior text across tool calls", async () => {
+    const contexts: Array<{
+      stopReason: string;
+      lastAssistantMessage?: string;
+      lastAssistantChunk?: string;
+    }> = [];
+    const harness = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        const params = request.params as { sessionId: string; prompt: Array<{ text?: string }> };
+        const promptText = params.prompt.map((part) => part.text ?? "").join("");
+        if (promptText === "fail-turn") {
+          instance.notify("session/update", {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "fatal: stream aborted" },
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        if (promptText === "tool-after-message") {
+          instance.notify("session/update", {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "fatal: stream aborted" },
+            },
+          });
+          instance.notify("session/update", {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "t1",
+              title: "Check status",
+              status: "completed",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        return false;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "turn-end-acp",
+      label: "TurnEnd ACP",
+      connector: harness.connector,
+      transformers: [
+        {
+          turnEnd(context) {
+            contexts.push({
+              stopReason: context.stopReason,
+              lastAssistantMessage: context.lastAssistantMessage,
+              lastAssistantChunk: context.lastAssistantChunk,
+            });
+            if (context.lastAssistantMessage === "fatal: stream aborted") {
+              return { state: "failed", error: { message: "stream aborted" } };
+            }
+            return null;
+          },
+        },
+      ],
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "m-fail",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "fail-turn" }] },
+        },
+      });
+      expect(
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:m-fail" &&
+            event.state !== "started",
+        ),
+      ).toEqual({
+        type: "session.turn",
+        sessionId: "session-1",
+        turnId: "acp:m-fail",
+        state: "failed",
+        error: { message: "stream aborted" },
+      });
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "m-tool",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "tool-after-message" }] },
+        },
+      });
+      expect(
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:m-tool" &&
+            event.state !== "started",
+        ),
+      ).toEqual({
+        type: "session.turn",
+        sessionId: "session-1",
+        turnId: "acp:m-tool",
+        state: "completed",
+      });
+
+      expect(contexts).toEqual([
+        {
+          stopReason: "end_turn",
+          lastAssistantMessage: "fatal: stream aborted",
+          lastAssistantChunk: "fatal: stream aborted",
+        },
+        {
+          stopReason: "end_turn",
+          lastAssistantMessage: undefined,
+          lastAssistantChunk: undefined,
+        },
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+});
