@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { InitializeResponse } from "@agentclientprotocol/sdk";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type {
   ProviderCatalog,
@@ -65,6 +66,8 @@ export interface AcpOptions {
    * as ready once this long passes without a history update.
    */
   loadReplayQuietPeriodMs?: number;
+  /** Select agents that finish replay before returning the session/load response. */
+  loadReplayEndsAtResponse?: (agentInfo: InitializeResponse["agentInfo"]) => boolean;
   /**
    * Keep a turn open after `end_turn` while qualifying tool calls are still running,
    * settling once those tools finish and the agent finishes its follow-up reply.
