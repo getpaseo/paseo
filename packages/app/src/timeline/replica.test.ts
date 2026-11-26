@@ -7,11 +7,17 @@ import {
 } from "@/runtime/replica-cache/row-store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { AgentSnapshotPayload, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type {
+  AgentSnapshotPayload,
+  AgentStreamEventPayload,
+  WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { AgentDirectoryReplica } from "@/runtime/directory-sync/agent-replica";
+import { WorkspaceDirectoryReplica } from "@/runtime/directory-sync/workspace-replica";
 import type { CachedTimeline } from "@/runtime/replica-cache";
 import {
+  normalizeWorkspaceDescriptor,
   selectAgentTimelineState,
   selectAgentTimelineTurnPresentation,
   selectAgentTurnPresentation,
@@ -1809,10 +1815,23 @@ describe("archived timeline lifetime", () => {
   const ACTIVE = "active-agent";
   const OTHER = "other-agent";
   const ARCHIVED = "archived-agent";
+  /** An agent whose row never got its archive timestamp, in a workspace that was archived. */
+  const IN_ARCHIVED_WORKSPACE = "agent-in-archived-workspace";
+  const WORKSPACE = "workspace";
+  const ARCHIVED_WORKSPACE = "archived-workspace";
+  const openOwners: ViewedTimelineOwner[] = [];
+  afterEach(() => {
+    for (const owner of openOwners.splice(0)) owner.dispose();
+  });
 
-  function agentPayload(id: string, archivedAt?: string): AgentSnapshotPayload {
+  function agentPayload(
+    id: string,
+    archivedAt?: string,
+    workspaceId: string = WORKSPACE,
+  ): AgentSnapshotPayload {
     return {
       id,
+      workspaceId,
       provider: "codex",
       cwd: "/repo",
       model: null,
@@ -1906,6 +1925,14 @@ describe("archived timeline lifetime", () => {
       () => undefined,
       () => undefined,
     );
+    const workspaces = new WorkspaceDirectoryReplica(SERVER_ID);
+    workspaces.commitSnapshot(
+      {
+        workspaces: new Map([[WORKSPACE, normalizeWorkspaceDescriptor(workspaceDescriptor())]]),
+        projects: new Map(),
+      },
+      [],
+    );
     directory.commitSnapshot(activeAgentIds.map(directoryEntry), []);
     const fetches: string[] = [];
     const held = new Map<string, () => void>();
@@ -1936,6 +1963,12 @@ describe("archived timeline lifetime", () => {
               agentPayload(agentId, "2026-09-11T00:00:00.000Z"),
             );
           }
+          if (agentId === IN_ARCHIVED_WORKSPACE) {
+            directory.submitTimelineAgent(
+              directory.captureTimeline(agentId),
+              agentPayload(agentId, undefined, ARCHIVED_WORKSPACE),
+            );
+          }
           owner.applyTimelineResponse(historyPage(agentId));
           return { hasNewer: false, endCursor: null };
         },
@@ -1944,8 +1977,10 @@ describe("archived timeline lifetime", () => {
       },
     });
     owner.setConnected(true);
+    openOwners.push(owner);
     return {
       directory,
+      workspaces,
       owner,
       fetches,
       view(agentIds: string[]) {
@@ -1959,6 +1994,26 @@ describe("archived timeline lifetime", () => {
         held.get(agentId)?.();
         await new Promise((resolve) => setTimeout(resolve, 0));
       },
+    };
+  }
+
+  function workspaceDescriptor(): WorkspaceDescriptorPayload {
+    return {
+      id: WORKSPACE,
+      projectId: "project",
+      projectDisplayName: "project",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: WORKSPACE,
+      title: WORKSPACE,
+      status: "done",
+      activityAt: null,
+      statusEnteredAt: null,
+      archivingAt: null,
+      diffStat: null,
+      scripts: [],
     };
   }
 
@@ -1994,7 +2049,6 @@ describe("archived timeline lifetime", () => {
     expect(timelineStatus(ACTIVE)).toBe("synced");
     expect(timelineStatus(OTHER)).toBe("synced");
     expect(host.fetches).toEqual([ACTIVE, OTHER]);
-    host.owner.dispose();
   });
 
   it("releases a hidden chat's timeline when its agent is archived", async () => {
@@ -2008,7 +2062,6 @@ describe("archived timeline lifetime", () => {
 
     expect(timelineStatus(ACTIVE)).toBe("cold");
     expect(residentAgentIds()).toEqual([OTHER]);
-    host.owner.dispose();
   });
 
   it("releases an archived chat's timeline once its tab is no longer shown", async () => {
@@ -2022,7 +2075,6 @@ describe("archived timeline lifetime", () => {
 
     expect(timelineStatus(ACTIVE)).toBe("cold");
     expect(residentAgentIds()).toEqual([]);
-    host.owner.dispose();
   });
 
   it("releases every timeline of a workspace when the active list drops its agents", async () => {
@@ -2036,7 +2088,32 @@ describe("archived timeline lifetime", () => {
     host.directory.commitSnapshot([], []);
 
     expect(residentAgentIds()).toEqual([]);
-    host.owner.dispose();
+  });
+
+  it("releases hidden timelines of a removed workspace whose agent rows still look active", async () => {
+    const host = openHost([ACTIVE, OTHER]);
+    host.view([ACTIVE]);
+    await expect.poll(() => timelineStatus(ACTIVE)).toBe("synced");
+    host.view([OTHER]);
+    await expect.poll(() => timelineStatus(OTHER)).toBe("synced");
+
+    host.workspaces.removeWorkspaceSnapshot(WORKSPACE);
+
+    expect(timelineStatus(OTHER)).toBe("synced");
+    expect(residentAgentIds()).toEqual([OTHER]);
+    host.view([]);
+    expect(residentAgentIds()).toEqual([]);
+  });
+
+  it("releases a History chat whose unarchived row belongs to an archived workspace", async () => {
+    const host = openHost([ACTIVE]);
+    host.view([IN_ARCHIVED_WORKSPACE]);
+    await expect.poll(() => timelineStatus(IN_ARCHIVED_WORKSPACE)).toBe("synced");
+
+    host.view([]);
+
+    expect(timelineStatus(IN_ARCHIVED_WORKSPACE)).toBe("cold");
+    expect(residentAgentIds()).toEqual([]);
   });
 
   it("keeps an archived chat open from History through active-list syncs and releases it on leave", async () => {
@@ -2055,7 +2132,6 @@ describe("archived timeline lifetime", () => {
     host.view([ARCHIVED]);
     await expect.poll(() => timelineStatus(ARCHIVED)).toBe("synced");
     expect(host.fetches).toEqual([ARCHIVED, ARCHIVED]);
-    host.owner.dispose();
   });
 
   it("ignores a History read that answers after the archived chat was left", async () => {
@@ -2069,7 +2145,6 @@ describe("archived timeline lifetime", () => {
 
     expect(timelineStatus(ARCHIVED)).toBe("cold");
     expect(residentAgentIds()).toEqual([]);
-    host.owner.dispose();
   });
 
   it("does not paint a cached archived chat back after it was left", async () => {
@@ -2095,6 +2170,5 @@ describe("archived timeline lifetime", () => {
 
     expect(timelineStatus(ARCHIVED)).toBe("cold");
     expect(residentAgentIds()).toEqual([]);
-    host.owner.dispose();
   });
 });

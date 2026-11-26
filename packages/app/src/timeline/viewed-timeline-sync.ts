@@ -561,7 +561,9 @@ export function createViewedTimelineOwner(input: {
     const changed =
       session?.agents !== observedSession?.agents ||
       session?.agentDetails !== observedSession?.agentDetails ||
-      session?.hasHydratedAgents !== observedSession?.hasHydratedAgents;
+      session?.hasHydratedAgents !== observedSession?.hasHydratedAgents ||
+      session?.workspaces !== observedSession?.workspaces ||
+      session?.hasHydratedWorkspaces !== observedSession?.hasHydratedWorkspaces;
     observedSession = session;
     if (!changed) return;
     sync.archiveChanged();
@@ -606,11 +608,20 @@ export function createViewedTimelineOwner(input: {
   };
 }
 
-/** Until the active list has hydrated, no agent is known to have left it. */
+/**
+ * An agent is archived once the hydrated active list lacks it, its row carries an archive
+ * timestamp, or the hydrated workspace list lacks its workspace. Workspace archive can leave
+ * an agent row without a timestamp. Until a list hydrates, it rules nothing out.
+ */
 function isAgentArchived(session: SessionState | undefined, agentId: string): boolean {
   if (!session?.hasHydratedAgents) return false;
   const agent = session.agents.get(agentId) ?? session.agentDetails.get(agentId);
-  return !agent || agent.archivedAt != null;
+  if (!agent || agent.archivedAt != null) return true;
+  return (
+    session.hasHydratedWorkspaces &&
+    agent.workspaceId !== undefined &&
+    !session.workspaces.has(agent.workspaceId)
+  );
 }
 
 function selectResidentTimelineAgentIds(session: SessionState): Set<string> {

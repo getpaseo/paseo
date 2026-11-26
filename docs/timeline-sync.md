@@ -213,9 +213,12 @@ read that arrives after the release is dropped.
 
 The active-list reconciliation does not release transcripts itself. An archived agent's fresh
 history response can arrive before the active-list response that omits it, while the chat is
-open in History. Clearing history there would discard rows the user is reading. Until the active
-list first hydrates, no agent is known to be archived, and every transcript stays. Deleting the
-agent clears the transcript.
+open in History. Clearing history there would discard rows the user is reading.
+
+An agent counts as archived when the active list omits it, when its row has an archive timestamp,
+or when the workspace list omits its workspace. The workspace check matters because a workspace
+archive can complete while one of its agents keeps a row with no archive timestamp. Until a list
+first hydrates, it marks no agent as archived. Deleting the agent clears the transcript.
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.
