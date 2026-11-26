@@ -155,6 +155,39 @@ describe("resolveAgentModelSelection", () => {
     expect(selection.selectedThinkingId).toBe("high");
   });
 
+  it("lists and selects the agent's thinking level when the model does not list it", () => {
+    const selection = resolveAgentModelSelection({
+      models: [
+        {
+          id: "opus",
+          provider: "claude",
+          label: "opus",
+          thinkingOptions: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High", isDefault: true },
+            { id: "max", label: "Max" },
+          ],
+          defaultThinkingOptionId: "high",
+        },
+      ],
+      runtimeModelId: "opus",
+      configuredModelId: "opus",
+      runtimeThinkingOptionId: null,
+      explicitThinkingOptionId: "xhigh",
+    });
+
+    expect(selection.selectedThinkingId).toBe("xhigh");
+    expect(selection.displayThinking).toBe("Extra high");
+    expect(selection.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "max",
+      "xhigh",
+    ]);
+  });
+
   it("formats raw thinking labels in the selected model display", () => {
     const selection = resolveAgentModelSelection({
       models: [
