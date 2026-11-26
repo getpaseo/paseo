@@ -702,6 +702,37 @@ describe("a child that ends its turn while it is still working", () => {
     expect(state.delivery.prompts[2]).toContain("Helper final");
   });
 
+  test("agents that only wait on each other settle and both callers hear finished", async () => {
+    const state = await scenario();
+    await state.service.register({ callerAgentId: "parent", childAgentId: "helper" });
+    await until(() => state.observation.waits.length === 1);
+    // The helper asks its parent a question and waits for the answer.
+    await state.service.register({ callerAgentId: "helper", childAgentId: "parent" });
+    await until(() => state.observation.waits.length === 2);
+    const wait = (child: string, index = 0) => state.observation.waitsFor(child)[index]!;
+
+    state.observation.work.set("parent", ["turn"]);
+    wait("helper").result.resolve(outcome("idle", "helper", "Asked my parent"));
+    await until(() => state.delivery.prompts.length === 1);
+    expect(state.delivery.prompts[0]).toContain("Agent helper (Child) ended its turn");
+    state.delivery.acknowledgments[0]!.resolve("steered");
+
+    // The parent answers. It waits on the helper, and the helper waits only on it.
+    state.observation.work.set("parent", []);
+    wait("parent").result.resolve(outcome("idle", "parent", "The answer"));
+    await until(() => state.delivery.prompts.length === 2);
+    expect(state.delivery.prompts[1]).toContain("Agent parent (Child) finished.");
+    expect(state.delivery.prompts[1]).toContain("The answer");
+    state.delivery.acknowledgments[1]!.resolve("steered");
+    await until(() => !state.service.hasPendingForCaller("helper"));
+
+    await until(() => state.observation.waitsFor("helper").length === 2);
+    wait("helper", 1).result.resolve(outcome("idle", "helper", "Helper final"));
+    await until(() => state.delivery.prompts.length === 3);
+    expect(state.delivery.prompts[2]).toContain("Agent helper (Child) finished.");
+    expect(state.delivery.prompts[2]).toContain("Helper final");
+  });
+
   test("stops following at the follow limit and says the child is still working", async () => {
     const state = await scenario(undefined, 0, 1, 50);
     await following(state);

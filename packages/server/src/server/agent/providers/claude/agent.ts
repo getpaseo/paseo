@@ -4496,8 +4496,8 @@ class ClaudeAgentSession implements AgentSession {
       { agentId: this.agentId, pid: child.pid, code, signal },
       "Claude runtime exited unexpectedly",
     );
-    this.failRunningRuntimeTasks();
     if (this.activeForegroundTurnId || this.autonomousTurn) {
+      this.failRunningRuntimeTasks();
       // The pump is about to throw. It waits for stderr to flush and reports the
       // real cause; reporting here first would replace that with a bare exit code
       // and detach this.query, which is how the pump recognizes its own stream.
@@ -4507,11 +4507,14 @@ class ClaudeAgentSession implements AgentSession {
     // failing against a dead transport forever.
     this.query = null;
     this.input = null;
+    // The failure goes first: an idle agent whose background work just ended
+    // otherwise reads as settled to anyone waiting for it to finish.
     this.dispatchEvents([
       this.buildTurnFailedEvent(
         `Claude stopped unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`}). Any background shells, monitors or other work it had running were terminated with it.`,
       ),
     ]);
+    this.failRunningRuntimeTasks();
   }
 
   private failRunningRuntimeTasks(): void {

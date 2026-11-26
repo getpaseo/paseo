@@ -235,18 +235,40 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     }
     await abortable(Promise.all(acknowledgments), signal);
   }
+  function delegations(agentId: string): FinishSubscription[] {
+    const records: FinishSubscription[] = [];
+    for (const group of watches.values())
+      for (const watch of group)
+        if (watch.records[0]!.callerAgentId === agentId) records.push(watch.records[0]!);
+    return records;
+  }
   function delegates(agentId: string): boolean {
+    return registering.has(agentId) || delegations(agentId).length > 0;
+  }
+  /**
+   * Whether one of the agent's delegations can still bring it a notice. A delegate that has settled
+   * is about to report; a delegate that only waits on agents in `chain` never will, so agents that
+   * wait on each other settle together.
+   */
+  function awaitsDelegates(agentId: string, chain: Set<string>): boolean {
     if (registering.has(agentId)) return true;
-    for (const group of watches.values()) {
-      for (const watch of group) if (watch.records[0]!.callerAgentId === agentId) return true;
-    }
-    return false;
+    chain.add(agentId);
+    return delegations(agentId).some((delegation) => {
+      // A remote delegate's work is known only to its host.
+      if (delegation.serverId) return true;
+      const delegate = delegation.childAgentId;
+      if (chain.has(delegate)) return false;
+      if (deps.pendingWork(delegation).length > 0 || delegations(delegate).length === 0)
+        return true;
+      return awaitsDelegates(delegate, chain);
+    });
   }
   /** Everything that will start the child's next turn by itself. */
   function pendingWork(record: FinishSubscription): PendingWork[] {
     const work = [...deps.pendingWork(record)];
     // A remote child's own subscriptions live on its host.
-    if (!record.serverId && delegates(record.childAgentId)) work.push("delegated agents");
+    if (!record.serverId && awaitsDelegates(record.childAgentId, new Set()))
+      work.push("delegated agents");
     return work;
   }
   async function run(watch: Watch, group: Set<Watch>): Promise<void> {
