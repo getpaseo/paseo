@@ -292,20 +292,28 @@ function ProjectSettingsBody({
     [openEditSheet, t],
   );
 
-  const projectLinks = (
-    <SettingsGroup
-      title={t("settings.projectLinks.entry.sectionTitle")}
-      testID="project-links-group"
-    >
-      <ProjectLinksEntry
-        key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
-        serverId={selectedHost.serverId}
-        projectId={selectedHost.projectId}
-        placements={projectLinkPlacements}
-        suggestions={projectLinkSuggestions}
-      />
-    </SettingsGroup>
-  );
+  const renderProjectSettings = (entry: ReactNode) =>
+    renderContent({
+      readQuery,
+      loadedConfig,
+      loadedRevision,
+      hasUncommittedWorktreeSetupChanges,
+      readError,
+      selectedHost,
+      queryKey,
+      client,
+      onReload: handleReload,
+      isHostGone,
+      onBackToProjects,
+      projectLinks: (
+        <SettingsGroup
+          title={t("settings.projectLinks.entry.sectionTitle")}
+          testID="project-links-group"
+        >
+          {entry}
+        </SettingsGroup>
+      ),
+    });
 
   return (
     <View role="main">
@@ -329,20 +337,16 @@ function ProjectSettingsBody({
         snapshot={editSnapshot}
       />
 
-      {renderContent({
-        readQuery,
-        loadedConfig,
-        loadedRevision,
-        hasUncommittedWorktreeSetupChanges,
-        readError,
-        selectedHost,
-        queryKey,
-        client,
-        onReload: handleReload,
-        isHostGone,
-        onBackToProjects,
-        projectLinks,
-      })}
+      {/* The entry can move as config loads without remounting the dialog or its pending save. */}
+      <ProjectLinksEntry
+        key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
+        serverId={selectedHost.serverId}
+        projectId={selectedHost.projectId}
+        placements={projectLinkPlacements}
+        suggestions={projectLinkSuggestions}
+      >
+        {renderProjectSettings}
+      </ProjectLinksEntry>
     </View>
   );
 }

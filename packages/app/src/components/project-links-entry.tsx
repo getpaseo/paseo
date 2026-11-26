@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { SettingsDetailRow } from "@/components/settings/detail-row";
@@ -17,6 +17,7 @@ interface ProjectLinksEntryProps {
   projectId?: string;
   placements?: readonly ProjectLinkPlacement[];
   suggestions?: readonly ProjectLinkSuggestion[];
+  children?: (entry: ReactNode) => ReactNode;
 }
 
 export function ProjectLinksEntry({
@@ -24,6 +25,7 @@ export function ProjectLinksEntry({
   projectId,
   placements = [],
   suggestions = [],
+  children,
 }: ProjectLinksEntryProps) {
   const { t } = useTranslation();
   const links = useLocalProjectLinksStore((state) => state.links);
@@ -46,7 +48,7 @@ export function ProjectLinksEntry({
             : "settings.projectLinks.entry.hint",
         );
 
-  return (
+  const entry = (
     <View style={settingsStyles.card}>
       <SettingsDetailRow
         label={t(
@@ -58,6 +60,12 @@ export function ProjectLinksEntry({
         onPress={open}
         testID="project-links-entry"
       />
+    </View>
+  );
+
+  return (
+    <>
+      {children ? children(entry) : entry}
       <ProjectLinksSheet
         visible={isOpen}
         onClose={close}
@@ -65,6 +73,6 @@ export function ProjectLinksEntry({
         suggestions={scopedSuggestions}
         links={scopedLinks}
       />
-    </View>
+    </>
   );
 }

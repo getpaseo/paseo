@@ -32,6 +32,7 @@ import {
   expectUncommittedSetupWarning,
   fillProjectIconUrl,
   fillProjectName,
+  holdProjectConfigRead,
   installDaemonConnectionGate,
   installReadTransportFailure,
   navigateToProjectSettings,
@@ -195,6 +196,30 @@ async function openProjectSettingsFromSidebar(page: Page, projectId: string): Pr
 }
 
 test.describe("Projects settings", () => {
+  test("keeps the project links dialog open when the configuration finishes loading", async ({
+    page,
+    editableProject,
+  }) => {
+    const releaseRead = await holdProjectConfigRead(page);
+    try {
+      await openProjects(page);
+      await navigateToProjectSettings(page, editableProject.name);
+      await expectProjectSettingsFormHidden(page);
+
+      await page.getByRole("button", { name: "Link projects", exact: true }).click();
+      const sheet = page.getByTestId("project-links-sheet");
+      await expect(sheet).toBeVisible();
+
+      releaseRead();
+      await expectProjectSettingsFormVisible(page);
+      await expect(sheet).toBeVisible();
+      await sheet.getByTestId("project-links-close").click();
+      await expect(sheet).toBeHidden();
+    } finally {
+      releaseRead();
+    }
+  });
+
   test("freshly-added project with no workspace is editable from the sidebar without a reload", async ({
     page,
   }) => {
