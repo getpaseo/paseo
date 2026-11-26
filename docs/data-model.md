@@ -591,6 +591,11 @@ then retry only when a requested row changes during the read. Unrelated agent st
 invalidate the read. Directory baseline replacements and host removal or renaming still invalidate
 the affected reads.
 
+On web and Electron, tabs share IndexedDB but hold independent directory snapshots in memory. A
+tab can commit directory deltas only while the persisted checkpoint revision matches the one it
+read or wrote. If a different tab evicts or rewrites that baseline, the next full directory refresh
+can replace it. Timeline writes do not depend on the directory checkpoint.
+
 The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. After an
 eviction, only a baseline replacement stores that host's directory again. Mutations queued around
 the eviction are dropped when they are written, so a checkpoint never outlives its rows. Budget
