@@ -761,6 +761,16 @@ interface ClientActivity {
   appVisibilityChangedAt: Date;
 }
 
+function resolveAgentSubscriptionSnapshotIds(
+  synced: { snapshotAgentIds: Iterable<string> } | null,
+  payload: { entries: ReadonlyArray<{ agent: { id: string } }>; pageInfo: { hasMore: boolean } },
+  request: { page?: { cursor?: string } },
+): Iterable<string> | null {
+  if (synced) return synced.snapshotAgentIds;
+  if (payload.pageInfo.hasMore || Boolean(request.page?.cursor)) return null;
+  return payload.entries.map((entry) => entry.agent.id);
+}
+
 export class Session {
   private readonly connectedHostSession: ConnectedHostSession | null;
   private routed = false;
@@ -855,6 +865,7 @@ export class Session {
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
+  private unsubscribeBeforeWorkspacePublish: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
   private projectUpdateQueue: Promise<void> = Promise.resolve();
   private isCleanedUp = false;
@@ -1077,6 +1088,8 @@ export class Session {
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
+      waitForDeferredPublication: (workspaceId) =>
+        this.workspaceRegistry.waitForDeferredPublication?.(workspaceId) ?? Promise.resolve(false),
       isCheckoutUntrusted: (checkoutPath) =>
         isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
       syncCheckoutWorktreeManager: async ({
@@ -1746,6 +1759,7 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
   ): Promise<void> {
     try {
+      await this.agentUpdates.flushPendingUpdates();
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       if (workspace.kind !== "directory" && this.wantsEvent("checkout_status_update")) {
         // Recovery can refresh Git before this session starts observing again.
@@ -1954,6 +1968,10 @@ export class Session {
         this.workspaceRegistry.subscribeToMutations?.((mutation) =>
           this.enqueueRegistryMutation(() => this.handleWorkspaceMutation(mutation)),
         ) ?? null;
+      this.unsubscribeBeforeWorkspacePublish ??=
+        this.workspaceRegistry.subscribeBeforePublish?.(() =>
+          this.agentUpdates.flushPendingUpdates(),
+        ) ?? null;
       this.unsubscribeTerminalWorkspaceContributionEvents ??=
         this.terminalManager?.subscribeTerminalWorkspaceContributionChanged((event) => {
           void this.emitWorkspaceUpdateForTerminalContribution(event).catch((error) =>
@@ -1968,6 +1986,8 @@ export class Session {
       this.unsubscribeProjectMutations = null;
       this.unsubscribeWorkspaceMutations?.();
       this.unsubscribeWorkspaceMutations = null;
+      this.unsubscribeBeforeWorkspacePublish?.();
+      this.unsubscribeBeforeWorkspacePublish = null;
       this.unsubscribeTerminalWorkspaceContributionEvents?.();
       this.unsubscribeTerminalWorkspaceContributionEvents = null;
     }
@@ -2016,6 +2036,7 @@ export class Session {
       if (this.isCleanedUp) {
         return;
       }
+      await this.agentUpdates.flushPendingUpdates();
       await this.emitWorkspaceUpdatesForWorkspaceIds(
         [mutation.workspaceId],
         mutation.expectsInitialAgent ? { optimisticStatus: "running" } : undefined,
@@ -2075,7 +2096,11 @@ export class Session {
         return;
       }
       const projectWorkspaceIds = (await this.workspaceRegistry.listActive())
-        .filter((workspace) => workspace.projectId === mutation.projectId)
+        .filter(
+          (workspace) =>
+            workspace.projectId === mutation.projectId &&
+            !this.workspaceRegistry.isBroadcastDeferred?.(workspace.workspaceId),
+        )
         .map((workspace) => workspace.workspaceId);
 
       if (mutation.kind === "remove") {
@@ -3716,7 +3741,7 @@ export class Session {
         await this.handleListCommandsRequest(msg);
         return;
       case "register_push_token":
-        this.handleRegisterPushToken(msg.token);
+        this.handleRegisterPushToken(msg.token, msg.preferences);
         return;
       case "push.unregister.request":
         this.pushNotifications.revoke(msg.token);
@@ -5674,9 +5699,12 @@ export class Session {
   /**
    * Handle push token registration
    */
-  private handleRegisterPushToken(token: string): void {
+  private handleRegisterPushToken(
+    token: string,
+    preferences?: Parameters<PushNotifications["renew"]>[1],
+  ): void {
     this.currentClientMetadata().pushToken = token;
-    this.pushNotifications.renew(token);
+    this.pushNotifications.renew(token, preferences);
     this.sessionLogger.info("Registered push token");
   }
 
@@ -6786,7 +6814,11 @@ export class Session {
     workspaceIds: Iterable<string>,
     options?: WorkspaceUpdateOptions,
   ): Promise<void> {
-    const uniqueWorkspaceIds = new Set(workspaceIds);
+    const uniqueWorkspaceIds = new Set<string>();
+    for (const workspaceId of workspaceIds) {
+      if (this.workspaceRegistry.isBroadcastDeferred?.(workspaceId)) continue;
+      uniqueWorkspaceIds.add(workspaceId);
+    }
     if (uniqueWorkspaceIds.size === 0) return;
     for (const subscription of this.workspaceUpdatesSubscriptions.values()) {
       await this.enqueueWorkspaceUpdates(uniqueWorkspaceIds, subscription, options);
@@ -6999,9 +7031,13 @@ export class Session {
         this.refreshObservationProducers();
       }
 
-      const payload = request.sync
+      const synced = request.sync
         ? await this.readAgentDirectorySync(request, backgroundVisibility)
+        : null;
+      const payload = synced
+        ? synced.payload
         : await this.listFetchAgentsEntries(request, backgroundVisibility);
+      const snapshotAgentIds = resolveAgentSubscriptionSnapshotIds(synced, payload, request);
       const snapshotUpdatedAtByAgentId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedUpdatedAt = Date.parse(entry.agent.updatedAt);
@@ -7020,7 +7056,10 @@ export class Session {
       });
 
       if (subscriptionId) {
-        this.agentUpdates.flushBootstrapped(owner!.id, { snapshotUpdatedAtByAgentId });
+        this.agentUpdates.flushBootstrapped(owner!.id, {
+          snapshotUpdatedAtByAgentId,
+          snapshotAgentIds,
+        });
       }
     } catch (error) {
       if (subscriptionId) {
@@ -7431,12 +7470,24 @@ export class Session {
       request.sync ?? {},
       backgroundVisibility,
     );
+    const snapshotAgentIds = (
+      await Promise.all(
+        snapshot.entries.map(async (entry) =>
+          (await this.agentDirectory.includes(entry.agent, backgroundVisibility))
+            ? entry.agent.id
+            : null,
+        ),
+      )
+    ).filter((id): id is string => id !== null);
     const entries = await Promise.all(
       result.entries.map(async (entry) =>
         (await this.agentDirectory.includes(entry.agent, backgroundVisibility)) ? entry : null,
       ),
     );
-    return { ...result, entries: entries.filter((entry) => entry !== null) };
+    return {
+      payload: { ...result, entries: entries.filter((entry) => entry !== null) },
+      snapshotAgentIds,
+    };
   }
 
   private async readWorkspaceDirectorySync(
@@ -9545,7 +9596,8 @@ export class Session {
   ): void {
     if (
       message.type !== "agent_attention_required" &&
-      message.type !== "terminal_attention_required"
+      message.type !== "terminal_attention_required" &&
+      message.type !== "plugin.notification"
     ) {
       subscription.owner.emit(message);
       return;
@@ -9554,11 +9606,13 @@ export class Session {
       message.payload.shouldNotify &&
       subscription.notifications &&
       !notified.has(subscription.owner.source);
-    subscription.owner.emit(
-      message.type === "agent_attention_required"
-        ? { ...message, payload: { ...message.payload, shouldNotify } }
-        : { ...message, payload: { ...message.payload, shouldNotify } },
-    );
+    if (message.type === "agent_attention_required") {
+      subscription.owner.emit({ ...message, payload: { ...message.payload, shouldNotify } });
+    } else if (message.type === "terminal_attention_required") {
+      subscription.owner.emit({ ...message, payload: { ...message.payload, shouldNotify } });
+    } else {
+      subscription.owner.emit({ ...message, payload: { ...message.payload, shouldNotify } });
+    }
     if (shouldNotify) notified.add(subscription.owner.source);
   }
 
@@ -9719,6 +9773,8 @@ export class Session {
     this.unsubscribePluginChanges = null;
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations = null;
+    this.unsubscribeBeforeWorkspacePublish?.();
+    this.unsubscribeBeforeWorkspacePublish = null;
     this.agentUpdates.dispose();
     await this.hubExecutionController?.cleanup();
     if (this.unsubscribeTerminalWorkspaceContributionEvents) {
@@ -9786,6 +9842,23 @@ function isValidGitHubRepoSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/u.test(value);
 }
 
+function statusEventCategory(
+  status: Extract<SessionOutboundMessage, { type: "status" }>["payload"]["status"],
+): SessionEventSubscription | null {
+  switch (status) {
+    case "server_info":
+      return "status.server_info";
+    case "daemon_config_changed":
+      return "status.daemon_config_changed";
+    case "plugin_catalog_changed":
+      return "status.plugin_catalog_changed";
+    case "plugin_settings_changed":
+      return "status.plugin_settings_changed";
+    default:
+      return null;
+  }
+}
+
 function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubscription | null {
   switch (message.type) {
     case "project.update":
@@ -9799,23 +9872,13 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "agent.provider_subagents.update":
     case "agent.background_work.update":
     case "terminal_attention_required":
+    case "plugin.notification":
     case "activity_log":
     case "hub.execution.agent.update":
     case "hub.execution.agent.stream":
       return message.type;
     case "status":
-      switch (message.payload.status) {
-        case "server_info":
-          return "status.server_info";
-        case "daemon_config_changed":
-          return "status.daemon_config_changed";
-        case "plugin_catalog_changed":
-          return "status.plugin_catalog_changed";
-        case "plugin_settings_changed":
-          return "status.plugin_settings_changed";
-        default:
-          return null;
-      }
+      return statusEventCategory(message.payload.status);
     default:
       return null;
   }
@@ -9838,6 +9901,7 @@ function legacyWantsEvent(
       return capabilities.has(CLIENT_CAPS.providerSubagents);
     // Old apps parse outbound messages strictly and do not know this type.
     case "agent.background_work.update":
+    case "plugin.notification":
       return false;
     default:
       return true;

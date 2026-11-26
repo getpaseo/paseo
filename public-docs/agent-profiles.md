@@ -15,7 +15,7 @@ Save the settings you use together as a named profile. Choose **UI work**, **Pla
 
 ## Create a profile
 
-1. Open **Settings → your host → Agents → Agent profiles**.
+1. Open **Settings → Host → Agent profiles**.
 2. Select **New profile** and give it a name, such as **UI work**.
 3. Choose its provider, model, mode, thinking level, and any available features.
 4. Fill in **When to use** with the kind of work this profile should handle.

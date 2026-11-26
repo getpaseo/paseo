@@ -96,7 +96,7 @@ Agent Provider，包括 Paseo 自带的一等 Provider 和你在 `agents.provide
 
 ## 空闲运行时 {#idle-runtimes}
 
-当 daemon 的基础条件允许清理，且 Provider 已实现的安全检查也允许时，Paseo 会在可恢复的 Agent 空闲一小时后释放其进程。你的下一条提示词会恢复同一个会话。要为整个主机禁用此功能，请在 **设置 → 你的主机 → Agents** 中关闭 **释放空闲 Agent**，或设置：
+当 daemon 的基础条件允许清理，且 Provider 已实现的安全检查也允许时，Paseo 会在可恢复的 Agent 空闲一小时后释放其进程。你的下一条提示词会恢复同一个会话。要为整个主机禁用此功能，请在 **设置 → 主机 → 守护进程** 中关闭 **释放空闲 Agent**，或设置：
 
 ```json
 { "agents": { "idleRuntimeCleanup": false } }

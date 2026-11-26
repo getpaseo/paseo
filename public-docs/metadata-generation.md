@@ -40,7 +40,7 @@ Every failure is written to `$PASEO_HOME/daemon.log` (`~/.paseo/daemon.log` by d
 
 ## Choose a model
 
-Open **Settings → Host → Metadata** and select **Automatic** or **Manual**. In Manual mode, pick the model Paseo uses. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list. Switching back to Automatic clears the list.
+Open **Settings → Host → Workspaces** and select **Automatic** or **Manual**. In Manual mode, pick the model Paseo uses. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list. Switching back to Automatic clears the list.
 
 ## Configure a custom fallback order
 

@@ -294,6 +294,7 @@ export const en = {
     archived: {
       callout: "This agent is archived",
       unarchive: "Unarchive",
+      unarchiving: "Unarchiving...",
     },
   },
   sessions: {
@@ -2416,7 +2417,7 @@ export const en = {
     title: "Settings",
     loading: "Loading settings...",
     groups: {
-      app: "App",
+      app: "This device",
       host: "Host",
     },
     hostPicker: {
@@ -2434,7 +2435,9 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat & panes",
       appearance: "Appearance",
       sidebar: "Sidebar",
       editor: "Editor",
@@ -2447,6 +2450,16 @@ export const en = {
       permissions: "Permissions",
       diagnostics: "Diagnostics",
       about: "About",
+    },
+    clientHosts: {
+      title: "Saved hosts",
+      info: "Hosts this device connects to. Names, icons, badges, and routes here only affect this device.",
+      backToHosts: "Back to hosts",
+      routesTitle: "How this device connects",
+      routesInfo:
+        "Saved routes this device uses to reach this host. Paseo picks the fastest available route.",
+      addRoute: "Add route",
+      activeRoute: "Active",
     },
     layout: {
       openInSidePane: {
@@ -2502,6 +2515,48 @@ export const en = {
     },
     notifications: {
       title: "Notifications",
+      enabled: {
+        label: "Enable notifications",
+        description: "Receive notifications from agents, terminals, and plugins on this device",
+        pausedDescription: "All notifications, including plugins, are paused on this device",
+      },
+      events: {
+        title: "Events",
+        agentPermission: {
+          label: "Agent needs permission",
+          description: "Approvals, plans, and questions",
+        },
+        agentError: {
+          label: "Agent errored",
+          description: "When an agent stops with an error",
+        },
+        agentFinished: {
+          label: "Agent finished",
+          description: "When an agent completes a turn",
+        },
+        terminalNeedsInput: {
+          label: "Terminal needs input",
+          description: "When a terminal command is waiting for input",
+        },
+        terminalFinished: {
+          label: "Terminal finished",
+          description: "When a terminal command finishes",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Plugin notifications",
+          description: "Allow installed plugins to send notifications",
+        },
+        empty: "Installed plugins appear here so you can mute them individually",
+      },
+      legacyHostTitle: "Update host for push preferences",
+      legacyHostHint:
+        "Update connected hosts to sync custom push notification preferences from this device",
+      desktop: {
+        title: "System",
+      },
       permission: "Notification permission",
       refreshAccessibility: "Refresh notification permission",
       playSound: "Play sound",
@@ -2519,6 +2574,7 @@ export const en = {
       projects: "Projects",
       connections: "Connections",
       agents: "Agents",
+      tools: "Tools & prompts",
       agentProfiles: "Agent profiles",
       metadata: "Metadata",
       voice: "Voice",
@@ -2528,6 +2584,7 @@ export const en = {
       terminals: "Terminals",
       plugins: "Plugins",
       host: "Overview",
+      daemon: "Daemon",
     },
     plugins: {
       gallery: pluginGallery.en,
@@ -3092,9 +3149,9 @@ export const en = {
         rowTitle: "Pair a device",
       },
       skills: {
-        sectionTitle: "Orchestration skills",
-        title: "Orchestration skills",
-        description: "Teach your agents how to use Paseo tools",
+        sectionTitle: "Skills",
+        title: "Paseo skills",
+        description: "Install bundled help, plugin, and orchestration skills",
         docs: "Skills",
         openDocs: "Open skills documentation",
         unavailable: "Connect to this host to manage orchestration skills",
@@ -3131,6 +3188,10 @@ export const en = {
           update: "Update skill",
           delete: "Delete skill",
         },
+      },
+      tools: {
+        instructionsTitle: "Instructions",
+        toolsTitle: "Agent tools",
       },
       orchestration: {
         title: "Orchestration",
@@ -3258,6 +3319,7 @@ export const en = {
         },
       },
       daemon: {
+        runtimeTitle: "Agent runtime",
         rename: {
           editLabel: "Edit label",
           title: "Rename host",

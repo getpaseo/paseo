@@ -11133,6 +11133,142 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
   expect(client.unarchivedHandles).toHaveLength(1);
 });
 
+test("clearAgentAttention is a no-op for live archived agents loaded for history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-attention-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Archived attention target",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.archiveAgent(agent.id);
+  const archivedRecord = await storage.get(agent.id);
+  if (!archivedRecord) throw new Error("expected archived agent record");
+  await storage.upsert({
+    ...archivedRecord,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: archivedRecord.updatedAt,
+  });
+  const loaded = await ensureAgentLoaded(agent.id, {
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  expect(loaded.attention.requiresAttention).toBe(true);
+  const storedBeforeRead = await storage.get(agent.id);
+  expect(storedBeforeRead).toMatchObject({
+    archivedAt: archivedRecord.archivedAt,
+    requiresAttention: false,
+  });
+
+  const emitted: Array<{ id: string; lifecycle: string }> = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        emitted.push({
+          id: event.agent.id,
+          lifecycle: event.agent.lifecycle,
+        });
+      }
+    },
+    { replayState: false },
+  );
+  try {
+    expect(await manager.clearAgentAttention(agent.id)).toBe(false);
+  } finally {
+    unsubscribe();
+  }
+
+  expect(emitted).toEqual([]);
+  expect(manager.getAgent(agent.id)?.attention).toEqual(loaded.attention);
+  expect(await storage.get(agent.id)).toEqual(storedBeforeRead);
+});
+
+test("unarchiveSnapshot suppresses intermediate archived close state unless native unarchive fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-close-emit-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Archived history runtime target",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.archiveAgent(agent.id);
+  await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+
+  const emittedOnSuccess: Array<{ lifecycle: string }> = [];
+  let emittedDuringNativeUnarchive = -1;
+  client.readArchivedAtDuringUnarchive = async () => {
+    emittedDuringNativeUnarchive = emittedOnSuccess.length;
+    return (await storage.get(agent.id))?.archivedAt;
+  };
+  const unsubSuccess = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agent.id) {
+        emittedOnSuccess.push({ lifecycle: event.agent.lifecycle });
+      }
+    },
+    { replayState: false },
+  );
+  try {
+    await manager.unarchiveSnapshot(agent.id);
+  } finally {
+    unsubSuccess();
+  }
+
+  expect(emittedDuringNativeUnarchive).toBe(0);
+  expect(emittedOnSuccess).toEqual([{ lifecycle: "closed" }]);
+  expect((await storage.get(agent.id))?.archivedAt).toBeNull();
+
+  // Re-archive and load history again, then verify failure re-emits the closed archived state.
+  await manager.archiveSnapshot(agent.id, new Date().toISOString());
+  const archivedAgain = await storage.get(agent.id);
+  await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+  client.unarchiveFailure = new Error("native unarchive failed");
+
+  const emittedOnFailure: Array<{ lifecycle: string }> = [];
+  const unsubFailure = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agent.id) {
+        emittedOnFailure.push({ lifecycle: event.agent.lifecycle });
+      }
+    },
+    { replayState: false },
+  );
+  try {
+    await expect(manager.unarchiveSnapshot(agent.id)).rejects.toThrow("native unarchive failed");
+  } finally {
+    unsubFailure();
+  }
+
+  expect(emittedOnFailure).toEqual([{ lifecycle: "closed" }]);
+  expect((await storage.get(agent.id))?.archivedAt).toBe(archivedAgain?.archivedAt);
+});
+
 test("archiveAgent cascade archives in-memory children with the full archive contract", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-contract-"));
   const storagePath = join(workdir, "agents");

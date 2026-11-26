@@ -296,6 +296,7 @@ export const ko: TranslationResources = {
     archived: {
       callout: "이 에이전트는 보관되었습니다",
       unarchive: "보관 해제",
+      unarchiving: "보관 해제 중...",
     },
   },
   sessions: {
@@ -2398,7 +2399,7 @@ export const ko: TranslationResources = {
     title: "설정",
     loading: "설정 불러오는 중...",
     groups: {
-      app: "앱",
+      app: "이 기기",
       host: "호스트",
     },
     hostPicker: {
@@ -2416,7 +2417,9 @@ export const ko: TranslationResources = {
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",
+      hosts: "호스트",
       chat: "채팅",
+      chatAndPanes: "채팅 및 패널",
       appearance: "모양",
       sidebar: "사이드바",
       terminal: "터미널",
@@ -2429,6 +2432,16 @@ export const ko: TranslationResources = {
       permissions: "권한",
       diagnostics: "진단",
       about: "정보",
+    },
+    clientHosts: {
+      title: "저장된 호스트",
+      info: "이 기기가 연결하는 호스트입니다. 이름, 아이콘, 배지 및 경로는 이 기기에만 적용됩니다.",
+      backToHosts: "호스트로 돌아가기",
+      routesTitle: "이 기기의 연결 방식",
+      routesInfo:
+        "이 기기가 이 호스트에 연결할 때 사용하는 저장된 경로입니다. Paseo가 가장 빠른 경로를 선택합니다.",
+      addRoute: "경로 추가",
+      activeRoute: "활성",
     },
     layout: en.settings.layout,
     editor: {
@@ -2446,6 +2459,47 @@ export const ko: TranslationResources = {
     },
     notifications: {
       title: "알림",
+      enabled: {
+        label: "알림 사용",
+        description: "이 기기에서 에이전트, 터미널, 플러그인 알림을 받습니다",
+        pausedDescription: "플러그인을 포함한 모든 알림이 이 기기에서 일시 중지되었습니다",
+      },
+      events: {
+        title: "이벤트",
+        agentPermission: {
+          label: "에이전트 권한 필요",
+          description: "승인, 계획 및 질문",
+        },
+        agentError: {
+          label: "에이전트 오류",
+          description: "에이전트가 오류로 중단될 때",
+        },
+        agentFinished: {
+          label: "에이전트 완료",
+          description: "에이전트가 턴을 완료할 때",
+        },
+        terminalNeedsInput: {
+          label: "터미널 입력 대기",
+          description: "터미널 명령이 입력을 기다릴 때",
+        },
+        terminalFinished: {
+          label: "터미널 완료",
+          description: "터미널 명령이 완료될 때",
+        },
+      },
+      plugins: {
+        title: "플러그인",
+        enabled: {
+          label: "플러그인 알림",
+          description: "설치된 플러그인이 알림을 보낼 수 있도록 허용",
+        },
+        empty: "설치된 플러그인이 여기에 표시되어 개별적으로 음소거할 수 있습니다",
+      },
+      legacyHostTitle: "푸시 설정을 위해 호스트 업데이트 필요",
+      legacyHostHint: "이 기기의 맞춤 푸시 알림 설정을 동기화하려면 연결된 호스트를 업데이트하세요",
+      desktop: {
+        title: "시스템",
+      },
       permission: "알림 권한",
       refreshAccessibility: "알림 권한 새로 고침",
       playSound: "소리 재생",
@@ -2463,6 +2517,7 @@ export const ko: TranslationResources = {
       projects: "프로젝트",
       connections: "연결",
       agents: "에이전트",
+      tools: "도구 및 프롬프트",
       agentProfiles: "에이전트 프로필",
       metadata: "메타데이터",
       voice: "음성",
@@ -2472,6 +2527,7 @@ export const ko: TranslationResources = {
       terminals: "터미널",
       plugins: "플러그인",
       host: "개요",
+      daemon: "데몬",
     },
     plugins: pluginSettings.ko,
     metadataGeneration: {
@@ -3012,6 +3068,10 @@ export const ko: TranslationResources = {
           delete: "스킬 삭제",
         },
       },
+      tools: {
+        instructionsTitle: "지침",
+        toolsTitle: "에이전트 도구",
+      },
       orchestration: {
         title: "오케스트레이션",
         unavailable: "오케스트레이션을 관리하려면 이 호스트에 연결하세요",
@@ -3139,6 +3199,7 @@ export const ko: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "에이전트 런타임",
         rename: {
           editLabel: "레이블 편집",
           title: "호스트 이름 변경",

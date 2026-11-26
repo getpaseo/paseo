@@ -300,6 +300,7 @@ export const ja: TranslationResources = {
     archived: {
       callout: "このエージェントはアーカイブされています",
       unarchive: "アーカイブ解除",
+      unarchiving: "アーカイブ解除中...",
     },
   },
   sessions: {
@@ -2411,7 +2412,7 @@ export const ja: TranslationResources = {
     title: "設定",
     loading: "設定を読み込み中...",
     groups: {
-      app: "アプリ",
+      app: "このデバイス",
       host: "ホスト",
     },
     hostPicker: {
@@ -2429,7 +2430,9 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
+      hosts: "ホスト",
       chat: "チャット",
+      chatAndPanes: "チャットとペイン",
       appearance: "外観",
       sidebar: "サイドバー",
       terminal: "ターミナル",
@@ -2442,6 +2445,16 @@ export const ja: TranslationResources = {
       permissions: "権限",
       diagnostics: "診断",
       about: "アプリ情報",
+    },
+    clientHosts: {
+      title: "保存済みホスト",
+      info: "このデバイスが接続するホストです。ここでの名前、アイコン、バッジ、経路はこのデバイスにのみ反映されます。",
+      backToHosts: "ホスト一覧に戻る",
+      routesTitle: "このデバイスの接続経路",
+      routesInfo:
+        "このデバイスがこのホストに到達するために保存された経路です。Paseoは利用可能な最速の経路を選びます。",
+      addRoute: "経路を追加",
+      activeRoute: "接続中",
     },
     layout: en.settings.layout,
     editor: {
@@ -2459,6 +2472,48 @@ export const ja: TranslationResources = {
     },
     notifications: {
       title: "通知",
+      enabled: {
+        label: "通知を有効にする",
+        description: "このデバイスでエージェント、ターミナル、プラグインからの通知を受け取ります",
+        pausedDescription: "プラグインを含むすべての通知がこのデバイスで一時停止されています",
+      },
+      events: {
+        title: "イベント",
+        agentPermission: {
+          label: "エージェントが権限を要求",
+          description: "承認、プラン、質問",
+        },
+        agentError: {
+          label: "エージェントのエラー",
+          description: "エージェントがエラーで停止したとき",
+        },
+        agentFinished: {
+          label: "エージェントが完了",
+          description: "エージェントがターンを完了したとき",
+        },
+        terminalNeedsInput: {
+          label: "ターミナルが入力を待機",
+          description: "ターミナルコマンドが入力を待っているとき",
+        },
+        terminalFinished: {
+          label: "ターミナルが完了",
+          description: "ターミナルコマンドが完了したとき",
+        },
+      },
+      plugins: {
+        title: "プラグイン",
+        enabled: {
+          label: "プラグイン通知",
+          description: "インストール済みプラグインによる通知の送信を許可します",
+        },
+        empty: "インストールされたプラグインがここに表示され、個別にミュートできます",
+      },
+      legacyHostTitle: "プッシュ通知設定にはホストの更新が必要です",
+      legacyHostHint:
+        "このデバイスのカスタムプッシュ通知設定を同期するには、接続中のホストを更新してください",
+      desktop: {
+        title: "システム",
+      },
       permission: "通知の権限",
       refreshAccessibility: "通知の権限を更新",
       playSound: "サウンドを再生",
@@ -2476,6 +2531,7 @@ export const ja: TranslationResources = {
       projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
+      tools: "ツールとプロンプト",
       agentProfiles: "エージェントプロファイル",
       metadata: "メタデータ",
       voice: "音声",
@@ -2485,6 +2541,7 @@ export const ja: TranslationResources = {
       terminals: "ターミナル",
       plugins: "プラグイン",
       host: "概要",
+      daemon: "デーモン",
     },
     plugins: pluginSettings.ja,
     metadataGeneration: {
@@ -3027,6 +3084,10 @@ export const ja: TranslationResources = {
           delete: "スキルを削除",
         },
       },
+      tools: {
+        instructionsTitle: "指示",
+        toolsTitle: "エージェントツール",
+      },
       orchestration: {
         title: "オーケストレーション",
         unavailable: "オーケストレーションを管理するにはこのホストに接続してください",
@@ -3155,6 +3216,7 @@ export const ja: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "エージェントランタイム",
         rename: {
           editLabel: "ラベルを編集",
           title: "ホストの名前を変更",

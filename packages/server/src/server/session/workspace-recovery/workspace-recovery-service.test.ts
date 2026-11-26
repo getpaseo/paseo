@@ -851,4 +851,75 @@ describe("recovery approval ownership for shared archived history", () => {
     expect(restored?.archivedAt).toBeNull();
     expect(restored?.untrustedSource).toEqual(untrustedSource);
   });
+
+  test("inspect and concurrent restore wait for deferred workspace publication instead of failing mid-unarchive", async () => {
+    const workspace: PersistedWorkspaceRecord = {
+      workspaceId: "ws-deferred-recovery",
+      projectId: "proj-1",
+      cwd: "/tmp/ws-deferred-recovery",
+      kind: "local_checkout",
+      displayName: "main",
+      title: null,
+      branch: "main",
+      baseBranch: null,
+      head: undefined,
+      isPaseoOwnedWorktree: false,
+      worktreeRoot: null,
+      mainRepoRoot: null,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+      archivedAt: null,
+      autoArchivedChangeRequestUrl: null,
+      pinnedAt: null,
+      metadata: {},
+      background: false,
+    };
+
+    let settling = true;
+    let releaseDeferral!: () => void;
+    const deferralSettled = new Promise<boolean>((resolve) => {
+      releaseDeferral = () => {
+        settling = false;
+        resolve(true);
+      };
+    });
+    const unarchiveWorkspace = vi.fn(async () => {});
+    const service = createWorkspaceRecoveryService({
+      paseoHome: "/tmp/paseo-home",
+      getWorkspace: async () => workspace,
+      getProject: async () => null,
+      isDirectory: async () => true,
+      unarchiveWorkspace,
+      waitForDeferredPublication: () => (settling ? deferralSettled : Promise.resolve(false)),
+    });
+
+    let inspectSettled = false;
+    let restoreSettled = false;
+    const inspectPromise = service.inspect(workspace.workspaceId).then((state) => {
+      inspectSettled = true;
+      return state;
+    });
+    const restorePromise = service.restore(workspace.workspaceId).then((result) => {
+      restoreSettled = true;
+      return result;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(inspectSettled).toBe(false);
+    expect(restoreSettled).toBe(false);
+
+    releaseDeferral();
+    const [inspectResult, restoreResult] = await Promise.all([inspectPromise, restorePromise]);
+    expect(inspectResult).toMatchObject({
+      kind: "unavailable",
+      workspaceId: workspace.workspaceId,
+      reason: "workspace_not_archived",
+    });
+    expect(restoreResult).toEqual({
+      workspaceId: workspace.workspaceId,
+      action: "unarchive",
+    });
+    expect(unarchiveWorkspace).not.toHaveBeenCalled();
+  });
 });

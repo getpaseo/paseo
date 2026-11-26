@@ -167,6 +167,7 @@ test("combined filtered agent lists create independent server-owned observations
       provider: "codex",
       cwd: daemon.staticDir,
       title: "Before",
+      labels: { role: "orchestrator" },
     });
     peer = await SubscriptionPeer.connect(daemon.port, "independent-agent-views");
     await peer.request({ type: "fetch_agents_request", requestId: "all", subscribe: {} });
@@ -186,7 +187,7 @@ test("combined filtered agent lists create independent server-owned observations
     expect(typeof all.subscriptionId).toBe("string");
     expect(typeof filtered.subscriptionId).toBe("string");
     expect(all.subscriptionId).not.toBe(filtered.subscriptionId);
-    await admin.updateAgent(agent.id, { name: "After" });
+    await admin.updateAgent(agent.id, { name: "After", labels: { role: "worker" } });
     await expect
       .poll(
         () =>
