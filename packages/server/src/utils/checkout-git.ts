@@ -4839,8 +4839,14 @@ export async function createPullRequest(
           `${options.approvedHeadSha}:refs/heads/${head}`,
         ]
       : ["push", "-u", "origin", head];
+    const recursivePushConfig: Array<[string, string]> = options.approvedHeadSha
+      ? [["push.default", "current"]]
+      : [];
     const pushConfig = [
       ...remoteConfig,
+      // Recursive URL pushes run the child's default push. A fresh matching
+      // branch must publish without requiring or writing upstream tracking.
+      ...recursivePushConfig,
       ...["proxy", "proxyauthmethod"].flatMap(
         (key): Array<[string, string]> =>
           originSettings.has(key) ? [[`http.${destination}.${key}`, originSettings.get(key)!]] : [],

@@ -115,64 +115,80 @@ it.each(["local", "symbolic"])(
   },
 );
 
-it("pushes unpublished submodule commits on demand while pinning the approved parent commit", async () => {
-  const root = mkdtempSync(join(tmpdir(), "paseo-pr-submodules-"));
-  try {
-    const { repo, remote } = initializeRepo(root, "parent");
-    const sub = initializeRepo(root, "dependency");
-    git(sub.repo, "symbolic-ref", "HEAD", "refs/heads/main");
-    git(root, "--git-dir", sub.remote, "symbolic-ref", "HEAD", "refs/heads/main");
-    git(repo, "-c", "protocol.file.allow=always", "submodule", "add", sub.remote, "dependency");
-    git(repo, "add", ".");
-    git(repo, "commit", "-m", "Add dependency");
-    git(repo, "switch", "-c", "feature");
-    const checkout = join(repo, "dependency");
-    git(checkout, "config", "user.name", "Test");
-    git(checkout, "config", "user.email", "test@example.com");
-    git(checkout, "config", "protocol.file.allow", "always");
-    git(checkout, "switch", "-c", "feature");
-    git(checkout, "config", "branch.feature.remote", "origin");
-    git(checkout, "config", "branch.feature.merge", "refs/heads/feature");
-    writeFileSync(join(checkout, "change.txt"), "dependency change\n");
-    git(checkout, "add", ".");
-    git(checkout, "commit", "-m", "Unpublished dependency change");
-    const dependencySha = git(checkout, "rev-parse", "HEAD");
-    git(repo, "add", "dependency");
-    git(repo, "commit", "-m", "Use dependency change");
-    git(repo, "config", "push.recurseSubmodules", "on-demand");
-    const approved = await capturePrCheckoutState(repo, "main");
-    git(repo, "commit", "--allow-empty", "-m", "Not approved");
-    let creations = 0;
-    await createPullRequest(
-      repo,
-      {
-        title: "Approved dependency change",
-        head: approved.head,
-        base: approved.base,
-        approvedHeadSha: approved.headSha,
-        approvedPushUrls: approved.pushUrls,
-        approvedOriginConfig: approved.originConfig,
-      },
-      {
-        ...createGitHubService(),
-        createPullRequest: async () => {
-          creations++;
-          return { url: "https://example.com/pull/1", number: 1 };
+it.each(["tracked", "untracked"])(
+  "pushes unpublished %s submodule branches on demand while pinning the parent",
+  async (tracking) => {
+    const root = mkdtempSync(join(tmpdir(), "paseo-pr-submodules-"));
+    try {
+      const { repo, remote } = initializeRepo(root, "parent");
+      const sub = initializeRepo(root, "dependency");
+      git(sub.repo, "symbolic-ref", "HEAD", "refs/heads/main");
+      git(root, "--git-dir", sub.remote, "symbolic-ref", "HEAD", "refs/heads/main");
+      git(repo, "-c", "protocol.file.allow=always", "submodule", "add", sub.remote, "dependency");
+      git(repo, "add", ".");
+      git(repo, "commit", "-m", "Add dependency");
+      git(repo, "switch", "-c", "feature");
+      const checkout = join(repo, "dependency");
+      git(checkout, "config", "user.name", "Test");
+      git(checkout, "config", "user.email", "test@example.com");
+      git(checkout, "config", "protocol.file.allow", "always");
+      git(checkout, "config", "push.default", "simple");
+      git(checkout, "switch", "-c", "feature");
+      if (tracking === "tracked") {
+        git(checkout, "config", "branch.feature.remote", "origin");
+        git(checkout, "config", "branch.feature.merge", "refs/heads/feature");
+      }
+      const childUpstream = git(
+        checkout,
+        "for-each-ref",
+        "--format=%(upstream)",
+        "refs/heads/feature",
+      );
+      expect(childUpstream).toBe(tracking === "tracked" ? "refs/remotes/origin/feature" : "");
+      writeFileSync(join(checkout, "change.txt"), "dependency change\n");
+      git(checkout, "add", ".");
+      git(checkout, "commit", "-m", "Unpublished dependency change");
+      const dependencySha = git(checkout, "rev-parse", "HEAD");
+      git(repo, "add", "dependency");
+      git(repo, "commit", "-m", "Use dependency change");
+      git(repo, "config", "push.recurseSubmodules", "on-demand");
+      const approved = await capturePrCheckoutState(repo, "main");
+      git(repo, "commit", "--allow-empty", "-m", "Not approved");
+      let creations = 0;
+      await createPullRequest(
+        repo,
+        {
+          title: "Approved dependency change",
+          head: approved.head,
+          base: approved.base,
+          approvedHeadSha: approved.headSha,
+          approvedPushUrls: approved.pushUrls,
+          approvedOriginConfig: approved.originConfig,
         },
-      },
-    );
-    expect(git(root, "--git-dir", remote, "rev-parse", "refs/heads/feature")).toBe(
-      approved.headSha,
-    );
-    expect(git(root, "--git-dir", sub.remote, "rev-parse", "refs/heads/feature")).toBe(
-      dependencySha,
-    );
-    expect(git(repo, "rev-parse", "HEAD")).not.toBe(approved.headSha);
-    expect(creations).toBe(1);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+        {
+          ...createGitHubService(),
+          createPullRequest: async () => {
+            creations++;
+            return { url: "https://example.com/pull/1", number: 1 };
+          },
+        },
+      );
+      expect(git(root, "--git-dir", remote, "rev-parse", "refs/heads/feature")).toBe(
+        approved.headSha,
+      );
+      expect(git(root, "--git-dir", sub.remote, "rev-parse", "refs/heads/feature")).toBe(
+        dependencySha,
+      );
+      expect(git(repo, "rev-parse", "HEAD")).not.toBe(approved.headSha);
+      expect(creations).toBe(1);
+      expect(git(checkout, "for-each-ref", "--format=%(upstream)", "refs/heads/feature")).toBe(
+        childUpstream,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it("rejects PR preparation while an interactive rebase is paused at an edit", async () => {
   const root = mkdtempSync(join(tmpdir(), "paseo-pr-rebase-"));
