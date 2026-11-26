@@ -678,3 +678,77 @@ test("a completed background creation releases its identity while preserving a n
     await client.close();
   }
 });
+
+for (const target of ["terminal", "empty"] as const) {
+  test(`successful ${target} reuse after conclusive Chat startup failure retires the identity across reload`, async ({
+    creation,
+    startup,
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const delay = await delayBrowserWorkspaceCreatedResponse(page);
+    const client = await connectNewWorkspaceDaemonClient();
+    try {
+      await creation.openWorkspaceForm("local");
+      const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+      await creation.submitPrompt("Original failed Chat task", "Create");
+      await delay.waitForCreateRequest();
+      await creation.leaveWorkspaceForm();
+      await startup.fail();
+      delay.release();
+      await expect(
+        page
+          .getByText(/Creation startup failed for test/)
+          .filter({ visible: true })
+          .first(),
+      ).toBeVisible();
+      const original = (await client.fetchWorkspaces()).entries.filter(
+        (entry) => !before.has(entry.id),
+      );
+      expect(original).toHaveLength(1);
+      expect(
+        (await client.fetchAgents()).entries.filter(
+          (entry) => entry.agent.workspaceId === original[0]!.id,
+        ),
+      ).toHaveLength(0);
+      await creation.returnToWorkspaceForm();
+      await page.reload();
+      if (target === "terminal") {
+        await selectLaunchOption(page, "blank");
+        await submitTerminalLaunch(page);
+      } else {
+        await fillComposerDraft(page, "");
+        await page.getByRole("button", { name: "Create", exact: true }).click();
+      }
+      await creation.expectOneCreatedWorkspace();
+      await page.waitForFunction(
+        (key) =>
+          JSON.parse(localStorage.getItem("paseo-drafts")!).state.creationIdByDraftKey[key] ===
+          null,
+        JSON.stringify([getServerId(), "new-workspace"]),
+      );
+      await creation.returnToWorkspaceForm();
+      await page.reload();
+      await selectLaunchOption(page, "chat");
+      await creation.submitPrompt(`Independent Chat after ${target}`, "Create");
+      await creation.expectPromptVisible(`Independent Chat after ${target}`);
+      const workspaces = (await client.fetchWorkspaces()).entries.filter(
+        (entry) => !before.has(entry.id),
+      );
+      expect(workspaces).toHaveLength(2);
+      const fresh = workspaces.find((entry) => entry.id !== original[0]!.id)!;
+      const createdIds = new Set(workspaces.map((workspace) => workspace.id));
+      await expect
+        .poll(async () =>
+          (await client.fetchAgents()).entries
+            .filter((entry) => createdIds.has(entry.agent.workspaceId ?? ""))
+            .map((entry) => entry.agent.workspaceId),
+        )
+        .toEqual([fresh.id]);
+    } finally {
+      delay.release();
+      await startup.release();
+      await client.close();
+    }
+  });
+}

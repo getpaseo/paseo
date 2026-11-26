@@ -309,10 +309,11 @@ export function createDraftCreations(deps: Dependencies) {
         await scope.writes;
         const prior = scope.record.attempt;
         // A retained workspace with no attempt is the legacy agent-not-sent rollback.
-        const workspaceOnly = prior
-          ? prior.kind === "workspace" && prior.agentRequested === false
+        const noAgentStart = prior
+          ? (prior.kind === "workspace" && prior.agentRequested === false) ||
+            prior.outcome === "failed"
           : scope.record.workspace !== undefined;
-        if (!workspaceOnly || scope.record.workspace?.id !== input.workspaceId) return false;
+        if (!noAgentStart || scope.record.workspace?.id !== input.workspaceId) return false;
         input.retire();
         return true;
       },

@@ -945,45 +945,134 @@ describe("creation receipt reconciliation and retirement", () => {
     ).rejects.toThrow(DraftCreationOutcomeUnknownError);
   });
 
-  it("rechecks retirement after a newer agent admission finishes its durable write, without waiting for its network result", async () => {
-    const disk = storage();
-    await seedWorkspaceAttempt(disk, false);
-    const writing = deferredValue<void>();
-    const persist = deferredValue<void>();
-    const network = deferredValue<string>();
-    const creations = creationsFor({
-      getItem: disk.getItem,
-      setItem: async (key, value) => {
-        if ((JSON.parse(value) as { attempt?: { kind: string } }).attempt?.kind === "agent") {
-          writing.resolve();
-          await persist.promise;
-        }
-        await disk.setItem(key, value);
-      },
-    });
-    const retire = {
-      ...scope,
-      workspaceId: "workspace-1",
-      retire: () => {
-        retirements++;
-      },
-    };
-    let retirements = 0;
-    expect(await creations.retireWorkspace(retire)).toBe(true);
-    const pending = creations.submit({
-      ...scope,
-      kind: "agent",
-      request: destinationRequest,
-      send: async () => network.promise,
-    });
-    await writing.promise;
-    const delayedRetirement = creations.retireWorkspace(retire);
-    persist.resolve();
-    expect(await delayedRetirement).toBe(false);
-    expect(retirements).toBe(1);
-    network.resolve("original-agent");
-    expect(await pending).toBe("original-agent");
-  });
+  it.each(["workspace", "agent"] as const)(
+    "retires a reused workspace after a conclusive %s Chat startup failure and reload",
+    async (kind) => {
+      const disk = storage();
+      if (kind === "agent") await seedWorkspaceAttempt(disk, false);
+      await creationsFor(disk).submit({
+        ...scope,
+        kind,
+        request: kind === "workspace" ? handedOffRequest : destinationRequest,
+        send: async ({ idempotencyKey }) => ({
+          creation: {
+            ...failure({ kind, idempotencyKey, unknown: false }),
+            workspace: handedOffWorkspace,
+          },
+        }),
+      });
+      const restored = creationsFor(disk);
+      expect(
+        await restored.workspaceRetry({ ...scope, request: { source: handedOffRequest.source } }),
+      ).toEqual({ kind: "reuse", workspace: handedOffWorkspace });
+      let retirements = 0;
+      const retirement = {
+        ...scope,
+        workspaceId: handedOffWorkspace.id,
+        retire: () => {
+          retirements += 1;
+        },
+      };
+      expect(
+        await restored.retireWorkspace({ ...retirement, workspaceId: "unrelated-workspace" }),
+      ).toBe(false);
+      expect(await restored.retireWorkspace(retirement)).toBe(true);
+      expect(retirements).toBe(1);
+    },
+  );
+
+  it.each(["pending", "unknown", "completed"] as const)(
+    "does not retire a workspace whose Chat attempt is %s",
+    async (outcome) => {
+      const disk = storage();
+      const phases = {
+        pending: "workspace_ready",
+        unknown: "failed",
+        completed: "completed",
+      } as const;
+      await creationsFor(disk).submit({
+        ...scope,
+        kind: "workspace",
+        request: handedOffRequest,
+        send: async ({ idempotencyKey }) => ({
+          creation: {
+            ...failure({ kind: "workspace", idempotencyKey, unknown: outcome === "unknown" }),
+            phase: phases[outcome],
+            workspace: handedOffWorkspace,
+            ...(outcome === "completed" ? { agent: recoveredAgent } : {}),
+          },
+        }),
+      });
+      let retirements = 0;
+      expect(
+        await creationsFor(disk).retireWorkspace({
+          ...scope,
+          workspaceId: handedOffWorkspace.id,
+          retire: () => {
+            retirements += 1;
+          },
+        }),
+      ).toBe(false);
+      expect(retirements).toBe(0);
+    },
+  );
+
+  it.each([false, true])(
+    "rechecks retirement during a newer agent admission after failed Chat=%s, without waiting for its network result",
+    async (failedChat) => {
+      const disk = storage();
+      if (failedChat) {
+        await creationsFor(disk).submit({
+          ...scope,
+          kind: "workspace",
+          request: handedOffRequest,
+          send: async ({ idempotencyKey }) => ({
+            creation: {
+              ...failure({ kind: "workspace", idempotencyKey, unknown: false }),
+              workspace: handedOffWorkspace,
+            },
+          }),
+        });
+      } else {
+        await seedWorkspaceAttempt(disk, false);
+      }
+      const writing = deferredValue<void>();
+      const persist = deferredValue<void>();
+      const network = deferredValue<string>();
+      const creations = creationsFor({
+        getItem: disk.getItem,
+        setItem: async (key, value) => {
+          if ((JSON.parse(value) as { attempt?: { kind: string } }).attempt?.kind === "agent") {
+            writing.resolve();
+            await persist.promise;
+          }
+          await disk.setItem(key, value);
+        },
+      });
+      const retire = {
+        ...scope,
+        workspaceId: "workspace-1",
+        retire: () => {
+          retirements++;
+        },
+      };
+      let retirements = 0;
+      expect(await creations.retireWorkspace(retire)).toBe(true);
+      const pending = creations.submit({
+        ...scope,
+        kind: "agent",
+        request: destinationRequest,
+        send: async () => network.promise,
+      });
+      await writing.promise;
+      const delayedRetirement = creations.retireWorkspace(retire);
+      persist.resolve();
+      expect(await delayedRetirement).toBe(false);
+      expect(retirements).toBe(1);
+      network.resolve("original-agent");
+      expect(await pending).toBe("original-agent");
+    },
+  );
 });
 
 it("agent admission reclaims an identity retired before it acquired the lock", async () => {
