@@ -144,11 +144,33 @@ function toolCallItem(item: WireItem, patch?: string): ProviderTimelineItem {
           }
         : toolDetail(item, patch),
   } as const;
+  if (item.kind === "subagent" || item.kind === "workflow") {
+    const outcome = subagentOutcome(item);
+    if (outcome === "failed")
+      return {
+        ...base,
+        status: outcome,
+        error: item.result?.errorKind ?? item.failureReason ?? item.status,
+      };
+    return { ...base, status: outcome ?? "running", error: null };
+  }
   if (item.status === "inProgress") return { ...base, status: "running", error: null };
   if (item.status === "cancelled") return { ...base, status: "canceled", error: null };
   if (item.status !== "completed")
     return { ...base, status: "failed", error: item.failureReason ?? item.status };
   return { ...base, status: "completed", error: null };
+}
+
+// Muse 1.4.7 leaves a finished subagent's item `inProgress`; its control status says the child is done.
+export function subagentOutcome(item: WireItem): "completed" | "failed" | "canceled" | undefined {
+  if (item.status === "cancelled") return "canceled";
+  if (item.status !== "inProgress" && item.status !== "completed") return "failed";
+  const done =
+    item.status === "completed" ||
+    item.controlStatus === "resultReady" ||
+    item.controlStatus === "closed";
+  if (!done) return undefined;
+  return item.result?.errorKind ? "failed" : "completed";
 }
 
 export function appendDelta(
