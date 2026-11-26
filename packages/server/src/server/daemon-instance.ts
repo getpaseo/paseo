@@ -29,6 +29,7 @@ const killTree = (pid: number, signal: string): Promise<void> =>
 export { resolvePaseoHome } from "./paseo-home.js";
 export { ensurePrivateDirectory } from "./private-files.js";
 export { daemonLaunchEnvironment } from "./config-environment.js";
+export { stripAppImageRuntimeEnv } from "./paseo-env.js";
 export { readLocalCredentialForTarget } from "./local-credential.js";
 export {
   TerminalCleanupNotConfirmedError,
