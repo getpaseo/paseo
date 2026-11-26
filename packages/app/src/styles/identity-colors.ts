@@ -105,3 +105,30 @@ function hashIdentityKey(key: string): number {
 export function deriveIdentityColorName(key: string): IdentityColorName {
   return IDENTITY_COLOR_NAMES[hashIdentityKey(key) % IDENTITY_COLOR_NAMES.length];
 }
+
+// Project initials have their own palette so changing them does not recolor host identities.
+// The approved soft rainbow keeps all seven hues distinct in both light and dark themes.
+// Dark lettering matches the approved preview and clears 4.5:1 on every muted fill.
+const PROJECT_COLORS = [
+  { backgroundColor: "#BE6C6B", color: "#000000" },
+  { backgroundColor: "#CA925A", color: "#000000" },
+  { backgroundColor: "#D5BD75", color: "#000000" },
+  { backgroundColor: "#6F9C79", color: "#000000" },
+  { backgroundColor: "#60A3AE", color: "#000000" },
+  { backgroundColor: "#628AB9", color: "#000000" },
+  { backgroundColor: "#947BB5", color: "#000000" },
+] as const;
+
+export function deriveProjectColors(
+  key: string,
+  projectOrderIndex = -1,
+): { backgroundColor: string; color: string } {
+  // Follow the saved project order so a short list actually shows a rainbow. Hashing each
+  // project independently can repeat colors and omit entire hues, unlike the approved preview.
+  // Projects outside the saved list still get a deterministic fallback.
+  const index =
+    Number.isSafeInteger(projectOrderIndex) && projectOrderIndex >= 0
+      ? projectOrderIndex
+      : hashIdentityKey(key);
+  return PROJECT_COLORS[index % PROJECT_COLORS.length];
+}
