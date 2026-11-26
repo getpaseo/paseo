@@ -370,7 +370,9 @@ purple dot once Needs input, Failed, Working and Ready to review have cleared. E
 counts once in its sidebar status group. For mixed chat states, the workspace hover card and row
 menu show how many chats are in each state.
 Use **Mark done** in the chat tab menu or in the floating status pill above the composer to resolve
-that result. An accepted reply also resolves it. Read, follow-up and resolution survive restarts.
+that result. Use **Mark all as done** in the workspace row menu to resolve the current results of
+its chats together. An accepted reply also resolves that chat's result. Read, follow-up and
+resolution survive restarts.
 Use **Mark for follow-up** in the chat tab menu to restore the reminder for a result you marked
 done. The action is available until the chat takes a new turn.
 

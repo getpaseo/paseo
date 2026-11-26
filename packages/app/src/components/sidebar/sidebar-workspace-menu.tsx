@@ -1,10 +1,19 @@
 import { useWorkspaceChatStatusSummary } from "@/hooks/use-workspace-chat-status-summary";
-import { useMemo, type ComponentProps, type PropsWithChildren, type ReactNode } from "react";
+import { useIsMutating, useMutation } from "@tanstack/react-query";
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  type ComponentProps,
+  type PropsWithChildren,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import type { GestureResponderEvent, PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Archive,
+  CheckCheck,
   CheckSquare,
   Circle,
   CircleCheck,
@@ -17,6 +26,10 @@ import {
 } from "lucide-react-native";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { isWeb } from "@/constants/platform";
+import { useToast } from "@/contexts/toast-context";
+import { useHostFeature } from "@/runtime/host-features";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -59,6 +72,7 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedArchive = withUnistyles(Archive);
+const ThemedCheckCheck = withUnistyles(CheckCheck);
 const ThemedCheckSquare = withUnistyles(CheckSquare);
 const ThemedCircle = withUnistyles(Circle);
 const ThemedPencil = withUnistyles(Pencil);
@@ -71,6 +85,9 @@ const copyLeadingIcon = <ThemedCopy size={14} uniProps={foregroundMutedColorMapp
 const renameLeadingIcon = <ThemedPencil size={14} uniProps={foregroundMutedColorMapping} />;
 const markAsReadLeadingIcon = (
   <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />
+);
+const markAllAsDoneLeadingIcon = (
+  <ThemedCheckCheck size={14} uniProps={foregroundMutedColorMapping} />
 );
 const markAsUnreadLeadingIcon = <ThemedCircle size={14} uniProps={foregroundMutedColorMapping} />;
 const selectLeadingIcon = <ThemedCheckSquare size={14} uniProps={foregroundMutedColorMapping} />;
@@ -168,6 +185,67 @@ function WorkspaceMenuItem({
   return <DropdownMenuItem {...props}>{children}</DropdownMenuItem>;
 }
 
+function MarkAllAsDoneMenuItem({
+  surface,
+  workspaceKey,
+  serverId,
+  workspaceId,
+}: Pick<SidebarWorkspaceMenuItemsProps, "workspaceKey" | "serverId" | "workspaceId"> & {
+  surface: MenuSurface;
+}) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const dismissError = useRef<(() => void) | null>(null);
+  // COMPAT(agentFollowUp): added in v0.17.2, remove gate after 2027-05-22.
+  const supportsReview = useHostFeature(serverId, "agentFollowUp");
+  const reviewResults = useWorkspaceFields(
+    supportsReview ? (serverId ?? null) : null,
+    workspaceId ?? null,
+    (workspace) => workspace.reviewResults?.filter((result) => !result.nested),
+  );
+  const mutationKey = ["workspace-review", "mark-all-done", serverId, workspaceId] as const;
+  const pending = useIsMutating({ mutationKey, exact: true }) > 0;
+  const { mutate } = useMutation({
+    mutationKey,
+    mutationFn: async (results: NonNullable<typeof reviewResults>) => {
+      const client = serverId && getHostRuntimeStore().getClient(serverId);
+      if (!client) throw new Error(t("workspace.terminal.hostDisconnected"));
+      const outcomes = await Promise.allSettled(
+        results.map(({ agentId, id }) => client.markAgentDone(agentId, id)),
+      );
+      const failure = outcomes.find((outcome) => outcome.status === "rejected");
+      if (failure) throw failure.reason;
+    },
+    onError: (error) => {
+      dismissError.current = toast.show(error instanceof Error ? error.message : String(error), {
+        variant: "error",
+        durationMs: null,
+      });
+    },
+  });
+  const handleMarkAllAsDone = useCallback(() => {
+    if (pending || !reviewResults?.length) return;
+    dismissError.current?.();
+    dismissError.current = null;
+    mutate(reviewResults);
+  }, [mutate, pending, reviewResults]);
+
+  if (!reviewResults?.length && !pending) return null;
+  return (
+    <WorkspaceMenuItem
+      surface={surface}
+      testID={`sidebar-workspace-menu-mark-all-done-${workspaceKey}`}
+      leading={markAllAsDoneLeadingIcon}
+      status={pending ? "pending" : "idle"}
+      pendingLabel={t("common.states.saving")}
+      closeOnSelect={false}
+      onSelect={handleMarkAllAsDone}
+    >
+      {t("sidebar.workspace.actions.markAllAsDone")}
+    </WorkspaceMenuItem>
+  );
+}
+
 function SidebarWorkspaceMenuItems({
   surface,
   workspaceKey,
@@ -244,6 +322,12 @@ function SidebarWorkspaceMenuItems({
           {t("sidebar.workspace.actions.markAllAsRead")}
         </WorkspaceMenuItem>
       ) : null}
+      <MarkAllAsDoneMenuItem
+        surface={surface}
+        workspaceKey={workspaceKey}
+        serverId={serverId}
+        workspaceId={workspaceId}
+      />
       {onMarkAsUnread ? (
         <WorkspaceMenuItem
           surface={surface}

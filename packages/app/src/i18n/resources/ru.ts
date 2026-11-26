@@ -1395,6 +1395,7 @@ export const ru: TranslationResources = {
         createWorkspaceFor: "Создать новое рабочее пространство для {{projectName}}",
         copyPath: "Копировать путь",
         markAllAsRead: "Отметить всё как прочитанное",
+        markAllAsDone: "Отметить всё как завершённое",
         copyBranchName: "Скопировать имя ветки",
         rename: "Переименовать рабочее пространство",
         pin: "Закрепить вверху",

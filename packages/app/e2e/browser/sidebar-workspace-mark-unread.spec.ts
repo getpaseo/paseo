@@ -541,6 +541,9 @@ test("workspace unread stays available on a legacy daemon", async ({ page, works
 
   await workspaceRow(page, subject.workspaceId).hover();
   await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
+  await expect(page.getByRole("menuitem", { name: "Mark all as done", exact: true })).toHaveCount(
+    0,
+  );
   await page.getByRole("menuitem", { name: "Mark as unread", exact: true }).click();
   await expectStatus(page, subject.workspaceId, "attention");
   expect(gate.getClientRequestCount("workspace.mark_unread.request")).toBe(1);
@@ -551,6 +554,62 @@ test("workspace unread stays available on a legacy daemon", async ({ page, works
   const requests = gate.getClientRequests("workspace.clear_attention.request");
   expect(requests).toHaveLength(1);
   expect(requests[0]).not.toHaveProperty("observedAttentionKeys");
+});
+
+test("Mark all as done resolves the selected workspace's current results", async ({
+  page,
+  workspaces: { subject, other },
+}) => {
+  const gate = await installDaemonWebSocketGate(page);
+  const second = await addFinishedAgent(subject);
+  await subject.client.sendAgentMessage(second.id, "A result that has not been read");
+  await subject.client.waitForFinish(second.id, 20_000);
+  await openAgentRoute(page, subject);
+  await expectStatus(page, subject.workspaceId, "attention");
+  await expectStatus(page, other.workspaceId, "needs_follow_up");
+
+  const item = page.getByTestId(
+    `sidebar-workspace-menu-mark-all-done-${getServerId()}:${subject.workspaceId}`,
+  );
+  const openMenu = async () => {
+    await workspaceRow(page, subject.workspaceId).hover();
+    await page
+      .getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`)
+      .click();
+  };
+  await openMenu();
+  await expect(item).toHaveText("Mark all as done");
+  const ack = "agent.mark_done.response";
+  gate.holdNextServerMessage(ack);
+  await item.click();
+  await gate.waitForHeldServerMessage(ack);
+  await expect(item).toHaveText("Saving...");
+  await expect(item).toBeDisabled();
+  gate.releaseHeldServerMessage(ack);
+  await expectStatus(page, subject.workspaceId, "done");
+  await expectStatus(page, other.workspaceId, "needs_follow_up");
+  await expect(item).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await chooseChatReviewAction(page, subject.workspaceId, subject.agentId, "mark-for-follow-up");
+  await expectStatus(page, subject.workspaceId, "needs_follow_up");
+  await openMenu();
+  gate.holdNextClientRequest("agent.mark_done.request");
+  await item.click();
+  await gate.waitForHeldClientRequest();
+
+  await subject.client.sendAgentMessage(subject.agentId, "A newer result to review");
+  await subject.client.waitForFinish(subject.agentId, 20_000);
+  await expectStatus(page, subject.workspaceId, "attention");
+  gate.releaseHeldClientRequest();
+  await expect(page.getByTestId("app-toast-message")).toHaveText(
+    "This chat result is no longer current",
+  );
+  await expect(item).toBeEnabled();
+  await item.click();
+  await expectStatus(page, subject.workspaceId, "done");
+  await expectStatus(page, other.workspaceId, "needs_follow_up");
+  await expect(page.getByText("This chat result is no longer current")).toHaveCount(0);
 });
 
 test("review actions affect only the chat chosen in the tab menu", async ({ page, workspaces }) => {

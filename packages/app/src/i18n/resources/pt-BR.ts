@@ -1402,6 +1402,7 @@ export const ptBR: TranslationResources = {
         createWorkspaceFor: "Criar um novo workspace para {{projectName}}",
         copyPath: "Copiar caminho",
         markAllAsRead: "Marcar tudo como lido",
+        markAllAsDone: "Marcar tudo como concluído",
         copyBranchName: "Copiar nome da branch",
         rename: "Renomear workspace",
         pin: "Fixar no topo",
