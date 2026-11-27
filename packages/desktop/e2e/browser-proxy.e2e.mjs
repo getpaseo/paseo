@@ -354,16 +354,15 @@ function sendWebSocketAsync(ws, data) {
   });
 }
 
-function stripNetworkTunnelFeature(text) {
+function setLegacyDaemonVersion(text) {
   try {
     const parsed = JSON.parse(text);
     if (
       parsed?.type === "session" &&
       parsed?.message?.type === "status" &&
-      parsed?.message?.payload?.status === "server_info" &&
-      parsed?.message?.payload?.features
+      parsed?.message?.payload?.status === "server_info"
     ) {
-      delete parsed.message.payload.features.networkTunnel;
+      parsed.message.payload.version = "0.17.6";
       return JSON.stringify(parsed);
     }
   } catch {
@@ -431,7 +430,7 @@ async function bridgeLegacyDaemonConnection({
 
   upstreamWs.on("message", (data, isBinary) => {
     if (!isBinary) {
-      const text = stripNetworkTunnelFeature(data.toString("utf8"));
+      const text = setLegacyDaemonVersion(data.toString("utf8"));
       void channel.send(text).catch(ignoreSendError);
       return;
     }
@@ -451,8 +450,7 @@ async function bridgeLegacyDaemonConnection({
 
 /**
  * Connects to the local relay as `serverId` using Noise NK E2EE, forwarding to a
- * real local Paseo daemon while stripping `features.networkTunnel` from `server_info`
- * to simulate an older daemon that lacks network tunnel support.
+ * real local Paseo daemon while reporting v0.17.6 in `server_info` to exercise the version cutoff.
  */
 async function startLegacyDaemonRelayAdapter({ relayPort, serverId, upstreamDaemonPort }) {
   const keyPair = generateKeyPair();
@@ -613,6 +611,34 @@ async function openNewBrowserTabAndNavigate(page, url) {
   await urlInput.press("Enter");
 }
 
+async function verifyServiceForward(page, artifactDir) {
+  await page.getByTestId("workspace-scripts-button").click();
+  await page.getByTestId("workspace-scripts-start-web").click();
+  const menu = page.getByTestId("workspace-scripts-menu");
+  if (!(await menu.isVisible())) await page.getByTestId("workspace-scripts-button").click();
+  const startForward = menu.getByRole("button", { name: "Forward to this computer" });
+  await expect(startForward).toBeVisible();
+  await menu.screenshot({ path: path.join(artifactDir, "05-service-menu.png") });
+  await startForward.click();
+  const addressButton = menu.getByRole("button", { name: /^Copy 127\.0\.0\.1:/ });
+  await expect(addressButton).toBeVisible();
+  const address = (await addressButton.textContent()).trim();
+  await expect
+    .poll(async () => {
+      try {
+        return await (await fetch(`http://${address}`)).text();
+      } catch {
+        return "";
+      }
+    })
+    .toBe("remote service");
+  await menu.screenshot({ path: path.join(artifactDir, "05-forward-to-computer.png") });
+  await menu.getByRole("button", { name: "Stop forwarding" }).click();
+  await expect(startForward).toBeVisible();
+  await expect(fetch(`http://${address}`)).rejects.toThrow();
+  await page.getByTestId("workspace-scripts-stop-web").click();
+}
+
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_PROXY_E2E_ARTIFACT_DIR ??
@@ -658,6 +684,14 @@ async function main() {
         enabled: true,
         endpoint: `127.0.0.1:${relayBridge.port}`,
         useTls: false,
+      },
+    });
+    writeJson(path.join(workspaceRoot, "wks-remote-proxy", "paseo.json"), {
+      scripts: {
+        web: {
+          type: "service",
+          command: `node -e "require('node:http').createServer((req,res) => res.end('remote service')).listen(Number(process.env.PASEO_PORT),'127.0.0.1')"`,
+        },
       },
     });
     seedPaseoHome({
@@ -858,6 +892,14 @@ async function main() {
     await expect(remoteWsButton).toBeVisible({ timeout: timeoutMs });
     await remoteWsButton.click();
 
+    if (process.env.PASEO_DESKTOP_SERVICE_FORWARD_ONLY === "1") {
+      await verifyServiceForward(page, artifactDir);
+      console.log(
+        "PASS: enabled Desktop forwarding over the protected relay, fetched the service from outside Electron and closed the listener.",
+      );
+      return;
+    }
+
     await openNewBrowserTabAndNavigate(page, targetUrl);
 
     const routingPill = page
@@ -962,7 +1004,7 @@ async function main() {
       });
 
     // -------------------------------------------------------------------------
-    // 3. Old daemon without features.networkTunnel fails closed + Browse locally
+    // 3. Daemon below v0.18.0 fails closed + Browse locally
     // -------------------------------------------------------------------------
     const oldWsButton = page
       .getByRole("button", {
@@ -1025,6 +1067,8 @@ async function main() {
 
     await page.screenshot({ path: path.join(artifactDir, "04-old-daemon-browse-locally.png") });
 
+    await remoteWsButton.click();
+    await verifyServiceForward(page, artifactDir);
     console.log(
       JSON.stringify(
         {

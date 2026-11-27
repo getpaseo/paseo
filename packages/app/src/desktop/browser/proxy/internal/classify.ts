@@ -164,7 +164,6 @@ export function classifyHostBrowserRouting(
     return { kind: "remote", support: "host_offline" };
   }
 
-  // COMPAT(networkTunnel): added in v0.18.0, remove after 2027-05-26 once daemon floor >= v0.18.0.
   if (supportsNetworkTunnel !== true) {
     return { kind: "remote", support: "daemon_update_required" };
   }

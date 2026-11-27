@@ -157,6 +157,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ) as Promise<BrowserProxyStatusSnapshot | null>,
     releaseHostProxy: (serverId: string) =>
       ipcRenderer.invoke("paseo:browser-proxy:release-host", serverId),
+    workspacePortForward: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("paseo:browser-proxy:workspace-forward", input) as Promise<number | null>,
     deliverProxyTicket: (input: { requestId: string; ticket?: string; error?: string }) =>
       ipcRenderer.invoke("paseo:browser-proxy:deliver-ticket", input),
     executeAutomationCommand: (request: Record<string, unknown>) =>

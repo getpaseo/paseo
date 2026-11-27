@@ -4,7 +4,7 @@ import {
   findDarwinLoopbackSocketUid,
   findLinuxLoopbackSocketUid,
   parseWindowsLoopbackSocketOwner,
-} from "./socket-owner.js";
+} from "@getpaseo/client/internal/node-network-tunnel";
 
 describe("OS loopback socket owner verification", () => {
   test("parses Linux /proc/net/tcp for matching 127.0.0.1 client->server connection UID", () => {

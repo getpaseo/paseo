@@ -1,8 +1,10 @@
+import { once } from "node:events";
 import net from "node:net";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   decodeNetworkTunnelFrame,
   encodeNetworkTunnelFrame,
+  NetworkTunnelCloseReason,
   type DecodedNetworkTunnelFrame,
   type NetworkTunnelFrame,
 } from "@getpaseo/protocol/network-tunnel";
@@ -43,11 +45,21 @@ function createFakeSession(resolveProxyResult?: (url: string, proxyRules: string
   return sessionObj;
 }
 
-function createEchoTunnelWire() {
+function createEchoTunnelWire({
+  replyAfterEof = false,
+  ipv6Only = false,
+  deferOpen,
+}: {
+  replyAfterEof?: boolean;
+  ipv6Only?: boolean;
+  deferOpen?: (frame: Extract<DecodedNetworkTunnelFrame, { type: "open" }>) => boolean;
+} = {}) {
   const binaryListeners = new Set<(bytes: Uint8Array) => void>();
   const closeListeners = new Set<(error?: Error) => void>();
   const openedTargets: Array<{ host: string; port: number }> = [];
+  const closeFrames: DecodedNetworkTunnelFrame[] = [];
   let closed = false;
+  const uploaded = new Map<number, Buffer[]>();
 
   const emit = (frame: NetworkTunnelFrame) => {
     const encoded = encodeNetworkTunnelFrame(frame);
@@ -65,10 +77,27 @@ function createEchoTunnelWire() {
       const frame: DecodedNetworkTunnelFrame = decodeNetworkTunnelFrame(bytes);
       if (frame.type === "open") {
         openedTargets.push({ host: frame.host, port: frame.port });
+        if (deferOpen?.(frame)) return;
+        if (ipv6Only && frame.host === "127.0.0.1") {
+          queueMicrotask(() =>
+            emit({
+              type: "close",
+              streamId: frame.streamId,
+              reason: NetworkTunnelCloseReason.ConnectRefused,
+            }),
+          );
+          return;
+        }
         queueMicrotask(() => {
           emit({ type: "opened", streamId: frame.streamId, initialWindowBytes: 512 * 1024 });
         });
       } else if (frame.type === "data") {
+        if (replyAfterEof) {
+          const chunks = uploaded.get(frame.streamId) ?? [];
+          chunks.push(Buffer.from(frame.data));
+          uploaded.set(frame.streamId, chunks);
+          return;
+        }
         queueMicrotask(() => {
           emit({
             type: "data",
@@ -78,8 +107,18 @@ function createEchoTunnelWire() {
         });
       } else if (frame.type === "half_close") {
         queueMicrotask(() => {
+          if (replyAfterEof) {
+            emit({
+              type: "data",
+              streamId: frame.streamId,
+              data: Buffer.concat(uploaded.get(frame.streamId) ?? []),
+            });
+            uploaded.delete(frame.streamId);
+          }
           emit({ type: "half_close", streamId: frame.streamId });
         });
+      } else if (frame.type === "close") {
+        closeFrames.push(frame);
       }
     },
     onBinary: (handler) => {
@@ -100,6 +139,8 @@ function createEchoTunnelWire() {
   return {
     wire,
     openedTargets,
+    closeFrames,
+    emit,
     drop: () => {
       if (closed) return;
       closed = true;
@@ -171,6 +212,97 @@ describe("BrowserProxyManager", () => {
     while (managers.length > 0) {
       await managers.pop()!.disposeAll();
     }
+  });
+
+  test("forwards local TCP through the existing tunnel without a browser session", async () => {
+    const tunnel = createEchoTunnelWire({ replyAfterEof: true, ipv6Only: true });
+    let allowSocket = false;
+    const manager = createBrowserProxyManager({
+      verifySocketOwner: async () => allowSocket,
+      requestTicket: async () => "ticket",
+      openTunnelWire: async () => tunnel.wire,
+      getSessionForPartition: () => {
+        throw new Error("Forwarding must not create a browser session");
+      },
+    });
+    managers.push(manager);
+    const scope = { serverId: "test-host", workspaceId: "ws", terminalId: "terminal", port: 43127 };
+    const port = await manager.workspacePortForward(1, {
+      ...scope,
+      action: "start",
+      target: { type: "directTcp", endpoint: "remote.test:6767" },
+    });
+    if (!port) throw new Error("Expected a forwarding port");
+    await expect(manager.workspacePortForward(2, { ...scope, action: "get" })).resolves.toBeNull();
+    const denied = net.createConnection({ host: "127.0.0.1", port });
+    await new Promise<void>((resolve) => {
+      denied.once("error", () => {});
+      denied.once("close", () => resolve());
+    });
+    expect(tunnel.openedTargets).toEqual([]);
+    allowSocket = true;
+    const reply = await new Promise<string>((resolve, reject) => {
+      const client = net.createConnection({ host: "127.0.0.1", port });
+      const chunks: Buffer[] = [];
+      client.on("data", (chunk) => chunks.push(chunk));
+      client.once("error", reject);
+      client.once("end", () => resolve(Buffer.concat(chunks).toString()));
+      client.end("request up to EOF");
+    });
+    expect(reply).toBe("request up to EOF");
+    expect(tunnel.openedTargets).toEqual([
+      { host: "127.0.0.1", port: scope.port },
+      { host: "::1", port: scope.port },
+    ]);
+
+    tunnel.drop();
+    await expect(manager.workspacePortForward(1, { ...scope, action: "get" })).resolves.toBeNull();
+  });
+
+  test("cancels a stopped forward's pending stream while another forward keeps the tunnel alive", async () => {
+    const scope = { serverId: "test-host", workspaceId: "ws", terminalId: "first", port: 43127 };
+    const other = { ...scope, terminalId: "second", port: 43128 };
+    const target = { type: "directTcp", endpoint: "remote.test:6767" } as const;
+    let notifyOpen!: (streamId: number) => void;
+    const pendingOpen = new Promise<number>((resolve) => {
+      notifyOpen = resolve;
+    });
+    const tunnel = createEchoTunnelWire({
+      deferOpen: (frame) => {
+        if (frame.port !== scope.port) return false;
+        notifyOpen(frame.streamId);
+        return true;
+      },
+    });
+    const manager = createBrowserProxyManager({
+      verifySocketOwner: async () => true,
+      requestTicket: async () => "ticket",
+      openTunnelWire: async () => tunnel.wire,
+      getSessionForPartition: () => {
+        throw new Error("Forwarding must not create a browser session");
+      },
+    });
+    managers.push(manager);
+
+    const port = await manager.workspacePortForward(1, { ...scope, action: "start", target });
+    const otherPort = await manager.workspacePortForward(1, { ...other, action: "start", target });
+    if (!port || !otherPort) throw new Error("Expected both forwarding ports");
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    const closed = once(socket, "close");
+    const streamId = await pendingOpen;
+    await manager.workspacePortForward(1, { ...scope, action: "stop" });
+    await closed;
+
+    const reset = { type: "close", flags: 0, streamId, reason: NetworkTunnelCloseReason.Reset };
+    expect(tunnel.closeFrames).toEqual([reset]);
+    tunnel.emit({ type: "opened", streamId, initialWindowBytes: 512 * 1024 });
+    expect(tunnel.closeFrames).toEqual([reset]);
+
+    const survivingSocket = net.createConnection({ host: "127.0.0.1", port: otherPort });
+    survivingSocket.end("still forwarding");
+    const received: Buffer[] = [];
+    for await (const chunk of survivingSocket) received.push(chunk);
+    expect(Buffer.concat(received).toString()).toBe("ECHO:still forwarding");
   });
 
   test("configures fixed-port SOCKS5 + session proxy, verifies resolveProxy, and keeps the same port across tunnel reconnect", async () => {

@@ -826,6 +826,9 @@ export const ja: TranslationResources = {
       actions: {
         chooseUrl: "URLを選択",
         copyUrl: "URLをコピー",
+        forwardLocally: "ローカルに転送",
+        stopForwarding: "転送を停止",
+        copyForward: "{{address}} をコピー",
         openService: "サービスを表示",
         restart: "再起動",
         run: "実行",

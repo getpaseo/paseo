@@ -1,3 +1,4 @@
+import { supportsNetworkTunnel as hostSupportsNetworkTunnel } from "@getpaseo/protocol/network-tunnel";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { getIsElectron } from "@/constants/platform";
 import { getDesktopHost, type DesktopBrowserProxyStatus } from "@/desktop/host";
@@ -198,7 +199,7 @@ export function useHostBrowserProxy(input: {
   const runtimeSnapshot = useHostRuntimeSnapshot(serverId);
   const supportsNetworkTunnel = useSessionStore((state) => {
     const serverInfo = state.sessions[serverId]?.serverInfo ?? null;
-    return serverInfo !== null ? serverInfo.features?.networkTunnel === true : null;
+    return serverInfo !== null ? hostSupportsNetworkTunnel(serverInfo) : null;
   });
 
   const proxyStatusSnapshot = useSyncExternalStore(

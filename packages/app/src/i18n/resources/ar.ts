@@ -822,6 +822,9 @@ export const ar: TranslationResources = {
       actions: {
         chooseUrl: "اختيار الرابط",
         copyUrl: "نسخ الرابط",
+        forwardLocally: "إعادة توجيه محليًا",
+        stopForwarding: "إيقاف إعادة التوجيه",
+        copyForward: "نسخ {{address}}",
         openService: "عرض الخدمة",
         restart: "إعادة التشغيل",
         run: "يجري",

@@ -818,6 +818,9 @@ export const zhCN: TranslationResources = {
       actions: {
         chooseUrl: "选择 URL",
         copyUrl: "复制 URL",
+        forwardLocally: "转发到本地",
+        stopForwarding: "停止转发",
+        copyForward: "复制 {{address}}",
         openService: "查看服务",
         restart: "重启",
         run: "运行",

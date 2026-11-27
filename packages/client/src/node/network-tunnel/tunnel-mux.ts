@@ -124,6 +124,9 @@ export class TunnelMuxClient {
         message: "Tunnel connection is closed",
       });
     }
+    if (input.socket.destroyed) {
+      return Promise.resolve({ ok: false, reason: NetworkTunnelCloseReason.Reset });
+    }
 
     const streamId = this.allocateStreamId();
     const stream: ActiveStream = {
@@ -150,9 +153,11 @@ export class TunnelMuxClient {
       resolveOpen = resolve;
     });
     const timeoutMs = input.timeoutMs ?? DEFAULT_OPEN_TIMEOUT_MS;
+    const onClose = () => this.closeStreamLocally(stream, NetworkTunnelCloseReason.Reset);
     const finishOpen = (result: OpenTunnelStreamResult) => {
       if (!stream.pendingOpenResolve) return;
       clearTimeout(timer);
+      stream.socket.off("close", onClose);
       stream.pendingOpenResolve = undefined;
       resolveOpen(result);
     };
@@ -160,8 +165,7 @@ export class TunnelMuxClient {
     const openInboundSeq = this.inboundFrameSeq;
     const timer = setTimeout(() => {
       if (stream.state !== "opening") return;
-      this.streams.delete(streamId);
-      stream.state = "closed";
+      this.cleanupStream(stream);
       this.sendFrameBestEffort({
         type: "close",
         streamId,
@@ -183,6 +187,8 @@ export class TunnelMuxClient {
     timer.unref?.();
 
     stream.pendingOpenResolve = finishOpen;
+    // A forward can close its socket while the daemon is still dialing.
+    stream.socket.once("close", onClose);
 
     void this.sendFrame({
       type: "open",
@@ -191,8 +197,7 @@ export class TunnelMuxClient {
       port: input.port,
     }).catch((error) => {
       if (stream.state !== "opening") return;
-      this.streams.delete(streamId);
-      stream.state = "closed";
+      this.cleanupStream(stream);
       finishOpen({
         ok: false,
         reason: NetworkTunnelCloseReason.InternalError,
@@ -290,6 +295,10 @@ export class TunnelMuxClient {
     if (!stream || stream.state !== "opening") {
       return;
     }
+    if (stream.socket.destroyed) {
+      this.closeStreamLocally(stream, NetworkTunnelCloseReason.Reset);
+      return;
+    }
     stream.state = "open";
     stream.sendWindow = frame.initialWindowBytes;
 
@@ -298,10 +307,6 @@ export class TunnelMuxClient {
       stream.onOpened?.();
     } catch {
       this.closeStreamLocally(stream, NetworkTunnelCloseReason.InternalError);
-      stream.pendingOpenResolve?.({
-        ok: false,
-        reason: NetworkTunnelCloseReason.InternalError,
-      });
       return;
     }
 
@@ -519,8 +524,7 @@ export class TunnelMuxClient {
       return;
     }
     if (stream.state === "opening") {
-      this.streams.delete(frame.streamId);
-      stream.state = "closed";
+      this.cleanupStream(stream);
       stream.pendingOpenResolve?.({
         ok: false,
         reason: frame.reason,
@@ -549,6 +553,7 @@ export class TunnelMuxClient {
       streamId,
       reason,
     });
+    stream.pendingOpenResolve?.({ ok: false, reason });
   }
 
   private cleanupStream(stream: ActiveStream): void {

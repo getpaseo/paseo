@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { BrowserWindow, ipcMain, session as electronSession, type WebContents } from "electron";
 import log from "electron-log/main";
+import { z } from "zod";
 import {
   getHostBrowserProxyPartition,
   isHostBrowserProxyPartition,
@@ -13,6 +14,26 @@ import {
   type BrowserProxyStatusSnapshot,
 } from "./internal/proxy-manager.js";
 import type { BrowserProxyTarget } from "./internal/tunnel-transport.js";
+
+const forwardId = z.string().min(1).max(255);
+const forwardScope = z.object({ serverId: forwardId, workspaceId: forwardId });
+const forwardEndpoint = z.object({
+  terminalId: forwardId,
+  port: z.number().int().min(1).max(65535),
+});
+const forwardRequest = z.discriminatedUnion("action", [
+  forwardScope.extend({ ...forwardEndpoint.shape, action: z.literal("get") }),
+  forwardScope.extend({ ...forwardEndpoint.shape, action: z.literal("stop") }),
+  forwardScope.extend({
+    ...forwardEndpoint.shape,
+    action: z.literal("start"),
+    target: z.unknown(),
+  }),
+  forwardScope.extend({
+    action: z.literal("prune"),
+    endpoints: z.array(forwardEndpoint).max(4096),
+  }),
+]);
 
 export {
   createBrowserProxyManager,
@@ -101,6 +122,7 @@ export function createElectronBrowserProxyController(): {
   dispose: () => Promise<void>;
 } {
   const pendingTicketRequests = new Map<string, PendingTicketRequest>();
+  const forwardOwners = new Set<number>();
 
   const requestTicketFromRenderer = (serverId: string): Promise<string> => {
     const windows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed());
@@ -160,6 +182,38 @@ export function createElectronBrowserProxyController(): {
   });
 
   const registerIpc = (): void => {
+    ipcMain.handle("paseo:browser-proxy:workspace-forward", async (event, raw: unknown) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (
+        !window ||
+        window.webContents !== event.sender ||
+        event.senderFrame !== event.sender.mainFrame
+      ) {
+        throw new Error("Only the Paseo window can manage workspace forwards");
+      }
+      const request = forwardRequest.parse(raw);
+      const owner = event.sender.id;
+      if (!forwardOwners.has(owner)) {
+        forwardOwners.add(owner);
+        event.sender.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
+          if (isMainFrame && !isSameDocument) void manager.closeWorkspaceForwardsForOwner(owner);
+        });
+        event.sender.on("render-process-gone", () => {
+          void manager.closeWorkspaceForwardsForOwner(owner);
+        });
+        event.sender.once("destroyed", () => {
+          forwardOwners.delete(owner);
+          void manager.closeWorkspaceForwardsForOwner(owner);
+        });
+      }
+      if (request.action !== "start") return await manager.workspacePortForward(owner, request);
+      const target = parseBrowserProxyTarget(request.target);
+      if (!target || (target.type === "relay" && target.serverId !== request.serverId)) {
+        throw new Error("Invalid workspace forward target");
+      }
+      return await manager.workspacePortForward(owner, { ...request, target });
+    });
+
     ipcMain.handle("paseo:browser-proxy:ensure-host", async (_event, rawInput: unknown) => {
       if (!isRecord(rawInput) || typeof rawInput.serverId !== "string") {
         throw new Error("Invalid browser proxy ensure input");

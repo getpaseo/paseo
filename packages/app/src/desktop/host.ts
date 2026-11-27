@@ -203,6 +203,13 @@ export interface DesktopBrowserBridge {
   }) => Promise<void>;
   getHostProxyStatus?: (serverId: string) => Promise<DesktopBrowserProxyStatusSnapshot | null>;
   releaseHostProxy?: (serverId: string) => Promise<void>;
+  workspacePortForward?: (
+    input: { serverId: string; workspaceId: string } & (
+      | { action: "get" | "stop"; terminalId: string; port: number }
+      | { action: "start"; terminalId: string; port: number; target: DesktopBrowserProxyTarget }
+      | { action: "prune"; endpoints: readonly { terminalId: string; port: number }[] }
+    ),
+  ) => Promise<number | null>;
   deliverProxyTicket?: (input: {
     requestId: string;
     ticket?: string;

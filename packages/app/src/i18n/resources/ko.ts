@@ -822,6 +822,9 @@ export const ko: TranslationResources = {
       actions: {
         chooseUrl: "URL를 선택하세요",
         copyUrl: "URL 복사",
+        forwardLocally: "로컬로 포워딩",
+        stopForwarding: "포워딩 중지",
+        copyForward: "{{address}} 복사",
         openService: "서비스 보기",
         restart: "다시 시작",
         run: "실행",

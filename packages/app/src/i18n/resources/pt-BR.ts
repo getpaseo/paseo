@@ -826,6 +826,9 @@ export const ptBR: TranslationResources = {
       actions: {
         chooseUrl: "Escolher URL",
         copyUrl: "Copiar URL",
+        forwardLocally: "Encaminhar localmente",
+        stopForwarding: "Parar o encaminhamento",
+        copyForward: "Copiar {{address}}",
         openService: "Ver serviço",
         restart: "Reiniciar",
         run: "Executar",

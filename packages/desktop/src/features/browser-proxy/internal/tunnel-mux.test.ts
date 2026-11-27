@@ -7,7 +7,7 @@ import {
   type DecodedNetworkTunnelFrame,
   type NetworkTunnelFrame,
 } from "@getpaseo/protocol/network-tunnel";
-import { TunnelMuxClient } from "./tunnel-mux.js";
+import { TunnelMuxClient } from "@getpaseo/client/internal/node-network-tunnel";
 import type { TunnelWireConnection } from "./tunnel-transport.js";
 
 function createFakeWire(ready?: Partial<TunnelWireConnection["ready"]>) {
@@ -143,6 +143,27 @@ describe("TunnelMuxClient", () => {
     client.end();
     await new Promise((r) => setTimeout(r, 10));
     expect(fake.sentFrames.some((f) => f.type === "half_close" && f.streamId === 1)).toBe(true);
+  });
+
+  test("rejects Opened when the socket was destroyed before its close event", async () => {
+    const fake = createFakeWire();
+    const mux = new TunnelMuxClient(fake.wire, { heartbeatIntervalMs: 0 });
+    const socket = new PassThrough();
+    const onOpened = vi.fn();
+    try {
+      const opened = mux.openStream({ host: "localhost", port: 3000, socket, onOpened });
+      socket.destroy();
+      fake.injectFrame({ type: "opened", streamId: 1, initialWindowBytes: 1024 });
+
+      expect(await opened).toEqual({ ok: false, reason: NetworkTunnelCloseReason.Reset });
+      expect(onOpened).not.toHaveBeenCalled();
+      expect(fake.sentFrames.slice(1)).toEqual([
+        { type: "close", flags: 0, streamId: 1, reason: NetworkTunnelCloseReason.Reset },
+      ]);
+      expect(socket.listenerCount("close")).toBe(0);
+    } finally {
+      mux.close();
+    }
   });
 
   test("returns daemon Close reason when Open is rejected", async () => {
