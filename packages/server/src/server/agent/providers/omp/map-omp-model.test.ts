@@ -46,7 +46,7 @@ describe("mapOmpModel thinking options", () => {
       "xhigh",
       "max",
     ]);
-    expect(result.defaultThinkingOptionId).toBe("medium");
+    expect(result.defaultThinkingOptionId).toBe("high");
   });
 
   test("exposes the full set when efforts is empty", () => {
@@ -67,6 +67,7 @@ describe("mapOmpModel thinking options", () => {
       "xhigh",
       "max",
     ]);
+    expect(result.defaultThinkingOptionId).toBe("high");
   });
 
   test("omits thinking options entirely when reasoning is false", () => {
@@ -87,7 +88,7 @@ describe("mapOmpModel thinking options", () => {
     expect(result.defaultThinkingOptionId).toBeUndefined();
   });
 
-  test("falls back to the first available option when defaultLevel is not in efforts", () => {
+  test("clamps a reported default the model does not support to the nearest effort", () => {
     const model = baseModel({
       reasoning: true,
       thinking: { mode: "effort", efforts: ["low", "high"], defaultLevel: "xhigh" },
@@ -96,11 +97,11 @@ describe("mapOmpModel thinking options", () => {
     const result = mapOmpModel(model, "omp");
 
     expect(result.thinkingOptions?.map((option) => option.id)).toEqual(["auto", "low", "high"]);
-    expect(result.defaultThinkingOptionId).toBe("low");
-    expect(result.thinkingOptions?.find((option) => option.isDefault)?.id).toBe("low");
+    expect(result.defaultThinkingOptionId).toBe("high");
+    expect(result.thinkingOptions?.find((option) => option.isDefault)?.id).toBe("high");
   });
 
-  test("uses the first option as default when defaultLevel is absent", () => {
+  test("uses OMP's high default when the model reports no default level", () => {
     const model = baseModel({
       reasoning: true,
       thinking: { mode: "effort", efforts: ["low", "medium", "high"] },
@@ -114,7 +115,49 @@ describe("mapOmpModel thinking options", () => {
       "medium",
       "high",
     ]);
-    expect(result.defaultThinkingOptionId).toBe("low");
+    expect(result.defaultThinkingOptionId).toBe("high");
+  });
+
+  test("clamps OMP's high default to the efforts a model reports", () => {
+    const single = mapOmpModel(
+      baseModel({ reasoning: true, thinking: { mode: "effort", efforts: ["low"] } }),
+      "omp",
+    );
+    expect(single.defaultThinkingOptionId).toBe("low");
+
+    const belowHigh = mapOmpModel(
+      baseModel({
+        reasoning: true,
+        thinking: { mode: "effort", efforts: ["minimal", "low", "medium"] },
+      }),
+      "omp",
+    );
+    expect(belowHigh.defaultThinkingOptionId).toBe("medium");
+
+    // Ties go to the lower effort, matching how OMP clamps.
+    const tie = mapOmpModel(
+      baseModel({
+        reasoning: true,
+        thinking: { mode: "effort", efforts: ["low", "medium", "xhigh"] },
+      }),
+      "omp",
+    );
+    expect(tie.defaultThinkingOptionId).toBe("medium");
+  });
+
+  test("keeps high as the default for a GLM 5.4 shape effort list", () => {
+    const model = baseModel({
+      provider: "glm",
+      id: "glm-5.4",
+      name: "GLM-5.4",
+      reasoning: true,
+      thinking: { mode: "effort", efforts: ["minimal", "low", "medium", "high", "xhigh"] },
+    });
+
+    const result = mapOmpModel(model, "omp");
+
+    expect(result.defaultThinkingOptionId).toBe("high");
+    expect(result.thinkingOptions?.find((option) => option.isDefault)?.id).toBe("high");
   });
 
   test("falls back to the full set when every reported effort is unknown", () => {
@@ -135,7 +178,7 @@ describe("mapOmpModel thinking options", () => {
       "xhigh",
       "max",
     ]);
-    expect(result.defaultThinkingOptionId).toBe("medium");
+    expect(result.defaultThinkingOptionId).toBe("high");
   });
 
   test("offers auto alongside reported efforts without making it the default", () => {
