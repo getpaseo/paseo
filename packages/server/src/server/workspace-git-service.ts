@@ -927,6 +927,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // Do not expose a stale classification to the next status consumer.
       // Local placement must not wait for the replacement working-tree scan.
       target.latestSnapshot = null;
+      // A queued worktree-only observation must not rebuild the old classification.
+      target.latestFacts = null;
       if (!options?.placementOnly) {
         await this.getSnapshot(normalizedCwd, {
           force: true,

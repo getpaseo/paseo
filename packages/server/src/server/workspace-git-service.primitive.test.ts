@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vi
 import { createGitHubService } from "../services/github-service.js";
 import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
 import { defaultForgeRegistry } from "../services/forge-registry.js";
+import type { FileObserverCallback } from "./file-observer/index.js";
 import {
   getCheckoutDiff as getCheckoutDiffUncached,
   getCheckoutSnapshotFacts as getCheckoutSnapshotFactsUncached,
@@ -487,6 +488,44 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       service.dispose();
     }
   }, 2_000);
+
+  test("a queued worktree observation cannot restore an invalidated non-Git classification", async () => {
+    const callbacks = new Map<string, FileObserverCallback>();
+    const getCheckoutSnapshotFacts = vi.fn().mockResolvedValue({ isGit: false });
+    const getCheckoutStatus = vi.fn().mockResolvedValue({ isGit: false });
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      getCheckoutIdentity: vi.fn().mockResolvedValue(createCheckoutStatus(REPO_CWD)),
+      subscribe: vi.fn(async (path: string, callback: FileObserverCallback) => {
+        callbacks.set(path, callback);
+        return createAsyncSubscription();
+      }),
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    try {
+      await vi.waitFor(() => expect(callbacks.has(REPO_CWD)).toBe(true));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await service.getSnapshot(REPO_CWD)).toMatchObject({ git: { isGit: false } });
+
+      getCheckoutSnapshotFacts.mockResolvedValue(createCheckoutFacts(REPO_CWD));
+      getCheckoutStatus.mockResolvedValue(createCheckoutStatus(REPO_CWD));
+      callbacks.get(REPO_CWD)!(null, [{ path: join(REPO_CWD, "file.ts"), type: "update" }]);
+      expect(await service.getCheckout(REPO_CWD, { placementOnly: true })).toMatchObject({
+        isGit: true,
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await flushPromises();
+
+      expect(await service.getSnapshot(REPO_CWD)).toMatchObject({
+        git: { isGit: true, repoRoot: REPO_CWD },
+      });
+      expect(await service.resolveRepoRoot(REPO_CWD)).toBe(REPO_CWD);
+    } finally {
+      subscription.unsubscribe();
+      service.dispose();
+    }
+  });
 
   test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
