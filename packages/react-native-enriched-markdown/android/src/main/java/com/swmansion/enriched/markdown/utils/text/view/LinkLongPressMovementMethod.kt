@@ -73,7 +73,7 @@ class LinkLongPressMovementMethod : ArrowKeyMovementMethod() {
           }
         isLinkTouchActive = pressedLink != null || pressedImage != null || pressedCodeBlock != null
         isTouchWithinTextBounds = charOffsetAt(widget, event) != null || pressedCodeBlock != null
-        pressedLink?.let { scheduleLongPress(widget, it) }
+        if (!widget.isLongClickable) pressedLink?.let { scheduleLongPress(widget, it) }
         // Keeps RNGH Pressable and scrolling parents from stealing the press before ACTION_UP.
         disallowsParentIntercept = isLinkTouchActive
         if (isLinkTouchActive) widget.parent?.requestDisallowInterceptTouchEvent(true)
@@ -153,6 +153,8 @@ class LinkLongPressMovementMethod : ArrowKeyMovementMethod() {
 
     return super.onTouchEvent(widget, buffer, event)
   }
+
+  fun performLinkLongClick(widget: TextView): Boolean = pressedLink?.onLongClick(widget) ?: false
 
   private fun scheduleLongPress(
     widget: TextView,

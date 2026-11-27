@@ -162,6 +162,7 @@ class LongPressSelectionInterceptTest {
   private fun linkSpannable(
     text: String,
     linkEnd: Int,
+    onLongPress: ((String) -> Unit)? = null,
     onPress: (String, String) -> Unit,
   ): SpannableStringBuilder {
     val style = createStyleConfig()
@@ -172,7 +173,7 @@ class LongPressSelectionInterceptTest {
         LinkSpan(
           url = "https://example.com",
           onLinkPress = onPress,
-          onLinkLongPress = null,
+          onLinkLongPress = onLongPress,
           styleCache = cache,
           blockStyle = blockStyle,
           context = context,
@@ -306,6 +307,49 @@ class LongPressSelectionInterceptTest {
 
     assertTrue("Parent ScrollView must scroll after vertical swipe starting on a checkbox", scrollView.scrollY > 0)
     assertFalse("Cancelled checkbox drag must not fire tap callback", tapped)
+  }
+
+  @Test
+  fun selectableLinkLongPressConsumesLongClickWithoutSelectingOrTapping() {
+    for (view in listOf(EnrichedMarkdownInternalText(context), EnrichedMarkdownText(context))) {
+      var longPressed = false
+      var pressed = false
+      val text = linkSpannable("Example link prose", 12, { longPressed = true }) { _, _ -> pressed = true }
+      when (view) {
+        is EnrichedMarkdownInternalText -> view.applyStyledText(text)
+        is EnrichedMarkdownText -> {
+          view.setText(text, TextView.BufferType.SPANNABLE)
+          view.setIsSelectable(true)
+        }
+      }
+      val parent = layoutInParent(view)
+      val (x, y) = pointOnChar(view, 2)
+      val downTime = SystemClock.uptimeMillis()
+      view.onTouchEvent(motionEvent(downTime, MotionEvent.ACTION_DOWN, x, y))
+      assertTrue(view.performLongClick())
+      assertTrue("Link long press must fire", longPressed)
+      assertFalse("Link long press must not start selection", view.hasSelection())
+      view.onTouchEvent(motionEvent(downTime, MotionEvent.ACTION_UP, x, y))
+      assertFalse("Long press must not also fire a tap", pressed)
+      assertFalse("Link touch must release parent intercept", parent.disallowIntercept)
+    }
+  }
+
+  @Test
+  fun proseLongPressDelegatesToTextView() {
+    val view = EnrichedMarkdownInternalText(context)
+    var longPressed = false
+    var delegated = false
+    view.applyStyledText(linkSpannable("Example link prose", 12, { longPressed = true }) { _, _ -> })
+    view.setOnLongClickListener { delegated = true; true }
+    layoutInParent(view)
+    val (x, y) = pointOnChar(view, 15)
+    val downTime = SystemClock.uptimeMillis()
+    view.onTouchEvent(motionEvent(downTime, MotionEvent.ACTION_DOWN, x, y))
+    assertTrue(view.performLongClick())
+    assertTrue("Prose must reach the platform long-click handler", delegated)
+    assertFalse(longPressed)
+    view.onTouchEvent(motionEvent(downTime, MotionEvent.ACTION_UP, x, y))
   }
 
   @Test
