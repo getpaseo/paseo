@@ -1686,7 +1686,7 @@ export class Session {
       this.emit(messageFor());
   }
 
-  // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10 with
+  // COMPAT(timelineRewindOperations): added in v0.18.0, remove after 2027-05-25 with
   // ./session/legacy-rewind-epoch. A client that cannot apply rewinds sees each one as a new epoch.
   private appliesRewinds(source?: object): boolean {
     return source
@@ -5662,7 +5662,7 @@ export class Session {
         subscription.owner.emit(rewind);
         continue;
       }
-      // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10. An older
+      // COMPAT(timelineRewindOperations): added in v0.18.0, remove after 2027-05-25. An older
       // client that started the rewind refetches its history when the rewind response arrives.
       if (
         this.delivery.isModern(source) ||

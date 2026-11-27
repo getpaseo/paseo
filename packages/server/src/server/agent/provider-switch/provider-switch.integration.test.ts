@@ -8,7 +8,10 @@ import { AgentManager, AgentProviderSwitchStartError } from "../agent-manager.js
 import { AgentStorage } from "../agent-storage.js";
 import { ensureAgentLoaded } from "../agent-loading.js";
 import { startAgentRun } from "../agent-prompt.js";
-import { createStoredAgentTimeline } from "../timeline/index.js";
+import {
+  createStoredAgentTimeline,
+  TimelineRewindSegmentBoundaryError,
+} from "../timeline/index.js";
 import { openTestTimelineDatabase } from "../timeline/testing.js";
 import type {
   AgentClient,
@@ -32,7 +35,7 @@ const BASE_CAPABILITIES = {
   supportsReasoningStream: false,
   supportsToolInvocations: true,
   supportsRewindConversation: true,
-  supportsRewindFiles: false,
+  supportsRewindFiles: true,
   supportsRewindBoth: false,
 } as const;
 
@@ -41,6 +44,8 @@ class FakeSession implements AgentSession {
   readonly provider: AgentProvider;
   readonly capabilities = BASE_CAPABILITIES;
   readonly receivedPrompts: Array<{ prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
+  readonly fileRewindCalls: string[] = [];
+  interruptCalls = 0;
   closed = false;
   private listeners = new Set<(event: AgentStreamEvent) => void>();
   private persistence: AgentPersistenceHandle | null;
@@ -150,7 +155,13 @@ class FakeSession implements AgentSession {
     return { kind: "after", retainedMessageId: null };
   }
 
-  async interrupt(): Promise<void> {}
+  async revertFiles(input: { messageId: string }): Promise<void> {
+    this.fileRewindCalls.push(input.messageId);
+  }
+
+  async interrupt(): Promise<void> {
+    this.interruptCalls += 1;
+  }
   async getAvailableModes() {
     return [];
   }
@@ -641,6 +652,59 @@ describe("AgentManager provider switching", () => {
     const waitResult = await waitResultPromise;
     expect(waitResult.status).toBe("idle");
     expect(waitResult.lastMessage).toBe("codex reply 1");
+  });
+
+  it("refuses files-only rewind across a provider switch before cancelling a running turn", async () => {
+    const { cwd, manager, codex } = createHarness();
+    const logger = createTestLogger();
+
+    const created = await manager.createAgent({ provider: "claude", cwd }, randomUUID(), {});
+    await runAndWaitIdle(manager, created.id, "Before switch", "msg-c1");
+
+    const switched = await manager.switchAgentProvider(created.id, {
+      toProvider: "codex",
+      prompt: "First Codex turn",
+      messageId: "msg-sw1",
+    });
+    await runAndWaitIdle(manager, created.id, switched.handoffPrompt, "msg-sw1");
+
+    let notifyRunning!: () => void;
+    const runningReady = new Promise<void>((resolve) => {
+      notifyRunning = resolve;
+    });
+    let releaseRunning!: () => void;
+    const runningGate = new Promise<void>((resolve) => {
+      releaseRunning = resolve;
+    });
+    codex.onStartTurn = async () => {
+      notifyRunning();
+      await runningGate;
+    };
+
+    const dispatch = await startAgentRun(manager, created.id, "In-flight Codex turn", logger, {
+      idleOnly: true,
+      skipPluginReload: true,
+      runOptions: { clientMessageId: "msg-sw2" },
+    });
+    expect(dispatch.disposition).toBe("turn_started");
+    await runningReady;
+
+    const codexSession = codex.createdSessions[0]!;
+    await expect(manager.rewind(created.id, "msg-c1", "files")).rejects.toBeInstanceOf(
+      TimelineRewindSegmentBoundaryError,
+    );
+    await expect(manager.rewind(created.id, "claude-msg-1", "files")).rejects.toBeInstanceOf(
+      TimelineRewindSegmentBoundaryError,
+    );
+    expect(codexSession.fileRewindCalls).toEqual([]);
+    expect(codexSession.interruptCalls).toBe(0);
+
+    releaseRunning();
+    if (dispatch.disposition === "turn_started") {
+      await dispatch.started;
+    }
+    const done = await manager.waitForAgentEvent(created.id);
+    expect(done.status).toBe("idle");
   });
 });
 

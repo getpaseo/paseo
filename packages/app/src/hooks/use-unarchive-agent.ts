@@ -18,7 +18,9 @@ function useIsAgentUnarchiving({ serverId, agentId }: UnarchiveAgentTarget): boo
 export async function runAgentUnarchive(input: {
   serverId: string;
   agentId: string;
-  client: { refreshAgent: (agentId: string) => Promise<{ historyDiverged?: boolean } | unknown> } | null;
+  client: {
+    refreshAgent: (agentId: string) => Promise<{ historyDiverged?: boolean } | unknown>;
+  } | null;
   isConnected: boolean;
   onRefreshed?: (result: { historyDiverged?: boolean }) => void;
 }): Promise<boolean> {
@@ -44,7 +46,9 @@ export function useUnarchiveAgent({ serverId, agentId }: UnarchiveAgentTarget) {
   const isUnarchiving = useIsAgentUnarchiving({ serverId, agentId });
 
   const unarchive = useCallback(
-    async (options?: { onRefreshed?: (result: { historyDiverged?: boolean }) => void }): Promise<void> => {
+    async (options?: {
+      onRefreshed?: (result: { historyDiverged?: boolean }) => void;
+    }): Promise<void> => {
       await runAgentUnarchive({
         serverId,
         agentId,

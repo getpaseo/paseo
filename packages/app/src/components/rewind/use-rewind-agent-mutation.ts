@@ -43,7 +43,7 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
-      // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10. A daemon with
+      // COMPAT(timelineRewindOperations): added in v0.18.0, remove after 2027-05-25. A daemon with
       // the feature delivers the rewind on the live timeline; an older one replaced the timeline
       // and this client has to read it again.
       const appliesLive =

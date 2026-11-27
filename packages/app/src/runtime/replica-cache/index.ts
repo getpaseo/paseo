@@ -84,7 +84,7 @@ const TimelinePositionSchema = z.strictObject({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
   // COMPAT(timelineRewindOperations): absent on caches written before rows were anchored, added in
-  // v0.14.1, remove after 2027-05-10. Such a cache is not restored; the chat loads its tail instead.
+  // v0.18.0, remove after 2027-05-25. Such a cache is not restored; the chat loads its tail instead.
   anchorSeq: z.number().int().nonnegative().optional(),
 });
 type StoredTimelinePosition = z.infer<typeof TimelinePositionSchema>;

@@ -547,6 +547,26 @@ export class AgentTimeline {
   }
 
   /**
+   * Refuses a files-only rewind whose target belongs to a previous provider segment or while a
+   * provider switch is pending, before the caller cancels a running turn.
+   */
+  assertRewindTargetInActiveSegment(scope: TimelineScope, messageId: string): Promise<void> {
+    return this.run(scope, async () => {
+      const head = await this.backendFor(scope).head(scope);
+      if (!head) return;
+      if (head.providerSwitch) throw new TimelineProviderSwitchPendingError(head.providerSwitch);
+      if (head.activeSegmentStartSeq <= 0) return;
+      const target = (await this.prompts(scope)).find(
+        (prompt) => prompt.messageId === messageId || prompt.providerMessageId === messageId,
+      );
+      if (!target) throw new TimelineRewindTargetError(messageId);
+      if (target.seqStart <= head.activeSegmentStartSeq) {
+        throw new TimelineRewindSegmentBoundaryError(messageId);
+      }
+    });
+  }
+
+  /**
    * Opens a rewind to before the active prompt `messageId`. While it is open, `describe` reports it,
    * and a second rewind is refused until this one completes or is abandoned.
    */

@@ -5465,6 +5465,7 @@ export class AgentManager {
       await this.reconcilePendingProviderSwitch(agentId);
       agent = this.requireSessionAgent(agentId);
       if (mode !== "files") await this.settleOpenRewind(agent, { judge: false });
+      else await this.timeline.assertRewindTargetInActiveSegment(scope, messageId);
       providerMessageId = await this.resolveRewindTarget(agentId, messageId);
       if (mode !== "files") intent = await this.timeline.beginRewind(scope, messageId);
       if (!heldFromCall) await this.cancelAgentRunBefore(agentId, "rewind");

@@ -39,7 +39,7 @@ export const CLIENT_CAPS = {
   // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove legacy
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
-  // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10 once the client
+  // COMPAT(timelineRewindOperations): added in v0.18.0, remove after 2027-05-25 once the client
   // floor applies rewinds. Clients without it see a rewound history under a derived epoch.
   timelineRewindOperations: "timeline_rewind_operations",
   // COMPAT(timelineNotifications): added in v0.7.2. The daemon omits notification

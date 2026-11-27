@@ -4164,7 +4164,7 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-grapheme-widths": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
-        // COMPAT(timelineRewindOperations): added in v0.14.1, remove gate after 2027-05-10.
+        // COMPAT(timelineRewindOperations): added in v0.18.0, remove gate after 2027-05-25.
         // A conversation rewind arrives as `agent.timeline.rewind`, not a replacement.
         timelineRewindOperations: z.boolean().optional(),
         // COMPAT(providerSwitching): added in v0.18.0, remove gate after 2027-05-25.
@@ -5265,7 +5265,7 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     hasNewer: z.boolean(),
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
-    // COMPAT(timelineRewindOperations): added in v0.14.1. Retirements whose seq lies in the page's
+    // COMPAT(timelineRewindOperations): added in v0.18.0. Retirements whose seq lies in the page's
     // span; apply them before the entries. Sent only to clients with the capability.
     retirements: z.array(AgentTimelineRetirementSchema).optional(),
     /** Seq of the latest active provider_switch marker, or 0 if never switched. */

@@ -1,4 +1,4 @@
-// COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10 once the client floor
+// COMPAT(timelineRewindOperations): added in v0.18.0, remove after 2027-05-25 once the client floor
 // applies rewinds. Delete this module and its call sites in session.ts.
 //
 // A client without the capability cannot drop retired rows from what it already holds. The only

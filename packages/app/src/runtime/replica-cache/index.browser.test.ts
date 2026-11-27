@@ -67,7 +67,7 @@ it("does not store a checkpoint for rows that another tab evicted", async () => 
         id: "message-1",
         text: "x".repeat(16_384),
         timestamp: new Date("2026-07-18T08:02:00.000Z"),
-        timelineCursor: { epoch: "epoch-1", seq: 12 },
+        timelineCursor: { epoch: "epoch-1", anchorSeq: 12, seq: 12 },
       },
     ],
     range: { epoch: "epoch-1", startSeq: 1, endSeq: 12 },
