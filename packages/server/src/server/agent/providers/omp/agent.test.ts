@@ -148,6 +148,9 @@ class ManualIdleScheduler implements OmpProviderIdleScheduler {
     if (this.waitCount >= count) return Promise.resolve();
     return new Promise((resolve) => this.waiters.push({ count, resolve }));
   }
+  waits(): number {
+    return this.waitCount;
+  }
 
   retry(): void {
     const resolve = this.retries.shift();
@@ -554,10 +557,9 @@ describe("OMP agent client and session", () => {
     const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 50 });
     await omp.start();
     const { completion } = await omp.startPromptWithNonTerminalEnd("first", "first done");
-    const stateChecks = omp.runtime().getStateRequestCount;
 
     await delay(70);
-    expect(omp.runtime().getStateRequestCount).toBe(stateChecks);
+    expect(scheduler.waits()).toBe(0);
     expect(omp.completedTurnCount()).toBe(0);
 
     const runtime = omp.runtime();
