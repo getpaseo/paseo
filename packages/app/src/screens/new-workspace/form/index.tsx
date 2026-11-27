@@ -20,6 +20,7 @@ import type { HostProfile } from "@/types/host-connection";
 import { shortenPath } from "@/utils/shorten-path";
 import {
   branchNameFromRef,
+  checkoutBranchName,
   refListOptions,
   type PickerItem,
   type RefAction,
@@ -283,7 +284,8 @@ function branchHolderOf(
   worktrees: readonly CheckoutWorktree[],
 ): BranchHolder {
   if (item?.kind !== "branch" || action !== "checkout") return null;
-  const holder = worktreeHoldingBranch(worktrees, branchNameFromRef(item.refName));
+  const branchName = checkoutBranchName(item);
+  const holder = branchName === null ? undefined : worktreeHoldingBranch(worktrees, branchName);
   if (!holder) return null;
   return holder.containsCwd ? "project-directory" : "worktree";
 }
@@ -375,7 +377,9 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
       ...trigger,
       icon,
       // A checkout works on the branch itself, so its origin and local rows read the same.
-      value: checksOutBranch ? branchNameFromRef(shown.refName) : base.triggerLabel,
+      value: checksOutBranch
+        ? (shown.branchName ?? branchNameFromRef(shown.refName))
+        : base.triggerLabel,
     },
   };
 }

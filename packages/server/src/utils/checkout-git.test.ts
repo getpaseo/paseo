@@ -340,6 +340,52 @@ describe("checkout git utilities", () => {
     });
   });
 
+  it("prioritizes an exact ref when resolving automatic checkout identity", async () => {
+    execFileSync("git", ["remote", "add", "company", "."], { cwd: repoDir });
+    execFileSync("git", ["update-ref", "refs/remotes/company/main", "HEAD"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "newer similar branch"],
+      {
+        cwd: repoDir,
+        env: { ...process.env, GIT_COMMITTER_DATE: "2030-01-01T00:00:00Z" },
+      },
+    );
+    execFileSync("git", ["update-ref", "refs/remotes/company/main-extra", "HEAD"], {
+      cwd: repoDir,
+    });
+    expect(
+      await listBranchSuggestions(repoDir, {
+        refMode: "exact",
+        query: "refs/remotes/company/main",
+        limit: 1,
+      }),
+    ).toMatchObject([
+      { name: "refs/remotes/company/main", branchName: "main", remoteName: "company" },
+    ]);
+  });
+
+  it.each(["team/company", "origin/team"])(
+    "identifies the configured remote %s separately from its branch name",
+    async (remoteName) => {
+      execFileSync("git", ["remote", "add", remoteName, "."], { cwd: repoDir });
+      execFileSync("git", ["update-ref", `refs/remotes/${remoteName}/topic`, "HEAD"], {
+        cwd: repoDir,
+      });
+      expect(await listBranchSuggestions(repoDir, { refMode: "exact", query: "topic" })).toEqual([
+        {
+          name: `refs/remotes/${remoteName}/topic`,
+          branchName: "topic",
+          remoteName,
+          committerDate: expect.any(Number),
+          hasLocal: false,
+          hasRemote: true,
+        },
+      ]);
+      expect(await listBranchSuggestions(repoDir, { query: "topic" })).toEqual([]);
+    },
+  );
+
   it("throws NotGitRepoError for non-git directories", async () => {
     const nonGitDir = join(tempDir, "not-git");
     mkdirSync(nonGitDir, { recursive: true });
@@ -575,6 +621,183 @@ describe("checkout git utilities", () => {
     ).toContain("refs/heads/feature/new-name");
   });
 
+  it.each(["main", "develop"])(
+    "exposes the remote default %s independently of the current branch and stored base",
+    async (defaultBranch) => {
+      execFileSync("git", ["update-ref", `refs/remotes/origin/${defaultBranch}`, "HEAD"], {
+        cwd: repoDir,
+      });
+      execFileSync(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${defaultBranch}`],
+        { cwd: repoDir },
+      );
+      execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: repoDir });
+      await writePaseoWorktreeMetadata(repoDir, { baseRefName: "feature/unrelated" });
+
+      const status = await getCheckoutStatus(repoDir);
+      expect(status.currentBranch).toBe("feature/unrelated");
+      expect(status.defaultBranchRef).toBe(`refs/remotes/origin/${defaultBranch}`);
+    },
+  );
+
+  it.each(["develop", "trunk"])(
+    "uses a sole local %s branch without assuming main",
+    async (branch) => {
+      execFileSync("git", ["branch", "-m", branch], { cwd: repoDir });
+      expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe(`refs/heads/${branch}`);
+      execFileSync("git", ["branch", "feature/agent"], { cwd: repoDir });
+      expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe(`refs/heads/${branch}`);
+    },
+  );
+
+  it("leaves multiple unconventional local branches unresolved", async () => {
+    execFileSync("git", ["branch", "-m", "integration"], { cwd: repoDir });
+    execFileSync("git", ["branch", "feature/other"], { cwd: repoDir });
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBeNull();
+  });
+
+  it("keeps the local default when main tracks an unrelated local branch", async () => {
+    execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "unrelated"],
+      { cwd: repoDir },
+    );
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    execFileSync("git", ["branch", "--set-upstream-to=feature/unrelated", "main"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "-b", "work"], { cwd: repoDir });
+    execFileSync("git", ["branch", "--set-upstream-to=main", "work"], { cwd: repoDir });
+
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.currentBranch).toBe("work");
+    expect(status.upstreamRef).toBe("refs/heads/main");
+    expect(status.defaultBranchRef).toBe("refs/heads/main");
+  });
+
+  it("uses a remote upstream stored in a custom fetch namespace", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: repoDir });
+    execFileSync("git", ["config", "remote.company.fetch", "+refs/heads/*:refs/vendor/company/*"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["fetch", "company"], { cwd: repoDir });
+    execFileSync("git", ["branch", "--set-upstream-to=refs/vendor/company/main", "main"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["for-each-ref", "--format=%(refname)", "refs/remotes"], {
+      cwd: repoDir,
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .forEach((ref) => {
+        execFileSync("git", ["update-ref", "--no-deref", "-d", ref], { cwd: repoDir });
+      });
+    commitFile(repoDir, "local-only.txt", "local only", "local main only");
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.defaultBranchRef).toBe("refs/vendor/company/main");
+    expect(
+      execFileSync("git", ["rev-parse", "refs/vendor/company/main"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim(),
+    ).not.toBe(
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim(),
+    );
+  });
+
+  it("reports the canonical local branch when a tag shares its name", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["switch", "-c", "release"], { cwd: repoDir });
+    execFileSync("git", ["push", "-u", "origin", "release"], { cwd: repoDir });
+    execFileSync("git", ["tag", "release"], { cwd: repoDir });
+    commitFile(repoDir, "fork-only.txt", "fork only", "unpushed fork commit");
+    const status = await getCheckoutStatus(repoDir);
+    expect(status.currentBranch).toBe("release");
+    expect(
+      execFileSync("git", ["rev-parse", `refs/heads/${status.currentBranch}`], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim());
+  });
+
+  it("uses a non-origin remote-tracking upstream when remote HEAD is unavailable", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: repoDir });
+    execFileSync("git", ["update-ref", "--no-deref", "-d", "refs/remotes/company/HEAD"], {
+      cwd: repoDir,
+    });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "local only"],
+      { cwd: repoDir },
+    );
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe("refs/remotes/company/main");
+  });
+
+  it.each(["upstream", "company"])("uses the default on a remote named %s", async (remote) => {
+    execFileSync("git", ["update-ref", `refs/remotes/${remote}/trunk`, "HEAD"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["symbolic-ref", `refs/remotes/${remote}/HEAD`, `refs/remotes/${remote}/trunk`],
+      { cwd: repoDir },
+    );
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe(
+      `refs/remotes/${remote}/trunk`,
+    );
+  });
+
+  it("prefers origin HEAD when another remote advertises a different default", async () => {
+    for (const remote of ["origin", "upstream"]) {
+      execFileSync("git", ["update-ref", `refs/remotes/${remote}/${remote}`, "HEAD"], {
+        cwd: repoDir,
+      });
+      execFileSync(
+        "git",
+        ["symbolic-ref", `refs/remotes/${remote}/HEAD`, `refs/remotes/${remote}/${remote}`],
+        { cwd: repoDir },
+      );
+    }
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe("refs/remotes/origin/origin");
+  });
+
+  it("requires a choice when multiple non-origin remotes advertise different defaults", async () => {
+    for (const remote of ["company", "upstream"]) {
+      execFileSync("git", ["update-ref", `refs/remotes/${remote}/main`, "HEAD"], { cwd: repoDir });
+      execFileSync(
+        "git",
+        ["symbolic-ref", `refs/remotes/${remote}/HEAD`, `refs/remotes/${remote}/main`],
+        { cwd: repoDir },
+      );
+    }
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBeNull();
+  });
+
+  it("uses the local default when origin/HEAD is stale", async () => {
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: repoDir });
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe("refs/heads/main");
+  });
+
+  it("resolves the remote default when there is no matching local branch", async () => {
+    execFileSync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: repoDir });
+    execFileSync(
+      "git",
+      ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"],
+      {
+        cwd: repoDir,
+      },
+    );
+    expect((await getCheckoutStatus(repoDir)).defaultBranchRef).toBe("refs/remotes/origin/develop");
+  });
+
   it("handles status/diff/commit in a normal repo", async () => {
     writeFileSync(join(repoDir, "file.txt"), "updated\n");
 
@@ -583,6 +806,7 @@ describe("checkout git utilities", () => {
     expect(status.currentBranch).toBe("main");
     expect(status.isDirty).toBe(true);
     expect(status.hasRemote).toBe(false);
+    expect(status.defaultBranchRef).toBe("refs/heads/main");
 
     const diff = await getCheckoutDiff(repoDir, { mode: "uncommitted" });
     expect(diff.diff).toContain("-hello");
@@ -983,7 +1207,8 @@ const x = 1;
     const metrics = stopGitCommandMetrics();
     const upstreamCountCommands = metrics.commands.filter(
       (command) =>
-        command.args[0] === "for-each-ref" && command.args.join(" ").includes("%(upstream)"),
+        command.args[0] === "for-each-ref" &&
+        command.args.join(" ").includes("%(upstream:track,nobracket)"),
     );
 
     expect(divergedStatus.isGit).toBe(true);

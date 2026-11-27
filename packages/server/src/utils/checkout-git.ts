@@ -268,6 +268,8 @@ interface GitRef {
 
 export interface BranchSuggestion {
   name: string;
+  branchName?: string;
+  remoteName?: string;
   committerDate: number;
   hasLocal: boolean;
   hasRemote: boolean;
@@ -333,6 +335,15 @@ function sortBranchSuggestions(
   });
 }
 
+async function listGitRemoteNames(cwd: string): Promise<string[]> {
+  const { stdout } = await runGitCommand(["remote"], { cwd, envOverlay: READ_ONLY_GIT_ENV });
+  // A remote name can contain slashes; the longest configured prefix owns the ref.
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+}
+
 export async function listBranchSuggestions(
   cwd: string,
   options: { query?: string; limit?: number; refMode?: "exact" } = {},
@@ -345,23 +356,39 @@ export async function listBranchSuggestions(
   const query = normalizeBranchSuggestionName(rawQuery) ?? rawQuery;
 
   if (options.refMode === "exact") {
-    const refs = await listGitRefs(cwd, "refs");
+    const [refs, remotes] = await Promise.all([listGitRefs(cwd, "refs"), listGitRemoteNames(cwd)]);
     const branches = refs.filter((ref) => {
       const isBranch = ref.name.startsWith("refs/heads/") || ref.name.startsWith("refs/remotes/");
       return isBranch && !ref.name.endsWith("/HEAD") && ref.name.toLowerCase().includes(rawQuery);
     });
-    branches.sort((a, b) => b.committerDate - a.committerDate || a.name.localeCompare(b.name));
-    return branches.slice(0, limit).map((ref) => ({
-      name: ref.name,
-      committerDate: ref.committerDate,
-      hasLocal: ref.name.startsWith("refs/heads/"),
-      hasRemote: ref.name.startsWith("refs/remotes/"),
-    }));
+    branches.sort(
+      (a, b) =>
+        Number(b.name === options.query?.trim()) - Number(a.name === options.query?.trim()) ||
+        b.committerDate - a.committerDate ||
+        a.name.localeCompare(b.name),
+    );
+    return branches.slice(0, limit).map((ref) => {
+      const hasLocal = ref.name.startsWith("refs/heads/");
+      const remoteName = remotes.find((remote) => ref.name.startsWith(`refs/remotes/${remote}/`));
+      const suggestion: BranchSuggestion = {
+        name: ref.name,
+        committerDate: ref.committerDate,
+        hasLocal,
+        hasRemote: !hasLocal,
+      };
+      if (hasLocal) suggestion.branchName = ref.name.slice("refs/heads/".length);
+      if (remoteName) {
+        suggestion.remoteName = remoteName;
+        suggestion.branchName = ref.name.slice(`refs/remotes/${remoteName}/`.length);
+      }
+      return suggestion;
+    });
   }
 
-  const [localRefs, remoteRefs] = await Promise.all([
+  const [localRefs, remoteRefs, remotes] = await Promise.all([
     listGitRefs(cwd, "refs/heads"),
     listGitRefs(cwd, "refs/remotes/origin"),
+    listGitRemoteNames(cwd),
   ]);
 
   const branchMeta = new Map<string, BranchSuggestionMeta>();
@@ -380,6 +407,13 @@ export async function listBranchSuggestions(
   }
 
   for (const ref of remoteRefs) {
+    // An origin/team remote is not an origin branch named team/… .
+    if (
+      remotes.some(
+        (remote) => remote !== "origin" && ref.name.startsWith(`refs/remotes/${remote}/`),
+      )
+    )
+      continue;
     const normalized = normalizeBranchSuggestionName(ref.name);
     if (!normalized) continue;
     const existing = branchMeta.get(normalized);
@@ -906,6 +940,7 @@ export interface CheckoutStatusGitNonPaseo {
   isDirty: boolean;
   baseRef: string | null;
   baseRefExact?: string | null;
+  defaultBranchRef?: string | null;
   comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   // Remote-tracking ref for currentBranch, e.g. "refs/remotes/origin/main". Null when the
@@ -936,6 +971,7 @@ export interface CheckoutStatusGitPaseo {
   isDirty: boolean;
   baseRef: string;
   baseRefExact?: string | null;
+  defaultBranchRef?: string | null;
   comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   upstreamRef: string | null;
@@ -983,6 +1019,9 @@ export interface CheckoutContext {
   facts?: CheckoutSnapshotFacts | null;
   readSession?: CheckoutReadSession;
   runGitCommand?: RunGitCommand;
+  resolveDefaultBranchRef?: (
+    input: ResolveRepositoryDefaultBranchRefInput,
+  ) => Promise<string | null>;
   // `git config --get` results shared by the lookups of one snapshot, keyed by config key.
   // Several lookups read the same keys; this keeps each to one process.
   gitConfigReads?: Map<string, Promise<string | null>>;
@@ -1770,6 +1809,59 @@ async function resolveBaseRef(repoRoot: string, context?: CheckoutContext): Prom
   return resolveRepositoryDefaultBranch(repoRoot, context);
 }
 
+// Workspace creation prefers the remote tip. Diff and merge bases keep their existing
+// local-branch policy in resolveRepositoryDefaultBranch.
+export interface ResolveRepositoryDefaultBranchRefInput {
+  cwd: string;
+  context?: CheckoutContext;
+}
+
+function parseDefaultBranchRefMetadata(stdout: string) {
+  const refs = new Map<string, string>();
+  const upstreams = new Map<string, { ref: string; remote: string }>();
+  const lines = stdout.split("\n");
+  const refLines = lines.filter(Boolean);
+  for (const line of refLines) {
+    const [ref, target = "", upstream = "", remote = ""] = line.split("\0");
+    refs.set(ref, target);
+    upstreams.set(ref, { ref: upstream, remote });
+  }
+  return { refs, upstreams };
+}
+
+export async function resolveRepositoryDefaultBranchRef({
+  cwd,
+  context,
+}: ResolveRepositoryDefaultBranchRefInput): Promise<string | null> {
+  const { stdout } = await getRunGitCommand(context)(
+    ["for-each-ref", "--format=%(refname)%00%(symref)%00%(upstream)%00%(upstream:remotename)"],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  const { refs, upstreams } = parseDefaultBranchRefMetadata(stdout);
+  const originDefault = refs.get("refs/remotes/origin/HEAD");
+  if (originDefault && refs.has(originDefault)) return originDefault;
+  const remoteDefaults: string[] = [];
+  const localBranches: string[] = [];
+  for (const [ref, target] of refs) {
+    if (ref.startsWith("refs/heads/")) localBranches.push(ref);
+    const isRemoteDefault = ref.startsWith("refs/remotes/") && ref.endsWith("/HEAD");
+    if (isRemoteDefault && refs.has(target)) remoteDefaults.push(target);
+  }
+  if (remoteDefaults.length === 1) return remoteDefaults[0];
+  if (remoteDefaults.length > 1) return null;
+  const conventionalDefaults = ["main", "master", "trunk", "develop"];
+  const conventionalRefs = conventionalDefaults.map((branch) => `refs/heads/${branch}`);
+  let localDefault = conventionalRefs.find((ref) => refs.has(ref));
+  if (!localDefault && localBranches.length === 1) localDefault = localBranches[0];
+  if (!localDefault) return null;
+  const branch = localDefault.slice("refs/heads/".length);
+  const originRef = `refs/remotes/origin/${branch}`;
+  if (refs.has(originRef)) return originRef;
+  const upstream = upstreams.get(localDefault);
+  if (upstream?.remote && upstream.remote !== "." && refs.has(upstream.ref)) return upstream.ref;
+  return localDefault;
+}
+
 interface ComparisonBaseRefName {
   localName: string;
   originRef: string;
@@ -2115,7 +2207,7 @@ async function inspectCheckoutContext(
 
   return {
     worktreeRoot: root,
-    currentBranch,
+    currentBranch: currentBranch ? await readStoredBranchName(cwd, currentBranch, context) : null,
     remoteUrl,
     absoluteGitDir,
     gitCommonDir,
@@ -2664,6 +2756,9 @@ export async function getCheckoutStatus(
     baseRef && currentBranch
       ? await getAheadBehind(cwd, baseRef, currentBranch, factsContext)
       : null;
+  const resolveDefaultBranchRef =
+    context?.resolveDefaultBranchRef ?? resolveRepositoryDefaultBranchRef;
+  const defaultBranchRef = await resolveDefaultBranchRef({ cwd, context: factsContext });
   // The wire carries the display name: clients label the base with it and send it back to
   // request diffs and merges. The exact ref stays in worktree.json and in facts, where the
   // comparisons and actions read it.
@@ -2689,6 +2784,7 @@ export async function getCheckoutStatus(
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       baseRefExact: baseRef,
+      defaultBranchRef,
       comparisonBaseRef,
       aheadBehind,
       ...upstream,
@@ -2707,6 +2803,7 @@ export async function getCheckoutStatus(
     isDirty,
     baseRef: displayBaseRef,
     baseRefExact: baseRef,
+    defaultBranchRef,
     comparisonBaseRef,
     aheadBehind,
     ...upstream,

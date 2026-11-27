@@ -305,6 +305,232 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       },
     );
 
+    it.each(["company", "upstream"])(
+      "checks out the selected %s ref when remote branch names are ambiguous",
+      async (remote) => {
+        for (const name of ["company", "upstream"]) {
+          execFileSync("git", ["remote", "add", name, repoDir], { cwd: repoDir });
+          execFileSync("git", ["update-ref", `refs/remotes/${name}/topic`, "main"], {
+            cwd: repoDir,
+          });
+        }
+        const result = await createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "remote-choice",
+          paseoHome,
+          source: {
+            kind: "checkout-branch",
+            branchName: "topic",
+            remoteRef: `refs/remotes/${remote}/topic`,
+          },
+        });
+        expect(result.branchName).toBe("topic");
+        expect(
+          execFileSync("git", ["rev-parse", "--symbolic-full-name", "@{upstream}"], {
+            cwd: result.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(`refs/remotes/${remote}/topic`);
+      },
+    );
+
+    it.each(["origin", "company", "upstream"])(
+      "refreshes selected %s checkout before creating its local branch",
+      async (remote) => {
+        const remotePath = join(tempDir, "checkout-remote.git");
+        const producer = join(tempDir, "producer");
+        execFileSync("git", ["init", "--bare", "-b", "main", remotePath], { cwd: repoDir });
+        execFileSync("git", ["remote", "add", remote, remotePath], { cwd: repoDir });
+        execFileSync("git", ["push", remote, "main:topic"], { cwd: repoDir });
+        const staleTip = execFileSync("git", ["rev-parse", `refs/remotes/${remote}/topic`], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim();
+        const other = remote === "origin" ? "company" : "origin";
+        execFileSync("git", ["remote", "add", other, repoDir], { cwd: repoDir });
+        execFileSync("git", ["update-ref", `refs/remotes/${other}/topic`, staleTip], {
+          cwd: repoDir,
+        });
+        execFileSync("git", ["clone", "--branch", "topic", remotePath, producer], { cwd: tempDir });
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "new remote topic",
+          ],
+          { cwd: producer },
+        );
+        execFileSync("git", ["push", "origin", "topic"], { cwd: producer });
+        const freshTip = execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: producer,
+          encoding: "utf8",
+        }).trim();
+        expect(freshTip).not.toBe(staleTip);
+        expect(
+          execFileSync("git", ["rev-parse", `refs/remotes/${remote}/topic`], {
+            cwd: repoDir,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(staleTip);
+        const result = await createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "fresh-checkout",
+          paseoHome,
+          source: {
+            kind: "checkout-branch",
+            branchName: "topic",
+            remoteRef: `refs/remotes/${remote}/topic`,
+          },
+        });
+        expect(
+          execFileSync("git", ["rev-parse", "HEAD"], {
+            cwd: result.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(freshTip);
+        expect(
+          execFileSync("git", ["rev-parse", "--symbolic-full-name", "@{upstream}"], {
+            cwd: result.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(`refs/remotes/${remote}/topic`);
+        expect(
+          execFileSync("git", ["rev-parse", `refs/remotes/${other}/topic`], {
+            cwd: repoDir,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(staleTip);
+      },
+    );
+
+    it("refreshes exact checkout refs from the longest configured remote", async () => {
+      const selectedRemote = join(tempDir, "selected.git");
+      const otherRemote = join(tempDir, "other.git");
+      const producer = join(tempDir, "producer");
+      for (const remotePath of [selectedRemote, otherRemote]) {
+        execFileSync("git", ["init", "--bare", "-b", "main", remotePath], { cwd: repoDir });
+      }
+      execFileSync("git", ["remote", "add", "team/company", selectedRemote], { cwd: repoDir });
+      // Git's remote-add guard rejects overlapping names; existing config can contain them.
+      execFileSync("git", ["config", "remote.team.url", otherRemote], { cwd: repoDir });
+      const otherMapping = "+refs/heads/main:refs/remotes/team/main";
+      execFileSync("git", ["config", "remote.team.fetch", otherMapping], { cwd: repoDir });
+      execFileSync("git", ["push", "team", "main:main"], { cwd: repoDir });
+      execFileSync("git", ["push", "team/company", "main:topic"], { cwd: repoDir });
+      const selectedRef = "refs/remotes/team/company/topic";
+      const staleTip = execFileSync("git", ["rev-parse", selectedRef], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim();
+      execFileSync("git", ["clone", "--branch", "topic", selectedRemote, producer], {
+        cwd: tempDir,
+      });
+      function commit(message: string) {
+        execFileSync(
+          "git",
+          [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+          ],
+          { cwd: producer },
+        );
+        return execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: producer,
+          encoding: "utf8",
+        }).trim();
+      }
+      const selectedTip = commit("selected remote tip");
+      execFileSync("git", ["push", "origin", "HEAD:topic"], { cwd: producer });
+      const otherTip = commit("other remote tip");
+      execFileSync("git", ["push", otherRemote, "HEAD:refs/heads/company/topic"], {
+        cwd: producer,
+      });
+      expect(new Set([staleTip, selectedTip, otherTip]).size).toBe(3);
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "longest-remote-checkout",
+        paseoHome,
+        source: { kind: "checkout-branch", branchName: "topic", remoteRef: selectedRef },
+      });
+      expect(
+        execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: result.worktreePath,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe(selectedTip);
+      expect(
+        execFileSync("git", ["rev-parse", selectedRef], { cwd: repoDir, encoding: "utf8" }).trim(),
+      ).toBe(selectedTip);
+      expect(
+        execFileSync("git", ["config", "branch.topic.remote"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("team/company");
+      expect(
+        execFileSync("git", ["config", "--get-all", "remote.team.fetch"], {
+          cwd: repoDir,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe(otherMapping);
+    });
+
+    it.each(["origin", "company"])(
+      "checks out an unmapped %s tracking ref without widening fetch configuration",
+      async (remote) => {
+        const remotePath = join(tempDir, "unmapped.git");
+        execFileSync("git", ["init", "--bare", "-b", "main", remotePath], { cwd: repoDir });
+        execFileSync("git", ["remote", "add", remote, remotePath], { cwd: repoDir });
+        execFileSync("git", ["push", remote, "main", "main:topic"], { cwd: repoDir });
+        const mapping = `+refs/heads/main:refs/remotes/${remote}/main`;
+        execFileSync("git", ["config", `remote.${remote}.fetch`, mapping], { cwd: repoDir });
+        execFileSync("git", ["fetch", remote, `+refs/heads/topic:refs/remotes/${remote}/topic`], {
+          cwd: repoDir,
+        });
+        const result = await createWorktreePrimitive({
+          cwd: repoDir,
+          worktreeSlug: "unmapped-topic",
+          paseoHome,
+          source: {
+            kind: "checkout-branch",
+            branchName: "topic",
+            remoteRef: `refs/remotes/${remote}/topic`,
+          },
+        });
+        expect(result.branchName).toBe("topic");
+        expect(
+          execFileSync("git", ["rev-parse", "HEAD"], {
+            cwd: result.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(
+          execFileSync("git", ["rev-parse", "main"], { cwd: repoDir, encoding: "utf8" }).trim(),
+        );
+        expect(
+          execFileSync("git", ["config", "--get-all", `remote.${remote}.fetch`], {
+            cwd: repoDir,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(mapping);
+      },
+    );
+
     it("checks out an existing local branch that is not checked out elsewhere", async () => {
       execFileSync("git", ["branch", "dev"], { cwd: repoDir });
 

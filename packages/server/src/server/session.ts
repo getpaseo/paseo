@@ -7756,6 +7756,7 @@ export class Session {
         worktreeSlug: source.worktreeSlug,
         action: source.action,
         refName: source.refName,
+        refMode: source.refMode,
         branchName: source.branchName,
         checkoutSource: source.checkoutSource,
         githubPrNumber: source.githubPrNumber,

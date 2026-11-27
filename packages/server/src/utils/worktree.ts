@@ -270,7 +270,7 @@ export type WorktreeSource =
       /** Where the new branch starts when that is not `baseBranch`, such as a fork's head. */
       startPoint?: string;
     }
-  | { kind: "checkout-branch"; branchName: string }
+  | { kind: "checkout-branch"; branchName: string; remoteRef?: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
   | { kind: "restore-commit"; commit: string; baseRef: string }
   | { kind: "restore-from-base"; baseRef: string; branchName: string }
@@ -2508,7 +2508,7 @@ async function resolveRestoredWorktreeSourcePlan(
   source: Extract<WorktreeSource, { kind: "restore" }>,
 ): Promise<WorktreeSourcePlan> {
   await validateGitBranchName(cwd, source.branchName);
-  await ensureLocalBranch(cwd, source.branchName);
+  await ensureLocalBranch({ cwd, branchName: source.branchName });
   if (await isBranchCheckedOut(cwd, source.branchName)) {
     throw new BranchAlreadyCheckedOutError(source.branchName);
   }
@@ -2622,7 +2622,7 @@ async function resolveWorktreeSourcePlan({
       return resolveRestoredWorktreeFromBasePlan(cwd, source);
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
-      await ensureLocalBranch(cwd, source.branchName);
+      await ensureLocalBranch({ cwd, branchName: source.branchName, remoteRef: source.remoteRef });
       const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);
       if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
@@ -2999,6 +2999,7 @@ async function refreshRemoteTrackingBaseRef(cwd: string, baseRef: string): Promi
     const remoteName = stdout
       .split("\n")
       .map((name) => name.trim())
+      .sort((a, b) => b.length - a.length)
       .find((name) => name.length > 0 && baseRef.startsWith(`refs/remotes/${name}/`));
     if (!remoteName) {
       return;
@@ -3017,8 +3018,36 @@ async function refreshRemoteTrackingBaseRef(cwd: string, baseRef: string): Promi
   }
 }
 
-async function ensureLocalBranch(cwd: string, branchName: string): Promise<void> {
+interface EnsureLocalBranchInput {
+  cwd: string;
+  branchName: string;
+  remoteRef?: string;
+}
+
+async function ensureLocalBranch({
+  cwd,
+  branchName,
+  remoteRef,
+}: EnsureLocalBranchInput): Promise<void> {
   if (await localBranchExists(cwd, branchName)) {
+    return;
+  }
+  if (remoteRef) {
+    await refreshRemoteTrackingBaseRef(cwd, remoteRef);
+    try {
+      await runGitCommand(["branch", "--track", branchName, remoteRef], {
+        cwd,
+        envOverlay: { LC_ALL: "C" },
+      });
+    } catch (error) {
+      // Ad-hoc refs in single-branch clones need not belong to a fetch mapping.
+      if (
+        !(error instanceof Error) ||
+        !error.message.includes("cannot set up tracking information;")
+      )
+        throw error;
+      await runGitCommand(["branch", "--no-track", branchName, remoteRef], { cwd });
+    }
     return;
   }
   try {

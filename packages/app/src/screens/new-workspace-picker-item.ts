@@ -1,10 +1,17 @@
-import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type {
+  DaemonClient,
+  CreatePaseoWorktreeInput,
+} from "@getpaseo/client/internal/daemon-client";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ComboboxOptionModel } from "@/components/ui/combobox-options";
 import { getForgePresentation } from "@/git/forge";
 
 export interface BranchPickerDetail {
   name: string;
+  /** Present only for details returned by the exact-ref lookup. */
+  refName?: string;
+  branchName?: string;
+  remoteName?: string;
   committerDate: number;
   hasLocal?: boolean;
   hasRemote?: boolean;
@@ -17,6 +24,8 @@ export type PickerItem =
       kind: "branch";
       name: string;
       refName: string;
+      branchName?: string;
+      remoteName?: string;
       accessibilityLabel: string;
       divergenceLabel?: string;
       committerDate?: number;
@@ -28,7 +37,7 @@ export type PickerItem =
 
 export type PickerCheckoutRequest = Pick<
   CreatePaseoWorktreeInput,
-  "action" | "refName" | "checkoutSource" | "githubPrNumber"
+  "action" | "refName" | "refMode" | "checkoutSource" | "githubPrNumber"
 >;
 
 /** What a new worktree does with the picked ref: start a new branch from it, or work on it. */
@@ -72,10 +81,34 @@ function divergenceAccessibility(ahead: number, behind: number, counterpart: str
   return `${commitCount(behind)} behind ${counterpart}`;
 }
 
+function exactBranchPickerItem({
+  detail,
+  refName,
+}: {
+  detail: BranchPickerDetail;
+  refName: string;
+}): PickerItem {
+  const remote = detail.remoteName ?? refQualifier(refName);
+  const name = `${detail.branchName ?? branchNameFromRef(refName)} (${remote})`;
+  return {
+    kind: "branch",
+    name,
+    refName,
+    ...(detail.branchName !== undefined ? { branchName: detail.branchName } : {}),
+    ...(detail.remoteName !== undefined ? { remoteName: detail.remoteName } : {}),
+    accessibilityLabel: `${name}, ${remote} branch`,
+    committerDate: detail.committerDate,
+  };
+}
+
 export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): PickerItem[] {
   const items: PickerItem[] = [];
 
   for (const detail of details) {
+    if (detail.refName) {
+      items.push(exactBranchPickerItem({ detail, refName: detail.refName }));
+      continue;
+    }
     const hasKnownProvenance = detail.hasLocal !== undefined || detail.hasRemote !== undefined;
     if (!hasKnownProvenance) {
       items.push({
@@ -137,6 +170,7 @@ export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): 
 export interface BaseRefCheckoutStatus {
   currentBranch: string | null;
   upstreamRef?: string | null;
+  defaultBranchRef?: string | null;
 }
 
 // Display only. The exact ref is what every request carries; this is just how a ref reads in
@@ -149,6 +183,19 @@ export function branchNameFromRef(refName: string): string {
     return separator === -1 ? remainder : remainder.slice(separator + 1);
   }
   return refName;
+}
+
+/** The local branch a checkout would use, when its identity is known. */
+export function checkoutBranchName(item: Extract<PickerItem, { kind: "branch" }>): string | null {
+  if (item.branchName !== undefined) return item.branchName;
+  // COMPAT(branchSuggestionIdentity): added after v0.17.4; remove after 2027-11-25.
+  // Older hosts do not identify configured remotes. Never guess a non-origin holder.
+  if (
+    item.refName.startsWith(REMOTE_TRACKING_PREFIX) &&
+    !item.refName.startsWith(`${REMOTE_TRACKING_PREFIX}origin/`)
+  )
+    return null;
+  return branchNameFromRef(item.refName);
 }
 
 // Where a ref lives, for disambiguating two rows that would otherwise read the same.
@@ -166,10 +213,28 @@ function refQualifier(refName: string): string | null {
 // row, the trigger label, and the created ref all read this; computing it twice is how the
 // picker once showed local main while branching off something else.
 //
-// The upstream wins when the branch has one, because branching off the local ref silently
-// carries unpushed commits into the new workspace. The daemon sends the resolved ref rather
-// than a remote name, so a fork tracking upstream/main branches from upstream/main.
-export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem | null {
+export function defaultBasePickerItem(
+  status: BaseRefCheckoutStatus,
+  options: { forkFromCurrentBranch: boolean; branchDetails?: readonly BranchPickerDetail[] } = {
+    forkFromCurrentBranch: false,
+  },
+): PickerItem | null {
+  if (options.forkFromCurrentBranch) {
+    if (!status.currentBranch) return null;
+    return baseBranchItem(`refs/heads/${status.currentBranch}`, "local");
+  }
+  if (status.defaultBranchRef !== undefined) {
+    if (!status.defaultBranchRef) return null;
+    const item = baseBranchItem(status.defaultBranchRef, "default");
+    const detail = options.branchDetails?.find(
+      (entry) => (entry.refName ?? entry.name) === status.defaultBranchRef,
+    );
+    return detail?.branchName
+      ? { ...item, branchName: detail.branchName, remoteName: detail.remoteName }
+      : item;
+  }
+  // COMPAT(defaultBranchRef): added in v0.16.0, remove after 2027-05-13 once the
+  // daemon floor sends defaultBranchRef. Older hosts retain their current-branch default.
   const currentBranch = status.currentBranch;
   if (!currentBranch) return null;
   // COMPAT(checkoutUpstreamRef): added in v0.2.6, remove after 2027-02-01 once the daemon
@@ -178,12 +243,45 @@ export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem
   const refName = status.upstreamRef ?? `refs/heads/${currentBranch}`;
   // The upstream branch can be named differently from the local one, so the row reads the
   // ref rather than the branch the user happens to be on.
+  return baseBranchItem(refName, status.upstreamRef ? "upstream" : "local");
+}
+
+/** Submission also resolves identity when the picker has never been opened. */
+export async function resolveCheckoutPickerItem({
+  item,
+  action,
+  client,
+  cwd,
+}: {
+  item: PickerItem | null;
+  action: RefAction;
+  client: Pick<DaemonClient, "getBranchSuggestions">;
+  cwd: string;
+}): Promise<PickerItem | null> {
+  if (!item || item.kind !== "branch" || action !== "checkout" || checkoutBranchName(item) !== null)
+    return item;
+  const suggestions = await client.getBranchSuggestions({
+    cwd,
+    refMode: "exact",
+    query: item.refName,
+    limit: 1,
+  });
+  const detail = suggestions.branchDetails?.find((entry) => entry.name === item.refName);
+  return detail?.branchName
+    ? { ...item, branchName: detail.branchName, remoteName: detail.remoteName }
+    : item;
+}
+
+function baseBranchItem(
+  refName: string,
+  qualifier: string,
+): Extract<PickerItem, { kind: "branch" }> {
   const name = branchNameFromRef(refName);
   return {
     kind: "branch",
     name,
     refName,
-    accessibilityLabel: status.upstreamRef ? `${name}, upstream branch` : `${name}, local branch`,
+    accessibilityLabel: `${name}, ${qualifier} branch`,
   };
 }
 
@@ -194,10 +292,11 @@ export function pickerItemToCheckoutRequest(
   if (!item) return undefined;
   switch (item.kind) {
     case "branch":
-      // A checkout works on the local branch; both the origin row and the local row stand for it.
-      return action === "checkout"
-        ? { action, refName: branchNameFromRef(item.refName) }
-        : { action, refName: item.refName };
+      return {
+        action,
+        refName: item.refName,
+        ...(action === "checkout" ? { refMode: "exact" as const } : {}),
+      };
     case "github-pr": {
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";
@@ -236,7 +335,7 @@ export function startsNewBranch(request: PickerCheckoutRequest | undefined): boo
 
 /**
  * The rows of one ref list. Checking out works on the local branch, so the origin and local rows
- * of a branch are one choice there: one row per branch, named by the branch, keeping the selected
+ * of a branch are one choice there. Other remotes keep their distinct ref and label. Keep the selected
  * row's id so its checkmark stays.
  */
 export function refListOptions(input: {
@@ -253,6 +352,15 @@ export function refListOptions(input: {
   for (const option of ofKind) {
     const item = itemById.get(option.id);
     if (item?.kind !== "branch") continue;
+    if (
+      item.refName.startsWith(REMOTE_TRACKING_PREFIX) &&
+      (item.remoteName !== undefined
+        ? item.remoteName !== "origin"
+        : !item.refName.startsWith(`${REMOTE_TRACKING_PREFIX}origin/`))
+    ) {
+      rowByBranch.set(option.id, option);
+      continue;
+    }
     const branchName = branchNameFromRef(item.refName);
     if (rowByBranch.has(branchName) && option.id !== selectedOptionId) continue;
     rowByBranch.set(branchName, { ...option, label: branchName });

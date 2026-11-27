@@ -274,6 +274,7 @@ export async function handleCreatePaseoWorktreeRequest(
         worktreeSlug: request.worktreeSlug,
         firstAgentContext: normalizeFirstAgentContext(request),
         refName: request.refName,
+        refMode: request.refMode,
         action: request.action,
         checkoutSource: request.checkoutSource,
         githubPrNumber: request.githubPrNumber,

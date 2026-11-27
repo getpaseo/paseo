@@ -4,6 +4,7 @@ import type { CheckoutWorktree } from "@getpaseo/protocol/messages";
 import { applyMetadataPatch } from "@/composer/draft/metadata";
 import {
   branchNameFromRef,
+  checkoutBranchName,
   DEFAULT_REF_ACTION,
   pickerItemToCheckoutRequest,
   type PickerCheckoutRequest,
@@ -192,7 +193,8 @@ export function createNewWorkspaceSetup(
   /** The worktree a checkout of `item` would collide with, if `item` is a branch one holds. */
   const worktreeHolding = (item: PickerItem): CheckoutWorktree | undefined => {
     if (item.kind !== "branch" || refActionFor(item.kind) !== "checkout") return undefined;
-    return worktreeHoldingBranch(inputs.worktrees, branchNameFromRef(item.refName));
+    const branchName = checkoutBranchName(item);
+    return branchName === null ? undefined : worktreeHoldingBranch(inputs.worktrees, branchName);
   };
   const chooseRef = (item: PickerItem) => {
     const holder = worktreeHolding(item);

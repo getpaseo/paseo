@@ -577,6 +577,7 @@ export interface CreatePaseoWorktreeInput extends Pick<
   | "worktreeSlug"
   | "firstAgentContext"
   | "refName"
+  | "refMode"
   | "action"
   | "checkoutSource"
   | "githubPrNumber"
@@ -5509,10 +5510,37 @@ export class DaemonClient {
     });
   }
 
+  private checkoutRefForHost(
+    input: Pick<
+      CreatePaseoWorktreeInput,
+      "action" | "refName" | "refMode" | "checkoutSource" | "githubPrNumber"
+    >,
+  ): Pick<CreatePaseoWorktreeInput, "refName" | "refMode"> {
+    const exact = { refName: input.refName, refMode: input.refMode };
+    if (
+      input.refMode !== "exact" ||
+      input.action !== "checkout" ||
+      input.checkoutSource ||
+      input.githubPrNumber !== undefined ||
+      this.lastServerInfoMessage?.features?.worktreeExactCheckoutRefs === true
+    )
+      return exact;
+    // COMPAT(worktreeExactCheckoutRefs): added after v0.17.3; remove after 2027-11-24.
+    // Existing local/origin checkouts keep their original wire format on older hosts.
+    for (const prefix of ["refs/heads/", "refs/remotes/origin/"]) {
+      if (input.refName?.startsWith(prefix))
+        return { refName: input.refName.slice(prefix.length), refMode: undefined };
+    }
+    if (input.refName?.startsWith("refs/remotes/"))
+      throw new Error("Update the host to check out a selected non-origin remote branch.");
+    return { refName: input.refName, refMode: undefined };
+  }
+
   async createPaseoWorktree(
     input: CreatePaseoWorktreeInput,
     requestId?: string,
   ): Promise<CreatePaseoWorktreePayload> {
+    const checkoutRef = this.checkoutRefForHost(input);
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
@@ -5523,7 +5551,8 @@ export class DaemonClient {
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
           : {}),
-        ...(input.refName !== undefined ? { refName: input.refName } : {}),
+        ...(checkoutRef.refName !== undefined ? { refName: checkoutRef.refName } : {}),
+        ...(checkoutRef.refMode !== undefined ? { refMode: checkoutRef.refMode } : {}),
         ...(input.action !== undefined ? { action: input.action } : {}),
         ...(input.checkoutSource !== undefined ? { checkoutSource: input.checkoutSource } : {}),
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
@@ -5550,8 +5579,13 @@ export class DaemonClient {
     if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
       agentConfig = await this.routeLegacyCreateConfig(agentConfig);
     }
+    const source =
+      input.source.kind === "worktree"
+        ? { ...input.source, ...this.checkoutRefForHost(input.source) }
+        : input.source;
     const result = await this.creations.createWorkspace({
       ...input,
+      source,
       requestId: resolvedRequestId,
       ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
     });

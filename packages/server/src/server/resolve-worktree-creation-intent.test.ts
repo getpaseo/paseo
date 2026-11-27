@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
@@ -123,6 +127,45 @@ describe("resolveWorktreeCreationIntent", () => {
       branchName: "feature",
     });
     expect(deps.headRefLookups).toEqual([]);
+  });
+
+  test.each(["company", "team/company"])(
+    "preserves the configured checkout remote %s",
+    async (remote) => {
+      const root = mkdtempSync(join(tmpdir(), "paseo-checkout-ref-"));
+      try {
+        execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
+        execFileSync("git", ["remote", "add", "upstream", "."], { cwd: root });
+        execFileSync("git", ["remote", "add", remote, "."], { cwd: root });
+        const refName = `refs/remotes/${remote}/feature/topic`;
+        await expect(
+          resolveWorktreeCreationIntent(
+            { action: "checkout", refName, refMode: "exact" },
+            root,
+            createResolverHarness(),
+          ),
+        ).resolves.toEqual({
+          kind: "checkout-branch",
+          branchName: "feature/topic",
+          remoteRef: refName,
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("normalizes an exact local checkout ref without reinterpreting its name", async () => {
+    await expect(
+      resolveWorktreeCreationIntent(
+        { action: "checkout", refName: "refs/heads/refs/remotes/company/topic", refMode: "exact" },
+        repoRoot,
+        createResolverHarness(),
+      ),
+    ).resolves.toEqual({
+      kind: "checkout-branch",
+      branchName: "refs/remotes/company/topic",
+    });
   });
 
   test("checks out an explicit branch target", async () => {

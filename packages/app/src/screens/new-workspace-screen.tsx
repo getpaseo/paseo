@@ -86,10 +86,12 @@ import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-works
 import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
+  resolveNewWorkspaceBaseContext,
 } from "./new-workspace-fork-context";
 import {
   buildPickerOptionData,
   defaultBasePickerItem,
+  resolveCheckoutPickerItem,
   pickerItemLabel,
   startsNewBranch,
   type BranchPickerDetail,
@@ -1071,6 +1073,14 @@ export function NewWorkspaceScreen({
   });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
+  const { checkoutSourceDirectory, forkFromCurrentBranch } = resolveNewWorkspaceBaseContext({
+    forkSetup: forkDraftSetup,
+    selectedServerId,
+    sourceServerId: serverId,
+    selectedProject,
+    sourceProject: routeProject,
+    sourceDirectory: selectedSourceDirectory,
+  });
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
   const visibleDraftContextScopeKeys = useMemo(
     () => resolveVisibleDraftContextScopeKeys({ isDraftHandoffActive, draftContextScopeKey }),
@@ -1143,7 +1153,7 @@ export function NewWorkspaceScreen({
 
   const { status: checkoutStatus } = useCheckoutStatusQuery({
     serverId: selectedServerId,
-    cwd: selectedSourceDirectory ?? "",
+    cwd: checkoutSourceDirectory ?? "",
   });
 
   const {
@@ -1183,8 +1193,12 @@ export function NewWorkspaceScreen({
   });
 
   const baseItem = useMemo(
-    () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
-    [checkoutStatus, selectedItem],
+    () =>
+      selectedItem ??
+      (checkoutStatus
+        ? defaultBasePickerItem(checkoutStatus, { forkFromCurrentBranch, branchDetails })
+        : null),
+    [checkoutStatus, selectedItem, forkFromCurrentBranch, branchDetails],
   );
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
     () =>
@@ -1197,8 +1211,8 @@ export function NewWorkspaceScreen({
   );
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
-    return displayItem ? pickerItemLabel(displayItem) : "main";
-  }, [itemById, selectedOptionId]);
+    return displayItem ? pickerItemLabel(displayItem) : t("newWorkspace.tooltips.startingRef");
+  }, [itemById, selectedOptionId, t]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       setup.chooseRef(item);
@@ -1327,24 +1341,35 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
+      const baseDirectory = checkoutSourceDirectory ?? selectedSourceDirectory;
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
       const checkoutStatusForCreate = createsWorktree
         ? await ensureCheckoutStatus({
             queryClient,
             client: connectedClient,
             serverId: selectedServerId,
-            cwd: selectedSourceDirectory,
+            cwd: baseDirectory,
           })
         : null;
+      const baseForCreate =
+        selectedItem ??
+        (checkoutStatusForCreate
+          ? defaultBasePickerItem(checkoutStatusForCreate, { forkFromCurrentBranch, branchDetails })
+          : null);
+      const checkoutItem = await resolveCheckoutPickerItem({
+        item: checkoutStatusForCreate ? baseForCreate : null,
+        action: setup.refActionFor(baseForCreate?.kind ?? "branch"),
+        client: connectedClient,
+        cwd: baseDirectory,
+      });
       const checkoutRequest = checkoutStatusForCreate
-        ? checkoutRequestOrExplain(
-            () =>
-              setup.checkoutRequestFor(
-                selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
-              ),
-            t,
-          )
+        ? checkoutRequestOrExplain(() => setup.checkoutRequestFor(checkoutItem), t)
         : undefined;
+      const requiresStartingRef =
+        createsWorktree &&
+        (forkFromCurrentBranch || checkoutStatusForCreate?.defaultBranchRef === null) &&
+        !checkoutRequest;
+      if (requiresStartingRef) throw new Error(t("newWorkspace.tooltips.startingRef"));
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
         launchTarget,
@@ -1369,9 +1394,12 @@ export function NewWorkspaceScreen({
       return normalizedWorkspace;
     },
     [
+      branchDetails,
       creationIdentity,
       creationResult,
+      checkoutSourceDirectory,
       effectiveIsolation,
+      forkFromCurrentBranch,
       launchTarget,
       mergeWorkspaces,
       queryClient,
@@ -1920,17 +1948,44 @@ function useRefPickerQueries(input: {
     (pickerOpen || (warmEnabled && debouncedSearchQuery === "")) && clientReady && hasDirectory;
 
   const branchSuggestionsQuery = useQuery({
-    queryKey: ["branch-suggestions", serverId, sourceDirectory, debouncedSearchQuery],
+    queryKey: [
+      "branch-suggestions",
+      serverId,
+      sourceDirectory,
+      debouncedSearchQuery,
+      "all-remotes",
+    ],
     queryFn: async () => {
       if (!sourceDirectory) {
         throw new Error("Choose a project");
       }
       const connectedClient = withConnectedClient();
-      return connectedClient.getBranchSuggestions({
-        cwd: sourceDirectory,
-        query: debouncedSearchQuery || undefined,
-        limit: 20,
-      });
+      const request = { cwd: sourceDirectory, query: debouncedSearchQuery || undefined };
+      const [suggestions, exactRefs] = await Promise.all([
+        connectedClient.getBranchSuggestions({ ...request, limit: 20 }),
+        connectedClient.getBranchSuggestions({ ...request, refMode: "exact", limit: 200 }),
+      ]);
+      return {
+        ...suggestions,
+        branchDetails: [
+          ...normalizeBranchDetails(suggestions),
+          ...normalizeBranchDetails(exactRefs)
+            .filter(
+              (detail) =>
+                detail.name.startsWith("refs/remotes/") &&
+                (detail.remoteName !== undefined
+                  ? detail.remoteName !== "origin"
+                  : !detail.name.startsWith("refs/remotes/origin/")),
+            )
+            .map(({ name, committerDate, branchName, remoteName }) => ({
+              name,
+              refName: name,
+              committerDate,
+              branchName,
+              remoteName,
+            })),
+        ],
+      };
     },
     // Keep the previous result while typing a search query in the same project so rows do not
     // blank out mid-search, without carrying branches across project or host switches.

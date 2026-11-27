@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CheckoutWorktree } from "@getpaseo/protocol/messages";
-import type { PickerItem } from "../new-workspace-picker-item";
+import {
+  buildBranchPickerItems,
+  defaultBasePickerItem,
+  resolveCheckoutPickerItem,
+  type PickerItem,
+} from "../new-workspace-picker-item";
 import {
   BranchInWorktreeError,
   createNewWorkspaceSetup,
@@ -260,7 +265,11 @@ describe("New workspace isolation and ref actions", () => {
     setup.chooseRefAction("branch", "checkout");
     setup.chooseRefAction("github-pr", "branch-off");
 
-    expect(setup.checkoutRequestFor(release)).toEqual({ action: "checkout", refName: "release" });
+    expect(setup.checkoutRequestFor(release)).toEqual({
+      action: "checkout",
+      refMode: "exact",
+      refName: "refs/remotes/origin/release",
+    });
     expect(setup.checkoutRequestFor(PULL_REQUEST)?.action).toBe("branch-off");
   });
 
@@ -274,6 +283,102 @@ describe("New workspace isolation and ref actions", () => {
 
     expect(setup.refActionFor("github-pr")).toBe("checkout");
     expect(setup.checkoutRequestFor(PULL_REQUEST)?.action).toBe("checkout");
+  });
+
+  it.each([false, true])(
+    "does not reuse an unrelated worktree for a slash-containing remote (identity: %s)",
+    (withIdentity) => {
+      const { effects, chosen } = recordingEffects();
+      const setup = createNewWorkspaceSetup(
+        {
+          ...READY,
+          worktrees: [PROJECT_DIRECTORY, worktree("/worktrees/unrelated", "company/topic")],
+        },
+        effects,
+      );
+      setup.chooseRefAction("branch", "checkout");
+      const [item] = buildBranchPickerItems([
+        {
+          name: "refs/remotes/team/company/topic",
+          refName: "refs/remotes/team/company/topic",
+          committerDate: 1,
+          ...(withIdentity ? { branchName: "topic", remoteName: "team/company" } : {}),
+        },
+      ]);
+      setup.chooseRef(item);
+      expect(setup.getSnapshot().existingWorktreePath).toBeNull();
+      expect(chosen).toEqual([item]);
+      expect(setup.checkoutRequestFor(item)).toEqual({
+        action: "checkout",
+        refName: "refs/remotes/team/company/topic",
+        refMode: "exact",
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "validates an automatic non-origin checkout against its holder (loaded: %s)",
+    async (loaded) => {
+      const setup = createNewWorkspaceSetup(
+        { ...READY, worktrees: [worktree("/holder", "main")] },
+        recordingEffects().effects,
+      );
+      setup.chooseRefAction("branch", "checkout");
+      const detail = {
+        name: "refs/remotes/company/main",
+        branchName: "main",
+        remoteName: "company",
+        committerDate: 1,
+      };
+      const item = defaultBasePickerItem(
+        { currentBranch: "feature/source", defaultBranchRef: detail.name },
+        {
+          forkFromCurrentBranch: false,
+          branchDetails: loaded ? [detail] : [],
+        },
+      );
+      const resolved = await resolveCheckoutPickerItem({
+        item,
+        action: "checkout",
+        cwd: "/repo",
+        client: {
+          getBranchSuggestions: async () => ({
+            branches: [detail.name],
+            branchDetails: [detail],
+            error: null,
+            requestId: "identity",
+          }),
+        },
+      });
+      expect(() => setup.checkoutRequestFor(resolved)).toThrow(
+        new BranchInWorktreeError({ branchName: "main", worktree: worktree("/holder", "main") }),
+      );
+    },
+  );
+
+  it("reuses the holder of the actual branch on a slash-containing remote", () => {
+    const setup = createNewWorkspaceSetup(
+      {
+        ...READY,
+        worktrees: [
+          worktree("/worktrees/topic", "topic"),
+          worktree("/worktrees/unrelated", "company/topic"),
+        ],
+      },
+      recordingEffects().effects,
+    );
+    setup.chooseRefAction("branch", "checkout");
+    const [item] = buildBranchPickerItems([
+      {
+        name: "refs/remotes/team/company/topic",
+        refName: "refs/remotes/team/company/topic",
+        branchName: "topic",
+        remoteName: "team/company",
+        committerDate: 1,
+      },
+    ]);
+    setup.chooseRef(item);
+    expect(setup.getSnapshot().existingWorktreePath).toBe("/worktrees/topic");
   });
 
   it("sends checking out a branch another worktree holds to that worktree", () => {

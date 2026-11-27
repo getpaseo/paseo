@@ -1900,6 +1900,7 @@ const GitSetupOptionsSchema = z.object({
   createWorktree: z.boolean().optional(),
   worktreeSlug: z.string().optional(),
   refName: z.string().min(1).optional(),
+  refMode: z.literal("exact").optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
   // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
@@ -2920,6 +2921,7 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   attachments: AgentAttachmentsSchema.optional(),
   firstAgentContext: FirstAgentContextSchema.optional(),
   refName: z.string().min(1).optional(),
+  refMode: z.literal("exact").optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
   // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
@@ -3055,6 +3057,7 @@ export const WorkspaceCreateRequestSchema = z.object({
       action: z.enum(["branch-off", "checkout"]).optional(),
       // Target branch for checkout, or base ref for branch-off.
       refName: z.string().min(1).optional(),
+      refMode: z.literal("exact").optional(),
       baseBranch: z.string().optional(),
       // New branch name for branch-off. The worktree path may use a different slug.
       branchName: z.string().min(1).optional(),
@@ -4059,6 +4062,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(worktreeRefActions): added after v0.16.2, remove gate after 2027-11-19.
         // Hosts without it check out a change request even when asked to branch off it.
         worktreeRefActions: z.boolean().optional(),
+        // COMPAT(worktreeExactCheckoutRefs): added after v0.17.3; remove after 2027-11-24.
+        worktreeExactCheckoutRefs: z.boolean().optional(),
         // COMPAT(workspaceSetupRun): added in v0.8.0, remove gate after 2027-09-02.
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
@@ -5890,6 +5895,7 @@ const CheckoutStatusCommonSchema = z.object({
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
   baseRefExact: z.string().nullable().optional(),
+  defaultBranchRef: z.string().nullable().optional(),
   comparisonBaseRef: z.string().nullable().optional(),
   // The full ref currentBranch tracks, as git resolves `<branch>@{upstream}`:
   // "refs/remotes/origin/main", "refs/remotes/upstream/main" on a fork, or a
@@ -6606,6 +6612,8 @@ export const BranchSuggestionsResponseSchema = z.object({
       .array(
         z.object({
           name: z.string(),
+          branchName: z.string().optional(),
+          remoteName: z.string().optional(),
           committerDate: z.number(),
           hasLocal: z.boolean().optional(),
           hasRemote: z.boolean().optional(),

@@ -660,6 +660,36 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(mergeBase).toBe(devTip);
     });
 
+    test.each([
+      { refMode: undefined, branch: "refs/heads/topic", tip: "main" },
+      { refMode: "exact" as const, branch: "topic", tip: "dev" },
+    ])(
+      "distinguishes legacy literal and exact checkout refs ($refMode)",
+      async ({ refMode, branch, tip }) => {
+        const { tempDir, repoDir, paseoHome } = createGitRepoWithDevBranch();
+        cleanupPaths.push(tempDir);
+        execFileSync("git", ["branch", "topic", "dev"], { cwd: repoDir });
+        execFileSync("git", ["branch", "refs/heads/topic", "main"], { cwd: repoDir });
+        const result = await createCoreWorktree(
+          { cwd: repoDir, action: "checkout", refName: "refs/heads/topic", refMode, paseoHome },
+          createCoreDeps(),
+        );
+        expect(result.worktree.branchName).toBe(branch);
+        expect(
+          execFileSync("git", ["symbolic-ref", "HEAD"], {
+            cwd: result.worktree.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(`refs/heads/${branch}`);
+        expect(
+          execFileSync("git", ["rev-parse", "HEAD"], {
+            cwd: result.worktree.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(execFileSync("git", ["rev-parse", tip], { cwd: repoDir, encoding: "utf8" }).trim());
+      },
+    );
+
     test("checks out an explicit existing branch", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepoWithDevBranch();
       cleanupPaths.push(tempDir);

@@ -5069,6 +5069,87 @@ test("sends project.remove.request", async () => {
   await expect(removePromise).resolves.toEqual({ removedWorkspaceIds: ["ws-main"] });
 });
 
+for (const route of ["direct", "legacy-workspace", "modern-workspace"] as const) {
+  for (const exactRefs of [undefined, false, true]) {
+    test.each([
+      { refName: "refs/heads/topic", refMode: "exact" as const, legacyRef: "topic" },
+      {
+        refName: "refs/heads/refs/remotes/company/topic",
+        refMode: "exact" as const,
+        legacyRef: "refs/remotes/company/topic",
+      },
+      { refName: "refs/remotes/origin/topic", refMode: "exact" as const, legacyRef: "topic" },
+      { refName: "refs/remotes/company/topic", refMode: "exact" as const, legacyRef: null },
+      { refName: "refs/remotes/upstream/topic", refMode: "exact" as const, legacyRef: null },
+      { refName: "refs/heads/topic", refMode: undefined, legacyRef: "refs/heads/topic" },
+      {
+        refName: "refs/remotes/company/topic",
+        refMode: undefined,
+        legacyRef: "refs/remotes/company/topic",
+      },
+    ])(
+      `negotiates exact checkout refs via ${route} (capability: ${exactRefs}): $refMode $refName`,
+      async ({ refName, refMode, legacyRef }) => {
+        const mock = createMockTransport();
+        const client = new DaemonClient({
+          url: "ws://test",
+          clientId: "checkout-capability",
+          logger: createMockLogger(),
+          reconnect: { enabled: false },
+          transportFactory: () => mock.transport,
+        });
+        clients.push(client);
+        const connecting = client.connect();
+        mock.triggerOpen({
+          features: {
+            worktreeRefActions: true,
+            creationLifecycle: route === "modern-workspace",
+            ...(exactRefs === undefined ? {} : { worktreeExactCheckoutRefs: exactRefs }),
+          },
+        });
+        await connecting;
+        const creating =
+          route === "direct"
+            ? client.createPaseoWorktree({ cwd: "/repo", action: "checkout", refName, refMode })
+            : client.createWorkspace({
+                source: { kind: "worktree", cwd: "/repo", action: "checkout", refName, refMode },
+              });
+        void creating.catch(() => {});
+        if (exactRefs !== true && legacyRef === null) {
+          await expect(creating).rejects.toThrow(/Update.*host/);
+          expect(mock.sent).toHaveLength(0);
+          return;
+        }
+        await vi.waitFor(() => expect(mock.sent).toHaveLength(1));
+        const request = parseSentFrame(mock.sent[0]);
+        const sentRef =
+          route === "direct"
+            ? request.refName
+            : z.object({ refName: z.string() }).parse(request.source).refName;
+        expect(sentRef).toBe(exactRefs ? refName : legacyRef);
+        expect(
+          route === "direct"
+            ? request.refMode
+            : z.object({ refMode: z.literal("exact").optional() }).parse(request.source).refMode,
+        ).toBe(exactRefs === true ? refMode : undefined);
+        mock.triggerMessage(
+          wrapSessionMessage({
+            type:
+              route === "direct" ? "create_paseo_worktree_response" : "workspace.create.response",
+            payload: {
+              requestId: request.requestId,
+              workspace: null,
+              setupTerminalId: null,
+              error: "checkout capability sentinel",
+            },
+          }),
+        );
+        await expect(creating).resolves.toMatchObject({ error: "checkout capability sentinel" });
+      },
+    );
+  }
+}
+
 test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

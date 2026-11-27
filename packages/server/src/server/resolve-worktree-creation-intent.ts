@@ -1,5 +1,10 @@
 import type { ForgeService, PullRequestCheckoutTarget } from "../services/forge-service.js";
-import type { WorktreeCheckoutRef, WorktreeSource } from "../utils/worktree.js";
+import {
+  UnknownBranchError,
+  type WorktreeCheckoutRef,
+  type WorktreeSource,
+} from "../utils/worktree.js";
+import { runGitCommand } from "../utils/run-git-command.js";
 import type { UntrustedWorkspaceSource } from "./workspace-automation-gate.js";
 
 export type WorktreeCreationIntent = Exclude<
@@ -25,6 +30,7 @@ export interface ResolveWorktreeCreationIntentInput {
   worktreeSlug?: string;
   branchName?: string;
   refName?: string;
+  refMode?: "exact";
   action?: "branch-off" | "checkout";
   checkoutSource?: {
     kind: "change_request";
@@ -123,10 +129,9 @@ export async function resolveWorktreeCreationIntent(
 
     const branchName = input.refName?.trim();
     if (branchName) {
-      return {
-        kind: "checkout-branch",
-        branchName,
-      };
+      return input.refMode === "exact"
+        ? resolveBranchCheckoutSource({ repoRoot, refName: branchName })
+        : { kind: "checkout-branch", branchName };
     }
 
     throw new MissingCheckoutTargetError();
@@ -363,4 +368,33 @@ async function resolvePrHeadRef(params: {
     cwd: params.repoRoot,
     number: params.changeRequestNumber,
   });
+}
+
+interface BranchCheckoutSourceInput {
+  repoRoot: string;
+  refName: string;
+}
+
+async function resolveBranchCheckoutSource({
+  repoRoot,
+  refName,
+}: BranchCheckoutSourceInput): Promise<Extract<WorktreeSource, { kind: "checkout-branch" }>> {
+  if (refName.startsWith("refs/heads/")) {
+    return { kind: "checkout-branch", branchName: refName.slice("refs/heads/".length) };
+  }
+  if (!refName.startsWith("refs/remotes/")) return { kind: "checkout-branch", branchName: refName };
+  const { stdout } = await runGitCommand(["remote"], { cwd: repoRoot });
+  // Remote names can contain slashes; match the configured name before taking the branch suffix.
+  const remote = stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .find((name) => refName.startsWith(`refs/remotes/${name}/`));
+  if (!remote) throw new UnknownBranchError({ branchName: refName, cwd: repoRoot });
+  return {
+    kind: "checkout-branch",
+    branchName: refName.slice(`refs/remotes/${remote}/`.length),
+    remoteRef: refName,
+  };
 }

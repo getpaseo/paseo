@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -796,6 +797,350 @@ test.describe("New workspace flow", () => {
       };
     }
 
+    for (const branch of ["develop", "trunk"]) {
+      test(`creates an untouched workspace from the sole local ${branch} branch`, async ({
+        page,
+      }) => {
+        const tempRepo = await createTempGitRepo("ref-default-local-");
+        try {
+          execFileSync("git", ["branch", "-m", branch], { cwd: tempRepo.path });
+          const sourceHead = readRepoRef(tempRepo.path, "HEAD");
+          const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+          await expectPickerSelected(page, branch);
+          const created = await createWorktreeAndRead(page, openedProject);
+          expect(created.branchInfo.hasAncestor(sourceHead)).toBe(true);
+          expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+            baseRefName: branch,
+            baseRef: `refs/heads/${branch}`,
+          });
+        } finally {
+          await tempRepo.cleanup();
+        }
+      });
+    }
+
+    test("requires an explicit branch when the repository default is ambiguous", async ({
+      page,
+    }) => {
+      const tempRepo = await createTempGitRepo("ref-default-ambiguous-");
+      try {
+        execFileSync("git", ["branch", "-m", "integration"], { cwd: tempRepo.path });
+        execFileSync("git", ["branch", "feature/other"], { cwd: tempRepo.path });
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await expectPickerSelected(page, "Choose where to start from");
+        const before = await client.fetchWorkspaces();
+        await submitNewWorkspaceEmpty(page);
+        await expect(page.getByTestId("composer-error")).toHaveText("Choose where to start from");
+        expect((await client.fetchWorkspaces()).entries.length).toBe(before.entries.length);
+        await openStartingRefPicker(page);
+        await startingRefRow(page, "integration, local branch").click();
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+          baseRefName: "integration",
+          baseRef: "refs/heads/integration",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("excludes unpushed commits when the default remote is named company", async ({ page }) => {
+      const tempRepo = await createTempGitRepo("ref-default-company-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["symbolic-ref", "refs/remotes/company/HEAD", "refs/remotes/company/main"],
+          { cwd: tempRepo.path },
+        );
+        const remoteHead = readRepoRef(tempRepo.path, "refs/remotes/company/main");
+        const localHead = commitLocalOnly(tempRepo.path, "local-only");
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await expectPickerSelected(page, "main");
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(remoteHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+          baseRefName: "main",
+          baseRef: "refs/remotes/company/main",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("uses a custom fetch namespace for the untouched default", async ({ page }) => {
+      const tempRepo = await createTempGitRepo("ref-custom-fetch-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["config", "remote.company.fetch", "+refs/heads/*:refs/vendor/company/*"],
+          { cwd: tempRepo.path },
+        );
+        execFileSync("git", ["fetch", "company"], { cwd: tempRepo.path });
+        execFileSync("git", ["branch", "--set-upstream-to=refs/vendor/company/main", "main"], {
+          cwd: tempRepo.path,
+        });
+        for (const ref of ["refs/remotes/company/HEAD", "refs/remotes/company/main"])
+          execFileSync("git", ["update-ref", "--no-deref", "-d", ref], { cwd: tempRepo.path });
+        const localHead = commitLocalOnly(tempRepo.path, "local-main-only");
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toMatchObject({
+          baseRef: "refs/vendor/company/main",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("validates the automatic non-origin checkout against an existing holder", async ({
+      page,
+    }) => {
+      const tempRepo = await createTempGitRepo("ref-auto-holder-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["symbolic-ref", "refs/remotes/company/HEAD", "refs/remotes/company/main"],
+          { cwd: tempRepo.path },
+        );
+        execFileSync("git", ["switch", "-c", "feature/source"], { cwd: tempRepo.path });
+        const holder = path.join(tempRepo.path, "holder");
+        execFileSync("git", ["worktree", "add", holder, "main"], { cwd: tempRepo.path });
+        await openWorktreeComposerForRepo(page, tempRepo.path);
+        await openStartingRefPicker(page);
+        await page.getByTestId("new-workspace-ref-picker-checkout").click();
+        await closeBranchPicker(page);
+        const before = await client.fetchWorkspaces();
+        await submitNewWorkspaceEmpty(page);
+        await expect(page.getByTestId("composer-error")).toContainText("main");
+        await expect(page.getByTestId("composer-error")).toContainText("holder");
+        expect((await client.fetchWorkspaces()).entries.length).toBe(before.entries.length);
+        expect(
+          execFileSync("git", ["branch", "--list", "main-*"], {
+            cwd: tempRepo.path,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("");
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    for (const remote of ["company", "upstream"]) {
+      test(`checks out topic from ${remote} when both non-origin remotes have it`, async ({
+        page,
+      }) => {
+        const tempRepo = await createTempGitRepo("checkout-remote-choice-", { withRemote: true });
+        try {
+          execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+          const upstreamPath = path.join(tempRepo.path, "upstream.git");
+          execFileSync("git", ["init", "--bare", upstreamPath], { cwd: tempRepo.path });
+          execFileSync("git", ["remote", "add", "upstream", upstreamPath], { cwd: tempRepo.path });
+          const tips: Record<string, string> = {};
+          for (const name of ["company", "upstream"]) {
+            execFileSync("git", ["switch", "-c", `${name}-source`, "main"], { cwd: tempRepo.path });
+            tips[name] = commitLocalOnly(tempRepo.path, `${name}-only`);
+            execFileSync("git", ["push", name, "HEAD:topic"], { cwd: tempRepo.path });
+          }
+          execFileSync("git", ["switch", "main"], { cwd: tempRepo.path });
+          const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+          await openStartingRefPicker(page);
+          await page.getByTestId("new-workspace-ref-picker-checkout").click();
+          await page.getByPlaceholder("Search branches").fill("topic");
+          await expectStartingRefRows(page, [
+            "topic (company), company branch",
+            "topic (upstream), upstream branch",
+          ]);
+          await startingRefRow(page, `topic (${remote}), ${remote} branch`).click();
+          const created = await createWorktreeAndRead(page, openedProject);
+          expect(created.branchInfo.hasAncestor(tips[remote])).toBe(true);
+          expect(
+            created.branchInfo.hasAncestor(tips[remote === "company" ? "upstream" : "company"]),
+          ).toBe(false);
+          expect(
+            execFileSync("git", ["branch", "--show-current"], {
+              cwd: created.workspaceDirectory,
+              encoding: "utf8",
+            }).trim(),
+          ).toBe("topic");
+          expect(
+            execFileSync("git", ["rev-parse", "--symbolic-full-name", "@{upstream}"], {
+              cwd: created.workspaceDirectory,
+              encoding: "utf8",
+            }).trim(),
+          ).toBe(`refs/remotes/${remote}/topic`);
+        } finally {
+          await tempRepo.cleanup();
+        }
+      });
+    }
+
+    test("checks out a slash-containing remote without reusing an unrelated worktree", async ({
+      page,
+    }) => {
+      const tempRepo = await createTempGitRepo("ref-slash-remote-", { withRemote: true });
+      try {
+        const remote = "team/company";
+        execFileSync("git", ["remote", "rename", "origin", remote], { cwd: tempRepo.path });
+        execFileSync("git", ["switch", "-c", "producer"], { cwd: tempRepo.path });
+        const selectedTip = commitLocalOnly(tempRepo.path, "selected-remote-only");
+        execFileSync("git", ["push", remote, "HEAD:topic"], { cwd: tempRepo.path });
+        execFileSync("git", ["switch", "main"], { cwd: tempRepo.path });
+        const unrelated = path.join(tempRepo.path, "unrelated-worktree");
+        execFileSync("git", ["worktree", "add", "-b", "company/topic", unrelated, "main"], {
+          cwd: tempRepo.path,
+        });
+        const unrelatedTip = commitLocalOnly(unrelated, "unrelated-worktree-only");
+        // The shorter remote has company/topic too, but must never refresh the selected ref.
+        const otherRemote = path.join(tempRepo.path, "team.git");
+        execFileSync("git", ["init", "--bare", "-b", "main", otherRemote], { cwd: tempRepo.path });
+        execFileSync("git", ["config", "remote.team.url", otherRemote], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["config", "remote.team.fetch", "+refs/heads/main:refs/remotes/team/main"],
+          { cwd: tempRepo.path },
+        );
+        execFileSync("git", ["push", otherRemote, "HEAD:company/topic"], { cwd: unrelated });
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await openStartingRefPicker(page);
+        await page.getByTestId("new-workspace-ref-picker-checkout").click();
+        await page.getByPlaceholder("Search branches").fill("topic");
+        await expectStartingRefRows(page, ["topic (team/company), team/company branch"]);
+        await startingRefRow(page, "topic (team/company), team/company branch").click();
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.workspaceDirectory).not.toBe(unrelated);
+        expect(created.branchInfo.hasAncestor(selectedTip)).toBe(true);
+        expect(created.branchInfo.hasAncestor(unrelatedTip)).toBe(false);
+        expect(
+          execFileSync("git", ["branch", "--show-current"], {
+            cwd: created.workspaceDirectory,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("topic");
+        expect(
+          execFileSync("git", ["rev-parse", "--symbolic-full-name", "@{upstream}"], {
+            cwd: created.workspaceDirectory,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("refs/remotes/team/company/topic");
+        expect(readRepoRef(unrelated, "HEAD")).toBe(unrelatedTip);
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("selects a local branch whose name resembles an exact remote ref", async ({ page }) => {
+      const tempRepo = await createTempGitRepo("ref-local-exact-name-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync("git", ["checkout", "-b", "remote-topic"], { cwd: tempRepo.path });
+        const remoteHead = commitLocalOnly(tempRepo.path, "remote-topic-only");
+        execFileSync("git", ["update-ref", "refs/remotes/company/topic", remoteHead], {
+          cwd: tempRepo.path,
+        });
+        execFileSync("git", ["switch", "main"], { cwd: tempRepo.path });
+        execFileSync("git", ["switch", "-c", "refs/remotes/company/topic"], { cwd: tempRepo.path });
+        const localHead = commitLocalOnly(tempRepo.path, "local-topic-only");
+        execFileSync("git", ["switch", "main"], { cwd: tempRepo.path });
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await openStartingRefPicker(page);
+        await page.getByPlaceholder("Search branches").fill("topic");
+        await expectStartingRefRows(page, [
+          "refs/remotes/company/topic, local branch",
+          "topic (company), company branch",
+        ]);
+        await startingRefRow(page, "refs/remotes/company/topic, local branch").click();
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(remoteHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toMatchObject({
+          baseRef: "refs/heads/refs/remotes/company/topic",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    for (const remote of ["company", "upstream"]) {
+      test(`selects ${remote} explicitly when non-origin remote defaults are ambiguous`, async ({
+        page,
+      }) => {
+        const tempRepo = await createTempGitRepo("ref-ambiguous-remotes-", { withRemote: true });
+        try {
+          execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+          const remoteUrl = execFileSync("git", ["remote", "get-url", "company"], {
+            cwd: tempRepo.path,
+            encoding: "utf8",
+          }).trim();
+          execFileSync("git", ["remote", "add", "upstream", remoteUrl], { cwd: tempRepo.path });
+          execFileSync(
+            "git",
+            ["update-ref", "refs/remotes/upstream/main", "refs/remotes/company/main"],
+            { cwd: tempRepo.path },
+          );
+          for (const name of ["company", "upstream"]) {
+            execFileSync(
+              "git",
+              ["symbolic-ref", `refs/remotes/${name}/HEAD`, `refs/remotes/${name}/main`],
+              { cwd: tempRepo.path },
+            );
+          }
+          const remoteHead = readRepoRef(tempRepo.path, `refs/remotes/${remote}/main`);
+          const localHead = commitLocalOnly(tempRepo.path, "unpushed-main");
+          const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+          await expectPickerSelected(page, "Choose where to start from");
+          await openStartingRefPicker(page);
+          await expectStartingRefRows(page, [
+            "main (company), company branch",
+            "main (upstream), upstream branch",
+            "main, local branch",
+          ]);
+          await page.getByPlaceholder("Search branches").fill(remote);
+          const otherRemote = remote === "company" ? "upstream" : "company";
+          await expect(
+            startingRefRow(page, `main (${otherRemote}), ${otherRemote} branch`),
+          ).toHaveCount(0);
+          await startingRefRow(page, `main (${remote}), ${remote} branch`).click();
+          await expectPickerSelected(page, `main (${remote})`);
+          const created = await createWorktreeAndRead(page, openedProject);
+          expect(created.branchInfo.hasAncestor(remoteHead)).toBe(true);
+          expect(created.branchInfo.hasAncestor(localHead)).toBe(false);
+          expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toMatchObject({
+            baseRef: `refs/remotes/${remote}/main`,
+          });
+        } finally {
+          await tempRepo.cleanup();
+        }
+      });
+    }
+
+    test("starts from the repository default when the source checkout is on an unrelated branch", async ({
+      page,
+    }, testInfo) => {
+      const tempRepo = await createTempGitRepo("ref-default-feature-", { withRemote: true });
+      try {
+        const originHead = readRepoRef(tempRepo.path, "refs/remotes/origin/main");
+        execFileSync("git", ["checkout", "-b", "feature/unrelated"], { cwd: tempRepo.path });
+        const featureHead = commitLocalOnly(tempRepo.path, "feature-only");
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        await expectPickerSelected(page, "main");
+        await page.screenshot({ path: testInfo.outputPath("default-main-from-feature.png") });
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(originHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(featureHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
+          baseRefName: "main",
+          baseRef: "refs/remotes/origin/main",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
     test("branches off the upstream when the local branch is ahead and the picker is untouched", async ({
       page,
     }) => {
@@ -848,26 +1193,25 @@ test.describe("New workspace flow", () => {
       }
     });
 
-    test("branches off a fork's upstream remote and records the branch name", async ({
+    test("uses the repository default rather than the current branch's non-origin upstream", async ({
       page,
     }, testInfo) => {
       const tempRepo = await createTempGitRepo("ref-default-fork-", { withRemote: true });
 
       try {
+        execFileSync(
+          "git",
+          ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+          { cwd: tempRepo.path },
+        );
         const upstreamHead = await trackForkUpstream(tempRepo.path);
         const originHead = readRepoRef(tempRepo.path, "refs/remotes/origin/main");
 
         const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
 
         await openStartingRefPicker(page);
-        // Branch suggestions only know about origin, so the upstream the fork actually
-        // tracks gets its own row rather than silently sharing origin's. Two rows reading
-        // "main" is the ambiguity this whole change exists to remove.
-        await expectStartingRefRows(page, [
-          "main (upstream), upstream branch",
-          "main, origin branch",
-        ]);
-        await expectPickerSelected(page, "main (upstream)");
+        await expectStartingRefRows(page, ["main, origin branch"]);
+        await expectPickerSelected(page, "main");
         const screenshotPath = testInfo.outputPath("ref-picker-fork.png");
         await captureStartingRefPicker(page, screenshotPath);
         await testInfo.attach("Ref picker: fork tracking upstream/main", {
@@ -878,12 +1222,13 @@ test.describe("New workspace flow", () => {
 
         const created = await createWorktreeAndRead(page, openedProject);
 
-        expect(created.branchInfo.hasAncestor(upstreamHead)).toBe(true);
+        expect(created.branchInfo.hasAncestor(upstreamHead)).toBe(false);
+        expect(created.branchInfo.hasAncestor(originHead)).toBe(true);
         expect(upstreamHead).not.toBe(originHead);
         // The name is what the UI shows; the ref is what resolves back to this commit.
         expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toEqual({
           baseRefName: "main",
-          baseRef: "refs/remotes/upstream/main",
+          baseRef: "refs/remotes/origin/main",
         });
       } finally {
         await tempRepo.cleanup();

@@ -38,6 +38,7 @@ export interface CreateWorktreeCoreInput {
   worktreeSlug?: string;
   branchName?: string;
   refName?: string;
+  refMode?: "exact";
   action?: "branch-off" | "checkout";
   checkoutSource?: ChangeRequestCheckoutSource;
   githubPrNumber?: number;
@@ -100,6 +101,7 @@ async function createWorktreeAtRepositoryRoot(
     intentInput = {
       action: "checkout",
       refName: input.refName,
+      refMode: input.refMode,
       checkoutSource: input.checkoutSource,
       githubPrNumber: input.githubPrNumber,
       worktreeSlug: requestedWorktreeSlug,
@@ -113,6 +115,7 @@ async function createWorktreeAtRepositoryRoot(
       checkoutSource: input.checkoutSource,
       githubPrNumber: input.githubPrNumber,
       refName: input.refName,
+      refMode: input.refMode,
       worktreeSlug: requestedWorktreeSlug,
     };
   } else {
@@ -120,6 +123,7 @@ async function createWorktreeAtRepositoryRoot(
     intentInput = {
       action: "branch-off",
       refName: input.refName,
+      refMode: input.refMode,
       checkoutSource: input.checkoutSource,
       githubPrNumber: input.githubPrNumber,
       branchName: requestedBranchName,
@@ -256,7 +260,12 @@ function describeCreationRequest(
       ...(intent.startPoint ? { startPoint: intent.startPoint } : {}),
     };
   if (intent.kind === "checkout-branch")
-    return { ...placement, kind: intent.kind, branch: intent.branchName };
+    return {
+      ...placement,
+      kind: intent.kind,
+      branch: intent.branchName,
+      ...(intent.remoteRef ? { remoteRef: intent.remoteRef } : {}),
+    };
   const { localBranchName, baseRefName, ...facts } = intent;
   return {
     ...placement,
@@ -281,9 +290,15 @@ function creationIntentFromRequest(
     };
   }
   if (request.kind === "checkout-branch") {
+    // A hook that changes the branch also replaces the selected remote's branch identity.
+    const remoteRef =
+      original.kind === "checkout-branch" && original.branchName === request.branch
+        ? original.remoteRef
+        : undefined;
     return {
       kind: request.kind,
       branchName: request.branch,
+      ...(remoteRef ? { remoteRef } : {}),
     };
   }
   const {

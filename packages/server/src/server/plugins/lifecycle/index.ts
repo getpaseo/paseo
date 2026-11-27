@@ -70,6 +70,7 @@ const worktreeRequestSchema = z.discriminatedUnion("kind", [
     .object({
       ...worktreeRequestFields,
       kind: z.literal("checkout-branch"),
+      remoteRef: z.string().min(1).optional(),
     })
     .strict(),
   z
@@ -324,6 +325,17 @@ function validateWorktreeBeforeResult(
 ): WorktreeBeforeRequest {
   if (previous.repoRoot !== next.repoRoot || previous.sourceCheckout !== next.sourceCheckout) {
     throw new Error("worktree.create.before hooks cannot change repoRoot or sourceCheckout");
+  }
+  if (next.kind === "checkout-branch") {
+    const remoteRef = previous.kind === "checkout-branch" ? previous.remoteRef : undefined;
+    if (next.remoteRef !== undefined && next.remoteRef !== remoteRef) {
+      throw new Error("worktree.create.before hooks cannot change remoteRef");
+    }
+    if (previous.kind === "checkout-branch" && previous.branch === next.branch) {
+      return { ...next, ...(remoteRef ? { remoteRef } : {}) };
+    }
+    const { remoteRef: _remoteRef, ...changedBranch } = next;
+    return changedBranch;
   }
   if (previous.kind === "branch-off" && next.kind === "branch-off") {
     if (next.startPoint !== undefined && next.startPoint !== previous.startPoint) {
