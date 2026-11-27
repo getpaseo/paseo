@@ -2,6 +2,7 @@ import { requirePluginText } from "@getpaseo/plugin/client/host";
 import type { createPluginHosts } from "./hosts";
 import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
+import { useWorkspaceRowBadgeItems } from "./workspace-row-badge-items/kit";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useSettings } from "./settings/use-settings";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
@@ -626,6 +627,7 @@ export function runPluginClientBundle(
             runtime.hosts.getSnapshot,
             runtime.hosts.getSnapshot,
           ),
+        useWorkspaceRowBadgeItems,
       };
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;

@@ -1,5 +1,10 @@
-import type { WorkspaceRowBadgeProps, WorkspaceRowBadgeTone } from "@getpaseo/plugin/client/ui";
-import { createContext, useContext, useMemo } from "react";
+import type { WorkspaceRowBadgeItem } from "@getpaseo/plugin/client";
+import type {
+  WorkspaceRowBadgeProps,
+  WorkspaceRowBadgesProps,
+  WorkspaceRowBadgeTone,
+} from "@getpaseo/plugin/client/ui";
+import { type ComponentType, createContext, useContext, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HOST_BADGE_ICON_SIZE } from "@/hosts/host-badge";
@@ -8,6 +13,30 @@ import { parsePluginIcon, PluginIconView } from "../icons";
 
 /** The item's title, the accessible name of a badge that has neither a label nor its own. */
 export const WorkspaceRowBadgeTitleContext = createContext<string | undefined>(undefined);
+
+export interface WorkspaceRowBadgesSource {
+  readonly items: readonly WorkspaceRowBadgeItem[];
+  readonly Badges: ComponentType<WorkspaceRowBadgesProps>;
+}
+
+/**
+ * Plugins' badge items and the component that draws them. The sidebar view slot provides it; the kit cannot import
+ * the plugin registry, which loads the kit.
+ */
+export const WorkspaceRowBadgesContext = createContext<WorkspaceRowBadgesSource | null>(null);
+
+const NO_ITEMS: readonly WorkspaceRowBadgeItem[] = [];
+
+/** Plugin badge items, listed for a sidebar view that renders its own rows. */
+export function useWorkspaceRowBadgeItems(): readonly WorkspaceRowBadgeItem[] {
+  return useContext(WorkspaceRowBadgesContext)?.items ?? NO_ITEMS;
+}
+
+/** Plugin badges for a workspace, drawn by a sidebar view that renders its own rows. */
+export function WorkspaceRowBadges(props: WorkspaceRowBadgesProps) {
+  const source = useContext(WorkspaceRowBadgesContext);
+  return source ? <source.Badges {...props} /> : null;
+}
 
 const ThemedPluginIconView = withUnistyles(PluginIconView);
 

@@ -126,6 +126,25 @@ export interface PluginHostSummary {
 }
 /** Live configured hosts. Supplied by the app's client bundle loader. */
 export declare function useHosts(): readonly PluginHostSummary[];
+
+/** A workspace row badge item that a plugin contributes, as listed for a sidebar view. */
+export interface WorkspaceRowBadgeItem {
+  /** `<pluginId>/<itemId>`, the same on every host. */
+  readonly key: string;
+  readonly pluginId: string;
+  readonly itemId: string;
+  /** The item's title in the app language. */
+  readonly title: string;
+  readonly icon: import("./contracts.js").PluginIcon;
+  /** Hosts whose copy of the plugin contributes the item; it draws only on their workspaces. */
+  readonly hostIds: readonly string[];
+}
+/**
+ * The workspace row badge items installed on any host, in install order, minus the ones hidden in Paseo's sidebar
+ * display preferences, for drawing with `WorkspaceRowBadges`. Empty outside a sidebar view. Supplied by the app's
+ * client bundle loader; apps older than this hook lack it, so check before calling.
+ */
+export declare function useWorkspaceRowBadgeItems(): readonly WorkspaceRowBadgeItem[];
 /** Borrow an online host's API under this installation's lifetime. */
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */

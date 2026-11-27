@@ -991,6 +991,8 @@ client.addWorkspaceRowBadgeItem({
 
 早于此 API 的应用没有 `addWorkspaceRowBadgeItem`；调用前请先检查它是否存在。
 
+[侧边栏视图](sidebar-views#match-the-apps-density)通过 `WorkspaceRowBadges` 在自己的行中绘制你的徽标，并通过 `useWorkspaceRowBadgeItems` 列出它们。
+
 参见[工作区行徽章示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges)。
 
 ## 宿主 UI {#host-ui}
