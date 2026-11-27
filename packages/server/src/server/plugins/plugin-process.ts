@@ -33,6 +33,7 @@ import {
 import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
+  ProviderCatalogRefreshModeSchema,
   ProviderEventSchema,
   type ProviderConnection,
   type ProviderRegistration,
@@ -211,6 +212,12 @@ export function createPluginWorker(options: {
       throw new Error(`Plugin provider ${id} must implement connect()`);
     }
     if (
+      provider.catalogRefresh !== undefined &&
+      !ProviderCatalogRefreshModeSchema.safeParse(provider.catalogRefresh).success
+    ) {
+      throw new Error(`Invalid catalogRefresh mode for plugin provider ${id}`);
+    }
+    if (
       provider.getCatalogCacheKey !== undefined &&
       typeof provider.getCatalogCacheKey !== "function"
     ) {
@@ -314,6 +321,7 @@ export function createPluginWorker(options: {
       iconPath: provider.icon,
       docsUrl: provider.docsUrl,
       requiresConfiguration: provider.requiresConfiguration,
+      catalogRefresh: provider.catalogRefresh,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
       installation: provider.installation
