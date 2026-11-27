@@ -128,6 +128,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
+      // Pi can be busy with a run it started itself (an extension message, a background
+      // result) before it reports agent_start. It rejects a bare prompt then; followUp queues
+      // the prompt into that run. Pi ignores the option when it is idle.
+      streamingBehavior: "followUp",
     });
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
