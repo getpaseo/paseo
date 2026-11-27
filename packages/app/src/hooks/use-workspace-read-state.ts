@@ -27,7 +27,11 @@ export function useWorkspaceReadState({
     attentionKeys: workspace.attentionKeys,
     reviewResults: workspace.reviewResults,
   }));
-  const hasClearableAttention = observed?.status === "attention" || observed?.status === "failed";
+  const hasClearableAttention =
+    observed != null &&
+    (supportsChatReview
+      ? Object.keys(observed.attentionKeys ?? {}).length > 0
+      : observed.status === "attention" || observed.status === "failed");
   const canMarkUnread =
     !supportsChatReview && supportsWorkspaceUnread && observed?.status === "done";
 

@@ -6934,7 +6934,7 @@ test("a failed review write leaves the same result available to retry", async ()
   expect(snapshot().updatedAt).toBe(activityAt);
 });
 
-test("an autonomous finish replaces the result identity and only reading a finish creates follow-up", async () => {
+test("a rejected reply preserves the latest result and acknowledging the error leaves a follow-up", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "agent-review-race-"));
   const session = new (class extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
@@ -6990,7 +6990,10 @@ test("an autonomous finish replaces the result identity and only reading a finis
   expect(await manager.clearAgentAttention(id, getAttentionKey(next))).toBe(false);
   await manager.clearAgentAttention(id, getAttentionKey(failed));
   expect(snapshot().requiresAttention).toBe(false);
-  expect(snapshot().reviewResult).toEqual(next.reviewResult);
+  expect(snapshot().reviewResult).toEqual({
+    id: next.reviewResult!.id,
+    followUpAt: expect.any(String),
+  });
 
   const latest = await finish("c", "turn_completed");
   await manager.clearAgentAttention(id, getAttentionKey(latest));
@@ -10243,6 +10246,28 @@ test("turns an agent starts on its own keep its finish unread until it is read",
   expect(attention).toHaveLength(4);
   expect(attention[3]?.reason).toBe("finished");
   expect(attention[3]?.attentionTimestamp).not.toBe(unreadFinish);
+
+  const resolvedResultId = toAgentPayload(manager.getAgent(agent.id)!).reviewResult!.id;
+  await manager.markAgentDone(agent.id, resolvedResultId);
+  expect(toAgentPayload(manager.getAgent(agent.id)!).reopenableReviewResultId).toBe(
+    resolvedResultId,
+  );
+
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "wake-5" });
+  await running;
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  client.session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "wake-5",
+    error: "Autonomous turn failed",
+  });
+  await failed;
+  expect(toAgentPayload(manager.getAgent(agent.id)!).reopenableReviewResultId).toBeUndefined();
+  await expect(manager.markAgentForFollowUp(agent.id, resolvedResultId)).rejects.toThrow(
+    "This chat result is no longer current",
+  );
 });
 
 test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {

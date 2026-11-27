@@ -515,8 +515,9 @@ function applyReviewAction(
   return {
     clearAttention: true,
     reopenableReviewResultId,
+    // A rejected reply can replace unread finish attention while leaving its result pending.
     reviewResult:
-      attentionReason === "finished" && reviewResult && !reviewResult.followUpAt
+      reviewResult && !reviewResult.followUpAt
         ? { ...reviewResult, followUpAt: new Date().toISOString() }
         : reviewResult,
   };
@@ -6195,6 +6196,8 @@ export class AgentManager {
       this.openActiveTurn(agent, eventTurnId, new Date());
     }
     agent.lastError = undefined;
+    agent.reviewResult = undefined;
+    agent.reopenableReviewResultId = undefined;
     // Nobody read the agent, so an unread finish stays unread. Clearing it would make every
     // turn the agent starts on its own, such as a reaction to background output, notify again.
     if (agent.attention.requiresAttention && agent.attention.attentionReason === "error") {

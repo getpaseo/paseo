@@ -123,7 +123,7 @@ async function markAsRead(page: Page, workspaceId: string) {
 async function expectStatus(
   page: Page,
   workspaceId: string,
-  status: "done" | "attention" | "needs_follow_up",
+  status: "done" | "attention" | "needs_follow_up" | "needs_input",
 ) {
   await expect(
     workspaceRow(page, workspaceId).getByTestId(`workspace-status-indicator-${status}`),
@@ -610,6 +610,31 @@ test("Mark all as done resolves the selected workspace's current results", async
   await expectStatus(page, subject.workspaceId, "done");
   await expectStatus(page, other.workspaceId, "needs_follow_up");
   await expect(page.getByText("This chat result is no longer current")).toHaveCount(0);
+});
+
+test("Mark all as read acknowledges a result while a sibling needs input", async ({
+  page,
+  workspaces,
+}) => {
+  const { subject, other } = workspaces;
+  const sibling = await addFinishedAgent(subject);
+  await subject.client.sendAgentMessage(sibling.id, "Emit synthetic plan approval.");
+  expect((await subject.client.waitForFinish(sibling.id, 15_000)).status).toBe("permission");
+
+  await openAgentRoute(page, other);
+  await expectStatus(page, subject.workspaceId, "needs_input");
+  await subject.client.markAgentUnread(subject.agentId);
+  await chooseWorkspaceMarkAsRead(page, subject.workspaceId);
+
+  await expectStatus(page, subject.workspaceId, "needs_input");
+  await workspaceRow(page, subject.workspaceId).hover();
+  await page.getByTestId(`sidebar-workspace-kebab-${getServerId()}:${subject.workspaceId}`).click();
+  await expect(page.getByTestId("workspace-menu-chat-status")).toHaveText(
+    "1 Needs input · 1 Needs follow-up",
+  );
+  await expect(page.getByRole("menuitem", { name: "Mark all as read", exact: true })).toHaveCount(
+    0,
+  );
 });
 
 test("review actions affect only the chat chosen in the tab menu", async ({ page, workspaces }) => {

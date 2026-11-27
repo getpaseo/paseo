@@ -371,8 +371,9 @@ counts once in its sidebar status group. For mixed chat states, the workspace ho
 menu show how many chats are in each state.
 Use **Mark done** in the chat tab menu or in the floating status pill above the composer to resolve
 that result. Use **Mark all as done** in the workspace row menu to resolve the current results of
-its chats together. An accepted reply also resolves that chat's result. Read, follow-up and
-resolution survive restarts.
+its chats together. A new turn clears the previous result. A reply that fails before the turn
+starts leaves the pending result in place. Acknowledging that error reveals the **Needs follow-up**
+reminder. Read, follow-up and resolution survive restarts.
 Use **Mark for follow-up** in the chat tab menu to restore the reminder for a result you marked
 done. The action is available until the chat takes a new turn.
 
@@ -381,8 +382,9 @@ chat without sending a new notification. On older hosts that support workspace-l
 **Mark as unread** in the workspace row menu. Opening a workspace restores its selected tab. Use
 **Mark as read** in another chat's tab menu to acknowledge that chat without switching tabs. Use
 **Mark all as read** in the workspace row menu to acknowledge all unread completions and failures
-in the workspace. Marking a finished chat unread makes **Mark done** available again, even if you
-already resolved it. Reading the chat moves it to **Needs follow-up** until you resolve it.
+in the workspace, including while another chat is working or waiting for input. Marking a finished
+chat unread makes **Mark done** available again, even if you already resolved it. Reading the chat
+moves it to **Needs follow-up** until you resolve it.
 
 Attention is set by the agent finishing or failing and acknowledged by deliberate focus or
 interaction with its chat, including repeat clicks in an already focused pane. A completion
