@@ -927,14 +927,21 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // Do not expose a stale classification to the next status consumer.
       // Local placement must not wait for the replacement working-tree scan.
       target.latestSnapshot = null;
-      // A queued worktree-only observation must not rebuild the old classification.
       target.latestFacts = null;
-      if (!options?.placementOnly) {
-        await this.getSnapshot(normalizedCwd, {
-          force: true,
-          includeForge: false,
-          reason: "checkout-classification-changed",
-        });
+      // Queue behind an active read: it may still publish the old classification.
+      const refreshOptions = {
+        force: true,
+        afterInFlight: true,
+        includeForge: false,
+        reason: "checkout-classification-changed",
+      };
+      if (options?.placementOnly) {
+        void this.refreshWorkspaceTarget(
+          target,
+          this.normalizeRefreshRequest(refreshOptions, refreshOptions.reason),
+        );
+      } else {
+        await this.getSnapshot(normalizedCwd, refreshOptions);
       }
     }
     if (!identity.isGit) {
@@ -3690,10 +3697,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           break;
         }
         snapshot = admittedSnapshot;
-        this.rememberSnapshot(target, snapshot, {
-          forceEmit:
-            request.force || (request.emitUnchanged === true && request.movedRemoteRefs.size > 0),
-        });
+        // Keep a cleared cache empty until its queued structural replacement finishes.
+        const invalidated =
+          target.latestSnapshot === null &&
+          target.refreshState.status === "in-flight" &&
+          target.refreshState.queued?.refreshStructure;
+        if (!invalidated) {
+          this.rememberSnapshot(target, snapshot, {
+            forceEmit:
+              request.force || (request.emitUnchanged === true && request.movedRemoteRefs.size > 0),
+          });
+        }
         failure = null;
       } catch (error) {
         failure = { error };

@@ -527,6 +527,66 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     }
   });
 
+  test.each(["worktree", "structural"] as const)(
+    "placement-only invalidation refreshes after an in-flight %s observation",
+    async (kind) => {
+      const callbacks = new Map<string, FileObserverCallback>();
+      const worktree = createDeferred<{ isDirty: boolean; diffStat: null }>();
+      const status = createDeferred<ReturnType<typeof createCheckoutStatus>>();
+      const getCheckoutSnapshotFacts = vi.fn().mockResolvedValue(createCheckoutFacts(REPO_CWD));
+      const getCheckoutStatus = vi.fn().mockResolvedValue(createCheckoutStatus(REPO_CWD));
+      const getCheckoutWorktreeState = vi.fn(() => worktree.promise);
+      const service = createService({
+        getCheckoutSnapshotFacts,
+        getCheckoutStatus,
+        getCheckoutWorktreeState,
+        getCheckoutIdentity: vi.fn().mockResolvedValue({ isGit: false }),
+        subscribe: vi.fn(async (path: string, callback: FileObserverCallback) => {
+          callbacks.set(path, callback);
+          return createAsyncSubscription();
+        }),
+      });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      let pending: ReturnType<typeof service.getSnapshot> | undefined;
+      try {
+        await vi.waitFor(() => expect(callbacks.has(REPO_CWD)).toBe(true));
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(await service.getSnapshot(REPO_CWD)).toMatchObject({ git: { isGit: true } });
+
+        if (kind === "worktree") {
+          callbacks.get(REPO_CWD)!(null, [{ path: join(REPO_CWD, "file.ts"), type: "update" }]);
+          await vi.advanceTimersByTimeAsync(1_000);
+          expect(getCheckoutWorktreeState).toHaveBeenCalled();
+        } else {
+          getCheckoutStatus.mockClear().mockImplementationOnce(() => status.promise);
+          pending = service.getSnapshot(REPO_CWD, {
+            force: true,
+            includeForge: false,
+            reason: "test-in-flight-structure",
+          });
+          await vi.waitFor(() => expect(getCheckoutStatus).toHaveBeenCalled());
+        }
+
+        getCheckoutSnapshotFacts.mockResolvedValue({ isGit: false });
+        getCheckoutStatus.mockResolvedValue({ isGit: false });
+        expect(await service.getCheckout(REPO_CWD, { placementOnly: true })).toMatchObject({
+          isGit: false,
+        });
+
+        worktree.resolve({ isDirty: true, diffStat: null });
+        status.resolve(createCheckoutStatus(REPO_CWD));
+        await pending;
+        await flushPromises();
+        expect(await service.getSnapshot(REPO_CWD)).toMatchObject({ git: { isGit: false } });
+      } finally {
+        worktree.resolve({ isDirty: true, diffStat: null });
+        status.resolve(createCheckoutStatus(REPO_CWD));
+        subscription.unsubscribe();
+        service.dispose();
+      }
+    },
+  );
+
   test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
