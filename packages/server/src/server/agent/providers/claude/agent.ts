@@ -2740,7 +2740,9 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (this.autonomousTurn) {
-      this.completeAutonomousTurn();
+      // Claude Code may still finish a compaction the autonomous turn started, so its marker
+      // stays open for the boundary or failed status, or for this turn's end.
+      this.completeAutonomousTurn("leave-open");
     }
 
     const sdkMessage = this.toSdkUserMessage(prompt);
@@ -2923,7 +2925,7 @@ class ClaudeAgentSession implements AgentSession {
 
     if (this.autonomousTurn) {
       this.flushPendingToolCalls();
-      this.completeAutonomousTurn();
+      this.completeAutonomousTurn("canceled");
     }
 
     await this.interruptActiveTurn();
@@ -4401,25 +4403,27 @@ class ClaudeAgentSession implements AgentSession {
     if (event.type === "turn_failed" || event.type === "turn_canceled") {
       this.flushPendingToolCalls();
     }
+    this.closeCompactionMarkerBeforeTerminal(event);
     this.notifySubscribers(event);
     this.activeForegroundTurnId = null;
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
     this.cancelCurrentTurn = null;
     this.activeTurnHasAssistantText = false;
-    this.compactionMarkerOpen = false;
     this.syncTurnState("foreground turn terminal");
   }
 
   private dispatchEvents(events: AgentStreamEvent[]): void {
     let terminalSeen = false;
     for (const event of events) {
+      if (!terminalSeen && this.isTerminalTurnEvent(event)) {
+        this.closeCompactionMarkerBeforeTerminal(event);
+      }
       this.notifySubscribers(event);
       terminalSeen ||= this.isTerminalTurnEvent(event);
     }
 
     if (terminalSeen) {
-      this.compactionMarkerOpen = false;
       if (this.activeForegroundTurnId) {
         this.activeForegroundTurnId = null;
         this.activeForegroundQuery = null;
@@ -4453,16 +4457,25 @@ class ClaudeAgentSession implements AgentSession {
     this.syncTurnState("autonomous turn started");
   }
 
-  private completeAutonomousTurn(): void {
+  /**
+   * `openCompaction` says what happens to a compaction marker still open: a stop cancels it,
+   * Claude Code going idle means it didn't finish, and a new foreground message leaves it open.
+   */
+  private completeAutonomousTurn(openCompaction: "canceled" | "failed" | "leave-open"): void {
     if (!this.autonomousTurn) {
       return;
+    }
+    if (openCompaction !== "leave-open") {
+      const close = this.takeCompactionMarkerClose(openCompaction);
+      if (close) {
+        this.notifySubscribers(close);
+      }
     }
     this.notifySubscribers({ type: "turn_completed", provider: "claude" });
     this.autonomousTurn = null;
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
     this.activeTurnHasAssistantText = false;
-    this.compactionMarkerOpen = false;
     this.syncTurnState("autonomous turn completed");
   }
 
@@ -4694,7 +4707,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (message.state === "idle") {
       this.mainTurnInFlight = false;
-      this.completeAutonomousTurn();
+      this.completeAutonomousTurn("failed");
     }
     return true;
   }
@@ -5235,6 +5248,8 @@ class ClaudeAgentSession implements AgentSession {
             provider: "claude",
           });
         }
+      } else if (message.compact_result === "failed") {
+        this.appendFailedCompactionEvents(message.compact_error, events);
       }
       return;
     }
@@ -5268,6 +5283,49 @@ class ClaudeAgentSession implements AgentSession {
     if (message.subtype === "task_progress") {
       return;
     }
+  }
+
+  /**
+   * A compaction that fails or is interrupted (a message sent while it runs aborts it) ends
+   * with `status: null, compact_result: "failed"` and no compact_boundary. Close the marker
+   * here, and stop waiting for the compaction summary so the next user message isn't dropped.
+   */
+  private appendFailedCompactionEvents(
+    compactError: string | undefined,
+    events: AgentStreamEvent[],
+  ): void {
+    const canceled = compactError?.toLowerCase().includes("request was aborted") ?? false;
+    const close = this.takeCompactionMarkerClose(canceled ? "canceled" : "failed");
+    if (close) {
+      events.push(close);
+    }
+  }
+
+  /**
+   * A turn can end with its compaction still open: stopping the agent ends the turn before
+   * Claude Code reports the compaction's result. A compaction that finished would have sent
+   * its compact_boundary inside the turn, so the open marker closes as not finished.
+   */
+  private closeCompactionMarkerBeforeTerminal(terminal: AgentStreamEvent): void {
+    const close = this.takeCompactionMarkerClose(
+      terminal.type === "turn_canceled" ? "canceled" : "failed",
+    );
+    if (close) {
+      this.notifySubscribers(close);
+    }
+  }
+
+  private takeCompactionMarkerClose(outcome: "failed" | "canceled"): AgentStreamEvent | null {
+    this.compacting = false;
+    if (!this.compactionMarkerOpen) {
+      return null;
+    }
+    this.compactionMarkerOpen = false;
+    return {
+      type: "timeline",
+      item: { type: "compaction", status: "completed", outcome },
+      provider: "claude",
+    };
   }
 
   private appendTaskNotificationEvents(

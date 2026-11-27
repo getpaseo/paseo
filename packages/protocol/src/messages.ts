@@ -821,6 +821,9 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
+    // Set on a "completed" marker when the compaction ended without compacting. A new status
+    // value would break older apps' parsing; they read this marker as a finished compaction.
+    outcome: z.enum(["failed", "canceled"]).optional(),
   }),
   z.object({
     type: z.literal("plugin"),

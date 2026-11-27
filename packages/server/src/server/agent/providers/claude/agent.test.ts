@@ -4489,6 +4489,142 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  function createFailedCompactionStatus(compactError: string): Record<string, unknown> {
+    return {
+      type: "system",
+      subtype: "status",
+      status: null,
+      compact_result: "failed",
+      compact_error: compactError,
+      session_id: "session-1",
+    };
+  }
+
+  function compactionItems(events: AgentStreamEvent[]) {
+    return events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "compaction"
+        ? [{ status: event.item.status, outcome: event.item.outcome }]
+        : [],
+    );
+  }
+
+  function lastCompactionBeforeTerminal(events: AgentStreamEvent[]): boolean {
+    const lastCompaction = events.findLastIndex(
+      (event) => event.type === "timeline" && event.item.type === "compaction",
+    );
+    const terminal = events.findIndex(
+      (event) =>
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled",
+    );
+    return lastCompaction >= 0 && terminal > lastCompaction;
+  }
+
+  test("closes the marker as canceled when a message sent during /compact aborts it", async () => {
+    // Recorded from Claude Code (SDK 0.3.326): a message sent while /compact runs is echoed,
+    // the compaction aborts with status null and compact_result "failed", and no
+    // compact_boundary follows.
+    const session = await createSessionForTurns([
+      [
+        createCompactingStatus(),
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Reply with the single word: ok" }],
+          },
+          uuid: "steer-echo-1",
+          session_id: "session-1",
+        },
+        createFailedCompactionStatus("API Error: Request was aborted."),
+        createInitMessage(),
+        {
+          type: "assistant",
+          message: { role: "assistant", content: [{ type: "text", text: "Compaction canceled." }] },
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session, "/compact");
+      expect(compactionItems(events)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: "canceled" },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a failed compaction closes its marker and keeps the next user message", async () => {
+    const session = await createSessionForTurns([
+      [
+        createCompactingStatus(),
+        createFailedCompactionStatus("API Error: 500 Internal server error"),
+        createSuccessResult(),
+      ],
+      [
+        {
+          type: "user",
+          message: { role: "user", content: "typed in the terminal" },
+          uuid: "terminal-user-1",
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const failedTurn = await collectStreamEvents(session, "/compact");
+      expect(compactionItems(failedTurn)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: "failed" },
+      ]);
+
+      const nextTurn = await collectStreamEvents(session, "next");
+      expect(nextTurn).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ type: "user_message", text: "typed in the terminal" }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("closes the marker as failed when a PreCompact hook blocks /compact", async () => {
+    // Recorded from Claude Code (SDK 0.3.326) with a PreCompact hook that exits 2.
+    const hookError =
+      "Compaction blocked by PreCompact hook: [echo 'compaction blocked by policy' >&2; exit 2]: compaction blocked by policy";
+    const session = await createSessionForTurns([
+      [
+        createCompactingStatus(),
+        createFailedCompactionStatus(`skipped: ${hookError}`),
+        createInitMessage(),
+        {
+          type: "assistant",
+          message: { role: "assistant", content: [{ type: "text", text: hookError }] },
+          session_id: "session-1",
+        },
+        createSuccessResult({ result: hookError }),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session, "/compact");
+      expect(compactionItems(events)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: "failed" },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("reports the plan mode Claude enters on its own with EnterPlanMode", async () => {
     // Claude Code announces a mode it switched to itself as a status message
     // carrying the new permissionMode, right after the EnterPlanMode tool call.
@@ -4538,6 +4674,11 @@ describe("ClaudeAgentSession context window usage", () => {
     try {
       const abandonedTurn = await collectStreamEvents(session, "abandoned compaction");
       expect(abandonedTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
+      expect(compactionItems(abandonedTurn)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: "failed" },
+      ]);
+      expect(lastCompactionBeforeTerminal(abandonedTurn)).toBe(true);
 
       const nextTurn = await collectStreamEvents(session, "next compaction");
       expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
@@ -4571,6 +4712,11 @@ describe("ClaudeAgentSession context window usage", () => {
       expect(interruptedTurn).toContainEqual(
         expect.objectContaining({ type: "turn_canceled", provider: "claude" }),
       );
+      expect(compactionItems(interruptedTurn)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: "canceled" },
+      ]);
+      expect(lastCompactionBeforeTerminal(interruptedTurn)).toBe(true);
 
       const nextTurn = await collectStreamEvents(session, "next compaction");
       expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
@@ -4579,33 +4725,83 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
-  test("a compaction abandoned in an autonomous turn does not suppress the next marker", async () => {
-    // Claude starts a turn of its own after the foreground result, which starts compacting and is
-    // then ended by the next foreground turn, never reaching a boundary.
+  // Claude starts a turn of its own after the foreground result, and that turn starts compacting.
+  const autonomousCompaction = [
+    createSuccessResult(),
+    createInitMessage(),
+    createMessageStartEvent(),
+    createCompactingStatus(),
+  ];
+
+  async function observeAutonomousCompaction(session: AgentSession) {
+    const observed: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => {
+      observed.push(event);
+    });
+    await collectStreamEvents(session, "foreground turn");
+    await vi.waitFor(() => {
+      expect(observed.filter(isLoadingCompactionEvent)).toHaveLength(1);
+    });
+    return { observed, unsubscribe };
+  }
+
+  test("a foreground message leaves an autonomous compaction open for its boundary", async () => {
     const session = await createSessionForTurns([
-      [
-        createSuccessResult(),
-        createInitMessage(),
-        createMessageStartEvent(),
-        createCompactingStatus(),
-      ],
+      autonomousCompaction,
+      [createCompactingStatus(), createCompactBoundary(), createSuccessResult()],
+    ]);
+
+    try {
+      const { observed, unsubscribe } = await observeAutonomousCompaction(session);
+      const nextTurn = await collectStreamEvents(session, "while compacting");
+      unsubscribe();
+
+      expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(0);
+      expect(compactionItems(observed)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: undefined },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("an autonomous compaction left open does not suppress the next marker", async () => {
+    // The foreground turn that ended the autonomous one finishes without a boundary.
+    const session = await createSessionForTurns([
+      autonomousCompaction,
+      [createSuccessResult()],
       [createCompactingStatus(), createSuccessResult()],
     ]);
 
     try {
-      const observed: AgentStreamEvent[] = [];
-      const unsubscribe = session.subscribe((event) => {
-        observed.push(event);
-      });
-
-      await collectStreamEvents(session, "foreground turn");
-      await vi.waitFor(() => {
-        expect(observed.filter(isLoadingCompactionEvent)).toHaveLength(1);
-      });
+      const { observed, unsubscribe } = await observeAutonomousCompaction(session);
+      await collectStreamEvents(session, "while compacting");
       unsubscribe();
+      expect(compactionItems(observed)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: "failed" },
+      ]);
 
       const nextTurn = await collectStreamEvents(session, "next compaction");
       expect(nextTurn.filter(isLoadingCompactionEvent)).toHaveLength(1);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("stopping the agent during an autonomous compaction cancels it", async () => {
+    const session = await createSessionForTurns([autonomousCompaction]);
+
+    try {
+      const { observed, unsubscribe } = await observeAutonomousCompaction(session);
+      await session.interrupt();
+      unsubscribe();
+
+      expect(compactionItems(observed)).toEqual([
+        { status: "loading", outcome: undefined },
+        { status: "completed", outcome: "canceled" },
+      ]);
     } finally {
       await session.close();
     }

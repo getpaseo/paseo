@@ -345,6 +345,15 @@ second line'`,
     expect(result).toContain("[Compacted]");
   });
 
+  it("names a compaction that did not finish", () => {
+    const result = curateAgentActivity([
+      { type: "compaction", status: "completed", outcome: "canceled" },
+    ]);
+
+    expect(result).toContain("[Compaction canceled]");
+    expect(result).not.toContain("[Compacted]");
+  });
+
   it("truncates to maxItems", () => {
     const timeline: AgentTimelineItem[] = [
       { type: "user_message", text: "Message 1" },

@@ -489,9 +489,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     return next;
   }
   if (retained.kind === "compaction" && retained.status === "completed") {
-    const tailIndex = tail.findIndex(
-      (item) => item.kind === "compaction" && item.status === "loading",
-    );
+    const tailIndex = findNewestLoadingCompactionIndex(tail);
     const existing = tail[tailIndex];
     if (tailIndex < 0 || !existing || existing.kind !== "compaction") {
       return null;
@@ -503,6 +501,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
       status: "completed",
       trigger: retained.trigger ?? existing.trigger,
       preTokens: retained.preTokens ?? existing.preTokens,
+      ...(retained.outcome ? { outcome: retained.outcome } : {}),
     };
     return next;
   }
@@ -822,6 +821,7 @@ export interface CompactionItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  outcome?: "failed" | "canceled";
 }
 
 export interface PluginTimelineStreamItem {
@@ -1505,6 +1505,15 @@ function reduceTimelineToolCall(
   });
 }
 
+/**
+ * A completed compaction closes the newest open marker. An older marker can stay open when
+ * its compaction never reported an end (daemons before the failed-compaction fix), and
+ * matching it first would leave the current one on "Compacting..." forever.
+ */
+function findNewestLoadingCompactionIndex(items: readonly StreamItem[]): number {
+  return items.findLastIndex((item) => item.kind === "compaction" && item.status === "loading");
+}
+
 function reduceTimelineCompaction(
   state: StreamItem[],
   item: Extract<
@@ -1515,7 +1524,7 @@ function reduceTimelineCompaction(
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
   if (item.status === "completed") {
-    const loadingIdx = state.findIndex((s) => s.kind === "compaction" && s.status === "loading");
+    const loadingIdx = findNewestLoadingCompactionIndex(state);
     const existing = loadingIdx >= 0 ? state[loadingIdx] : undefined;
     if (loadingIdx >= 0 && existing && existing.kind === "compaction") {
       const updated: CompactionItem = {
@@ -1524,6 +1533,7 @@ function reduceTimelineCompaction(
         status: "completed",
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
+        ...(item.outcome ? { outcome: item.outcome } : {}),
       };
       return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
     }
@@ -1539,6 +1549,7 @@ function reduceTimelineCompaction(
     status: item.status,
     trigger: item.trigger,
     preTokens: item.preTokens,
+    ...(item.outcome ? { outcome: item.outcome } : {}),
   };
   return [...state, compaction];
 }

@@ -443,6 +443,8 @@ export const zhCN: TranslationResources = {
       manual: "上下文已手动压缩",
       withTokens: "上下文已压缩（{{tokens}}K tokens）",
       completed: "上下文已压缩",
+      failed: "压缩失败",
+      canceled: "压缩已取消",
     },
   },
   importSession: {

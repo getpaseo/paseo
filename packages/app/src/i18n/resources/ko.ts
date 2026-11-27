@@ -444,6 +444,8 @@ export const ko: TranslationResources = {
       manual: "컨텍스트가 수동으로 압축되었습니다",
       withTokens: "컨텍스트가 압축되었습니다 ({{tokens}}K 토큰)",
       completed: "컨텍스트가 압축되었습니다",
+      failed: "압축에 실패했습니다",
+      canceled: "압축이 취소되었습니다",
     },
   },
   importSession: {
