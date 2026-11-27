@@ -303,6 +303,26 @@ Browsers require user interaction before allowing sound; handle rejection and of
 play button. The function plays on the device running the plugin client, not on the daemon,
 and does not promise delivery while the app is suspended or closed.
 
+### Pick images
+
+Call `client.pickImages(): Promise<PluginPickedImage[]>` to let the user choose images with Paseo's
+own image picker: the photo library on iOS and Android, the file dialog on desktop, and the file
+chooser in a browser. Each image is `{ name, mimeType, base64 }`; `name` is `null` when the platform
+does not report one. Call it from a user action.
+
+```ts
+if (client.pickImages) {
+  const images = await client.pickImages();
+  // Send them to the daemon: { name: string | null, mimeType: "image/png", base64: string }[]
+  if (images.length) await client.rpc(saveImages, { images });
+}
+```
+
+The promise resolves with an empty array when the user cancels or denies photo access (Paseo
+explains the denial), and when another pick is already open. It rejects if a chosen image cannot be
+read or the plugin unloads. Apps that predate the picker leave `pickImages` undefined: check it
+before showing a button that opens it.
+
 ### External links and workspace browsers
 
 Use `ExternalLink` to open documentation outside Paseo:

@@ -257,6 +257,20 @@ promise 在播放结束时 resolve，在文件无效、播放失败或插件卸�
 
 为了可移植性，请使用 PCM WAV 或 MP3 文件。其他编解码格式取决于客户端的解码器。接受 MIME 参数。请传入完整的音频文件；不支持原始 PCM 采样。浏览器要求用户交互后才允许播放声音；请处理 reject 并提供一个播放按钮。该函数在运行插件客户端的设备上播放，而不是在 daemon 上，并且不保证应用被挂起或关闭时仍能播放。
 
+### 选择图片 {#pick-images}
+
+调用 `client.pickImages(): Promise<PluginPickedImage[]>`，让用户通过 Paseo 自带的图片选择器选择图片：iOS 和 Android 上是相册，桌面端是文件对话框，浏览器中是文件选择器。每张图片是 `{ name, mimeType, base64 }`；平台不提供文件名时，`name` 为 `null`。请在用户交互中调用它。
+
+```ts
+if (client.pickImages) {
+  const images = await client.pickImages();
+  // Send them to the daemon: { name: string | null, mimeType: "image/png", base64: string }[]
+  if (images.length) await client.rpc(saveImages, { images });
+}
+```
+
+用户取消、拒绝相册访问（Paseo 会说明原因），或已有另一个选择器打开时，promise resolve 为空数组。无法读取所选图片或插件卸载时，promise reject。早于该选择器的应用中 `pickImages` 为 undefined：显示打开它的按钮之前请先检查。
+
 ### 外部链接和工作区浏览器 {#external-links-and-workspace-browsers}
 
 使用 `ExternalLink` 在 Paseo 之外打开文档：

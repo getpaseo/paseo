@@ -62,7 +62,7 @@ Register these on `client` in `index.client.tsx`. Each returns a remover. `addHe
 
 Examples live in [`plugin-examples/`](https://github.com/getpaseo/paseo/tree/main/plugin-examples).
 
-The client context also has `paseo`, `rpc`, `subscribe`, `openScreen`, `openPanel`, `openSettings`, `composers`, `playAudio`, and `i18n`. Import hooks such as `usePaseo`, `useRpc`, `useSubscription`, `useSettings`, `useWorkspace`, `useAgent`, and `useTabState` from `@getpaseo/plugin/client`.
+The client context also has `paseo`, `rpc`, `subscribe`, `openScreen`, `openPanel`, `openSettings`, `composers`, `playAudio`, `pickImages` (optional; older apps lack it), and `i18n`. Import hooks such as `usePaseo`, `useRpc`, `useSubscription`, `useSettings`, `useWorkspace`, `useAgent`, and `useTabState` from `@getpaseo/plugin/client`.
 
 ### Server contributions
 
