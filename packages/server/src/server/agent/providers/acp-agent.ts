@@ -120,6 +120,7 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "../create-agent-mode.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { StaleProviderSessionError } from "../stale-provider-session-error.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -2240,6 +2241,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.settleCommandsReady();
   }
 
+  private canResumeSession(): boolean {
+    return Boolean(
+      this.agentCapabilities?.loadSession || this.agentCapabilities?.sessionCapabilities?.resume,
+    );
+  }
+
   private async closeAfterInitializationFailure(error: unknown): Promise<never> {
     try {
       await this.close();
@@ -2280,7 +2287,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`${this.provider} session is not initialized`);
     }
     if (this.connection.signal.aborted) {
-      throw new Error(describeACPDisconnect(this.child));
+      const disconnect = describeACPDisconnect(this.child);
+      // The caller reopens a resumable session from persistence, on a new process.
+      if (this.canResumeSession()) {
+        throw new StaleProviderSessionError(this.sessionId, `after ${disconnect}`);
+      }
+      throw new Error(disconnect);
     }
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
@@ -3323,6 +3335,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (this.closed || this.historyRuntimeReleased) {
         return;
       }
+      this.logger.warn(
+        { pid: child.pid, code, signal, idle: !this.activeForegroundTurnId },
+        "ACP agent process exited unexpectedly",
+      );
       if (this.activeForegroundTurnId) {
         this.synthesizeCanceledToolCalls();
         this.finishTurn({
