@@ -2164,7 +2164,7 @@ export class AgentManager {
       await this.drainSessionEvents(agentId);
       this.cancelRunningProviderSubagents(agentId);
       this.clearProviderBackgroundWork(agentId);
-      closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      closedExisting = await this.prepareAgentForClosure(existing, "agent reloaded");
       await this.persistSnapshot(closedExisting);
       this.assertAcceptingAgentRegistrations();
 
@@ -2446,7 +2446,7 @@ export class AgentManager {
     this.cancelRunningProviderSubagents(agentId);
     // close() drops the session's subscribers before the provider could report an empty list.
     this.clearProviderBackgroundWork(agentId);
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
+    const closedAgent = await this.prepareAgentForClosure(agent, "agent closed");
 
     let persistError: unknown;
     try {
@@ -4541,7 +4541,7 @@ export class AgentManager {
   async deleteAgentState(agentId: string, deletedCwd?: string): Promise<void> {
     const agent = this.agents.get(agentId) ?? (await this.registry?.get(agentId));
     const cwd = deletedCwd ?? agent?.cwd;
-    if (cwd && (this.latestTurnChangesEnabled || agent?.latestTurnChanges || deletedCwd)) {
+    if (cwd) {
       await this.tryReleaseTurnComparison(cwd, agentId, true);
     }
     this.discardRetainedAgentState(agentId);
@@ -5099,13 +5099,10 @@ export class AgentManager {
     };
   }
 
-  private prepareAgentForClosure(
+  private async prepareAgentForClosure(
     agent: LiveManagedAgent,
     cancelReason: string,
-  ): ManagedAgentClosed {
-    const before = agent.pendingTurnChanges?.before;
-    agent.pendingTurnChanges = undefined;
-    if (before) this.trackBackgroundTask(this.tryReleaseTurnBaseline(agent, before));
+  ): Promise<ManagedAgentClosed> {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -5120,6 +5117,14 @@ export class AgentManager {
       turnId,
     }));
     this.runs.clearAgentRun(agent.id);
+    if (agent.pendingTurnChanges) {
+      agent.pendingTurnChanges = undefined;
+      agent.latestTurnChanges = null;
+      // Finish cleanup before a reopened agent can retain a new baseline.
+      const cleanup = this.tryReleaseTurnComparison(agent.cwd, agent.id, true);
+      this.trackBackgroundTask(cleanup);
+      await cleanup;
+    }
     return {
       ...agent,
       lifecycle: "closed",

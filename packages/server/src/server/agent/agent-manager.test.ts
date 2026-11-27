@@ -16649,6 +16649,65 @@ test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
   },
 );
 
+test("turn capture clears the previous comparison when shutdown closes an unfinished turn", async () => {
+  const scratch = mkdtempSync(join(tmpdir(), "paseo-turn-shutdown-"));
+  const cwd = join(scratch, "repo");
+  mkdirSync(cwd);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  git("init", "-b", "main");
+
+  const storagePath = join(scratch, "agents");
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new (class extends TestAgentSession {
+        private runs = 0;
+
+        override async startTurn() {
+          const turnId = `shutdown-turn-${++this.runs}`;
+          if (this.runs === 1) {
+            writeFileSync(join(cwd, "first.txt"), "first turn\n");
+            this.pushEvent({ type: "turn_completed", provider: "codex", turnId });
+          }
+          return { turnId };
+        }
+      })(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(storagePath, logger),
+    latestTurnChangesEnabled: true,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await drainAsyncGenerator(manager.streamAgent(agent.id, "first"));
+    expect(manager.getAgent(agent.id)?.latestTurnChanges?.turnId).toBe("shutdown-turn-1");
+
+    const unfinished = drainAsyncGenerator(manager.streamAgent(agent.id, "second"));
+    await manager.waitForAgentRunStart(agent.id);
+    expect(manager.getAgent(agent.id)?.activeForegroundTurnId).toBe("shutdown-turn-2");
+    const refs = () => git("for-each-ref", "--format=%(refname)", "refs/paseo/turn-changes/");
+    expect(refs()).toContain("/pending");
+
+    manager.prepareForShutdown();
+    await manager.closeAgent(agent.id);
+    await unfinished;
+    await manager.flushForShutdown();
+
+    const record = await new AgentStorage(storagePath, logger).get(agent.id);
+    expect(record?.lastStatus).toBe("closed");
+    expect(record?.latestTurnChanges).toBeUndefined();
+    expect(refs()).toBe("");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flushForShutdown();
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 class LaunchWrapRecordingClient extends TestAgentClient {
   readonly sessions: CloseRecordingTestAgentSession[] = [];
   readonly launchContexts: Array<AgentLaunchContext | undefined> = [];

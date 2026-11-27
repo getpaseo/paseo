@@ -3865,9 +3865,9 @@ export class Session {
 
   private async deleteAgentState(
     agentId: string,
-    agent: Pick<ManagedAgent, "cwd" | "workspaceId" | "latestTurnChanges"> | null,
+    agent: Pick<ManagedAgent, "cwd" | "workspaceId"> | null,
   ): Promise<void> {
-    if (!agent || !(agent.latestTurnChanges || this.agentManager.latestTurnChangesEnabled)) {
+    if (!agent) {
       return this.agentManager.deleteAgentState(agentId);
     }
     if (agent.workspaceId) {

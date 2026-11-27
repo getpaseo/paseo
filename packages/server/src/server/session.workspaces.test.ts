@@ -6247,12 +6247,20 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
   }
 });
 
-test("deleting an archived agent removes snapshot refs from its bare worktree repository", async () => {
+test.each([
+  { scenario: "settled and pending captures in a removed checkout", settled: true, removed: true },
+  { scenario: "a first pending capture in a removed checkout", settled: false, removed: true },
+  { scenario: "a first pending capture in an existing checkout", settled: false, removed: false },
+])("deletion cleans $scenario with capture disabled", async ({ settled, removed }) => {
   const scratch = mkdtempSync(path.join(tmpdir(), "session-bare-turn-snapshots-"));
   const root = path.join(scratch, "repo.git");
   const cwd = path.join(scratch, "checkout");
   const git = (args: string[], gitCwd = scratch) =>
-    execFileSync("git", args, { cwd: gitCwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync("git", args, {
+      cwd: gitCwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
   try {
     git(["init", "-b", "main", "seed"]);
     git(
@@ -6276,6 +6284,7 @@ test("deleting an archived agent removes snapshot refs from its bare worktree re
     const commit = git(["rev-parse", "HEAD"], cwd).trim();
     const changes = { turnId: "turn-1", before: commit, after: commit };
     const now = "2026-03-01T12:00:00.000Z";
+    const archivedAt = removed ? now : null;
     const workspace = createPersistedWorkspaceRecord({
       workspaceId: "ws-bare-turn-snapshots",
       projectId: "proj-bare-turn-snapshots",
@@ -6286,7 +6295,7 @@ test("deleting an archived agent removes snapshot refs from its bare worktree re
       displayName: "checkout",
       createdAt: now,
       updatedAt: now,
-      archivedAt: now,
+      archivedAt,
     });
     const agent = {
       ...makeStoredAgent({
@@ -6295,13 +6304,15 @@ test("deleting an archived agent removes snapshot refs from its bare worktree re
         updatedAt: now,
         workspaceId: workspace.workspaceId,
       }),
-      latestTurnChanges: changes,
-      archivedAt: now,
+      latestTurnChanges: settled ? changes : undefined,
+      archivedAt,
     };
+    if (settled) {
+      await retainTurnBaseline(cwd, agent.id, commit);
+      await retainTurnComparison(cwd, agent.id, changes);
+    }
     await retainTurnBaseline(cwd, agent.id, commit);
-    await retainTurnComparison(cwd, agent.id, changes);
-    await retainTurnBaseline(cwd, agent.id, commit);
-    git(["--git-dir", root, "worktree", "remove", cwd]);
+    if (removed) git(["--git-dir", root, "worktree", "remove", cwd]);
     const refs = () =>
       git(["--git-dir", root, "for-each-ref", "--format=%(refname)", "refs/paseo/turn-changes/"]);
     expect(
@@ -6309,15 +6320,21 @@ test("deleting an archived agent removes snapshot refs from its bare worktree re
         .trimEnd()
         .split("\n")
         .map((ref) => path.posix.basename(ref)),
-    ).toEqual(["after", "before", "pending"]);
+    ).toEqual(settled ? ["after", "before", "pending"] : ["pending"]);
 
     const logger = createTestLogger();
     const storage = new AgentStorage(path.join(scratch, "agents"), logger);
     await storage.upsert(agent);
-    const manager = new AgentManager({ clients: {}, registry: storage, logger });
+    const manager = new AgentManager({
+      clients: {},
+      registry: storage,
+      latestTurnChangesEnabled: false,
+      logger,
+    });
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForWorkspaceTests({
       agentManager: {
+        latestTurnChangesEnabled: manager.latestTurnChangesEnabled,
         closeAgent: manager.closeAgent.bind(manager),
         flush: manager.flush.bind(manager),
         deleteAgentState: manager.deleteAgentState.bind(manager),
