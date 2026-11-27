@@ -1434,7 +1434,9 @@ export class OpenCodeAgentClient implements AgentClient {
     this.createOpenCodeClient = deps.createClient ?? createSdkOpenCodeClient;
     this.serverManager =
       deps.serverManager ??
-      OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
+      OpenCodeServerManager.getInstance({
+        logger: this.logger,
+        runtimeSettings,
         managedProcesses: deps.managedProcesses,
         resolveHomeDir: deps.resolveHomeDir,
         createEventSource: ({ serverUrl, processExit, listening, logger: eventLogger }) =>
@@ -1448,6 +1450,7 @@ export class OpenCodeAgentClient implements AgentClient {
         decorateServerEnv: this.bridge
           ? (env) => this.bridge?.decorateServerEnv(env) ?? env
           : undefined,
+        scope: this.bridge ?? deps.managedProcesses,
       });
     this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
   }
