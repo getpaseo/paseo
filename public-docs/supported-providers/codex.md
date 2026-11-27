@@ -57,7 +57,7 @@ If the command is not found:
 1. Install the [Codex CLI](https://developers.openai.com/codex/cli).
 2. Sign in with `codex login` or an API key.
 3. If the Paseo daemon was already running when you installed the CLI, restart Paseo.
-4. In Paseo, open **Settings → Hosts → your host → Providers → Codex** and select **Refresh**.
+4. In Paseo, open **Settings → Host → Providers → Codex** and select **Refresh**.
 
 Codex becomes available once Paseo can find and start the `codex` command.
 

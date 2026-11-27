@@ -293,6 +293,7 @@ export const en = {
     archived: {
       callout: "This agent is archived",
       unarchive: "Unarchive",
+      unarchiving: "Unarchiving...",
     },
   },
   sessions: {
@@ -653,6 +654,24 @@ export const en = {
         failedToLoad: "Failed to load page",
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
+      },
+      routing: {
+        tooltipHost: "Browsing through {{hostName}}. Click to browse locally.",
+        tooltipLocal: "Browsing locally. Click to browse through {{hostName}}.",
+        switchToLocal: "Switch browser routing from {{hostName}} to Local",
+        switchToHost: "Switch browser routing from Local to {{hostName}}",
+      },
+      proxy: {
+        connecting: "Connecting to {{hostName}}...",
+        reconnecting: "Reconnecting to {{hostName}}...",
+        updateTitle: "Update {{hostName}} to browse through this host",
+        updateDescription: "This host does not support browser proxying yet.",
+        routedTitle: "Browser proxy is not available for routed hosts",
+        routedDescription: "Connect directly to this host or browse locally.",
+        offlineTitle: "{{hostName}} is offline",
+        offlineDescription: "Wait for the host to reconnect or browse locally.",
+        errorTitle: "Could not connect browser proxy",
+        browseLocally: "Browse locally",
       },
     },
     terminal: {
@@ -2409,7 +2428,7 @@ export const en = {
     title: "Settings",
     loading: "Loading settings...",
     groups: {
-      app: "App",
+      app: "This device",
       host: "Host",
     },
     hostPicker: {
@@ -2427,7 +2446,9 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat & panes",
       appearance: "Appearance",
       sidebar: "Sidebar",
       editor: "Editor",
@@ -2440,6 +2461,16 @@ export const en = {
       permissions: "Permissions",
       diagnostics: "Diagnostics",
       about: "About",
+    },
+    clientHosts: {
+      title: "Saved hosts",
+      info: "Hosts this device connects to. Names, icons, badges, and routes here only affect this device.",
+      backToHosts: "Back to hosts",
+      routesTitle: "How this device connects",
+      routesInfo:
+        "Saved routes this device uses to reach this host. Paseo picks the fastest available route.",
+      addRoute: "Add route",
+      activeRoute: "Active",
     },
     layout: {
       openInSidePane: {
@@ -2495,6 +2526,48 @@ export const en = {
     },
     notifications: {
       title: "Notifications",
+      enabled: {
+        label: "Enable notifications",
+        description: "Receive notifications from agents, terminals, and plugins on this device",
+        pausedDescription: "All notifications, including plugins, are paused on this device",
+      },
+      events: {
+        title: "Events",
+        agentPermission: {
+          label: "Agent needs permission",
+          description: "Approvals, plans, and questions",
+        },
+        agentError: {
+          label: "Agent errored",
+          description: "When an agent stops with an error",
+        },
+        agentFinished: {
+          label: "Agent finished",
+          description: "When an agent completes a turn",
+        },
+        terminalNeedsInput: {
+          label: "Terminal needs input",
+          description: "When a terminal command is waiting for input",
+        },
+        terminalFinished: {
+          label: "Terminal finished",
+          description: "When a terminal command finishes",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Plugin notifications",
+          description: "Allow installed plugins to send notifications",
+        },
+        empty: "Installed plugins appear here so you can mute them individually",
+      },
+      legacyHostTitle: "Update host for push preferences",
+      legacyHostHint:
+        "Update connected hosts to sync custom push notification preferences from this device",
+      desktop: {
+        title: "System",
+      },
       permission: "Notification permission",
       refreshAccessibility: "Refresh notification permission",
       playSound: "Play sound",
@@ -2512,6 +2585,7 @@ export const en = {
       projects: "Projects",
       connections: "Connections",
       agents: "Agents",
+      tools: "Tools & prompts",
       agentProfiles: "Agent profiles",
       metadata: "Metadata",
       voice: "Voice",
@@ -2521,6 +2595,7 @@ export const en = {
       terminals: "Terminals",
       plugins: "Plugins",
       host: "Overview",
+      daemon: "Daemon",
     },
     plugins: {
       gallery: pluginGallery.en,
@@ -2591,7 +2666,7 @@ export const en = {
     metadataGeneration: {
       title: "Metadata generation",
       description:
-        "Choose the model Paseo uses for workspace titles, branch names, commit messages, and pull request drafts",
+        "Choose the model and instructions Paseo uses for workspace titles, branch names, commit messages, and pull request drafts",
       selection: "Model selection",
       automatic: "Automatic",
       preferred: "Manual",
@@ -2599,6 +2674,10 @@ export const en = {
       preferredHint: "Choose the model Paseo uses",
       model: "Model",
       modelHint: "Only this model is used. If it fails, Paseo does not try another model",
+      instructions: "Instructions",
+      instructionsHint: "Applied to all generated metadata on this host",
+      instructionsPlaceholder:
+        "Example: Write in Simplified Chinese. Keep phrasing consistent across titles and commits. Do not use em dashes.",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
     },
@@ -3086,9 +3165,9 @@ export const en = {
         rowTitle: "Pair a device",
       },
       skills: {
-        sectionTitle: "Orchestration skills",
-        title: "Orchestration skills",
-        description: "Teach your agents how to use Paseo tools",
+        sectionTitle: "Skills",
+        title: "Paseo skills",
+        description: "Install bundled help, plugin, and orchestration skills",
         docs: "Skills",
         openDocs: "Open skills documentation",
         unavailable: "Connect to this host to manage orchestration skills",
@@ -3125,6 +3204,10 @@ export const en = {
           update: "Update skill",
           delete: "Delete skill",
         },
+      },
+      tools: {
+        instructionsTitle: "Instructions",
+        toolsTitle: "Agent tools",
       },
       orchestration: {
         title: "Orchestration",
@@ -3192,6 +3275,8 @@ export const en = {
       },
       agentProfiles: {
         sectionTitle: "Agent profiles",
+        sectionDescription:
+          "Save agent settings that you can pick quickly and that agents can use to delegate work",
         unavailable: "Connect to this host to manage agent profiles",
         unsupported: "This host runs a daemon that does not support agent profiles yet",
         emptyState: "No profiles yet. Add one to start agents from a saved provider and model.",
@@ -3215,6 +3300,9 @@ export const en = {
         featuresLabel: "Features",
         featureCount: "{{count}} features",
         featureCountOne: "{{count}} feature",
+        systemPromptLabel: "System prompt",
+        systemPromptPlaceholder: "Focus on layout, accessibility, and design tokens.",
+        systemPromptHint: "Applies to new agents only",
         notesLabel: "When to use",
         notesPlaceholder: "Use for UI work — components, layout and design tokens.",
         notesHint: "Tells agents when to pick this profile",
@@ -3252,6 +3340,7 @@ export const en = {
         },
       },
       daemon: {
+        runtimeTitle: "Agent runtime",
         rename: {
           editLabel: "Edit label",
           title: "Rename host",

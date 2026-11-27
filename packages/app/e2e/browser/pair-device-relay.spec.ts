@@ -97,6 +97,11 @@ test("turns Tailscale on and off from Devices, asking first over Tailscale", asy
       const restoreSpeed = await slowConnectionToHost(page, daemon.port, 300);
       await expectTailscaleRowLoadsOn(page, address, () => openSetupMobileStep(page, daemon));
       await expectTailscaleRowLoadsOn(page, address, () => preparePairingHost(page, daemon));
+      await test.step("Turning Tailscale off and back on settles over a slow connection", async () => {
+        await disableTailscale(page, address);
+        await enableTailscale(page);
+        await expectTailscaleAddress(page, address);
+      });
       restoreSpeed();
     });
 

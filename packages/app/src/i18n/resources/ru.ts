@@ -298,6 +298,7 @@ export const ru: TranslationResources = {
     archived: {
       callout: "Этот агент находится в архиве",
       unarchive: "Разархивировать",
+      unarchiving: "Разархивация...",
     },
   },
   sessions: {
@@ -662,6 +663,24 @@ export const ru: TranslationResources = {
         invalidUrl: "Недопустимый URL браузера",
         unsupportedProtocol:
           "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",
+      },
+      routing: {
+        tooltipHost: "Просмотр через {{hostName}}. Нажмите, чтобы перейти в локальный режим.",
+        tooltipLocal: "Локальный просмотр. Нажмите, чтобы просматривать через {{hostName}}.",
+        switchToLocal: "Переключить маршрутизацию браузера с {{hostName}} на локальную",
+        switchToHost: "Переключить маршрутизацию браузера с локальной на {{hostName}}",
+      },
+      proxy: {
+        connecting: "Подключение к {{hostName}}...",
+        reconnecting: "Повторное подключение к {{hostName}}...",
+        updateTitle: "Обновите {{hostName}}, чтобы просматривать через этот хост",
+        updateDescription: "Этот хост пока не поддерживает проксирование браузера.",
+        routedTitle: "Прокси браузера недоступен для маршрутизируемых хостов",
+        routedDescription: "Подключитесь к хосту напрямую или просматривайте локально.",
+        offlineTitle: "{{hostName}} не в сети",
+        offlineDescription: "Дождитесь повторного подключения хоста или просматривайте локально.",
+        errorTitle: "Не удалось подключить прокси браузера",
+        browseLocally: "Просматривать локально",
       },
     },
     terminal: {
@@ -2420,7 +2439,7 @@ export const ru: TranslationResources = {
     title: "Настройки",
     loading: "Загрузка настроек...",
     groups: {
-      app: "Приложение",
+      app: "Это устройство",
       host: "Хост",
     },
     hostPicker: {
@@ -2438,7 +2457,9 @@ export const ru: TranslationResources = {
     groupInfo: "О разделе «{{title}}»",
     sections: {
       general: "Основные",
+      hosts: "Хосты",
       chat: "Чат",
+      chatAndPanes: "Чат и панели",
       appearance: "Оформление",
       sidebar: "Боковая панель",
       terminal: "Терминал",
@@ -2451,6 +2472,16 @@ export const ru: TranslationResources = {
       permissions: "Разрешения",
       diagnostics: "Диагностика",
       about: "О приложении",
+    },
+    clientHosts: {
+      title: "Сохранённые хосты",
+      info: "Хосты, к которым подключается это устройство. Имена, значки, бейджи и маршруты здесь влияют только на это устройство.",
+      backToHosts: "Назад к хостам",
+      routesTitle: "Как подключается это устройство",
+      routesInfo:
+        "Сохранённые маршруты, по которым это устройство подключается к хосту. Paseo выбирает самый быстрый.",
+      addRoute: "Добавить маршрут",
+      activeRoute: "Активный",
     },
     layout: en.settings.layout,
     editor: {
@@ -2468,6 +2499,49 @@ export const ru: TranslationResources = {
     },
     notifications: {
       title: "Уведомления",
+      enabled: {
+        label: "Включить уведомления",
+        description: "Получать уведомления от агентов, терминалов и плагинов на этом устройстве",
+        pausedDescription:
+          "Все уведомления, включая уведомления от плагинов, приостановлены на этом устройстве",
+      },
+      events: {
+        title: "События",
+        agentPermission: {
+          label: "Агенту требуется разрешение",
+          description: "Подтверждения, планы и вопросы",
+        },
+        agentError: {
+          label: "Ошибка агента",
+          description: "Когда агент останавливается из-за ошибки",
+        },
+        agentFinished: {
+          label: "Агент завершил работу",
+          description: "Когда агент завершает ход",
+        },
+        terminalNeedsInput: {
+          label: "Терминал ожидает ввода",
+          description: "Когда команда в терминале ждёт ввода",
+        },
+        terminalFinished: {
+          label: "Терминал завершил команду",
+          description: "Когда команда в терминале завершается",
+        },
+      },
+      plugins: {
+        title: "Плагины",
+        enabled: {
+          label: "Уведомления плагинов",
+          description: "Разрешить установленным плагинам отправлять уведомления",
+        },
+        empty: "Установленные плагины появятся здесь, чтобы вы могли отключать их по отдельности",
+      },
+      legacyHostTitle: "Обновите хост для настроек push-уведомлений",
+      legacyHostHint:
+        "Обновите подключённые хосты для синхронизации настроек push-уведомлений с этого устройства",
+      desktop: {
+        title: "Система",
+      },
       permission: "Разрешение на уведомления",
       refreshAccessibility: "Обновить разрешение на уведомления",
       playSound: "Воспроизводить звук",
@@ -2485,6 +2559,7 @@ export const ru: TranslationResources = {
       projects: "Проекты",
       connections: "Подключения",
       agents: "Агенты",
+      tools: "Инструменты и промпты",
       agentProfiles: "Профили агентов",
       metadata: "Метаданные",
       voice: "Голос",
@@ -2494,12 +2569,13 @@ export const ru: TranslationResources = {
       terminals: "Терминалы",
       plugins: "Плагины",
       host: "Обзор",
+      daemon: "Демон",
     },
     plugins: pluginSettings.ru,
     metadataGeneration: {
       title: "Генерация метаданных",
       description:
-        "Выберите модель, которую Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов и черновиков PR",
+        "Выберите модель и инструкции, которые Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов и черновиков PR",
       selection: "Выбор модели",
       automatic: "Автоматически",
       preferred: "Вручную",
@@ -2508,6 +2584,10 @@ export const ru: TranslationResources = {
       model: "Модель",
       modelHint:
         "Используется только эта модель. Если она не сработает, Paseo не будет пробовать другую модель",
+      instructions: "Инструкции",
+      instructionsHint: "Применяются ко всем метаданным, создаваемым на этом хосте",
+      instructionsPlaceholder:
+        "Пример: Пиши на русском языке. Сохраняй единый стиль в названиях и коммитах. Не используй длинное тире.",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
     },
@@ -3007,9 +3087,9 @@ export const ru: TranslationResources = {
         rowTitle: "Подключить устройство",
       },
       skills: {
-        sectionTitle: "Навыки оркестрации",
-        title: "Навыки оркестрации",
-        description: "Научите агентов пользоваться инструментами Paseo",
+        sectionTitle: "Навыки",
+        title: "Навыки Paseo",
+        description: "Установить встроенные навыки справки, плагинов и оркестрации",
         docs: "Навыки",
         openDocs: "Открыть документацию по навыкам",
         unavailable: "Подключитесь к этому хосту, чтобы управлять навыками оркестрации",
@@ -3046,6 +3126,10 @@ export const ru: TranslationResources = {
           update: "Обновить навык",
           delete: "Удалить навык",
         },
+      },
+      tools: {
+        instructionsTitle: "Инструкции",
+        toolsTitle: "Инструменты агентов",
       },
       orchestration: {
         title: "Оркестрация",
@@ -3114,6 +3198,8 @@ export const ru: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Профили агентов",
+        sectionDescription:
+          "Сохраняйте настройки агентов, чтобы быстро выбирать их и позволять агентам использовать их при делегировании задач",
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями агентов",
         unsupported: "На этом хосте запущен демон, который пока не поддерживает профили агентов",
         emptyState:
@@ -3138,6 +3224,9 @@ export const ru: TranslationResources = {
         featuresLabel: "Функции",
         featureCount: "Функции: {{count}}",
         featureCountOne: "{{count}} функция",
+        systemPromptLabel: "Системный промпт",
+        systemPromptPlaceholder: "Сосредоточься на вёрстке, доступности и дизайн-токенах.",
+        systemPromptHint: "Применяется только к новым агентам",
         notesLabel: "Когда использовать",
         notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
         notesHint: "Помогает агентам выбрать этот профиль при запуске другого агента.",
@@ -3175,6 +3264,7 @@ export const ru: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "Среда выполнения агентов",
         rename: {
           editLabel: "Изменить название",
           title: "Переименовать хост",

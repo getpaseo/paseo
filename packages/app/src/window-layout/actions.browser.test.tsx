@@ -1,8 +1,9 @@
-import React, { act } from "react";
+import React, { act, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { PortalProvider } from "@gorhom/portal";
 import { afterEach, expect, it, vi } from "vitest";
 import { Text } from "react-native";
+import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { page } from "vitest/browser";
 import {
   DropdownMenu,
@@ -14,7 +15,7 @@ import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import type { WindowLayout } from "./model";
 import { WindowLayoutContext } from "./context";
 import { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
-import { WindowLayoutDivisionGap } from "./surface";
+import { WindowLayoutDivisionGap, WindowLayoutSurface } from "./surface";
 import { lightTheme } from "@/styles/theme";
 
 vi.stubGlobal("React", React);
@@ -30,6 +31,40 @@ document.body.appendChild(container);
 const root = createRoot(container);
 afterEach(() => {
   act(() => root.render(null));
+});
+
+const statusBarInsets = { top: 24, left: 0, right: 0, bottom: 20 };
+const statusBarSurfaceStyle = { height: 200 };
+it("clears the status bar in wide layouts without applying the top inset twice", () => {
+  function Header() {
+    const insets = useSafeAreaInsets();
+    const style = useMemo(() => ({ paddingTop: insets.top }), [insets.top]);
+    return (
+      <button type="button" style={style}>
+        Tabs
+      </button>
+    );
+  }
+  for (const compact of [false, true]) {
+    act(() =>
+      root.render(
+        <SafeAreaInsetsContext.Provider value={statusBarInsets}>
+          <WindowLayoutSurface compact={compact} style={statusBarSurfaceStyle}>
+            <Header />
+          </WindowLayoutSurface>
+        </SafeAreaInsetsContext.Provider>,
+      ),
+    );
+    const surface = container.firstElementChild as HTMLElement;
+    const button = container.querySelector("button")!;
+    expect(getComputedStyle(surface).paddingTop).toBe(compact ? "0px" : "24px");
+    expect(getComputedStyle(button).paddingTop).toBe(compact ? "24px" : "0px");
+    if (!compact) {
+      expect(button.getBoundingClientRect().top - surface.getBoundingClientRect().top).toBe(24);
+      const rect = button.getBoundingClientRect();
+      expect(document.elementFromPoint(rect.left + rect.width / 2, rect.top + 1)).toBe(button);
+    }
+  }
 });
 
 it("paints the reserved division with the sidebar surface", () => {

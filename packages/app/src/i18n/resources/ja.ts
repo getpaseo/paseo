@@ -299,6 +299,7 @@ export const ja: TranslationResources = {
     archived: {
       callout: "このエージェントはアーカイブされています",
       unarchive: "アーカイブ解除",
+      unarchiving: "アーカイブ解除中...",
     },
   },
   sessions: {
@@ -660,6 +661,24 @@ export const ja: TranslationResources = {
         failedToLoad: "ページの読み込みに失敗しました",
         invalidUrl: "無効なブラウザURL",
         unsupportedProtocol: "サポートされていないブラウザURLをブロック: {{protocol}}",
+      },
+      routing: {
+        tooltipHost: "{{hostName}} 経由で閲覧中。クリックしてローカルで閲覧。",
+        tooltipLocal: "ローカルで閲覧中。クリックして {{hostName}} 経由で閲覧。",
+        switchToLocal: "ブラウザルーティングを {{hostName}} からローカルに切り替え",
+        switchToHost: "ブラウザルーティングをローカルから {{hostName}} に切り替え",
+      },
+      proxy: {
+        connecting: "{{hostName}} に接続中...",
+        reconnecting: "{{hostName}} に再接続中...",
+        updateTitle: "このホスト経由で閲覧するには {{hostName}} を更新してください",
+        updateDescription: "このホストはまだブラウザプロキシに対応していません。",
+        routedTitle: "ルーティングされたホストではブラウザプロキシを利用できません",
+        routedDescription: "このホストに直接接続するか、ローカルで閲覧してください。",
+        offlineTitle: "{{hostName}} はオフラインです",
+        offlineDescription: "ホストの再接続を待つか、ローカルで閲覧してください。",
+        errorTitle: "ブラウザプロキシに接続できませんでした",
+        browseLocally: "ローカルで閲覧",
       },
     },
     terminal: {
@@ -2404,7 +2423,7 @@ export const ja: TranslationResources = {
     title: "設定",
     loading: "設定を読み込み中...",
     groups: {
-      app: "アプリ",
+      app: "このデバイス",
       host: "ホスト",
     },
     hostPicker: {
@@ -2422,7 +2441,9 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
+      hosts: "ホスト",
       chat: "チャット",
+      chatAndPanes: "チャットとペイン",
       appearance: "外観",
       sidebar: "サイドバー",
       terminal: "ターミナル",
@@ -2435,6 +2456,16 @@ export const ja: TranslationResources = {
       permissions: "権限",
       diagnostics: "診断",
       about: "アプリ情報",
+    },
+    clientHosts: {
+      title: "保存済みホスト",
+      info: "このデバイスが接続するホストです。ここでの名前、アイコン、バッジ、経路はこのデバイスにのみ反映されます。",
+      backToHosts: "ホスト一覧に戻る",
+      routesTitle: "このデバイスの接続経路",
+      routesInfo:
+        "このデバイスがこのホストに到達するために保存された経路です。Paseoは利用可能な最速の経路を選びます。",
+      addRoute: "経路を追加",
+      activeRoute: "接続中",
     },
     layout: en.settings.layout,
     editor: {
@@ -2452,6 +2483,48 @@ export const ja: TranslationResources = {
     },
     notifications: {
       title: "通知",
+      enabled: {
+        label: "通知を有効にする",
+        description: "このデバイスでエージェント、ターミナル、プラグインからの通知を受け取ります",
+        pausedDescription: "プラグインを含むすべての通知がこのデバイスで一時停止されています",
+      },
+      events: {
+        title: "イベント",
+        agentPermission: {
+          label: "エージェントが権限を要求",
+          description: "承認、プラン、質問",
+        },
+        agentError: {
+          label: "エージェントのエラー",
+          description: "エージェントがエラーで停止したとき",
+        },
+        agentFinished: {
+          label: "エージェントが完了",
+          description: "エージェントがターンを完了したとき",
+        },
+        terminalNeedsInput: {
+          label: "ターミナルが入力を待機",
+          description: "ターミナルコマンドが入力を待っているとき",
+        },
+        terminalFinished: {
+          label: "ターミナルが完了",
+          description: "ターミナルコマンドが完了したとき",
+        },
+      },
+      plugins: {
+        title: "プラグイン",
+        enabled: {
+          label: "プラグイン通知",
+          description: "インストール済みプラグインによる通知の送信を許可します",
+        },
+        empty: "インストールされたプラグインがここに表示され、個別にミュートできます",
+      },
+      legacyHostTitle: "プッシュ通知設定にはホストの更新が必要です",
+      legacyHostHint:
+        "このデバイスのカスタムプッシュ通知設定を同期するには、接続中のホストを更新してください",
+      desktop: {
+        title: "システム",
+      },
       permission: "通知の権限",
       refreshAccessibility: "通知の権限を更新",
       playSound: "サウンドを再生",
@@ -2469,6 +2542,7 @@ export const ja: TranslationResources = {
       projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
+      tools: "ツールとプロンプト",
       agentProfiles: "エージェントプロファイル",
       metadata: "メタデータ",
       voice: "音声",
@@ -2478,12 +2552,13 @@ export const ja: TranslationResources = {
       terminals: "ターミナル",
       plugins: "プラグイン",
       host: "概要",
+      daemon: "デーモン",
     },
     plugins: pluginSettings.ja,
     metadataGeneration: {
       title: "メタデータ生成",
       description:
-        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルを選択します",
+        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルと指示を選択します",
       selection: "モデル選択",
       automatic: "自動",
       preferred: "手動",
@@ -2491,6 +2566,10 @@ export const ja: TranslationResources = {
       preferredHint: "Paseo が使用するモデルを選択します",
       model: "モデル",
       modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
+      instructions: "指示",
+      instructionsHint: "このホストで生成されるすべてのメタデータに適用されます",
+      instructionsPlaceholder:
+        "例：日本語で書く。タイトルとコミットメッセージの表現を統一する。全角ダッシュを使わない。",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
     },
@@ -3021,6 +3100,10 @@ export const ja: TranslationResources = {
           delete: "スキルを削除",
         },
       },
+      tools: {
+        instructionsTitle: "指示",
+        toolsTitle: "エージェントツール",
+      },
       orchestration: {
         title: "オーケストレーション",
         unavailable: "オーケストレーションを管理するにはこのホストに接続してください",
@@ -3088,6 +3171,8 @@ export const ja: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "エージェントプロファイル",
+        sectionDescription:
+          "素早く選べるエージェント設定を保存します。エージェントが作業を委任するときにも使えます",
         unavailable: "エージェントプロファイルを管理するにはこのホストに接続してください",
         unsupported: "このホストで動作するデーモンはまだエージェントプロファイルに対応していません",
         emptyState:
@@ -3112,6 +3197,10 @@ export const ja: TranslationResources = {
         featuresLabel: "機能",
         featureCount: "{{count}}個の機能",
         featureCountOne: "{{count}}個の機能",
+        systemPromptLabel: "システムプロンプト",
+        systemPromptPlaceholder:
+          "レイアウト、アクセシビリティ、デザイントークンに集中してください。",
+        systemPromptHint: "新しいエージェントにのみ適用されます",
         notesLabel: "使用する場面",
         notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
         notesHint: "別のエージェントを起動するとき、このプロファイルを選ぶために使用されます。",
@@ -3149,6 +3238,7 @@ export const ja: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "エージェントランタイム",
         rename: {
           editLabel: "ラベルを編集",
           title: "ホストの名前を変更",

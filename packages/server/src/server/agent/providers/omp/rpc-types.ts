@@ -26,6 +26,7 @@ export const OmpToolCallContentSchema = z
     id: z.string(),
     name: z.string(),
     arguments: z.unknown(),
+    intent: z.string().optional(),
   })
   .passthrough();
 
@@ -323,6 +324,7 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
       toolCallId: z.string(),
       toolName: z.string(),
       args: z.unknown(),
+      intent: z.string().optional(),
     })
     .passthrough(),
   z

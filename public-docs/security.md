@@ -130,7 +130,7 @@ Paseo checks Chromium sandbox availability each time the desktop app launches on
 
 AppImage and extracted tar archives launch with Chromium's sandbox disabled when neither is available. Use the `.deb` or `.rpm` package if you require Chromium process isolation. Passing `--no-sandbox` explicitly disables it.
 
-Open **Settings → Diagnostics → App Diagnostics** to check the sandbox state and reason. The [desktop log](/docs/troubleshooting#reading-the-logs) records the same decision.
+Open **Settings → About → App diagnostic** to check the sandbox state and reason. The [desktop log](/docs/troubleshooting#reading-the-logs) records the same decision.
 
 ## Agent authentication
 

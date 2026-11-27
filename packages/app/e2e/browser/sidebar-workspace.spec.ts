@@ -210,14 +210,14 @@ async function simulateDamagedLegacyDirectoryCache(
               return;
             }
             const stored = JSON.parse(checkpoint.payload);
-            // Read the cursors from whichever version wrote them, then store them as version 1:
-            // the format whose writer could keep a checkpoint after evicting the rows it describes.
+            // Read the cursors from whichever version wrote them, then store them as version 2:
+            // the format whose writer could keep a checkpoint after another tab evicted its rows.
             const cursors = typeof stored.version === "number" ? stored.cursors : stored;
             if (!cursors?.workspaces?.generation) {
               transaction.abort();
               return;
             }
-            store.put({ ...checkpoint, payload: JSON.stringify({ version: 1, cursors }) });
+            store.put({ ...checkpoint, payload: JSON.stringify({ version: 2, cursors }) });
             for (const row of rows) {
               if (
                 row.serverId === serverId &&

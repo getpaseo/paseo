@@ -297,6 +297,7 @@ export const it: TranslationResources = {
     archived: {
       callout: "Questo agente è archiviato",
       unarchive: "Ripristina dall'archivio",
+      unarchiving: "Ripristino dall'archivio...",
     },
   },
   sessions: {
@@ -658,6 +659,25 @@ export const it: TranslationResources = {
         failedToLoad: "Caricamento della pagina non riuscito",
         invalidUrl: "URL del browser non valido",
         unsupportedProtocol: "URL del browser non supportato bloccato: {{protocol}}",
+      },
+      routing: {
+        tooltipHost: "Navigazione tramite {{hostName}}. Fai clic per navigare in locale.",
+        tooltipLocal: "Navigazione in locale. Fai clic per navigare tramite {{hostName}}.",
+        switchToLocal: "Passa dalla navigazione tramite {{hostName}} alla navigazione in locale",
+        switchToHost: "Passa dalla navigazione in locale alla navigazione tramite {{hostName}}",
+      },
+      proxy: {
+        connecting: "Connessione a {{hostName}}...",
+        reconnecting: "Riconnessione a {{hostName}}...",
+        updateTitle: "Aggiorna {{hostName}} per navigare tramite questo host",
+        updateDescription: "Questo host non supporta ancora il proxy del browser.",
+        routedTitle:
+          "Il proxy del browser non è disponibile per gli host raggiunti tramite un intermediario",
+        routedDescription: "Connettiti direttamente a questo host oppure naviga in locale.",
+        offlineTitle: "{{hostName}} è offline",
+        offlineDescription: "Attendi che l'host si riconnetta oppure naviga in locale.",
+        errorTitle: "Impossibile connettersi al proxy del browser",
+        browseLocally: "Naviga in locale",
       },
     },
     terminal: {
@@ -2455,7 +2475,7 @@ export const it: TranslationResources = {
     title: "Impostazioni",
     loading: "Caricamento delle impostazioni...",
     groups: {
-      app: "App",
+      app: "Questo dispositivo",
       host: "Host",
     },
     hostPicker: {
@@ -2473,7 +2493,9 @@ export const it: TranslationResources = {
     groupInfo: "Informazioni su {{title}}",
     sections: {
       general: "Generali",
+      hosts: "Host",
       chat: "Chat",
+      chatAndPanes: "Chat e pannelli",
       appearance: "Aspetto",
       sidebar: "Barra laterale",
       editor: "Editor",
@@ -2486,6 +2508,16 @@ export const it: TranslationResources = {
       permissions: "Autorizzazioni",
       diagnostics: "Diagnostica",
       about: "Informazioni",
+    },
+    clientHosts: {
+      title: "Host salvati",
+      info: "Host a cui si connette questo dispositivo. Nomi, icone, contrassegni e modalità di connessione valgono solo su questo dispositivo.",
+      backToHosts: "Torna agli host",
+      routesTitle: "Come si connette questo dispositivo",
+      routesInfo:
+        "Modalità di connessione salvate per raggiungere questo host. Paseo sceglie la più veloce tra quelle disponibili.",
+      addRoute: "Aggiungi connessione",
+      activeRoute: "Attiva",
     },
     layout: {
       openInSidePane: {
@@ -2545,6 +2577,49 @@ export const it: TranslationResources = {
     },
     notifications: {
       title: "Notifiche",
+      enabled: {
+        label: "Attiva notifiche",
+        description: "Ricevi su questo dispositivo le notifiche di agenti, terminali e plugin",
+        pausedDescription:
+          "Tutte le notifiche, comprese quelle dei plugin, sono in pausa su questo dispositivo",
+      },
+      events: {
+        title: "Eventi",
+        agentPermission: {
+          label: "L'agente richiede un'autorizzazione",
+          description: "Approvazioni, piani e domande",
+        },
+        agentError: {
+          label: "Errore dell'agente",
+          description: "Quando un agente si ferma a causa di un errore",
+        },
+        agentFinished: {
+          label: "L'agente ha terminato",
+          description: "Quando un agente completa un turno",
+        },
+        terminalNeedsInput: {
+          label: "Il terminale attende un input",
+          description: "Quando un comando del terminale attende un input",
+        },
+        terminalFinished: {
+          label: "Comando del terminale completato",
+          description: "Quando un comando del terminale termina",
+        },
+      },
+      plugins: {
+        title: "Plugin",
+        enabled: {
+          label: "Notifiche dei plugin",
+          description: "Consenti ai plugin installati di inviare notifiche",
+        },
+        empty: "I plugin installati compaiono qui. Puoi disattivarne le notifiche singolarmente",
+      },
+      legacyHostTitle: "Aggiorna gli host per sincronizzare le preferenze delle notifiche push",
+      legacyHostHint:
+        "Aggiorna gli host connessi per sincronizzare le preferenze delle notifiche push impostate su questo dispositivo",
+      desktop: {
+        title: "Sistema",
+      },
       permission: "Autorizzazione alle notifiche",
       refreshAccessibility: "Aggiorna autorizzazione alle notifiche",
       playSound: "Riproduci suono",
@@ -2562,6 +2637,7 @@ export const it: TranslationResources = {
       projects: "Progetti",
       connections: "Connessioni",
       agents: "Agenti",
+      tools: "Strumenti e prompt",
       agentProfiles: "Profili agente",
       metadata: "Metadati",
       voice: "Voce",
@@ -2571,12 +2647,13 @@ export const it: TranslationResources = {
       terminals: "Terminali",
       plugins: "Plugin",
       host: "Panoramica",
+      daemon: "Daemon",
     },
     plugins: pluginSettings.it,
     metadataGeneration: {
       title: "Generazione dei metadati",
       description:
-        "Scegli il modello usato da Paseo per titoli degli ambienti di lavoro, nomi dei branch, messaggi di commit e bozze delle pull request",
+        "Scegli il modello e le istruzioni che Paseo usa per generare titoli degli ambienti di lavoro, nomi dei branch, messaggi di commit e bozze delle pull request",
       selection: "Selezione del modello",
       automatic: "Automatica",
       preferred: "Manuale",
@@ -2584,6 +2661,10 @@ export const it: TranslationResources = {
       preferredHint: "Scegli il modello usato da Paseo",
       model: "Modello",
       modelHint: "Viene usato solo questo modello. Se non funziona, Paseo non ne prova un altro",
+      instructions: "Istruzioni",
+      instructionsHint: "Si applicano a tutti i metadati generati su questo host",
+      instructionsPlaceholder:
+        "Esempio: scrivi in cinese semplificato. Usa uno stile coerente per titoli e messaggi di commit. Evita le lineette lunghe.",
       docs: "Documentazione",
       saveError: "Impossibile aggiornare la generazione dei metadati",
     },
@@ -3079,9 +3160,9 @@ export const it: TranslationResources = {
         rowTitle: "Associa un dispositivo",
       },
       skills: {
-        sectionTitle: "Skill di orchestrazione",
-        title: "Skill di orchestrazione",
-        description: "Insegna ai tuoi agenti a usare gli strumenti di Paseo",
+        sectionTitle: "Skill",
+        title: "Skill di Paseo",
+        description: "Installa le skill incluse per la guida, i plugin e l'orchestrazione",
         docs: "Skill",
         openDocs: "Apri documentazione delle skill",
         unavailable: "Connettiti a questo host per gestire le skill di orchestrazione",
@@ -3119,6 +3200,10 @@ export const it: TranslationResources = {
           update: "Aggiorna skill",
           delete: "Elimina skill",
         },
+      },
+      tools: {
+        instructionsTitle: "Istruzioni",
+        toolsTitle: "Strumenti degli agenti",
       },
       orchestration: {
         title: "Orchestrazione",
@@ -3187,6 +3272,8 @@ export const it: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Profili degli agenti",
+        sectionDescription:
+          "Salva le impostazioni degli agenti per selezionarle rapidamente. Gli agenti possono usare i profili per delegare attività",
         unavailable: "Connettiti a questo host per gestire i profili degli agenti",
         unsupported: "Questo host esegue un daemon che non supporta ancora i profili degli agenti",
         emptyState:
@@ -3211,6 +3298,9 @@ export const it: TranslationResources = {
         featuresLabel: "Funzionalità",
         featureCount: "{{count}} funzionalità",
         featureCountOne: "{{count}} funzionalità",
+        systemPromptLabel: "Prompt di sistema",
+        systemPromptPlaceholder: "Concentrati su layout, accessibilità e token di design.",
+        systemPromptHint: "Si applica solo ai nuovi agenti",
         notesLabel: "Quando usarlo",
         notesPlaceholder:
           "Usa per lavorare sull'interfaccia: componenti, disposizione e token di design.",
@@ -3245,6 +3335,7 @@ export const it: TranslationResources = {
         columns: { profile: "Profilo", runtime: "Modello e runtime", whenToUse: "Quando usarlo" },
       },
       daemon: {
+        runtimeTitle: "Runtime degli agenti",
         rename: {
           editLabel: "Modifica etichetta",
           title: "Rinomina host",

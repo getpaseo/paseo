@@ -96,6 +96,7 @@ jobs:
   publish-macos:
     needs: [create-release]
     if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') && ((github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-macos-v')))) }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -181,7 +182,7 @@ jobs:
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload packaged smoke diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: desktop-smoke-macos-${{ matrix.electron_arch }}

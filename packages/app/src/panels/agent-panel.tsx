@@ -66,6 +66,7 @@ import {
   type AgentScreenReadySyncState,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
+import { useWorkspaceArchiveUndoRestoringAgent } from "@/workspace/archive-undo";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
@@ -721,10 +722,22 @@ function ChatAgentContent({
   const historySyncGeneration = useSessionStore(
     (state) => state.sessions[serverId]?.historySyncGeneration ?? 0,
   );
-  const replicaTimelineStatus = useSessionStore((state) =>
-    agentId
-      ? selectAgentTimelineState(state.sessions[serverId], agentId).status
-      : ("cold" as const),
+  const { replicaTimelineStatus, hasImmediatelyRevealableHistory } = useSessionStore(
+    useShallow((state) => {
+      if (!agentId) {
+        return {
+          replicaTimelineStatus: "cold" as const,
+          hasImmediatelyRevealableHistory: false,
+        };
+      }
+      const timeline = selectAgentTimelineState(state.sessions[serverId], agentId);
+      return {
+        replicaTimelineStatus: timeline.status,
+        hasImmediatelyRevealableHistory:
+          timeline.status === "painted" ||
+          (timeline.status === "synced" && timeline.older === "none"),
+      };
+    }),
   );
   const hasAppliedAuthoritativeHistory = replicaTimelineStatus === "synced";
   const agentHistorySyncGeneration = useSessionStore((state) =>
@@ -1021,7 +1034,7 @@ function ChatAgentContent({
       effectiveAgent={effectiveAgent}
       routeBottomAnchorRequest={routeBottomAnchorRequest}
       hasAppliedAuthoritativeHistory={hasAppliedAuthoritativeHistory}
-      hasCachedHistory={replicaTimelineStatus === "painted"}
+      hasCachedHistory={hasImmediatelyRevealableHistory}
       toastApi={toastApi}
       toast={toastState}
       dismiss={dismissToast}
@@ -1104,6 +1117,11 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   // The dock lays out fullscreen for the same session the composer edits in.
   const composerEditingSession = useComposerEditingSession("chat");
   const isComposerFullscreen = useComposerFullscreen(composerEditingSession);
+  const isWorkspaceRestoring = useWorkspaceArchiveUndoRestoringAgent({
+    serverId,
+    workspaceId,
+    agentId,
+  });
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
   const focusRestoredComposer = useStableEvent(() => {
     if (isPaneFocused && showsComposer && hasActiveComposer) {
@@ -1180,6 +1198,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         serverId={serverId}
         isPaneFocused={isPaneFocused}
         isArchivingCurrentAgent={isArchivingCurrentAgent}
+        isWorkspaceRestoring={isWorkspaceRestoring}
         archivedAt={agentState.archivedAt}
         cwd={cwd}
         isSubmitLoading={false}
@@ -1571,6 +1590,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   serverId,
   isPaneFocused,
   isArchivingCurrentAgent,
+  isWorkspaceRestoring,
   archivedAt,
   cwd,
   isSubmitLoading,
@@ -1585,6 +1605,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   serverId: string;
   isPaneFocused: boolean;
   isArchivingCurrentAgent: boolean;
+  isWorkspaceRestoring: boolean;
   archivedAt: Date | null;
   cwd: string;
   isSubmitLoading: boolean;
@@ -1599,7 +1620,13 @@ const AgentComposerSection = memo(function AgentComposerSection({
     return null;
   }
   if (archivedAt) {
-    return <ArchivedAgentCallout serverId={serverId} agentId={agentId} />;
+    return (
+      <ArchivedAgentCallout
+        serverId={serverId}
+        agentId={agentId}
+        isWorkspaceRestoring={isWorkspaceRestoring}
+      />
+    );
   }
   if (isArchivingCurrentAgent) {
     return null;

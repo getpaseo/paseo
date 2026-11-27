@@ -1528,6 +1528,47 @@ test("waits for the daemon to acknowledge push token revocation", async () => {
   await revocation;
 });
 
+test("registers a push token with or without notification preferences", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_push_preferences",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { pushNotificationPreferences: true } });
+  await connectPromise;
+
+  client.registerPushToken("ExponentPushToken[legacy-call]");
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "register_push_token",
+    token: "ExponentPushToken[legacy-call]",
+  });
+
+  const preferences = {
+    enabled: true,
+    events: {
+      agentPermission: true,
+      agentError: true,
+      agentFinished: true,
+      terminalNeedsInput: true,
+      terminalFinished: false,
+    },
+    plugins: {
+      enabled: true,
+      muted: ["review-bot"],
+    },
+  };
+  client.registerPushToken("ExponentPushToken[with-prefs]", preferences);
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "register_push_token",
+    token: "ExponentPushToken[with-prefs]",
+    preferences,
+  });
+});
+
 test("bounds the wait for push token revocation", async () => {
   useHeartbeatClock();
   const mock = createMockTransport();

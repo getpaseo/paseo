@@ -84,6 +84,7 @@ import {
   resolveStagingUserId,
   runElectronQuitAndInstall,
   shouldInstallAppUpdateOnQuit,
+  shouldUseWindowProgressBar,
 } from "./auto-updater";
 
 describe("checkForAppUpdate", () => {
@@ -160,43 +161,109 @@ describe("checkForAppUpdate", () => {
     });
   });
 
-  it("forwards download-progress to window progress bars and renderer events", async () => {
+  it("forwards download-progress to window progress bars on non-darwin platforms and avoids idle clears", async () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const setProgressBar = vi.fn();
     const send = vi.fn();
-    getAllWindowsMock.mockReturnValue([
-      { isDestroyed: () => false, setProgressBar, webContents: { send } },
-    ]);
-    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
-      isUpdateAvailable: true,
-      updateInfo: { version: "1.2.6" },
-    });
+    try {
+      getAllWindowsMock.mockReturnValue([
+        { isDestroyed: () => false, setProgressBar, webContents: { send } },
+      ]);
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.6" },
+      });
 
-    await checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-      autoDownload: true,
-    });
-    autoUpdaterMock.handlers.get("download-progress")?.({
-      percent: 42,
-      transferred: 420,
-      total: 1000,
-      bytesPerSecond: 100,
-    });
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+        autoDownload: true,
+      });
+      expect(setProgressBar).not.toHaveBeenCalled();
 
-    expect(setProgressBar).toHaveBeenCalledWith(0.42);
-    expect(send).toHaveBeenCalledWith("paseo:event:app-update-download-progress", {
-      version: "1.2.6",
-      percent: 42,
-      transferred: 420,
-      total: 1000,
-      bytesPerSecond: 100,
-    });
+      autoUpdaterMock.handlers.get("download-progress")?.({
+        percent: 42,
+        transferred: 420,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
 
-    autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.6" });
-    expect(setProgressBar).toHaveBeenLastCalledWith(-1);
-    expect(send).toHaveBeenLastCalledWith("paseo:event:app-update-download-progress", null);
-    getAllWindowsMock.mockReturnValue([]);
+      expect(setProgressBar).toHaveBeenCalledWith(0.42);
+      expect(send).toHaveBeenCalledWith("paseo:event:app-update-download-progress", {
+        version: "1.2.6",
+        percent: 42,
+        transferred: 420,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
+
+      autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.6" });
+      expect(setProgressBar).toHaveBeenLastCalledWith(-1);
+      expect(setProgressBar).toHaveBeenCalledTimes(2);
+      expect(send).toHaveBeenLastCalledWith("paseo:event:app-update-download-progress", null);
+
+      // A subsequent idle clear (e.g., switching channels) must not call setProgressBar(-1) again.
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: false,
+        updateInfo: { version: "1.2.3" },
+      });
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "beta",
+        intent: "manual",
+      });
+      expect(setProgressBar).toHaveBeenCalledTimes(2);
+    } finally {
+      getAllWindowsMock.mockReturnValue([]);
+      platformSpy.mockRestore();
+    }
+  });
+
+  it("skips window progress bars on darwin while still forwarding renderer events", async () => {
+    expect(shouldUseWindowProgressBar("darwin")).toBe(false);
+    expect(shouldUseWindowProgressBar("win32")).toBe(true);
+    expect(shouldUseWindowProgressBar("linux")).toBe(true);
+
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const setProgressBar = vi.fn();
+    const send = vi.fn();
+    try {
+      getAllWindowsMock.mockReturnValue([
+        { isDestroyed: () => false, setProgressBar, webContents: { send } },
+      ]);
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.11" },
+      });
+
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+        autoDownload: true,
+      });
+      autoUpdaterMock.handlers.get("download-progress")?.({
+        percent: 55,
+        transferred: 550,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
+      autoUpdaterMock.handlers.get("update-downloaded")?.({ version: "1.2.11" });
+
+      expect(setProgressBar).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledWith("paseo:event:app-update-download-progress", {
+        version: "1.2.11",
+        percent: 55,
+        transferred: 550,
+        total: 1000,
+        bytesPerSecond: 100,
+      });
+      expect(send).toHaveBeenLastCalledWith("paseo:event:app-update-download-progress", null);
+    } finally {
+      getAllWindowsMock.mockReturnValue([]);
+      platformSpy.mockRestore();
+    }
   });
 
   it("gates automatic checks and autoDownload from desktop settings and falls back to automatic on read failure", async () => {
@@ -253,40 +320,45 @@ describe("checkForAppUpdate", () => {
   });
 
   it("does not fail update events when setProgressBar throws", async () => {
+    const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     const send = vi.fn();
-    getAllWindowsMock.mockReturnValue([
-      {
-        isDestroyed: () => false,
-        setProgressBar: () => {
-          throw new Error("unsupported desktop environment");
+    try {
+      getAllWindowsMock.mockReturnValue([
+        {
+          isDestroyed: () => false,
+          setProgressBar: () => {
+            throw new Error("unsupported desktop environment");
+          },
+          webContents: { send },
         },
-        webContents: { send },
-      },
-    ]);
-    autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
-      isUpdateAvailable: true,
-      updateInfo: { version: "1.2.7" },
-    });
-
-    await checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-      autoDownload: true,
-    });
-    expect(() => {
-      autoUpdaterMock.handlers.get("download-progress")?.({
-        percent: 50,
-        transferred: 50,
-        total: 100,
-        bytesPerSecond: 10,
+      ]);
+      autoUpdaterMock.checkForUpdates.mockResolvedValueOnce({
+        isUpdateAvailable: true,
+        updateInfo: { version: "1.2.7" },
       });
-    }).not.toThrow();
-    expect(send).toHaveBeenCalledWith(
-      "paseo:event:app-update-download-progress",
-      expect.objectContaining({ version: "1.2.7", percent: 50 }),
-    );
-    getAllWindowsMock.mockReturnValue([]);
+
+      await checkForAppUpdate({
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        intent: "automatic",
+        autoDownload: true,
+      });
+      expect(() => {
+        autoUpdaterMock.handlers.get("download-progress")?.({
+          percent: 50,
+          transferred: 50,
+          total: 100,
+          bytesPerSecond: 10,
+        });
+      }).not.toThrow();
+      expect(send).toHaveBeenCalledWith(
+        "paseo:event:app-update-download-progress",
+        expect.objectContaining({ version: "1.2.7", percent: 50 }),
+      );
+    } finally {
+      getAllWindowsMock.mockReturnValue([]);
+      platformSpy.mockRestore();
+    }
   });
 
   it("reports a failure when quitAndInstall emits an installer error and returns normally", async () => {

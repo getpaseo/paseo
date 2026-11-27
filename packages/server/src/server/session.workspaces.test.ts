@@ -1652,6 +1652,23 @@ test("agent_update emits remove when the agent has no workspaceId", async () => 
   const getSnapshot = vi.fn(async () => {
     throw new Error("getSnapshot should not be called for unregistered agent_update placement");
   });
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
   const session = asTestSession(
     createSessionForWorkspaceTests({
       onMessage: (message) => emitted.push(message),
@@ -1661,15 +1678,31 @@ test("agent_update emits remove when the agent has no workspaceId", async () => 
       },
     }),
   );
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.workspaceRegistry.listActive = async () => [workspace];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
 
   await activateAgentUpdatesSubscription(session, "sub-agents", {});
+
+  // First include the agent in the subscription, then forward an update with no workspaceId.
+  await session.agentUpdates.forwardLiveAgent(
+    makeManagedAgent({
+      id: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: workspace.workspaceId,
+      lifecycle: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+    }),
+  );
+  emitted.length = 0;
 
   await session.agentUpdates.forwardLiveAgent(
     makeManagedAgent({
       id: "agent-1",
       cwd: UNREGISTERED_CWD,
       lifecycle: "running",
-      updatedAt: "2026-03-30T15:00:00.000Z",
+      updatedAt: "2026-03-30T15:00:01.000Z",
     }),
   );
 
@@ -8878,6 +8911,88 @@ test("terminal activity contribution change updates the correct workspace", asyn
       status: "running",
     },
   });
+});
+
+async function createWorkspaceWithTerminals(name: string) {
+  const emitted: SessionOutboundMessage[] = [];
+  const cwd = mkdtempSync(path.join(tmpdir(), `paseo-session-${name}-`));
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: `ws-${name}`,
+    projectId: `proj-${name}`,
+    cwd,
+    kind: "directory",
+    displayName: name,
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const project = createPersistedProjectRecord({
+    projectId: `proj-${name}`,
+    rootPath: cwd,
+    kind: "non_git",
+    displayName: name,
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const { session, terminalManager } = await createSessionWithTerminalManager({
+    workspaces: [workspace],
+    projects: [project],
+    onMessage: (message) => emitted.push(message),
+  });
+  const createTerminal = () =>
+    terminalManager.createTerminal({ cwd, workspaceId: workspace.workspaceId });
+  return { emitted, workspace, session, terminalManager, createTerminal };
+}
+
+test("workspace clear attention clears a finished terminal in the workspace", async () => {
+  const { emitted, workspace, session, terminalManager, createTerminal } =
+    await createWorkspaceWithTerminals("clear-terminal");
+  const terminal = await createTerminal();
+  await terminalManager.setTerminalActivity(terminal.id, "working");
+  await terminalManager.setTerminalActivity(terminal.id, "idle");
+  await waitForWorkspaceUpdate(
+    emitted,
+    (message) =>
+      message.payload.kind === "upsert" &&
+      message.payload.workspace.id === workspace.workspaceId &&
+      message.payload.workspace.status === "attention",
+    "a finished terminal marks the workspace for attention",
+  );
+
+  await session.handleMessage({
+    type: "workspace.clear_attention.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-clear-terminal",
+  });
+
+  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
+    requestId: "req-clear-terminal",
+    success: true,
+  });
+  expect(terminalManager.getTerminal(terminal.id)?.getActivity()?.attentionReason ?? null).toBe(
+    null,
+  );
+  const lastUpdate = filterByType(emitted, "workspace_update").findLast(
+    (message) =>
+      message.payload.kind === "upsert" && message.payload.workspace.id === workspace.workspaceId,
+  );
+  expect(lastUpdate?.payload).toMatchObject({ workspace: { status: "done" } });
+});
+
+test("workspace clear attention keeps a terminal that needs input", async () => {
+  const { session, workspace, terminalManager, createTerminal } =
+    await createWorkspaceWithTerminals("keep-needs-input");
+  const terminal = await createTerminal();
+  await terminalManager.setTerminalActivity(terminal.id, "attention");
+
+  await session.handleMessage({
+    type: "workspace.clear_attention.request",
+    workspaceId: workspace.workspaceId,
+    requestId: "req-keep-needs-input",
+  });
+
+  expect(terminalManager.getTerminal(terminal.id)?.getActivity()?.attentionReason).toBe(
+    "needs_input",
+  );
 });
 
 test("same-cwd terminal activity updates only the workspace that owns the terminal", async () => {

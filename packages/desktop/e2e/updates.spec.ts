@@ -39,7 +39,7 @@ test.describe("Desktop updates", () => {
     await page.reload();
     await openSettings(page);
     await openSettingsHost(page, desktopManagedOutdatedDaemon.serverId);
-    await openHostSection(page, desktopManagedOutdatedDaemon.serverId, "host");
+    await openHostSection(page, desktopManagedOutdatedDaemon.serverId, "daemon");
 
     const updateCard = page.getByTestId("host-page-update-card");
     await expect(updateCard).toBeVisible();

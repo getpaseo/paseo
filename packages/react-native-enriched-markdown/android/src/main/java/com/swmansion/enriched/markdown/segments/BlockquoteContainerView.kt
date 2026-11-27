@@ -91,9 +91,15 @@ class BlockquoteContainerView(
   // A plain quote shows the code block's copy control in a header band of the
   // same height; an admonition keeps its title band and has no copy control.
   private val copyButton =
-    HeaderCopyButton(context, parentConfig.style.codeBlockStyle) { parentConfig.dynamicProps.copyLabel }.apply {
+    HeaderCopyButton(context, parentConfig.style.codeBlockStyle).apply {
+      contentDescription = parentConfig.dynamicProps.copyLabel
       setOnClickListener { copyBody() }
     }
+
+  internal fun syncCopyLabel() {
+    copyButton.contentDescription = parentConfig.dynamicProps.copyLabel
+    syncChildCopyLabels()
+  }
 
   private fun reservedHeaderHeight(): Int =
     if (admonitionType != null) ceil(admonitionHeaderReservedHeight(blockquoteStyle)).toInt() else copyButton.bandHeight
@@ -159,6 +165,7 @@ class BlockquoteContainerView(
         onLatexError = parentConfig.onLatexError,
       )
     applySegments(rendered, reset = false)
+    syncCopyLabel()
     requestLayout()
   }
 

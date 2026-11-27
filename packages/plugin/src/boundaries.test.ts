@@ -694,3 +694,88 @@ describe("worktree manager SDK boundary", () => {
     ).toEqual([]);
   });
 });
+
+describe("plugin notifications SDK boundary", () => {
+  it("types server notification sends and client tap handlers with capabilities and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        PluginNotifications,
+        PluginNotificationSendInput,
+        PluginNotificationSendResult,
+        PluginNotificationOpenTarget,
+      } from "@getpaseo/plugin/server";
+      import type {
+        PluginClientContext,
+        PluginHostNavigationActions,
+        PluginNotificationOpenContext,
+        PluginNotificationOpenEvent,
+        PluginNotificationOpenHandler,
+      } from "@getpaseo/plugin/client";
+
+      export async function sendFromServer(server: PluginServerContext) {
+        const notifications: PluginNotifications = server.notifications;
+        const target: PluginNotificationOpenTarget = {
+          type: "screen",
+          screenId: "details",
+          params: { id: "42" },
+        };
+        const input: PluginNotificationSendInput = {
+          title: "Build failed",
+          body: "Check the logs",
+          key: "build:42",
+          open: target,
+          data: { buildId: 42, ok: false, tags: ["ci"] },
+        };
+        const result: PluginNotificationSendResult = await notifications.send(input);
+        if (result.status === "sent") {
+          const id: string = result.notificationId;
+          void id;
+        }
+        await server.notifications.send({
+          title: "Agent ready",
+          body: "Done",
+          open: { type: "agent", agentId: "agent-1" },
+        });
+        await server.notifications.send({
+          title: "Workspace ready",
+          body: "Done",
+          open: { type: "workspace", workspaceId: "ws-1" },
+        });
+        // @ts-expect-error data must be JSON values
+        await server.notifications.send({ title: "Bad", body: "Bad", data: { fn: () => {} } });
+        // @ts-expect-error open target requires a known type discriminant
+        await server.notifications.send({ title: "Bad", body: "Bad", open: { type: "unknown" } });
+      }
+
+      export function contributeClient(client: PluginClientContext) {
+        const handler: PluginNotificationOpenHandler = (context: PluginNotificationOpenContext) => {
+          const navigation: PluginHostNavigationActions = context.navigation;
+          void navigation;
+          const event: PluginNotificationOpenEvent = context.event;
+          const kind: "opened" = event.type;
+          const id: string = event.notificationId;
+          void kind;
+          void id;
+          // @ts-expect-error event fields are read-only
+          event.notificationId = "other";
+          if (event.data) {
+            // @ts-expect-error event data record is read-only
+            event.data.extra = "nope";
+          }
+          if (typeof event.data?.agentId === "string") {
+            context.navigation.openAgent({ agentId: event.data.agentId, focusHost: true });
+          } else if (typeof event.data?.workspaceId === "string") {
+            context.navigation.openWorkspace({ workspaceId: event.data.workspaceId });
+          } else {
+            context.openScreen({ screenId: "main", params: { from: "notification" } });
+          }
+        };
+        const cleanup = client.onNotificationOpen(handler);
+        return cleanup;
+      }
+    `),
+    ).toEqual([]);
+  });
+});

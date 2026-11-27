@@ -30,7 +30,7 @@ Paseo 可以运行任何使用 [Agent Client Protocol](https://agentclientprotoc
 从目录添加其中一个：
 
 1. 如果该 Agent 不是通过 `npx` 或 `uvx` 启动的，请先在 daemon 主机上安装它的 CLI。
-2. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers**。
+2. 在 Paseo 中打开 **设置 → 主机 → Providers**。
 3. 选择 **+ Provider**，找到该 Agent，然后选择 **添加**。
 
 通过 `npx` 或 `uvx` 启动的条目只需要 daemon 主机上有该工具。如果缺少 CLI，Provider 页面会显示 **未安装**，选择 **安装** 会打开它的安装说明。

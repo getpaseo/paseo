@@ -67,6 +67,9 @@ test.describe("Agent profiles settings", () => {
     try {
       await test.step("the section starts empty", async () => {
         await openAgentProfileSettings(page);
+        await expect(page.getByTestId("agent-profiles-description")).toHaveText(
+          "Save agent settings that you can pick quickly and that agents can use to delegate work",
+        );
         await expectNoAgentProfiles(page);
       });
 
@@ -77,11 +80,18 @@ test.describe("Agent profiles settings", () => {
           model: "Ten second stream",
           thinking: "High",
           mode: "Approval test",
+          systemPrompt: "Focus on layout, accessibility, and design tokens.",
           notes: "Use for UI work — components, layout and design tokens.",
         });
         await expectAgentProfile(page, {
           name: "UI work",
-          tags: [MOCK_PROVIDER_LABEL, "Ten second stream", "Approval test", "High"],
+          tags: [
+            MOCK_PROVIDER_LABEL,
+            "Ten second stream",
+            "Approval test",
+            "High",
+            "System prompt",
+          ],
           notes: "Use for UI work — components, layout and design tokens.",
         });
       });
@@ -89,11 +99,12 @@ test.describe("Agent profiles settings", () => {
       await test.step("editing to a model without thinking levels drops the level", async () => {
         await editAgentProfile(page, "UI work", {
           model: "One minute stream",
+          systemPrompt: "Keep replies concise.",
           notes: "Now for quick checks.",
         });
         await expectAgentProfile(page, {
           name: "UI work",
-          tags: [MOCK_PROVIDER_LABEL, "One minute stream", "Approval test"],
+          tags: [MOCK_PROVIDER_LABEL, "One minute stream", "Approval test", "System prompt"],
           notes: "Now for quick checks.",
         });
         await expectAgentProfileTagsGone(page, {
@@ -107,6 +118,7 @@ test.describe("Agent profiles settings", () => {
           provider: MOCK_PROVIDER_LABEL,
           model: "One minute stream",
           mode: "Approval test",
+          systemPrompt: "Keep replies concise.",
           notes: "Now for quick checks.",
         });
       });
@@ -272,13 +284,15 @@ test.describe("Agent profiles settings", () => {
       await test.step("switching Settings sections asks before discarding an edited draft", async () => {
         await fillAgentProfileName(page, "Unsaved sidebar edit");
 
-        await switchSettingsSectionWithConfirm(page, "Agents", "dismiss");
+        await switchSettingsSectionWithConfirm(page, "Tools & prompts", "dismiss");
         await expect(page.getByTestId("agent-profile-drawer")).toBeVisible();
         await expectAgentProfileNameDraft(page, "Unsaved sidebar edit");
 
-        await switchSettingsSectionWithConfirm(page, "Agents", "accept");
+        await switchSettingsSectionWithConfirm(page, "Tools & prompts", "accept");
         await expect(page.getByTestId("agent-profile-drawer")).toHaveCount(0, { timeout: 30_000 });
-        await expect(page.getByTestId("settings-detail-header-title")).toHaveText("Agents");
+        await expect(page.getByTestId("settings-detail-header-title")).toHaveText(
+          "Tools & prompts",
+        );
       });
 
       await test.step("confirming browser Back leaves Agent profiles and discards the draft", async () => {

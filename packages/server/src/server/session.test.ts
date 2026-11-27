@@ -2095,6 +2095,43 @@ test("push token registration can be revoked by the connected client", async () 
   ]);
 });
 
+test("push token registration forwards notification preferences to pushNotifications.renew", async () => {
+  const renewed: Array<{ token: string; preferences: unknown }> = [];
+  const session = createSessionForTest({
+    pushNotifications: asPushNotifications({
+      renew: (token: string, preferences?: unknown) => renewed.push({ token, preferences }),
+    }),
+  });
+
+  const preferences = {
+    enabled: true,
+    events: {
+      agentPermission: true,
+      agentError: true,
+      agentFinished: true,
+      terminalNeedsInput: true,
+      terminalFinished: false,
+    },
+    plugins: {
+      enabled: true,
+      muted: ["review-bot"],
+    },
+  };
+
+  await session.handleMessage({
+    type: "register_push_token",
+    token: "ExponentPushToken[prefs-device]",
+    preferences,
+  });
+
+  expect(renewed).toEqual([
+    {
+      token: "ExponentPushToken[prefs-device]",
+      preferences,
+    },
+  ]);
+});
+
 test("push token revocation only acknowledges durable removal", async () => {
   const renewed: string[] = [];
   const messages: SessionOutboundMessage[] = [];

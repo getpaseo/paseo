@@ -416,6 +416,47 @@ describe("ProviderSnapshotManager background refresh", () => {
     expect(harness.provider("codex").shutdowns).toBe(1);
   });
 
+  test("skips on_demand providers while keeping background providers scheduled", async () => {
+    const timers = new FakeRefreshTimers();
+    const probes: Probe[] = [];
+    const createTaggedClient = (
+      provider: AgentProvider,
+      catalogRefresh?: "background" | "on_demand",
+    ): AgentClient => {
+      const state: TestProvider = {
+        models: [model(provider, `${provider}-1`)],
+        available: true,
+        forces: [],
+        shutdowns: 0,
+      };
+      return {
+        ...createClient(provider, state, () => probes.push({ minute: timers.minute, provider })),
+        catalogRefresh,
+      };
+    };
+    const enabled = new Set<AgentProvider>(["claude", "codex", "copilot", "opencode"]);
+    const providerOverrides = Object.fromEntries(
+      BUILTIN_PROVIDER_IDS.filter((id) => !enabled.has(id)).map((id) => [id, { enabled: false }]),
+    );
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides,
+      extraClients: {
+        claude: createTaggedClient("claude", "background"),
+        codex: createTaggedClient("codex"),
+        copilot: createTaggedClient("copilot", "on_demand"),
+        opencode: createTaggedClient("opencode", "on_demand"),
+      },
+      backgroundRefresh: { intervalMs: INTERVAL_MS, timers },
+    });
+    try {
+      await timers.advanceMinutes(75);
+      expect(probes.map((probe) => probe.provider)).toEqual(["claude", "codex", "claude", "codex"]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("destroy and shutdown cancel the scheduled refresh", async () => {
     const destroyed = createHarness({ enabled: ["codex"] });
     expect(destroyed.timers.pendingCount).toBe(1);

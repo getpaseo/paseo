@@ -65,12 +65,16 @@ function normalizeLaunchDefault(
   return defaultBinary;
 }
 
-async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promise<string | null> {
-  const found = await findExecutable(command, { env });
+async function resolveLaunchPath(
+  command: string,
+  env?: ProcessEnvRecord,
+  options?: { probe?: boolean },
+): Promise<string | null> {
+  const found = await findExecutable(command, { env, probe: options?.probe });
   if (found) {
     return found;
   }
-  if (isAbsolute(command)) {
+  if (options?.probe !== false && isAbsolute(command)) {
     return executableExists(command);
   }
   return null;
@@ -78,10 +82,11 @@ async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promi
 
 async function resolveDefaultLaunchPath(
   defaultBinary: ProviderLaunchDefault,
+  options?: { probe?: boolean },
 ): Promise<string | null> {
   return defaultBinary.resolvePath
     ? await defaultBinary.resolvePath()
-    : await resolveLaunchPath(defaultBinary.command);
+    : await resolveLaunchPath(defaultBinary.command, undefined, options);
 }
 
 export interface ResolveProviderLaunchOptions {
@@ -117,11 +122,12 @@ export async function resolveProviderLaunch({
 export async function checkProviderLaunchAvailable(
   launch: ResolvedProviderLaunch,
   defaultBinary?: ProviderLaunchDefault,
+  options?: { probe?: boolean },
 ): Promise<ProviderLaunchAvailability> {
   const resolvedPath =
     defaultBinary && launch.source !== "override"
-      ? await resolveDefaultLaunchPath(defaultBinary)
-      : await resolveLaunchPath(launch.command, launch.env);
+      ? await resolveDefaultLaunchPath(defaultBinary, options)
+      : await resolveLaunchPath(launch.command, launch.env, options);
   return {
     available: resolvedPath !== null,
     resolvedPath,

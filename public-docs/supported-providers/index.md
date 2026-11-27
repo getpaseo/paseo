@@ -32,7 +32,7 @@ Paseo runs any agent that speaks the [Agent Client Protocol](https://agentclient
 To add one from the catalog:
 
 1. If the agent does not launch through `npx` or `uvx`, install its CLI on your daemon host.
-2. Open **Settings → Hosts → your host → Providers** in Paseo.
+2. Open **Settings → Host → Providers** in Paseo.
 3. Select **+ Provider**, find the agent, and select **Add**.
 
 Entries that launch through `npx` or `uvx` need only that tool on your daemon host. If a CLI is missing, the provider page shows **Not installed**, and **Install** opens its install instructions.

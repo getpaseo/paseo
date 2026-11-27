@@ -2228,13 +2228,18 @@ const examples = (await readdir(examplesDirectory, { withFileTypes: true }))
   .filter((entry) => entry.isDirectory() && entry.name !== "markdown-panel")
   .map((entry) => entry.name);
 
+const exampleDaemonVersions: Record<string, string> = {
+  "sidebar-views": "0.16.0",
+  notifications: "0.18.0-beta.1",
+};
+
 it.each(examples)("builds and loads the %s plugin example", async (example) => {
   const settingsDirectory = await mkdtemp(path.join(tmpdir(), "paseo-example-settings-"));
   temporaryDirectories.push(settingsDirectory);
   const runtime = createTestRuntime(
     { settingsDirectory },
     undefined,
-    example === "sidebar-views" ? "0.16.0" : resolveDaemonVersion(import.meta.url),
+    exampleDaemonVersions[example] ?? resolveDaemonVersion(import.meta.url),
   );
   try {
     await runtime.startPlugin(example, path.join(examplesDirectory, example));

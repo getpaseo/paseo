@@ -681,4 +681,56 @@ describe("deriveAgentScreenViewState", () => {
     expect(sync.ui).toBe("status");
     expect(result.memory.hadInitialSyncFailure).toBe(false);
   });
+
+  it("stays ready without reverting to boot when an archived agent unarchives", () => {
+    const archivedAgent = {
+      ...createAgent("agent-1"),
+      archivedAt: new Date("2026-02-19T00:01:00.000Z"),
+    };
+    const archivedResult = deriveAgentScreenViewState({
+      input: {
+        ...createBaseInput(),
+        agent: archivedAgent,
+        isArchived: true,
+        hasHydratedHistoryBefore: false,
+        needsAuthoritativeSync: true,
+        isHistorySyncing: true,
+        visibilityCatchUpStatus: "pending",
+      },
+      memory: createBaseMemory(),
+    });
+    expectReadyState(archivedResult.state);
+    expect(archivedResult.memory.hasRenderedReady).toBe(true);
+
+    const unarchivedAgent = {
+      ...createAgent("agent-1"),
+      archivedAt: null,
+    };
+    const unarchivedInput = {
+      ...createBaseInput(),
+      agent: unarchivedAgent,
+      isArchived: false,
+      hasHydratedHistoryBefore: false,
+      needsAuthoritativeSync: true,
+      isHistorySyncing: true,
+      visibilityCatchUpStatus: "pending" as const,
+    };
+
+    // Without prior ready render, the same unarchived input stays in boot.
+    const freshBoot = deriveAgentScreenViewState({
+      input: unarchivedInput,
+      memory: createBaseMemory(),
+    });
+    expect(freshBoot.state.tag).toBe("boot");
+
+    // Because this screen already rendered ready while archived, unarchiving stays ready.
+    const unarchivedResult = deriveAgentScreenViewState({
+      input: unarchivedInput,
+      memory: archivedResult.memory,
+    });
+    const ready = expectReadyState(unarchivedResult.state);
+    expect(ready.agent.id).toBe("agent-1");
+    expect(ready.source).toBe("authoritative");
+    expect(ready.sync).toEqual({ status: "catching_up", ui: "overlay" });
+  });
 });

@@ -299,6 +299,7 @@ export const es: TranslationResources = {
     archived: {
       callout: "Este agente está archivado.",
       unarchive: "Desarchivar",
+      unarchiving: "Desarchivando...",
     },
   },
   sessions: {
@@ -660,6 +661,24 @@ export const es: TranslationResources = {
         failedToLoad: "No se pudo cargar la página",
         invalidUrl: "Navegador no válidoURL",
         unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",
+      },
+      routing: {
+        tooltipHost: "Navegando a través de {{hostName}}. Haz clic para navegar localmente.",
+        tooltipLocal: "Navegando localmente. Haz clic para navegar a través de {{hostName}}.",
+        switchToLocal: "Cambiar el enrutamiento del navegador de {{hostName}} a Local",
+        switchToHost: "Cambiar el enrutamiento del navegador de Local a {{hostName}}",
+      },
+      proxy: {
+        connecting: "Conectando con {{hostName}}...",
+        reconnecting: "Reconectando con {{hostName}}...",
+        updateTitle: "Actualiza {{hostName}} para navegar a través de este host",
+        updateDescription: "Este host todavía no admite el proxy del navegador.",
+        routedTitle: "El proxy del navegador no está disponible para hosts enrutados",
+        routedDescription: "Conéctate directamente a este host o navega localmente.",
+        offlineTitle: "{{hostName}} está desconectado",
+        offlineDescription: "Espera a que el host se reconecte o navega localmente.",
+        errorTitle: "No se pudo conectar el proxy del navegador",
+        browseLocally: "Navegar localmente",
       },
     },
     terminal: {
@@ -2435,7 +2454,7 @@ export const es: TranslationResources = {
     title: "Ajustes",
     loading: "Cargando configuración...",
     groups: {
-      app: "Aplicación",
+      app: "Este dispositivo",
       host: "Host",
     },
     hostPicker: {
@@ -2453,7 +2472,9 @@ export const es: TranslationResources = {
     groupInfo: "Acerca de{{title}}",
     sections: {
       general: "General",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat y paneles",
       appearance: "Apariencia",
       sidebar: "Barra lateral",
       terminal: "Terminal",
@@ -2466,6 +2487,16 @@ export const es: TranslationResources = {
       permissions: "Permisos",
       diagnostics: "Diagnóstico",
       about: "Acerca de",
+    },
+    clientHosts: {
+      title: "Hosts guardados",
+      info: "Hosts a los que se conecta este dispositivo. Los nombres, iconos, insignias y rutas aquí solo afectan a este dispositivo.",
+      backToHosts: "Volver a hosts",
+      routesTitle: "Cómo se conecta este dispositivo",
+      routesInfo:
+        "Rutas guardadas que usa este dispositivo para llegar a este host. Paseo elige la más rápida disponible.",
+      addRoute: "Añadir ruta",
+      activeRoute: "Activa",
     },
     layout: en.settings.layout,
     editor: {
@@ -2483,6 +2514,49 @@ export const es: TranslationResources = {
     },
     notifications: {
       title: "Notificaciones",
+      enabled: {
+        label: "Activar notificaciones",
+        description: "Recibe notificaciones de agentes, terminales y plugins en este dispositivo",
+        pausedDescription:
+          "Todas las notificaciones, incluidas las de plugins, están en pausa en este dispositivo",
+      },
+      events: {
+        title: "Eventos",
+        agentPermission: {
+          label: "El agente necesita permiso",
+          description: "Aprobaciones, planes y preguntas",
+        },
+        agentError: {
+          label: "Error del agente",
+          description: "Cuando un agente se detiene con un error",
+        },
+        agentFinished: {
+          label: "El agente terminó",
+          description: "Cuando un agente completa un turno",
+        },
+        terminalNeedsInput: {
+          label: "La terminal necesita entrada",
+          description: "Cuando un comando de terminal espera entrada",
+        },
+        terminalFinished: {
+          label: "La terminal terminó",
+          description: "Cuando finaliza un comando de terminal",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Notificaciones de plugins",
+          description: "Permitir que los plugins instalados envíen notificaciones",
+        },
+        empty: "Los plugins instalados aparecen aquí para que puedas silenciarlos individualmente",
+      },
+      legacyHostTitle: "Actualiza el host para preferencias push",
+      legacyHostHint:
+        "Actualiza los hosts conectados para sincronizar preferencias de notificaciones push desde este dispositivo",
+      desktop: {
+        title: "Sistema",
+      },
       permission: "Permiso de notificaciones",
       refreshAccessibility: "Actualizar permiso de notificaciones",
       playSound: "Reproducir sonido",
@@ -2500,6 +2574,7 @@ export const es: TranslationResources = {
       projects: "Proyectos",
       connections: "Conexiones",
       agents: "Agents",
+      tools: "Herramientas e instrucciones",
       agentProfiles: "Perfiles de agente",
       metadata: "Metadatos",
       voice: "Voz",
@@ -2509,12 +2584,13 @@ export const es: TranslationResources = {
       terminals: "Terminals",
       plugins: "Plugins",
       host: "Resumen",
+      daemon: "Daemon",
     },
     plugins: pluginSettings.es,
     metadataGeneration: {
       title: "Generación de metadatos",
       description:
-        "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
+        "Elige el modelo y las instrucciones que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
       selection: "Selección de modelo",
       automatic: "Automática",
       preferred: "Manual",
@@ -2522,6 +2598,10 @@ export const es: TranslationResources = {
       preferredHint: "Elige el modelo que usa Paseo",
       model: "Modelo",
       modelHint: "Solo se usa este modelo. Si falla, Paseo no prueba otro modelo",
+      instructions: "Instrucciones",
+      instructionsHint: "Se aplican a todos los metadatos generados en este host",
+      instructionsPlaceholder:
+        "Ejemplo: Escribe en español. Mantén un estilo coherente entre títulos y commits. No uses rayas largas.",
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
     },
@@ -3058,6 +3138,10 @@ export const es: TranslationResources = {
           delete: "Eliminar habilidad",
         },
       },
+      tools: {
+        instructionsTitle: "Instrucciones",
+        toolsTitle: "Herramientas de agentes",
+      },
       orchestration: {
         title: "Orquestación",
         unavailable: "Conéctese a este host para administrar la orquestación",
@@ -3124,6 +3208,8 @@ export const es: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Perfiles de agente",
+        sectionDescription:
+          "Guarda configuraciones de agente que puedes elegir rápido y que los agentes pueden usar para delegar trabajo",
         unavailable: "Conéctese a este host para administrar perfiles de agente",
         unsupported: "Este host ejecuta un daemon que aún no admite perfiles de agente",
         emptyState:
@@ -3148,6 +3234,9 @@ export const es: TranslationResources = {
         featuresLabel: "Características",
         featureCount: "{{count}} características",
         featureCountOne: "{{count}} característica",
+        systemPromptLabel: "Aviso del sistema",
+        systemPromptPlaceholder: "Enfócate en el diseño, la accesibilidad y los tokens de diseño.",
+        systemPromptHint: "Solo se aplica a agentes nuevos",
         notesLabel: "Cuándo usarlo",
         notesPlaceholder: "Úselo para trabajo de UI: componentes, diseño y tokens de diseño.",
         notesHint: "Ayuda a los agentes a elegir este perfil al iniciar otro agente.",
@@ -3185,6 +3274,7 @@ export const es: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "Ejecución de agentes",
         rename: {
           editLabel: "Editar etiqueta",
           title: "Cambiar nombre de host",

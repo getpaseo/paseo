@@ -14,6 +14,9 @@ import type {
 } from "@getpaseo/plugin";
 import type {
   PluginHandlerContext,
+  PluginNotificationSendInput,
+  PluginNotificationSendResult,
+  PluginNotifications,
   PluginServerContext,
   PluginServerContribution,
   PluginWorktreeCreateInput,
@@ -21,6 +24,7 @@ import type {
   PluginWorktreeRestoreRequest,
   WorktreeManagerRegistration,
 } from "@getpaseo/plugin/server";
+import { randomUUID } from "node:crypto";
 import { assertPluginWireValue } from "@getpaseo/protocol/binary-frames/index";
 import {
   PluginSubscriptionHandlers,
@@ -29,6 +33,7 @@ import {
 import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
+  ProviderCatalogRefreshModeSchema,
   ProviderEventSchema,
   type ProviderConnection,
   type ProviderRegistration,
@@ -127,6 +132,13 @@ export function createPluginWorker(options: {
   >();
   const pendingProviderConnections = new Map<string, { tombstoned: boolean }>();
   const installationRequests = new Map<string, AbortController>();
+  const notificationRequests = new Map<
+    string,
+    {
+      resolve: (result: PluginNotificationSendResult) => void;
+      reject: (error: Error) => void;
+    }
+  >();
   let cleanup: (() => void | Promise<void>) | null = null;
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
@@ -198,6 +210,12 @@ export function createPluginWorker(options: {
     if (!provider.label.trim()) throw new Error(`Plugin provider ${id} requires a label`);
     if (typeof provider.connect !== "function") {
       throw new Error(`Plugin provider ${id} must implement connect()`);
+    }
+    if (
+      provider.catalogRefresh !== undefined &&
+      !ProviderCatalogRefreshModeSchema.safeParse(provider.catalogRefresh).success
+    ) {
+      throw new Error(`Invalid catalogRefresh mode for plugin provider ${id}`);
     }
     if (
       provider.getCatalogCacheKey !== undefined &&
@@ -272,6 +290,29 @@ export function createPluginWorker(options: {
     };
   }
 
+  const notifications: PluginNotifications = {
+    send(input: PluginNotificationSendInput): Promise<PluginNotificationSendResult> {
+      if (stopping) {
+        return Promise.reject(new Error("Plugin is stopping"));
+      }
+      let payload: unknown;
+      try {
+        payload = jsonTransportValue(input);
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+      const requestId = randomUUID();
+      return new Promise<PluginNotificationSendResult>((resolve, reject) => {
+        notificationRequests.set(requestId, { resolve, reject });
+        send({
+          type: "notification.send",
+          requestId,
+          input: payload,
+        });
+      });
+    },
+  };
+
   function providerMetadata(provider: ProviderRegistration) {
     return {
       id: provider.id,
@@ -280,6 +321,7 @@ export function createPluginWorker(options: {
       iconPath: provider.icon,
       docsUrl: provider.docsUrl,
       requiresConfiguration: provider.requiresConfiguration,
+      catalogRefresh: provider.catalogRefresh,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
       hasStatus: provider.status !== undefined,
       installation: provider.installation
@@ -484,6 +526,7 @@ export function createPluginWorker(options: {
       registerUsageSource,
       registerWorktreeManager,
       registerSettings,
+      notifications,
       addHook: hooks.addHook,
       on: hooks.on,
       before: hooks.before,
@@ -531,6 +574,9 @@ export function createPluginWorker(options: {
     for (const request of installationRequests.values())
       request.abort(new Error("Plugin is stopping"));
     for (const request of worktreeRequests.values()) request.abort(new Error("Plugin is stopping"));
+    for (const pending of notificationRequests.values())
+      pending.reject(new Error("Plugin is stopping"));
+    notificationRequests.clear();
     worktreeManager = null;
     const currentCleanup = cleanup;
     cleanup = null;
@@ -682,6 +728,59 @@ export function createPluginWorker(options: {
     return handleInstallationMessage(message);
   }
 
+  function handleNotificationMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "notification.result" | "notification.error" }
+  > {
+    if (message.type !== "notification.result" && message.type !== "notification.error") {
+      return false;
+    }
+    const pending = notificationRequests.get(message.requestId);
+    if (!pending) return true;
+    notificationRequests.delete(message.requestId);
+    if (message.type === "notification.result") pending.resolve(message.result);
+    else pending.reject(new Error(message.error));
+    return true;
+  }
+
+  function handleProviderConnectOrSend(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "provider.connect" | "provider.send" | "provider.close" }
+  > {
+    if (message.type === "provider.connect") {
+      void connectProvider(message).catch((error) => {
+        if (stopping) return;
+        send({
+          type: "provider.connect_failed",
+          connectionId: message.connectionId,
+          error: describeError(error),
+        });
+      });
+      return true;
+    }
+    if (message.type === "provider.send") {
+      void sendProviderInput(message).catch((error) => {
+        if (stopping) return;
+        send({
+          type: "provider.rejected",
+          connectionId: message.connectionId,
+          acceptanceId: message.acceptanceId,
+          error: describeError(error),
+        });
+      });
+      return true;
+    }
+    if (message.type === "provider.close") {
+      void closeProviderConnection(message.connectionId);
+      return true;
+    }
+    return false;
+  }
+
   function handleMessage(rawMessage: unknown): void {
     const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
     if (!parsed.success) {
@@ -719,6 +818,7 @@ export function createPluginWorker(options: {
       void shutdown();
       return;
     }
+    if (handleNotificationMessage(message)) return;
     if (stopping) {
       rejectWhileStopping(message);
       return;
@@ -729,33 +829,7 @@ export function createPluginWorker(options: {
       handleUsageRequest(message);
       return;
     }
-    if (message.type === "provider.connect") {
-      void connectProvider(message).catch((error) => {
-        if (stopping) return;
-        send({
-          type: "provider.connect_failed",
-          connectionId: message.connectionId,
-          error: describeError(error),
-        });
-      });
-      return;
-    }
-    if (message.type === "provider.send") {
-      void sendProviderInput(message).catch((error) => {
-        if (stopping) return;
-        send({
-          type: "provider.rejected",
-          connectionId: message.connectionId,
-          acceptanceId: message.acceptanceId,
-          error: describeError(error),
-        });
-      });
-      return;
-    }
-    if (message.type === "provider.close") {
-      void closeProviderConnection(message.connectionId);
-      return;
-    }
+    if (handleProviderConnectOrSend(message)) return;
     if (message.type === "paseo_frame" || message.type === "paseo_close") return;
     if (isHookMessage(message)) {
       handleHookMessage(message);

@@ -22,7 +22,6 @@ import kotlin.math.roundToInt
 internal class HeaderCopyButton(
   context: Context,
   style: CodeBlockStyle,
-  private val label: () -> CharSequence,
 ) : AppCompatImageButton(context) {
   /** Height of the band, and the side of the button's square hit box. */
   val bandHeight: Int = CodeBlockContainerView.headerHeight(style)
@@ -42,9 +41,6 @@ internal class HeaderCopyButton(
       ),
     )
   }
-
-  // Read live so a runtime label change reaches TalkBack without a push.
-  override fun getContentDescription(): CharSequence = label()
 
   fun measureInBand() {
     val spec = MeasureSpec.makeMeasureSpec(bandHeight, MeasureSpec.EXACTLY)

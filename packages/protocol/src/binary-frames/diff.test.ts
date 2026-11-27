@@ -268,3 +268,37 @@ test.each([true, false])(
     expect(decodeDiffFrame(encodeDiffFrame(frame))).toEqual(frame);
   },
 );
+
+test("roundtrips diffAddition and diffDeletion run styles", () => {
+  const frame = {
+    opcode: 0x41 as const,
+    slot: 0,
+    revision: 1,
+    files: [
+      {
+        path: "changes.diff",
+        hunks: [
+          {
+            oldStart: 1,
+            oldCount: 1,
+            newStart: 1,
+            newCount: 1,
+            lines: [
+              {
+                type: "remove" as const,
+                content: "-old",
+                runs: [{ style: "diffDeletion", length: 4 }],
+              },
+              {
+                type: "add" as const,
+                content: "+new",
+                runs: [{ style: "diffAddition", length: 4 }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  expect(decodeDiffFrame(encodeDiffFrame(frame))).toEqual(frame);
+});

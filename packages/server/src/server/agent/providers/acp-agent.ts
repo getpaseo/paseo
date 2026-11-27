@@ -3,7 +3,7 @@ import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive } from "../provider-options.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import { homedir } from "node:os";
@@ -11,6 +11,8 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
+import type { ProviderCatalogRefreshMode } from "@getpaseo/plugin/server/provider";
+import { resolveDaemonVersion } from "../../daemon-version.js";
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import type { ProcessTerminator } from "../../../utils/tree-kill.js";
 import type {
@@ -118,6 +120,7 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "../create-agent-mode.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { StaleProviderSessionError } from "../stale-provider-session-error.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
@@ -1047,8 +1050,22 @@ function isACPCreateConfigUnattended(input: AgentCreateConfigUnattendedInput): b
   );
 }
 
+let cachedAcpClientInfo: { name: string; title: string; version: string } | null = null;
+
+function resolveAcpClientInfo(): { name: string; title: string; version: string } {
+  if (!cachedAcpClientInfo) {
+    cachedAcpClientInfo = {
+      name: "paseo",
+      title: "Paseo",
+      version: resolveDaemonVersion(import.meta.url),
+    };
+  }
+  return cachedAcpClientInfo;
+}
+
 export class ACPAgentClient implements AgentClient {
   readonly provider: string;
+  readonly catalogRefresh: ProviderCatalogRefreshMode = "on_demand";
   private readonly usageProvider?: string;
   readonly capabilities: AgentCapabilityFlags;
   readonly resolveCreateConfig = resolveACPCreateConfig;
@@ -1542,6 +1559,64 @@ export class ACPAgentClient implements AgentClient {
     });
   }
 
+  async getCatalogCacheKey(_options: FetchCatalogOptions): Promise<string> {
+    const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
+    const sortedEnv = Object.entries(env).sort(([a], [b]) => a.localeCompare(b));
+    let command: string;
+    let args: string[];
+    try {
+      const prefix = await resolveProviderLaunch({
+        commandConfig: this.runtimeSettings?.command,
+        defaultBinary: this.defaultCommand[0],
+      });
+      const resolvedArgs =
+        prefix.source === "override"
+          ? prefix.args
+          : [...prefix.args, ...this.defaultCommand.slice(1)];
+      const availability = await checkProviderLaunchAvailable(
+        {
+          ...prefix,
+          env,
+        },
+        undefined,
+        { probe: false },
+      );
+      command = availability.resolvedPath
+        ? path.resolve(availability.resolvedPath)
+        : `unresolved:${prefix.command}`;
+      args = resolvedArgs;
+    } catch {
+      command = `unresolved:${this.defaultCommand[0]}`;
+      args = this.defaultCommand.slice(1);
+    }
+    return createHash("sha256")
+      .update(JSON.stringify(["acp:global/1", command, args, sortedEnv]))
+      .digest("hex");
+  }
+
+  async getCatalogBinaryFingerprint(_options: FetchCatalogOptions): Promise<string | undefined> {
+    try {
+      const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
+      const prefix = await resolveProviderLaunch({
+        commandConfig: this.runtimeSettings?.command,
+        defaultBinary: this.defaultCommand[0],
+      });
+      const availability = await checkProviderLaunchAvailable(
+        {
+          ...prefix,
+          env,
+        },
+        undefined,
+        { probe: false },
+      );
+      if (!availability.resolvedPath) return undefined;
+      const info = await fs.stat(path.resolve(availability.resolvedPath));
+      return `${info.mtimeMs}:${info.size}`;
+    } catch {
+      return undefined;
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
     try {
       await this.resolveLaunchCommand();
@@ -1702,7 +1777,7 @@ export class ACPAgentClient implements AgentClient {
               this.clientCapabilityMeta,
               clientCapabilities ?? this.clientCapabilities,
             ),
-            clientInfo: { name: "Paseo", version: "dev" },
+            clientInfo: resolveAcpClientInfo(),
           }),
           transport.processError,
           ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
@@ -2166,6 +2241,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.settleCommandsReady();
   }
 
+  private canResumeSession(): boolean {
+    return Boolean(
+      this.agentCapabilities?.loadSession || this.agentCapabilities?.sessionCapabilities?.resume,
+    );
+  }
+
   private async closeAfterInitializationFailure(error: unknown): Promise<never> {
     try {
       await this.close();
@@ -2206,7 +2287,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`${this.provider} session is not initialized`);
     }
     if (this.connection.signal.aborted) {
-      throw new Error(describeACPDisconnect(this.child));
+      const disconnect = describeACPDisconnect(this.child);
+      // The caller reopens a resumable session from persistence, on a new process.
+      if (this.canResumeSession()) {
+        throw new StaleProviderSessionError(this.sessionId, `after ${disconnect}`);
+      }
+      throw new Error(disconnect);
     }
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
@@ -3249,6 +3335,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (this.closed || this.historyRuntimeReleased) {
         return;
       }
+      this.logger.warn(
+        { pid: child.pid, code, signal, idle: !this.activeForegroundTurnId },
+        "ACP agent process exited unexpectedly",
+      );
       if (this.activeForegroundTurnId) {
         this.synthesizeCanceledToolCalls();
         this.finishTurn({
@@ -3279,7 +3369,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             this.clientCapabilityMeta,
             this.clientCapabilities,
           ),
-          clientInfo: { name: "Paseo", version: "dev" },
+          clientInfo: resolveAcpClientInfo(),
         }),
         processError,
       ]),

@@ -34,6 +34,7 @@ import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { LocalSpeechModel } from "@getpaseo/protocol/speech/rpc-schemas";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
+import type { NotificationPreferences } from "@getpaseo/protocol/notification-preferences";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -60,6 +61,7 @@ import type {
   CreatePaseoWorktreeRequest,
   FileDownloadTokenResponse,
   FileUploadResponse,
+  NetworkTunnelCreateTicketPayload,
   FileExplorerResponse,
   FileVersion,
   FileWriteResult,
@@ -2592,10 +2594,11 @@ export class DaemonClient {
     });
   }
 
-  registerPushToken(token: string): void {
+  registerPushToken(token: string, preferences?: NotificationPreferences): void {
     this.sendSessionMessage({
       type: "register_push_token",
       token,
+      ...(preferences !== undefined ? { preferences } : {}),
     });
   }
 
@@ -5967,6 +5970,27 @@ export class DaemonClient {
         path,
       },
       responseType: "file_download_token_response",
+    });
+  }
+
+  /**
+   * Requests a short-lived single-use ticket for opening a dedicated binary
+   * network tunnel WebSocket against this daemon.
+   * Gated on `server_info.features.networkTunnel`.
+   */
+  async createNetworkTunnelTicket(requestId?: string): Promise<NetworkTunnelCreateTicketPayload> {
+    if (!this.isConnected) {
+      throw this.unavailableError();
+    }
+    // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
+    if (this.getLastServerInfoMessage()?.features?.networkTunnel !== true) {
+      throw Object.assign(new Error("Update the daemon to use the network tunnel"), {
+        code: "unsupported_capability",
+      });
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"network.tunnel.create_ticket.response">({
+      requestId,
+      message: { type: "network.tunnel.create_ticket.request" },
     });
   }
 

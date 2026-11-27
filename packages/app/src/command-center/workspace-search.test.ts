@@ -94,7 +94,7 @@ describe("workspace ranking", () => {
     expect(ids([text, subject], "42")).toEqual(["payments", "a-text"]);
   });
 
-  it("orders workspaces in the same match tier by recency", () => {
+  it("orders workspaces in the same match class by recency at every prefix", () => {
     const older = workspace({
       id: "older",
       title: "Usage hover card",
@@ -105,7 +105,25 @@ describe("workspace ranking", () => {
       title: "Deliver sidebar usage",
       activityAt: new Date("2026-10-17T00:00:00Z"),
     });
-    expect(ids([older, newer], "usage")).toEqual(["newer", "older"]);
+    for (const query of ["u", "us", "usa", "usag", "usage"]) {
+      expect(ids([older, newer], query), query).toEqual(["newer", "older"]);
+    }
+  });
+
+  it("does not flip a newer workspace below an older exact-title workspace on the final character", () => {
+    const newer = workspace({
+      id: "newer",
+      title: "paseo command center",
+      activityAt: new Date("2026-10-17T00:00:00Z"),
+    });
+    const older = workspace({
+      id: "older",
+      title: "paseo",
+      activityAt: new Date("2026-10-01T00:00:00Z"),
+    });
+    for (const query of ["p", "pa", "pas", "pase", "paseo"]) {
+      expect(ids([newer, older], query), query).toEqual(["newer", "older"]);
+    }
   });
 
   it("lists every workspace most recent first when the query is empty", () => {

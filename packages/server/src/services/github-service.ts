@@ -2436,7 +2436,8 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             PullRequestCheckoutTargetSchema,
             "{}",
           );
-          return toPullRequestCheckoutTarget(parsed);
+          const remoteNames = await listRemotesForRepository(input.cwd, `${owner}/${name}`);
+          return toPullRequestCheckoutTarget(parsed, remoteNames);
         },
       });
     },
@@ -3607,6 +3608,32 @@ async function resolveOriginRepositoryPath(cwd: string): Promise<string | null> 
   return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
 }
 
+async function listRemotesForRepository(cwd: string, repo: string): Promise<string[]> {
+  let stdout: string;
+  try {
+    ({ stdout } = await runGitCommand(["config", "--get-regexp", "^remote\\..+\\.url$"], {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+      acceptExitCodes: [0, 1],
+    }));
+  } catch {
+    return [];
+  }
+  const wanted = repo.toLowerCase();
+  const remoteNames: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const [key, url] = line.trim().split(/\s+/u);
+    if (!key || !url) continue;
+    const location = parseGitRemoteLocation(url);
+    const remoteRepo = location ? parseGitHubRemoteIdentity(location.path)?.repo : undefined;
+    if (remoteRepo?.toLowerCase() === wanted) {
+      remoteNames.push(key.slice("remote.".length, -".url".length));
+    }
+  }
+  return remoteNames;
+}
+
 interface GitHubRepoViewOptions {
   cwd: string;
   /** owner/name to ask about; `gh` picks the default repository for the directory when absent. */
@@ -3909,21 +3936,27 @@ function normalizeRepositorySummary(repository: {
   };
 }
 
+// A fork has its own pull request numbers, so the pull request ref is fetched only from the
+// remotes that point at the repository it was looked up in. Without such a remote, origin
+// and then upstream are tried.
 function toPullRequestCheckoutTarget(
   parsed: z.infer<typeof PullRequestCheckoutTargetSchema>,
+  repositoryRemoteNames: string[],
 ): PullRequestCheckoutTarget {
   const pullRequest = parsed.data.repository.pullRequest;
   if (!pullRequest) {
     throw new Error("Pull request not found");
   }
+  const remoteNames =
+    repositoryRemoteNames.length > 0 ? repositoryRemoteNames : ["origin", "upstream"];
   return {
     number: pullRequest.number,
     baseRefName: pullRequest.baseRefName,
     headRefName: pullRequest.headRefName,
-    checkoutRefs: [
-      { remoteName: "origin", remoteRef: `refs/pull/${pullRequest.number}/head` },
-      { remoteName: "upstream", remoteRef: `refs/pull/${pullRequest.number}/head` },
-    ],
+    checkoutRefs: remoteNames.map((remoteName) => ({
+      remoteName,
+      remoteRef: `refs/pull/${pullRequest.number}/head`,
+    })),
     headOwnerLogin: pullRequest.headRepositoryOwner?.login || null,
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,

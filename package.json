@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.17.5",
+  "version": "0.18.1",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -124,8 +124,8 @@
     "release:publish": "node scripts/publish-release-packages.mjs",
     "release:publish:beta": "node scripts/publish-release-packages.mjs --beta",
     "release:push": "node scripts/push-current-release-tag.mjs",
-    "release:ship": "node scripts/push-current-release-tag.mjs --check && npm run release:publish && npm run release:push",
-    "release:ship:beta": "node scripts/push-current-release-tag.mjs --check && npm run release:publish:beta && npm run release:push",
+    "release:ship": "npm run release:push && npm run release:publish",
+    "release:ship:beta": "npm run release:push && npm run release:publish:beta",
     "release:reconcile": "node scripts/reconcile-release.mjs"
   },
   "devDependencies": {

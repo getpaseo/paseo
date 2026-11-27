@@ -1,5 +1,11 @@
-import type { ReplicaHostRows, ReplicaRow, ReplicaRowChanges, ReplicaRowStore } from "./row-store";
-import { REPLICA_ROW_STORE_SCHEMA_VERSION } from "./row-store-schema";
+import type {
+  ReplicaHostRows,
+  ReplicaRow,
+  ReplicaRowApplyOptions,
+  ReplicaRowChanges,
+  ReplicaRowStore,
+} from "./row-store";
+import { REPLICA_ROW_STORE_SCHEMA_VERSION, REPLICA_SINGLETON_ROW_ID } from "./row-store-schema";
 
 export type {
   ReplicaHostRows,
@@ -16,6 +22,16 @@ const DATABASE_VERSION = 1;
 const ROWS_STORE = "rows";
 const META_STORE = "meta";
 const SCHEMA_VERSION_KEY = "schema_version";
+const DIRECTORY_KINDS = ["agent", "checkpoint", "project", "workspace"] as const;
+
+interface IndexedDbReplicaRow extends ReplicaRow {
+  directoryRevision?: string;
+}
+
+function withoutDirectoryRevision(row: IndexedDbReplicaRow): ReplicaRow {
+  if (row.directoryRevision === undefined) return row;
+  return { serverId: row.serverId, kind: row.kind, id: row.id, payload: row.payload };
+}
 
 interface IndexedDbReplicaRowStoreOptions {
   databaseName: string;
@@ -91,6 +107,12 @@ export function createIndexedDbReplicaRowStore(
 ): ReplicaRowStore {
   let database: IDBDatabase | null = null;
   let opening: Promise<void> | null = null;
+  const observedDirectoryRevisions = new Map<string, string>();
+
+  function observeDirectoryRevision(serverId: string, revision: string | undefined): void {
+    if (revision === undefined) observedDirectoryRevisions.delete(serverId);
+    else observedDirectoryRevisions.set(serverId, revision);
+  }
 
   function getDatabase(): IDBDatabase {
     if (!database) throw new Error("Replica row store has not been opened");
@@ -125,12 +147,14 @@ export function createIndexedDbReplicaRowStore(
   async function readAll(): Promise<ReplicaHostRows[]> {
     const transaction = getDatabase().transaction(ROWS_STORE, "readonly");
     const completion = transactionComplete(transaction);
-    const rows = await requestResult<ReplicaRow[]>(transaction.objectStore(ROWS_STORE).getAll());
+    const rows = await requestResult<IndexedDbReplicaRow[]>(
+      transaction.objectStore(ROWS_STORE).getAll(),
+    );
     await completion;
     const hosts = new Map<string, ReplicaRow[]>();
     for (const row of rows) {
       const hostRows = hosts.get(row.serverId) ?? [];
-      hostRows.push(row);
+      hostRows.push(withoutDirectoryRevision(row));
       hosts.set(row.serverId, hostRows);
     }
     return Array.from(hosts, ([serverId, hostRows]) => ({ serverId, rows: hostRows }));
@@ -148,36 +172,127 @@ export function createIndexedDbReplicaRowStore(
     const requests = ids
       ? kinds.flatMap((kind) =>
           ids.map(async (id) => {
-            const row = await requestResult<ReplicaRow | undefined>(
+            const row = await requestResult<IndexedDbReplicaRow | undefined>(
               store.get([serverId, kind, id]),
             );
             return row ? [row] : [];
           }),
         )
       : kinds.map((kind) =>
-          requestResult<ReplicaRow[]>(
+          requestResult<IndexedDbReplicaRow[]>(
             store.getAll(IDBKeyRange.bound([serverId, kind], [serverId, kind, []])),
           ),
         );
     const rows = (await Promise.all(requests)).flat();
     await completion;
-    return rows.sort((left, right) =>
-      left.kind === right.kind
-        ? left.id.localeCompare(right.id)
-        : left.kind.localeCompare(right.kind),
-    );
+    if (!ids && DIRECTORY_KINDS.every((kind) => kinds.includes(kind))) {
+      const checkpoint = rows.find(
+        (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+      );
+      observeDirectoryRevision(serverId, checkpoint?.directoryRevision);
+    }
+    return rows
+      .map(withoutDirectoryRevision)
+      .sort((left, right) =>
+        left.kind === right.kind
+          ? left.id.localeCompare(right.id)
+          : left.kind.localeCompare(right.kind),
+      );
   }
 
-  async function apply(changes: ReplicaRowChanges): Promise<void> {
+  async function apply(
+    changes: ReplicaRowChanges,
+    { directoryBaselines }: ReplicaRowApplyOptions = {},
+  ): Promise<ReplicaRowChanges | void> {
+    let accepted = changes;
+    const nextRevisions = new Map<string, string | undefined>();
     await runTransaction(getDatabase(), ROWS_STORE, async (transaction) => {
       const rows = transaction.objectStore(ROWS_STORE);
-      for (const key of changes.deletes) {
+      if (directoryBaselines) {
+        accepted = await prepareDirectoryWrite({
+          rows,
+          changes,
+          directoryBaselines,
+          nextRevisions,
+        });
+      }
+      for (const key of accepted.deletes) {
         await requestResult(rows.delete([key.serverId, key.kind, key.id]));
       }
-      for (const row of changes.upserts) {
-        await requestResult(rows.put(row));
+      for (const row of accepted.upserts) {
+        const directoryRevision =
+          row.kind === "checkpoint" ? nextRevisions.get(row.serverId) : undefined;
+        await requestResult(rows.put(directoryRevision ? { ...row, directoryRevision } : row));
       }
     });
+    for (const [serverId, revision] of nextRevisions) observeDirectoryRevision(serverId, revision);
+    return accepted === changes ? undefined : accepted;
+  }
+
+  async function prepareDirectoryWrite(input: {
+    rows: IDBObjectStore;
+    changes: ReplicaRowChanges;
+    directoryBaselines: ReadonlySet<string>;
+    nextRevisions: Map<string, string | undefined>;
+  }): Promise<ReplicaRowChanges> {
+    const { rows, changes, directoryBaselines, nextRevisions } = input;
+    const hosts = new Set(directoryBaselines);
+    const checkpoints = new Map<string, ReplicaRow>();
+    for (const row of changes.upserts) {
+      if (row.kind !== "timeline") hosts.add(row.serverId);
+      if (row.kind === "checkpoint") checkpoints.set(row.serverId, row);
+    }
+    for (const row of changes.deletes) {
+      if (row.kind !== "timeline") hosts.add(row.serverId);
+    }
+
+    const staleHosts = new Set<string>();
+    const unbasedHosts = new Set<string>();
+    for (const serverId of hosts) {
+      const replacingBaseline = directoryBaselines.has(serverId);
+      const current = replacingBaseline
+        ? undefined
+        : await requestResult<IndexedDbReplicaRow | undefined>(
+            rows.get([serverId, "checkpoint", REPLICA_SINGLETON_ROW_ID]),
+          );
+      if (replacingBaseline) {
+        // A different tab may have added directory rows since this tab indexed the cache.
+        for (const kind of DIRECTORY_KINDS) {
+          await requestResult(
+            rows.delete(IDBKeyRange.bound([serverId, kind], [serverId, kind, []])),
+          );
+        }
+      } else if (current?.directoryRevision !== observedDirectoryRevisions.get(serverId)) {
+        staleHosts.add(serverId);
+        continue;
+      } else if (!current?.directoryRevision) {
+        // Targeted lookups can still use these rows, but they do not form a baseline.
+        unbasedHosts.add(serverId);
+        continue;
+      }
+
+      // Rotate the revision even on row-only writes. A tab that missed those changes
+      // must not publish a checkpoint over them.
+      const checkpoint = checkpoints.get(serverId);
+      const revision =
+        checkpoint || current ? crypto.getRandomValues(new Uint32Array(4)).join(":") : undefined;
+      nextRevisions.set(serverId, revision);
+      if (!checkpoint && current) {
+        await requestResult(rows.put({ ...current, directoryRevision: revision }));
+      }
+    }
+    if (staleHosts.size === 0 && unbasedHosts.size === 0) return changes;
+    return {
+      deletes: changes.deletes.filter(
+        (row) => row.kind === "timeline" || !staleHosts.has(row.serverId),
+      ),
+      upserts: changes.upserts.filter(
+        (row) =>
+          row.kind === "timeline" ||
+          (!staleHosts.has(row.serverId) &&
+            (row.kind !== "checkpoint" || !unbasedHosts.has(row.serverId))),
+      ),
+    };
   }
 
   async function deleteHost(serverId: string): Promise<void> {
@@ -199,6 +314,11 @@ export function createIndexedDbReplicaRowStore(
         await requestResult(rows.delete([row.serverId, row.kind, row.id]));
       }
     });
+    const revision = observedDirectoryRevisions.get(oldServerId);
+    if (revision !== undefined) {
+      observedDirectoryRevisions.delete(oldServerId);
+      observeDirectoryRevision(newServerId, revision);
+    }
   }
 
   async function clear(): Promise<void> {

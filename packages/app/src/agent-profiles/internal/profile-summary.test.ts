@@ -63,6 +63,25 @@ describe("buildAgentProfileRosterSummary", () => {
     expect(summary.runtimeDetails).toEqual(["OpenCode", "Build", "High", "1 option"]);
   });
 
+  it("includes a system prompt tag when configured", () => {
+    const profile: AgentProfile = {
+      id: "p3",
+      name: "UI specialist",
+      provider: "opencode",
+      model: "openrouter/moonshotai/kimi-k3.1-pro",
+      systemPrompt: "Focus on layout and tokens.",
+    };
+
+    const summary = buildAgentProfileRosterSummary({
+      profile,
+      entries,
+      formatFeatureCount,
+      systemPromptLabel: "System prompt",
+    });
+
+    expect(summary.runtimeDetails).toEqual(["OpenCode", "System prompt"]);
+  });
+
   it("falls back to stored provider id when catalog is unavailable", () => {
     const profile: AgentProfile = {
       id: "p2",

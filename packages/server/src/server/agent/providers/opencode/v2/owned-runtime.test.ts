@@ -125,9 +125,15 @@ test("a wrapped caller gets its own helper behind the wrap, and other callers ke
     expect(launched.profile).toBe("agent");
     expect(launched.argv.slice(0, 4)).toEqual(["--profile", process.execPath, script, "serve"]);
 
+    const wrappedAgain = wrapped.retain();
+    expect(wrapped.releaseStopsServer()).toBe(false);
+    await wrappedAgain.release();
+    expect(wrapped.releaseStopsServer()).toBe(true);
     await wrapped.release();
     await expect(wrapped.exited).resolves.toBeInstanceOf(Error);
     await shared.release();
+    // The shared helper stays up for the next caller after its last lease goes.
+    expect(sharedAgain.releaseStopsServer()).toBe(false);
     await sharedAgain.release();
   } finally {
     await runtime.shutdown();

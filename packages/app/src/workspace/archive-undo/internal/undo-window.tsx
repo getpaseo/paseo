@@ -25,6 +25,7 @@ export interface UndoableWorkspaceArchiveEntryInput {
 
 interface UndoWindowEntry extends UndoableWorkspaceArchiveEntryInput {
   hidden: WorkspaceDescriptor | null;
+  archivedAgentIds: ReadonlySet<string>;
   archived: boolean;
   failed: boolean;
   committed: boolean;
@@ -181,6 +182,7 @@ export async function archiveWorkspacesWithUndo(input: {
     const windowEntry: UndoWindowEntry = {
       ...entry,
       hidden: archive.hidden,
+      archivedAgentIds: archive.archivedAgentIds,
       archived: false,
       failed: false,
       committed: false,
