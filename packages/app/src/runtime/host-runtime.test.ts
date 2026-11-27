@@ -180,7 +180,9 @@ class FakeDaemonClient {
   }
 
   public ownedSubscriptions = true;
+  public advertisedDirectEndpoints: string[] | null = null;
   private daemonVersion: string | null = "0.8.0";
+  private rawMessageListeners = new Set<Parameters<DaemonClient["subscribeRawMessages"]>[0]>();
 
   getLastServerInfoMessage(): ReturnType<DaemonClient["getLastServerInfoMessage"]> {
     if (this.daemonVersion === null) return null;
@@ -192,8 +194,24 @@ class FakeDaemonClient {
       features: {
         ownedSubscriptions: this.ownedSubscriptions,
         connectedHosts: this.connectedHosts,
+        ...(this.advertisedDirectEndpoints ? { learnedDirectEndpoints: true } : {}),
       },
+      ...(this.advertisedDirectEndpoints
+        ? { directEndpoints: this.advertisedDirectEndpoints }
+        : {}),
     };
+  }
+
+  subscribeRawMessages(listener: Parameters<DaemonClient["subscribeRawMessages"]>[0]): () => void {
+    this.rawMessageListeners.add(listener);
+    return () => this.rawMessageListeners.delete(listener);
+  }
+
+  advertiseDirectEndpoints(endpoints: string[]): void {
+    this.advertisedDirectEndpoints = endpoints;
+    const payload = this.getLastServerInfoMessage();
+    if (!payload) return;
+    for (const listener of this.rawMessageListeners) listener({ type: "status", payload });
   }
 
   // Like the real client, the server info is cleared while disconnected and replaced by the
@@ -528,6 +546,88 @@ function makeDeps(
     getClientId: async () => "cid_test_runtime",
   };
 }
+
+it("learns advertised addresses only from a paired relay connection", async () => {
+  const relay = makeHost().connections[1]!;
+  const host = makeHost({ connections: [relay], preferredConnectionId: relay.id });
+  const clients: FakeDaemonClient[] = [];
+  const deps = makeDeps({ [relay.id]: 5 }, clients);
+  const originalConnect = deps.connectToDaemon;
+  deps.connectToDaemon = async (input) => {
+    const result = await originalConnect(input);
+    (result.client as unknown as FakeDaemonClient).advertisedDirectEndpoints = ["100.100.1.5:6767"];
+    return result;
+  };
+  const learned: Array<{
+    serverId: string;
+    sourceConnectionId: string;
+    daemonPublicKeyB64: string;
+    endpoints: string[];
+  }> = [];
+  const controller = new HostRuntimeController({
+    host,
+    deps,
+    onLearnedDirectEndpoints: (input) => learned.push(input),
+  });
+  await controller.start({ autoProbe: false });
+  expect(learned).toEqual([
+    {
+      serverId: host.serverId,
+      sourceConnectionId: relay.id,
+      daemonPublicKeyB64: "pk_test",
+      endpoints: ["100.100.1.5:6767"],
+    },
+  ]);
+  clients[0]?.advertiseDirectEndpoints([]);
+  expect(learned.at(-1)?.endpoints).toEqual([]);
+  await controller.stop();
+});
+
+it("learns address updates after an adaptive switch to another relay", async () => {
+  useHostRuntimeClock();
+  const host = makeHost({
+    connections: [relayPrimary, relayAlternate],
+    preferredConnectionId: relayPrimary.id,
+  });
+  const clients: FakeDaemonClient[] = [];
+  const latencies: Record<string, number | Error> = {
+    [relayPrimary.id]: 300,
+    [relayAlternate.id]: 320,
+  };
+  const baseDeps = makeDeps(latencies, clients);
+  const learned: Array<{ sourceConnectionId: string; endpoints: string[] }> = [];
+  const controller = new HostRuntimeController({
+    host,
+    deps: {
+      ...baseDeps,
+      createClient: (input) => {
+        const client = baseDeps.createClient(input) as unknown as FakeDaemonClient;
+        if (input.connection.id === relayAlternate.id) {
+          client.advertisedDirectEndpoints = ["100.100.1.5:6767"];
+        }
+        return client as unknown as DaemonClient;
+      },
+    },
+    onLearnedDirectEndpoints: ({ sourceConnectionId, endpoints }) =>
+      learned.push({ sourceConnectionId, endpoints }),
+  });
+
+  await controller.start({ autoProbe: false });
+  (controller.getSnapshot().client as unknown as FakeDaemonClient).heartbeatReportsRtt(300);
+  latencies[relayAlternate.id] = 100;
+  for (let index = 0; index < 3; index += 1) {
+    await vi.advanceTimersByTimeAsync(120_000);
+    await controller.runProbeCycleNow();
+  }
+
+  expect(controller.getSnapshot().activeConnectionId).toBe(relayAlternate.id);
+  expect(learned).toEqual([
+    { sourceConnectionId: relayAlternate.id, endpoints: ["100.100.1.5:6767"] },
+  ]);
+  (controller.getSnapshot().client as unknown as FakeDaemonClient).advertiseDirectEndpoints([]);
+  expect(learned.at(-1)).toEqual({ sourceConnectionId: relayAlternate.id, endpoints: [] });
+  await controller.stop();
+});
 
 function createDeferred<T>() {
   let resolve: ((value: T | PromiseLike<T>) => void) | null = null;
@@ -3215,6 +3315,33 @@ describe("HostRuntimeStore", () => {
 
     expect(revokedServerIds).toEqual([host.serverId]);
     expect(store.getHosts()).toEqual([]);
+  });
+
+  it("removes learned addresses with their source relay", async () => {
+    const relay = makeHost().connections[1]!;
+    const learned: HostConnection = {
+      id: "direct:100.100.1.5:6767",
+      type: "directTcp",
+      endpoint: "100.100.1.5:6767",
+      learnedFromConnectionId: relay.id,
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({ connections: [relay, learned], preferredConnectionId: relay.id });
+    const revokedServerIds: string[] = [];
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({
+        "@paseo:daemon-registry": JSON.stringify([host]),
+        "@paseo:e2e": "1",
+      }),
+      deps: makeDeps({}, []),
+      revokePushNotifications: async ({ serverId }) => {
+        revokedServerIds.push(serverId);
+      },
+    });
+    await store.boot();
+    await store.removeConnection(host.serverId, relay.id);
+    expect(store.getHosts()).toEqual([]);
+    expect(revokedServerIds).toEqual([host.serverId]);
   });
 
   it("loads the host registry and restores its cached directory", async () => {

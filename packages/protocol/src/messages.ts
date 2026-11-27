@@ -4015,6 +4015,8 @@ export const ServerInfoStatusPayloadSchema = z
     machineKind: z.string().nullable().optional(),
     // Authenticated producer for host registration ownership, separate from admission authority.
     sourceId: z.string().optional(),
+    // COMPAT(learnedDirectEndpoints): added in v0.16, remove optional parsing after 2027-05-10.
+    directEndpoints: z.array(z.string()).optional(),
     // COMPAT(sessionPermissions): optional while clients support older daemons.
     permissions: z.array(DaemonPermissionSchema).optional(),
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
@@ -4040,6 +4042,7 @@ export const ServerInfoStatusPayloadSchema = z
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
+        learnedDirectEndpoints: z.boolean().optional(),
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),
