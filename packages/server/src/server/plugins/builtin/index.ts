@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 export const builtinPlugins = [
   "antigravity-provider",
   "claude-usage-source",
+  "cloudflared-tunnel",
   "codex-usage-source",
   "copilot-usage-source",
   "cursor-usage-source",
@@ -18,6 +19,7 @@ export const builtinPlugins = [
   "muse-provider",
   "opencode-go-usage-source",
   "openrouter-host-usage-source",
+  "tailscale-funnel",
   "worktree-include",
   "zai-usage-source",
 ] as const;

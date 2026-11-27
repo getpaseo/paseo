@@ -3,6 +3,7 @@ import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageBehavior, AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
+import { TunnelSession, type TunnelManager } from "./tunnels/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
 import {
   createWorkspaceBaseBranchService,
@@ -496,6 +497,7 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
   connectedHosts?: ConnectedHosts;
+  tunnelManager?: TunnelManager;
   sourceId?: string;
   routed?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
@@ -770,6 +772,7 @@ function resolveAgentSubscriptionSnapshotIds(
 
 export class Session {
   private readonly connectedHostSession: ConnectedHostSession | null;
+  private readonly tunnelSession: TunnelSession | null;
   private routed = false;
   isRouted(): boolean {
     return this.routed;
@@ -998,6 +1001,7 @@ export class Session {
     this.sessionId = uuidv4();
     this.hostSourceId = hostSource(options);
     this.connectedHostSession = createHostSession(options, this);
+    this.tunnelSession = createTunnelSession(options, this);
     this.onMessage = onMessage;
     this.onMessageToSource = onMessageToSource
       ? (source, message) => this.observeSourceSend(() => onMessageToSource(source, message))
@@ -2774,9 +2778,13 @@ export class Session {
     return undefined;
   }
 
+  private dispatchDomainSessionMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return this.connectedHostSession?.dispatch(msg) ?? this.tunnelSession?.dispatch(msg);
+  }
+
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
-      this.connectedHostSession?.dispatch(msg) ??
+      this.dispatchDomainSessionMessage(msg) ??
       this.dispatchSubscriptionMessage(msg, source) ??
       this.dispatchVoiceAndControlMessage(msg) ??
       this.dispatchAgentObservationMessage(msg, source) ??
@@ -9894,6 +9902,13 @@ function createHostSession(options: SessionOptions, session: Session): Connected
     () => session.isRouted(),
     session.getSessionId(),
     () => options.getConnectedHostBufferedAmount?.() ?? 0,
+  );
+}
+
+function createTunnelSession(options: SessionOptions, session: Session): TunnelSession | null {
+  if (!options.tunnelManager) return null;
+  return new TunnelSession(options.tunnelManager, session.delivery, (message) =>
+    session.publish(message),
   );
 }
 

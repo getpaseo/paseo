@@ -1,5 +1,11 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
-import type { PluginHookAgent, PluginNotificationSendResult } from "@getpaseo/plugin/server";
+import type {
+  PluginHookAgent,
+  PluginNotificationSendResult,
+  TunnelEvent,
+  TunnelProviderStatus,
+  TunnelTarget,
+} from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
   ProviderCatalogOptions,
@@ -57,6 +63,79 @@ export interface PluginWorktreeManagerCapabilities {
   hasRestore: boolean;
 }
 
+export interface PluginTunnelProviderMetadata {
+  id: string;
+  label: string;
+  description?: string;
+  docsUrl?: string;
+}
+
+export const TunnelTargetSchema: z.ZodType<TunnelTarget> = z
+  .object({
+    id: z.string().min(1),
+    host: z.string().min(1),
+    port: z.number().int().min(1).max(65535),
+    label: z.string().optional(),
+    slug: z.string().optional(),
+  })
+  .strict();
+
+export const TunnelProviderStatusSchema: z.ZodType<TunnelProviderStatus> = z.discriminatedUnion(
+  "status",
+  [
+    z
+      .object({
+        status: z.literal("available"),
+        detail: z.string().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        status: z.literal("unavailable"),
+        reason: z.string().min(1),
+        installUrl: z.string().optional(),
+        fixHint: z.string().optional(),
+      })
+      .strict(),
+  ],
+);
+
+export const TunnelEventSchema: z.ZodType<TunnelEvent> = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("connecting"),
+      detail: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("ready"),
+      url: z.string().min(1),
+      stability: z.enum(["ephemeral", "stable"]).optional(),
+      detail: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("reconnecting"),
+      reason: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("error"),
+      message: z.string().min(1),
+      recoverable: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("closed"),
+      reason: z.string().optional(),
+    })
+    .strict(),
+]);
+
 export type PluginProcessRequest =
   | { type: "tool.call"; requestId: string; agent: PluginHookAgent; name: string; input: unknown }
   | { type: "tool.cancel"; requestId: string }
@@ -100,6 +179,10 @@ export type PluginProcessRequest =
   | { type: "worktree.remove"; requestId: string; request: unknown }
   | { type: "worktree.restore"; requestId: string; request: unknown }
   | { type: "worktree.cancel"; requestId: string }
+  | { type: "tunnel.status"; requestId: string; providerId: string }
+  | { type: "tunnel.status.cancel"; requestId: string }
+  | { type: "tunnel.open"; exposureId: string; providerId: string; target: TunnelTarget }
+  | { type: "tunnel.close"; exposureId: string }
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
@@ -138,6 +221,10 @@ export type PluginProcessMessage =
       worktreeManager: PluginWorktreeManagerCapabilities | null;
     }
   | {
+      type: "tunnel_providers.changed";
+      tunnelProviders: PluginTunnelProviderMetadata[];
+    }
+  | {
       type: "ready";
       methods: string[];
       subscriptions?: string[];
@@ -145,7 +232,10 @@ export type PluginProcessMessage =
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: string[];
       worktreeManager?: PluginWorktreeManagerCapabilities | null;
+      tunnelProviders?: PluginTunnelProviderMetadata[];
     }
+  | { type: "tunnel.event"; exposureId: string; event: TunnelEvent }
+  | { type: "tunnel.closed"; exposureId: string; error?: string }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
   | { type: "provider.installation.report"; requestId: string; report: ProviderUpdateReport }
@@ -177,6 +267,15 @@ const worktreeManagerCapabilitiesSchema = z
   .object({
     hasRemove: z.boolean(),
     hasRestore: z.boolean(),
+  })
+  .strict();
+
+const tunnelProviderMetadataSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    description: z.string().optional(),
+    docsUrl: z.string().optional(),
   })
   .strict();
 
@@ -339,6 +438,23 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
     z.object({ type: z.literal("worktree.cancel"), requestId: z.string().min(1) }).strict(),
     z
       .object({
+        type: z.literal("tunnel.status"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+      })
+      .strict(),
+    z.object({ type: z.literal("tunnel.status.cancel"), requestId: z.string().min(1) }).strict(),
+    z
+      .object({
+        type: z.literal("tunnel.open"),
+        exposureId: z.string().min(1),
+        providerId: z.string().min(1),
+        target: TunnelTargetSchema,
+      })
+      .strict(),
+    z.object({ type: z.literal("tunnel.close"), exposureId: z.string().min(1) }).strict(),
+    z
+      .object({
         type: z.literal("usage.fetch"),
         requestId: z.string(),
         sourceId: z.string(),
@@ -430,6 +546,12 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .strict(),
     z
       .object({
+        type: z.literal("tunnel_providers.changed"),
+        tunnelProviders: z.array(tunnelProviderMetadataSchema),
+      })
+      .strict(),
+    z
+      .object({
         type: z.literal("ready"),
         methods: z.array(z.string()),
         subscriptions: z.array(z.string()).optional(),
@@ -437,6 +559,21 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
         worktreeManager: worktreeManagerCapabilitiesSchema.nullable().optional(),
+        tunnelProviders: z.array(tunnelProviderMetadataSchema).optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("tunnel.event"),
+        exposureId: z.string().min(1),
+        event: TunnelEventSchema,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("tunnel.closed"),
+        exposureId: z.string().min(1),
+        error: z.string().optional(),
       })
       .strict(),
     z

@@ -25,6 +25,9 @@ import type {
   PluginWorktreeCreateInput,
   PluginWorktreeRemoveRequest,
   PluginWorktreeRestoreRequest,
+  TunnelEvent,
+  TunnelProviderStatus,
+  TunnelTarget,
 } from "@getpaseo/plugin/server";
 import { z } from "zod";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
@@ -49,10 +52,14 @@ import type {
   PluginProcessMessage,
   PluginProcessRequest,
   PluginProviderMetadata,
+  PluginTunnelProviderMetadata,
   PluginUsageSourceMetadata,
   PluginWorktreeManagerCapabilities,
 } from "./plugin-process-protocol.js";
-import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
+import {
+  PluginProcessMessageSchema,
+  TunnelProviderStatusSchema,
+} from "./plugin-process-protocol.js";
 import {
   BufferedPluginSubscription,
   type PluginRuntimeSubscription,
@@ -148,11 +155,13 @@ interface LoadedPlugin {
   worktreeManager: PluginWorktreeManagerCapabilities | null;
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
+  tunnelProviders: readonly PluginTunnelProviderMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
   providerConnections: Map<string, RemoteProviderConnection>;
   providerConnectionTombstones: Set<string>;
+  tunnelExposures: Map<string, RemoteTunnelExposure>;
   sessionSocket: PluginSessionSocket | null;
   sessionClosed: Promise<void> | null;
 }
@@ -194,9 +203,18 @@ interface RemoteProviderConnection {
   rejectClosed(error: Error): void;
 }
 
+interface RemoteTunnelExposure {
+  onEvent(event: TunnelEvent): void;
+  onClosed(error?: string): void;
+  closed: boolean;
+  closedPromise: Promise<void>;
+  resolveClosed(): void;
+}
+
 interface PluginRuntimeDependencies {
   settingsDirectory?: string;
   onSettingsChanged?: (pluginId: string, settingsId: string) => void;
+  onTunnelProvidersChanged?: (pluginId: string) => void;
   spawnChild?: () => PluginChild;
   sessionHost?: PluginPaseoSessionHost;
 }
@@ -491,6 +509,101 @@ export class PluginRuntime {
 
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[] {
     return this.plugins.get(pluginId)?.usageSources ?? [];
+  }
+
+  getTunnelProviderRegistrations(pluginId: string): readonly PluginTunnelProviderMetadata[] {
+    return this.plugins.get(pluginId)?.tunnelProviders ?? [];
+  }
+
+  async getTunnelProviderStatus(
+    pluginId: string,
+    providerId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<TunnelProviderStatus> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    if (!loaded.tunnelProviders.some((provider) => provider.id === providerId)) {
+      throw new Error(`Plugin ${pluginId} does not contribute tunnel provider ${providerId}`);
+    }
+    return TunnelProviderStatusSchema.parse(
+      await this.request(
+        loaded,
+        { type: "tunnel.status", requestId: randomUUID(), providerId },
+        { signal: options?.signal },
+      ),
+    );
+  }
+
+  openTunnel(
+    pluginId: string,
+    providerId: string,
+    exposureId: string,
+    target: TunnelTarget,
+    callbacks: {
+      onEvent(event: TunnelEvent): void;
+      onClosed(error?: string): void;
+    },
+  ): { close(): Promise<void> } {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded?.child) throw new Error(`Plugin is not available: ${pluginId}`);
+    if (!loaded.tunnelProviders.some((provider) => provider.id === providerId)) {
+      throw new Error(`Plugin ${pluginId} does not contribute tunnel provider ${providerId}`);
+    }
+    if (loaded.tunnelExposures.has(exposureId)) {
+      throw new Error(`Duplicate tunnel exposure: ${exposureId}`);
+    }
+    let resolveClosed!: () => void;
+    const closedPromise = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const state: RemoteTunnelExposure = {
+      onEvent: callbacks.onEvent,
+      onClosed: callbacks.onClosed,
+      closed: false,
+      closedPromise,
+      resolveClosed,
+    };
+    const finish = (error?: string) => {
+      if (state.closed) return;
+      state.closed = true;
+      loaded.tunnelExposures.delete(exposureId);
+      state.resolveClosed();
+      state.onClosed(error);
+    };
+    loaded.tunnelExposures.set(exposureId, state);
+    void send(loaded.child, {
+      type: "tunnel.open",
+      exposureId,
+      providerId,
+      target,
+    }).catch((error) => {
+      finish(describeError(error));
+    });
+    return {
+      close: async () => {
+        if (state.closed) return;
+        if (loaded.child?.connected) {
+          await send(loaded.child, { type: "tunnel.close", exposureId }).catch(() => undefined);
+        } else {
+          finish();
+          return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            state.closedPromise,
+            new Promise<void>((resolve) => {
+              timer = setTimeout(() => {
+                finish();
+                resolve();
+              }, 5_000);
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      },
+    };
   }
 
   fetchUsage(pluginId: string, sourceId: string, input: unknown): Promise<unknown> {
@@ -989,6 +1102,8 @@ export class PluginRuntime {
           void send(child, { type: "worktree.cancel", requestId }).catch(() => {});
         if (isInstallationRequest(message))
           void send(child, { type: "provider.installation.cancel", requestId }).catch(() => {});
+        if (message.type === "tunnel.status")
+          void send(child, { type: "tunnel.status.cancel", requestId }).catch(() => {});
         signal?.removeEventListener("abort", cancel);
         reject(signal?.reason ?? new Error("Plugin request canceled"));
       };
@@ -1016,6 +1131,8 @@ export class PluginRuntime {
                 void send(child, { type: "provider.installation.cancel", requestId }).catch(
                   () => {},
                 );
+              if (message.type === "tunnel.status")
+                void send(child, { type: "tunnel.status.cancel", requestId }).catch(() => {});
               reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
             }, timeoutMs);
       signal?.addEventListener("abort", cancel, { once: true });
@@ -1075,11 +1192,13 @@ export class PluginRuntime {
         worktreeManager: null,
         providers: [],
         usageSources: [],
+        tunnelProviders: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
         providerConnections: new Map(),
         providerConnectionTombstones: new Set(),
+        tunnelExposures: new Map(),
         sessionSocket: null,
         sessionClosed: null,
       };
@@ -1208,11 +1327,13 @@ export class PluginRuntime {
       worktreeManager: ready.worktreeManager ?? null,
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
+      tunnelProviders: ready.tunnelProviders ?? [],
       child,
       outputCapture,
       pending,
       providerConnections: new Map(),
       providerConnectionTombstones: new Set(),
+      tunnelExposures: new Map(),
       sessionSocket: session.socket,
       sessionClosed: sessionAttachment.closed,
     };
@@ -1292,6 +1413,7 @@ export class PluginRuntime {
       loaded.worktreeManager = message.worktreeManager;
       return;
     }
+    if (this.handleTunnelMessage(loaded, message)) return;
     if (message.type === "settings.changed") {
       this.dependencies.onSettingsChanged?.(loaded.id, message.settingsId);
       return;
@@ -1325,6 +1447,30 @@ export class PluginRuntime {
     clearTimeout(pending.timeout);
     if (message.type === "result") pending.resolve(message.output);
     else pending.reject(new Error(message.error));
+  }
+
+  private handleTunnelMessage(loaded: LoadedPlugin, message: PluginProcessMessage): boolean {
+    if (message.type === "tunnel_providers.changed") {
+      loaded.tunnelProviders = message.tunnelProviders;
+      this.dependencies.onTunnelProvidersChanged?.(loaded.id);
+      return true;
+    }
+    if (message.type === "tunnel.event") {
+      const exposure = loaded.tunnelExposures.get(message.exposureId);
+      if (exposure && !exposure.closed) exposure.onEvent(message.event);
+      return true;
+    }
+    if (message.type === "tunnel.closed") {
+      const exposure = loaded.tunnelExposures.get(message.exposureId);
+      if (exposure && !exposure.closed) {
+        exposure.closed = true;
+        loaded.tunnelExposures.delete(message.exposureId);
+        exposure.resolveClosed();
+        exposure.onClosed(message.error);
+      }
+      return true;
+    }
+    return false;
   }
 
   private async handleNotificationSend(
@@ -1652,6 +1798,14 @@ export class PluginRuntime {
       this.failRemoteProviderConnection(state, new Error(`Plugin process exited: ${loaded.id}`));
     }
     loaded.providerConnections.clear();
+    const exposures = [...loaded.tunnelExposures.values()];
+    loaded.tunnelExposures.clear();
+    for (const exposure of exposures) {
+      if (exposure.closed) continue;
+      exposure.closed = true;
+      exposure.resolveClosed();
+      exposure.onClosed(`Plugin process exited: ${loaded.id}`);
+    }
     await loaded.sessionClosed;
     if (wasPublished) this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
   }

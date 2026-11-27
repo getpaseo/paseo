@@ -3,8 +3,11 @@ import { PluginHookHandlers } from "./lifecycle/index.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
 import {
   PluginProcessRequestSchema,
+  TunnelEventSchema,
+  TunnelProviderStatusSchema,
   type PluginProcessMessage,
   type PluginProcessRequest,
+  type PluginTunnelProviderMetadata,
 } from "./plugin-process-protocol.js";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
 import type {
@@ -22,6 +25,7 @@ import type {
   PluginWorktreeCreateInput,
   PluginWorktreeRemoveRequest,
   PluginWorktreeRestoreRequest,
+  TunnelProviderRegistration,
   WorktreeManagerRegistration,
 } from "@getpaseo/plugin/server";
 import { randomUUID } from "node:crypto";
@@ -124,8 +128,20 @@ export function createPluginWorker(options: {
   const subscriptions = new PluginSubscriptionHandlers({ send, sendAndWait });
   const providers = new Map<string, ProviderRegistration>();
   const usageSources = new Map<string, UsageSourceRegistration>();
+  const tunnelProviders = new Map<string, TunnelProviderRegistration>();
+  const tunnelStatusRequests = new Map<string, AbortController>();
+  const activeTunnels = new Map<
+    string,
+    {
+      providerId: string;
+      controller: AbortController;
+      abortedByHost: boolean;
+      done: Promise<void>;
+    }
+  >();
   let worktreeManager: WorktreeManagerRegistration | null = null;
   const worktreeRequests = new Map<string, AbortController>();
+  let readySent = false;
   const providerConnections = new Map<
     string,
     { connection: ProviderConnection; unsubscribe: () => void; closing?: Promise<void> }
@@ -287,6 +303,67 @@ export function createPluginWorker(options: {
       if (worktreeManager !== manager) return;
       worktreeManager = null;
       send({ type: "worktree_manager.changed", worktreeManager: null });
+    };
+  }
+
+  function tunnelProviderCatalog(): PluginTunnelProviderMetadata[] {
+    return [...tunnelProviders.values()]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((provider) => {
+        const entry: PluginTunnelProviderMetadata = {
+          id: provider.id,
+          label: provider.label,
+        };
+        if (provider.description !== undefined) entry.description = provider.description;
+        if (provider.docsUrl !== undefined) entry.docsUrl = provider.docsUrl;
+        return entry;
+      });
+  }
+
+  function registerTunnelProvider(provider: TunnelProviderRegistration): () => void {
+    const id = typeof provider?.id === "string" ? provider.id.trim() : "";
+    if (!/^[a-z][a-z0-9._-]*$/.test(id)) {
+      throw new Error(`Invalid tunnel provider ID: ${provider?.id}`);
+    }
+    if (typeof provider.label !== "string" || !provider.label.trim()) {
+      throw new Error(`Tunnel provider ${id} requires a label`);
+    }
+    if (typeof provider.status !== "function") {
+      throw new Error(`Tunnel provider ${id} must implement status()`);
+    }
+    if (typeof provider.open !== "function") {
+      throw new Error(`Tunnel provider ${id} must implement open()`);
+    }
+    if (
+      provider.docsUrl !== undefined &&
+      (typeof provider.docsUrl !== "string" || !isHttpUrl(provider.docsUrl))
+    ) {
+      throw new Error(`Tunnel provider ${id} docsUrl must be an http(s) URL`);
+    }
+    if (tunnelProviders.has(id)) {
+      throw new Error(`Duplicate tunnel provider ID: ${id}`);
+    }
+    const registered: TunnelProviderRegistration = {
+      ...provider,
+      id,
+      label: provider.label.trim(),
+    };
+    tunnelProviders.set(id, registered);
+    if (readySent && !stopping) {
+      send({ type: "tunnel_providers.changed", tunnelProviders: tunnelProviderCatalog() });
+    }
+    return () => {
+      if (tunnelProviders.get(id) !== registered) return;
+      tunnelProviders.delete(id);
+      for (const active of activeTunnels.values()) {
+        if (active.providerId === id) {
+          active.abortedByHost = true;
+          active.controller.abort(new Error(`Tunnel provider unregistered: ${id}`));
+        }
+      }
+      if (readySent && !stopping) {
+        send({ type: "tunnel_providers.changed", tunnelProviders: tunnelProviderCatalog() });
+      }
     };
   }
 
@@ -525,6 +602,7 @@ export function createPluginWorker(options: {
       registerProvider,
       registerUsageSource,
       registerWorktreeManager,
+      registerTunnelProvider,
       registerSettings,
       notifications,
       addHook: hooks.addHook,
@@ -554,11 +632,13 @@ export function createPluginWorker(options: {
       subscriptions: subscriptions.catalog(),
       hooks: hooks.catalog(),
       worktreeManager: worktreeManagerCapabilities(),
+      tunnelProviders: tunnelProviderCatalog(),
       providers: [...providers.values()]
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
       usageSources: usageSourceMetadata,
     });
+    readySent = true;
   }
 
   async function shutdown(): Promise<void> {
@@ -574,6 +654,16 @@ export function createPluginWorker(options: {
     for (const request of installationRequests.values())
       request.abort(new Error("Plugin is stopping"));
     for (const request of worktreeRequests.values()) request.abort(new Error("Plugin is stopping"));
+    for (const request of tunnelStatusRequests.values())
+      request.abort(new Error("Plugin is stopping"));
+    const closingTunnels: Promise<void>[] = [];
+    for (const active of activeTunnels.values()) {
+      active.abortedByHost = true;
+      active.controller.abort(new Error("Plugin is stopping"));
+      closingTunnels.push(active.done);
+    }
+    await Promise.allSettled(closingTunnels);
+    tunnelProviders.clear();
     for (const pending of notificationRequests.values())
       pending.reject(new Error("Plugin is stopping"));
     notificationRequests.clear();
@@ -622,9 +712,20 @@ export function createPluginWorker(options: {
       message.type === "worktree.create" ||
       message.type === "worktree.remove" ||
       message.type === "worktree.restore" ||
+      message.type === "tunnel.status" ||
       message.type === "subscribe"
     ) {
       send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
+    } else if (message.type === "tunnel.open") {
+      send({
+        type: "tunnel.closed",
+        exposureId: message.exposureId,
+        error: "Plugin is stopping",
+      });
+    } else if (message.type === "tunnel.close") {
+      if (!activeTunnels.has(message.exposureId)) {
+        send({ type: "tunnel.closed", exposureId: message.exposureId });
+      }
     } else if (message.type === "provider.connect") {
       send({
         type: "provider.connect_failed",
@@ -839,6 +940,10 @@ export function createPluginWorker(options: {
       handleWorktreeMessage(message);
       return;
     }
+    if (isTunnelMessage(message)) {
+      handleTunnelMessage(message);
+      return;
+    }
     if (message.type === "invoke") invoke(message);
     else handleSubscriptionMessage(message);
   }
@@ -985,6 +1090,164 @@ export function createPluginWorker(options: {
           send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       )
       .finally(() => worktreeRequests.delete(message.requestId));
+  }
+
+  function isTunnelMessage(
+    message: PluginProcessRequest,
+  ): message is Extract<
+    PluginProcessRequest,
+    { type: "tunnel.status" | "tunnel.status.cancel" | "tunnel.open" | "tunnel.close" }
+  > {
+    return (
+      message.type === "tunnel.status" ||
+      message.type === "tunnel.status.cancel" ||
+      message.type === "tunnel.open" ||
+      message.type === "tunnel.close"
+    );
+  }
+
+  function handleTunnelMessage(
+    message: Extract<
+      PluginProcessRequest,
+      { type: "tunnel.status" | "tunnel.status.cancel" | "tunnel.open" | "tunnel.close" }
+    >,
+  ): void {
+    if (message.type === "tunnel.status.cancel") {
+      tunnelStatusRequests.get(message.requestId)?.abort(new Error("Tunnel status canceled"));
+      return;
+    }
+    if (message.type === "tunnel.close") {
+      const active = activeTunnels.get(message.exposureId);
+      if (!active) {
+        send({ type: "tunnel.closed", exposureId: message.exposureId });
+        return;
+      }
+      active.abortedByHost = true;
+      active.controller.abort(new Error("Tunnel closed"));
+      return;
+    }
+    if (!paseo) {
+      if (message.type === "tunnel.status") {
+        send({
+          type: "error",
+          requestId: message.requestId,
+          error: "Plugin Paseo API is unavailable",
+        });
+      } else {
+        send({
+          type: "tunnel.closed",
+          exposureId: message.exposureId,
+          error: "Plugin Paseo API is unavailable",
+        });
+      }
+      return;
+    }
+    const provider = tunnelProviders.get(message.providerId);
+    if (!provider) {
+      if (message.type === "tunnel.status") {
+        send({
+          type: "error",
+          requestId: message.requestId,
+          error: `Unknown tunnel provider: ${message.providerId}`,
+        });
+      } else {
+        send({
+          type: "tunnel.closed",
+          exposureId: message.exposureId,
+          error: `Unknown tunnel provider: ${message.providerId}`,
+        });
+      }
+      return;
+    }
+    if (message.type === "tunnel.status") {
+      const controller = new AbortController();
+      tunnelStatusRequests.set(message.requestId, controller);
+      void Promise.resolve()
+        .then(() => provider.status({ paseo: paseo!, signal: controller.signal }))
+        .then((raw) => {
+          const parsed = TunnelProviderStatusSchema.parse(jsonTransportValue(raw));
+          if (
+            parsed.status === "unavailable" &&
+            parsed.installUrl !== undefined &&
+            !isHttpUrl(parsed.installUrl)
+          ) {
+            throw new Error(`Tunnel provider ${provider.id} installUrl must be an http(s) URL`);
+          }
+          send({ type: "result", requestId: message.requestId, output: parsed });
+          return undefined;
+        })
+        .catch((error) => {
+          send({ type: "error", requestId: message.requestId, error: describeError(error) });
+          return undefined;
+        })
+        .finally(() => {
+          tunnelStatusRequests.delete(message.requestId);
+        });
+      return;
+    }
+    if (activeTunnels.has(message.exposureId)) {
+      send({
+        type: "tunnel.closed",
+        exposureId: message.exposureId,
+        error: `Duplicate tunnel exposure: ${message.exposureId}`,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    let settled = false;
+    let reportFailure: string | undefined;
+    const entry = {
+      providerId: provider.id,
+      controller,
+      abortedByHost: false,
+      done: Promise.resolve(),
+    };
+    const report = (rawEvent: unknown) => {
+      if (settled) return;
+      try {
+        const event = TunnelEventSchema.parse(jsonTransportValue(rawEvent));
+        if (event.type === "ready" && !isHttpUrl(event.url)) {
+          throw new Error(`Tunnel provider ${provider.id} reported invalid URL: ${event.url}`);
+        }
+        send({ type: "tunnel.event", exposureId: message.exposureId, event });
+      } catch (error) {
+        reportFailure = describeError(error);
+        controller.abort(error);
+      }
+    };
+    const done = Promise.resolve()
+      .then(() =>
+        provider.open(structuredClone(message.target), {
+          paseo: paseo!,
+          signal: controller.signal,
+          report,
+        }),
+      )
+      .then(
+        () => {
+          settled = true;
+          activeTunnels.delete(message.exposureId);
+          send({
+            type: "tunnel.closed",
+            exposureId: message.exposureId,
+            ...(reportFailure ? { error: reportFailure } : {}),
+          });
+          return undefined;
+        },
+        (error) => {
+          settled = true;
+          activeTunnels.delete(message.exposureId);
+          const failure = reportFailure ?? (entry.abortedByHost ? undefined : describeError(error));
+          send({
+            type: "tunnel.closed",
+            exposureId: message.exposureId,
+            ...(failure ? { error: failure } : {}),
+          });
+          return undefined;
+        },
+      );
+    entry.done = done;
+    activeTunnels.set(message.exposureId, entry);
   }
   return { shutdown };
 }

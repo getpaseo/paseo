@@ -103,6 +103,12 @@ The `worktree-include` built-in copies gitignored files selected by
 [`.worktreeinclude`](../public-docs/worktrees.md#copy-local-files-with-worktreeinclude)
 before setup and agents, through `worktree.create.after`.
 
+The `cloudflared-tunnel` and `tailscale-funnel` built-ins register tunnel providers through
+`server.registerTunnelProvider()`. Both start without installed binaries or credentials and report
+availability through `status()`. Quick mode in `cloudflared-tunnel` forwards the local HTTP target
+directly with `--url`, while named mode passes `TUNNEL_TOKEN` via environment and runs the
+remotely configured Cloudflare tunnel (`cloudflared tunnel --no-autoupdate run`).
+
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`
 filesystem, and packaging dependencies excludes `.d.ts` files needed for import validation.

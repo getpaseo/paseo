@@ -46,6 +46,15 @@ export type {
   PluginNotificationOpenTarget,
 } from "./notifications.js";
 export type {
+  TunnelEvent,
+  TunnelOpenContext,
+  TunnelProviderRegistration,
+  TunnelProviderStatus,
+  TunnelStability,
+  TunnelStatusContext,
+  TunnelTarget,
+} from "./tunnel.js";
+export type {
   PluginWorktreeContext,
   PluginWorktreeCreateInput,
   PluginWorktreeCreateResult,

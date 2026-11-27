@@ -215,6 +215,7 @@ import {
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
+import { TunnelManager } from "./tunnels/index.js";
 import { BuiltinPluginLoader } from "./plugins/builtin/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
 
@@ -460,6 +461,7 @@ export interface PaseoDaemon {
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
   serviceProxy: ServiceProxySubsystem;
+  tunnelManager: TunnelManager;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
   browserToolsBroker: BrowserToolsBroker;
   start(): Promise<void>;
@@ -646,7 +648,9 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
+  const tunnelManager = new TunnelManager({ logger });
   const pluginRuntime: PluginService = new PluginService(logger, daemonConfigStore, daemonVersion, {
+    tunnelManager,
     usageAgents: {
       hasAgent: (id) => agentManager.getAgent(id) !== null,
       usageSession: (id) => agentManager.usageSession(id),
@@ -1955,6 +1959,7 @@ export async function createPaseoDaemon(
               workspaceLabelService,
               workspaceArchiveOperations,
               config.pushNotifications,
+              tunnelManager,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -2023,6 +2028,7 @@ export async function createPaseoDaemon(
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);
       unsubscribePluginProviders();
+      await tunnelManager.closeAll().catch(() => undefined);
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       await agentProviderRuntime.shutdown().catch(() => undefined);
@@ -2085,6 +2091,11 @@ export async function createPaseoDaemon(
       );
       await agentStorage.flush().catch(() => undefined);
     }
+    await withTimeout({
+      promise: tunnelManager.closeAll(),
+      timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+      label: "close active tunnels",
+    }).catch((error) => logger.warn({ err: error }, "Failed to close active tunnels"));
     await pluginRuntime.stopAllPlugins();
     try {
       if (keepTerminals) {
@@ -2134,6 +2145,7 @@ export async function createPaseoDaemon(
     agentStorage,
     terminalManager,
     serviceProxy,
+    tunnelManager,
     scriptRuntimeStore,
     browserToolsBroker,
     start,

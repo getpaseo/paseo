@@ -779,3 +779,76 @@ describe("plugin notifications SDK boundary", () => {
     ).toEqual([]);
   });
 });
+
+describe("tunnel provider SDK boundary", () => {
+  it("types tunnel provider registration, status union, lifecycle events, and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        TunnelEvent,
+        TunnelOpenContext,
+        TunnelProviderRegistration,
+        TunnelProviderStatus,
+        TunnelStability,
+        TunnelStatusContext,
+        TunnelTarget,
+      } from "@getpaseo/plugin/server";
+
+      export default function contribute(server: PluginServerContext) {
+        const provider: TunnelProviderRegistration = {
+          id: "acme-tunnel",
+          label: "Acme Tunnel",
+          description: "Expose local HTTP targets through Acme.",
+          docsUrl: "https://example.com/docs/tunnel",
+          async status({ paseo, signal }: TunnelStatusContext): Promise<TunnelProviderStatus> {
+            void paseo;
+            if (signal.aborted) {
+              return {
+                status: "unavailable",
+                reason: "Probe aborted",
+                installUrl: "https://example.com/install",
+                fixHint: "Retry the probe.",
+              };
+            }
+            return { status: "available", detail: "v1.0.0" };
+          },
+          async open(target: TunnelTarget, { paseo, signal, report }: TunnelOpenContext) {
+            const id: string = target.id;
+            const host: string = target.host;
+            const port: number = target.port;
+            const label: string | undefined = target.label;
+            const slug: string | undefined = target.slug;
+            void [id, host, port, label, slug, paseo];
+            // @ts-expect-error target fields are read-only
+            target.port = 8080;
+            const stability: TunnelStability = "ephemeral";
+            const connecting: TunnelEvent = { type: "connecting" };
+            const ready: TunnelEvent = {
+              type: "ready",
+              url: "https://demo.example.com",
+              stability,
+            };
+            const reconnecting: TunnelEvent = { type: "reconnecting", reason: "network changed" };
+            const error: TunnelEvent = { type: "error", message: "dropped", recoverable: true };
+            const closed: TunnelEvent = { type: "closed", reason: "aborted" };
+            report(connecting);
+            report(ready);
+            report(reconnecting);
+            report(error);
+            report(closed);
+            // @ts-expect-error ready event requires a url
+            report({ type: "ready" });
+            // @ts-expect-error status requires a valid discriminant
+            const badStatus: TunnelProviderStatus = { available: true };
+            void badStatus;
+            void signal;
+          },
+        };
+        const dispose: () => void = server.registerTunnelProvider(provider);
+        return dispose;
+      }
+    `),
+    ).toEqual([]);
+  });
+});

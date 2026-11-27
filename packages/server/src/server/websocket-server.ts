@@ -15,6 +15,7 @@ import { createToolHosts } from "./agent/host-operations/index.js";
 import { HOST_ROUTE_OPCODE } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonLinkEndpoint, VirtualHostSocket } from "./connected-hosts/index.js";
 import { ConnectedHosts } from "./connected-hosts/index.js";
+import type { TunnelManager } from "./tunnels/index.js";
 import { stat } from "node:fs/promises";
 import {
   createWorkspaceBaseBranchService,
@@ -680,6 +681,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly advertiseRelayConfig: boolean;
   private readonly directorySync = new DirectorySyncService();
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
+  private readonly tunnelManager: TunnelManager | null;
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
 
   private async validateCompletedCreation(snapshot: CreationSnapshot): Promise<void> {
@@ -750,6 +752,7 @@ export class VoiceAssistantWebSocketServer {
     workspaceLabelService?: WorkspaceLabelService,
     workspaceArchiveOperations?: WorkspaceArchiveOperations,
     pushNotifications?: PushNotifications,
+    tunnelManager?: TunnelManager | null,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -767,6 +770,7 @@ export class VoiceAssistantWebSocketServer {
     this.browserToolsBroker = browserToolsBroker ?? null;
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
+    this.tunnelManager = tunnelManager ?? null;
     this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
@@ -1725,6 +1729,7 @@ export class VoiceAssistantWebSocketServer {
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
       connectedHosts: this.connectedHosts,
+      tunnelManager: this.tunnelManager ?? undefined,
       getSourceLocalEndpoint: (source) => this.socketLocalEndpoints.get(source),
       getConnectedHostBufferedAmount: () => {
         let total = 0;
@@ -2208,6 +2213,8 @@ export class VoiceAssistantWebSocketServer {
         pluginSubscriptions: true,
         // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
         pluginNotifications: true,
+        // COMPAT(tunnelProviders): added in v0.18.0, remove gate after 2027-06-01.
+        ...(this.tunnelManager ? { tunnelProviders: true } : {}),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
