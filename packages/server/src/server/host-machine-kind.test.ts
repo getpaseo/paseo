@@ -3,6 +3,7 @@ import {
   classifyLinuxMachine,
   classifyMacModel,
   parseMacIoregProductName,
+  pickClassifiableMacModel,
   type LinuxMachineProbeInput,
 } from "./host-machine-kind";
 
@@ -90,5 +91,34 @@ describe("classifyLinuxMachine", () => {
 
   it("returns null when no marker matches", () => {
     expect(classifyLinuxMachine(linuxProbe())).toBeNull();
+  });
+});
+
+describe("Apple Silicon host icon (issue #10997)", () => {
+  const expertDeviceOutput = `
+    "compatible" = <"J516sAP","Mac15,7","AppleARM">
+    "model" = <"Mac15,7">
+  `;
+  const platformDeviceOutput = `
+    +-o product  <class IOPlatformDevice>
+      "product-name" = <"MacBook Pro (16-inch, Nov 2023)">
+  `;
+
+  it("treats a generic Mac identifier as unclassifiable", () => {
+    expect(parseMacIoregProductName(expertDeviceOutput)).toBe("Mac15,7");
+    expect(classifyMacModel(parseMacIoregProductName(expertDeviceOutput))).toBeNull();
+    expect(pickClassifiableMacModel([expertDeviceOutput])).toBeNull();
+  });
+
+  it("falls back to the IOPlatformDevice product-name so Auto resolves to laptop", () => {
+    const picked = pickClassifiableMacModel([expertDeviceOutput, platformDeviceOutput]);
+    expect(picked).toBe("MacBook Pro (16-inch, Nov 2023)");
+    expect(classifyMacModel(picked)).toBe("laptop");
+  });
+
+  it("keeps the first classifiable probe when an older Mac exposes product-name on the expert node", () => {
+    const intel = `"model" = <"MacBookPro18,3">
+"product-name" = <"MacBook Pro">`;
+    expect(pickClassifiableMacModel([intel, platformDeviceOutput])).toBe("MacBook Pro");
   });
 });
