@@ -37,6 +37,7 @@ interface AgentListProps {
   showAttentionIndicator?: boolean;
   showHostColumn?: boolean;
   search?: string;
+  onProjectPress?: (agent: AggregatedAgent) => void;
 }
 
 type DateSectionKey = "today" | "yesterday" | "thisWeek" | "thisMonth" | "older";
@@ -157,6 +158,43 @@ function SessionRowTrailingAttention({
   );
 }
 
+function SessionRowProjectCell({
+  projectName,
+  projectRanges,
+  agent,
+  onProjectPress,
+}: {
+  projectName: string;
+  projectRanges: ReturnType<typeof findHighlightRanges>;
+  agent: AggregatedAgent;
+  onProjectPress?: (agent: AggregatedAgent) => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  const handleProjectPress = useCallback(() => onProjectPress?.(agent), [onProjectPress, agent]);
+  const text = (
+    <HighlightedText
+      text={projectName}
+      ranges={projectRanges}
+      style={styles.columnMeta}
+      numberOfLines={1}
+      testID={`agent-row-project-${agent.serverId}-${agent.id}`}
+    />
+  );
+  if (!onProjectPress || !projectName) {
+    return text;
+  }
+  return (
+    <Pressable
+      onPress={handleProjectPress}
+      accessibilityRole="button"
+      accessibilityLabel={t("agentList.filterByProject", { project: projectName })}
+      testID={`agent-row-project-filter-${agent.serverId}-${agent.id}`}
+    >
+      {text}
+    </Pressable>
+  );
+}
+
 function SessionRow({
   agent,
   search,
@@ -166,6 +204,7 @@ function SessionRow({
   showHostColumn,
   onPress,
   onLongPress,
+  onProjectPress,
 }: {
   agent: AggregatedAgent;
   search?: string;
@@ -175,6 +214,7 @@ function SessionRow({
   showHostColumn: boolean;
   onPress: (agent: AggregatedAgent) => void;
   onLongPress: (agent: AggregatedAgent) => void;
+  onProjectPress?: (agent: AggregatedAgent) => void;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -289,12 +329,11 @@ function SessionRow({
       </View>
       {!isMobile ? (
         <View style={styles.rowColumns}>
-          <HighlightedText
-            text={projectName}
-            ranges={ranges.project}
-            style={styles.columnMeta}
-            numberOfLines={1}
-            testID={`agent-row-project-${agent.serverId}-${agent.id}`}
+          <SessionRowProjectCell
+            projectName={projectName}
+            projectRanges={ranges.project}
+            agent={agent}
+            onProjectPress={onProjectPress}
           />
           {showHostColumn ? (
             <Text style={styles.columnMetaHost} numberOfLines={1}>
@@ -339,6 +378,7 @@ export function AgentList({
   showAttentionIndicator = true,
   showHostColumn = false,
   search,
+  onProjectPress,
 }: AgentListProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -447,6 +487,7 @@ export function AgentList({
           showHostColumn={showHostColumn}
           onPress={handleAgentPress}
           onLongPress={handleAgentLongPress}
+          onProjectPress={onProjectPress}
         />
       );
     },
@@ -454,6 +495,7 @@ export function AgentList({
       handleAgentLongPress,
       handleAgentPress,
       isMobile,
+      onProjectPress,
       search,
       selectedAgentId,
       showAttentionIndicator,
