@@ -225,9 +225,12 @@ describe("findExecutable", () => {
       chmodSync(binPath, 0o755);
     }
 
-    await expect(findExecutable(cmdName, { env: { PATH: dir }, probe: false })).resolves.toBe(
-      binPath,
-    );
+    const resolved = await findExecutable(cmdName, { env: { PATH: dir }, probe: false });
+    if (process.platform === "win32") {
+      expect(resolved?.toLowerCase()).toBe(binPath.toLowerCase());
+    } else {
+      expect(resolved).toBe(binPath);
+    }
     expect(existsSync(marker)).toBe(false);
 
     // Verify Windows WinGet package fallback works when probe: false.
