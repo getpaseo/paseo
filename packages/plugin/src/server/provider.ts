@@ -29,7 +29,7 @@ export const PROVIDER_CAPABILITIES = [
 
 export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
-export const ProviderCatalogRefreshModeSchema = z.enum(["background", "on_demand", "manual"]);
+export const ProviderCatalogRefreshModeSchema = z.enum(["background", "on_demand"]);
 
 export type ProviderCatalogRefreshMode = z.infer<typeof ProviderCatalogRefreshModeSchema>;
 
@@ -49,8 +49,7 @@ export interface ProviderRegistration {
   /**
    * How Paseo refreshes this provider's model/mode catalog:
    * - `"background"`: refreshes passively on open and on the background timer (default for direct providers).
-   * - `"on_demand"`: refreshes passively once when uncached or binary changes; excluded from the background timer.
-   * - `"manual"`: never calls discovery passively or on a timer; hydrates from disk cache and refreshes only on explicit user request.
+   * - `"on_demand"`: discovers once when uncached or when the binary changes, caches on disk across restarts, and skips the background timer (default for ACP providers).
    */
   catalogRefresh?: ProviderCatalogRefreshMode;
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */

@@ -7505,13 +7505,13 @@ describe("respectful ACP probing defaults and hygiene", () => {
     expect(keyDifferentArgs).not.toBe(keyGlobal);
     expect(keyDifferentEnv).not.toBe(keyGlobal);
 
-    const manual = runAcpProvider({
-      id: "manual-acp",
-      label: "Manual ACP",
+    const background = runAcpProvider({
+      id: "background-acp",
+      label: "Background ACP",
       command: ["/usr/bin/agent", "acp"],
-      catalogRefresh: "manual",
+      catalogRefresh: "background",
     });
-    expect(manual.catalogRefresh).toBe("manual");
+    expect(background.catalogRefresh).toBe("background");
   });
 
   it("reuses the initialized capability probe for global discover() (1 spawn total) and cleans up on close", async () => {

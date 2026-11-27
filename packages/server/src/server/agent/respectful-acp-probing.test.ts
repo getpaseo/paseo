@@ -222,79 +222,12 @@ describe("respectful ACP probing", () => {
       const entry3 = await manager3.getProvider({ provider: "fake-acp", wait: true });
       expect(entry3.models?.map((model) => model.id)).toEqual(["model-v1", "model-v2"]);
       expect(acpSpawns(await readEvents(logFile))).toHaveLength(2);
+
+      // Explicit manual Refresh runs 1 global spawn and updates the cache.
+      await manager3.refreshSettingsSnapshot({ providers: ["fake-acp"] });
+      expect(acpSpawns(await readEvents(logFile))).toHaveLength(3);
     } finally {
       await manager3.shutdown();
-    }
-  });
-
-  test("manual mode does 0 discovery spawns passively, 1 global spawn on manual refresh, and hydrates across restarts", async () => {
-    const dir = await createTempDir("paseo-acp-manual-");
-    const logFile = path.join(dir, "trace.ndjson");
-    const cachePath = path.join(dir, "cache", "provider-catalogs.json");
-    const binary = await createFakeAcpExecutable({
-      dir,
-      name: "manual-acp",
-      logFile,
-      models: [{ value: "manual-model", name: "Manual Model" }],
-    });
-
-    const base = runAcpProvider({
-      id: "manual-acp",
-      label: "Manual ACP",
-      command: [binary, "acp"],
-      catalogRefresh: "manual",
-    });
-
-    const manager1 = new ProviderSnapshotManager({
-      logger: createTestLogger(),
-      providerOverrides: disabledBuiltinsOverrides(),
-      catalogCachePath: cachePath,
-    });
-    try {
-      manager1.replacePluginProviders([base]);
-      await Promise.all([
-        manager1.getProvider({ provider: "manual-acp", wait: true }),
-        manager1.getProvider({ provider: "manual-acp", cwd: path.join(dir, "ws-1"), wait: true }),
-        manager1.getProvider({ provider: "manual-acp", cwd: path.join(dir, "ws-2"), wait: true }),
-      ]);
-      const initialEntry = await manager1.getProvider({ provider: "manual-acp", wait: false });
-      expect(initialEntry).toMatchObject({
-        status: "ready",
-        models: [],
-        modes: [],
-      });
-      expect(initialEntry.fetchedAt).toBeUndefined();
-      expect(acpSpawns(await readEvents(logFile))).toHaveLength(0);
-
-      // Explicit manual refresh -> exactly 1 global spawn (reusing warmProbe) and writes disk cache.
-      await manager1.refreshSettingsSnapshot({ providers: ["manual-acp"] });
-      const refreshedEntry = await manager1.getProvider({ provider: "manual-acp", wait: false });
-      expect(refreshedEntry).toMatchObject({
-        status: "ready",
-        models: [expect.objectContaining({ id: "manual-model", label: "Manual Model" })],
-      });
-      expect(refreshedEntry.fetchedAt).toBeTruthy();
-      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
-    } finally {
-      await manager1.shutdown();
-    }
-
-    // Restart -> hydrates models immediately from disk cache with 0 spawns.
-    const manager2 = new ProviderSnapshotManager({
-      logger: createTestLogger(),
-      providerOverrides: disabledBuiltinsOverrides(),
-      catalogCachePath: cachePath,
-    });
-    try {
-      manager2.replacePluginProviders([base]);
-      const hydrated = await manager2.getProvider({ provider: "manual-acp", wait: true });
-      expect(hydrated).toMatchObject({
-        status: "ready",
-        models: [expect.objectContaining({ id: "manual-model", label: "Manual Model" })],
-      });
-      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
-    } finally {
-      await manager2.shutdown();
     }
   });
 
@@ -314,7 +247,6 @@ describe("respectful ACP probing", () => {
         id: "old-cli",
         label: "Old CLI",
         command: [binary, "acp"],
-        catalogRefresh: "manual",
       }),
       async status() {
         return {
@@ -470,77 +402,6 @@ describe("respectful ACP probing", () => {
     }
   });
 
-  test("discovers once on demand when validateAgentConfiguration checks a model or mode on an uncached manual provider", async () => {
-    const dir = await createTempDir("paseo-acp-manual-hub-");
-    const logFile = path.join(dir, "trace.ndjson");
-    const cachePath = path.join(dir, "cache", "provider-catalogs.json");
-    const binary = await createFakeAcpExecutable({
-      dir,
-      name: "fake-manual-hub",
-      logFile,
-      models: [{ value: "model-v1", name: "Model V1" }],
-    });
-
-    const registration: ProviderRegistration = {
-      ...runAcpProvider({
-        id: "fake-manual-hub",
-        label: "Fake Manual Hub",
-        command: [binary, "acp"],
-        catalogRefresh: "manual",
-      }),
-      async status() {
-        return { available: true };
-      },
-    };
-
-    const manager = new ProviderSnapshotManager({
-      logger: createTestLogger(),
-      providerOverrides: disabledBuiltinsOverrides(),
-      catalogCachePath: cachePath,
-    });
-    try {
-      manager.replacePluginProviders([registration]);
-
-      // Passive warm-up does not spawn ACP.
-      const before = await manager.getProvider({ provider: "fake-manual-hub", wait: true });
-      expect(before.status).toBe("ready");
-      expect(before.models).toEqual([]);
-      expect(acpSpawns(await readEvents(logFile))).toHaveLength(0);
-
-      // Validation without explicit model/mode succeeds with 0 spawns.
-      await expect(
-        manager.validateAgentConfiguration({ provider: "fake-manual-hub" }),
-      ).resolves.toEqual([]);
-      expect(acpSpawns(await readEvents(logFile))).toHaveLength(0);
-
-      // Explicit Hub validation naming a model/mode discovers once, persists, and validates accurately.
-      await expect(
-        manager.validateAgentConfiguration({
-          provider: "fake-manual-hub",
-          model: "model-v1",
-          modeId: "default",
-        }),
-      ).resolves.toEqual([]);
-      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
-
-      // Invalid model is still rejected without spawning a second time.
-      await expect(
-        manager.validateAgentConfiguration({
-          provider: "fake-manual-hub",
-          model: "missing-model",
-        }),
-      ).resolves.toEqual([
-        {
-          path: ["model"],
-          message: "Model 'missing-model' is not available for provider 'fake-manual-hub'",
-        },
-      ]);
-      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
-    } finally {
-      await manager.shutdown();
-    }
-  });
-
   test("applies updated additionalModels and replacement models after restart without re-spawning ACP", async () => {
     const dir = await createTempDir("paseo-acp-overlay-");
     const logFile = path.join(dir, "trace.ndjson");
@@ -552,12 +413,11 @@ describe("respectful ACP probing", () => {
       models: [{ value: "model-v1", name: "Model V1" }],
     });
 
-    const createRegistration = (catalogRefresh: "on_demand" | "manual"): ProviderRegistration => ({
+    const createRegistration = (): ProviderRegistration => ({
       ...runAcpProvider({
         id: "fake-overlay",
         label: "Fake Overlay",
         command: [binary, "acp"],
-        catalogRefresh,
       }),
       async status() {
         return { available: true };
@@ -576,7 +436,7 @@ describe("respectful ACP probing", () => {
       },
     });
     try {
-      manager1.replacePluginProviders([createRegistration("on_demand")]);
+      manager1.replacePluginProviders([createRegistration()]);
       const entry = await manager1.getProvider({ provider: "fake-overlay", wait: true });
       expect(entry.models?.map((m) => m.id)).toEqual(["model-v1", "old-extra"]);
       expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
@@ -596,7 +456,7 @@ describe("respectful ACP probing", () => {
       },
     });
     try {
-      manager2.replacePluginProviders([createRegistration("manual")]);
+      manager2.replacePluginProviders([createRegistration()]);
       const entry = await manager2.getProvider({ provider: "fake-overlay", wait: true });
       expect(entry.models?.map((m) => m.id)).toEqual(["model-v1", "new-extra"]);
       expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);

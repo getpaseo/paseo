@@ -47,7 +47,7 @@ Paseo 连接到 `agy acp`，并显示 CLI 提供的权限模式。**Full access*
 
 ### 缺少新模型 {#new-models-are-missing}
 
-Paseo 不会在启动时或后台自动探测 `agy acp`。首次刷新前，模型选择器会提供 **Default** 以便立即开始会话。请打开 **设置 → Providers → Antigravity** 并选择 **刷新**，即可拉取完整的模型和思考级别列表，并在磁盘缓存以供 daemon 重启后复用。当你的账号获得新模型时，再次选择 **刷新** 即可。
+Paseo 会在首次启动（或升级 `agy` CLI 后）探测一次 Antigravity 的模型和思考级别，并将目录缓存到磁盘以便在 daemon 重启后复用，不会在后台定时轮询。当你的账号获得新模型时，请打开 **设置 → Providers → Antigravity** 并选择 **刷新**。
 
 ### Paseo 显示的模型与 `agy models` 不同 {#paseo-shows-different-models-than-agy-models}
 

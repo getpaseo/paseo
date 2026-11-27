@@ -27,10 +27,10 @@ async function launchAgent(source: string) {
   };
 }
 
-it("uses clean agy acp command without --disable-telemetry and manual catalog refresh", () => {
+it("uses clean agy acp command without --disable-telemetry and on_demand catalog refresh", () => {
   const provider = createAntigravityProvider();
   expect(provider.command).toEqual(["agy", "acp"]);
-  expect(provider.catalogRefresh).toBe("manual");
+  expect(provider.catalogRefresh).toBe("on_demand");
 });
 
 it("rejects agy versions older than 1.5.1 without spawning agy acp", async () => {

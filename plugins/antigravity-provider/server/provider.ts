@@ -176,7 +176,6 @@ export function createAntigravityProvider(): ProviderRegistration {
     description: "Antigravity CLI on your host",
     icon: "icon.svg",
     command: ["agy", "acp"],
-    catalogRefresh: "manual",
     acpOptions: {
       // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
       perModelThinkingOptions: true,

@@ -18,7 +18,7 @@ export type AgentProviderModeDefinition = Omit<AgentMode, "icon" | "colorTier"> 
     isUnattended?: boolean;
   };
 
-export type ProviderCatalogRefreshMode = "background" | "on_demand" | "manual";
+export type ProviderCatalogRefreshMode = "background" | "on_demand";
 
 // TODO: `modes` should not be static. Providers (especially ACP) report their
 // own modes at runtime via session/new. We should fetch modes from the provider

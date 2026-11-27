@@ -49,7 +49,7 @@ In Paseo, open **Settings → Providers → Antigravity** and select **Diagnosti
 
 ### New models are missing
 
-Paseo does not probe `agy acp` automatically on startup or in the background. Before you refresh Antigravity for the first time, the model picker offers **Default** so you can start a session immediately. Open **Settings → Providers → Antigravity** and select **Refresh** to load the full model and thinking-level list and cache it on disk across daemon restarts. Select **Refresh** again whenever your account gains new models.
+Paseo discovers Antigravity models and thinking levels once on first startup (or after you update the `agy` CLI) and caches the catalog on disk across daemon restarts without background polling. When your account gains new models, open **Settings → Providers → Antigravity** and select **Refresh**.
 
 ### Paseo shows different models than `agy models`
 

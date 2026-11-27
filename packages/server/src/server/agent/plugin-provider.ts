@@ -247,7 +247,9 @@ class ProviderRuntime {
   }
 
   private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
-    const launch = await this.resolveEffectiveLaunch();
+    const launch = await this.resolveEffectiveLaunch(
+      this.registration.status ? { probe: false } : undefined,
+    );
     if (!launch) return undefined;
     if (!launch.resolved) throw new Error(`${launch.command} not found on PATH`);
     return toProviderLaunch(launch);

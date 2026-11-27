@@ -416,12 +416,12 @@ describe("ProviderSnapshotManager background refresh", () => {
     expect(harness.provider("codex").shutdowns).toBe(1);
   });
 
-  test("skips on_demand and manual providers while keeping background providers scheduled", async () => {
+  test("skips on_demand providers while keeping background providers scheduled", async () => {
     const timers = new FakeRefreshTimers();
     const probes: Probe[] = [];
     const createTaggedClient = (
       provider: AgentProvider,
-      catalogRefresh?: "background" | "on_demand" | "manual",
+      catalogRefresh?: "background" | "on_demand",
     ): AgentClient => {
       const state: TestProvider = {
         models: [model(provider, `${provider}-1`)],
@@ -445,7 +445,7 @@ describe("ProviderSnapshotManager background refresh", () => {
         claude: createTaggedClient("claude", "background"),
         codex: createTaggedClient("codex"),
         copilot: createTaggedClient("copilot", "on_demand"),
-        opencode: createTaggedClient("opencode", "manual"),
+        opencode: createTaggedClient("opencode", "on_demand"),
       },
       backgroundRefresh: { intervalMs: INTERVAL_MS, timers },
     });

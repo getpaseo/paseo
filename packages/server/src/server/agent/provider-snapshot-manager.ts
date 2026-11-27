@@ -664,7 +664,7 @@ export class ProviderSnapshotManager {
       ];
     }
 
-    let provider = await this.getProvider({
+    const provider = await this.getProvider({
       provider: input.provider,
       cwd: input.cwd,
       wait: true,
@@ -682,40 +682,6 @@ export class ProviderSnapshotManager {
               : `Provider '${input.provider}' is not available`,
         },
       ];
-    }
-
-    const definition = this.generation.definitions[input.provider];
-    const needsCatalogValidation = Boolean(input.model || input.modeId || input.thinkingOptionId);
-    // Manual providers skip passive discovery, so an uncached snapshot has no fetchedAt yet.
-    // When an explicit execution names a model, mode, or thinking option, discover once and
-    // persist to the disk cache so validation reflects real provider capabilities.
-    if (
-      definition &&
-      (definition.catalogRefresh ?? "background") === "manual" &&
-      provider.fetchedAt === undefined &&
-      needsCatalogValidation
-    ) {
-      await this.refreshProviders(
-        resolveProviderSnapshotTarget(input.cwd),
-        [input.provider],
-        "manual",
-      );
-      provider = await this.getProvider({
-        provider: input.provider,
-        cwd: input.cwd,
-        wait: true,
-      });
-      if (provider.status !== "ready") {
-        return [
-          {
-            path: ["provider"],
-            message:
-              provider.status === "error" && provider.error
-                ? provider.error
-                : `Provider '${input.provider}' is not available`,
-          },
-        ];
-      }
     }
 
     return validateAgentConfigurationAgainstProvider({
@@ -1326,7 +1292,6 @@ export class ProviderSnapshotManager {
       publish: setEntry,
     } = options;
     const refreshMode = definition.catalogRefresh ?? "background";
-    const isManualRefresh = refresh === "manual";
     const persistedCacheKey = buildPersistedCatalogKey(
       cacheKey,
       definition.configuration?.providerOptions,
@@ -1358,33 +1323,23 @@ export class ProviderSnapshotManager {
             return { kind: "error" as const, message: availability.message };
           }
 
-          if (!isManualRefresh) {
-            const persisted = this.catalogCache
-              ? await this.catalogCache.get(provider, persistedCacheKey)
-              : undefined;
+          if (!refresh && refreshMode === "on_demand" && this.catalogCache) {
+            const persisted = await this.catalogCache.get(provider, persistedCacheKey);
             if (persisted) {
-              if (refreshMode === "manual") {
+              const currentFingerprint = await context.runActivity("binary-fingerprint", () =>
+                raceProviderRefreshAbort(
+                  context.signal,
+                  client.getCatalogBinaryFingerprint?.(catalogOptions) ??
+                    Promise.resolve(undefined),
+                ),
+              );
+              const fingerprintMatches =
+                !persisted.binaryFingerprint ||
+                !currentFingerprint ||
+                persisted.binaryFingerprint === currentFingerprint;
+              if (fingerprintMatches) {
                 return { kind: "hydrated" as const, persisted };
               }
-              if (!refresh) {
-                const currentFingerprint = await context.runActivity("binary-fingerprint", () =>
-                  raceProviderRefreshAbort(
-                    context.signal,
-                    client.getCatalogBinaryFingerprint?.(catalogOptions) ??
-                      Promise.resolve(undefined),
-                  ),
-                );
-                const fingerprintMatches =
-                  !persisted.binaryFingerprint ||
-                  !currentFingerprint ||
-                  persisted.binaryFingerprint === currentFingerprint;
-                if (fingerprintMatches) {
-                  return { kind: "hydrated" as const, persisted };
-                }
-              }
-            }
-            if (refreshMode === "manual") {
-              return { kind: "manual_empty" as const };
             }
           }
 
@@ -1398,7 +1353,7 @@ export class ProviderSnapshotManager {
             this.catalogCache &&
             rawResult.discovered &&
             rawResult.catalog.incomplete !== true &&
-            refreshMode !== "background"
+            refreshMode === "on_demand"
               ? await context
                   .runActivity("binary-fingerprint", () =>
                     raceProviderRefreshAbort(
@@ -1424,20 +1379,6 @@ export class ProviderSnapshotManager {
       if (outcome.kind === "error") {
         setEntry(
           { ...base, status: "error", enabled: true, error: outcome.message },
-          { incomplete: false },
-        );
-        return;
-      }
-      if (outcome.kind === "manual_empty") {
-        const emptyCatalog = applyCatalogConfig({ models: [], modes: [] });
-        setEntry(
-          {
-            ...base,
-            status: "ready",
-            enabled: true,
-            models: normalizeAgentModelCatalog(emptyCatalog.models),
-            modes: emptyCatalog.modes,
-          },
           { incomplete: false },
         );
         return;
@@ -1492,7 +1433,7 @@ export class ProviderSnapshotManager {
         this.catalogCache &&
         discovered &&
         rawCatalog.incomplete !== true &&
-        refreshMode !== "background"
+        refreshMode === "on_demand"
       ) {
         this.catalogCache.set(provider, persistedCacheKey, {
           fetchedAt,
