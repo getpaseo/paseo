@@ -517,6 +517,7 @@ interface WorkspaceGitTarget {
   /** The remote the forge snapshot was last refreshed for; null until the first forge refresh. */
   forgeRefreshedForRemote: { remoteUrl: string | null } | null;
   latestSnapshot: WorkspaceGitRuntimeSnapshot | null;
+  pendingClassification: boolean | null;
   latestSnapshotLoadedAtMs: number | null;
   latestFacts: CheckoutSnapshotFacts | null;
   factsPromise: Promise<CheckoutSnapshotFacts> | null;
@@ -922,12 +923,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         : {}),
     });
     const target = this.workspaceTargets.get(normalizedCwd);
-    const cached = target?.latestSnapshot;
-    if (target && cached && cached.git.isGit !== identity.isGit) {
+    const knownClassification = target?.pendingClassification ?? target?.latestSnapshot?.git.isGit;
+    if (target && knownClassification !== undefined && knownClassification !== identity.isGit) {
       // Do not expose a stale classification to the next status consumer.
       // Local placement must not wait for the replacement working-tree scan.
       target.latestSnapshot = null;
       target.latestFacts = null;
+      target.pendingClassification = identity.isGit;
       // Queue behind an active read: it may still publish the old classification.
       const refreshOptions = {
         force: true,
@@ -1416,6 +1418,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       forgeRefreshedForRemote: null,
       latestForgeLoadedAtMs: null,
       latestSnapshot: null,
+      pendingClassification: null,
       latestSnapshotLoadedAtMs: null,
       latestFacts: null,
       factsPromise: null,
@@ -3697,17 +3700,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           break;
         }
         snapshot = admittedSnapshot;
-        // Keep a cleared cache empty until its queued structural replacement finishes.
-        const invalidated =
-          target.latestSnapshot === null &&
+        // Only the final structural replacement clears placement invalidation.
+        if (
+          request.refreshStructure &&
           target.refreshState.status === "in-flight" &&
-          target.refreshState.queued?.refreshStructure;
-        if (!invalidated) {
-          this.rememberSnapshot(target, snapshot, {
-            forceEmit:
-              request.force || (request.emitUnchanged === true && request.movedRemoteRefs.size > 0),
-          });
+          !target.refreshState.queued?.refreshStructure
+        ) {
+          target.pendingClassification = null;
         }
+        this.rememberSnapshot(target, snapshot, {
+          forceEmit:
+            request.force || (request.emitUnchanged === true && request.movedRemoteRefs.size > 0),
+        });
         failure = null;
       } catch (error) {
         failure = { error };
@@ -4128,7 +4132,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     snapshot: WorkspaceGitRuntimeSnapshot,
     options?: { forceEmit?: boolean },
   ): void {
-    if (target.closed || target.folderMissing || this.workspaceTargets.get(target.cwd) !== target) {
+    if (
+      target.closed ||
+      target.folderMissing ||
+      target.pendingClassification !== null ||
+      this.workspaceTargets.get(target.cwd) !== target
+    ) {
       return;
     }
     target.latestSnapshot = snapshot;

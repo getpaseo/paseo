@@ -587,6 +587,76 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     },
   );
 
+  test.each([false, true])(
+    "forge polls cannot publish invalidated classification (reinitialized: %s)",
+    async (reinitialized) => {
+      const replacement = createDeferred<CheckoutSnapshotFacts>();
+      let pollStatus: ((status: CurrentPullRequestStatus | null) => void) | undefined;
+      const github = {
+        ...createGitHubServiceStub(),
+        retainCurrentPullRequestStatusPoll: vi.fn(
+          (options: { onStatus: (status: CurrentPullRequestStatus | null) => void }) => {
+            pollStatus = options.onStatus;
+            return { unsubscribe: vi.fn() };
+          },
+        ),
+      };
+      const getCheckoutSnapshotFacts = vi.fn().mockResolvedValue(createCheckoutFacts(REPO_CWD));
+      const getCheckoutStatus = vi.fn().mockResolvedValue(createCheckoutStatus(REPO_CWD));
+      const getCheckoutIdentity = vi.fn().mockResolvedValue({ isGit: false });
+      const service = createService({
+        getCheckoutSnapshotFacts,
+        getCheckoutStatus,
+        getCheckoutIdentity,
+        github,
+      });
+      const listener = vi.fn();
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+      try {
+        await vi.waitFor(() => {
+          expect(pollStatus).toBeTypeOf("function");
+          expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+        });
+        getCheckoutSnapshotFacts
+          .mockImplementationOnce(() => replacement.promise)
+          .mockResolvedValue(reinitialized ? createCheckoutFacts(REPO_CWD) : { isGit: false });
+        getCheckoutStatus
+          .mockResolvedValueOnce({ isGit: false })
+          .mockResolvedValue(reinitialized ? createCheckoutStatus(REPO_CWD) : { isGit: false });
+        expect(await service.getCheckout(REPO_CWD, { placementOnly: true })).toMatchObject({
+          isGit: false,
+        });
+        if (reinitialized) {
+          getCheckoutIdentity.mockResolvedValue(createCheckoutStatus(REPO_CWD));
+          expect(await service.getCheckout(REPO_CWD, { placementOnly: true })).toMatchObject({
+            isGit: true,
+          });
+        }
+
+        listener.mockClear();
+        pollStatus!(createCurrentPullRequestStatus());
+        let settled = false;
+        const pending = service.getSnapshot(REPO_CWD).then((snapshot) => {
+          settled = true;
+          return snapshot;
+        });
+        await flushPromises();
+        expect(settled).toBe(false);
+        expect(listener).not.toHaveBeenCalled();
+
+        replacement.resolve({ isGit: false });
+        expect(await pending).toMatchObject({ git: { isGit: reinitialized } });
+        expect(await service.getSnapshot(REPO_CWD)).toMatchObject({
+          git: { isGit: reinitialized },
+        });
+      } finally {
+        replacement.resolve({ isGit: false });
+        subscription.unsubscribe();
+        service.dispose();
+      }
+    },
+  );
+
   test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");
     const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
