@@ -822,7 +822,6 @@ describe("translation resources", () => {
     expect(en.agentAutocomplete.noCommands).toBe("No commands found");
     expect(en.agentAutocomplete.commandsFailed).toBe("Couldn't load commands");
     expect(en.loadOlderHistory.failed).toBe("Couldn't load older history");
-    expect(en.agentControls.thinking.extraHigh).toBe("Extra high");
     expect(en.agentControls.model.unknown).toBe("Unknown model");
     expect(en.panels.draft.creatingAgent).toBe("Creating agent");
   });

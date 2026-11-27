@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "./labels";
 
 describe("formatAgentModeLabel", () => {
@@ -39,5 +40,21 @@ describe("formatThinkingOptionLabel", () => {
     );
     expect(formatThinkingOptionLabel({ id: "xhigh" })).toBe("Extra high");
     expect(formatThinkingOptionLabel({ id: "xhigh", label: "Extra high" })).toBe("Extra high");
+  });
+
+  it("keeps Extra high untranslated in non-English locales alongside other thinking levels", async () => {
+    for (const locale of ["ja", "ko", "fr", "es", "pt-BR", "ru", "ar"] as const) {
+      await i18n.changeLanguage(locale);
+      try {
+        expect(formatThinkingOptionLabel({ id: "low", label: "low" })).toBe("Low");
+        expect(formatThinkingOptionLabel({ id: "high", label: "high" })).toBe("High");
+        expect(formatThinkingOptionLabel({ id: "xhigh", label: "xhigh" })).toBe("Extra high");
+        expect(formatThinkingOptionLabel({ id: "extra_high", label: "extra_high" })).toBe(
+          "Extra high",
+        );
+      } finally {
+        await i18n.changeLanguage("en");
+      }
+    }
   });
 });

@@ -228,7 +228,6 @@ export const es: TranslationResources = {
     thinking: {
       title: "Pensamiento",
       unknown: "Desconocido",
-      extraHigh: "extra alto",
       select: "Seleccione la opción de pensamiento",
       selectWithValue: "Seleccione la opción de pensamiento ({{value}})",
     },

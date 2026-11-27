@@ -226,7 +226,6 @@ export const ar: TranslationResources = {
     thinking: {
       title: "التفكير",
       unknown: "مجهول",
-      extraHigh: "ارتفاع إضافي",
       select: "حدد خيار التفكير",
       selectWithValue: "حدد خيار التفكير ({{value}})",
     },
