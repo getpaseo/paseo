@@ -92,11 +92,11 @@ function shapedCharactersFor(options: { lineCount: number; lineLength: number })
 }
 
 describe("diff document measurement cost", () => {
-  it("keeps additive wrapped search work proportional to long source lines", () => {
+  it.each(["a", "一", "--"])("keeps wrapped search work proportional for %s", (unit) => {
     function measuredGraphemes(length: number): number {
       let count = 0;
       measureFragments({
-        text: "a".repeat(length),
+        text: unit.repeat(length),
         availableWidth: 200,
         wrapLines: true,
         lineHeight: 18,
