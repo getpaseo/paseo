@@ -123,6 +123,43 @@ export type PluginClientRuntime = Pick<
 // The 0.12 entry exposed the reveal hook as well as UI components.
 const pluginReactNativeCompatRuntime = { ...pluginUiRuntime, useRevealedText };
 
+// Deprecated or removed react-native core getters that throw on access.
+// PushNotificationIOS crashes iOS fatally via guardedLoadModule -> RCTExceptionsManager.reportFatal
+// because RCTPushNotificationManager is not linked in Expo builds, bypassing JS try/catch.
+const UNSUPPORTED_REACT_NATIVE_EXPORTS = new Set([
+  "PushNotificationIOS",
+  "AsyncStorage",
+  "ImagePickerIOS",
+  "ProgressViewIOS",
+  "DatePickerIOS",
+  "Slider",
+]);
+
+export function createPluginReactNativeRuntime(
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  const keys = Object.keys(source);
+  const target =
+    keys.length === 1 &&
+    keys[0] === "default" &&
+    typeof source.default === "object" &&
+    source.default !== null
+      ? (source.default as Record<string, unknown>)
+      : source;
+  const runtime: Record<string, unknown> = {};
+  for (const key of Object.keys(target)) {
+    if (key === "default" || UNSUPPORTED_REACT_NATIVE_EXPORTS.has(key)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(target, key);
+    if (!descriptor) continue;
+    Object.defineProperty(runtime, key, descriptor);
+  }
+  return runtime;
+}
+
+const pluginReactNativeRuntime = createPluginReactNativeRuntime(
+  ReactNative as unknown as Record<string, unknown>,
+);
+
 export function runPluginClientBundle(
   id: string,
   bundle: string,
@@ -588,7 +625,7 @@ export function runPluginClientBundle(
     if (name === "@getpaseo/plugin/client/ui") return pluginUiRuntime;
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
-    if (name === "react-native") return ReactNative;
+    if (name === "react-native") return pluginReactNativeRuntime;
     if (name === "@getpaseo/plugin") return pluginSharedRuntime;
     if (name === "@getpaseo/plugin/client")
       return {

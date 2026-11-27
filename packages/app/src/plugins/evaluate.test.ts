@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { useRevealedText } from "@/hooks/use-revealed-text";
-import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+import {
+  createPluginReactNativeRuntime,
+  runPluginClientBundle,
+  type PluginClientRuntime,
+} from "./evaluate";
 
 const runtime = {
   paseo: {},
@@ -908,6 +912,60 @@ describe("evaluatePluginClientBundle", () => {
         } }; })`,
       ),
     ).toThrow("setup exploded");
+  });
+
+  it("omits unsupported react-native core getters while keeping safe getters lazy", () => {
+    let platformReads = 0;
+    let pushReads = 0;
+    const raw = {
+      get Platform() {
+        platformReads += 1;
+        return { OS: "ios" };
+      },
+      get PushNotificationIOS() {
+        pushReads += 1;
+        throw new Error("`new NativeEventEmitter()` requires a non-null argument.");
+      },
+      get AsyncStorage() {
+        throw new Error("AsyncStorage has been removed from react-native core.");
+      },
+    };
+    const interopNamespace = Object.defineProperties(
+      {},
+      {
+        Platform: Object.getOwnPropertyDescriptor(raw, "Platform")!,
+        PushNotificationIOS: Object.getOwnPropertyDescriptor(raw, "PushNotificationIOS")!,
+        AsyncStorage: Object.getOwnPropertyDescriptor(raw, "AsyncStorage")!,
+        default: { enumerable: true, value: raw },
+      },
+    );
+
+    const safe = createPluginReactNativeRuntime(interopNamespace);
+
+    expect(platformReads).toBe(0);
+    expect(pushReads).toBe(0);
+    expect(Object.getOwnPropertyNames(safe)).toEqual(["Platform"]);
+    expect("PushNotificationIOS" in safe).toBe(false);
+    expect("AsyncStorage" in safe).toBe(false);
+    expect("default" in safe).toBe(false);
+    expect(Object.assign({}, safe)).toEqual({ Platform: { OS: "ios" } });
+    expect(platformReads).toBe(1);
+    expect(pushReads).toBe(0);
+  });
+
+  it("never exposes PushNotificationIOS or default on require('react-native')", () => {
+    const plugin = evaluatePluginClientBundle(
+      "rn-safe",
+      bundle(`
+        const rn = require("react-native");
+        const names = Object.getOwnPropertyNames(rn);
+        if (names.includes("PushNotificationIOS") || names.includes("default")) {
+          throw new Error("Unsafe react-native exports leaked: " + names.join(","));
+        }
+        for (const name of names) void rn[name];
+      `),
+    );
+    expect(plugin.id).toBe("rn-safe");
   });
 });
 
