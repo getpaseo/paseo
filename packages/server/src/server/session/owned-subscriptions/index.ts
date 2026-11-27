@@ -58,6 +58,7 @@ export interface OwnedSubscription {
 
 const BINARY_REPLY_REQUESTS: ReadonlySet<string> = new Set([
   "file_explorer_request",
+  "agent.timeline.image.read.request",
   "plugin.rpc.invoke.request",
 ]);
 
