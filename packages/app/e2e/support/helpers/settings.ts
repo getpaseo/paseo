@@ -486,7 +486,7 @@ export async function expectHostInjectMcpCard(page: Page): Promise<void> {
 function idleAgentReleaseSwitch(page: Page) {
   return page
     .getByTestId("host-page-idle-runtime-cleanup-card")
-    .getByRole("switch", { name: "Release idle agents" });
+    .getByRole("switch", { name: "Release idle agents", exact: true });
 }
 
 export async function expectIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {

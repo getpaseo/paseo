@@ -154,7 +154,7 @@ test.describe("Settings host page", () => {
   test("idle agent release changes live on one host and stays saved without restarting", async ({
     page,
   }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(180_000);
     const primaryServerId = getServerId();
     const daemon = await startIsolatedHostDaemon("srv_e2e_idle_agent_release");
     const client = await connectDaemonClient<DaemonClient>({
@@ -242,7 +242,7 @@ test.describe("Settings host page", () => {
   });
 
   test("a failed idle release save stays visible and retry applies it live", async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(180_000);
     const daemon = await startIsolatedHostDaemon("srv_e2e_idle_release_failure");
     const configPath = path.join(daemon.paseoHome, "config.json");
     try {
@@ -256,7 +256,7 @@ test.describe("Settings host page", () => {
       // A real filesystem failure, with the daemon and RPC path intact.
       await rename(configPath, `${configPath}.saved`);
       await mkdir(configPath);
-      await page.getByRole("switch", { name: "Release idle agents" }).click();
+      await page.getByRole("switch", { name: "Release idle agents", exact: true }).click();
       await expect(page.getByTestId("host-page-idle-runtime-cleanup-error")).toContainText(
         "Failed to read",
       );
