@@ -172,6 +172,26 @@ describe("dictation keyboard behavior", () => {
 });
 
 describe("dictation transcript behavior", () => {
+  it.each(["interrupt", "steer", "queue"] as const)(
+    "retains a transcript without %s submission while attachments block sending",
+    (defaultSendBehavior) => {
+      const actions: string[] = [];
+      applyDictationTranscript("spoken prompt", {
+        value: "typed context",
+        defaultSendBehavior,
+        isAgentRunning: true,
+        onQueue: () => actions.push("queue"),
+        onSubmit: () => actions.push("submit"),
+        replaceText: (text) => actions.push("replace:" + text),
+        attachments: [],
+        cwd: "/repo",
+        autoSend: true,
+        isSubmitDisabled: true,
+      });
+      expect(actions).toEqual(["replace:typed context spoken prompt"]);
+    },
+  );
+
   it("publishes an auto-sent transcript to the composer before submitting it", () => {
     const actions: string[] = [];
 
@@ -185,6 +205,7 @@ describe("dictation transcript behavior", () => {
       attachments: [],
       cwd: "/repo",
       autoSend: true,
+      isSubmitDisabled: false,
     });
 
     expect(actions).toEqual([

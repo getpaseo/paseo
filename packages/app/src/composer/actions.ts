@@ -123,13 +123,26 @@ export async function pickAndPersistImages(input: {
   );
 }
 
+export async function disposeUploadedFileSource(file: SelectedFile): Promise<void> {
+  try {
+    await file.dispose?.();
+  } catch (error) {
+    // The upload already succeeded; a leftover pasted-text file must not fail it.
+    console.error("[Composer] Failed to dispose file source:", file.fileName, error);
+  }
+}
+
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
   files: SelectedFile[];
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
-  const prepared: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
-
+  const prepared: Array<{
+    source: SelectedFile;
+    fileName: string;
+    mimeType: string;
+    bytes: Uint8Array;
+  }> = [];
   for (const file of input.files) {
     const bytes = await file.readBytes();
     if (bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
@@ -138,6 +151,7 @@ export async function uploadFileAttachments(input: {
       );
     }
     prepared.push({
+      source: file,
       fileName: file.fileName,
       mimeType: file.mimeType,
       bytes,
@@ -145,13 +159,17 @@ export async function uploadFileAttachments(input: {
   }
 
   for (const file of prepared) {
-    const response = await input.client.uploadFile(file);
+    const response = await input.client.uploadFile({
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      bytes: file.bytes,
+    });
     if (response.error || !response.file) {
       throw new Error(response.error ?? "Upload failed.");
     }
+    await disposeUploadedFileSource(file.source);
     result.push({ kind: "file", attachment: response.file });
   }
-
   return result;
 }
 
