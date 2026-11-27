@@ -1740,7 +1740,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         },
         batchSize: GITHUB_POLL_BATCH_MAX,
         onChecks: (url, headSha, contexts) => checks.get(url)!({ headSha, contexts }),
-        knownActivity: (url) => watching.get(url)?.callbacks.knownActivity?.(),
         firstBatchSize,
         isObserved,
       });

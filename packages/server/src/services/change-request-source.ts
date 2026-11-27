@@ -19,6 +19,7 @@ const changeRequestSnapshotSchema = changeRequestStatusSchema.extend({
       id: z.string(),
       kind: z.enum(["comment", "inline comment", "review", "approval"]),
       url: z.string(),
+      updatedAt: z.string().optional(),
       message: z.string().optional(),
     }),
   ),
