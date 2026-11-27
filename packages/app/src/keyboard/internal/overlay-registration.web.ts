@@ -57,6 +57,7 @@ let webOverlayFocusCheckQueued = false;
 
 interface RemoveWebOverlayOptions {
   restoreFocus?: boolean;
+  deferFocusRestore?: boolean;
 }
 
 function getTopWebOverlay(): WebOverlayEntry | undefined {
@@ -187,33 +188,48 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
     }
   });
 
+  let removed = false;
+  let removedScope: HTMLElement | null = null;
+  let activeAtRemove: Element | null = null;
+  let topAfterRemove: OverlayEntry | undefined;
+
   return (options) => {
     window.cancelAnimationFrame(focusFrame);
-    const removedScope = entry.getScope();
-    const activeAtRemove = typeof document !== "undefined" ? document.activeElement : null;
-    remove();
-    detachWebOverlayListeners();
+    if (!removed) {
+      removed = true;
+      removedScope = entry.getScope();
+      activeAtRemove = typeof document !== "undefined" ? document.activeElement : null;
+      remove();
+      topAfterRemove = overlays.getTop();
+      detachWebOverlayListeners();
+    }
     if (
-      entry.manageFocus &&
-      options?.restoreFocus !== false &&
-      entry.restoreFocus &&
-      canRestoreFocusTo(entry.restoreFocus)
+      !entry.manageFocus ||
+      options?.restoreFocus === false ||
+      !entry.restoreFocus ||
+      !canRestoreFocusTo(entry.restoreFocus)
     ) {
-      const target = entry.restoreFocus;
-      const topAfterRemove = overlays.getTop();
-      // React runs useLayoutEffect cleanups during its mutation commit phase while its
-      // event system is disabled, which drops synchronous focusin events (breaking onFocus
-      // and onSelect on restored text inputs). Defer focus restoration until the commit ends,
-      // and skip it if another overlay opened or the commit moved focus to a new target.
-      queueMicrotask(() => {
-        if (
-          overlays.getTop() === topAfterRemove &&
-          shouldRestoreFocusAfterRemoval(removedScope, entry.openerElement, activeAtRemove) &&
-          canRestoreFocusTo(target)
-        ) {
-          target.focus();
-        }
-      });
+      return;
+    }
+
+    const target = entry.restoreFocus;
+    const restore = () => {
+      if (
+        overlays.getTop() === topAfterRemove &&
+        shouldRestoreFocusAfterRemoval(removedScope, entry.openerElement, activeAtRemove) &&
+        canRestoreFocusTo(target)
+      ) {
+        target.focus();
+      }
+    };
+
+    if (options?.deferFocusRestore) {
+      // Unmount cleanups run during React's mutation commit phase while its DOM event
+      // system is disabled, which drops synchronous focusin events (breaking onFocus
+      // and onSelect on restored text inputs). Defer focus restoration until the commit ends.
+      queueMicrotask(restore);
+    } else {
+      restore();
     }
   };
 }
@@ -267,8 +283,9 @@ export function useOverlayRegistration({
       activeRef.current && typeof window !== "undefined" && typeof document !== "undefined";
     if (!shouldRegister) {
       const shouldRestoreFocus = !activeRef.current;
+      const removeEntry = removeEntryRef.current ?? detachedRemoveEntryRef.current;
       if (registeredRef.current || shouldRestoreFocus) {
-        removeEntryRef.current?.({ restoreFocus: shouldRestoreFocus });
+        removeEntry?.({ restoreFocus: shouldRestoreFocus });
       }
       registeredRef.current = false;
       if (shouldRestoreFocus) {
@@ -295,16 +312,24 @@ export function useOverlayRegistration({
 
   const setScope = useCallback(
     (node: unknown) => {
-      scopeRef.current =
+      const nextScope =
         typeof HTMLElement !== "undefined" && node instanceof HTMLElement ? node : null;
-      if (!scopeRef.current && activeRef.current) {
+      if (!nextScope) {
+        // Detach from the overlay stack before clearing scopeRef so removeEntry records
+        // the departing scope. Focus restoration runs in the layout effect when active
+        // flips false (after React re-enables DOM events and before passive effects run),
+        // or in unmount cleanup if the host unmounts while active.
         const removeEntry = removeEntryRef.current;
-        removeEntry?.({ restoreFocus: false });
-        detachedRemoveEntryRef.current = removeEntry;
-        removeEntryRef.current = null;
-        registeredRef.current = false;
+        if (removeEntry) {
+          removeEntry({ restoreFocus: false });
+          detachedRemoveEntryRef.current = removeEntry;
+          removeEntryRef.current = null;
+          registeredRef.current = false;
+        }
+        scopeRef.current = null;
         return;
       }
+      scopeRef.current = nextScope;
       // Host refs attach before descendant layout effects and autofocus. Register
       // here so the previous overlay cannot redirect that pending focus.
       syncRegistration();
@@ -312,16 +337,24 @@ export function useOverlayRegistration({
     [syncRegistration],
   );
 
+  // Register and deactivate during the layout phase, when React's DOM event system is
+  // enabled (so synchronous focus restoration delivers onFocus/onSelect) and before
+  // passive effects run.
   useLayoutEffect(() => {
     syncRegistration();
+  }, [active, syncRegistration]);
+
+  // Unmount cleanup runs during React's mutation phase while DOM events are disabled,
+  // so focus restoration on unmount-while-active defers to a microtask.
+  useLayoutEffect(() => {
     return () => {
       const removeEntry = removeEntryRef.current ?? detachedRemoveEntryRef.current;
-      removeEntry?.();
+      removeEntry?.({ deferFocusRestore: true });
       removeEntryRef.current = null;
       detachedRemoveEntryRef.current = null;
       registeredRef.current = false;
     };
-  }, [active, syncRegistration]);
+  }, []);
 
   return setScope;
 }

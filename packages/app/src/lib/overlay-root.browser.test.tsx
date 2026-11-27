@@ -1,6 +1,6 @@
 import { useGlobalOverlayLayer } from "./overlay-root";
 import { useOverlayRegistration } from "@/keyboard";
-import React, { useCallback, useRef, type RefCallback } from "react";
+import React, { useCallback, useEffect, useRef, type RefCallback } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -111,6 +111,38 @@ function AutofocusReplacementHarness({
       {showInlineInput ? (
         <input autoFocus data-testid="inline-autofocus-input" onBlur={handleBlur} />
       ) : null}
+    </div>
+  );
+}
+
+function PassiveFocusOrderHarness({
+  open,
+  openedAfterClose,
+}: {
+  open: boolean;
+  openedAfterClose: string[];
+}) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const onFocusIn = (event: FocusEvent) => {
+      if (!open && trigger.contains(event.target as Node)) {
+        openedAfterClose.push("focusin-while-enabled");
+      }
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, [open, openedAfterClose]);
+
+  return (
+    <div>
+      <button ref={triggerRef} type="button" data-testid="passive-trigger">
+        Trigger
+      </button>
+      <InnerOverlay active={open} restoreFocusRef={triggerRef} />
     </div>
   );
 }
@@ -324,6 +356,32 @@ describe("useOverlayRegistration in the browser", () => {
     expect(inlineInput).toBeTruthy();
     expect(document.activeElement).toBe(inlineInput);
     expect(blurs).toEqual([]);
+  });
+
+  it("restores focus during layout effects before passive focusin listeners re-enable", async () => {
+    const openedAfterClose: string[] = [];
+
+    flushSync(() =>
+      root.render(<PassiveFocusOrderHarness open={false} openedAfterClose={openedAfterClose} />),
+    );
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="passive-trigger"]')!;
+    trigger.focus();
+    openedAfterClose.length = 0;
+
+    flushSync(() =>
+      root.render(<PassiveFocusOrderHarness open openedAfterClose={openedAfterClose} />),
+    );
+    await nextFrame();
+    document.querySelector<HTMLInputElement>('[data-testid="overlay-search"]')?.focus();
+    expect(document.activeElement).not.toBe(trigger);
+
+    flushSync(() =>
+      root.render(<PassiveFocusOrderHarness open={false} openedAfterClose={openedAfterClose} />),
+    );
+    await nextFrame();
+
+    expect(document.activeElement).toBe(trigger);
+    expect(openedAfterClose).toEqual([]);
   });
 });
 
