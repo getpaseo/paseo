@@ -1,10 +1,12 @@
 import { stat } from "node:fs/promises";
-import { execCommand } from "@getpaseo/plugin/server";
+import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
 import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
 import type {
   ProviderInstallationLaunch,
   ProviderLaunch,
   ProviderRegistration,
+  ProviderUpdateContext,
+  ProviderUpdateResult,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 import { mapToolCall } from "./tool-calls.js";
@@ -113,14 +115,18 @@ async function agyVersionCacheKey(
   return JSON.stringify([launch.command, binarySignature, prefix, scriptSignature]);
 }
 
+function cliPrefixArgs(args: readonly string[]): readonly string[] {
+  // The launch ends with the `acp` subcommand and its flags; CLI subcommands run before `acp`.
+  const acp = args.indexOf("acp");
+  return acp === -1 ? args : args.slice(0, acp);
+}
+
 /** The release `agy --version` reports, or its first line when it names no release. */
 async function readAgyVersion(
   launch: Pick<ProviderInstallationLaunch, "command" | "args" | "env">,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
-  // The launch ends with the `acp` subcommand and its flags; the version comes from the CLI itself.
-  const acp = launch.args.indexOf("acp");
-  const prefix = acp === -1 ? launch.args : launch.args.slice(0, acp);
+  const prefix = cliPrefixArgs(launch.args);
   const cacheKey = await agyVersionCacheKey(launch, prefix);
   if (cacheKey !== null) {
     if (agyVersionCache.has(cacheKey)) {
@@ -152,6 +158,53 @@ async function readAgyVersion(
     }
   }
   return run;
+}
+
+async function updateAgyCli(context: ProviderUpdateContext): Promise<ProviderUpdateResult> {
+  const { launch, report, signal } = context;
+  if (!launch?.resolved) {
+    return { status: "failed", message: "Antigravity is not installed" };
+  }
+  const args = [...cliPrefixArgs(launch.args), "update"];
+  const commandLine = [launch.command, ...args].join(" ");
+  report({ type: "message", text: `Running ${commandLine}\n` });
+  return new Promise((resolve, reject) => {
+    const child = spawnProcess(launch.command, args, {
+      env: launch.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const onAbort = () => void terminateProcess(child).catch(() => undefined);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (text: string) => report({ type: "stdout", text }));
+    child.stderr?.on("data", (text: string) => report({ type: "stderr", text }));
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    child.once("error", (error) => {
+      cleanup();
+      reject(error);
+    });
+    child.once("close", (code, closeSignal) => {
+      cleanup();
+      if (code === 0) {
+        agyVersionCache.clear();
+        resolve({
+          status: "succeeded",
+          message:
+            "Antigravity is updated. New agents use the new version; running agents keep theirs until restarted.",
+        });
+      } else {
+        resolve({
+          status: "failed",
+          message:
+            code === null
+              ? `${commandLine} stopped by ${closeSignal}`
+              : `${commandLine} exited with code ${code}`,
+        });
+      }
+    });
+  });
 }
 
 // agy 1.5.14 reads its sign-in from a token file when any of these is set, and from the OS keyring
@@ -213,7 +266,6 @@ export function createAntigravityProvider(): ProviderRegistration {
   return {
     ...provider,
     docsUrl: "https://paseo.sh/docs/supported-providers/antigravity#troubleshooting",
-    // agy documents no update command and no release source, so there is nothing to check or run.
     installation: {
       installUrl: "https://antigravity.google/docs/getting-started?tab=cli",
       async inspect({ launch, signal }) {
@@ -221,6 +273,7 @@ export function createAntigravityProvider(): ProviderRegistration {
         const version = await readAgyVersion(launch, signal);
         return version ? { status: "installed", version } : { status: "installed" };
       },
+      update: updateAgyCli,
     },
     async status({ launch }) {
       if (!launch) {

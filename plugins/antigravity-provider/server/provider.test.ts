@@ -694,13 +694,63 @@ describe("installation", () => {
     `);
     const installation = createAntigravityProvider().installation!;
     expect(installation.installUrl).toBe("https://antigravity.google/docs/getting-started?tab=cli");
-    expect(installation.update).toBeUndefined();
+    expect(installation.update).toBeDefined();
     await expect(
       installation.inspect!({ launch: { ...launch, resolved: true }, signal }),
     ).resolves.toEqual({
       status: "installed",
       version: "1.6.2",
     });
+  });
+
+  it("runs agy update without the acp subcommand and streams output", async () => {
+    const { launch } = await launchAgent(`
+      const args = process.argv.slice(2);
+      if (args.includes("acp")) process.exit(1);
+      if (args[0] === "update") {
+        process.stdout.write("Updated to 1.6.3\\n");
+        process.stderr.write("Cleaning up\\n");
+        process.exit(0);
+      }
+      process.exit(2);
+    `);
+    const reports: Array<{ type: string; text: string }> = [];
+    const result = await createAntigravityProvider().installation!.update!({
+      launch: { ...launch, resolved: true },
+      report: (event) => reports.push(event),
+      signal,
+    });
+    expect(result).toEqual({
+      status: "succeeded",
+      message:
+        "Antigravity is updated. New agents use the new version; running agents keep theirs until restarted.",
+    });
+    expect(reports).toEqual(
+      expect.arrayContaining([
+        { type: "stdout", text: "Updated to 1.6.3\n" },
+        { type: "stderr", text: "Cleaning up\n" },
+      ]),
+    );
+  });
+
+  it("reports failure when agy update exits non-zero or is not installed", async () => {
+    const { launch } = await launchAgent(`process.exit(3);`);
+    const failed = await createAntigravityProvider().installation!.update!({
+      launch: { ...launch, resolved: true },
+      report: () => undefined,
+      signal,
+    });
+    expect(failed.status).toBe("failed");
+    if (failed.status === "failed") {
+      expect(failed.message).toContain("exited with code 3");
+    }
+    await expect(
+      createAntigravityProvider().installation!.update!({
+        launch: { command: "agy", args: ["acp"], env: {}, resolved: false },
+        report: () => undefined,
+        signal,
+      }),
+    ).resolves.toEqual({ status: "failed", message: "Antigravity is not installed" });
   });
 
   it("is not installed when the executable does not resolve", async () => {

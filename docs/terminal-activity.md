@@ -65,6 +65,11 @@ Codex hook mapping:
 - `PermissionRequest` → `needs-input`
 - `Stop` → `idle`
 
+Antigravity hook mapping:
+
+- `PreInvocation`, `PostToolUse` → `running`
+- `Stop` → `idle`
+
 OpenCode uses a server plugin instead of command hooks. Both generations discover the same global plugin file. Their loaders select separate entrypoints: OpenCode 1 calls `server()` with `{ type, properties }` bus events; OpenCode 2 calls `setup()` and subscribes to decoded `{ type, data }` events. Do not share their status mapping: V1 publishes `session.status` snapshots, while V2 publishes `session.execution.*` transitions.
 
 | OpenCode event                                              | Generation | Activity    |
@@ -98,6 +103,7 @@ activity when the env is present.
 
 When enabled, Paseo installs provider hooks globally:
 
+- Antigravity hooks are written under the `paseo-terminal-activity` key in `~/.gemini/config/hooks.json` (or `ANTIGRAVITY_CONFIG_DIR/hooks.json` when that override is set).
 - Claude hooks are written to `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR/settings.json` when that override is set).
 - Codex hooks are written to `~/.codex/hooks.json` (or `CODEX_HOME/hooks.json` when that override is set). Codex supports a native `commandWindows`, so each Paseo hook includes both POSIX and Windows commands. Non-managed Codex hooks are trust-gated by Codex; users may see Codex's hook review prompt before the hook runs.
 - OpenCode gets a self-contained plugin at `$XDG_CONFIG_HOME/opencode/plugins/paseo-terminal-activity.js` (or `~/.config/opencode/plugins/paseo-terminal-activity.js` when XDG is unset; `OPENCODE_CONFIG_DIR` still wins when set).

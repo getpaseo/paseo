@@ -9,6 +9,7 @@ import {
   installAgentHooks,
   uninstallAgentHooks,
 } from "./agent-hook-installer.js";
+import { antigravityAgentHookProvider } from "./antigravity/antigravity.js";
 import { claudeAgentHookProvider } from "./claude/claude.js";
 import { codexAgentHookProvider } from "./codex/codex.js";
 import { opencodeAgentHookProvider } from "./opencode/opencode.js";
@@ -20,6 +21,7 @@ export type {
 } from "./agent-hook-installer.js";
 
 export const AGENT_HOOK_PROVIDERS = {
+  [antigravityAgentHookProvider.id]: antigravityAgentHookProvider,
   [claudeAgentHookProvider.id]: claudeAgentHookProvider,
   [codexAgentHookProvider.id]: codexAgentHookProvider,
   [opencodeAgentHookProvider.id]: opencodeAgentHookProvider,
