@@ -1090,6 +1090,22 @@ export const fr: TranslationResources = {
           addAllToChat: "Tout ajouter à la conversation",
           addingToChat: "Ajout…",
         },
+        watch: {
+          manage: "Arrêtez le suivi dans les tâches en arrière-plan.",
+          thisAgent: "Suivre avec cet agent",
+          watching: "Suivi de {{reference}}",
+          action: "Suivre la {{abbreviation}}",
+          recipient: "Envoyer les mises à jour à",
+          noAgents: "Ouvrez un agent dans cet espace de travail pour lancer le suivi.",
+          untitledAgent: "Agent sans titre",
+          starting: "Lancement du suivi…",
+          started: "Suivi lancé. Gérez-le dans les tâches en arrière-plan de l’agent.",
+          failed: "Impossible de lancer le suivi. Réessayez.",
+          closed: "Cette {{abbreviation}} est déjà fermée.",
+          updateHost:
+            "Mettez l’hôte à jour pour lancer le suivi ici. Avec Paseo 0.17.1 ou une version ultérieure, vous pouvez demander à l’agent de suivre l’URL dans la conversation.",
+          disconnected: "Reconnectez-vous à l’hôte et réessayez.",
+        },
         checksOverview: {
           headline: {
             actionRequired: "Certaines vérifications demandent votre attention",

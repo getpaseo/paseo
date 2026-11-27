@@ -39,6 +39,7 @@ export function PullRequestContent(input: {
     return (
       <PullRequestPane
         serverId={input.serverId}
+        workspaceId={input.workspaceId}
         cwd={input.cwd}
         data={input.prPane.data}
         activityLoading={input.prPane.activityLoading}

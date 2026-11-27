@@ -119,6 +119,14 @@ export default defineConfig({
         extends: true,
         resolve: {
           alias: [
+            // Use the compiled web-resolvable sheet so browser tests can exercise compact overlays.
+            {
+              find: /^@gorhom\/bottom-sheet$/,
+              replacement: path.resolve(
+                rootNodeModules,
+                "@gorhom/bottom-sheet/lib/module/index.js",
+              ),
+            },
             // The app renders LegendList on native only, from the patched native build. Browser
             // tests render that build too, instead of the package's separate web build. Unit tests
             // load it outside Vite, where its react-native import would miss the web alias.
@@ -198,6 +206,7 @@ export default defineConfig({
       "expo-router/react-navigation",
       "@testing-library/react",
       "@tanstack/react-query",
+      "zustand/traditional",
       "@tanstack/react-virtual",
       "@legendapp/list/react-native",
       "react-i18next",
@@ -216,6 +225,7 @@ export default defineConfig({
       "react-native-reanimated",
       "react-native-gesture-handler",
       "react-native-keyboard-controller",
+      "@gorhom/bottom-sheet",
     ],
   },
   // babel-preset-expo compiles JSX with the automatic runtime, so app modules don't import React.

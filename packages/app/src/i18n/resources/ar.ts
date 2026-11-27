@@ -1064,6 +1064,22 @@ export const ar: TranslationResources = {
           addAllToChat: "إضافة الكل إلى الدردشة",
           addingToChat: "جارٍ الإضافة...",
         },
+        watch: {
+          manage: "أوقِف هذه المراقبة من الأعمال في الخلفية.",
+          thisAgent: "المراقبة باستخدام هذا الوكيل",
+          watching: "مراقبة {{reference}}",
+          action: "مراقبة {{abbreviation}}",
+          recipient: "إرسال التحديثات إلى",
+          noAgents: "افتح وكيلاً في مساحة العمل هذه لبدء المراقبة.",
+          untitledAgent: "وكيل بلا عنوان",
+          starting: "جارٍ بدء المراقبة…",
+          started: "بدأت المراقبة. يمكنك إدارتها من أعمال الوكيل في الخلفية.",
+          failed: "تعذّر بدء المراقبة. حاول مرة أخرى.",
+          closed: "أُغلق {{abbreviation}} بالفعل.",
+          updateHost:
+            "حدّث المضيف لبدء المراقبة من هنا. في Paseo 0.17.1 أو أحدث، يمكنك أن تطلب من الوكيل مراقبة الرابط في المحادثة.",
+          disconnected: "أعِد الاتصال بالمضيف ثم حاول مرة أخرى.",
+        },
         checksOverview: {
           headline: {
             actionRequired: "بعض الفحوصات تحتاج إلى انتباهك",

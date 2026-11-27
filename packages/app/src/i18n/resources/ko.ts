@@ -1071,6 +1071,22 @@ export const ko: TranslationResources = {
           addAllToChat: "모두 채팅에 추가",
           addingToChat: "추가 중...",
         },
+        watch: {
+          manage: "백그라운드 작업에서 모니터링을 중지할 수 있습니다.",
+          thisAgent: "이 에이전트로 모니터링",
+          watching: "{{reference}} 모니터링 중",
+          action: "{{abbreviation}} 모니터링",
+          recipient: "업데이트 수신 대상",
+          noAgents: "모니터링을 시작하려면 이 작업 공간에서 에이전트를 여세요.",
+          untitledAgent: "제목 없는 에이전트",
+          starting: "모니터링 시작 중…",
+          started: "모니터링을 시작했습니다. 에이전트의 백그라운드 작업에서 관리할 수 있습니다.",
+          failed: "모니터링을 시작하지 못했습니다. 다시 시도하세요.",
+          closed: "이 {{abbreviation}}은 이미 닫혔습니다.",
+          updateHost:
+            "여기서 모니터링을 시작하려면 호스트를 업데이트하세요. Paseo 0.17.1 이상에서는 채팅으로 에이전트에게 URL을 모니터링하도록 요청할 수 있습니다.",
+          disconnected: "호스트에 다시 연결한 뒤 시도하세요.",
+        },
         checksOverview: {
           headline: {
             actionRequired: "확인이 필요한 검사가 있습니다",

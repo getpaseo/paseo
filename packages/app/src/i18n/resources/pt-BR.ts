@@ -1088,6 +1088,22 @@ export const ptBR: TranslationResources = {
           addAllToChat: "Adicionar tudo ao chat",
           addingToChat: "Adicionando...",
         },
+        watch: {
+          manage: "Pare este acompanhamento nos trabalhos em segundo plano.",
+          thisAgent: "Acompanhar com este agente",
+          watching: "Acompanhando {{reference}}",
+          action: "Acompanhar {{abbreviation}}",
+          recipient: "Enviar atualizações para",
+          noAgents: "Abra um agente neste espaço de trabalho para iniciar o acompanhamento.",
+          untitledAgent: "Agente sem título",
+          starting: "Iniciando acompanhamento…",
+          started: "Acompanhamento iniciado. Gerencie-o nos trabalhos em segundo plano do agente.",
+          failed: "Não foi possível iniciar o acompanhamento. Tente novamente.",
+          closed: "Esta {{abbreviation}} já foi fechada.",
+          updateHost:
+            "Atualize o host para iniciar o acompanhamento aqui. No Paseo 0.17.1 ou mais recente, você pode pedir ao agente no chat que acompanhe a URL.",
+          disconnected: "Reconecte-se ao host e tente novamente.",
+        },
         checksOverview: {
           headline: {
             actionRequired: "Algumas verificações precisam da sua atenção",

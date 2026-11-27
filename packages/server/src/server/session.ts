@@ -535,6 +535,10 @@ export interface SessionOptions {
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
+  changeRequestWatches?: Pick<
+    import("./agent/change-request-watches/index.js").ChangeRequestWatches,
+    "subscribe"
+  >;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -923,12 +927,14 @@ export class Session {
   private readonly getSourceLocalEndpoint?: (source: object) => string | undefined;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
+  private readonly changeRequestWatches: SessionOptions["changeRequestWatches"];
   private readonly messageReceipts: Pick<MessageReceipts, "send">;
   private readonly agentMessages: AgentMessageDelivery;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
 
   constructor(options: SessionOptions) {
+    this.changeRequestWatches = options.changeRequestWatches;
     const {
       clientId,
       permissions,
@@ -3272,6 +3278,8 @@ export class Session {
         return this.handleAgentBackgroundWorkListRequest(msg);
       case "agent.background_work.stop.request":
         return this.handleAgentBackgroundWorkStopRequest(msg);
+      case "agent.change_request.subscribe.request":
+        return this.handleAgentChangeRequestSubscribeRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
         return this.handleProviderSubagentTimelineRequest(msg, source);
       case "session.events.set_subscription.request": {
@@ -9022,6 +9030,28 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleAgentChangeRequestSubscribeRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.change_request.subscribe.request" }>,
+  ): Promise<void> {
+    let subscribed = false;
+    let error: string | null = null;
+    try {
+      if (!this.authorization.allowsPermission("automation.manage")) {
+        throw new Error("Automation management permission is required to watch a pull request.");
+      }
+      const target = await this.resolveBackgroundWorkAgent(msg.agentId);
+      if ("error" in target) throw new Error(target.error);
+      if (!this.changeRequestWatches) throw new Error("Change request watches are unavailable.");
+      ({ subscribed } = await this.changeRequestWatches.subscribe(msg.agentId, msg.url));
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+    this.emit({
+      type: "agent.change_request.subscribe.response",
+      payload: { requestId: msg.requestId, subscribed, error },
+    });
   }
 
   private async handleAgentBackgroundWorkStopRequest(

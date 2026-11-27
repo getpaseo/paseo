@@ -310,6 +310,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 
 interface SessionForTestOptions {
   workspaceRuntimeStore?: WorkspaceRuntimeStore;
+  changeRequestWatches?: SessionOptions["changeRequestWatches"];
   sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
   permissions?: readonly DaemonPermission[];
@@ -440,6 +441,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     },
     workspaceLabelService: options.workspaceLabelService,
     scheduleService: asScheduleService(),
+    changeRequestWatches: options.changeRequestWatches,
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
     workspaceGitService: asWorkspaceGitService(workspaceGitService),
@@ -6360,6 +6362,71 @@ test("publishes the current dormant inventory when an older update waits on stor
   await new Promise<void>((resolve) => setImmediate(resolve));
   const updates = messages.filter((message) => message.type === "agent.background_work.update");
   expect(updates.every((message) => message.payload.items.length === 0)).toBe(true);
+  await session.cleanup();
+});
+
+test("starts a change request watch only for an eligible agent with automation permission", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const active = createStoredAgentRecord({ id: "active", cwd: "/tmp/repo" });
+  const archived = createStoredAgentRecord({
+    id: "archived",
+    cwd: "/tmp/repo",
+    archivedAt: "2026-11-25T00:00:00Z",
+  });
+  const subscribe = vi.fn<NonNullable<SessionOptions["changeRequestWatches"]>["subscribe"]>();
+  subscribe.mockResolvedValue({
+    url: "https://github.com/acme/repo/pull/42",
+    state: "open",
+    headSha: "head",
+    checksState: "neutral",
+    checks: [],
+    reviewDecision: null,
+    subscribed: true,
+    stale: false,
+  });
+  const session = createSessionForTest({
+    messages,
+    permissions: ["workspace.read", "automation.manage"],
+    changeRequestWatches: { subscribe },
+    agentManager: { getAgent: () => undefined },
+    agentStorage: {
+      get: async (id: string) => [active, archived].find((agent) => agent.id === id),
+    },
+  });
+  const request = {
+    type: "agent.change_request.subscribe.request",
+    agentId: active.id,
+    url: "https://github.com/acme/repo/pull/42",
+    requestId: "read-only",
+  } as const;
+  await session.handleMessage(request);
+  expect(findByType(messages, "rpc_error")?.payload.code).toBe("access_denied");
+  session.setPermissions(["workspace.read", "workspace.write"]);
+  await session.handleMessage({ ...request, requestId: "no-automation" });
+  session.setPermissions(["workspace.read", "workspace.write", "automation.manage"]);
+  await session.handleMessage({ ...request, agentId: archived.id, requestId: "archived" });
+  await session.handleMessage({ ...request, agentId: "missing", requestId: "missing" });
+  expect(subscribe).not.toHaveBeenCalled();
+  await session.handleMessage({ ...request, requestId: "allowed" });
+  expect(subscribe).toHaveBeenCalledExactlyOnceWith(active.id, request.url);
+  expect(
+    messages
+      .filter((message) => message.type === "agent.change_request.subscribe.response")
+      .map(({ payload }) => payload),
+  ).toEqual([
+    {
+      requestId: "no-automation",
+      subscribed: false,
+      error: expect.stringContaining("Automation management permission"),
+    },
+    {
+      requestId: "archived",
+      subscribed: false,
+      error: expect.stringContaining("Agent is archived"),
+    },
+    { requestId: "missing", subscribed: false, error: expect.stringContaining("Unknown agent") },
+    { requestId: "allowed", subscribed: true, error: null },
+  ]);
   await session.cleanup();
 });
 

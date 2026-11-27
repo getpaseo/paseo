@@ -1056,6 +1056,22 @@ export const zhCN: TranslationResources = {
           addAllToChat: "全部添加到聊天",
           addingToChat: "正在添加...",
         },
+        watch: {
+          manage: "可以在后台工作中停止监视。",
+          thisAgent: "让此代理监视",
+          watching: "正在监视 {{reference}}",
+          action: "监视 {{abbreviation}}",
+          recipient: "将更新发送给",
+          noAgents: "在此工作区打开一个代理即可开始监视。",
+          untitledAgent: "未命名的代理",
+          starting: "正在开始监视…",
+          started: "已开始监视。可以在代理的后台工作中管理。",
+          failed: "无法开始监视，请重试。",
+          closed: "此 {{abbreviation}} 已关闭。",
+          updateHost:
+            "请更新主机以在此处开始监视。在 Paseo 0.17.1 或更高版本中，你可以在聊天中请代理监视该网址。",
+          disconnected: "请重新连接主机后重试。",
+        },
         checksOverview: {
           headline: {
             actionRequired: "部分检查需要你处理",

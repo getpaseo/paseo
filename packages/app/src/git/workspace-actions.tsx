@@ -4,15 +4,22 @@ import { useGitActions } from "@/git/use-actions";
 
 interface WorkspaceActionsProps {
   serverId: string;
+  workspaceId: string;
   cwd: string;
 }
 
-export function WorkspaceActions({ serverId, cwd }: WorkspaceActionsProps) {
-  const { gitActions } = useGitActions({
+export function WorkspaceActions({ serverId, workspaceId, cwd }: WorkspaceActionsProps) {
+  const { gitActions, watchDialog } = useGitActions({
     serverId,
+    workspaceId,
     cwd,
     icons: GIT_ACTION_ICONS,
   });
 
-  return <GitActionsSplitButton gitActions={gitActions} />;
+  return (
+    <>
+      <GitActionsSplitButton gitActions={gitActions} />
+      {watchDialog}
+    </>
+  );
 }

@@ -1078,6 +1078,22 @@ export const ja: TranslationResources = {
           addAllToChat: "すべてチャットに追加",
           addingToChat: "追加中...",
         },
+        watch: {
+          manage: "この監視はバックグラウンド作業から停止できます。",
+          thisAgent: "このエージェントで監視",
+          watching: "{{reference}} を監視中",
+          action: "{{abbreviation}} を監視",
+          recipient: "更新の送信先",
+          noAgents: "監視を開始するには、このワークスペースでエージェントを開いてください。",
+          untitledAgent: "無題のエージェント",
+          starting: "監視を開始中…",
+          started: "監視を開始しました。エージェントのバックグラウンド作業から管理できます。",
+          failed: "監視を開始できませんでした。もう一度お試しください。",
+          closed: "この {{abbreviation}} はすでに閉じられています。",
+          updateHost:
+            "ここから監視を開始するにはホストを更新してください。Paseo 0.17.1 以降では、チャットでエージェントに URL の監視を依頼できます。",
+          disconnected: "ホストに再接続してから、もう一度お試しください。",
+        },
         checksOverview: {
           headline: {
             actionRequired: "対応が必要なチェックがあります",

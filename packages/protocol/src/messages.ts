@@ -2168,6 +2168,13 @@ export const AgentBackgroundWorkListRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentChangeRequestSubscribeRequestMessageSchema = z.object({
+  type: z.literal("agent.change_request.subscribe.request"),
+  agentId: z.string().min(1),
+  url: z.string().min(1),
+  requestId: z.string(),
+});
+
 export const AgentBackgroundWorkStopRequestMessageSchema = z.object({
   type: z.literal("agent.background_work.stop.request"),
   agentId: z.string(),
@@ -3728,6 +3735,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentListRequestMessageSchema,
   AgentBackgroundWorkListRequestMessageSchema,
   AgentBackgroundWorkStopRequestMessageSchema,
+  AgentChangeRequestSubscribeRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
@@ -4182,6 +4190,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentBackgroundWork: z.boolean().optional(),
         // COMPAT(agentBackgroundWorkStop): added after v0.15.0, remove after 2027-05-03.
         agentBackgroundWorkStop: z.boolean().optional(),
+        agentChangeRequestSubscribe: z.boolean().optional(),
         // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
         projectedSubagentTimeline: z.boolean().optional(),
         wholeTurnTimeline: z.boolean().optional(),
@@ -5315,6 +5324,7 @@ export const AgentBackgroundWorkItemSchema = z.object({
   kind: z.string(),
   description: z.string().nullable(),
   command: z.string().optional(),
+  changeRequestUrl: z.string().optional(),
   startedAt: z.string(),
   canStop: z.boolean().optional(),
   stopToken: z.string().optional(),
@@ -5328,6 +5338,15 @@ export const AgentBackgroundWorkListResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string(),
     items: z.array(AgentBackgroundWorkItemSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentChangeRequestSubscribeResponseMessageSchema = z.object({
+  type: z.literal("agent.change_request.subscribe.response"),
+  payload: z.object({
+    requestId: z.string(),
+    subscribed: z.boolean(),
     error: z.string().nullable(),
   }),
 });
@@ -7907,6 +7926,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentUpdateMessageSchema,
   AgentBackgroundWorkListResponseMessageSchema,
   AgentBackgroundWorkStopResponseMessageSchema,
+  AgentChangeRequestSubscribeResponseMessageSchema,
   AgentBackgroundWorkUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,

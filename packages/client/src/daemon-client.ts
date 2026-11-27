@@ -4142,6 +4142,24 @@ export class DaemonClient {
     return payload.items;
   }
 
+  async subscribeAgentChangeRequest(
+    input: { agentId: string; url: string },
+    options: { requestId?: string; timeout?: number } = {},
+  ): Promise<boolean> {
+    // COMPAT(agentChangeRequestSubscribe): added after v0.17.4, remove after 2027-05-25.
+    if (this.lastServerInfoMessage?.features?.agentChangeRequestSubscribe !== true) {
+      throw new Error("Update the host to start a watch from the Pull request tab.");
+    }
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.change_request.subscribe.response">({
+        requestId: options.requestId,
+        timeout: options.timeout ?? 60_000,
+        message: { type: "agent.change_request.subscribe.request", ...input },
+      });
+    if (payload.error) throw new Error(payload.error);
+    return payload.subscribed;
+  }
+
   async stopAgentBackgroundWork(
     agentId: string,
     item: AgentBackgroundWorkItem,

@@ -4491,6 +4491,42 @@ test("rejects an internal create before sending when the host predates internal 
   expect(mock.sent).toHaveLength(0);
 });
 
+test.each([true, false])(
+  "gates the change request subscribe RPC by daemon capability (%s)",
+  async (supported) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const connect = client.connect();
+    mock.triggerOpen({ features: supported ? { agentChangeRequestSubscribe: true } : {} });
+    await connect;
+
+    const input = { agentId: "agent-a", url: "https://github.com/acme/repo/pull/42" };
+    const result = client.subscribeAgentChangeRequest(input);
+    if (!supported) {
+      await expect(result).rejects.toThrow("Update the host");
+      expect(mock.sent).toHaveLength(0);
+      return;
+    }
+    const request = parseSentFrame(mock.sent[0]);
+    expect(request).toMatchObject({ type: "agent.change_request.subscribe.request", ...input });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent.change_request.subscribe.response",
+        payload: { requestId: request.requestId, subscribed: false, error: null },
+      }),
+    );
+    await expect(result).resolves.toBe(false);
+  },
+);
+
 test("metadata needs a host that advertises entityMetadata and sends nothing to one that does not", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
