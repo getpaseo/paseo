@@ -3643,10 +3643,12 @@ export class DaemonClient {
     });
   }
 
-  async archiveAgent(agentId: string): Promise<{ archivedAt: string }> {
+  async archiveAgent(agentId: string, scope?: "self" | "tree"): Promise<{ archivedAt: string }> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
-      type: "archive_agent_request",
+      ...(scope
+        ? { type: "archive_agent_scoped_request" as const, scope }
+        : { type: "archive_agent_request" as const }),
       agentId,
       requestId,
     });

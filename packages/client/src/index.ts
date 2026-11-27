@@ -465,6 +465,7 @@ export interface PaseoAgentHandle {
    */
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
+  archiveWithScope(scope: "self" | "tree"): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
@@ -1187,6 +1188,13 @@ function createAgentHandleFactory(
       commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
       archive: async () => {
         const result = await daemonClient.archiveAgent(id);
+        if (current) {
+          current = { ...current, archivedAt: result.archivedAt };
+        }
+        return result;
+      },
+      archiveWithScope: async (scope) => {
+        const result = await daemonClient.archiveAgent(id, scope);
         if (current) {
           current = { ...current, archivedAt: result.archivedAt };
         }

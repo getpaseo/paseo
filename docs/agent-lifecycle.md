@@ -126,7 +126,7 @@ Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Age
 - **Subagents** — exist as part of the creating agent's work, appear in that agent's subagent track, and are archived with it.
 - **Detached agents** — stand on their own after an explicit detach transition, do not appear in the former parent's subagent track, and are not archived with it.
 
-Parent archive detaches a subagent instead of archiving it when either condition holds:
+The default parent archive detaches a subagent instead of archiving it when either condition holds:
 
 - The child belongs to another workspace.
 - The child is currently open in an agent tab.
@@ -137,6 +137,8 @@ generic agent metadata update. This includes background and restored tabs; navig
 the marker. Closing a tab sets that client's label to `false`. Any `true` client label keeps the child
 open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
 normal root agent immediately, and closing its still-open tab archives it.
+
+The scoped archive client operation explicitly chooses `self` or `tree`. `self` preserves children and their parent links; `tree` archives descendants even across workspaces or open tabs, interrupting active runs. It uses a separate wire request so an older daemon cannot silently treat the requested scope as the default behavior.
 
 Agent-scoped workspace creation records the caller's workspace as `parentWorkspaceId`.
 This is informational ancestry for future workspace grouping. It does not change placement,

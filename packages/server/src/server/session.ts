@@ -3338,6 +3338,14 @@ export class Session {
     }
   }
 
+  private dispatchAgentArchiveMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "archive_agent_request")
+      return this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
+    if (msg.type === "archive_agent_scoped_request")
+      return this.handleArchiveAgentRequest(msg.agentId, msg.requestId, msg.scope);
+    return undefined;
+  }
+
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "fetch_agents_request":
@@ -3350,8 +3358,6 @@ export class Session {
         return this.handleFetchAgent(msg.agentId, msg.requestId);
       case "delete_agent_request":
         return this.handleDeleteAgentRequest(msg.agentId, msg.requestId);
-      case "archive_agent_request":
-        return this.handleArchiveAgentRequest(msg.agentId, msg.requestId);
       case "close_items_request":
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
@@ -3379,7 +3385,7 @@ export class Session {
       case "clear_agent_attention":
         return this.handleClearAgentAttention(msg.agentId, msg.requestId);
       default:
-        return undefined;
+        return this.dispatchAgentArchiveMessage(msg);
     }
   }
 
@@ -3918,10 +3924,14 @@ export class Session {
     });
   }
 
-  private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
+  private async handleArchiveAgentRequest(
+    agentId: string,
+    requestId: string,
+    scope?: "self" | "tree",
+  ): Promise<void> {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`);
 
-    const { archivedAt } = await this.archiveAgentForClose(agentId);
+    const { archivedAt } = await this.archiveAgentForClose(agentId, scope);
 
     this.emit({
       type: "agent_archived",
@@ -3935,6 +3945,7 @@ export class Session {
 
   private async archiveAgentForClose(
     agentId: string,
+    scope?: "self" | "tree",
   ): Promise<{ agentId: string; archivedAt: string }> {
     const { archivedAt, record: archivedRecord } = await archiveAgentCommand(
       {
@@ -3943,6 +3954,7 @@ export class Session {
         logger: this.sessionLogger,
       },
       agentId,
+      scope,
     );
 
     if (archivedRecord && this.agentUpdates.hasSubscription()) {

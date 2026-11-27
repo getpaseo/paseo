@@ -11149,6 +11149,64 @@ test("archiveAgent cascade archives in-memory children with the full archive con
   expect(storedUnrelated?.archivedAt).toBeUndefined();
 });
 
+test.each([
+  { scope: "self", closed: false },
+  { scope: "tree", closed: false },
+  { scope: "self", closed: true },
+  { scope: "tree", closed: true },
+] as const)(
+  "archive scope $scope applies to the complete child tree (closed=$closed)",
+  async ({ scope, closed }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "archive-scope-test-"));
+    onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    const parent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Parent" },
+      undefined,
+      { workspaceId: "workspace-a" },
+    );
+    const child = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Child" },
+      undefined,
+      {
+        workspaceId: "workspace-b",
+        labels: {
+          [PARENT_AGENT_ID_LABEL]: parent.id,
+          [MOBILE_OPEN_AGENT_TAB_LABEL]: "true",
+        },
+      },
+    );
+    const grandchild = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Grandchild" },
+      undefined,
+      {
+        workspaceId: "workspace-b",
+        labels: { [PARENT_AGENT_ID_LABEL]: child.id },
+      },
+    );
+    await manager.closeAgent(child.id);
+    if (closed) {
+      await manager.closeAgent(parent.id);
+      await manager.archiveSnapshot(parent.id, new Date().toISOString(), scope);
+    } else {
+      await manager.archiveAgent(parent.id, undefined, scope);
+    }
+    expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+    for (const id of [child.id, grandchild.id]) {
+      const record = await storage.get(id);
+      if (scope === "tree") expect(record?.archivedAt).toEqual(expect.any(String));
+      else expect(record?.archivedAt).toBeUndefined();
+    }
+    if (scope === "self")
+      expect((await storage.get(child.id))?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
+  },
+);
+
 test("archiveAgent detaches an open same-workspace child instead of cascading", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-open-child-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -11387,94 +11445,98 @@ test("archiveAgent cannot overtake a received child open-tab update", async () =
   expect(storedChild?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
 });
 
-test("archiveAgent cascade closes a running child runtime", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-running-child-"));
-  const storagePath = join(workdir, "agents");
-  const storage = new AgentStorage(storagePath, logger);
-  const finishRun = deferred<void>();
+test.each([undefined, "tree"] as const)(
+  "archiveAgent cascade closes a running child runtime (scope=%s)",
+  async (scope) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-running-child-"));
+    onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const finishRun = deferred<void>();
 
-  class RunningChildSession extends TestAgentSession {
-    closeCalled = false;
+    class RunningChildSession extends TestAgentSession {
+      closeCalled = false;
 
-    override async startTurn(): Promise<{ turnId: string }> {
-      const turnId = "running-child-turn";
-      void (async () => {
-        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-        await finishRun.promise;
-        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
-      })();
-      return { turnId };
-    }
-
-    override async close(): Promise<void> {
-      this.closeCalled = true;
-    }
-  }
-
-  class RunningChildClient extends TestAgentClient {
-    readonly sessions: RunningChildSession[] = [];
-
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      const session = new RunningChildSession(config);
-      this.sessions.push(session);
-      return session;
-    }
-  }
-
-  const client = new RunningChildClient();
-  const manager = new AgentManager({
-    clients: {
-      codex: client,
-    },
-    registry: storage,
-    logger,
-  });
-  const parent = await manager.createAgent(
-    {
-      provider: "codex",
-      cwd: workdir,
-      title: "Parent",
-    },
-    undefined,
-    { workspaceId: undefined },
-  );
-  const child = await manager.createAgent(
-    {
-      provider: "codex",
-      cwd: workdir,
-      title: "Running Child",
-    },
-    undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
-  );
-  const childSession = client.sessions[1];
-  const childLifecycleEvents: string[] = [];
-  const unsubscribe = manager.subscribe(
-    (event) => {
-      if (event.type === "agent_state" && event.agent.id === child.id) {
-        childLifecycleEvents.push(event.agent.lifecycle);
+      override async startTurn(): Promise<{ turnId: string }> {
+        const turnId = "running-child-turn";
+        void (async () => {
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+          await finishRun.promise;
+          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+        })();
+        return { turnId };
       }
-    },
-    { agentId: child.id, replayState: false },
-  );
-  const childRun = manager.streamAgent(child.id, "keep running");
-  const drainChildRun = (async () => {
-    for await (const _event of childRun) {
-      // Drain the foreground turn while archive closes it.
+
+      override async close(): Promise<void> {
+        this.closeCalled = true;
+      }
     }
-  })();
 
-  await manager.waitForAgentRunStart(child.id);
+    class RunningChildClient extends TestAgentClient {
+      readonly sessions: RunningChildSession[] = [];
 
-  await manager.archiveAgent(parent.id);
-  finishRun.resolve();
-  await drainChildRun;
-  unsubscribe();
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const session = new RunningChildSession(config);
+        this.sessions.push(session);
+        return session;
+      }
+    }
 
-  expect(childSession?.closeCalled).toBe(true);
-  expect(manager.getAgent(child.id)).toBeNull();
-  expect(childLifecycleEvents).toContain("closed");
-});
+    const client = new RunningChildClient();
+    const manager = new AgentManager({
+      clients: {
+        codex: client,
+      },
+      registry: storage,
+      logger,
+    });
+    const parent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        title: "Parent",
+      },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const child = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        title: "Running Child",
+      },
+      undefined,
+      { labels: { [PARENT_AGENT_ID_LABEL]: parent.id }, workspaceId: undefined },
+    );
+    const childSession = client.sessions[1];
+    const childLifecycleEvents: string[] = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state" && event.agent.id === child.id) {
+          childLifecycleEvents.push(event.agent.lifecycle);
+        }
+      },
+      { agentId: child.id, replayState: false },
+    );
+    const childRun = manager.streamAgent(child.id, "keep running");
+    const drainChildRun = (async () => {
+      for await (const _event of childRun) {
+        // Drain the foreground turn while archive closes it.
+      }
+    })();
+
+    await manager.waitForAgentRunStart(child.id);
+
+    await manager.archiveAgent(parent.id, undefined, scope);
+    finishRun.resolve();
+    await drainChildRun;
+    unsubscribe();
+
+    expect(childSession?.closeCalled).toBe(true);
+    expect(manager.getAgent(child.id)).toBeNull();
+    expect(childLifecycleEvents).toContain("closed");
+  },
+);
 
 test("archiveAgent cascade archives off-memory children with the full archive contract", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-off-memory-"));

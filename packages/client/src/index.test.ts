@@ -1082,6 +1082,25 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   expect(agent.current()?.archivedAt).toBe("2026-05-16T01:00:00.000Z");
   expect(agent.archivedAt).toBe("2026-05-16T01:00:00.000Z");
 
+  const scopedPromise = agent.archiveWithScope("tree");
+  const scopedRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(scopedRequest).toMatchObject({
+    type: "archive_agent_scoped_request",
+    agentId: "agent_sdk",
+    scope: "tree",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent_archived",
+      payload: {
+        requestId: scopedRequest.requestId,
+        agentId: "agent_sdk",
+        archivedAt: "2026-05-16T01:00:00.000Z",
+      },
+    }),
+  );
+  await expect(scopedPromise).resolves.toEqual({ archivedAt: "2026-05-16T01:00:00.000Z" });
+
   unsubscribe();
   await client.close();
 });

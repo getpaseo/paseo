@@ -1075,6 +1075,13 @@ export const ArchiveAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ArchiveAgentScopedRequestMessageSchema = z.object({
+  type: z.literal("archive_agent_scoped_request"),
+  agentId: z.string(),
+  scope: z.enum(["self", "tree"]),
+  requestId: z.string(),
+});
+
 export const CloseItemsRequestMessageSchema = z.object({
   type: z.literal("close_items_request"),
   agentIds: z.array(z.string()).default([]),
@@ -3638,6 +3645,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
+  ArchiveAgentScopedRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
