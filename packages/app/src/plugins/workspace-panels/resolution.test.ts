@@ -45,6 +45,7 @@ function installed(): InstalledPlugin {
     timelineTransformers: [],
     timelineRenderers: [],
     notificationOpenHandlers: [],
+    forgeClientProviders: [],
   };
 }
 

@@ -1,3 +1,4 @@
+import type { ClientForgeHostSnapshot } from "@/git/client-forge-registry";
 import {
   useCallback,
   useMemo,
@@ -119,6 +120,7 @@ export interface NewWorkspaceFormProps {
     canChooseAction: boolean;
     /** Selects the forge's change-request words, such as "Merge requests" on GitLab. */
     changeRequestContext: "mr" | undefined;
+    clientForgeHost: ClientForgeHostSnapshot;
   };
   launch: {
     serverId: string;
@@ -293,7 +295,7 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
   const { t } = useTranslation();
   const { options: allOptions, itemById, selectedItem, selectedOptionId, worktrees } = base;
   const { open: openPicker, onSelect, actionFor, onActionChange } = base;
-  const context = base.changeRequestContext;
+  const { changeRequestContext: context, clientForgeHost } = base;
   const [list, setList] = useState<RefList>("branch");
   const action = actionFor[list];
   const options = useMemo(
@@ -316,12 +318,13 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
         <RefOption
           {...row}
           item={item}
+          clientForgeHost={clientForgeHost}
           heldIn={branchHolderOf(item, action, worktrees)}
           disabled={isPending}
         />
       );
     },
-    [action, isPending, itemById, worktrees],
+    [action, clientForgeHost, isPending, itemById, worktrees],
   );
   const toolbar = useMemo(
     () => (

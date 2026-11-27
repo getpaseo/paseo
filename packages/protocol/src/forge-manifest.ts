@@ -30,6 +30,18 @@ export interface ForgeSignInCommand {
   hostnameFlag?: string;
 }
 
+/**
+ * Where a user completes setup for a forge with no CLI to sign into. A plugin
+ * that authenticates with a token has nothing to install, so the install/sign-in
+ * hints do not apply; it points at its own settings screen instead. Built-in
+ * forges never set this — they all have a CLI.
+ */
+export interface ForgeSetupSurface {
+  pluginId: string;
+  /** Settings screen the plugin registered with `client.addSettingsScreen`. */
+  screenId: string;
+}
+
 export interface ForgeDefinition {
   /** Registry id, matches the server adapter and the wire `forge` value. */
   id: string;
@@ -47,6 +59,8 @@ export interface ForgeDefinition {
   iconKind: string;
   /** Sign-in recipe, or null when the forge has no Paseo-driven sign-in. */
   signIn: ForgeSignInCommand | null;
+  /** Settings screen to open when `signIn` is null. Plugin forges only. */
+  setup?: ForgeSetupSurface;
   /**
    * Public cloud hosts this forge owns exactly. A BOUNDED list, never an
    * allowlist for self-hosted detection — self-hosted/Enterprise instances are

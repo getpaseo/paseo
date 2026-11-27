@@ -48,6 +48,7 @@ function plugin(): InstalledPlugin {
     composerItems: [],
     newWorkspaceItems: [],
     workspaceRowBadgeItems: [],
+    forgeClientProviders: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],

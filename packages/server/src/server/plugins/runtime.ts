@@ -27,12 +27,18 @@ import type {
   PluginWorktreeRestoreRequest,
 } from "@getpaseo/plugin/server";
 import { z } from "zod";
+import type { PluginPresence } from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import type pino from "pino";
+import type {
+  PluginForgeSerializedError,
+  PluginForgeServerProviderDescriptor,
+  PluginForgeServiceMethod,
+} from "@getpaseo/plugin/server";
 import {
   PROVIDER_CAPABILITIES,
   requireProviderCapabilities,
@@ -44,6 +50,12 @@ import {
 } from "@getpaseo/plugin/server/provider";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compileDirectoryPlugin } from "./compiler.js";
+import {
+  ForgeAuthenticationError,
+  ForgeCliMissingError,
+  ForgeCommandError,
+} from "../../services/forge-cli-command.js";
+import { parsePluginForgeProviderDescriptors, parsePluginForgeResult } from "./forge-validation.js";
 import type { PluginRequirements } from "@getpaseo/protocol/messages";
 import type {
   PluginProcessMessage,
@@ -97,6 +109,8 @@ export interface PluginWorktreeManagerRuntime {
     options?: { preferredPluginId?: string; signal?: AbortSignal },
   ): Promise<{ pluginId: string; path: string } | null>;
 }
+const FORGE_REQUEST_TIMEOUT_MS = 180_000;
+const FORGE_PROBE_TIMEOUT_MS = 30_000;
 const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
 const MAX_LOG_LINE_BYTES = 16 * 1024;
@@ -124,6 +138,7 @@ interface PendingInvocation {
   /** Absent for requests without a deadline. */
   timeout?: ReturnType<typeof setTimeout>;
   report?: (report: ProviderUpdateReport) => void;
+  parseOutput?: (output: unknown) => unknown;
 }
 
 interface PluginRequestOptions {
@@ -132,6 +147,28 @@ interface PluginRequestOptions {
   report?: (report: ProviderUpdateReport) => void;
   /** Overrides the default per-message timeout (e.g. shared budget across serial worktree managers). */
   timeoutMs?: number;
+  timedOutMessage?: string;
+  parseOutput?: (output: unknown) => unknown;
+}
+
+function resolveInvocationResult(
+  pending: PendingInvocation,
+  message: Extract<
+    PluginProcessMessage,
+    { type: "result" | "error" | "forge_result" | "forge_error" }
+  >,
+): void {
+  if (message.type === "result" || message.type === "forge_result") {
+    try {
+      pending.resolve(pending.parseOutput ? pending.parseOutput(message.output) : message.output);
+    } catch (error) {
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  } else if (message.type === "forge_error") {
+    pending.reject(deserializeForgeError(message.error));
+  } else {
+    pending.reject(new Error(message.error));
+  }
 }
 
 interface LoadedPlugin {
@@ -148,6 +185,7 @@ interface LoadedPlugin {
   worktreeManager: PluginWorktreeManagerCapabilities | null;
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
+  forgeProviders: readonly PluginForgeServerProviderDescriptor[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -280,6 +318,7 @@ export interface PluginPaseoSessionHost {
     socket: PluginSessionSocket,
   ): Promise<{ closed: Promise<void> }>;
   sendPluginNotification?(notification: ValidatedPluginNotification): void | Promise<void>;
+  getClientPresence(): PluginPresence;
 }
 
 function resolveWorkerUrl(): URL {
@@ -354,6 +393,34 @@ function requestTimeoutMs(message: PluginProcessRequest): number | null {
   // An updater runs as long as it needs; daemon shutdown aborts it.
   if (message.type === "provider.installation.update") return null;
   return REQUEST_TIMEOUT_MS;
+}
+
+function deserializeForgeError(serialized: PluginForgeSerializedError): Error {
+  let error: Error;
+  if (serialized.kind === "missing-cli") {
+    error = new ForgeCliMissingError(serialized.message);
+  } else if (serialized.kind === "auth-failure") {
+    error = new ForgeAuthenticationError(serialized.message, { stderr: serialized.stderr ?? "" });
+  } else if (serialized.kind === "command-error") {
+    error = new ForgeCommandError(
+      { brand: serialized.brand ?? "Forge", binary: serialized.binary ?? "forge" },
+      {
+        args: serialized.args ?? [],
+        cwd: serialized.cwd ?? "",
+        exitCode: serialized.exitCode ?? null,
+        stderr: serialized.stderr ?? serialized.message,
+      },
+    );
+    // The host class always words its message as a CLI failure. A REST-backed
+    // adapter said something else, so restore what it actually reported rather
+    // than telling the user a command failed that was never run. The class stays
+    // the host's: `instanceof ForgeCommandError` gates cached-failure fallback.
+    error.message = serialized.message;
+  } else {
+    error = new Error(serialized.message);
+  }
+  if (serialized.name) error.name = serialized.name;
+  return error;
 }
 
 function send(child: PluginChild, message: PluginProcessRequest): Promise<void> {
@@ -650,6 +717,11 @@ export class PluginRuntime {
     return connected.finally(() => clearTimeout(timeout));
   }
 
+  forgeProviders(pluginId: string): readonly PluginForgeServerProviderDescriptor[] {
+    const loaded = this.plugins.get(pluginId);
+    return loaded ? structuredClone(loaded.forgeProviders) : [];
+  }
+
   getLogs(pluginId: string): PluginLogEntry[] {
     return (
       this.logTails.get(pluginId)?.entries.map((entry) => ({
@@ -667,7 +739,7 @@ export class PluginRuntime {
 
   async invoke(pluginId: string, method: string, input: unknown): Promise<unknown> {
     const loaded = this.plugins.get(pluginId);
-    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    if (!loaded?.child) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
     return this.request(loaded, { type: "invoke", requestId: randomUUID(), method, input });
@@ -1016,7 +1088,11 @@ export class PluginRuntime {
                 void send(child, { type: "provider.installation.cancel", requestId }).catch(
                   () => {},
                 );
-              reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
+              reject(
+                new Error(
+                  options.timedOutMessage ?? `Plugin RPC timed out: ${pluginId}.${message.type}`,
+                ),
+              );
             }, timeoutMs);
       signal?.addEventListener("abort", cancel, { once: true });
       loaded.pending.set(requestId, {
@@ -1030,6 +1106,7 @@ export class PluginRuntime {
         },
         timeout,
         report,
+        ...(options?.parseOutput ? { parseOutput: options.parseOutput } : {}),
       });
       void send(child, message).catch((error) => {
         clearTimeout(timeout);
@@ -1038,6 +1115,34 @@ export class PluginRuntime {
         reject(error);
       });
     });
+  }
+
+  async invokeForge(
+    pluginId: string,
+    providerId: string,
+    method: PluginForgeServiceMethod | "probeHost",
+    input: unknown,
+  ): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded?.child) throw new Error(`Plugin is not available: ${pluginId}`);
+    const provider = loaded.forgeProviders.find(
+      (descriptor) => descriptor.definition.id === providerId,
+    );
+    if (!provider) {
+      throw new Error(`Plugin ${pluginId} does not contribute forge provider ${providerId}`);
+    }
+    if (method === "probeHost" ? !provider.hasProbeHost : !provider.methods.includes(method)) {
+      throw new Error(`Forge provider ${providerId} does not contribute ${method}`);
+    }
+    return this.request(
+      loaded,
+      { type: "invoke_forge", requestId: randomUUID(), providerId, method, input },
+      {
+        timeoutMs: method === "probeHost" ? FORGE_PROBE_TIMEOUT_MS : FORGE_REQUEST_TIMEOUT_MS,
+        timedOutMessage: `Plugin forge request timed out: ${pluginId}.${providerId}.${method}`,
+        parseOutput: (output) => parsePluginForgeResult(method, output),
+      },
+    );
   }
 
   async stopAll(): Promise<void> {
@@ -1075,6 +1180,7 @@ export class PluginRuntime {
         worktreeManager: null,
         providers: [],
         usageSources: [],
+        forgeProviders: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -1158,11 +1264,23 @@ export class PluginRuntime {
               });
             } else if (message.type === "paseo_close") {
               session.socket.peerClosed();
+            } else if (message.type === "presence.request") {
+              // Answered before `ready` too, so a contribution can read presence while it starts.
+              void send(child, {
+                type: "presence.result",
+                requestId: message.requestId,
+                presence: sessionHost.getClientPresence(),
+              }).catch(() => undefined);
             } else if (message.type === "ready") {
               if (settled) return;
-              settled = true;
-              clearTimeout(timeout);
-              resolve(message);
+              try {
+                const forgeProviders = parsePluginForgeProviderDescriptors(message.forgeProviders);
+                settled = true;
+                clearTimeout(timeout);
+                resolve({ ...message, forgeProviders });
+              } catch (error) {
+                fail(error instanceof Error ? error : new Error(String(error)));
+              }
             } else if (message.type === "fatal") {
               fail(new Error(message.error));
             } else if (loaded) {
@@ -1208,6 +1326,7 @@ export class PluginRuntime {
       worktreeManager: ready.worktreeManager ?? null,
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
+      forgeProviders: ready.forgeProviders,
       child,
       outputCapture,
       pending,
@@ -1218,7 +1337,12 @@ export class PluginRuntime {
     };
     session.plugin = loaded;
     this.logger.info(
-      { pluginId, methods: ready.methods, providers: ready.providers },
+      {
+        pluginId,
+        methods: ready.methods,
+        providers: ready.providers,
+        forgeProviders: ready.forgeProviders.map((provider) => provider.definition.id),
+      },
       "Loaded plugin",
     );
     return loaded;
@@ -1318,13 +1442,19 @@ export class PluginRuntime {
       void this.handleNotificationSend(loaded, message);
       return;
     }
-    if (message.type !== "result" && message.type !== "error") return;
+    if (
+      message.type !== "result" &&
+      message.type !== "error" &&
+      message.type !== "forge_result" &&
+      message.type !== "forge_error"
+    ) {
+      return;
+    }
     const pending = loaded.pending.get(message.requestId);
     if (!pending) return;
     loaded.pending.delete(message.requestId);
     clearTimeout(pending.timeout);
-    if (message.type === "result") pending.resolve(message.output);
-    else pending.reject(new Error(message.error));
+    resolveInvocationResult(pending, message);
   }
 
   private async handleNotificationSend(
@@ -1652,8 +1782,8 @@ export class PluginRuntime {
       this.failRemoteProviderConnection(state, new Error(`Plugin process exited: ${loaded.id}`));
     }
     loaded.providerConnections.clear();
-    await loaded.sessionClosed;
     if (wasPublished) this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
+    await loaded.sessionClosed;
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {

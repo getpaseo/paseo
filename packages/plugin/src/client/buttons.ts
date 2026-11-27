@@ -1,22 +1,36 @@
 import type { PluginText } from "../text.js";
 import type { ComponentType } from "react";
 import type { PluginIconProps } from "../icons.js";
-import type { PluginHostProps, PluginIcon } from "./contracts.js";
+import type { PluginNavigableHostProps, PluginIcon } from "./contracts.js";
 
 export type PluginButtonContext =
   | { context: "workspace"; workspaceId: string }
   | { context: "agent"; workspaceId: string; agentId: string };
 
-export type PluginButtonIconProps = PluginHostProps & PluginButtonContext & PluginIconProps;
+export type PluginButtonIconProps = PluginNavigableHostProps &
+  PluginButtonContext &
+  PluginIconProps;
 
-export type PluginButtonContentProps = PluginHostProps & PluginButtonContext & { close(): void };
+export type PluginButtonContentProps = PluginNavigableHostProps &
+  PluginButtonContext & { close(): void };
 
 export type PluginButtonIcon = PluginIcon<PluginButtonIconProps>;
 
 export type PluginButtonBehavior<Text extends PluginText = string> =
   | { kind: "action"; onPress(): void | Promise<void> }
   | { kind: "menu"; items: readonly PluginButtonMenuEntry<Text>[] }
-  | { kind: "popover"; Content: ComponentType<PluginButtonContentProps> };
+  | {
+      kind: "popover";
+      Content: ComponentType<PluginButtonContentProps>;
+      /**
+       * `false` drops the title row the phone sheet otherwise shows above `Content`. Hosts that do
+       * not support it keep the title.
+       */
+      sheetTitle?: false;
+      /** Popover width in points on wide layouts. Phones always use a full-width sheet. */
+      width?: number;
+    };
+
 export type PluginButtonMenuEntry<Text extends PluginText = string> =
   | { kind: "separator"; id: string }
   | {

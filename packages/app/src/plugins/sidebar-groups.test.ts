@@ -49,6 +49,7 @@ function installed(
     timelineTransformers: [],
     timelineRenderers: [],
     notificationOpenHandlers: [],
+    forgeClientProviders: [],
   };
 }
 

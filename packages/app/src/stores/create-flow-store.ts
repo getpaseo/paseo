@@ -10,6 +10,7 @@ export interface PendingCreateAttempt {
   workspaceId?: string;
   agentId: string | null;
   clientMessageId: string;
+  labels?: Record<string, string>;
   text: string;
   timestamp: number;
   lifecycle: CreateFlowLifecycleState;

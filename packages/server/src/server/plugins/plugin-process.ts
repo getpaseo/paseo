@@ -24,12 +24,21 @@ import type {
   PluginWorktreeRestoreRequest,
   WorktreeManagerRegistration,
 } from "@getpaseo/plugin/server";
-import { randomUUID } from "node:crypto";
 import { assertPluginWireValue } from "@getpaseo/protocol/binary-frames/index";
 import {
   PluginSubscriptionHandlers,
   type PluginSubscriptionHandler,
 } from "./subscription-handlers.js";
+import {
+  PLUGIN_FORGE_SERVICE_METHODS,
+  type PluginForgeSerializedError,
+  type PluginForgeServerProviderContribution,
+  type PluginForgeServerProviderDescriptor,
+  type PluginForgeServerService,
+  type PluginForgeServiceMethod,
+  type PluginPresence,
+} from "@getpaseo/plugin/server";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
@@ -48,6 +57,7 @@ import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
+import { PluginSecretStore } from "./secrets.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
 import { initializeEnvironmentProxy } from "../network/index.js";
 function describeError(error: unknown): string {
@@ -83,6 +93,58 @@ function validateProviderInstallation(
     throw new Error(`Invalid installation update callback for plugin provider ${id}`);
 }
 
+const OPTIONAL_FORGE_SERVICE_METHODS = new Set<PluginForgeServiceMethod>([
+  "defaultCheckoutRefs",
+  "buildPrLocalBranchName",
+  "dispose",
+]);
+
+function describeForgeProvider(
+  providerId: string,
+  contribution: PluginForgeServerProviderContribution,
+): PluginForgeServerProviderDescriptor {
+  const methods = PLUGIN_FORGE_SERVICE_METHODS.filter(
+    (method) => typeof contribution.service[method] === "function",
+  );
+  return {
+    definition: { ...contribution.definition, id: providerId },
+    methods,
+    authProbeCanThrow: contribution.service.authProbeCanThrow === true,
+    supportsCrossRepoCheckoutWithoutRefs:
+      contribution.service.supportsCrossRepoCheckoutWithoutRefs === true,
+    hasProbeHost: typeof contribution.probeHost === "function",
+  };
+}
+
+function serializeForgeError(error: unknown): PluginForgeSerializedError {
+  if (!error || typeof error !== "object") {
+    return { message: String(error) };
+  }
+  const record = error as Record<string, unknown>;
+  const serialized: PluginForgeSerializedError = {
+    message: typeof record.message === "string" ? record.message : String(error),
+  };
+  if (typeof record.name === "string") serialized.name = record.name;
+  if (
+    record.kind === "missing-cli" ||
+    record.kind === "auth-failure" ||
+    record.kind === "command-error"
+  ) {
+    serialized.kind = record.kind;
+  }
+  if (typeof record.stderr === "string") serialized.stderr = record.stderr;
+  if (Array.isArray(record.args) && record.args.every((value) => typeof value === "string")) {
+    serialized.args = record.args;
+  }
+  if (typeof record.cwd === "string") serialized.cwd = record.cwd;
+  if (typeof record.exitCode === "number" || record.exitCode === null) {
+    serialized.exitCode = record.exitCode;
+  }
+  if (typeof record.brand === "string") serialized.brand = record.brand;
+  if (typeof record.binary === "string") serialized.binary = record.binary;
+  return serialized;
+}
+
 export interface PluginWorkerChannel {
   send(message: PluginProcessMessage, callback?: () => void): void;
   onMessage(handler: (message: PluginProcessRequest) => void): () => void;
@@ -95,6 +157,38 @@ export function createPluginWorker(options: {
 }): { shutdown(): Promise<void> } {
   const { channel, contribute } = options;
   let settingsStore: PluginSettingsStore | null = null;
+  let secretStore: PluginSecretStore | null = null;
+
+  /**
+   * Deliberately not an RPC. The daemon never publishes a handler for these, so a
+   * plugin's token cannot be fetched by a connected client.
+   */
+  const secrets = {
+    get: (key: string) => requireSecretStore().get(key),
+    has: (key: string) => requireSecretStore().has(key),
+    keys: () => requireSecretStore().keys(),
+    set: (key: string, value: string) => requireSecretStore().set(key, value),
+    delete: (key: string) => requireSecretStore().delete(key),
+  };
+
+  const pendingPresence = new Map<
+    string,
+    { resolve: (presence: PluginPresence) => void; reject: (error: Error) => void }
+  >();
+
+  // Presence lives in the daemon's WebSocket server, so the worker asks for it over its channel.
+  function presence(): Promise<PluginPresence> {
+    const requestId = randomUUID();
+    return new Promise((resolve, reject) => {
+      pendingPresence.set(requestId, { resolve, reject });
+      send({ type: "presence.request", requestId });
+    });
+  }
+
+  function requireSecretStore(): PluginSecretStore {
+    if (!secretStore) throw new Error("Plugin secret storage is unavailable");
+    return secretStore;
+  }
   function registerSettings<Schema extends ZodType>(definition: SettingsDefinition<Schema>) {
     if (!settingsStore) throw new Error("Plugin settings storage is unavailable");
     const handlers = settingsStore.register(definition);
@@ -138,6 +232,8 @@ export function createPluginWorker(options: {
       reject: (error: Error) => void;
     }
   >();
+  const forgeProviders = new Map<string, PluginForgeServerProviderContribution>();
+  const disposedForgeProviders = new Set<string>();
   let cleanup: (() => void | Promise<void>) | null = null;
   let daemonClient: DaemonClient | null = null;
   let paseo: PaseoApi | null = null;
@@ -485,6 +581,37 @@ export function createPluginWorker(options: {
     return closing;
   }
 
+  function validateForgeProviderId(providerId: string): string {
+    const normalized = providerId.trim();
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(normalized)) {
+      throw new Error(`Invalid plugin forge provider id: ${providerId}`);
+    }
+    if (forgeProviders.has(normalized)) {
+      throw new Error(`Duplicate plugin forge provider id: ${normalized}`);
+    }
+    return normalized;
+  }
+
+  function registerForgeProvider(contribution: PluginForgeServerProviderContribution): void {
+    if (!contribution || typeof contribution !== "object") {
+      throw new Error("Plugin forge provider contribution must be an object");
+    }
+    const providerId = validateForgeProviderId(contribution.definition?.id ?? "");
+    if (!contribution.service || typeof contribution.service !== "object") {
+      throw new Error(`Plugin forge provider ${providerId} must provide a service`);
+    }
+    for (const method of PLUGIN_FORGE_SERVICE_METHODS) {
+      if (OPTIONAL_FORGE_SERVICE_METHODS.has(method)) continue;
+      if (typeof contribution.service[method] !== "function") {
+        throw new Error(`Plugin forge provider ${providerId} must implement ${method}`);
+      }
+    }
+    forgeProviders.set(providerId, {
+      ...contribution,
+      definition: { ...contribution.definition, id: providerId },
+    });
+  }
+
   const transportFactory = createPluginDaemonTransportFactory({
     send,
     onMessage(handler) {
@@ -512,8 +639,15 @@ export function createPluginWorker(options: {
           send({ type: "settings.changed", settingsId }),
         )
       : null;
+    secretStore = message.settingsDirectory
+      ? new PluginSecretStore(message.settingsDirectory)
+      : null;
+    if (!paseo) throw new Error("Plugin Paseo API is unavailable");
     const contributedCleanup = contribute({
       handle,
+      paseo,
+      secrets,
+      presence,
       registerProvider,
       registerUsageSource,
       registerWorktreeManager,
@@ -522,6 +656,7 @@ export function createPluginWorker(options: {
       addHook: hooks.addHook,
       on: hooks.on,
       before: hooks.before,
+      addForgeServerProvider: registerForgeProvider,
     });
     if (typeof contributedCleanup !== "function") {
       throw new Error("Plugin contribution must return a cleanup function");
@@ -550,6 +685,9 @@ export function createPluginWorker(options: {
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
       usageSources: usageSourceMetadata,
+      forgeProviders: [...forgeProviders]
+        .map(([providerId, contribution]) => describeForgeProvider(providerId, contribution))
+        .sort((left, right) => left.definition.id.localeCompare(right.definition.id)),
     });
   }
 
@@ -578,11 +716,22 @@ export function createPluginWorker(options: {
       console.error("Plugin cleanup failed", error);
     }
     await Promise.all([...providerConnections.keys()].map(closeProviderConnection));
+    for (const [providerId, contribution] of forgeProviders) {
+      if (disposedForgeProviders.has(providerId)) continue;
+      disposedForgeProviders.add(providerId);
+      try {
+        await contribution.service.dispose?.();
+      } catch (error) {
+        console.error(`Plugin forge provider cleanup failed: ${providerId}`, error);
+      }
+    }
     await releaseApi;
     await daemonClient?.close().catch(() => undefined);
     await sendAndWait({ type: "paseo_close" });
     daemonClient = null;
     paseo = null;
+    for (const pending of pendingPresence.values()) pending.reject(new Error("Plugin stopped"));
+    pendingPresence.clear();
     channel.disconnect();
   }
 
@@ -599,6 +748,49 @@ export function createPluginWorker(options: {
     })().then(
       (output) => send({ type: "result", requestId: message.requestId, output }),
       (error) => send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+    );
+  }
+
+  function handleForgeInvocation(
+    message: Extract<PluginProcessRequest, { type: "invoke_forge" }>,
+  ): void {
+    const contribution = forgeProviders.get(message.providerId);
+    if (!contribution) {
+      send({
+        type: "forge_error",
+        requestId: message.requestId,
+        error: { message: `Unknown forge provider: ${message.providerId}` },
+      });
+      return;
+    }
+    const invocation = Promise.resolve().then(() => {
+      if (message.method === "probeHost") {
+        if (!contribution.probeHost) {
+          throw new Error(`Forge provider ${message.providerId} has no host probe`);
+        }
+        return contribution.probeHost(message.input as string);
+      }
+      const method = contribution.service[message.method];
+      if (typeof method !== "function") {
+        throw new Error(
+          `Forge provider ${message.providerId} does not implement ${message.method}`,
+        );
+      }
+      const invokeMethod = method as (this: PluginForgeServerService, input?: unknown) => unknown;
+      if (message.method === "dispose") {
+        disposedForgeProviders.add(message.providerId);
+        return invokeMethod.call(contribution.service);
+      }
+      return invokeMethod.call(contribution.service, message.input);
+    });
+    void invocation.then(
+      (output) => send({ type: "forge_result", requestId: message.requestId, output }),
+      (error) =>
+        send({
+          type: "forge_error",
+          requestId: message.requestId,
+          error: serializeForgeError(error),
+        }),
     );
   }
 
@@ -773,29 +965,35 @@ export function createPluginWorker(options: {
     return false;
   }
 
+  function rejectInvalidMessage(rawMessage: unknown, error: string): void {
+    const value = rawMessage as { connectionId?: unknown; acceptanceId?: unknown } | null;
+    if (value && typeof value.connectionId === "string" && typeof value.acceptanceId === "string") {
+      send({
+        type: "provider.rejected",
+        connectionId: value.connectionId,
+        acceptanceId: value.acceptanceId,
+        error: `Invalid provider input: ${error}`,
+      });
+      void closeProviderConnection(value.connectionId);
+      return;
+    }
+    send({ type: "fatal", error: `Invalid plugin process request: ${error}` });
+    void shutdown();
+  }
+
   function handleMessage(rawMessage: unknown): void {
     const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
     if (!parsed.success) {
-      const value = rawMessage as { connectionId?: unknown; acceptanceId?: unknown } | null;
-      if (
-        value &&
-        typeof value.connectionId === "string" &&
-        typeof value.acceptanceId === "string"
-      ) {
-        send({
-          type: "provider.rejected",
-          connectionId: value.connectionId,
-          acceptanceId: value.acceptanceId,
-          error: `Invalid provider input: ${parsed.error.message}`,
-        });
-        void closeProviderConnection(value.connectionId);
-        return;
-      }
-      send({ type: "fatal", error: `Invalid plugin process request: ${parsed.error.message}` });
-      void shutdown();
+      rejectInvalidMessage(rawMessage, parsed.error.message);
       return;
     }
     const message = parsed.data;
+    // Cleanup may still be waiting on presence, so answers are delivered while stopping too.
+    if (message.type === "presence.result") {
+      pendingPresence.get(message.requestId)?.resolve(message.presence);
+      pendingPresence.delete(message.requestId);
+      return;
+    }
     if (message.type === "initialize") {
       void initialize(message).catch(async (error) => {
         send({ type: "fatal", error: describeError(error) });
@@ -832,8 +1030,10 @@ export function createPluginWorker(options: {
       return;
     }
     if (message.type === "invoke") invoke(message);
+    else if (message.type === "invoke_forge") handleForgeInvocation(message);
     else handleSubscriptionMessage(message);
   }
+  channel.onMessage(handleMessage);
 
   function invoke(message: Extract<PluginProcessRequest, { type: "invoke" }>): void {
     const registered = handlers.get(message.method);
@@ -861,7 +1061,6 @@ export function createPluginWorker(options: {
           send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       );
   }
-  channel.onMessage(handleMessage);
 
   function handleHookMessage(
     message: Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }>,

@@ -1,4 +1,5 @@
 import { LRUCache } from "lru-cache";
+import type { ForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import {
   normalizeHost,
   parseGitRemoteLocation,
@@ -7,11 +8,7 @@ import {
 import { resolveSshHostname, type SshHostnameResolver } from "../utils/ssh-hostname.js";
 import { defaultResolveRemoteUrl } from "./forge-cli-command.js";
 import type { ForgeService } from "./forge-service.js";
-import {
-  createForgeService,
-  defaultForgeRegistry,
-  probeRegisteredForgeHost,
-} from "./forge-registry.js";
+import { defaultForgeRegistry, type ForgeHostMatch, type ForgeRegistry } from "./forge-registry.js";
 
 export interface ForgeResolution {
   /** Registered forge id, e.g. "github" or "gitlab". */
@@ -20,12 +17,17 @@ export interface ForgeResolution {
   host: string;
   /** Adapter for {@link forge}, shared across resolutions of the same forge. */
   service: ForgeService;
+  /** Registry generation of the adapter used to create {@link service}. */
+  adapterRevision: number;
+  /** Presentation and terminology owned by the resolved daemon registry. */
+  definition: ForgeDefinition;
 }
 
 /** Probe a host for a forge id when the name heuristic is inconclusive. */
 export type ForgeHostProbe = (host: string) => Promise<string | null>;
 
 export interface CreateForgeResolverOptions {
+  registry?: ForgeRegistry;
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
   createService?: (forge: string) => ForgeService | null;
   matchHost?: (host: string) => string | null;
@@ -51,7 +53,7 @@ export interface ForgeResolver {
    * regardless of which forge backs the workspace.
    */
   invalidate(cwd: string): void;
-  /** Dispose all instantiated forge adapters owned by this resolver. */
+  /** Release the registry subscription and dispose the instantiated adapters. */
   dispose(): void;
 }
 
@@ -73,24 +75,39 @@ export function forgeForHost(host: string): string | null {
 }
 
 export function createForgeResolver(options: CreateForgeResolverOptions = {}): ForgeResolver {
+  const registry = options.registry ?? defaultForgeRegistry;
   const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
-  const create = options.createService ?? createForgeService;
-  const matchHost = options.matchHost ?? forgeForHost;
-  const probeForge = options.probeForge ?? probeRegisteredForgeHost;
+  const create = options.createService ?? ((forge: string) => registry.create(forge));
+  const probeForge = options.probeForge ?? ((host: string) => registry.probeHost(host));
+  function classifyHost(host: string): ForgeHostMatch {
+    if (!options.matchHost) return registry.classifyHost(host);
+    const forge = options.matchHost(host);
+    return forge ? { kind: "unique", forge } : { kind: "none" };
+  }
   const resolveSsh = options.resolveSshHostname ?? resolveSshHostname;
   const now = options.now ?? Date.now;
-  const services = new Map<string, ForgeService>();
+  const services = new Map<string, { revision: number; service: ForgeService }>();
+  const unsubscribeRegistry = registry.subscribe((change) => {
+    const cached = services.get(change.forge);
+    if (cached && cached.revision !== registry.adapterRevision(change.forge)) {
+      services.delete(change.forge);
+    }
+    probedForgeByHost.clear();
+  });
   // Cache the per-host probe result so the synchronous resolveFromRemoteUrl can
   // reuse a forge discovered by an earlier async resolve. Positive results are
   // permanent; negative ones expire (NEGATIVE_PROBE_TTL_MS) so a CLI installed
   // or authenticated later is picked up without a daemon restart.
   const probedForgeByHost = new LRUCache<
     string,
-    { forge: string | null; expiresAt: number | null }
+    { forge: string | null; expiresAt: number | null; registryRevision: number }
   >({ max: FORGE_RESOLVER_CACHE_MAX });
   // Coalesce concurrent probes of the same host so "never re-probe" holds under
   // concurrency: callers racing on the same host await one shared probe.
-  const inFlightProbes = new Map<string, Promise<string | null>>();
+  const inFlightProbes = new Map<
+    string,
+    { registryRevision: number; identity: symbol; promise: Promise<string | null> }
+  >();
   // resolveRemoteUrl spawns `git config` — memoize per cwd so repeated resolve()
   // calls (the PR-status poll hits this every cycle) don't re-spawn it. TTL'd
   // (not permanent, unlike a positive host probe) so a remote added/changed
@@ -122,7 +139,10 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!entry) {
       return undefined;
     }
-    if (entry.expiresAt !== null && now() >= entry.expiresAt) {
+    if (
+      entry.registryRevision !== registry.revision() ||
+      (entry.expiresAt !== null && now() >= entry.expiresAt)
+    ) {
       probedForgeByHost.delete(host);
       return undefined;
     }
@@ -131,27 +151,38 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
 
   function getService(forge: string): ForgeService | null {
     const normalized = forge.trim().toLowerCase();
-    if (!normalized) {
+    return normalized ? (adapter(normalized)?.service ?? null) : null;
+  }
+
+  function adapter(forge: string): { revision: number; service: ForgeService } | null {
+    const adapterRevision =
+      registry.adapterRevision(forge) ?? (options.createService ? registry.revision() : null);
+    if (adapterRevision === null) {
       return null;
     }
-    let service = services.get(normalized);
+    const cached = services.get(forge);
+    if (cached?.revision === adapterRevision) return cached;
+
+    const service = create(forge);
     if (!service) {
-      const created = create(normalized);
-      if (!created) {
-        return null;
-      }
-      service = created;
-      services.set(normalized, service);
+      services.delete(forge);
+      return null;
     }
-    return service;
+    const entry = { revision: adapterRevision, service };
+    services.set(forge, entry);
+    return entry;
   }
 
   function buildResolution(forge: string, host: string): ForgeResolution | null {
-    const service = getService(forge);
-    if (!service) {
-      return null;
-    }
-    return { forge, host, service };
+    const entry = adapter(forge);
+    if (!entry) return null;
+    return {
+      forge,
+      host,
+      service: entry.service,
+      adapterRevision: entry.revision,
+      definition: registry.definitionOrNeutral(forge),
+    };
   }
 
   async function probeHostForge(host: string): Promise<string | null> {
@@ -159,10 +190,12 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (cached !== undefined) {
       return cached;
     }
+    const registryRevision = registry.revision();
     const existing = inFlightProbes.get(host);
-    if (existing) {
-      return existing;
+    if (existing?.registryRevision === registryRevision) {
+      return existing.promise;
     }
+    const identity = Symbol(host);
     const pending = (async () => {
       try {
         // A caller-injected probe that throws degrades to "no forge" and is
@@ -173,16 +206,22 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
         } catch {
           probed = null;
         }
+        if (registry.revision() !== registryRevision) {
+          return null;
+        }
         probedForgeByHost.set(host, {
           forge: probed,
           expiresAt: probed === null ? now() + NEGATIVE_PROBE_TTL_MS : null,
+          registryRevision,
         });
         return probed;
       } finally {
-        inFlightProbes.delete(host);
+        if (inFlightProbes.get(host)?.identity === identity) {
+          inFlightProbes.delete(host);
+        }
       }
     })();
-    inFlightProbes.set(host, pending);
+    inFlightProbes.set(host, { registryRevision, identity, promise: pending });
     return pending;
   }
 
@@ -194,7 +233,12 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!host) {
       return null;
     }
-    const forge = matchHost(host) ?? readFreshProbe(host) ?? null;
+    const directMatch = classifyHost(host);
+    if (directMatch.kind === "ambiguous") {
+      return null;
+    }
+    const forge =
+      directMatch.kind === "unique" ? directMatch.forge : (readFreshProbe(host) ?? null);
     if (!forge) {
       return null;
     }
@@ -206,10 +250,11 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!normalized) {
       return null;
     }
-    const directForge = matchHost(normalized);
-    if (directForge) {
-      return buildResolution(directForge, normalized);
+    const match = classifyHost(normalized);
+    if (match.kind === "unique") {
+      return buildResolution(match.forge, normalized);
     }
+    if (match.kind === "ambiguous") return null;
     const probed = await probeHostForge(normalized);
     if (!probed) {
       return null;
@@ -227,15 +272,21 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!location) {
       return null;
     }
-    const directForge = matchHost(location.host);
-    if (directForge) {
-      return buildResolution(directForge, location.host);
+    const directMatch = classifyHost(location.host);
+    if (directMatch.kind === "unique") {
+      return buildResolution(directMatch.forge, location.host);
+    }
+    if (directMatch.kind === "ambiguous") {
+      return null;
     }
 
     const resolved = await resolveHostForProbe(location);
-    if (resolved.forge) {
-      rememberAliasForge(location.host, resolved.host, resolved.forge);
-      return buildResolution(resolved.forge, resolved.host);
+    if (resolved.match.kind === "unique") {
+      rememberAliasForge(location.host, resolved.host, resolved.match.forge);
+      return buildResolution(resolved.match.forge, resolved.host);
+    }
+    if (resolved.match.kind === "ambiguous") {
+      return null;
     }
 
     const forge = await probeHostForge(resolved.host);
@@ -256,39 +307,29 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     probedForgeByHost.set(aliasHost, {
       forge,
       expiresAt: forge === null ? now() + NEGATIVE_PROBE_TTL_MS : null,
+      registryRevision: registry.revision(),
     });
   }
 
   async function resolveHostForProbe(
     location: GitRemoteLocation,
-  ): Promise<{ host: string; forge?: string }> {
+  ): Promise<{ host: string; match: ForgeHostMatch }> {
     if (location.transport !== "scp" && location.transport !== "ssh") {
-      return { host: location.host };
+      return { host: location.host, match: { kind: "none" } };
     }
 
     const resolvedHost = await resolveSsh(location.host);
     if (!resolvedHost) {
-      return { host: location.host };
+      return { host: location.host, match: { kind: "none" } };
     }
 
-    const resolvedForge = matchHost(resolvedHost);
-    if (resolvedForge) {
-      return { host: resolvedHost, forge: resolvedForge };
-    }
-
-    return { host: resolvedHost };
+    return { host: resolvedHost, match: classifyHost(resolvedHost) };
   }
 
   function invalidate(cwd: string): void {
     remoteUrlByCwd.delete(cwd);
-    for (const service of services.values()) {
+    for (const { service } of services.values()) {
       service.invalidate({ cwd });
-    }
-  }
-
-  function dispose(): void {
-    for (const service of services.values()) {
-      service.dispose?.();
     }
   }
 
@@ -298,7 +339,14 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     resolveHost,
     getService,
     invalidate,
-    dispose,
+    dispose() {
+      unsubscribeRegistry();
+      for (const { service } of services.values()) service.dispose?.();
+      services.clear();
+      probedForgeByHost.clear();
+      remoteUrlByCwd.clear();
+      inFlightProbes.clear();
+    },
     async resolve(cwd: string): Promise<ForgeResolution | null> {
       return resolveFromRemoteUrlAsync(await resolveRemoteUrlCached(cwd));
     },

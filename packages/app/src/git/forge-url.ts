@@ -11,14 +11,14 @@
  * issue and change-request numbers (a fork's parent) and publishes them as
  * `forgeWeb`; branch and file links stay on the origin repository.
  */
-import {
-  forgeWebHost,
-  isForgeCloudHost,
-  parseGitRemoteLocation,
-} from "@getpaseo/protocol/git-remote";
+import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeWeb } from "@getpaseo/protocol/messages";
 import type { ForgeReferenceSigil } from "@/git/client-forge-module";
-import { getClientForgeLogicModule } from "@/git/forges";
+import {
+  getClientForgeDefinition,
+  getClientForgeLogic,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 
 export interface ForgeBlobUrlInput {
   remoteUrl: string | null | undefined;
@@ -47,8 +47,12 @@ export interface ForgeReferenceUrlInput {
   number: number;
 }
 
-export function buildForgeChecksUrl(forge: string, changeRequestUrl: string): string | null {
-  const suffix = getClientForgeLogicModule(forge)?.urlGrammar?.changeRequestChecksSuffix;
+export function buildForgeChecksUrl(
+  forge: string,
+  changeRequestUrl: string,
+  host: ClientForgeHostSnapshot,
+): string | null {
+  const suffix = getClientForgeLogic(host, forge)?.urlGrammar?.changeRequestChecksSuffix;
   if (!suffix) {
     return null;
   }
@@ -92,6 +96,7 @@ function resolveForgeWebLocation(
   forge: string,
   remoteUrl: string | null | undefined,
   forgeWeb: ForgeWeb | null | undefined,
+  host: ClientForgeHostSnapshot,
 ): ForgeWebLocation | null {
   if (!remoteUrl) {
     return null;
@@ -100,9 +105,10 @@ function resolveForgeWebLocation(
   if (!location || !isValidRepoPath(location.path)) {
     return null;
   }
-  // COMPAT(forgeWeb): added in v0.16.0, remove the remote-derived host after 2027-06-01 once daemon floor >= v0.16.0.
-  const webHost = forgeWeb?.host ?? forgeWebHost(forge, location.host);
-  const isCloudHost = isForgeCloudHost(forge, location.host);
+  const cloudHosts = (getClientForgeDefinition(host, forge)?.cloudHosts ?? []).map(normalizeHost);
+  const isCloudHost = cloudHosts.includes(location.host);
+  const fallbackHost = isCloudHost ? cloudHosts[0] : location.host;
+  const webHost = forgeWeb?.host ?? fallbackHost;
   // Carry a non-default port only for a self-hosted http(s) origin (e.g.
   // `:60443`): the web UI shares that origin. An SSH/scp remote's port is not the
   // web port, and a canonicalized cloud host always serves on the default port.
@@ -149,9 +155,10 @@ function normalizeBlobPath(path: string | null | undefined): string | null {
 export function buildForgeBranchTreeUrl(
   forge: string,
   input: ForgeBranchTreeUrlInput,
+  host: ClientForgeHostSnapshot,
 ): string | null {
-  const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb);
+  const grammar = getClientForgeLogic(host, forge)?.urlGrammar;
+  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb, host);
   const branch = input.branch?.trim();
   if (!grammar || !location || !branch || branch === "HEAD") {
     return null;
@@ -159,9 +166,13 @@ export function buildForgeBranchTreeUrl(
   return `${forgeOrigin(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
 }
 
-export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
-  const grammar = getClientForgeLogicModule(forge)?.urlGrammar;
-  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb);
+export function buildForgeBlobUrl(
+  forge: string,
+  input: ForgeBlobUrlInput,
+  host: ClientForgeHostSnapshot,
+): string | null {
+  const grammar = getClientForgeLogic(host, forge)?.urlGrammar;
+  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb, host);
   const branch = input.branch?.trim();
   const filePath = normalizeBlobPath(input.path);
   if (!grammar || !location || !branch || branch === "HEAD" || !filePath) {
@@ -183,11 +194,12 @@ export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): stri
 export function buildForgeReferenceUrl(
   forge: string,
   input: ForgeReferenceUrlInput,
+  host: ClientForgeHostSnapshot,
 ): string | null {
-  const referencePath = getClientForgeLogicModule(forge)?.urlGrammar?.referencePaths?.find(
+  const referencePath = getClientForgeLogic(host, forge)?.urlGrammar?.referencePaths?.find(
     (path) => path.sigil === input.sigil,
   );
-  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb);
+  const location = resolveForgeWebLocation(forge, input.remoteUrl, input.forgeWeb, host);
   const repo = input.repo ?? input.forgeWeb?.referenceRepository ?? location?.repo;
   if (
     !referencePath ||
@@ -203,6 +215,6 @@ export function buildForgeReferenceUrl(
 }
 
 /** Whether the forge has web URL builders (i.e. a known URL grammar). */
-export function hasForgeWebUrls(forge: string): boolean {
-  return getClientForgeLogicModule(forge)?.urlGrammar !== undefined;
+export function hasForgeWebUrls(forge: string, host: ClientForgeHostSnapshot): boolean {
+  return getClientForgeLogic(host, forge)?.urlGrammar !== undefined;
 }

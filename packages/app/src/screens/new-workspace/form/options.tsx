@@ -1,3 +1,4 @@
+import type { ClientForgeHostSnapshot } from "@/git/client-forge-registry";
 import { useMemo, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -181,10 +182,12 @@ export function RefOption({
   active,
   onPress,
   item,
+  clientForgeHost,
   heldIn,
   disabled,
 }: OptionRowState & {
   item: PickerItem | undefined;
+  clientForgeHost: ClientForgeHostSnapshot;
   heldIn: BranchHolder;
   disabled: boolean;
 }): ReactElement {
@@ -223,7 +226,7 @@ export function RefOption({
     );
   }
   // The number is the row's identity and the title its name, so they read as two things.
-  const { numberPrefix } = getForgePresentation(item.item.forge ?? "github");
+  const { numberPrefix } = getForgePresentation(item.item.forge ?? "github", clientForgeHost);
   return (
     <ComboboxItem
       testID={`new-workspace-ref-picker-pr-${item.item.number}`}
@@ -234,7 +237,7 @@ export function RefOption({
       disabled={disabled}
       onPress={onPress}
       leadingSlot={pullRequestLeadingSlot}
-      accessibilityLabel={pickerItemLabel(item)}
+      accessibilityLabel={pickerItemLabel(item, clientForgeHost)}
     />
   );
 }

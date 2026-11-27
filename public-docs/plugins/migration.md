@@ -92,6 +92,7 @@ Use this table as the complete registration checklist.
 | `plugin.addTimelineRenderer(renderer)` in the old root entry                                  | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                                                                                                  |
 | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` in shared files | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                                                                                        |
 | `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types                                                                             |
+| New Git Forge contribution                                                                    | `client.addForgeClientProvider(provider)` in `index.client.ts`; see [Git Forge providers](reference#add-a-git-forge-provider)                                 |
 
 Register the screen that replaces an `addSidebarItem` under that item's `id` to keep saved links
 working. A `/plugin/<plugin>/sidebar/<id>` link, and the older `/plugin/<plugin>/<id>`, opens the

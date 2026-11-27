@@ -29,6 +29,7 @@ import {
 } from "../../test-utils/workspace-git-service-stub.js";
 import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import { expandTilde } from "../../../utils/path.js";
+import { getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 function isCheckDetailsResponse(msg: SessionOutboundMessage): boolean {
@@ -1265,6 +1266,8 @@ describe("CheckoutSession", () => {
             forge: "gitlab",
             host: "gitlab.example.com",
             service: gitlabService as ForgeService,
+            adapterRevision: 1,
+            definition: getForgeDefinitionOrNeutral("gitlab"),
           }),
         },
       });
@@ -1306,6 +1309,8 @@ describe("CheckoutSession", () => {
             forge: "github",
             host: "github.com",
             service: githubService as ForgeService,
+            adapterRevision: 1,
+            definition: getForgeDefinitionOrNeutral("github"),
           }),
         },
       });

@@ -82,6 +82,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     timelineTransformers: [],
     timelineRenderers: [],
     notificationOpenHandlers: [],
+    forgeClientProviders: [],
   };
 }
 

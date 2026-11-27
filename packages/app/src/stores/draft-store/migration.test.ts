@@ -116,6 +116,40 @@ function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "revie
 }
 
 describe("draft-store migration", () => {
+  it("preserves valid Agent launch metadata across restart migration", async () => {
+    const agentLaunch = {
+      draftId: "draft-1",
+      serverId: "host-1",
+      pluginId: "todo",
+      projectId: "project-1",
+      launchId: "attempt-1",
+      documentIncarnationId: "incarnation-1",
+      journalKey: "journal-1",
+      requestFingerprint: "fingerprint-1",
+      labels: { "paseo.plugin.todo": "v1" },
+      clientMessageId: "message-1",
+      submissionState: "outcome_unknown_readonly" as const,
+    };
+    const migrated = await migratePersistedState(
+      {
+        drafts: {
+          "draft:host-1:draft-1": {
+            input: { text: "edited after restart", attachments: [] },
+            lifecycle: "active",
+            agentLaunch,
+            updatedAt: 1,
+            version: 2,
+          },
+        },
+      },
+      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 2 },
+    );
+    expect(migrated.drafts["draft:host-1:draft-1"]).toMatchObject({
+      input: { text: "edited after restart" },
+      agentLaunch,
+    });
+  });
+
   it("keeps a supported legacy draft for migration", async () => {
     const backing = createMemoryStorage();
     const legacyState = {

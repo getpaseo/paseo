@@ -62,6 +62,7 @@ function installation(invoked: string[]): InstalledPlugin {
     timelineTransformers: [],
     timelineRenderers: [],
     notificationOpenHandlers: [],
+    forgeClientProviders: [],
   };
 }
 

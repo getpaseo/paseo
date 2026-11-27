@@ -12,6 +12,7 @@ import {
   type BuildGitActionsInput,
 } from "./policy";
 import { deriveMergeCapability, type ForgeSpecificStatusFacts } from "./merge-capability";
+import { BUILTIN_CLIENT_FORGE_HOST } from "./client-forge-registry";
 
 type GithubMergeFactsFixture = ForgeSpecificStatusFacts & {
   forge: "github";
@@ -78,7 +79,7 @@ function createInput(
     pullRequestIsDraft: false,
     pullRequestIsMerged: false,
     pullRequestMergeable: "UNKNOWN",
-    mergeCapability: deriveMergeCapability(pullRequestGithub),
+    mergeCapability: deriveMergeCapability(pullRequestGithub, BUILTIN_CLIENT_FORGE_HOST),
     hasPullRemote: hasRemote,
     hasPushRemote: hasRemote,
     upstream: "tracked",

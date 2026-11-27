@@ -67,6 +67,7 @@ import { getActivityVerbKey, getStateLabelKey } from "./data";
 import type { PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
 import { CheckPresentationIcon } from "@/git/check-presentation.view";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 import {
   buildPrTimeline,
   type PrReviewEntry,
@@ -206,6 +207,7 @@ export function PullRequestPane({
     [isCompact],
   );
   const toast = useToast();
+  const clientForgeHost = useClientForgeHost(serverId);
   const daemonClient = useHostRuntimeClient(serverId);
   // COMPAT(githubCheckDetailsRpc): recognize the legacy capability on daemons
   // predating checkout.forge.get_check_details.*. Remove after 2027-01-17 once
@@ -293,6 +295,7 @@ export function PullRequestPane({
         forge: data.forge,
         pullRequest: { number: data.number, title: data.title, url: data.url },
         activity,
+        clientForgeHost,
       };
       const attachment =
         activity.kind === "comment"
@@ -308,6 +311,7 @@ export function PullRequestPane({
     },
     [
       addWorkspaceAttachment,
+      clientForgeHost,
       data.forge,
       data.number,
       data.provider,
@@ -327,6 +331,7 @@ export function PullRequestPane({
         forge: data.forge,
         pullRequest: { number: data.number, title: data.title, url: data.url },
         thread,
+        clientForgeHost,
       });
       if (!attachment) {
         return;
@@ -338,6 +343,7 @@ export function PullRequestPane({
     },
     [
       addWorkspaceAttachment,
+      clientForgeHost,
       data.forge,
       data.number,
       data.provider,
@@ -415,6 +421,7 @@ export function PullRequestPane({
           pullRequest: { number: data.number, title: data.title, url: data.url },
           check,
           githubDetails: details,
+          clientForgeHost,
         });
         addWorkspaceAttachment({
           scopeKey: workspaceAttachmentScopeKey,
@@ -428,6 +435,7 @@ export function PullRequestPane({
     },
     [
       addWorkspaceAttachment,
+      clientForgeHost,
       canFetchForgeCheckDetails,
       canFetchGitHubCheckDetails,
       cwd,
@@ -455,7 +463,7 @@ export function PullRequestPane({
 
   const statePresentation = PR_STATE_PRESENTATION[data.state];
   const StateIcon = statePresentation.Icon;
-  const forgePresentation = getForgePresentation(data.forge);
+  const forgePresentation = getForgePresentation(data.forge, clientForgeHost);
   const repoIdentity =
     data.projectPath ??
     (data.repoOwner && data.repoName ? `${data.repoOwner}/${data.repoName}` : null);

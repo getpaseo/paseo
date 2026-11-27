@@ -1,5 +1,9 @@
 import type { ForgeWeb } from "@getpaseo/protocol/messages";
 import { type Forge, forgeFromRemoteUrl, getForgePresentation } from "@/git/forge";
+import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 import type { DesktopOpenTarget, OpenDesktopTargetInput } from "@/workspace/desktop-open-targets";
 import {
   type ResolvedWorkspaceFilePaths,
@@ -43,6 +47,7 @@ export interface PlanWorkspaceOpenTargetsInput {
   isLocalExecution: boolean;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
   forge?: Forge | null;
+  clientForgeHost?: ClientForgeHostSnapshot;
 }
 
 function resolveActiveFileForOpenTargets(
@@ -118,6 +123,7 @@ function planDesktopOpenTargets(input: {
 
 function buildForgeWebUrl(
   forge: Forge,
+  clientForgeHost: ClientForgeHostSnapshot,
   input: {
     remoteUrl: string | null | undefined;
     forgeWeb: ForgeWeb | null | undefined;
@@ -127,7 +133,7 @@ function buildForgeWebUrl(
     lineEnd?: number;
   },
 ): string | null {
-  const presentation = getForgePresentation(forge);
+  const presentation = getForgePresentation(forge, clientForgeHost);
   if (input.path) {
     return (
       presentation.buildBlobUrl?.({
@@ -154,15 +160,19 @@ function planForgeOpenTarget(input: {
   resolvedFile: ResolvedWorkspaceFilePaths | null;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
   forge?: Forge | null;
+  clientForgeHost: ClientForgeHostSnapshot;
 }): PlannedForgeOpenTarget | null {
   if (!input.checkoutStatus?.isGit) {
     return null;
   }
-  const forge = input.forge ?? forgeFromRemoteUrl(input.checkoutStatus.remoteUrl) ?? null;
+  const forge =
+    input.forge ??
+    forgeFromRemoteUrl(input.checkoutStatus.remoteUrl, input.clientForgeHost) ??
+    null;
   if (!forge) {
     return null;
   }
-  const url = buildForgeWebUrl(forge, {
+  const url = buildForgeWebUrl(forge, input.clientForgeHost, {
     remoteUrl: input.checkoutStatus.remoteUrl,
     forgeWeb: input.checkoutStatus.forgeWeb,
     branch: input.checkoutStatus.currentBranch,
@@ -177,7 +187,7 @@ function planForgeOpenTarget(input: {
     source: "forge",
     forge,
     id: forge,
-    label: getForgePresentation(forge).brandLabel,
+    label: getForgePresentation(forge, input.clientForgeHost).brandLabel,
     url,
   };
 }
@@ -187,6 +197,10 @@ export function planWorkspaceOpenTargets(
 ): PlannedWorkspaceOpenTarget[] {
   const resolvedFile = resolveActiveFileForOpenTargets(input);
   const desktopTargets = planDesktopOpenTargets({ ...input, resolvedFile });
-  const forgeTarget = planForgeOpenTarget({ ...input, resolvedFile });
+  const forgeTarget = planForgeOpenTarget({
+    ...input,
+    clientForgeHost: input.clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST,
+    resolvedFile,
+  });
   return forgeTarget ? [...desktopTargets, forgeTarget] : desktopTargets;
 }

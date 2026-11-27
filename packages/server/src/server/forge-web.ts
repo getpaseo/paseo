@@ -1,4 +1,4 @@
-import { forgeWebHost } from "@getpaseo/protocol/git-remote";
+import { normalizeHost } from "@getpaseo/protocol/git-remote";
 import type { ForgeWeb } from "@getpaseo/protocol/messages";
 import type { ForgeResolution } from "../services/forge-resolver.js";
 
@@ -30,17 +30,20 @@ export function forgeWebForResolution(input: {
   previous: ForgeWebEntry | null;
   nowMs: number;
 }): ForgeWebEntry {
-  const remoteKey = `${input.resolution.forge}\0${input.remoteUrl}`;
+  const { forge, adapterRevision, definition } = input.resolution;
+  const remoteKey = `${forge}\0${adapterRevision}\0${input.remoteUrl}`;
   const previous = input.previous?.remoteKey === remoteKey ? input.previous : null;
   // A settled lookup stands for as long as the remote does, and a failed one keeps its retry
   // time, however often forced refreshes (every push, fetch and branch switch) ask.
   if (previous) {
     return previous;
   }
+  const host = normalizeHost(input.resolution.host);
+  const cloudHosts = definition.cloudHosts?.map(normalizeHost) ?? [];
   return {
     remoteUrl: input.remoteUrl,
     remoteKey,
-    forgeWeb: { host: forgeWebHost(input.resolution.forge, input.resolution.host) },
+    forgeWeb: { host: cloudHosts.includes(host) ? cloudHosts[0] : host },
     // A lookup that has never run is due now; one that failed keeps its own retry time.
     retryAtMs: input.resolution.service.getReferenceRepository ? input.nowMs : null,
   };
