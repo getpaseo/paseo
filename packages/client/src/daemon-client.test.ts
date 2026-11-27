@@ -10585,3 +10585,92 @@ test("disposing a route before its deferred close does not reopen it on origin r
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
 });
+
+test("a reverse channel open requires the peer's bidirectional host capability", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "reverse-link-support",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { connectedHosts: true, hostMultiplexing: true } });
+  await connecting;
+
+  const opening = client.openHostLink("reverse", {
+    flowControl: true,
+    purpose: "reverse",
+    peerServerId: "srv_mac",
+  });
+  void opening.catch(() => undefined);
+  expect(mock.sent.map((frame) => parseSentFrame(frame).type)).toEqual([]);
+  await expect(opening).rejects.toMatchObject({ code: "unsupported_capability" });
+});
+
+test("a negotiated reverse channel open carries the dialer's peer identity", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "reverse-link-identity",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({
+    features: { connectedHosts: true, hostMultiplexing: true, hostBidirectionalLinks: true },
+  });
+  await connecting;
+
+  const opening = client.openHostLink("reverse", {
+    flowControl: true,
+    purpose: "reverse",
+    peerServerId: "srv_mac",
+  });
+  const request = parseSentFrame(mock.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "hosts.link.open.request",
+    channelId: "reverse",
+    flowControl: true,
+    purpose: "reverse",
+    peerServerId: "srv_mac",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "hosts.link.open.response",
+      payload: { requestId: request.requestId, routeId: "reverse-route", flowControl: true },
+    }),
+  );
+  await expect(opening).resolves.toEqual({ routeId: "reverse-route", flowControl: true });
+});
+
+test("reverse host enrollment cannot silently succeed against an older daemon", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "reverse-enrollment-support",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen({ features: { connectedHosts: true, hostMultiplexing: true } });
+  await connecting;
+
+  const token = "ab".repeat(32);
+  const operations = [
+    client.addHost({ connection: "reverse://srv_mac", incomingToken: token }),
+    client.updateHost("host", { reverseOffer: { token, permissions: ["workspace.read"] } }),
+    client.updateHost("host", { reverseOffer: null }),
+  ];
+  const observed = Promise.allSettled(operations);
+  expect(mock.sent.map((frame) => parseSentFrame(frame).type)).toEqual([]);
+  for (const result of await observed) {
+    expect(result).toMatchObject({
+      status: "rejected",
+      reason: { code: "unsupported_capability" },
+    });
+  }
+});

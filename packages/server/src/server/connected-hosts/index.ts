@@ -17,6 +17,7 @@ import {
   HostSummarySchema,
   HostAddSchema,
   HostUpdateSchema,
+  HostReverseOfferSchema,
   type HostDirectory,
   type HostSummary,
   type HostAdd,
@@ -34,11 +35,35 @@ export class HostError extends Error {
     super(message);
   }
 }
-const SavedSchema = HostSummarySchema.extend({ connection: z.string() });
+const SavedSchema = HostSummarySchema.omit({
+  direction: true,
+  reverseEnabled: true,
+  reverseStatus: true,
+}).extend({
+  connection: z.string(),
+  incomingToken: HostAddSchema.shape.incomingToken,
+  reverseOffer: HostReverseOfferSchema.optional(),
+});
 type Saved = z.infer<typeof SavedSchema>;
 export interface HostActor {
   sourceId: string;
   manageSources: boolean;
+  permissions?: readonly DaemonPermission[];
+}
+export type ConnectReverseHost = (input: {
+  client: DaemonClient;
+  serverId: string;
+  token: string;
+  permissions: readonly DaemonPermission[];
+  signal: AbortSignal;
+  connected(): void;
+}) => Promise<void>;
+interface ReverseRun {
+  controller: AbortController;
+  status: NonNullable<HostSummary["reverseStatus"]>;
+}
+interface IncomingCarrier {
+  close(): void;
 }
 interface Live {
   client: DaemonClient;
@@ -55,6 +80,8 @@ export class ConnectedHosts {
   private readonly budget = new HostTransportBudget();
   private rows: Saved[] = [];
   private readonly live = new Map<string, Live>();
+  private readonly incoming = new Map<string, IncomingCarrier>();
+  private readonly reverse = new Map<string, ReverseRun>();
   private readonly routes = new Set<Route>();
   private readonly listeners = new Set<() => void>();
   private queue: Promise<unknown> = Promise.resolve();
@@ -63,22 +90,29 @@ export class ConnectedHosts {
   constructor(
     private readonly home: string,
     private readonly self: HostDirectory["self"],
+    private readonly connectReverse?: ConnectReverseHost,
   ) {
     this.ready = this.load();
     void this.ready.catch(() => {});
   }
-  private async load(): Promise<void> {
+  private async readRows(file: string): Promise<Saved[]> {
     try {
-      this.rows = z
-        .array(SavedSchema)
-        .parse(JSON.parse(await readFile(join(this.home, "hosts.json"), "utf8")));
+      return z.array(SavedSchema).parse(JSON.parse(await readFile(join(this.home, file), "utf8")));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         throw new Error("Cannot read saved connected hosts", { cause: error });
+      return [];
     }
+  }
+  private async load(): Promise<void> {
+    const rows = await Promise.all([
+      this.readRows("hosts.json"),
+      this.readRows("incoming-hosts.json"),
+    ]);
+    this.rows = rows.flat();
     if (this.closed) return;
     for (const row of this.rows) {
-      row.status = row.enabled ? "connecting" : "disabled";
+      row.status = this.initialStatus(row);
       row.nextRetryAt = null;
       this.start(row);
     }
@@ -87,7 +121,7 @@ export class ConnectedHosts {
     await this.ready;
     return {
       self: { ...this.self },
-      hosts: this.rows.map(({ connection: _secret, ...row }) => structuredClone(row)),
+      hosts: this.rows.map((row) => this.summary(row)),
     };
   }
   observe(changed: () => void): () => void {
@@ -97,12 +131,16 @@ export class ConnectedHosts {
   private changed(): void {
     for (const listener of this.listeners) listener();
   }
-  private async persist(rows: Saved[]): Promise<void> {
+  private async persist(rows: Saved[], changedRow: Saved): Promise<void> {
+    // Older daemons read hosts.json and would try dialing a passive entry.
+    const incoming = Boolean(changedRow.incomingToken);
+    const file = incoming ? "incoming-hosts.json" : "hosts.json";
+    const savedRows = rows.filter((row) => Boolean(row.incomingToken) === incoming);
     await mkdir(this.home, { recursive: true });
     const temp = join(this.home, `.hosts-${randomUUID()}.tmp`);
     try {
-      await writeFile(temp, JSON.stringify(rows), { mode: 0o600 });
-      await rename(temp, join(this.home, "hosts.json"));
+      await writeFile(temp, JSON.stringify(savedRows), { mode: 0o600 });
+      await rename(temp, join(this.home, file));
     } finally {
       await rm(temp, { force: true });
     }
@@ -117,13 +155,41 @@ export class ConnectedHosts {
     return result;
   }
   private summary(row: Saved): HostSummary {
-    const { connection: _secret, ...summary } = row;
-    return structuredClone(summary);
+    const {
+      connection: _connection,
+      incomingToken: _incomingToken,
+      reverseOffer,
+      ...summary
+    } = row;
+    return structuredClone({
+      ...summary,
+      ...(row.incomingToken ? { direction: "incoming" as const } : {}),
+      ...(reverseOffer ? { reverseEnabled: true, reverseStatus: this.reverseStatus(row) } : {}),
+    });
+  }
+  private describeRegistration(
+    input: HostAdd,
+    actor: HostActor,
+    incomingPeer: string | null,
+  ): string {
+    if (!incomingPeer && input.incomingToken === undefined)
+      return parseHostTarget(input.connection).description;
+    if (!actor.manageSources)
+      throw new HostError("permission_denied", "Only an access manager can approve reverse access");
+    if (!incomingPeer || !input.incomingToken)
+      throw new HostError(
+        "invalid_connection",
+        "An incoming registration requires a peer and token",
+      );
+    if (incomingPeer === this.self.serverId)
+      throw new HostError("self_host", "Cannot approve this daemon as an incoming peer");
+    return `Incoming link from ${incomingPeer}`;
   }
   add(input: HostAdd, actor: HostActor): Promise<HostSummary> {
     return this.mutate(async () => {
       input = HostAddSchema.parse(input);
-      const target = parseHostTarget(input.connection);
+      const incomingPeer = incomingPeerId(input.connection);
+      const description = this.describeRegistration(input, actor, incomingPeer);
       const source = { id: actor.sourceId, key: input.sourceKey ?? randomUUID() };
       const existing = this.rows.find(
         (row) => row.source.id === source.id && row.source.key === source.key,
@@ -131,6 +197,7 @@ export class ConnectedHosts {
       if (existing) {
         if (
           existing.connection === input.connection &&
+          existing.incomingToken === input.incomingToken &&
           existing.label === (input.label ?? null) &&
           JSON.stringify(Object.entries(existing.metadata).sort()) ===
             JSON.stringify(Object.entries(input.metadata ?? {}).sort())
@@ -141,71 +208,110 @@ export class ConnectedHosts {
           "This source key already exists. Update its registration explicitly.",
         );
       }
+      if (incomingPeer && this.rows.some((row) => this.peerId(row) === incomingPeer))
+        throw new HostError("duplicate_host", "Another registration already owns this daemon");
       if (this.rows.length >= 128)
         throw new HostError("resource_limit", "Remove a host before adding another (limit 128)");
       const row: Saved = {
         registrationId: `hst_${randomUUID()}`,
         serverId: null,
         connection: input.connection,
+        incomingToken: input.incomingToken,
         label: input.label ?? null,
         metadata: input.metadata ?? {},
         source,
         enabled: true,
-        status: "connecting",
-        targetDescription: target.description,
+        status: incomingPeer ? "offline" : "connecting",
+        targetDescription: description,
         lastOnlineAt: null,
         nextRetryAt: null,
         error: null,
       };
-      await this.persist([...this.rows, row]);
+      await this.persist([...this.rows, row], row);
       this.rows.push(row);
       this.start(row);
       this.changed();
       return this.summary(row);
     });
   }
+  private validateReverseUpdate(previous: Saved, patch: HostUpdate, actor: HostActor): void {
+    if (patch.reverseOffer === undefined && !(previous.incomingToken && patch.enabled)) return;
+    if (!actor.manageSources)
+      throw new HostError("permission_denied", "Only an access manager can approve reverse access");
+    const offer = patch.reverseOffer;
+    if (!offer) return;
+    if (
+      previous.incomingToken ||
+      !previous.serverId ||
+      !previous.lastOnlineAt ||
+      patch.connection !== undefined
+    )
+      throw new HostError(
+        "invalid_connection",
+        "Verify an outbound host before granting reverse access",
+      );
+    const live = this.live.get(previous.registrationId);
+    if (
+      live?.accepted &&
+      live.client.getLastServerInfoMessage()?.features?.hostBidirectionalLinks !== true
+    )
+      throw new HostError(
+        "unsupported_capability",
+        "Update the destination daemon to use reverse access",
+      );
+    if (offer.permissions.some((permission) => !actor.permissions?.includes(permission)))
+      throw new HostError("permission_denied", "Cannot offer permissions the caller does not have");
+  }
+  private validateUpdate(previous: Saved, patch: HostUpdate, actor: HostActor): void {
+    if (previous.incomingToken && (patch.connection !== undefined || patch.replaceIdentity))
+      throw new HostError("invalid_connection", "Remove and reapprove to replace an incoming peer");
+    if (
+      (patch.connection !== undefined || patch.metadata !== undefined || patch.replaceIdentity) &&
+      actor.sourceId !== previous.source.id &&
+      !actor.manageSources
+    )
+      throw new HostError(
+        "permission_denied",
+        "Only the source or access manager can replace its connection and metadata",
+      );
+    if (patch.replaceIdentity && patch.connection === undefined)
+      throw new HostError(
+        "invalid_connection",
+        "Identity replacement requires a replacement connection",
+      );
+    this.validateReverseUpdate(previous, patch, actor);
+  }
   update(id: string, patch: HostUpdate, actor: HostActor): Promise<HostSummary> {
     return this.mutate(async () => {
       patch = HostUpdateSchema.parse(patch);
       const previous = this.require(id);
-      if (
-        (patch.connection !== undefined || patch.metadata !== undefined || patch.replaceIdentity) &&
-        actor.sourceId !== previous.source.id &&
-        !actor.manageSources
-      )
-        throw new HostError(
-          "permission_denied",
-          "Only the source or access manager can replace its connection and metadata",
-        );
-      if (patch.replaceIdentity && patch.connection === undefined)
-        throw new HostError(
-          "invalid_connection",
-          "Identity replacement requires a replacement connection",
-        );
+      this.validateUpdate(previous, patch, actor);
       const row: Saved = {
         ...previous,
         ...(patch.label !== undefined ? { label: patch.label } : {}),
         ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
         ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
       };
+      if (patch.reverseOffer !== undefined) row.reverseOffer = patch.reverseOffer ?? undefined;
       if (patch.connection !== undefined) {
+        row.reverseOffer = undefined;
         row.connection = patch.connection;
         row.targetDescription = parseHostTarget(patch.connection).description;
       }
       if (patch.replaceIdentity) row.serverId = null;
-      const restart =
-        patch.connection !== undefined || patch.enabled !== undefined || patch.replaceIdentity;
+      const restart = patch.connection !== undefined || patch.enabled !== undefined;
       if (restart) {
-        row.status = row.enabled ? "connecting" : "disabled";
+        row.status = this.initialStatus(row);
         row.error = null;
         row.nextRetryAt = null;
       }
       const rows = this.rows.map((entry) => (entry === previous ? row : entry));
-      await this.persist(rows);
+      await this.persist(rows, row);
       if (restart) this.stop(id, row.enabled ? "host_offline" : "host_disabled");
+      else if (patch.reverseOffer !== undefined) this.stopReverse(id);
       Object.assign(previous, row);
-      this.rows = rows.map((entry) => (entry === row ? previous : entry));
       if (restart) this.start(previous);
+      else if (patch.reverseOffer !== undefined) this.startReverse(previous);
       this.changed();
       return this.summary(previous);
     });
@@ -219,7 +325,7 @@ export class ConnectedHosts {
           "Only the source or access manager can remove this host. Disable it to stop access.",
         );
       const rows = this.rows.filter((entry) => entry !== row);
-      await this.persist(rows);
+      await this.persist(rows, row);
       this.stop(id, "host_unknown");
       this.rows = rows;
       this.changed();
@@ -230,18 +336,189 @@ export class ConnectedHosts {
     if (!row) throw new HostError("host_unknown", "Unknown host registration");
     return row;
   }
-  private stop(id: string, code = "host_offline"): void {
-    this.live.get(id)?.stop();
-    this.live.delete(id);
+  private initialStatus(row: Saved): HostSummary["status"] {
+    if (!row.enabled) return "disabled";
+    return row.incomingToken ? "offline" : "connecting";
+  }
+  private peerId(row: Saved): string | null {
+    return row.serverId ?? incomingPeerId(row.connection);
+  }
+  private closeRoutes(id: string, code = "host_offline"): void {
     for (const route of this.routes)
       if (route.registrationId === id)
         route.close(code, "Host access was disabled, replaced or removed");
+  }
+  private stop(id: string, code = "host_offline"): void {
+    this.stopReverse(id);
+    this.closeRoutes(id, code);
+    const incoming = this.incoming.get(id);
+    this.incoming.delete(id);
+    incoming?.close();
+    const live = this.live.get(id);
+    this.live.delete(id);
+    live?.stop();
+  }
+  private reverseStatus(row: Saved): NonNullable<HostSummary["reverseStatus"]> {
+    const run = this.reverse.get(row.registrationId);
+    if (run) return run.status;
+    const live = this.live.get(row.registrationId);
+    return live?.accepted &&
+      live.client.getLastServerInfoMessage()?.features?.hostBidirectionalLinks !== true
+      ? "error"
+      : "offline";
+  }
+  private stopReverse(id: string): void {
+    const run = this.reverse.get(id);
+    this.reverse.delete(id);
+    run?.controller.abort();
+  }
+  private startReverse(row: Saved): void {
+    const connect = this.connectReverse;
+    const live = this.live.get(row.registrationId);
+    const serverId = row.serverId;
+    const offer = row.reverseOffer;
+    if (
+      !connect ||
+      !live?.accepted ||
+      !serverId ||
+      !offer ||
+      live.client.getLastServerInfoMessage()?.features?.hostBidirectionalLinks !== true ||
+      this.reverse.has(row.registrationId)
+    )
+      return;
+
+    const controller = new AbortController();
+    const { signal } = controller;
+    const run: ReverseRun = { controller, status: "connecting" };
+    this.reverse.set(row.registrationId, run);
+    const update = (status: ReverseRun["status"]) => {
+      if (signal.aborted || status === run.status) return;
+      run.status = status;
+      this.changed();
+    };
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    signal.addEventListener("abort", () => clearTimeout(retry), { once: true });
+    const attempt = async () => {
+      if (signal.aborted) return;
+      update("connecting");
+      try {
+        await connect({
+          client: live.client,
+          serverId,
+          token: offer.token,
+          permissions: offer.permissions,
+          signal,
+          connected: () => {
+            attempts = 0;
+            update("online");
+          },
+        });
+        update("offline");
+      } catch {
+        update("error");
+      }
+      if (signal.aborted) return;
+      retry = setTimeout(() => void attempt(), acceptanceRetryDelayMs(attempts++));
+      retry.unref();
+    };
+    void attempt();
+  }
+  async acceptReverse(
+    peerServerId: string,
+    close: () => void,
+  ): Promise<{
+    token: string;
+    attach(client: DaemonClient): Promise<void>;
+    detach(): void;
+  }> {
+    return this.mutate(async () => {
+      const row = this.rows.find(
+        (entry) => entry.incomingToken && incomingPeerId(entry.connection) === peerServerId,
+      );
+      if (!row?.enabled || !row.incomingToken)
+        throw new HostError("permission_denied", "Reverse host access has not been approved");
+      if (this.rows.find((entry) => this.peerId(entry) === peerServerId) !== row)
+        throw new HostError("duplicate_host", "Another registration already owns this daemon");
+      const id = row.registrationId;
+      if (this.incoming.has(id))
+        throw new HostError("duplicate_host", "A reverse carrier already owns this daemon");
+      const carrier: IncomingCarrier = { close };
+      let detached = false;
+      let client: DaemonClient | undefined;
+      let unsubscribe: (() => void) | undefined;
+      const detach = () => {
+        if (detached) return;
+        detached = true;
+        unsubscribe?.();
+        if (this.incoming.get(id) !== carrier) return;
+        this.incoming.delete(id);
+        this.live.delete(id);
+        this.closeRoutes(id);
+        if (row.status === "online") {
+          row.status = "offline";
+          this.changed();
+        }
+        close();
+        if (client) void client.close().catch(() => {});
+      };
+      return {
+        token: row.incomingToken,
+        detach,
+        attach: (connected) =>
+          this.mutate(async () => {
+            if (detached || !row.enabled || !this.rows.includes(row))
+              throw new HostError("host_offline", "Incoming host approval changed");
+            if (
+              this.incoming.has(id) ||
+              this.rows.find((entry) => this.peerId(entry) === peerServerId) !== row
+            )
+              throw new HostError(
+                "duplicate_host",
+                "Another carrier or registration already owns this daemon",
+              );
+            const info = connected.getLastServerInfoMessage();
+            if (!connected.isConnected || !info || info.serverId !== peerServerId)
+              throw new HostError(
+                "server_id_mismatch",
+                "Reverse link presented an unexpected daemon identity",
+              );
+            if (!info.features?.connectedHosts || !info.features.hostMultiplexing)
+              throw new HostError("unsupported_capability", "Update the incoming daemon");
+
+            const next = {
+              ...row,
+              serverId: peerServerId,
+              status: "online" as const,
+              lastOnlineAt: new Date().toISOString(),
+            };
+            await this.persist(
+              this.rows.map((entry) => (entry === row ? next : entry)),
+              row,
+            );
+            if (detached || !connected.isConnected)
+              throw new HostError("host_offline", "Incoming host closed during setup");
+            this.incoming.set(id, carrier);
+            client = connected;
+            this.live.set(id, {
+              client,
+              accepted: true,
+              stop: () => void connected.close().catch(() => {}),
+            });
+            Object.assign(row, next);
+            unsubscribe = connected.subscribeConnectionStatus((status) => {
+              if (status.status !== "connected") detach();
+            });
+            this.changed();
+          }),
+      };
+    });
   }
   private start(
     row: Saved,
     resume?: { failures: number; transports: DaemonTransportFactory },
   ): void {
-    if (!row.enabled || this.closed) return;
+    if (!row.enabled || row.incomingToken || this.closed) return;
     const transports =
       resume?.transports ??
       createHostTransportFactory(row.connection, this.budget, {
@@ -278,7 +555,10 @@ export class ConnectedHosts {
           await this.mutate(async () => {
             if (stopped) return;
             const discovered = { ...row, serverId: info.serverId };
-            await this.persist(this.rows.map((entry) => (entry === row ? discovered : entry)));
+            await this.persist(
+              this.rows.map((entry) => (entry === row ? discovered : entry)),
+              row,
+            );
             row.serverId = info.serverId;
           });
         if (info.serverId === this.self.serverId)
@@ -286,7 +566,7 @@ export class ConnectedHosts {
             "self_host",
             "This connection reaches this daemon. Remove it or replace the connection.",
           );
-        if (this.rows.find((entry) => entry.serverId === info.serverId) !== row)
+        if (this.rows.find((entry) => this.peerId(entry) === info.serverId) !== row)
           throw new HostError(
             "duplicate_host",
             "Another registration already owns this daemon. Remove the duplicate registration.",
@@ -299,7 +579,7 @@ export class ConnectedHosts {
         // Pin and persist under the same writer as management to prevent discovery races.
         await this.mutate(async () => {
           if (stopped) return;
-          if (this.rows.find((entry) => entry.serverId === info.serverId) !== row)
+          if (this.rows.find((entry) => this.peerId(entry) === info.serverId) !== row)
             throw new HostError("duplicate_host", "Another registration already owns this daemon");
           const next = {
             ...row,
@@ -309,11 +589,15 @@ export class ConnectedHosts {
             error: null,
             nextRetryAt: null,
           };
-          await this.persist(this.rows.map((entry) => (entry === row ? next : entry)));
+          await this.persist(
+            this.rows.map((entry) => (entry === row ? next : entry)),
+            row,
+          );
           if (stopped || client.getLastServerInfoMessage() !== info || !client.isConnected) return;
           Object.assign(row, next);
           live.accepted = true;
           attempts = 0;
+          this.startReverse(row);
           this.changed();
         });
       } catch (error) {
@@ -340,8 +624,8 @@ export class ConnectedHosts {
         void accept();
         return;
       }
-      for (const route of this.routes)
-        if (route.registrationId === row.registrationId) route.close();
+      this.stopReverse(row.registrationId);
+      this.closeRoutes(row.registrationId);
       row.status = state.status === "connecting" ? "connecting" : "offline";
       row.nextRetryAt = state.status === "disconnected" ? (state.nextRetryAt ?? null) : null;
       if (state.status === "disconnected")
@@ -551,10 +835,14 @@ export class ConnectedHosts {
     this.closed = true;
     await this.ready;
     await this.queue;
-    for (const id of this.live.keys()) this.stop(id);
+    for (const id of new Set([...this.live.keys(), ...this.incoming.keys()])) this.stop(id);
     for (const route of this.routes) route.close();
     this.listeners.clear();
   }
+}
+
+function incomingPeerId(connection: string): string | null {
+  return /^reverse:\/\/([A-Za-z0-9_-]{1,256})$/.exec(connection)?.[1] ?? null;
 }
 
 const ACCEPTANCE_RETRY_BASE_MS = 1500;

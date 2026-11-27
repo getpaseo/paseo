@@ -86,6 +86,48 @@ test.describe("Settings host page", () => {
     });
   });
 
+  test("manages daemon connections and approves both ends of reverse access from settings", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const serverId = getServerId();
+    const daemon = await startIsolatedHostDaemon("srv_e2e_reverse_bakery");
+    let dialer: DaemonClient | undefined;
+    let peer: DaemonClient | undefined;
+    try {
+      dialer = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "reverse-dialer" });
+      peer = await connectDaemonClient<DaemonClient>({
+        clientIdPrefix: "reverse-peer",
+        port: daemon.port,
+      });
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openHostSection(page, serverId, "daemon");
+
+      await page.getByTestId("daemon-connected-host-add").click();
+      await page.getByTestId("daemon-connected-host-address").fill(`127.0.0.1:${daemon.port}`);
+      await page.getByTestId("daemon-connected-host-name").fill("Bakery");
+      await page.getByTestId("daemon-connected-host-confirm").click();
+      const section = page.getByTestId("daemon-connected-hosts");
+      await expect(section.getByText("Bakery", { exact: true })).toBeVisible();
+      await section.getByTestId("daemon-connected-host-enable-reverse").click();
+      await expect(page.getByText("Read workspaces", { exact: true })).toBeVisible();
+      await page.getByTestId("daemon-connected-host-confirm").click();
+      await expect(section).toContainText("Reverse access · Online");
+      await expect
+        .poll(async () => (await peer!.listHosts()).hosts)
+        .toMatchObject([{ direction: "incoming", serverId, status: "online" }]);
+    } finally {
+      if (dialer) {
+        const { hosts } = await dialer.listHosts();
+        for (const entry of hosts.filter((host) => host.serverId === daemon.serverId)) {
+          await dialer.removeHost(entry.registrationId).catch(() => undefined);
+        }
+      }
+      await Promise.allSettled([dialer?.close(), peer?.close(), daemon.close()]);
+    }
+  });
+
   test("a failed remote daemon update remains visible in the host UI", async ({
     page,
     outdatedDaemon,

@@ -2457,6 +2457,50 @@ export const ja: TranslationResources = {
       diagnostics: "診断",
       about: "アプリ情報",
     },
+    connectedHosts: {
+      title: "接続済みホスト",
+      managedBy:
+        "{{host}} がこれらの接続を開いて管理します。ペアリング済みのアプリは接続先のホストを検出できます。",
+      add: "接続先ホストを追加",
+      empty: "接続先ホストがありません",
+      loading: "接続済みホストを読み込み中…",
+      loadError: "接続済みホストを読み込めませんでした",
+      changeError: "接続を保存できませんでした。両方のデーモンを確認して再試行してください。",
+      incoming: "着信接続",
+      enableReverse: "逆方向アクセスを有効にする",
+      disableReverse: "逆方向アクセスを無効にする",
+      remove: "削除",
+      reverseStatus: "逆方向アクセス · {{status}}",
+      reverseError: "{{peer}} で着信接続の承認を確認してください。",
+      address: "接続アドレスまたはペアリングリンク",
+      password: "Paseo パスワード（任意）",
+      nickname: "名前（任意）",
+      connectFrom:
+        "{{host}} が接続を開始します。SSH、直接接続、またはリレーのアドレスを入力してください。",
+      approveHint:
+        "両方のデーモンでアクセスを承認します。{{peer}} は {{host}} を検出し、そのワークスペースを開けるようになります。",
+      approveWriteHint:
+        "両方のデーモンでアクセスを承認します。{{peer}} は {{host}} でプロンプトを送信し、ターミナルに入力できるようになります。",
+      revokeHint:
+        "{{peer}} からの逆方向アクセスを無効にします。順方向の接続は引き続き利用できます。",
+      removeHint: "このデーモンから {{peer}} への接続を削除します。",
+      read: "ワークスペースの読み取り",
+      write: "読み取りと書き込み",
+      saving: "保存中…",
+      status: {
+        connecting: "接続中",
+        online: "オンライン",
+        offline: "オフライン",
+        error: "エラー",
+        disabled: "無効",
+      },
+      action: {
+        add: "接続先ホストを追加",
+        approve: "逆方向アクセスを有効にする",
+        revoke: "逆方向アクセスを無効にする",
+        remove: "接続先ホストを削除",
+      },
+    },
     clientHosts: {
       title: "保存済みホスト",
       info: "このデバイスが接続するホストです。ここでの名前、アイコン、バッジ、経路はこのデバイスにのみ反映されます。",

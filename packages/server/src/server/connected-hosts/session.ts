@@ -97,7 +97,12 @@ export class ConnectedHostSession {
     });
   }
   private async execute(message: SessionInboundMessage): Promise<void> {
-    const actor = { ...this.actor, manageSources: this.permissions().includes("access.manage") };
+    const permissions = this.permissions();
+    const actor = {
+      ...this.actor,
+      manageSources: permissions.includes("access.manage"),
+      permissions,
+    };
     switch (message.type) {
       case "hosts.list.request":
         return this.list(message);

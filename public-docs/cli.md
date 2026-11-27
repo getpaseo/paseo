@@ -91,6 +91,46 @@ JSON output never includes connection credentials.
 the pinned daemon identity. Add `--replace-identity` with `--connection` only after verifying a changed
 destination. `rm` removes the saved connection; agents and workspaces on that host keep running.
 
+### Bidirectional connected hosts
+
+To let a host discover and route back to the daemon that dials it, enable reverse access on an
+existing registration and approve it on the accepting daemon. Both daemons must support
+bidirectional links. The dialer manages reconnects, and both directions share its connection
+over SSH, a direct connection, or relay.
+
+In the app, open **Settings → Host → Daemon → Connected hosts**. Choose **Enable reverse access** on an online registration and select the permissions to grant. The app submits both approvals when your session can manage access on both daemons. The status on the registration shows when the reverse connection is online.
+
+For the CLI workflow, suppose the Mac already reaches Bakery. On the Mac, use `paseo host ls` to find
+Bakery's registration ID (`hst_bakery` below) and `paseo daemon status` to find the Mac's server
+ID (`srv_mac` below). Create a private token file, then grant Bakery permission to discover and
+read workspaces on the Mac.
+
+```sh
+(umask 077 && openssl rand -hex 32 > paseo-reverse.token)
+paseo host enable-reverse hst_bakery --token-file ./paseo-reverse.token \
+  --permission daemon.read --permission workspace.read
+```
+
+Transfer the token file securely to Bakery and keep it readable only by its owner. From
+Bakery, approve the Mac's incoming registration with the same token.
+
+```sh
+paseo host accept-reverse srv_mac --label Mac --token-file ./paseo-reverse.token
+paseo host ls
+```
+
+The Mac appears in Bakery's directory once the daemons authenticate the reverse connection.
+Apps paired with Bakery can then discover the Mac. If the shared connection drops, the Mac's
+registration on Bakery remains saved and goes offline until the Mac reconnects.
+On the Mac, `paseo host inspect hst_bakery` shows the reverse status for the registration.
+
+The example grants read access. Add `--permission workspace.write` if Bakery should be able to
+send prompts or type in terminals on the Mac.
+
+Run `paseo host disable-reverse hst_bakery` on the Mac to revoke reverse access while retaining
+the original registration. On Bakery, use `host disable` or `host rm` with the incoming
+registration ID shown by `host ls`.
+
 ## Provider diagnostics
 
 Ask the daemon to inspect the provider environment it actually uses:

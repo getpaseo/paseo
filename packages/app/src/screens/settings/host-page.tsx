@@ -64,6 +64,7 @@ import { useProviderIcon } from "@/components/provider-icons";
 import { BrowserToolsRow } from "./browser-tools-card";
 import { HostPaseoToolsRow } from "./paseo-tools-card";
 import { RestartRecoveryRow } from "./restart-recovery-card";
+import { ConnectedHostsSection } from "./connected-hosts-section";
 import { IdleRuntimeCleanupRow } from "./idle-runtime-cleanup-card";
 import { restartDaemonFromSettings, updateDaemonFromSettings } from "./daemon-lifecycle";
 
@@ -409,6 +410,7 @@ export function HostDaemonPage({ serverId }: { serverId: string }) {
       {!isLocalDaemon ? <UpdateDaemonCard key={host.serverId} host={host} /> : null}
 
       <HostAgentRuntimeSection serverId={serverId} />
+      <ConnectedHostsSection serverId={serverId} label={host.label} />
 
       <SettingsSection title={t("settings.host.daemon.dangerZone")}>
         <RestartDaemonCard host={host} />

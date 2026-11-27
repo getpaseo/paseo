@@ -1,3 +1,6 @@
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createReverseHostChannelTransport } from "@getpaseo/client/node";
+import { acceptReverseCarrier, openReverseCarrier } from "./connected-hosts/reverse-carrier.js";
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
@@ -13,8 +16,12 @@ import {
 } from "./agent/agent-prompt.js";
 import { createToolHosts } from "./agent/host-operations/index.js";
 import { HOST_ROUTE_OPCODE } from "@getpaseo/protocol/binary-frames/index";
-import { DaemonLinkEndpoint, VirtualHostSocket } from "./connected-hosts/index.js";
-import { ConnectedHosts } from "./connected-hosts/index.js";
+import {
+  ConnectedHosts,
+  DaemonLinkEndpoint,
+  VirtualHostSocket,
+  type ConnectReverseHost,
+} from "./connected-hosts/index.js";
 import { stat } from "node:fs/promises";
 import {
   createWorkspaceBaseBranchService,
@@ -598,6 +605,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
+  private readonly reverseCarrierSockets = new WeakSet<WebSocketLike>();
   private readonly networkTunnel = new NetworkTunnelService();
   private readonly handedOffTunnelSockets = new WeakSet<WebSocketLike>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
@@ -844,7 +852,11 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
-    this.connectedHosts = new ConnectedHosts(paseoHome, { serverId, label: getHostName() });
+    this.connectedHosts = new ConnectedHosts(
+      paseoHome,
+      { serverId, label: getHostName() },
+      (offer) => this.connectReverseHost(offer),
+    );
     this.passwordHash = auth?.password;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
@@ -2120,6 +2132,7 @@ export class VoiceAssistantWebSocketServer {
       features: {
         connectedHosts: true,
         hostMultiplexing: true,
+        hostBidirectionalLinks: true,
         // COMPAT(relayProtectedSecurity): added in v0.13.0, remove gate after 2027-04-21.
         relayProtectedSecurity: true,
         usageSetting: true,
@@ -2641,6 +2654,10 @@ export class VoiceAssistantWebSocketServer {
     if (!decodedFrame) {
       return false;
     }
+    if (this.reverseCarrierSockets.has(ws)) {
+      ws.close(1008, "Expected a host channel frame");
+      return true;
+    }
     if (!activeConnection) {
       this.incrementRuntimeCounter("binaryBeforeHelloRejected");
       log.warn("Rejected binary frame before hello");
@@ -2680,7 +2697,11 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
-    if (message.type === "tunnel_hello" && !pendingConnection.authenticating) {
+    if (
+      message.type === "tunnel_hello" &&
+      !pendingConnection.authenticating &&
+      !this.reverseCarrierSockets.has(ws)
+    ) {
       this.handleTunnelHello({
         ws,
         message,
@@ -2870,6 +2891,81 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  private async connectReverseHost(offer: Parameters<ConnectReverseHost>[0]): Promise<void> {
+    offer.signal.throwIfAborted();
+    const transport = createReverseHostChannelTransport(
+      offer.client,
+      offer.serverId,
+      randomUUID(),
+      this.serverId,
+    )({ url: "ws://reverse-host/ws" });
+    const stop = () => transport.close();
+    offer.signal.addEventListener("abort", stop, { once: true });
+    try {
+      let markClosed: () => void = () => undefined;
+      const closed = new Promise<void>((resolve) => {
+        markClosed = resolve;
+      });
+      await openReverseCarrier(
+        transport,
+        {
+          dialerServerId: this.serverId,
+          acceptorServerId: offer.serverId,
+          token: offer.token,
+        },
+        async (socket) => {
+          offer.signal.throwIfAborted();
+          socket.once("close", markClosed);
+          this.reverseCarrierSockets.add(socket);
+          await this.attachSocket(socket, undefined, undefined, false, {
+            principalId: `reverse-host:${offer.serverId}`,
+            permissions: offer.permissions,
+          });
+          if (socket.readyState !== 1) markClosed();
+        },
+      );
+      if (!offer.signal.aborted) offer.connected();
+      await closed;
+    } finally {
+      offer.signal.removeEventListener("abort", stop);
+      stop();
+    }
+  }
+
+  private async acceptReverseHost(socket: VirtualHostSocket, peerServerId: string): Promise<void> {
+    const approval = await this.connectedHosts.acceptReverse(peerServerId, () =>
+      socket.close(1008, "Reverse host access was revoked"),
+    );
+    if (socket.readyState !== 1) {
+      approval.detach();
+      return;
+    }
+    let client: DaemonClient | undefined;
+    socket.once("close", () => {
+      approval.detach();
+      void client?.close().catch(() => {});
+    });
+    void acceptReverseCarrier(socket, {
+      dialerServerId: peerServerId,
+      acceptorServerId: this.serverId,
+      token: approval.token,
+    })
+      .then(async (transportFactory) => {
+        if (socket.readyState !== 1) return undefined;
+        client = new DaemonClient({
+          url: "ws://reverse-host/ws",
+          clientId: `reverse-host-link-${this.serverId}`,
+          transportFactory,
+          connectTimeoutMs: HELLO_TIMEOUT_MS,
+          reconnect: { enabled: false },
+        });
+        await client.connect();
+        await approval.attach(client);
+        return undefined;
+      })
+      .catch(() => socket.close(1008, "Reverse host authentication failed"));
+  }
+
   private hostLink(ws: WebSocketLike, connection: SessionConnection): DaemonLinkEndpoint {
     let link = this.hostLinks.get(ws);
     if (!link) {
@@ -2879,6 +2975,9 @@ export class VoiceAssistantWebSocketServer {
         routed: () => connection.session.isRouted(),
         bufferedAmount: () => this.socketBufferedAmount(ws),
         delivery: connection.session.delivery,
+        admitReverse: this.reverseCarrierSockets.has(ws)
+          ? undefined
+          : (socket, peerServerId) => this.acceptReverseHost(socket, peerServerId),
         admit: (socket, permissions) =>
           this.attachSocket(socket, undefined, undefined, false, {
             principalId: connection.principalId,
@@ -2900,6 +2999,10 @@ export class VoiceAssistantWebSocketServer {
       await activeConnection.session.delivery.request(ws, message.message, () =>
         link.dispatch(message.message),
       );
+      return;
+    }
+    if (this.reverseCarrierSockets.has(ws)) {
+      ws.close(1008, "Expected a host channel request");
       return;
     }
     this.recordInboundSessionRequestType(message.message.type);

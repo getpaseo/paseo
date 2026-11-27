@@ -15,12 +15,21 @@ export interface PaseoHostActions {
   client(serverId: string): Promise<PaseoApi>;
 }
 
+export function createReverseHostChannelTransport(
+  origin: DaemonClient,
+  serverId: string,
+  scopeId: string,
+  peerServerId: string,
+): DaemonTransportFactory {
+  return createHostChannelTransport(origin, serverId, scopeId, null, { peerServerId });
+}
+
 export function createHostChannelTransport(
   origin: DaemonClient,
   serverId: string,
   scopeId: string,
   initialRouteId: string | null,
-  link = false,
+  link: boolean | { peerServerId: string } = false,
 ): DaemonTransportFactory {
   let first: string | null = initialRouteId;
   return () => {
@@ -93,7 +102,15 @@ export function createHostChannelTransport(
     let opening: Promise<string>;
     if (first) opening = Promise.resolve(first);
     else if (link) {
-      opening = origin.openHostLink(scopeId, { flowControl: true }).then((opened) => {
+      const openedLink =
+        typeof link === "object"
+          ? origin.openHostLink(scopeId, {
+              flowControl: true,
+              purpose: "reverse",
+              peerServerId: link.peerServerId,
+            })
+          : origin.openHostLink(scopeId, { flowControl: true });
+      opening = openedLink.then((opened) => {
         // COMPAT(hostLinkFlowControl): added after v0.15.3 (#9109); remove after
         // 2027-05-08 once the daemon floor supports forwarding acknowledgments.
         // Older destinations omit flowControl and receive no acknowledgment messages.

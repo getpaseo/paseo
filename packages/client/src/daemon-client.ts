@@ -1912,6 +1912,13 @@ export class DaemonClient {
         code: "unsupported_capability",
       });
   }
+  private requireBidirectionalHostLinks(): void {
+    if (this.lastServerInfoMessage?.features?.hostBidirectionalLinks !== true)
+      throw Object.assign(new Error("Update the daemon to use bidirectional connected hosts"), {
+        code: "unsupported_capability",
+      });
+  }
+
   async listHosts(): Promise<HostDirectory> {
     this.requireConnectedHosts();
     return (
@@ -1936,6 +1943,7 @@ export class DaemonClient {
   }
   async addHost(input: HostAdd) {
     this.requireConnectedHosts();
+    if (input.incomingToken !== undefined) this.requireBidirectionalHostLinks();
     return (
       await this.sendCorrelatedSessionRequest({
         message: { type: "hosts.add.request", input },
@@ -1945,6 +1953,7 @@ export class DaemonClient {
   }
   async updateHost(registrationId: string, patch: HostUpdate) {
     this.requireConnectedHosts();
+    if (patch.reverseOffer !== undefined) this.requireBidirectionalHostLinks();
     return (
       await this.sendCorrelatedSessionRequest({
         message: { type: "hosts.update.request", registrationId, patch },
@@ -1977,13 +1986,20 @@ export class DaemonClient {
   openHostLink(channelId: string): Promise<string>;
   openHostLink(
     channelId: string,
-    options: { flowControl: true },
+    options: { flowControl: true } & (
+      | { purpose?: undefined; peerServerId?: undefined }
+      | { purpose: "reverse"; peerServerId: string }
+    ),
   ): Promise<{ routeId: string; flowControl: boolean }>;
   async openHostLink(
     channelId: string,
-    options?: { flowControl: true },
+    options?: { flowControl: true } & (
+      | { purpose?: undefined; peerServerId?: undefined }
+      | { purpose: "reverse"; peerServerId: string }
+    ),
   ): Promise<string | { routeId: string; flowControl: boolean }> {
     this.requireConnectedHosts();
+    if (options?.purpose === "reverse") this.requireBidirectionalHostLinks();
     if (this.getLastServerInfoMessage()?.features?.hostMultiplexing !== true)
       throw Object.assign(new Error("Update the destination daemon"), {
         code: "unsupported_capability",
@@ -1993,6 +2009,9 @@ export class DaemonClient {
         type: "hosts.link.open.request",
         channelId,
         ...(options?.flowControl ? { flowControl: true } : {}),
+        ...(options?.purpose === "reverse"
+          ? { purpose: "reverse" as const, peerServerId: options.peerServerId }
+          : {}),
       },
       responseType: "hosts.link.open.response",
     });

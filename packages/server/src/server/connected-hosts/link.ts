@@ -15,7 +15,6 @@ import type {
 
 /** A logical socket has no network resources or authority of its own. */
 export class VirtualHostSocket extends EventEmitter {
-  readonly maxFrameBytes = MAX_HOST_CHANNEL_FRAME_BYTES;
   readonly supportsConcurrentWrites = true;
   readyState = 1;
   constructor(
@@ -23,6 +22,7 @@ export class VirtualHostSocket extends EventEmitter {
     private readonly ended: (code: number, reason: string) => void,
     private readonly buffered: () => number,
     private readonly transformHello: (data: string) => string,
+    readonly maxFrameBytes = MAX_HOST_CHANNEL_FRAME_BYTES,
   ) {
     super();
   }
@@ -77,6 +77,7 @@ export class DaemonLinkEndpoint {
       bufferedAmount(): number | null;
       delivery: SessionDelivery;
       admit(socket: VirtualHostSocket, permissions: readonly DaemonPermission[]): Promise<void>;
+      admitReverse?(socket: VirtualHostSocket, peerServerId: string): Promise<void>;
     },
   ) {}
   handles(message: SessionInboundMessage): boolean {
@@ -94,132 +95,7 @@ export class DaemonLinkEndpoint {
       this.channels.get(message.routeId)?.flowControl?.acknowledge(message.sequence);
       return;
     }
-    if (message.type === "hosts.link.open.request") {
-      const error = (code: string, text: string) =>
-        this.parent.delivery.reply({
-          type: "rpc_error",
-          payload: {
-            requestId: message.requestId,
-            requestType: message.type,
-            code,
-            error: text,
-          },
-        });
-      if (this.closed || this.parent.routed()) {
-        error("unsupported_capability", "Connected hosts support one hop");
-        return;
-      }
-      if (this.channels.size >= 128) {
-        error("resource_limit", "Too many host channels");
-        return;
-      }
-      let socket: VirtualHostSocket;
-      const flowControl = message.flowControl
-        ? new HostChannelFlowControl((bytes) => {
-            if (this.pendingOutputBytes + bytes > 256 * 1024 * 1024)
-              throw new HostChannelOutputLimitError();
-            this.pendingOutputBytes += bytes;
-            return () => {
-              this.pendingOutputBytes -= bytes;
-            };
-          })
-        : undefined;
-      const owner = this.parent.delivery.begin("host-link", undefined, () => {
-        this.channels.delete(owner.id);
-        flowControl?.close();
-        socket?.close();
-      });
-      const id = owner.id;
-      // Capture actual authenticated authority. The caller hello can only reduce it.
-      const ceiling = [...this.parent.permissions()];
-      socket = new VirtualHostSocket(
-        async (data) => {
-          const output: SessionOutboundMessage | null =
-            typeof data === "string"
-              ? {
-                  type: "hosts.route.frame",
-                  payload: { subscriptionId: id, data, binary: false },
-                }
-              : null;
-          const frame = typeof data === "string" ? null : encodeHostRouteFrame(id, data);
-          const bytes = output
-            ? Buffer.byteLength(JSON.stringify({ type: "session", message: output }))
-            : frame!.byteLength;
-          const buffered = this.parent.bufferedAmount();
-          // Account for the exact escaped outer frame, retaining control-frame headroom.
-          if (buffered === null || buffered + bytes > 64 * 1024 * 1024 - 65536) {
-            socket.close(1009, "Host channel output limit reached");
-            throw new Error("Host channel output limit reached");
-          }
-          try {
-            const write = async () => {
-              if (output) await owner.emitAndWait(output);
-              else await owner.emitBinaryAndWait(frame!);
-            };
-            if (flowControl) await flowControl.send(bytes, write);
-            else await write();
-          } catch (failure) {
-            socket.close(
-              failure instanceof HostChannelOutputLimitError ? 1009 : 1000,
-              failure instanceof HostChannelOutputLimitError
-                ? failure.message
-                : "Host channel closed",
-            );
-            throw failure;
-          }
-        },
-        (code, reason) => {
-          this.channels.delete(id);
-          flowControl?.close();
-          let failure = "host_offline";
-          if (code === 1009) failure = "resource_limit";
-          if (code === 1008) failure = "permission_denied";
-          owner.emit({
-            type: "hosts.route.closed",
-            payload: {
-              subscriptionId: id,
-              code: failure,
-              message: reason,
-            },
-          });
-          void owner.release();
-        },
-        () => this.parent.bufferedAmount() ?? 0,
-        (data) => {
-          const hello = JSON.parse(data);
-          if (hello.type !== "hello" || typeof hello.clientId !== "string")
-            throw new Error("Expected hello");
-          return JSON.stringify({
-            ...hello,
-            auth: undefined,
-            routed: true,
-            clientId: `link-${createHash("sha256")
-              .update(JSON.stringify([this.parent.identity, hello.clientId]))
-              .digest("hex")}`,
-          });
-        },
-      );
-      this.channels.set(id, { scopeId: message.channelId, socket, flowControl });
-      try {
-        await this.parent.admit(socket, ceiling);
-        if (this.closed || socket.readyState !== 1) {
-          socket.close();
-          return;
-        }
-        this.parent.delivery.reply({
-          type: "hosts.link.open.response",
-          payload: {
-            requestId: message.requestId,
-            routeId: id,
-            ...(flowControl ? { flowControl: true } : {}),
-          },
-        });
-      } catch {
-        socket.close();
-        error("host_offline", "Could not admit host channel");
-      }
-      return;
-    }
+    if (message.type === "hosts.link.open.request") return this.open(message);
     if (message.type === "hosts.route.frame.request" && this.channels.has(message.routeId)) {
       this.channels.get(message.routeId)!.socket.feed(message.data);
       return;
@@ -231,6 +107,157 @@ export class DaemonLinkEndpoint {
       }
     }
     return;
+  }
+  private async open(
+    message: Extract<SessionInboundMessage, { type: "hosts.link.open.request" }>,
+  ): Promise<void> {
+    const error = (code: string, text: string) =>
+      this.parent.delivery.reply({
+        type: "rpc_error",
+        payload: {
+          requestId: message.requestId,
+          requestType: message.type,
+          code,
+          error: text,
+        },
+      });
+    if (this.closed || this.parent.routed()) {
+      error("unsupported_capability", "Connected hosts support one hop");
+      return;
+    }
+    const reverse = message.purpose === "reverse";
+    let admit: (socket: VirtualHostSocket) => Promise<void>;
+    if (reverse) {
+      const admitReverse = this.parent.admitReverse;
+      const reversePeer = message.peerServerId;
+      if (!admitReverse || !reversePeer) {
+        error("permission_denied", "Reverse host access has not been approved");
+        return;
+      }
+      admit = (socket) => admitReverse(socket, reversePeer);
+    } else {
+      // Capture actual authenticated authority. The caller hello can only reduce it.
+      const ceiling = [...this.parent.permissions()];
+      admit = (socket) => this.parent.admit(socket, ceiling);
+    }
+    if (this.channels.size >= 128) {
+      error("resource_limit", "Too many host channels");
+      return;
+    }
+    let socket: VirtualHostSocket;
+    const flowControl = message.flowControl
+      ? new HostChannelFlowControl((bytes) => {
+          if (this.pendingOutputBytes + bytes > 256 * 1024 * 1024)
+            throw new HostChannelOutputLimitError();
+          this.pendingOutputBytes += bytes;
+          return () => {
+            this.pendingOutputBytes -= bytes;
+          };
+        })
+      : undefined;
+    const owner = this.parent.delivery.begin("host-link", undefined, () => {
+      this.channels.delete(owner.id);
+      flowControl?.close();
+      socket?.close();
+    });
+    const id = owner.id;
+    socket = new VirtualHostSocket(
+      async (data) => {
+        const output: SessionOutboundMessage | null =
+          typeof data === "string"
+            ? {
+                type: "hosts.route.frame",
+                payload: { subscriptionId: id, data, binary: false },
+              }
+            : null;
+        const frame = typeof data === "string" ? null : encodeHostRouteFrame(id, data);
+        const bytes = output
+          ? Buffer.byteLength(JSON.stringify({ type: "session", message: output }))
+          : frame!.byteLength;
+        const buffered = this.parent.bufferedAmount();
+        // Account for the exact escaped outer frame, retaining control-frame headroom.
+        if (buffered === null || buffered + bytes > 64 * 1024 * 1024 - 65536) {
+          socket.close(1009, "Host channel output limit reached");
+          throw new Error("Host channel output limit reached");
+        }
+        try {
+          const write = async () => {
+            if (output) await owner.emitAndWait(output);
+            else await owner.emitBinaryAndWait(frame!);
+          };
+          if (flowControl) await flowControl.send(bytes, write);
+          else await write();
+        } catch (failure) {
+          socket.close(
+            failure instanceof HostChannelOutputLimitError ? 1009 : 1000,
+            failure instanceof HostChannelOutputLimitError
+              ? failure.message
+              : "Host channel closed",
+          );
+          throw failure;
+        }
+      },
+      (code, reason) => {
+        this.channels.delete(id);
+        flowControl?.close();
+        let failure = "host_offline";
+        if (code === 1009) failure = "resource_limit";
+        if (code === 1008) failure = "permission_denied";
+        owner.emit({
+          type: "hosts.route.closed",
+          payload: {
+            subscriptionId: id,
+            code: failure,
+            message: reason,
+          },
+        });
+        void owner.release();
+      },
+      () => this.parent.bufferedAmount() ?? 0,
+      (data) => {
+        if (reverse) return data;
+        const hello = JSON.parse(data);
+        if (hello.type !== "hello" || typeof hello.clientId !== "string")
+          throw new Error("Expected hello");
+        return JSON.stringify({
+          ...hello,
+          auth: undefined,
+          routed: true,
+          clientId: `link-${createHash("sha256")
+            .update(JSON.stringify([this.parent.identity, hello.clientId]))
+            .digest("hex")}`,
+        });
+      },
+    );
+    this.channels.set(id, { scopeId: message.channelId, socket, flowControl });
+    try {
+      await admit(socket);
+      if (this.closed || socket.readyState !== 1) {
+        socket.close();
+        return;
+      }
+      this.parent.delivery.reply({
+        type: "hosts.link.open.response",
+        payload: {
+          requestId: message.requestId,
+          routeId: id,
+          ...(flowControl ? { flowControl: true } : {}),
+        },
+      });
+    } catch (failure) {
+      if (
+        reverse &&
+        failure instanceof Error &&
+        "code" in failure &&
+        failure.code === "permission_denied"
+      ) {
+        socket.close(1008, "Reverse host access has not been approved");
+        error("permission_denied", "Reverse host access has not been approved");
+      } else {
+        socket.close();
+        error("host_offline", "Could not admit host channel");
+      }
+    }
   }
   binary(frame: HostRouteFrame): boolean {
     const socket = this.channels.get(frame.routeId)?.socket;

@@ -6,8 +6,8 @@ Connect A to B through `paseo --host A host` or `paseo.hosts`. Consumers select 
 
 ## Ownership and authority
 
-Credentials live in A's `hosts.json`, written atomically with mode `0600` on POSIX systems. Discovery returns a safe
-target description. Replacement inputs never come back through a read API. Keep this file private
+Outbound credentials live in `hosts.json` and passive approvals live in `incoming-hosts.json`. Both files are written atomically with mode `0600` on POSIX systems. Discovery returns a safe
+target description. Replacement inputs never come back through a read API. Keep both files private
 when collecting diagnostics or backing up daemon state.
 
 The authenticated producer owns its source key. Repeating an unchanged add returns the saved entry,
@@ -21,7 +21,7 @@ routed API scope. Each scope owns an isolated virtual session on B. A derives it
 admitted origin session, producer, and logical SDK scope. B admits virtual sessions under the actual
 physical link principal, then intersects forwarded caller grants with that link's current authority.
 Changing or resuming a parent's grants closes its existing channels; reconnect re-admits demand with
-current authority. A routed API cannot select a second hop, and saving a host grants no reverse access.
+current authority. A routed API cannot select a second hop. Reverse access requires separate approval from both daemons.
 
 A producer that registers a host through a routed API is qualified on B as
 `route:<B principal>:<A serverId>:<A producer>`, with each component percent-encoded. This namespace belongs to the authenticated link
@@ -105,3 +105,32 @@ subscription demand is rebuilt by its owning client on reconnect.
 See the [SDK reference](../public-docs/sdk/reference.md#clienthosts),
 [CLI reference](../public-docs/cli.md#connected-hosts), and
 [plugin reference](../public-docs/plugins/reference.md#connected-hosts).
+
+## Bidirectional registration implementation plan
+
+A bidirectional registration gives each daemon a route to the other over one authenticated daemon session. The dialer owns the destination address, credentials, and reconnect policy. The accepting daemon keeps a passive registration with its own stable ID and reports it offline when the dialer goes away. Each daemon publishes its own directory. Apps continue using the existing host discovery and routing APIs. SSH, direct connections, and relay use the same implementation above the transport.
+
+### Enrollment and authority
+
+An ordinary registration stays one-way. Once the outbound identity is pinned, an access manager on the dialer enables reverse access with an explicit permission ceiling. An access manager on the acceptor approves an incoming registration for the dialer's server ID. Provision the same randomly generated 32-byte token on each daemon. Use a fresh token for every relationship and pass it to the CLI through a file. Keep it under the registry's existing private storage rules.
+
+On every new carrier, both sides prove possession of the token with fresh challenges bound to both server IDs and their roles. The carrier handshake does not send the token. A reported server ID is display and routing metadata. It cannot prove authority on its own.
+
+Each side controls the grants it issues and the visibility of its local directory entry. The reverse proof admits the accepting daemon under the dialer's separately configured grant. Reuse ordinary admission and intersect the remote caller's forwarded grants with the authenticated link's local permission ceiling in each direction. Revocation or disabled state survives reconnect. Removing an approved reverse entry requires explicit re-enrollment before it can return. Treat identity replacement as a new enrollment.
+
+### Transport and lifecycle
+
+Negotiate an optional `hostBidirectionalLinks` capability and establish one reverse carrier on the existing socket after enrollment. Reserve it through the existing host-link open flow with an explicit negotiated purpose. The acceptor runs a daemon client on the carrier and the dialer admits it under the reverse credential. This keeps the outer WebSocket roles unchanged and reuses the host-link RPCs and virtual session admission in both directions. Separate carrier and nested channel lifetimes. Forward and reverse channel IDs belong to independent channel tables. Close the carrier when the authenticated outer session ends or reverse access changes.
+
+A passive entry becomes discoverable to apps once reverse authentication and identity checks confirm its server ID. Until then it appears offline in host management. Enforce the existing one-hop rule for user sessions, including a reciprocal registration. Keep existing buffer budgets and binary payloads. Account for additional nesting against the physical frame limit, including relay encryption overhead. Closing a reverse route releases its subscriptions and buffers. Losing the physical session closes both directions, and the dialer alone reconnects. A reverse authentication failure is reported separately from forward health.
+
+### Tests-first implementation checklist
+
+- [x] **Reserve and negotiate a reverse carrier.** Prove that an existing peer still accepts ordinary channel opens and that a reverse open on an unsupported or unapproved peer fails before admitting a session. Verify frames and close events stay with their original channel.
+- [x] **Route over the carrier.** Open isolated sessions on two fixture daemons in both directions with one physical connection. Verify simultaneous requests, binary terminal frames, cancellation, frame limits, and closure while a channel is opening.
+- [x] **Enroll and authorize both sides.** Reuse daemon session admission and connected-host management permissions. Test missing approval, a replayed proof, a token from another peer, mismatched identity, permission attenuation, and revocation of only the reverse direction.
+- [x] **Persist and publish the passive registration.** Verify it keeps its ID through reconnect and restart, reports offline while the dialer is absent, and appears through ordinary client observation. Test disable, removal, and reciprocal duplicates. Check routed workspace access from a client connected only to the accepting daemon and the app's existing directory discovery behavior.
+- [x] **Expose enrollment in the existing CLI.** Document how to convert a verified one-way entry and how to inspect or revoke reverse access. Keep credentials out of arguments shown in diagnostics, directory responses, and errors.
+- [x] **Verify transport coverage.** Run the routing and recovery checks over SSH and an encrypted relay session. Verify nested frame budgeting and recovery after relay loss. Run targeted suites, typecheck, and lint.
+
+Verification covered SSH tunnels on isolated Linux daemons and a local protected relay. Workspace and terminal traffic worked in both directions. Restarting each tunnel or relay restored the same passive registration. App discovery was verified through the host runtime tests.

@@ -1,3 +1,9 @@
+import { DaemonPermissionSchema } from "./daemon-permissions.js";
+export {
+  DAEMON_PERMISSIONS,
+  DaemonPermissionSchema,
+  type DaemonPermission,
+} from "./daemon-permissions.js";
 import { AgentMessageSchema } from "./agent-message.js";
 import {
   HostsListRequestSchema,
@@ -161,20 +167,6 @@ export {
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
-
-export const DAEMON_PERMISSIONS = [
-  "daemon.read",
-  "daemon.manage",
-  "tunnel.manage",
-  "access.manage",
-  "workspace.read",
-  "workspace.write",
-  "workspace.manage",
-  "automation.manage",
-  "hub.execute",
-] as const;
-export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
-export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
 
 const MutableDaemonProviderModelSchema = z
   .object({
@@ -4040,6 +4032,8 @@ export const ServerInfoStatusPayloadSchema = z
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
+        // COMPAT(hostBidirectionalLinks): added after v0.18.1. remove the compatibility gate after 2027-05-27.
+        hostBidirectionalLinks: z.boolean().optional(),
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),

@@ -7,7 +7,7 @@ import { afterEach, expect, test } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { createHostClient, createHostChannelTransport } from "@getpaseo/client/node";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import type { HostDirectory } from "@getpaseo/protocol/hosts";
+import type { HostDirectory, HostUpdate } from "@getpaseo/protocol/hosts";
 
 const cleanup: (() => Promise<unknown>)[] = [];
 
@@ -1138,6 +1138,109 @@ test("source-key registration remains idempotent at directory capacity", async (
   await expect(
     registry.add({ connection: "127.0.0.1:1", sourceKey: "new" }, actor),
   ).rejects.toMatchObject({ code: "resource_limit" });
+});
+
+test("incoming host approval is private, survives restart, and cannot dial", async () => {
+  const { ConnectedHosts } = await import("./index.js");
+  const home = await mkdtemp(join(tmpdir(), "hosts-incoming-"));
+  cleanup.push(() => rm(home, { recursive: true, force: true }));
+  const { client, paseo } = await api(await daemon());
+  const peerId = (await paseo.hosts.list()).self.serverId;
+  const self = { serverId: "srv_acceptor", label: "Acceptor" };
+  const admin = { sourceId: "owner", manageSources: true };
+  const manager = { sourceId: "manager", manageSources: false };
+  const incomingToken = "ab".repeat(32);
+  const input = { connection: `reverse://${peerId}`, incomingToken, sourceKey: "mac" };
+  const first = new ConnectedHosts(home, self);
+  cleanup.push(() => first.close());
+  await expect(first.add(input, manager)).rejects.toMatchObject({ code: "permission_denied" });
+  const saved = await first.add(input, admin);
+  expect(saved).toMatchObject({
+    direction: "incoming",
+    serverId: null,
+    status: "offline",
+    nextRetryAt: null,
+  });
+  expect(await first.add(input, admin)).toEqual(saved);
+  await expect(first.add({ ...input, sourceKey: "duplicate" }, admin)).rejects.toMatchObject({
+    code: "duplicate_host",
+  });
+  expect(JSON.stringify(await first.list())).not.toContain(incomingToken);
+  expect(JSON.stringify(saved)).not.toContain(incomingToken);
+  await expect(stat(join(home, "hosts.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await stat(join(home, "incoming-hosts.json"))).mode & 0o777).toBe(0o600);
+
+  await first.update(saved.registrationId, { enabled: false }, manager);
+  await first.close();
+  const restored = new ConnectedHosts(home, self);
+  cleanup.push(() => restored.close());
+  expect((await restored.list()).hosts).toEqual([{ ...saved, enabled: false, status: "disabled" }]);
+  await expect(restored.acceptReverse(peerId, () => {})).rejects.toMatchObject({
+    code: "permission_denied",
+  });
+  await expect(
+    restored.update(saved.registrationId, { enabled: true }, manager),
+  ).rejects.toMatchObject({
+    code: "permission_denied",
+  });
+  expect(await restored.update(saved.registrationId, { enabled: true }, admin)).toEqual(saved);
+  await expect(restored.acceptReverse("srv_unapproved", () => {})).rejects.toMatchObject({
+    code: "permission_denied",
+  });
+  const approval = await restored.acceptReverse(peerId, () => {});
+  expect(approval.token).toBe(incomingToken);
+  await approval.attach(client);
+  const [onlineHost] = (await restored.list()).hosts;
+  expect(onlineHost).toMatchObject({
+    registrationId: saved.registrationId,
+    serverId: peerId,
+    status: "online",
+  });
+  await restored.close();
+
+  const offline = new ConnectedHosts(home, self);
+  cleanup.push(() => offline.close());
+  expect((await offline.list()).hosts).toEqual([{ ...onlineHost, status: "offline" }]);
+});
+
+test("reverse offers only grant the access manager's permissions to a verified peer", async () => {
+  const { ConnectedHosts } = await import("./index.js");
+  const destination = await daemon();
+  const home = await mkdtemp(join(tmpdir(), "hosts-reverse-offer-"));
+  cleanup.push(() => rm(home, { recursive: true, force: true }));
+  const registry = new ConnectedHosts(home, { serverId: "srv_dialer", label: "Dialer" });
+  cleanup.push(() => registry.close());
+  const manager = { sourceId: "operator", manageSources: false };
+  const admin = {
+    sourceId: "admin",
+    manageSources: true,
+    permissions: ["workspace.read", "access.manage"] as const,
+  };
+  const token = "cd".repeat(32);
+  const offer = { reverseOffer: { token, permissions: ["workspace.read"] } } satisfies HostUpdate;
+  const host = await registry.add({ connection: `127.0.0.1:${destination.port}` }, manager);
+  await expect
+    .poll(async () => (await registry.list()).hosts[0]?.status, { timeout: 15000 })
+    .toBe("online");
+  await expect(registry.update(host.registrationId, offer, manager)).rejects.toMatchObject({
+    code: "permission_denied",
+  });
+  await expect(
+    registry.update(
+      host.registrationId,
+      { reverseOffer: { token, permissions: ["workspace.write"] } },
+      admin,
+    ),
+  ).rejects.toMatchObject({ code: "permission_denied" });
+  const enabled = await registry.update(host.registrationId, offer, admin);
+  expect(enabled).toMatchObject({ reverseEnabled: true, status: "online" });
+  expect(JSON.stringify(enabled)).not.toContain(token);
+  await expect(
+    registry.update(host.registrationId, { reverseOffer: null }, manager),
+  ).rejects.toMatchObject({ code: "permission_denied" });
+  const revoked = await registry.update(host.registrationId, { reverseOffer: null }, admin);
+  expect(revoked).toMatchObject({ status: "online" });
+  expect(revoked).not.toHaveProperty("reverseEnabled");
 });
 
 /** Real WebSocket proxy records the A–B physical wire without replacing either daemon. */
@@ -2720,3 +2823,55 @@ test.each([false, true])(
       .toEqual([]);
   },
 );
+
+test("bidirectional connected hosts share one physical link and can revoke reverse access", async () => {
+  const dialer = await daemon();
+  const acceptor = await daemon();
+  const wire = await hostWire(acceptor);
+  const origin = (await api(dialer)).paseo;
+  const destination = (await api(acceptor)).paseo;
+  const dialerId = (await origin.hosts.list()).self.serverId;
+  const outbound = await origin.hosts.add({ connection: wire.connection });
+  const acceptorId = (await online(origin)).hosts[0]!.serverId!;
+  const reverseToken = "ab".repeat(32);
+
+  await origin.hosts.update(outbound.registrationId, {
+    reverseOffer: { token: reverseToken, permissions: ["workspace.read"] },
+  });
+  expect((await destination.hosts.list()).hosts).toEqual([]);
+  const incoming = await destination.hosts.add({
+    connection: `reverse://${dialerId}`,
+    incomingToken: reverseToken,
+    label: "Dialing daemon",
+  });
+  expect((await online(destination)).hosts[0]).toMatchObject({
+    registrationId: incoming.registrationId,
+    serverId: dialerId,
+    direction: "incoming",
+  });
+
+  const forward = await origin.hosts.client(acceptorId);
+  const reverse = await destination.hosts.client(dialerId);
+  cleanup.push(
+    () => forward.dispose(),
+    () => reverse.dispose(),
+  );
+  const [forwardResult, reverseResult] = await Promise.all([
+    forward.workspaces.list(),
+    reverse.workspaces.list(),
+  ]);
+  expect(forwardResult.entries).toEqual([]);
+  expect(reverseResult.entries).toEqual([]);
+  await expect(
+    reverse.workspaces.create({ source: { kind: "directory", path: dialer.paseoHome } }),
+  ).rejects.toMatchObject({ code: "access_denied" });
+  expect(wire.connections()).toBe(1);
+  expect(wire.active()).toBe(1);
+  expect(JSON.stringify(await origin.hosts.list())).not.toContain(reverseToken);
+  expect(JSON.stringify(await destination.hosts.list())).not.toContain(reverseToken);
+
+  await origin.hosts.update(outbound.registrationId, { reverseOffer: null });
+  await expect.poll(async () => (await destination.hosts.list()).hosts[0]?.status).toBe("offline");
+  expect((await forward.workspaces.list()).entries).toEqual([]);
+  expect(wire.connections()).toBe(1);
+});

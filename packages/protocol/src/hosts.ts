@@ -1,11 +1,18 @@
 import { z } from "zod";
+import { DaemonPermissionSchema } from "./daemon-permissions.js";
 
 export const HostMetadataSchema = z.record(z.string().max(256), z.string().max(4096));
+const HostReverseTokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const HostReverseOfferSchema = z.object({
+  token: HostReverseTokenSchema,
+  permissions: z.array(DaemonPermissionSchema).min(1).max(32),
+});
 export const HostAddSchema = z.object({
   connection: z.string().min(1).max(16384),
   label: z.string().max(256).optional(),
   metadata: HostMetadataSchema.optional(),
   sourceKey: z.string().min(1).max(256).optional(),
+  incomingToken: HostReverseTokenSchema.optional(),
 });
 export const HostUpdateSchema = z.object({
   label: z.string().max(256).nullable().optional(),
@@ -13,10 +20,14 @@ export const HostUpdateSchema = z.object({
   enabled: z.boolean().optional(),
   connection: z.string().min(1).max(16384).optional(),
   replaceIdentity: z.boolean().optional(),
+  reverseOffer: HostReverseOfferSchema.nullable().optional(),
 });
 export const HostSummarySchema = z.object({
   registrationId: z.string(),
   serverId: z.string().nullable(),
+  direction: z.literal("incoming").optional(),
+  reverseEnabled: z.boolean().optional(),
+  reverseStatus: z.enum(["connecting", "online", "offline", "error"]).optional(),
   label: z.string().nullable(),
   source: z.object({ id: z.string(), key: z.string() }),
   metadata: HostMetadataSchema,
@@ -117,6 +128,8 @@ export const HostsLinkOpenRequestSchema = z.object({
   requestId: z.string(),
   channelId: z.string().min(1).max(256),
   flowControl: z.boolean().optional(),
+  purpose: z.literal("reverse").optional(),
+  peerServerId: z.string().min(1).max(256).optional(),
 });
 export const HostsLinkOpenResponseSchema = z.object({
   type: z.literal("hosts.link.open.response"),

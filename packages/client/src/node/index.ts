@@ -1,4 +1,4 @@
-export { createHostChannelTransport } from "../hosts/index.js";
+export { createHostChannelTransport, createReverseHostChannelTransport } from "../hosts/index.js";
 import { HostTransportBudget } from "./buffering.js";
 export { HostTransportBudget } from "./buffering.js";
 import { homedir } from "node:os";

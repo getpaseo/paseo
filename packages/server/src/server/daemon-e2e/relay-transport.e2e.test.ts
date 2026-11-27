@@ -543,6 +543,128 @@ async function waitForCapturedLog(
     120000,
   );
 
+  test.skipIf(usesExternalRelay)(
+    "connected hosts use a single protected relay connection for bidirectional routes and recovery",
+    async ({ onTestFinished }) => {
+      onTestFinished(stopRelay);
+      await startRelay({ useLocalRelay: true });
+      const port = relayPort;
+      const accepting = await createTestPaseoDaemon({
+        relayEnabled: true,
+        relayEndpoint: `127.0.0.1:${port}`,
+        relayUseTls: false,
+        relayPublicUseTls: false,
+        relayRequireProtectedSecurity: true,
+      });
+      onTestFinished(() => accepting.close());
+      const dialing = await createTestPaseoDaemon();
+      onTestFinished(() => dialing.close());
+      const wire = await relayWire(port);
+      onTestFinished(() => wire.close());
+
+      const dialingClient = createHostClient(`127.0.0.1:${dialing.port}`, {
+        clientId: crypto.randomUUID(),
+      });
+      const acceptingClient = createHostClient(`127.0.0.1:${accepting.port}`, {
+        clientId: crypto.randomUUID(),
+      });
+      onTestFinished(() => dialingClient.close());
+      onTestFinished(() => acceptingClient.close());
+      await Promise.all([dialingClient.connect(), acceptingClient.connect()]);
+      const dialingApi = createPaseoApi(dialingClient);
+      const acceptingApi = createPaseoApi(acceptingClient);
+      onTestFinished(() => dialingApi.dispose());
+      onTestFinished(() => acceptingApi.dispose());
+
+      const offerUrl = await getPairingOfferUrl({
+        paseoHome: accepting.paseoHome,
+        relayEnabled: true,
+        relayEndpoint: accepting.config.relayEndpoint,
+        relayRequireProtectedSecurity: true,
+      });
+      const { serverId: acceptingId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+      const dialingId = (await dialingApi.hosts.list()).self.serverId;
+      const connection = new URL(`relay://127.0.0.1:${wire.port}/${acceptingId}`);
+      connection.searchParams.set("key", daemonPublicKeyB64);
+      connection.searchParams.set("security", "protected");
+      const outbound = await dialingApi.hosts.add({ connection: connection.toString() });
+      await expect
+        .poll(async () => (await dialingApi.hosts.list()).hosts[0]?.status, { timeout: 20000 })
+        .toBe("online");
+      const admittedConnections = wire.connections();
+      const token = "ab".repeat(32);
+      const incoming = await acceptingApi.hosts.add({
+        connection: `reverse://${dialingId}`,
+        incomingToken: token,
+      });
+      await dialingApi.hosts.update(outbound.registrationId, {
+        reverseOffer: {
+          token,
+          permissions: ["daemon.read", "workspace.read", "workspace.write", "workspace.manage"],
+        },
+      });
+      const incomingStatus = async () => (await acceptingApi.hosts.list()).hosts[0]?.status;
+      await expect.poll(incomingStatus, { timeout: 20000 }).toBe("online");
+
+      const forward = await dialingApi.hosts.client(acceptingId);
+      const reverse = await acceptingApi.hosts.client(dialingId);
+      onTestFinished(() => forward.dispose());
+      onTestFinished(() => reverse.dispose());
+      const [forwardWorkspace, reverseWorkspace] = await Promise.all([
+        forward.workspaces.create({ source: { kind: "directory", path: accepting.staticDir } }),
+        reverse.workspaces.create({ source: { kind: "directory", path: dialing.staticDir } }),
+      ]);
+      const echo = {
+        command: process.execPath,
+        args: ["-e", "process.stdin.on('data', data => process.stdout.write(data))"],
+      };
+      const [forwardTerminal, reverseTerminal] = await Promise.all([
+        forwardWorkspace.terminals.create(echo),
+        reverseWorkspace.terminals.create(echo),
+      ]);
+      const exchange = async (marker: string) => {
+        const forwardRoute = await openConnectedHostTerminal(
+          dialingClient,
+          acceptingId,
+          forwardTerminal.id,
+        );
+        try {
+          const reverseRoute = await openConnectedHostTerminal(
+            acceptingClient,
+            dialingId,
+            reverseTerminal.id,
+          );
+          try {
+            await Promise.all([
+              forwardRoute.write(`forward_${marker}\n`),
+              reverseRoute.write(`reverse_${marker}\n`),
+            ]);
+            await expect.poll(forwardRoute.output).toContain(`forward_${marker}`);
+            await expect.poll(reverseRoute.output).toContain(`reverse_${marker}`);
+          } finally {
+            reverseRoute.close();
+          }
+        } finally {
+          forwardRoute.close();
+        }
+      };
+      await exchange("before");
+      expect(wire.active()).toBe(1);
+      expect(wire.connections()).toBe(admittedConnections);
+
+      await stopRelay();
+      await expect.poll(incomingStatus, { timeout: 15000 }).toBe("offline");
+      await startRelay({ useLocalRelay: true, port });
+      await expect.poll(incomingStatus, { timeout: 30000 }).toBe("online");
+      expect((await acceptingApi.hosts.list()).hosts[0]?.registrationId).toBe(
+        incoming.registrationId,
+      );
+      await exchange("after");
+      expect(wire.active()).toBe(1);
+    },
+    120000,
+  );
+
   test("password-protected daemon refuses a relay client without the password", async () => {
     let daemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | undefined;
     const clients: HostClient[] = [];
