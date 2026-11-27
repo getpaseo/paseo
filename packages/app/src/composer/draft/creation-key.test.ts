@@ -1556,3 +1556,69 @@ it.each([
     expect(retirements).toBe(0);
   },
 );
+
+it.each(["failed", "completed"] as const)(
+  "recovers a handed-off workspace's %s receipt when its ready checkpoint was lost",
+  async (phase) => {
+    const disk = storage();
+    await creationsFor(disk).submit({
+      ...scope,
+      kind: "workspace",
+      request: handedOffRequest,
+      send: async () => undefined,
+    });
+    let observations = 0;
+    const restored = creationsFor(disk);
+    const result = await restored.reconcileWorkspace({
+      ...scope,
+      workspaceId: handedOffWorkspace.id,
+      request: destinationRequest,
+      observe: async (kind, key, onEvent) => {
+        observations += 1;
+        const receipt = {
+          ...failure({ kind, idempotencyKey: key, unknown: false }),
+          phase,
+          workspace: handedOffWorkspace,
+          ...(phase === "completed" ? { agent: recoveredAgent, error: null } : {}),
+        };
+        onEvent(receipt);
+        return receipt;
+      },
+    });
+    expect(observations).toBe(1);
+    expect(result).toEqual(phase === "completed" ? recoveredAgent : undefined);
+  },
+);
+
+it.each(["missing", "different"] as const)(
+  "refuses handed-off recovery when the observed workspace is %s",
+  async (ready) => {
+    const disk = storage();
+    await creationsFor(disk).submit({
+      ...scope,
+      kind: "workspace",
+      request: handedOffRequest,
+      send: async () => undefined,
+    });
+    let observations = 0;
+    await expect(
+      creationsFor(disk).reconcileWorkspace({
+        ...scope,
+        workspaceId: handedOffWorkspace.id,
+        request: destinationRequest,
+        observe: async (kind, key, onEvent) => {
+          observations += 1;
+          const receipt = {
+            ...failure({ kind, idempotencyKey: key, unknown: false }),
+            ...(ready === "different"
+              ? { workspace: { ...handedOffWorkspace, id: "another-workspace" } }
+              : {}),
+          };
+          onEvent(receipt);
+          return receipt;
+        },
+      }),
+    ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+    expect(observations).toBe(1);
+  },
+);

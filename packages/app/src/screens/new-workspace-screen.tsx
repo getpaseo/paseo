@@ -402,7 +402,7 @@ async function createMultiplicityWorkspace(input: {
     ...(firstAgentContext ? { firstAgentContext } : {}),
     ...(Object.keys(input.metadata).length > 0 ? { metadata: { ...input.metadata } } : {}),
   };
-  const admissionRequest = { ...request, launchTarget: input.launchTarget };
+  const admissionRequest = { request, launchTarget: input.launchTarget };
   const retry = await draftCreations.workspaceRetry({
     serverId: input.serverId,
     draftId: input.idempotencyKey,

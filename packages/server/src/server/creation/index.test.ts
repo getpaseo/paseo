@@ -322,3 +322,54 @@ test("observer failures are logged without failing creation", async () => {
     }),
   );
 });
+
+test.each([
+  { kind: "workspace", phase: "accepted" },
+  { kind: "workspace", phase: "workspace_ready" },
+  { kind: "agent", phase: "accepted" },
+] as const)(
+  "settles an orphaned $kind/$phase receipt with no in-flight stage after restart",
+  async ({ kind, phase }) => {
+    const f = await fixture();
+    const identity = createHash("sha256")
+      .update(JSON.stringify([kind, f.input.key]))
+      .digest("hex");
+    const snapshot = {
+      kind,
+      phase,
+      idempotencyKey: f.input.key,
+      revision: 1,
+      error: null,
+      workspaceId: workspace.id,
+      agentId: agent.id,
+      ...(phase === "workspace_ready" ? { workspace } : {}),
+    };
+    await writeFile(
+      join(f.directory, `${identity}.json`),
+      JSON.stringify({ fingerprint: "persisted", inFlight: null, snapshot }),
+    );
+    const updates: CreationSnapshot[] = [];
+    const subscription = await new CreationService(f.directory, silentLogger).subscribe(
+      kind,
+      f.input.key,
+      (update) => updates.push(update),
+    );
+    expect(subscription.snapshot).toMatchObject({
+      kind,
+      phase: "failed",
+      outcomeUnknown: true,
+      error: `${kind}_request_outcome_unknown`,
+      revision: 2,
+    });
+    expect(updates).toEqual([subscription.snapshot]);
+    subscription.unsubscribe();
+    const repeated = await new CreationService(f.directory, silentLogger).subscribe(
+      kind,
+      f.input.key,
+      () => {},
+    );
+    expect(repeated.snapshot).toEqual(subscription.snapshot);
+    repeated.unsubscribe();
+    expect(f.calls).toEqual([]);
+  },
+);

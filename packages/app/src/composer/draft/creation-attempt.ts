@@ -35,9 +35,13 @@ const RecordSchema = z.object({
 });
 type Record = z.infer<typeof RecordSchema>;
 
+function workspaceRequest(request: object): CreateWorkspaceRequestOptions {
+  return ("request" in request ? request.request : request) as CreateWorkspaceRequestOptions;
+}
+
 function workspacePlacementKey(request: object): string {
   return draftCreationKey("workspace-placement", {
-    source: "source" in request ? request.source : null,
+    source: workspaceRequest(request).source ?? null,
   });
 }
 
@@ -107,7 +111,7 @@ function notifyObserver(
 }
 
 function requestsAgent(input: Pick<Submission<unknown>, "kind" | "request">): boolean {
-  return input.kind === "agent" || ("agent" in input.request && input.request.agent != null);
+  return input.kind === "agent" || workspaceRequest(input.request).agent != null;
 }
 
 function isStandaloneReplay(attempt: Attempt, draftId: string, request: object): boolean {
@@ -165,7 +169,7 @@ function agentIntent(request: object, root: string): string | undefined {
 }
 
 function workspaceAgentIntent(request: object): string | undefined {
-  const input = request as CreateWorkspaceRequestOptions;
+  const input = workspaceRequest(request);
   if (!input.agent || !input.source) return undefined;
   const root = input.source.kind === "directory" ? input.source.path : input.source.cwd;
   return root ? agentIntent(input.agent, root) : undefined;
@@ -344,14 +348,14 @@ export function createDraftCreations(deps: Dependencies) {
         isStandaloneReplay(prior, input.draftId, input.request)
       )
         return undefined;
-      const ready = scope.record.workspace;
-      if (prior.kind === "workspace" && (!ready || ready.id !== input.workspaceId))
-        throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
       const snapshot = await input.observe(prior.kind, prior.key, (update) =>
         acceptSnapshot(scope, update, true),
       );
       await scope.writes;
       if (snapshot?.kind !== prior.kind || snapshot.idempotencyKey !== prior.key)
+        throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
+      const ready = scope.record.workspace;
+      if (prior.kind === "workspace" && (!ready || ready.id !== input.workspaceId))
         throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
       if (snapshot.phase === "failed" && snapshot.outcomeUnknown === false) return undefined;
       if (

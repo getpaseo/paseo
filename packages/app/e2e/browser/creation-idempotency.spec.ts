@@ -1,3 +1,5 @@
+import { draftCreationKey } from "../../src/composer/draft/creation-key";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { reselectModel } from "../support/helpers/model-memory";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, renameSync, rmSync } from "node:fs";
@@ -973,6 +975,103 @@ test("a retired explicit fork route uses a fresh creation scope when revisited a
       )
       .toBe(2);
   } finally {
+    await client.close();
+  }
+});
+
+test("an explicit local draft retains the pre-upgrade workspace key encoding without admission storage", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  const client = await connectNewWorkspaceDaemonClient();
+  const routeDraftId = "draft_upgrade_workspace_key";
+  const prompt = "Recover the pre-upgrade local start";
+  const frames = await loadSessionMessageReaders();
+  const submissions: Array<{ key: string | undefined; expected: string }> = [];
+  let suppressReadiness = true;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((frame) => {
+      const message = frames.client(frame);
+      if (message?.type === "workspace.create.request") {
+        const {
+          type: _type,
+          requestId: _requestId,
+          subscribe: _subscribe,
+          idempotencyKey,
+          ...request
+        } = message;
+        // Wire validation adds empty labels; this draft did not submit labels.
+        const { labels: _labels, ...agent } = request.agent!;
+        submissions.push({
+          key: idempotencyKey,
+          expected: draftCreationKey(routeDraftId, {
+            request: { ...request, agent },
+            launchTarget: { kind: "chat" },
+          }),
+        });
+      }
+      server.send(frame);
+    });
+    server.onMessage((frame) => {
+      const message = frames.server(frame);
+      if (
+        suppressReadiness &&
+        (message?.type === "workspace.create.update" ||
+          message?.type === "workspace.create.response")
+      )
+        return;
+      browser.send(frame);
+    });
+  });
+  try {
+    await creation.openWorkspaceForm("local");
+    const url = new URL(page.url());
+    url.searchParams.set("draftId", routeDraftId);
+    await page.goto(`${url.pathname}${url.search}`);
+    await reselectModel(page, "mock", "Ten second stream");
+    const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+    await creation.submitPrompt(prompt, "Create");
+    await expect.poll(() => submissions.length).toBe(1);
+    expect(submissions[0]!.key).toBe(submissions[0]!.expected);
+    await expect
+      .poll(
+        async () =>
+          (await client.fetchWorkspaces()).entries.filter((entry) => !before.has(entry.id)).length,
+      )
+      .toBe(1);
+    await page.waitForFunction(
+      (text) => localStorage.getItem("paseo-drafts")?.includes(text),
+      prompt,
+    );
+    await page.evaluate(() => {
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith("draft-creation:")) localStorage.removeItem(key);
+      }
+    });
+    suppressReadiness = false;
+    await page.reload();
+    await reselectModel(page, "mock", "Ten second stream");
+    await creation.submitPrompt(prompt, "Create");
+    await expect.poll(() => submissions.length).toBe(2);
+    expect(submissions.map((submission) => submission.key)).toEqual([
+      submissions[0]!.expected,
+      submissions[0]!.expected,
+    ]);
+    await startup.release();
+    await creation.expectPromptVisible(prompt);
+    const created = (await client.fetchWorkspaces()).entries.filter(
+      (entry) => !before.has(entry.id),
+    );
+    expect(created).toHaveLength(1);
+    expect(
+      (await client.fetchAgents()).entries.filter(
+        (entry) => entry.agent.workspaceId === created[0]!.id,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    await startup.release();
     await client.close();
   }
 });
