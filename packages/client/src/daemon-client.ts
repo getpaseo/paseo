@@ -1482,6 +1482,7 @@ export class DaemonClient {
   > = new Map();
   private eventListeners: Set<DaemonEventHandler> = new Set();
   private waiters: Set<Waiter<unknown>> = new Set();
+  private readonly creationReceiptLifetime = new AbortController();
   private checkoutStatusInFlight: Map<string, Promise<CheckoutStatusPayload>> = new Map();
   private connectionListeners: Set<(status: ConnectionState) => void> = new Set();
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1862,6 +1863,7 @@ export class DaemonClient {
     this.disposeTransport(1000, "Client closed");
     this.providerSnapshotUpdates.clear();
     const closedError = new DaemonClientClosedError("Daemon client closed");
+    this.creationReceiptLifetime.abort();
     this.clearWaiters(closedError);
     this.rejectPendingSendQueue(closedError);
     await this.diffStreams.close();
@@ -3536,13 +3538,22 @@ export class DaemonClient {
     idempotencyKey: string,
     onEvent: (snapshot: CreationSnapshot) => void,
   ): Promise<CreationSnapshot | null> {
+    const signal = this.creationReceiptLifetime.signal;
+    if (signal.aborted) throw new DaemonClientClosedError("Daemon client closed");
     if (this.lastServerInfoMessage?.features?.creationLifecycle !== true) return null;
     const observation = this.observe("creation.subscribe.response", {
       type: "creation.subscribe.request",
       kind,
       idempotencyKey,
     });
+    let rejectClosed!: () => void;
     const result = new Promise<CreationSnapshot | null>((resolve, reject) => {
+      rejectClosed = () => reject(new DaemonClientClosedError("Daemon client closed"));
+      signal.addEventListener("abort", rejectClosed, { once: true });
+      if (signal.aborted) {
+        rejectClosed();
+        return;
+      }
       const accept = (snapshot: CreationSnapshot | null) => {
         if (!snapshot) {
           resolve(null);
@@ -3561,6 +3572,7 @@ export class DaemonClient {
       });
     });
     return result.finally(() => {
+      signal.removeEventListener("abort", rejectClosed);
       void observation.release().catch(() => undefined);
     });
   }

@@ -10805,3 +10805,53 @@ test("waitForCreation observes a saved workspace receipt without submitting crea
     "workspace.create.request",
   );
 });
+
+test.each(["workspace", "agent"] as const)(
+  "closing a client rejects a saved %s receipt wait after a nonterminal snapshot",
+  async (kind) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disposed-receipt-wait",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { creationLifecycle: true, ownedSubscriptions: true } });
+    await connected;
+    const phases: string[] = [];
+    const result = client.waitForCreation(kind, "saved-receipt", (snapshot) =>
+      phases.push(snapshot.phase),
+    );
+    const outcome = result.catch((error: unknown) => error);
+    await expect.poll(() => mock.sent.length).toBe(1);
+    const request = parseSentFrame(mock.sent[0]);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "creation.subscribe.response",
+        payload: {
+          requestId: request.requestId,
+          subscriptionId: "receipt-observer",
+          snapshot: {
+            kind,
+            idempotencyKey: "saved-receipt",
+            revision: 1,
+            phase: "accepted",
+            workspaceId: null,
+            agentId: null,
+            error: null,
+          },
+          error: null,
+        },
+      }),
+    );
+    expect(phases).toEqual(["accepted"]);
+    await client.close();
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(await outcome).toMatchObject({ message: "Daemon client closed" });
+    await expect(client.waitForCreation(kind, "saved-receipt", () => {})).rejects.toThrow(
+      "Daemon client closed",
+    );
+  },
+);
