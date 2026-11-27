@@ -1,0 +1,27 @@
+name: Cancel iOS App Store review
+
+# Cancel an active in-flight iOS App Store review submission on App Store
+# Connect. Pass expected_version to abort safely if Apple has already moved on
+# to a different version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        type: string
+        required: false
+        description: "Expected marketing version currently in review, e.g. 0.18.0. Fails without cancelling if the active submission is for a different version."
+
+jobs:
+  cancel_ios_review:
+    name: Cancel iOS App Store review
+    environment: production
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Install fastlane
+        run: bundle install
+      - name: Cancel review
+        run: |
+          export EXPECTED_VERSION="${{ inputs.expected_version }}"
+          bundle exec fastlane ios cancel_review
