@@ -17,6 +17,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
+import { getIsElectron } from "@/constants/platform";
+import { readHostBrowserRouting } from "@/desktop/browser/proxy";
 import { openServiceUrl } from "@/utils/open-service-url";
 import {
   resolveWorkspaceLaunchEndpointLink,
@@ -278,6 +280,7 @@ function LaunchEndpointRow({
   preferredRouteKind,
   onSelectRouteKind,
   onOpenUrlInBrowserTab,
+  remotePreviewServerId,
 }: {
   activeConnection: ActiveConnection | null;
   endpoint: WorkspaceLaunches[number]["endpoints"][number];
@@ -285,20 +288,30 @@ function LaunchEndpointRow({
   preferredRouteKind: WorkspaceScriptLinkKind | null;
   onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
+  remotePreviewServerId?: string;
 }): ReactElement {
   const { t } = useTranslation();
   // COMPAT(workspaceLaunchTcpListeners): added in v0.7.0, remove after 2027-02-28 once the
   // supported daemon floor is >= v0.7.0. Older daemons omit the protocol for HTTP endpoints.
   const protocol = endpoint.protocol ?? "http";
-  const endpointLink = resolveWorkspaceLaunchEndpointLink({ endpoint, activeConnection });
+  const serverId = remotePreviewServerId;
+  const endpointLink = resolveWorkspaceLaunchEndpointLink({
+    endpoint,
+    activeConnection,
+    inAppRemotePreview: Boolean(serverId && onOpenUrlInBrowserTab),
+  });
   const selectedTarget =
     endpointLink.targets.find((target) => target.kind === preferredRouteKind) ??
     endpointLink.primary;
   const handleOpen = useCallback(() => {
     if (selectedTarget) {
-      void openServiceUrl(selectedTarget.url, { openInApp: onOpenUrlInBrowserTab });
+      if (serverId && onOpenUrlInBrowserTab && selectedTarget.kind === "direct") {
+        onOpenUrlInBrowserTab(selectedTarget.url);
+        return;
+      }
+      void openServiceUrl(selectedTarget.url, { openInApp: onOpenUrlInBrowserTab, serverId });
     }
-  }, [onOpenUrlInBrowserTab, selectedTarget]);
+  }, [onOpenUrlInBrowserTab, selectedTarget, serverId]);
 
   return (
     <View style={styles.endpointRow}>
@@ -372,6 +385,7 @@ interface LaunchRowProps {
   onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
+  remotePreviewServerId?: string;
 }
 
 function LaunchRow({
@@ -389,6 +403,7 @@ function LaunchRow({
   onSelectRouteKind,
   onViewTerminal,
   onOpenUrlInBrowserTab,
+  remotePreviewServerId,
 }: LaunchRowProps): ReactElement {
   const { t } = useTranslation();
   const isRunning = launch.lifecycle === "running";
@@ -528,12 +543,29 @@ function LaunchRow({
               preferredRouteKind={preferredRouteKind}
               onSelectRouteKind={onSelectRouteKind}
               onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+              remotePreviewServerId={remotePreviewServerId}
             />
           ))}
         </View>
       ) : null}
     </View>
   );
+}
+
+function useLaunchHostRouting(serverId: string) {
+  const tunnelSupported = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.networkTunnel === true,
+  );
+  const hostSnapshot = useHostRuntimeSnapshot(serverId);
+  const routing =
+    getIsElectron() && hostSnapshot?.connectionStatus === "online" && tunnelSupported
+      ? readHostBrowserRouting(serverId)
+      : null;
+  return {
+    activeConnection: hostSnapshot?.activeConnection ?? null,
+    remotePreviewServerId:
+      routing?.kind === "remote" && routing.support === "supported" ? serverId : undefined,
+  };
 }
 
 export function WorkspaceLaunchesSection({
@@ -551,7 +583,7 @@ export function WorkspaceLaunchesSection({
   const { t } = useTranslation();
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
+  const { activeConnection, remotePreviewServerId } = useLaunchHostRouting(serverId);
   const preferredRouteKind = useWorkspaceServiceRoutePreferencesStore(
     (state) => state.byServerId[serverId] ?? null,
   );
@@ -673,6 +705,7 @@ export function WorkspaceLaunchesSection({
           onSelectRouteKind={handleSelectRouteKind}
           onViewTerminal={onViewTerminal}
           onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+          remotePreviewServerId={remotePreviewServerId}
         />
       ))}
     </View>

@@ -328,6 +328,8 @@ To try switching in a scratch project with Node.js, set `launches` in `paseo.jso
 
 Start `dev` from **Run** and open its discovered HTTP link. Switch to `full` and open its link.
 The response changes from `dev` to `full` while the port block stays the same.
+On desktop, opening an HTTP endpoint on a supported remote host previews it in the workspace's
+Paseo browser tab through that host's network.
 
 ### Reverse proxy
 

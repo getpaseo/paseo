@@ -123,10 +123,18 @@ export function resolveWorkspaceScriptLink(input: {
 export function resolveWorkspaceLaunchEndpointLink(input: {
   endpoint: WorkspaceLaunchEndpointPayload;
   activeConnection: ActiveConnection | null;
+  inAppRemotePreview?: boolean;
 }): ResolvedWorkspaceScriptLink {
   const { endpoint, activeConnection } = input;
   if (endpoint.protocol === "tcp") {
     return { primary: null, targets: [] };
+  }
+  if (input.inAppRemotePreview) {
+    const targets: WorkspaceScriptLinkTarget[] = [];
+    addTarget(targets, "direct", `http://localhost:${endpoint.port}`);
+    const publicUrl = endpoint.publicProxyUrl ?? endpoint.proxyUrl;
+    if (!isLocalOnlyUrl(publicUrl)) addTarget(targets, "public", publicUrl);
+    return { primary: targets[0] ?? null, targets };
   }
 
   const requiresPublicRoute =
