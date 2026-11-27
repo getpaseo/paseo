@@ -1413,6 +1413,64 @@ test("orders buffered pre-steer output before an immediately accepted steer", as
   }
 });
 
+test("history sync holds the agent's run from the read to the last row", async () => {
+  // A turn starting while the provider reads would put its prompt ahead of what was read, and
+  // what the provider already counted as read would be dropped.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  class SyncingSession extends TestAgentSession {
+    async syncAppendedHistory(): Promise<import("./agent-sdk-types.js").AgentHistorySyncResult> {
+      await gate;
+      return {
+        kind: "appended",
+        events: [
+          {
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "written elsewhere" },
+          },
+        ],
+      };
+    }
+  }
+  const session = new SyncingSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-sync-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const sync = manager.syncAgentHistory(agent.id);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+
+    release();
+    await expect(sync).resolves.toEqual({ kind: "appended", items: 1 });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    const rows = manager.fetchTimeline(agent.id, { limit: 0 }).rows;
+    expect(rows.map((row) => row.item)).toContainEqual({
+      type: "assistant_message",
+      text: "written elsewhere",
+    });
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("a steer the provider names without echoing it can be rewound to", async () => {
   // Claude takes a steered message into the running turn without echoing it back as a user
   // message, so the id it minted for the message reaches the manager only through the admission.

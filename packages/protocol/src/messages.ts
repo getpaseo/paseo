@@ -2093,6 +2093,17 @@ export const RefreshAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+/**
+ * Reads what another process appended to a loaded agent's history since it was loaded, such as a
+ * Claude Code terminal continuing the same session, without reloading the agent. Gated on
+ * `server_info.features.agentHistorySync`.
+ */
+export const AgentHistorySyncRequestSchema = z.object({
+  type: z.literal("agent.history.sync.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
 export const CancelAgentRequestMessageSchema = z.object({
   type: z.literal("cancel_agent_request"),
   agentId: z.string(),
@@ -2411,6 +2422,25 @@ export const WorkspacePinSetResponsePayloadSchema = z.object({
   accepted: z.boolean(),
   pinnedAt: z.string().nullable(),
   error: z.string().nullable(),
+});
+
+export const AgentHistorySyncResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  agentId: z.string(),
+  /**
+   * `appended`: the new records were added to the timeline. `unchanged`: nothing new.
+   * `reloaded`: the history could not be read in part, so the agent was reloaded as
+   * `refresh_agent_request` does. `busy`: a turn is running; nothing was read.
+   */
+  outcome: z.string(),
+  appendedItems: z.number(),
+  timelineSize: z.number(),
+  error: z.string().nullable(),
+});
+
+export const AgentHistorySyncResponseSchema = z.object({
+  type: z.literal("agent.history.sync.response"),
+  payload: AgentHistorySyncResponsePayloadSchema,
 });
 
 export const WorkspacePinSetResponseSchema = z.object({
@@ -3647,6 +3677,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentMetadataUpdateRequestSchema,
   WorkspaceMetadataUpdateRequestSchema,
   WorkspacePinSetRequestSchema,
+  AgentHistorySyncRequestSchema,
   WorkspaceBaseBranchSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
@@ -4037,6 +4068,8 @@ export const ServerInfoStatusPayloadSchema = z
         backgroundWorkspaces: z.boolean().optional(),
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: z.boolean().optional(),
+        /** `agent.history.sync.request` is understood. */
+        agentHistorySync: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
@@ -8065,6 +8098,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopStopResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
+  // Appended last: generated validators in released packages address messages by position.
+  AgentHistorySyncResponseSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -8169,6 +8204,8 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
   typeof WorkspaceTitleSetResponsePayloadSchema
 >;
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
+export type AgentHistorySyncResponse = z.infer<typeof AgentHistorySyncResponseSchema>;
+export type AgentHistorySyncRequest = z.infer<typeof AgentHistorySyncRequestSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<

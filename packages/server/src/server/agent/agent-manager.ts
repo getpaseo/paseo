@@ -4374,6 +4374,62 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
+  /**
+   * Adds to a loaded agent's timeline what another process appended to its provider history
+   * (a Claude Code terminal on the same session), without reloading the session or replacing
+   * the timeline: only the new rows are recorded and sent. `reload` when the session cannot
+   * read the appended part on its own; the caller reloads the agent instead.
+   */
+  async syncAgentHistory(
+    agentId: string,
+  ): Promise<
+    | { kind: "busy" }
+    | { kind: "unchanged" }
+    | { kind: "appended"; items: number }
+    | { kind: "reload"; reason: string }
+  > {
+    const agent = this.requireSessionAgent(agentId);
+    if (this.hasInFlightRun(agentId)) return { kind: "busy" };
+    if (!agent.historyPrimed) return { kind: "reload", reason: "its history is not loaded" };
+    if (!agent.session.syncAppendedHistory) {
+      return { kind: "reload", reason: "its provider cannot sync history" };
+    }
+    // Held from the read to the last row: a turn starting in between would put its prompt
+    // ahead of what was read, and what the session already took as read would be lost.
+    const lock = this.runs.createPendingRun(agentId);
+    try {
+      const result = await agent.session.syncAppendedHistory();
+      if (result.kind !== "appended") return result;
+      let items = 0;
+      for (const rawEvent of result.events) {
+        const event = limitAgentStreamEventContent(rawEvent);
+        if (event.type !== "timeline") continue;
+        for (const item of projectAgentMessages(event.item)) {
+          const row = this.recordTimeline(
+            agent.id,
+            item,
+            event.timestamp ? { timestamp: event.timestamp } : undefined,
+          );
+          this.dispatchStream(
+            agent.id,
+            { ...event, item },
+            {
+              seq: row.seq,
+              epoch: this.timelineStore.getEpoch(agent.id),
+              timestamp: row.timestamp,
+            },
+          );
+          items++;
+        }
+      }
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      return { kind: "appended", items };
+    } finally {
+      this.runs.settleForegroundRun(agentId, lock.token);
+    }
+  }
+
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {

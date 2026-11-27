@@ -626,6 +626,16 @@ export interface ImportProviderSessionContext {
   launchContext?: AgentLaunchContext;
 }
 
+/**
+ * What another process appended to a session's own history since it was loaded or last synced.
+ * `reload` means the appended part cannot be read on its own (rewritten, branched, or holding
+ * records whose replay needs the whole history); the caller reloads the session instead.
+ */
+export type AgentHistorySyncResult =
+  | { kind: "unchanged" }
+  | { kind: "appended"; events: Extract<AgentStreamEvent, { type: "timeline" }>[] }
+  | { kind: "reload"; reason: string };
+
 export interface ImportedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
@@ -783,6 +793,8 @@ export interface AgentSession {
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
+  /** Reads only what was appended to this session's history elsewhere; see AgentHistorySyncResult. */
+  syncAppendedHistory?(): Promise<AgentHistorySyncResult>;
   /** A returned model is the effective selection committed by this mutation.
    * Returning void means the requested selection was accepted. No status read is required. */
   setModel?(modelId: string | null): Promise<void | { model: string | null }>;

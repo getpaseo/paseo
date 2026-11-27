@@ -3976,6 +3976,29 @@ export class DaemonClient {
     return status.agent;
   }
 
+  /**
+   * Adds to a loaded agent's timeline what another process appended to its history, reloading the
+   * agent only when that part cannot be read on its own. Needs `server_info.features.agentHistorySync`.
+   */
+  async syncAgentHistory(
+    agentId: string,
+    requestId?: string,
+  ): Promise<{ outcome: string; appendedItems: number; timelineSize: number }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "agent.history.sync.request", agentId },
+      responseType: "agent.history.sync.response",
+    });
+    if (payload.error !== null) {
+      throw new Error(payload.error);
+    }
+    return {
+      outcome: payload.outcome,
+      appendedItems: payload.appendedItems,
+      timelineSize: payload.timelineSize,
+    };
+  }
+
   async refreshAgent(agentId: string, requestId?: string): Promise<AgentRefreshedStatusPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
