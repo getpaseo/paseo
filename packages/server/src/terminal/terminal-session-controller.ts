@@ -1000,6 +1000,7 @@ export class TerminalSessionController {
         activeStream.outputCoalescer.flush();
         activeStream.needsSnapshot = true;
         void this.trySendSnapshot(activeStream);
+        if (activeStream.completion === "retain") this.scheduleStreamCompletion(activeStream);
         return;
       }
       if (message.type === "titleChange") {
@@ -1040,9 +1041,7 @@ export class TerminalSessionController {
         activeStream.needsSnapshot = true;
         void this.trySendSnapshot(activeStream);
       }
-      void this.completeStream(activeStream).catch((error) =>
-        this.sessionLogger.warn({ err: error }, "Failed to complete terminal stream"),
-      );
+      this.scheduleStreamCompletion(activeStream);
     });
     activeStream.unsubscribe = () => {
       unsubscribeOutput();
@@ -1218,9 +1217,7 @@ export class TerminalSessionController {
       detached = true;
       if (stream.completion === "close") continue;
       // Explicit close overrides retention while its final replay is pending.
-      const retaining = stream.completion === "retain";
       stream.completion = "close";
-      if (retaining && options?.emitExit) continue;
       const completion = options?.emitExit ? this.completeStream(stream) : stream.owner.release();
       void completion.catch((error) =>
         this.sessionLogger.warn({ err: error }, "Failed to release terminal stream"),
@@ -1229,11 +1226,20 @@ export class TerminalSessionController {
     return detached;
   }
 
+  private scheduleStreamCompletion(stream: ActiveTerminalStream): void {
+    void this.completeStream(stream).catch((error) =>
+      this.sessionLogger.warn({ err: error }, "Failed to complete terminal stream"),
+    );
+  }
+
   private async completeStream(stream: ActiveTerminalStream): Promise<void> {
     // Preserve bootstrap/snapshot ordering. Explicit release can remove this
     // registration while the read is pending, in which case it discards delivery.
     await stream.snapshotTask;
-    if (this.activeStreams.get(stream.slot) !== stream) return;
+    if (this.activeStreams.get(stream.slot) !== stream || stream.completion === "none") return;
+    // The worker can recover again after a failed final replay. Keep the
+    // snapshot-ready listener and live tail until replay succeeds or the view closes.
+    if (stream.completion === "retain" && stream.needsSnapshot) return;
     if (stream.snapshotOutput) {
       stream.outputCoalescer.handle(stream.snapshotOutput.toString("utf8"));
       stream.snapshotOutput = undefined;
@@ -1248,6 +1254,7 @@ export class TerminalSessionController {
       stream.completion = "none";
       return;
     }
+    stream.completion = "none";
     stream.owner.emit({ type: "terminal_stream_exit", payload: { terminalId: stream.terminalId } });
     await stream.owner.release();
   }

@@ -1232,6 +1232,9 @@ function exitFixture(
     output: (data: string, revision: number) => {
       for (const listener of outputs) listener({ type: "output", data, revision });
     },
+    ready: () => {
+      for (const listener of outputs) listener({ type: "snapshotReady" });
+    },
     exit: () => {
       exitInfo = { exitCode: 0, signal: null, lastOutputLines: [] };
       for (const listener of exits) listener(exitInfo);
@@ -1349,6 +1352,57 @@ describe("terminal output before natural exit", () => {
       await f.delivery.close();
     }
   });
+
+  test.each(["recovery", "dismissal"] as const)(
+    "keeps a failed final launch replay attached until %s",
+    async (resolution) => {
+      const readReplay = vi.fn(async () => terminalReplay("recovered final output", 3));
+      readReplay
+        .mockResolvedValueOnce(terminalReplay("before disconnect", 1))
+        .mockRejectedValueOnce(new Error("Worker disconnected during final replay"));
+      const f = exitFixture(readReplay, {
+        workspaceLaunch: { launchName: "dev", command: "./bin/dev", portBase: 42000, portCount: 4 },
+      });
+      try {
+        const owner = await f.subscribe({}, true, "retained-recovery");
+        await flushMicrotasks();
+        f.exit();
+        await flushMicrotasks();
+        expect(readReplay).toHaveBeenCalledTimes(2);
+        expect(f.outputs.size).toBe(1);
+        expect(f.delivery.registrationCount).toBe(1);
+        expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toEqual([]);
+
+        if (resolution === "dismissal") {
+          f.removeTerminal();
+          await flushMicrotasks();
+          expect(f.delivery.registrationCount).toBe(0);
+          expect(f.frames.at(-1)?.message).toEqual({
+            type: "terminal_stream_exit",
+            payload: { terminalId: "exit-terminal", subscriptionId: owner.id },
+          });
+        } else {
+          f.ready();
+          await flushMicrotasks();
+          expect(readReplay).toHaveBeenCalledTimes(3);
+          const restored = f.frames.filter(
+            (row) => row.binary?.opcode === TerminalStreamOpcode.Restore,
+          );
+          expect(restored).toHaveLength(2);
+          expect(Buffer.from(restored[1].binary!.payload).toString()).toContain(
+            "recovered final output",
+          );
+          expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toEqual(
+            [],
+          );
+          expect(f.delivery.registrationCount).toBe(1);
+        }
+        expect(f.outputs.size + f.exits.size).toBe(0);
+      } finally {
+        await f.delivery.close();
+      }
+    },
+  );
 
   test.each([true, false])(
     "keeps attached launch output after exit during restore (modern=%s)",

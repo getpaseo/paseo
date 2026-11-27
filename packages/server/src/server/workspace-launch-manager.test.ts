@@ -40,121 +40,128 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
-  it("switches the one active launch while retaining its shared workspace environment", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-"));
-    tempDirs.push(directory);
-    const port = await getFreePort();
-    writeFileSync(
-      join(directory, "paseo.json"),
-      JSON.stringify({
-        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
-        launches: {
-          dev: { command: "./bin/dev" },
-          full: { command: "./bin/dev --full" },
-        },
-      }),
-    );
-
-    const terminalManager = createTerminalManager();
-    const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService();
-    const manager = new WorkspaceLaunchManager({
-      terminalManager: terminalManager.manager,
-      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
-      workspaceRuntimeEnvironment: runtimeEnvironment,
-      assertAutomationAllowed: async () => {},
-      getDaemonTcpPort: () => 6767,
-      serviceProxyPublicBaseUrl: null,
-      resolveScriptHealth: null,
-      emitWorkspaceUpdates: async () => {},
-      logger: pino({ level: "silent" }),
-    });
-    const context = {
-      workspaceId: "workspace-launch-test",
-      workspaceDirectory: directory,
-      projectSlug: "example-project",
-      branchName: "feature/launch",
-    };
-
-    const dev = await manager.start(context, "dev");
-    expect(dev).toMatchObject({
-      launchName: "dev",
-      lifecycle: "running",
-      active: true,
-      portBase: port,
-      portEnd: port,
-      portCount: 1,
-    });
-    expect(terminalManager.created[0]?.env).toMatchObject({
-      PASEO_PORT_BASE: String(port),
-      PASEO_PORT_END: String(port),
-      PASEO_PORT_COUNT: "1",
-      PASEO_LAUNCH_NAME: "dev",
-      COMPOSE_PROJECT_NAME: dev.composeProjectName,
-      PASEO_COMPOSE_PROJECT_NAME: dev.composeProjectName,
-    });
-
-    terminalManager.failNextCreate();
-    await expect(manager.start(context, "full")).rejects.toThrow("Failed to create terminal");
-    expect(terminalManager.killed).toEqual([dev.terminalId, expect.any(String)]);
-    expect(await manager.buildSnapshot(context)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ launchName: "dev", lifecycle: "running", active: true }),
-        expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
-      ]),
-    );
-    const restoredDev = (await manager.buildSnapshot(context)).find(
-      (launch) => launch.launchName === "dev",
-    );
-    expect(restoredDev?.terminalId).not.toBe(dev.terminalId);
-
-    const full = await manager.start(context, "full");
-    expect(terminalManager.killed).toEqual([
-      dev.terminalId,
-      expect.any(String),
-      // Rollback replaced the stopped dev session and dismissed its retained output.
-      dev.terminalId,
-      restoredDev?.terminalId,
-    ]);
-    expect(terminalManager.manager.getTerminal(restoredDev!.terminalId!)).toBeDefined();
-    expect(full).toMatchObject({
-      launchName: "full",
-      lifecycle: "running",
-      active: true,
-      portBase: port,
-      composeProjectName: dev.composeProjectName,
-    });
-    expect(await manager.buildSnapshot(context)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ launchName: "dev", lifecycle: "stopped", active: false }),
-        expect.objectContaining({ launchName: "full", lifecycle: "running", active: true }),
-      ]),
-    );
-
-    await Promise.all([manager.start(context, "dev"), manager.start(context, "full")]);
-    const activeLaunches = (await manager.buildSnapshot(context)).filter((launch) => launch.active);
-    expect(activeLaunches).toEqual([
-      expect.objectContaining({ launchName: "full", lifecycle: "running" }),
-    ]);
-    const currentTerminalId = activeLaunches[0]!.terminalId!;
-    expect(currentTerminalId).not.toBe(full.terminalId);
-    const currentTerminal = terminalManager.manager.getTerminal(currentTerminalId);
-    expect(currentTerminal).toMatchObject({ id: currentTerminalId });
-
-    await manager.stop(context, "full");
-    expect(terminalManager.manager.getTerminal(currentTerminalId)).toBe(currentTerminal);
-    expect(currentTerminal?.getExitInfo()).toEqual({ exitCode: 0 });
-    expect(await manager.buildSnapshot(context)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          launchName: "full",
-          lifecycle: "stopped",
-          active: false,
-          terminalId: currentTerminalId,
+  it.each(["dev", ""])(
+    "switches active launch %j while retaining its shared workspace environment",
+    async (initialName) => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-"));
+      tempDirs.push(directory);
+      const port = await getFreePort();
+      writeFileSync(
+        join(directory, "paseo.json"),
+        JSON.stringify({
+          worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+          launches: {
+            [initialName]: { command: "./bin/dev" },
+            full: { command: "./bin/dev --full" },
+          },
         }),
-      ]),
-    );
-    await manager.disposeWorkspace(context.workspaceId);
-  });
+      );
+
+      const terminalManager = createTerminalManager();
+      const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService();
+      const manager = new WorkspaceLaunchManager({
+        terminalManager: terminalManager.manager,
+        serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+        workspaceRuntimeEnvironment: runtimeEnvironment,
+        assertAutomationAllowed: async () => {},
+        getDaemonTcpPort: () => 6767,
+        serviceProxyPublicBaseUrl: null,
+        resolveScriptHealth: null,
+        emitWorkspaceUpdates: async () => {},
+        logger: pino({ level: "silent" }),
+      });
+      const context = {
+        workspaceId: "workspace-launch-test",
+        workspaceDirectory: directory,
+        projectSlug: "example-project",
+        branchName: "feature/launch",
+      };
+
+      const dev = await manager.start(context, initialName);
+      expect(dev).toMatchObject({
+        launchName: initialName,
+        lifecycle: "running",
+        active: true,
+        portBase: port,
+        portEnd: port,
+        portCount: 1,
+      });
+      expect(terminalManager.created[0]?.env).toMatchObject({
+        PASEO_PORT_BASE: String(port),
+        PASEO_PORT_END: String(port),
+        PASEO_PORT_COUNT: "1",
+        PASEO_LAUNCH_NAME: initialName,
+        COMPOSE_PROJECT_NAME: dev.composeProjectName,
+        PASEO_COMPOSE_PROJECT_NAME: dev.composeProjectName,
+      });
+      expect(await manager.start(context, initialName)).toEqual(dev);
+      expect(terminalManager.created).toHaveLength(1);
+
+      terminalManager.failNextCreate();
+      await expect(manager.start(context, "full")).rejects.toThrow("Failed to create terminal");
+      expect(terminalManager.killed).toEqual([dev.terminalId, expect.any(String)]);
+      expect(await manager.buildSnapshot(context)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ launchName: initialName, lifecycle: "running", active: true }),
+          expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
+        ]),
+      );
+      const restoredDev = (await manager.buildSnapshot(context)).find(
+        (launch) => launch.launchName === initialName,
+      );
+      expect(restoredDev?.terminalId).not.toBe(dev.terminalId);
+
+      const full = await manager.start(context, "full");
+      expect(terminalManager.killed).toEqual([
+        dev.terminalId,
+        expect.any(String),
+        // Rollback replaced the stopped dev session and dismissed its retained output.
+        dev.terminalId,
+        restoredDev?.terminalId,
+      ]);
+      expect(terminalManager.manager.getTerminal(restoredDev!.terminalId!)).toBeDefined();
+      expect(full).toMatchObject({
+        launchName: "full",
+        lifecycle: "running",
+        active: true,
+        portBase: port,
+        composeProjectName: dev.composeProjectName,
+      });
+      expect(await manager.buildSnapshot(context)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ launchName: initialName, lifecycle: "stopped", active: false }),
+          expect.objectContaining({ launchName: "full", lifecycle: "running", active: true }),
+        ]),
+      );
+
+      await Promise.all([manager.start(context, initialName), manager.start(context, "full")]);
+      const activeLaunches = (await manager.buildSnapshot(context)).filter(
+        (launch) => launch.active,
+      );
+      expect(activeLaunches).toEqual([
+        expect.objectContaining({ launchName: "full", lifecycle: "running" }),
+      ]);
+      const currentTerminalId = activeLaunches[0]!.terminalId!;
+      expect(currentTerminalId).not.toBe(full.terminalId);
+      const currentTerminal = terminalManager.manager.getTerminal(currentTerminalId);
+      expect(currentTerminal).toMatchObject({ id: currentTerminalId });
+
+      await manager.stop(context, "full");
+      expect(terminalManager.manager.getTerminal(currentTerminalId)).toBe(currentTerminal);
+      expect(currentTerminal?.getExitInfo()).toEqual({ exitCode: 0 });
+      expect(await manager.buildSnapshot(context)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            launchName: "full",
+            lifecycle: "stopped",
+            active: false,
+            terminalId: currentTerminalId,
+          }),
+        ]),
+      );
+      await manager.disposeWorkspace(context.workspaceId);
+    },
+  );
 
   it("cleans an unacknowledged creation before rollback and a later retry", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-launch-lost-reply-"));

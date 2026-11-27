@@ -269,9 +269,10 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       closingLaunches.map((terminal) => terminalManager.killTerminalAndWait(terminal.id)),
     );
     const activeLaunchName = this.activeLaunches.get(context.workspaceId);
-    const activeRuntime = activeLaunchName
-      ? this.runtimes.get(context.workspaceId)?.get(activeLaunchName)
-      : null;
+    const activeRuntime =
+      activeLaunchName === undefined
+        ? undefined
+        : this.runtimes.get(context.workspaceId)?.get(activeLaunchName);
     if (activeLaunchName === launchName && activeRuntime?.lifecycle === "running") {
       return this.toPayload(context, launchName);
     }
@@ -316,7 +317,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       context,
     };
     const supersededLaunch =
-      activeLaunchName && activeRuntime?.lifecycle === "running"
+      activeRuntime?.lifecycle === "running"
         ? {
             launchName: activeRuntime.launchName,
             command: activeRuntime.command,
