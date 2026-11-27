@@ -296,6 +296,72 @@ class IosReviewTest < Minitest::Test
     end
   end
 
+  def test_submit_review_clears_stale_unresolved_issues_submission_on_rejected_version_by_default
+    rejected = FakeAppStoreVersion.new(id: "v-1", version_string: "0.18.0", app_version_state: "REJECTED")
+    stale_submission = FakeReviewSubmission.new(
+      id: "sub-rejected",
+      state: "UNRESOLVED_ISSUES",
+      app_store_version_for_review: rejected,
+    )
+    client = FakeClient.new(
+      versions: [rejected],
+      submissions: [stale_submission],
+      builds: [make_build("0.18.1", "18001999")],
+      submission_poll_states: { "sub-rejected" => %w[CANCELING COMPLETE] },
+      version_poll_states: { "v-1" => %w[REJECTED DEVELOPER_REJECTED] },
+    )
+    deliver_calls = []
+
+    result = IosReview.submit_review(
+      client: client,
+      app: @app,
+      ui: @ui,
+      target_version: "0.18.1",
+      target_build: "18001999",
+      replace_in_review: false,
+      deliver_runner: ->(args) { deliver_calls << args },
+      sleep_fn: @sleep_fn,
+      clock: @clock,
+    )
+
+    assert_equal :submitted, result[:status]
+    assert_equal false, result[:reject_if_possible]
+    assert_equal ["sub-rejected"], client.canceled_submission_ids
+    assert_equal "COMPLETE", stale_submission.state
+    assert_equal [{ app_version: "0.18.1", build_number: "18001999", reject_if_possible: false }], deliver_calls
+  end
+
+  def test_submit_review_skips_if_review_starts_while_waiting_for_build_processing
+    processing_build = make_build("0.18.1", "18001999", processing_state: "PROCESSING")
+    client = FakeClient.new(versions: [], submissions: [], builds: [processing_build])
+    deliver_calls = []
+
+    sleep_and_start_review = lambda do |seconds|
+      @clock.advance(seconds)
+      processing_build.processing_state = "VALID"
+      client.versions << FakeAppStoreVersion.new(id: "v-race", version_string: "0.18.0", app_version_state: "WAITING_FOR_REVIEW")
+    end
+
+    result = IosReview.submit_review(
+      client: client,
+      app: @app,
+      ui: @ui,
+      target_version: "0.18.1",
+      target_build: "18001999",
+      replace_in_review: false,
+      deliver_runner: ->(args) { deliver_calls << args },
+      sleep_fn: sleep_and_start_review,
+      clock: @clock,
+    )
+
+    assert_equal :skipped, result[:status]
+    assert_equal "0.18.0", result[:in_review_version]
+    assert_equal "WAITING_FOR_REVIEW", result[:in_review_state]
+    assert_empty client.canceled_submission_ids
+    assert_empty deliver_calls
+    assert_includes @ui.importants.first, "IOS_REVIEW_SKIPPED in_review_version=0.18.0 in_review_state=WAITING_FOR_REVIEW waiting_version=0.18.1 waiting_build=18001999"
+  end
+
   def test_submit_review_with_replace_in_review_cancels_after_validating_build_and_passes_reject_if_possible
     in_flight_version = FakeAppStoreVersion.new(id: "v-1", version_string: "0.18.0", app_version_state: "IN_REVIEW")
     submission = FakeReviewSubmission.new(id: "sub-1", state: "IN_REVIEW", app_store_version_for_review: in_flight_version)

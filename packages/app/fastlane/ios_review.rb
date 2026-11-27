@@ -34,11 +34,16 @@ module IosReview
 
   # ReviewSubmission states representing an active submission already in Apple's queue
   # (or mid-cancellation). UNRESOLVED_ISSUES is intentionally excluded here so a
-  # rejected version's free slot is not treated as an in-flight review.
+  # rejected version's free slot is not treated as an in-flight review; stale
+  # UNRESOLVED_ISSUES submissions are cleared separately right before deliver runs.
   IN_FLIGHT_SUBMISSION_STATES = %w[
     WAITING_FOR_REVIEW
     IN_REVIEW
     CANCELING
+  ].freeze
+
+  UNRESOLVED_SUBMISSION_STATES = %w[
+    UNRESOLVED_ISSUES
   ].freeze
 
   # ReviewSubmission states that can be cancelled via ReviewSubmission#cancel_submission
@@ -304,27 +309,14 @@ module IosReview
     blocking = find_blocking_review(client: client, app: app)
 
     if blocking && !replace_in_review
-      waiting_version, waiting_build = resolve_waiting_build_summary(
+      return emit_skipped_result(
         client: client,
         app: app,
+        ui: ui,
+        blocking: blocking,
         target_version: target_version,
         target_build: target_build,
       )
-      summary = "IOS_REVIEW_SKIPPED in_review_version=#{blocking[:version]} in_review_state=#{blocking[:state]} waiting_version=#{waiting_version} waiting_build=#{waiting_build}"
-      ui.important(summary)
-      ui.message(
-        "Leaving iOS App Store version #{blocking[:version]} (#{blocking[:state]}) untouched. " \
-        "TestFlight build #{waiting_version} (#{waiting_build}) is ready to submit later via " \
-        "resubmit-ios-review.yml (or with replace_in_review=true to replace the in-flight review).",
-      )
-      return {
-        status: :skipped,
-        summary: summary,
-        in_review_version: blocking[:version],
-        in_review_state: blocking[:state],
-        waiting_version: waiting_version,
-        waiting_build: waiting_build,
-      }
     end
 
     valid_build = wait_for_valid_build(
@@ -356,6 +348,34 @@ module IosReview
       if cancel_result[:status] == :canceled
         ui.message("Proceeding to submit replacement build #{build_number} as App Store version #{app_version}")
       end
+    else
+      # Re-check after waiting for TestFlight processing so a review submitted
+      # in the meantime is never disturbed.
+      post_wait_blocking = find_blocking_review(client: client, app: app)
+      if post_wait_blocking
+        return emit_skipped_result(
+          client: client,
+          app: app,
+          ui: ui,
+          blocking: post_wait_blocking,
+          target_version: app_version,
+          target_build: build_number,
+        )
+      end
+
+      # Fastlane's Deliver::SubmitForReview#create_review_submission fails if a
+      # prior rejected ReviewSubmission remains in UNRESOLVED_ISSUES. Clear only
+      # UNRESOLVED_ISSUES submissions here while keeping reject_if_possible: false
+      # so an in-flight WAITING_FOR_REVIEW or IN_REVIEW submission is never cancelled.
+      clear_unresolved_issues_submissions(
+        client: client,
+        app: app,
+        ui: ui,
+        timeout_seconds: cancel_timeout_seconds,
+        poll_interval: cancel_poll_interval,
+        sleep_fn: sleep_fn,
+        clock: clock,
+      )
     end
 
     ui.message("Submitting build #{build_number} as App Store version #{app_version} for review (reject_if_possible=#{replace_in_review})")
@@ -371,6 +391,102 @@ module IosReview
       build_number: build_number,
       reject_if_possible: replace_in_review,
     }
+  end
+
+  def emit_skipped_result(client:, app:, ui:, blocking:, target_version:, target_build:)
+    waiting_version, waiting_build = resolve_waiting_build_summary(
+      client: client,
+      app: app,
+      target_version: target_version,
+      target_build: target_build,
+    )
+    summary = "IOS_REVIEW_SKIPPED in_review_version=#{blocking[:version]} in_review_state=#{blocking[:state]} waiting_version=#{waiting_version} waiting_build=#{waiting_build}"
+    ui.important(summary)
+    ui.message(
+      "Leaving iOS App Store version #{blocking[:version]} (#{blocking[:state]}) untouched. " \
+      "TestFlight build #{waiting_version} (#{waiting_build}) is ready to submit later via " \
+      "resubmit-ios-review.yml (or with replace_in_review=true to replace the in-flight review).",
+    )
+    {
+      status: :skipped,
+      summary: summary,
+      in_review_version: blocking[:version],
+      in_review_state: blocking[:state],
+      waiting_version: waiting_version,
+      waiting_build: waiting_build,
+    }
+  end
+
+  def clear_unresolved_issues_submissions(
+    client:,
+    app:,
+    ui:,
+    timeout_seconds: DEFAULT_CANCEL_TIMEOUT_SECONDS,
+    poll_interval: DEFAULT_CANCEL_POLL_INTERVAL,
+    sleep_fn: Kernel.method(:sleep),
+    clock: Time.method(:now)
+  )
+    stale_submissions = client.review_submissions(app, states: UNRESOLVED_SUBMISSION_STATES)
+      .select { |s| UNRESOLVED_SUBMISSION_STATES.include?(s.state.to_s) }
+
+    stale_submissions.each do |submission|
+      assoc_version = submission.respond_to?(:app_store_version_for_review) ? submission.app_store_version_for_review : nil
+      ui.message(
+        "Clearing stale rejected review submission #{submission.id} " \
+        "(version #{assoc_version&.version_string || 'unknown'}, state: #{submission.state}) before submitting...",
+      )
+      client.cancel_review_submission(submission)
+      wait_for_submission_cancellation(
+        client: client,
+        submission: submission,
+        assoc_version: assoc_version,
+        ui: ui,
+        timeout_seconds: timeout_seconds,
+        poll_interval: poll_interval,
+        sleep_fn: sleep_fn,
+        clock: clock,
+      )
+    end
+  end
+
+  def wait_for_submission_cancellation(
+    client:,
+    submission:,
+    assoc_version:,
+    ui:,
+    timeout_seconds:,
+    poll_interval:,
+    sleep_fn:,
+    clock:
+  )
+    deadline = clock.call + timeout_seconds
+    final_submission_state = submission.state
+    final_version_state = version_state(assoc_version)
+
+    loop do
+      refreshed = client.get_review_submission(submission.id)
+      final_submission_state = refreshed ? refreshed.state : "COMPLETE"
+      submission_done = refreshed.nil? || !CANCELLABLE_SUBMISSION_STATES.include?(refreshed.state.to_s)
+
+      version_done = true
+      if assoc_version&.id
+        refreshed_version = client.get_app_store_version(assoc_version.id)
+        final_version_state = version_state(refreshed_version) || final_version_state
+        version_done = !%w[WAITING_FOR_REVIEW IN_REVIEW].include?(final_version_state.to_s)
+      end
+
+      return [final_submission_state, final_version_state] if submission_done && version_done
+
+      if clock.call >= deadline
+        ui.user_error!(
+          "Timed out waiting for iOS review submission #{submission.id} cancellation to complete " \
+          "(submission_state=#{final_submission_state}, version_state=#{final_version_state || 'unknown'}).",
+        )
+      end
+
+      ui.message("Waiting for cancellation to take effect (submission=#{final_submission_state}, version=#{final_version_state || 'unknown'})...")
+      sleep_fn.call(poll_interval)
+    end
   end
 
   def cancel_review(
@@ -430,34 +546,16 @@ module IosReview
       client.cancel_review_submission(submission)
     end
 
-    deadline = clock.call + timeout_seconds
-    final_submission_state = submission.state
-    final_version_state = version_state(assoc_version)
-
-    loop do
-      refreshed = client.get_review_submission(submission.id)
-      final_submission_state = refreshed ? refreshed.state : "COMPLETE"
-      submission_done = refreshed.nil? || !CANCELLABLE_SUBMISSION_STATES.include?(refreshed.state.to_s)
-
-      version_done = true
-      if assoc_version&.id
-        refreshed_version = client.get_app_store_version(assoc_version.id)
-        final_version_state = version_state(refreshed_version) || final_version_state
-        version_done = !%w[WAITING_FOR_REVIEW IN_REVIEW].include?(final_version_state.to_s)
-      end
-
-      break if submission_done && version_done
-
-      if clock.call >= deadline
-        ui.user_error!(
-          "Timed out waiting for iOS review submission #{submission.id} cancellation to complete " \
-          "(submission_state=#{final_submission_state}, version_state=#{final_version_state || 'unknown'}).",
-        )
-      end
-
-      ui.message("Waiting for cancellation to take effect (submission=#{final_submission_state}, version=#{final_version_state || 'unknown'})...")
-      sleep_fn.call(poll_interval)
-    end
+    final_submission_state, final_version_state = wait_for_submission_cancellation(
+      client: client,
+      submission: submission,
+      assoc_version: assoc_version,
+      ui: ui,
+      timeout_seconds: timeout_seconds,
+      poll_interval: poll_interval,
+      sleep_fn: sleep_fn,
+      clock: clock,
+    )
 
     summary = "IOS_REVIEW_CANCELED version=#{active_version || 'unknown'} submission_id=#{submission.id} submission_state=#{final_submission_state} version_state=#{final_version_state || 'unknown'}"
     ui.success(summary)
