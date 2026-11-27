@@ -664,7 +664,7 @@ export class ProviderSnapshotManager {
       ];
     }
 
-    const provider = await this.getProvider({
+    let provider = await this.getProvider({
       provider: input.provider,
       cwd: input.cwd,
       wait: true,
@@ -682,6 +682,40 @@ export class ProviderSnapshotManager {
               : `Provider '${input.provider}' is not available`,
         },
       ];
+    }
+
+    const definition = this.generation.definitions[input.provider];
+    const needsCatalogValidation = Boolean(input.model || input.modeId || input.thinkingOptionId);
+    // Manual providers skip passive discovery, so an uncached snapshot has no fetchedAt yet.
+    // When an explicit execution names a model, mode, or thinking option, discover once and
+    // persist to the disk cache so validation reflects real provider capabilities.
+    if (
+      definition &&
+      (definition.catalogRefresh ?? "background") === "manual" &&
+      provider.fetchedAt === undefined &&
+      needsCatalogValidation
+    ) {
+      await this.refreshProviders(
+        resolveProviderSnapshotTarget(input.cwd),
+        [input.provider],
+        "manual",
+      );
+      provider = await this.getProvider({
+        provider: input.provider,
+        cwd: input.cwd,
+        wait: true,
+      });
+      if (provider.status !== "ready") {
+        return [
+          {
+            path: ["provider"],
+            message:
+              provider.status === "error" && provider.error
+                ? provider.error
+                : `Provider '${input.provider}' is not available`,
+          },
+        ];
+      }
     }
 
     return validateAgentConfigurationAgainstProvider({
@@ -827,9 +861,10 @@ export class ProviderSnapshotManager {
       this.usageActivityCache.delete(provider);
       const before = this.generation.definitions[provider];
       const after = generation.definitions[provider];
-      // Clear persisted disk cache only when an existing provider's config changed or was removed,
-      // not when a built-in/plugin provider registers for the first time during startup.
-      if (before && (!after || !isDeepStrictEqual(before.configuration, after.configuration))) {
+      // Clear persisted disk cache when a provider is removed. Config changes that affect
+      // discovery (command/args/env/providerOptions) already alter the persisted cache key,
+      // while static model overlays (`models`/`additionalModels`) are applied live on hydration.
+      if (before && !after) {
         this.catalogCache?.deleteProvider(provider);
       }
     }
@@ -935,6 +970,8 @@ export class ProviderSnapshotManager {
         isCreateConfigUnattended:
           client.isCreateConfigUnattended?.bind(client) ?? definition.isCreateConfigUnattended,
         fetchCatalog: (options, _client, context) => client.fetchCatalog(options, context),
+        fetchRawCatalog: undefined,
+        applyCatalogConfig: undefined,
       };
     }
 
@@ -1290,6 +1327,11 @@ export class ProviderSnapshotManager {
     } = options;
     const refreshMode = definition.catalogRefresh ?? "background";
     const isManualRefresh = refresh === "manual";
+    const persistedCacheKey = buildPersistedCatalogKey(
+      cacheKey,
+      definition.configuration?.providerOptions,
+    );
+    const applyCatalogConfig = definition.applyCatalogConfig ?? ((catalog) => catalog);
 
     try {
       const outcome = await runProviderRefreshWithDeadline({
@@ -1318,7 +1360,7 @@ export class ProviderSnapshotManager {
 
           if (!isManualRefresh) {
             const persisted = this.catalogCache
-              ? await this.catalogCache.get(provider, cacheKey)
+              ? await this.catalogCache.get(provider, persistedCacheKey)
               : undefined;
             if (persisted) {
               if (refreshMode === "manual") {
@@ -1346,9 +1388,17 @@ export class ProviderSnapshotManager {
             }
           }
 
-          const catalog = await definition.fetchCatalog(catalogOptions, client, context);
+          const rawResult = definition.fetchRawCatalog
+            ? await definition.fetchRawCatalog(catalogOptions, client, context)
+            : {
+                catalog: await definition.fetchCatalog(catalogOptions, client, context),
+                discovered: true,
+              };
           const binaryFingerprint =
-            this.catalogCache && catalog.incomplete !== true && refreshMode !== "background"
+            this.catalogCache &&
+            rawResult.discovered &&
+            rawResult.catalog.incomplete !== true &&
+            refreshMode !== "background"
               ? await context
                   .runActivity("binary-fingerprint", () =>
                     raceProviderRefreshAbort(
@@ -1359,7 +1409,12 @@ export class ProviderSnapshotManager {
                   )
                   .catch(() => undefined)
               : undefined;
-          return { kind: "fetched" as const, catalog, binaryFingerprint };
+          return {
+            kind: "fetched" as const,
+            rawCatalog: rawResult.catalog,
+            discovered: rawResult.discovered,
+            binaryFingerprint,
+          };
         },
       });
       if (outcome.kind === "unavailable") {
@@ -1374,13 +1429,14 @@ export class ProviderSnapshotManager {
         return;
       }
       if (outcome.kind === "manual_empty") {
+        const emptyCatalog = applyCatalogConfig({ models: [], modes: [] });
         setEntry(
           {
             ...base,
             status: "ready",
             enabled: true,
-            models: [],
-            modes: [],
+            models: normalizeAgentModelCatalog(emptyCatalog.models),
+            modes: emptyCatalog.modes,
           },
           { incomplete: false },
         );
@@ -1388,17 +1444,18 @@ export class ProviderSnapshotManager {
       }
       if (outcome.kind === "hydrated") {
         const { persisted } = outcome;
+        const hydratedCatalog = applyCatalogConfig(persisted.catalog);
         setEntry(
           {
             ...base,
             defaultModeId:
-              persisted.catalog.defaultModeId === undefined
+              hydratedCatalog.defaultModeId === undefined
                 ? base.defaultModeId
-                : persisted.catalog.defaultModeId,
+                : hydratedCatalog.defaultModeId,
             status: "ready",
             enabled: true,
-            models: persisted.catalog.models,
-            modes: persisted.catalog.modes,
+            models: normalizeAgentModelCatalog(hydratedCatalog.models),
+            modes: hydratedCatalog.modes,
             fetchedAt: persisted.fetchedAt,
           },
           { incomplete: false },
@@ -1406,11 +1463,12 @@ export class ProviderSnapshotManager {
         return;
       }
 
-      const { catalog, binaryFingerprint } = outcome;
-      const models = normalizeAgentModelCatalog(catalog.models);
-      if (models.length !== catalog.models.length) {
+      const { rawCatalog, discovered, binaryFingerprint } = outcome;
+      const configuredCatalog = applyCatalogConfig(rawCatalog);
+      const models = normalizeAgentModelCatalog(configuredCatalog.models);
+      if (models.length !== configuredCatalog.models.length) {
         this.logger.warn(
-          { provider, discardedRows: catalog.models.length - models.length },
+          { provider, discardedRows: configuredCatalog.models.length - models.length },
           "Provider catalog contains repeated model IDs; retaining the first definition",
         );
       }
@@ -1419,24 +1477,31 @@ export class ProviderSnapshotManager {
         {
           ...base,
           defaultModeId:
-            catalog.defaultModeId === undefined ? base.defaultModeId : catalog.defaultModeId,
+            configuredCatalog.defaultModeId === undefined
+              ? base.defaultModeId
+              : configuredCatalog.defaultModeId,
           status: "ready",
           enabled: true,
           models,
-          modes: catalog.modes,
+          modes: configuredCatalog.modes,
           fetchedAt,
         },
-        { incomplete: catalog.incomplete === true },
+        { incomplete: configuredCatalog.incomplete === true },
       );
-      if (this.catalogCache && catalog.incomplete !== true && refreshMode !== "background") {
-        this.catalogCache.set(provider, cacheKey, {
+      if (
+        this.catalogCache &&
+        discovered &&
+        rawCatalog.incomplete !== true &&
+        refreshMode !== "background"
+      ) {
+        this.catalogCache.set(provider, persistedCacheKey, {
           fetchedAt,
           ...(binaryFingerprint ? { binaryFingerprint } : {}),
           catalog: {
-            models,
-            modes: catalog.modes,
-            ...(catalog.defaultModeId !== undefined
-              ? { defaultModeId: catalog.defaultModeId }
+            models: normalizeAgentModelCatalog(rawCatalog.models),
+            modes: rawCatalog.modes,
+            ...(rawCatalog.defaultModeId !== undefined
+              ? { defaultModeId: rawCatalog.defaultModeId }
               : {}),
           },
         });
@@ -1563,6 +1628,33 @@ function createWorkspaceSnapshotTarget(cwd: string): ProviderSnapshotTarget {
     snapshotCwd,
     catalogScope: { scope: "workspace", cwd: snapshotCwd },
   };
+}
+
+function buildPersistedCatalogKey(
+  cacheKey: string,
+  providerOptions: ProviderOptions | undefined,
+): string {
+  if (!providerOptions || Object.keys(providerOptions).length === 0) {
+    return cacheKey;
+  }
+  return JSON.stringify([cacheKey, canonicalizeForCacheKey(providerOptions)]);
+}
+
+function canonicalizeForCacheKey(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeForCacheKey(item));
+  }
+  if (value && typeof value === "object") {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      const entry = (value as Record<string, unknown>)[key];
+      if (entry !== undefined) {
+        sorted[key] = canonicalizeForCacheKey(entry);
+      }
+    }
+    return sorted;
+  }
+  return value;
 }
 
 function createFetchCatalogOptions(

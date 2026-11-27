@@ -83,6 +83,23 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
 });
 `;
+  if (process.platform === "win32") {
+    const scriptPath = path.join(options.dir, `${options.name}.cjs`);
+    await writeFile(scriptPath, script, "utf8");
+    const cmdPath = path.join(options.dir, `${options.name}.cmd`);
+    await writeFile(
+      cmdPath,
+      [
+        "@echo off",
+        `:: models=${options.models.map((m) => m.value).join(",")}`,
+        `"${process.execPath}" "${scriptPath}" %*`,
+        "",
+      ].join("\r\n"),
+      "utf8",
+    );
+    return cmdPath;
+  }
+
   await writeFile(filePath, script, "utf8");
   await chmod(filePath, 0o755);
   return filePath;
@@ -450,6 +467,147 @@ describe("respectful ACP probing", () => {
       ).toHaveLength(1);
     } finally {
       await manager.shutdown();
+    }
+  });
+
+  test("discovers once on demand when validateAgentConfiguration checks a model or mode on an uncached manual provider", async () => {
+    const dir = await createTempDir("paseo-acp-manual-hub-");
+    const logFile = path.join(dir, "trace.ndjson");
+    const cachePath = path.join(dir, "cache", "provider-catalogs.json");
+    const binary = await createFakeAcpExecutable({
+      dir,
+      name: "fake-manual-hub",
+      logFile,
+      models: [{ value: "model-v1", name: "Model V1" }],
+    });
+
+    const registration: ProviderRegistration = {
+      ...runAcpProvider({
+        id: "fake-manual-hub",
+        label: "Fake Manual Hub",
+        command: [binary, "acp"],
+        catalogRefresh: "manual",
+      }),
+      async status() {
+        return { available: true };
+      },
+    };
+
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: disabledBuiltinsOverrides(),
+      catalogCachePath: cachePath,
+    });
+    try {
+      manager.replacePluginProviders([registration]);
+
+      // Passive warm-up does not spawn ACP.
+      const before = await manager.getProvider({ provider: "fake-manual-hub", wait: true });
+      expect(before.status).toBe("ready");
+      expect(before.models).toEqual([]);
+      expect(acpSpawns(await readEvents(logFile))).toHaveLength(0);
+
+      // Validation without explicit model/mode succeeds with 0 spawns.
+      await expect(
+        manager.validateAgentConfiguration({ provider: "fake-manual-hub" }),
+      ).resolves.toEqual([]);
+      expect(acpSpawns(await readEvents(logFile))).toHaveLength(0);
+
+      // Explicit Hub validation naming a model/mode discovers once, persists, and validates accurately.
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "fake-manual-hub",
+          model: "model-v1",
+          modeId: "default",
+        }),
+      ).resolves.toEqual([]);
+      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
+
+      // Invalid model is still rejected without spawning a second time.
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "fake-manual-hub",
+          model: "missing-model",
+        }),
+      ).resolves.toEqual([
+        {
+          path: ["model"],
+          message: "Model 'missing-model' is not available for provider 'fake-manual-hub'",
+        },
+      ]);
+      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
+    } finally {
+      await manager.shutdown();
+    }
+  });
+
+  test("applies updated additionalModels and replacement models after restart without re-spawning ACP", async () => {
+    const dir = await createTempDir("paseo-acp-overlay-");
+    const logFile = path.join(dir, "trace.ndjson");
+    const cachePath = path.join(dir, "cache", "provider-catalogs.json");
+    const binary = await createFakeAcpExecutable({
+      dir,
+      name: "fake-overlay",
+      logFile,
+      models: [{ value: "model-v1", name: "Model V1" }],
+    });
+
+    const createRegistration = (catalogRefresh: "on_demand" | "manual"): ProviderRegistration => ({
+      ...runAcpProvider({
+        id: "fake-overlay",
+        label: "Fake Overlay",
+        command: [binary, "acp"],
+        catalogRefresh,
+      }),
+      async status() {
+        return { available: true };
+      },
+    });
+
+    // Run 1: discover raw catalog with old-extra additional model.
+    const manager1 = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      catalogCachePath: cachePath,
+      providerOverrides: {
+        ...disabledBuiltinsOverrides(),
+        "fake-overlay": {
+          additionalModels: [{ id: "old-extra", label: "Old Extra" }],
+        },
+      },
+    });
+    try {
+      manager1.replacePluginProviders([createRegistration("on_demand")]);
+      const entry = await manager1.getProvider({ provider: "fake-overlay", wait: true });
+      expect(entry.models?.map((m) => m.id)).toEqual(["model-v1", "old-extra"]);
+      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
+    } finally {
+      await manager1.shutdown();
+    }
+
+    // Run 2 (stopped config edit): additionalModels changed to new-extra -> 0 spawns, new overlay applied.
+    const manager2 = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      catalogCachePath: cachePath,
+      providerOverrides: {
+        ...disabledBuiltinsOverrides(),
+        "fake-overlay": {
+          additionalModels: [{ id: "new-extra", label: "New Extra" }],
+        },
+      },
+    });
+    try {
+      manager2.replacePluginProviders([createRegistration("manual")]);
+      const entry = await manager2.getProvider({ provider: "fake-overlay", wait: true });
+      expect(entry.models?.map((m) => m.id)).toEqual(["model-v1", "new-extra"]);
+      expect(acpSpawns(await readEvents(logFile))).toHaveLength(1);
+      await expect(
+        manager2.validateAgentConfiguration({
+          provider: "fake-overlay",
+          model: "new-extra",
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      await manager2.shutdown();
     }
   });
 });

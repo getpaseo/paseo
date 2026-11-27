@@ -7434,7 +7434,11 @@ lines.on("line", (line) => {
         requestId: "open-one",
         error: { message: expect.stringMatching(/ENOENT/u) },
       });
-      expect(spawned.map((child) => child.spawnargs)).toEqual([
+      // Closing the connection's idle capability probe on Windows spawns taskkill.exe.
+      const launchedArgs = spawned
+        .map((child) => child.spawnargs)
+        .filter((args) => args[0]?.toLowerCase() !== "taskkill.exe");
+      expect(launchedArgs).toEqual([
         [missing, "--profile", "a b", process.execPath, fixture.agent],
       ]);
       // The only start of the agent is the connection's capability probe, before the open.

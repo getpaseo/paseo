@@ -145,9 +145,11 @@ async function readAgyVersion(
   });
   if (cacheKey !== null) {
     agyVersionInFlight.set(cacheKey, run);
-    void run.finally(() => {
+    try {
+      return await run;
+    } finally {
       if (agyVersionInFlight.get(cacheKey) === run) agyVersionInFlight.delete(cacheKey);
-    });
+    }
   }
   return run;
 }
