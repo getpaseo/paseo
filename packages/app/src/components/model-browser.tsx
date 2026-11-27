@@ -18,6 +18,7 @@ import {
   Text,
   View,
   type AccessibilityActionEvent,
+  type FocusEvent,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   type NativeScrollEvent,
@@ -75,7 +76,10 @@ import {
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import { focusedModelBrowserControlOwnsEnter } from "@/components/model-browser-focus";
+import {
+  focusCameFromKeyboard,
+  focusedModelBrowserControlOwnsEnter,
+} from "@/components/model-browser-focus";
 import {
   MODEL_BROWSER_CREATE_PROFILE_KEY,
   MODEL_BROWSER_KEYBOARD_KEYS,
@@ -630,6 +634,12 @@ function ModelBrowserPressable({
     },
     [onPress],
   );
+  const handleFocus = useCallback(
+    (event: FocusEvent) => {
+      if (onFocus && focusCameFromKeyboard(event.target)) onFocus();
+    },
+    [onFocus],
+  );
   const handleAccessibilityAction = useCallback(
     (event: AccessibilityActionEvent) => {
       if (event.nativeEvent.actionName === "activate") onPress();
@@ -651,7 +661,7 @@ function ModelBrowserPressable({
         ref={rowRef}
         onLayout={onLayout}
         onPress={handlePress}
-        onFocus={onFocus}
+        onFocus={handleFocus}
         hitSlop={hitSlop}
         style={style}
         accessibilityRole="button"
@@ -1428,7 +1438,7 @@ function IndependentModelList({
         viewabilityConfig={reveal.viewabilityConfig}
         style={styles.virtualizedModelList}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
+        keyboardDismissMode={MODEL_LIST_KEYBOARD_DISMISS_MODE}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.virtualizedModelListContent}
         nestedScrollEnabled
@@ -1466,7 +1476,7 @@ function IndependentProviderList({
         onScroll={onScroll}
         scrollEventThrottle={16}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
+        keyboardDismissMode={MODEL_LIST_KEYBOARD_DISMISS_MODE}
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
         testID="compact-provider-list"
@@ -1617,6 +1627,11 @@ function ModelSearchEmptyState() {
     </View>
   );
 }
+
+// React Native Web blurs the focused input on every scroll in "on-drag" mode, including wheel
+// scrolls and the scroll that reveals an arrowed-to row. That moves focus out of search, so
+// typing stops and Enter lands on the header's Back button. Only a native keyboard needs it.
+const MODEL_LIST_KEYBOARD_DISMISS_MODE = isNative ? "on-drag" : "none";
 
 interface ModelBrowserKeyboardBinding {
   view: ModelBrowserView;
@@ -1782,7 +1797,7 @@ function ModelBrowserBrowseView({
       onScroll={browseReveal.onScroll}
       scrollEventThrottle={16}
       keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="on-drag"
+      keyboardDismissMode={MODEL_LIST_KEYBOARD_DISMISS_MODE}
       showsVerticalScrollIndicator={false}
       testID="compact-provider-list"
     >

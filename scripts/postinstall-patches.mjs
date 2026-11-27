@@ -70,6 +70,10 @@ const patchedPackages = [
   // Web pointer capture: capture only pointers the handler still tracks after pointer-down, so a
   // touch-only pan that fails the mouse leaves browser text selection alone. Keep until upstream
   // stops capturing pointers a handler has rejected.
+  // Android mouse buttons: backport of
+  // https://github.com/software-mansion/react-native-gesture-handler/pull/4265 (2.33.0), so a
+  // mouse click reaches Tap and LongPress. Remove the RNGestureHandlerRootView, Extensions and
+  // LongPressGestureHandler hunks at >= 2.33.0.
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",
