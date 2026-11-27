@@ -123,66 +123,18 @@ export type PluginClientRuntime = Pick<
 // The 0.12 entry exposed the reveal hook as well as UI components.
 const pluginReactNativeCompatRuntime = { ...pluginUiRuntime, useRevealedText };
 
-// Explicit allowlist of cross-platform react-native UI and layout exports exposed to plugins.
-// Exposing the raw react-native namespace leaks unlinked native getters (such as PushNotificationIOS)
-// that crash iOS fatally via Metro's guardedLoadModule -> RCTExceptionsManager.reportFatal,
-// bypassing PluginRegistry's try/catch.
-export const PLUGIN_REACT_NATIVE_EXPORTS = [
-  "AccessibilityInfo",
-  "ActivityIndicator",
-  "Alert",
-  "Animated",
-  "AppState",
-  "Appearance",
-  "BackHandler",
-  "Button",
-  "Dimensions",
-  "Easing",
-  "FlatList",
-  "I18nManager",
-  "Image",
-  "ImageBackground",
-  // Deprecated in RN core, retained for existing plugins until host replacements exist.
-  "InteractionManager",
-  "Keyboard",
-  "KeyboardAvoidingView",
-  "LayoutAnimation",
-  "Linking",
-  "Modal",
-  "PanResponder",
-  "PixelRatio",
-  "Platform",
-  "Pressable",
-  "RefreshControl",
-  // Deprecated in RN core, retained for existing plugins (no react-native-safe-area-context in plugin runtime).
-  "SafeAreaView",
-  "ScrollView",
-  "SectionList",
-  "Share",
-  "StatusBar",
-  "StyleSheet",
-  "Switch",
-  "Text",
-  "TextInput",
-  "Touchable",
-  "TouchableHighlight",
-  "TouchableNativeFeedback",
-  "TouchableOpacity",
-  "TouchableWithoutFeedback",
-  "Vibration",
-  "View",
-  "VirtualizedList",
-  "findNodeHandle",
-  "processColor",
-  "useColorScheme",
-  "useWindowDimensions",
-] as const;
+// PushNotificationIOS crashes iOS fatally via Metro's guardedLoadModule ->
+// RCTExceptionsManager.reportFatal because RCTPushNotificationManager is not linked
+// in Expo builds, bypassing PluginRegistry's try/catch. Omit it and raw `default`
+// while preserving all other enumerable react-native exports as lazy descriptors.
+export const OMITTED_REACT_NATIVE_EXPORTS = new Set(["PushNotificationIOS", "default"]);
 
 export function createPluginReactNativeRuntime(
   source: Record<string, unknown>,
 ): Record<string, unknown> {
   const runtime: Record<string, unknown> = {};
-  for (const key of PLUGIN_REACT_NATIVE_EXPORTS) {
+  for (const key of Object.keys(source)) {
+    if (OMITTED_REACT_NATIVE_EXPORTS.has(key)) continue;
     const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (!descriptor) continue;
     Object.defineProperty(runtime, key, descriptor);
