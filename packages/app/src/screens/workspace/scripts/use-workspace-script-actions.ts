@@ -22,6 +22,7 @@ export interface WorkspaceScriptLinks {
 }
 
 export interface WorkspaceScriptActions {
+  serverId?: string;
   start: (scriptName: string) => void;
   stop: (scriptName: string) => void;
   /** Stops the script, then starts it again once the daemon reports it stopped. */
@@ -169,6 +170,7 @@ export function useWorkspaceScriptActions({
 
   return useMemo(
     () => ({
+      serverId,
       start: startScript,
       stop: stopScript,
       restart,
@@ -179,6 +181,7 @@ export function useWorkspaceScriptActions({
       isStopPending: stopScriptMutation.isPending,
     }),
     [
+      serverId,
       startScript,
       stopScript,
       restart,

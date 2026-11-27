@@ -54,8 +54,10 @@ import {
   type ServerCapabilityState,
   type ServerCapabilities,
   type WSOutboundMessage,
+  type WSTunnelHelloMessage,
   wrapSessionMessage,
 } from "./messages.js";
+import { NetworkTunnelService } from "./network-tunnel/index.js";
 import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
@@ -508,6 +510,7 @@ interface PluginSessionConnection extends SessionConnectionBase {
 type SessionConnection = ReconnectableSessionConnection | PluginSessionConnection;
 
 interface SocketSessionOptions {
+  principalId: string;
   sourceId?: string;
   clientId: string;
   appVersion: string | null;
@@ -595,6 +598,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly logger: pino.Logger;
   private readonly wss: WebSocketServer;
   private readonly hostLinks = new Map<WebSocketLike, DaemonLinkEndpoint>();
+  private readonly networkTunnel = new NetworkTunnelService();
+  private readonly handedOffTunnelSockets = new WeakSet<WebSocketLike>();
   private readonly pendingConnections: Map<WebSocketLike, PendingConnection> = new Map();
   private readonly sessions: Map<WebSocketLike, SessionConnection> = new Map();
   private readonly socketLocalEndpoints = new WeakMap<object, string>();
@@ -1199,6 +1204,9 @@ export class VoiceAssistantWebSocketServer {
     principalId: string,
     permissions: readonly DaemonPermission[],
   ): void {
+    if (!permissions.includes("workspace.write")) {
+      this.networkTunnel.revokePrincipal(principalId);
+    }
     for (const [socket, link] of this.hostLinks) {
       if (this.sessions.get(socket)?.principalId === principalId) {
         link.close("permission_denied");
@@ -1233,6 +1241,7 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
+    this.networkTunnel.close();
     await this.agentMessages.close();
     await this.connectedHosts.close();
     this.unsubscribeSpeechReadiness?.();
@@ -1637,6 +1646,7 @@ export class VoiceAssistantWebSocketServer {
     let connection: SessionConnection | null = null;
 
     const session = this.createSocketSession({
+      principalId: admission.principalId,
       clientId,
       appVersion,
       clientCapabilities,
@@ -1749,6 +1759,11 @@ export class VoiceAssistantWebSocketServer {
       },
       publishScriptStatusUpdate: (message) => this.publishScriptStatusUpdate(message),
       downloadTokenStore: this.downloadTokenStore,
+      createNetworkTunnelTicket: (permissions) =>
+        this.networkTunnel.createTicket({
+          principalId: options.principalId,
+          permissions,
+        }),
       pushNotifications: this.pushNotifications,
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
@@ -2322,6 +2337,8 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
+        networkTunnel: true,
       },
     };
   }
@@ -2367,6 +2384,7 @@ export class VoiceAssistantWebSocketServer {
 
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
+      if (this.handedOffTunnelSockets.has(ws)) return;
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
       try {
         this.chunkedSocket(ws).receive(typeof data === "string" ? data : bufferFromWsData(data));
@@ -2377,6 +2395,7 @@ export class VoiceAssistantWebSocketServer {
     });
 
     ws.on("close", async (...args: unknown[]) => {
+      if (this.handedOffTunnelSockets.has(ws)) return;
       this.chunkedSockets.get(ws)?.close();
       const code = args[0];
       const reason = args[1];
@@ -2387,6 +2406,7 @@ export class VoiceAssistantWebSocketServer {
     });
 
     ws.on("error", async (...args: unknown[]) => {
+      if (this.handedOffTunnelSockets.has(ws)) return;
       const error = args[0];
       const err = error instanceof Error ? error : new Error(String(error));
       const active = this.sessions.get(ws);
@@ -2658,6 +2678,15 @@ export class VoiceAssistantWebSocketServer {
       return;
     }
 
+    if (message.type === "tunnel_hello" && !pendingConnection.authenticating) {
+      this.handleTunnelHello({
+        ws,
+        message,
+        pending: pendingConnection,
+      });
+      return;
+    }
+
     pendingConnection.connectionLogger.warn(
       {
         messageType: message.type,
@@ -2671,6 +2700,72 @@ export class VoiceAssistantWebSocketServer {
     } catch {
       // ignore close errors
     }
+  }
+
+  private handleTunnelHello(params: {
+    ws: WebSocketLike;
+    message: WSTunnelHelloMessage;
+    pending: PendingConnection;
+  }): void {
+    const { ws, message, pending } = params;
+    this.clearPendingConnection(ws);
+    this.socketIdentities.delete(ws);
+    this.applicationSocketLease.release(ws);
+
+    const redeemed = this.networkTunnel.redeemTicket(message.ticket);
+    if (!redeemed) {
+      pending.connectionLogger.warn("Rejected tunnel_hello with invalid or expired ticket");
+      this.rejectTunnelHello(
+        ws,
+        "invalid_ticket",
+        "Tunnel ticket is invalid, expired, or already used",
+      );
+      return;
+    }
+
+    if (!redeemed.permissions.includes("workspace.write")) {
+      pending.connectionLogger.warn(
+        { principalId: redeemed.principalId },
+        "Rejected tunnel_hello lacking workspace.write permission",
+      );
+      this.rejectTunnelHello(
+        ws,
+        "unauthorized",
+        "Principal is not authorized to open network tunnels",
+      );
+      return;
+    }
+
+    // Mark handed off synchronously before attaching TunnelSession so subsequent
+    // binary frames (including pipelined frames on EncryptedRelaySocket) bypass
+    // WebSocketServer and ChunkedTransport completely.
+    this.handedOffTunnelSockets.add(ws);
+    this.chunkedSockets.delete(ws);
+    this.networkTunnel.attachTunnelSocket(ws, {
+      principalId: redeemed.principalId,
+      logger: pending.connectionLogger,
+    });
+  }
+
+  private rejectTunnelHello(ws: WebSocketLike, code: string, message: string): void {
+    const closeSocket = () => {
+      try {
+        ws.close(WS_CLOSE_DAEMON_AUTH_FAILED, message);
+      } catch {
+        // ignore close errors
+      }
+    };
+    try {
+      const payload = JSON.stringify({ type: "tunnel_error", code, message });
+      const sendResult = ws.send(payload);
+      if (sendResult && typeof sendResult.then === "function") {
+        void sendResult.catch(() => undefined).finally(closeSocket);
+        return;
+      }
+    } catch {
+      // fall through to close
+    }
+    closeSocket();
   }
 
   private handleRawMessage(
@@ -2749,9 +2844,12 @@ export class VoiceAssistantWebSocketServer {
         return;
       }
 
-      if (message.type === "hello") {
+      if (isHandshakeMessage(message)) {
         this.incrementRuntimeCounter("unexpectedHelloOnActiveConnection");
-        activeConnection.connectionLogger.warn("Received hello on active connection");
+        activeConnection.connectionLogger.warn(
+          { messageType: message.type },
+          "Received unexpected handshake on active connection",
+        );
         try {
           ws.close(WS_CLOSE_INVALID_HELLO, "Unexpected hello");
         } catch {
@@ -3331,6 +3429,10 @@ function createWebSocketConnectionIdentity(
     ...(metadata?.securityMode ? { securityMode: metadata.securityMode } : {}),
     ...(metadata?.hubDaemonId ? { hubDaemonId: metadata.hubDaemonId } : {}),
   };
+}
+
+function isHandshakeMessage(message: WSInboundMessage): boolean {
+  return message.type === "hello" || message.type === "tunnel_hello";
 }
 
 function sessionConnectionKey(principalId: string, clientId: string): string {
