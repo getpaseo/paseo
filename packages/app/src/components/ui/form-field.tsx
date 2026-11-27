@@ -29,6 +29,10 @@ const FIELD_CHROME = { sm: "chromeSm", md: "chromeMd" } as const satisfies Recor
   ControlSize,
   string
 >;
+const FIELD_MULTILINE_CHROME = {
+  sm: "chromeMultilineSm",
+  md: "chromeMultilineMd",
+} as const satisfies Record<ControlSize, string>;
 const FIELD_TEXT = { sm: "inputSm", md: "inputMd" } as const satisfies Record<ControlSize, string>;
 
 interface FieldProps {
@@ -179,6 +183,9 @@ export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputPro
     const size = sizeProp ?? containedSize ?? "md";
     const isDisabled = editable === false;
     const chromeSizeStyle = formInputStyles[FIELD_CHROME[size]];
+    const chromeMultilineStyle = props.multiline
+      ? formInputStyles[FIELD_MULTILINE_CHROME[size]]
+      : null;
     const inputSizeStyle = formInputStyles[FIELD_TEXT[size]];
     const splitStyle = useMemo(() => splitFormTextInputStyle(style), [style]);
     const setInputRef = useCallback(
@@ -209,6 +216,7 @@ export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputPro
       ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
         formInputStyles.chrome,
         chromeSizeStyle,
+        chromeMultilineStyle,
         leading ? formInputStyles.chromeWithLeading : null,
         resolveControlInteractionStyles(
           {
@@ -226,7 +234,15 @@ export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputPro
         invalid ? formInputStyles.controlInvalid : null,
         splitStyle.chromeStyle,
       ],
-      [chromeSizeStyle, focused, invalid, isDisabled, leading, splitStyle.chromeStyle],
+      [
+        chromeMultilineStyle,
+        chromeSizeStyle,
+        focused,
+        invalid,
+        isDisabled,
+        leading,
+        splitStyle.chromeStyle,
+      ],
     );
 
     return (
@@ -291,6 +307,12 @@ const formInputStyles = StyleSheet.create((theme) => {
     },
     chromeMd: {
       ...geometry.fieldControlMd,
+    },
+    chromeMultilineSm: {
+      paddingVertical: theme.spacing[2],
+    },
+    chromeMultilineMd: {
+      paddingVertical: theme.spacing[3],
     },
     controlRest: {
       ...geometry.controlRest,

@@ -1289,6 +1289,72 @@ describe("DaemonConfigStore", () => {
     expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
   });
 
+  test("patch persists and clears host metadata generation instructions without clobbering providers", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [{ provider: "claude", model: "haiku" }] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const updated = await store.patch({
+      metadataGeneration: {
+        instructions: "  Write in Simplified Chinese.\nDo not use em dashes.  ",
+      },
+    });
+    expect(updated.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+
+    // Updating providers preserves instructions.
+    const withProviders = await store.patch({
+      metadataGeneration: {
+        providers: [{ provider: "codex", model: "gpt-5.4-mini" }],
+      },
+    });
+    expect(withProviders.metadataGeneration).toEqual({
+      providers: [{ provider: "codex", model: "gpt-5.4-mini" }],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "codex", model: "gpt-5.4-mini" }],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+
+    // Removing a provider preserves instructions.
+    const afterRemove = await store.patch({ removeProviders: ["codex"] });
+    expect(afterRemove.metadataGeneration).toEqual({
+      providers: [],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+
+    // Clearing instructions with whitespace removes the key while preserving providers.
+    const cleared = await store.patch({
+      metadataGeneration: { instructions: "   \n  " },
+    });
+    expect(cleared.metadataGeneration).toEqual({ providers: [] });
+    expect(cleared.metadataGeneration.instructions).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({ providers: [] });
+  });
+
   test("patch persists the host idle runtime cleanup opt-out for the next daemon start", async () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -566,6 +566,9 @@
                 "required": ["provider"],
                 "additionalProperties": false
               }
+            },
+            "instructions": {
+              "type": "string"
             }
           },
           "additionalProperties": false

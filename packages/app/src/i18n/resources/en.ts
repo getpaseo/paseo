@@ -2666,7 +2666,7 @@ export const en = {
     metadataGeneration: {
       title: "Metadata generation",
       description:
-        "Choose the model Paseo uses for workspace titles, branch names, commit messages, and pull request drafts",
+        "Choose the model and instructions Paseo uses for workspace titles, branch names, commit messages, and pull request drafts",
       selection: "Model selection",
       automatic: "Automatic",
       preferred: "Manual",
@@ -2674,6 +2674,10 @@ export const en = {
       preferredHint: "Choose the model Paseo uses",
       model: "Model",
       modelHint: "Only this model is used. If it fails, Paseo does not try another model",
+      instructions: "Instructions",
+      instructionsHint: "Applied to all generated metadata on this host",
+      instructionsPlaceholder:
+        "Example: Write in Simplified Chinese. Keep phrasing consistent across titles and commits. Do not use em dashes.",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
     },
