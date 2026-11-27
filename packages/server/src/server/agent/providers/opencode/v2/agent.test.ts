@@ -2130,7 +2130,7 @@ describe("OpenCode v2 session lifecycle", () => {
   });
 });
 
-test("OpenCode v2 runtime safety retains shells, queued reports and shared executions", async () => {
+test("OpenCode v2 runtime safety retains shells, queued reports and its own executions", async () => {
   const harness = new V2Harness();
   const client = new OpenCodeV2AgentClient({
     logger: createTestLogger(),
@@ -2168,9 +2168,7 @@ test("OpenCode v2 runtime safety retains shells, queued reports and shared execu
     ];
     expect(await session.canStopRuntime!()).toBe(false);
     harness.api.session.inbox.list = async () => [];
-    harness.api.session.active = async () => ({
-      "unrelated-autonomous-session": { type: "running" },
-    });
+    harness.api.session.active = async () => ({ [session.id!]: { type: "running" } });
     expect(await session.canStopRuntime!()).toBe(false);
     harness.api.session.active = async () => ({});
     expect(await session.canStopRuntime!()).toBe(true);
@@ -2178,6 +2176,27 @@ test("OpenCode v2 runtime safety retains shells, queued reports and shared execu
       throw new Error("No shell inventory");
     };
     await expect(session.canStopRuntime!()).rejects.toThrow("No shell inventory");
+  } finally {
+    await session.close();
+  }
+});
+
+test("OpenCode v2 runtime safety vetoes another session's execution only when the release stops the server", async () => {
+  const harness = new V2Harness();
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  try {
+    harness.api.session.active = async () => ({
+      "unrelated-autonomous-session": { type: "running" },
+    });
+    // The shared server keeps running after this lease goes, so the other execution is safe.
+    expect(await session.canStopRuntime!()).toBe(true);
+    // Releasing the last lease of a dedicated server stops it, with the other execution inside.
+    harness.releaseStopsServer = true;
+    expect(await session.canStopRuntime!()).toBe(false);
   } finally {
     await session.close();
   }

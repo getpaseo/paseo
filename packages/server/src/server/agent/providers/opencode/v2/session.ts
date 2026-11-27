@@ -751,12 +751,14 @@ export class OpenCodeV2Session implements AgentSession {
     if (this.closed || this.exited || this.reconnecting || this.turns.id || this.dirty)
       return false;
     const request = { signal: AbortSignal.timeout(10_000) };
-    // Active executions are server-wide. Releasing the last lease must not stop an
-    // autonomous execution merely because it belongs to another session or location.
-    if (Object.keys(await this.client.session.active(request)).length > 0) return false;
+    const active = await this.client.session.active(request);
+    // Releasing the last lease of a server stops it, so it must not stop an autonomous
+    // execution merely because it belongs to another session or location.
+    if (this.connection.releaseStopsServer() && Object.keys(active).length > 0) return false;
     const family = new Map([[this.info.id, this.info]]);
     const directories = new Set<string>();
     for (const info of family.values()) {
+      if (active[info.id]) return false;
       if ((await this.client.session.inbox.list({ sessionID: info.id }, request)).length)
         return false;
       directories.add(info.location.directory);

@@ -32,6 +32,7 @@ export class V2Harness {
   readonly environments: Array<{ sessionID: string; variables: Record<string, string> }> = [];
   readonly instructions = new Map<string, string>();
   releases = 0;
+  releaseStopsServer = false;
   active = false;
   activeReads = 0;
   autoComplete = true;
@@ -250,6 +251,7 @@ export class V2Harness {
       this.releases += 1;
     },
     retain: () => this.connection,
+    releaseStopsServer: () => this.releaseStopsServer,
     exited: new Promise<Error>(() => undefined),
   };
   readonly runtime = { acquire: async () => this.connection, shutdown: async () => undefined };
