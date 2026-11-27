@@ -208,6 +208,35 @@ it.each([
   },
 );
 
+it("clamps negative remaining counts and percentages when premium quota is exceeded", async () => {
+  const report = await fetchPremiumQuota({
+    entitlement: 20000,
+    remaining: -6,
+    percent_remaining: -0.03,
+    unlimited: false,
+  });
+  expect(report).toMatchObject({
+    status: "available",
+    planLabel: "individual",
+    windows: [
+      {
+        id: "premium_interactions",
+        label: "Premium requests",
+        usedPct: 100,
+        remainingPct: 0,
+        resetsAt: "2026-12-01T00:00:00.000Z",
+      },
+    ],
+    details: expect.arrayContaining([
+      {
+        id: "premium_remaining",
+        label: "Premium requests remaining",
+        value: "0 / 20000",
+      },
+    ]),
+  });
+});
+
 it.each([
   undefined,
   null,

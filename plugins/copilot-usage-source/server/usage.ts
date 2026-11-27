@@ -26,8 +26,8 @@ const CopilotUsageResponseSchema = z.object({
       premium_interactions: z
         .object({
           entitlement: z.number().nonnegative().nullish(),
-          remaining: z.number().nonnegative().nullish(),
-          percent_remaining: z.number().min(0).max(100).nullish(),
+          remaining: z.number().nullish(),
+          percent_remaining: z.number().nullish(),
           unlimited: z.boolean().optional(),
         })
         .nullish(),
@@ -95,7 +95,7 @@ export async function fetchUsage(
         windowFromUsedPct({
           id: "premium_interactions",
           label: "Premium requests",
-          utilizationPct: 100 - premium.percent_remaining,
+          utilizationPct: Math.max(0, Math.min(100, 100 - premium.percent_remaining)),
           resetsAt: resp.quota_reset_date_utc || resp.quota_reset_date,
         }),
       );
@@ -104,7 +104,7 @@ export async function fetchUsage(
       details.push({
         id: "premium_remaining",
         label: "Premium requests remaining",
-        value: `${premium.remaining} / ${premium.entitlement}`,
+        value: `${Math.max(0, premium.remaining)} / ${premium.entitlement}`,
       });
     }
   }
