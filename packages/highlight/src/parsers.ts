@@ -1,9 +1,19 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
-import { dart, kotlin } from "@codemirror/legacy-modes/mode/clike";
+import { dart, kotlin, scala } from "@codemirror/legacy-modes/mode/clike";
+import { cmake } from "@codemirror/legacy-modes/mode/cmake";
 import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
+import { groovy } from "@codemirror/legacy-modes/mode/groovy";
+import { lua } from "@codemirror/legacy-modes/mode/lua";
+import { perl } from "@codemirror/legacy-modes/mode/perl";
+import { powerShell } from "@codemirror/legacy-modes/mode/powershell";
+import { properties } from "@codemirror/legacy-modes/mode/properties";
+import { protobuf } from "@codemirror/legacy-modes/mode/protobuf";
+import { r } from "@codemirror/legacy-modes/mode/r";
 import { ruby } from "@codemirror/legacy-modes/mode/ruby";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { standardSQL } from "@codemirror/legacy-modes/mode/sql";
+import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { parser as jsParser } from "@lezer/javascript";
@@ -46,6 +56,14 @@ const diffLanguage = StreamLanguage.define({
   },
 });
 const rubyLanguage = StreamLanguage.define(ruby);
+const kotlinLanguage = StreamLanguage.define(kotlin);
+const scalaLanguage = StreamLanguage.define(scala);
+const powerShellLanguage = StreamLanguage.define(powerShell);
+const groovyLanguage = StreamLanguage.define(groovy);
+const cmakeLanguage = StreamLanguage.define(cmake);
+const propertiesLanguage = StreamLanguage.define(properties);
+const perlLanguage = StreamLanguage.define(perl);
+const stexLanguage = StreamLanguage.define(stex);
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -117,10 +135,41 @@ const languagesByExtension: Record<string, Language> = {
   podspec: rubyLanguage,
   thor: rubyLanguage,
   // Kotlin
-  kt: StreamLanguage.define(kotlin),
-  kts: StreamLanguage.define(kotlin),
+  kt: kotlinLanguage,
+  kts: kotlinLanguage,
+  // Scala
+  scala: scalaLanguage,
+  sc: scalaLanguage,
   // TOML
   toml: StreamLanguage.define(toml),
+  // SQL
+  sql: StreamLanguage.define(standardSQL),
+  // Lua
+  lua: StreamLanguage.define(lua),
+  // Protobuf
+  proto: StreamLanguage.define(protobuf),
+  // PowerShell
+  ps1: powerShellLanguage,
+  psm1: powerShellLanguage,
+  psd1: powerShellLanguage,
+  // Groovy / Gradle
+  groovy: groovyLanguage,
+  gradle: groovyLanguage,
+  // CMake
+  cmake: cmakeLanguage,
+  // Properties / INI
+  properties: propertiesLanguage,
+  ini: propertiesLanguage,
+  conf: propertiesLanguage,
+  // R
+  r: StreamLanguage.define(r),
+  // Perl
+  pl: perlLanguage,
+  pm: perlLanguage,
+  // LaTeX / TeX
+  tex: stexLanguage,
+  sty: stexLanguage,
+  cls: stexLanguage,
   // C#
   cs: csharpLanguage,
   // Nix
@@ -137,7 +186,7 @@ const languagesByExtension: Record<string, Language> = {
   mdx: language(markdownParser),
 };
 
-/** Extensionless files whose whole name identifies the language, matched case-sensitively. */
+/** Exact-basename files whose whole name identifies the language, matched case-sensitively. */
 const languagesByFilename = new Map<string, Language>([
   // Ruby
   ["Gemfile", rubyLanguage],
@@ -152,6 +201,8 @@ const languagesByFilename = new Map<string, Language>([
   ["Fastfile", rubyLanguage],
   ["Appfile", rubyLanguage],
   ["Dangerfile", rubyLanguage],
+  // CMake
+  ["CMakeLists.txt", cmakeLanguage],
 ]);
 
 export function getLanguageForFile(filename: string): Language | null {

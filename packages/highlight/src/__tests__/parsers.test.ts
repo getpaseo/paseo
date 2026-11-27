@@ -36,6 +36,27 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("tasks.rake")).toBe(true);
     expect(isLanguageSupported("paseo.gemspec")).toBe(true);
     expect(isLanguageSupported("config.ru")).toBe(true);
+    expect(isLanguageSupported("query.sql")).toBe(true);
+    expect(isLanguageSupported("script.lua")).toBe(true);
+    expect(isLanguageSupported("schema.proto")).toBe(true);
+    expect(isLanguageSupported("deploy.ps1")).toBe(true);
+    expect(isLanguageSupported("module.psm1")).toBe(true);
+    expect(isLanguageSupported("manifest.psd1")).toBe(true);
+    expect(isLanguageSupported("build.groovy")).toBe(true);
+    expect(isLanguageSupported("build.gradle")).toBe(true);
+    expect(isLanguageSupported("Main.scala")).toBe(true);
+    expect(isLanguageSupported("script.sc")).toBe(true);
+    expect(isLanguageSupported("toolchain.cmake")).toBe(true);
+    expect(isLanguageSupported("app.properties")).toBe(true);
+    expect(isLanguageSupported("config.ini")).toBe(true);
+    expect(isLanguageSupported("service.conf")).toBe(true);
+    expect(isLanguageSupported("analysis.r")).toBe(true);
+    expect(isLanguageSupported("analysis.R")).toBe(true);
+    expect(isLanguageSupported("script.pl")).toBe(true);
+    expect(isLanguageSupported("Module.pm")).toBe(true);
+    expect(isLanguageSupported("paper.tex")).toBe(true);
+    expect(isLanguageSupported("style.sty")).toBe(true);
+    expect(isLanguageSupported("article.cls")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
     expect(isLanguageSupported("Counter.svelte")).toBe(true);
     expect(isLanguageSupported("Page.astro")).toBe(true);
@@ -64,6 +85,14 @@ describe("isLanguageSupported", () => {
     // Names are case-sensitive, and a lockfile is not Ruby.
     expect(isLanguageSupported("gemfile")).toBe(false);
     expect(isLanguageSupported("Gemfile.lock")).toBe(false);
+  });
+
+  it("recognizes CMakeLists.txt by exact basename", () => {
+    expect(isLanguageSupported("CMakeLists.txt")).toBe(true);
+    expect(isLanguageSupported("app/CMakeLists.txt")).toBe(true);
+    expect(isLanguageSupported("dir.with.dots/CMakeLists.txt")).toBe(true);
+    expect(getLanguageForFile("CMakeLists.txt")).toBe(getLanguageForFile("toolchain.cmake"));
+    expect(isLanguageSupported("cmakelists.txt")).toBe(false);
   });
 
   it("handles nested paths", () => {
@@ -105,6 +134,26 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("rake");
     expect(extensions).toContain("gemspec");
     expect(extensions).toContain("ru");
+    expect(extensions).toContain("sql");
+    expect(extensions).toContain("lua");
+    expect(extensions).toContain("proto");
+    expect(extensions).toContain("ps1");
+    expect(extensions).toContain("psm1");
+    expect(extensions).toContain("psd1");
+    expect(extensions).toContain("groovy");
+    expect(extensions).toContain("gradle");
+    expect(extensions).toContain("scala");
+    expect(extensions).toContain("sc");
+    expect(extensions).toContain("cmake");
+    expect(extensions).toContain("properties");
+    expect(extensions).toContain("ini");
+    expect(extensions).toContain("conf");
+    expect(extensions).toContain("r");
+    expect(extensions).toContain("pl");
+    expect(extensions).toContain("pm");
+    expect(extensions).toContain("tex");
+    expect(extensions).toContain("sty");
+    expect(extensions).toContain("cls");
     expect(extensions).toContain("json");
     expect(extensions).toContain("svelte");
     expect(extensions).toContain("astro");

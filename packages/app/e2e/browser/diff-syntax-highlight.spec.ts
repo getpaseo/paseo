@@ -34,6 +34,27 @@ const DIFF_FIXTURE = [
   "-Old description",
   "+New description",
   "```",
+  "",
+  "Plus Ruby, Kotlin, TOML, and SQL:",
+  "",
+  "```ruby",
+  "class Greeter",
+  '  def hi(name) = "Hello #{name}"',
+  "end",
+  "```",
+  "",
+  "```kotlin",
+  'val message: String = "Kotlin ready"',
+  "```",
+  "",
+  "```toml",
+  "[server]",
+  'host = "localhost"',
+  "```",
+  "",
+  "```sql",
+  "SELECT id, name FROM users WHERE active = TRUE;",
+  "```",
 ].join("\n");
 
 const FILE_DIFF_CONTENT = [
@@ -114,6 +135,17 @@ test.describe("diff and patch syntax highlighting", () => {
         await expect(diffMeta).toHaveCSS("color", expectedColors.meta);
         await expect(patchAdd).toHaveCSS("color", expectedColors.addition);
         await expect(patchDel).toHaveCSS("color", expectedColors.deletion);
+
+        const rubyDef = message.getByText("def", { exact: true });
+        const kotlinVal = message.getByText("val", { exact: true });
+        const tomlHost = message.getByText("host", { exact: true });
+        const sqlSelect = message.getByText("SELECT", { exact: true });
+        const expectedKeyword = theme === "dark" ? "rgb(198, 120, 221)" : "rgb(166, 38, 164)";
+        const expectedProperty = theme === "dark" ? "rgb(209, 154, 102)" : "rgb(152, 104, 1)";
+        await expect(rubyDef).toHaveCSS("color", expectedKeyword);
+        await expect(kotlinVal).toHaveCSS("color", expectedKeyword);
+        await expect(tomlHost).toHaveCSS("color", expectedProperty);
+        await expect(sqlSelect).toHaveCSS("color", expectedKeyword);
 
         await saveScreenshot(page, `chat-diff-patch-${theme}.png`);
       } finally {
