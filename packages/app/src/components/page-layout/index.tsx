@@ -20,10 +20,13 @@ const PageScrollView =
 
 interface PageLayoutProps {
   title?: string;
+  /** Short page description shown below the title on desktop and above the body on compact. */
+  description?: string;
   /** Compact back button. Defaults to navigating back. */
   onBack?: () => void;
   testID?: string;
   titleTestID?: string;
+  descriptionTestID?: string;
   /** Controls for the whole page: right of the title on desktop, in the back header on compact. */
   actions?: ReactNode;
   /** `wide` for pages that lay content out in a grid, such as a gallery. Defaults to a reading column. */
@@ -38,9 +41,11 @@ interface PageLayoutProps {
  */
 export function PageLayout({
   title,
+  description,
   onBack,
   testID,
   titleTestID,
+  descriptionTestID,
   actions,
   width = "default",
   children,
@@ -49,6 +54,24 @@ export function PageLayout({
   const insets = useSafeAreaInsets();
   const scrollContentStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
   const showTitle = !isCompact && title !== undefined;
+  let pageHeader: ReactNode = null;
+  if (showTitle) {
+    pageHeader = (
+      <PageTitle
+        title={title}
+        description={description}
+        actions={actions}
+        testID={titleTestID}
+        descriptionTestID={descriptionTestID}
+      />
+    );
+  } else if (description) {
+    pageHeader = (
+      <Text style={styles.compactDescription} testID={descriptionTestID}>
+        {description}
+      </Text>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -65,7 +88,7 @@ export function PageLayout({
         testID={testID}
       >
         <View style={width === "wide" ? styles.contentWide : styles.content}>
-          {showTitle ? <PageTitle title={title} actions={actions} testID={titleTestID} /> : null}
+          {pageHeader}
           {children}
         </View>
       </PageScrollView>
@@ -87,12 +110,15 @@ interface PageTitleProps {
   /** Drawn before the title, such as the icon of the thing the page is about. */
   icon?: ReactNode;
   title?: string;
+  /** Short page description rendered directly below the title on the same leading rail. */
+  description?: string;
   /** A control that belongs to the title, drawn right after it. */
   adornment?: ReactNode;
   /** Controls for the whole page, drawn at the trailing edge. */
   actions?: ReactNode;
   testID?: string;
   titleTestID?: string;
+  descriptionTestID?: string;
 }
 
 /**
@@ -103,40 +129,49 @@ export function PageTitle({
   parent,
   icon,
   title,
+  description,
   adornment,
   actions,
   testID,
   titleTestID = "page-title",
+  descriptionTestID,
 }: PageTitleProps) {
   return (
-    <View style={styles.titleRow} testID={testID}>
-      <View style={styles.titleParts}>
-        {parent ? (
-          <PressHighlight
-            accessibilityRole="button"
-            accessibilityLabel={parent.accessibilityLabel}
-            onPress={parent.onPress}
-            testID={parent.testID}
-          >
-            {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => (
-              <Text style={[styles.title, styles.parent, hovered && styles.parentHovered]}>
-                {parent.label}
-              </Text>
-            )}
-          </PressHighlight>
-        ) : null}
-        {parent && title !== undefined ? (
-          <ThemedChevronRight size={ICON_SIZE.lg} uniProps={separatorColor} />
-        ) : null}
-        {icon}
-        {title !== undefined ? (
-          <Text style={[styles.title, styles.titleLeaf]} numberOfLines={1} testID={titleTestID}>
-            {title}
-          </Text>
-        ) : null}
-        {adornment}
+    <View style={styles.titleBlock} testID={testID}>
+      <View style={styles.titleRow}>
+        <View style={styles.titleParts}>
+          {parent ? (
+            <PressHighlight
+              accessibilityRole="button"
+              accessibilityLabel={parent.accessibilityLabel}
+              onPress={parent.onPress}
+              testID={parent.testID}
+            >
+              {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => (
+                <Text style={[styles.title, styles.parent, hovered && styles.parentHovered]}>
+                  {parent.label}
+                </Text>
+              )}
+            </PressHighlight>
+          ) : null}
+          {parent && title !== undefined ? (
+            <ThemedChevronRight size={ICON_SIZE.lg} uniProps={separatorColor} />
+          ) : null}
+          {icon}
+          {title !== undefined ? (
+            <Text style={[styles.title, styles.titleLeaf]} numberOfLines={1} testID={titleTestID}>
+              {title}
+            </Text>
+          ) : null}
+          {adornment}
+        </View>
+        {actions}
       </View>
-      {actions}
+      {description ? (
+        <Text style={styles.description} testID={descriptionTestID}>
+          {description}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -166,12 +201,27 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: 1080,
     alignSelf: "center",
   },
+  titleBlock: {
+    marginBottom: theme.spacing[6],
+  },
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[4],
-    marginBottom: theme.spacing[6],
+  },
+  description: {
+    marginLeft: theme.spacing[1],
+    marginTop: theme.spacing[1.5],
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.45),
+  },
+  compactDescription: {
+    marginBottom: theme.spacing[4],
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: Math.round(theme.fontSize.sm * 1.45),
   },
   titleParts: {
     // Line up with the section titles, which sit inset from their cards.

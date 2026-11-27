@@ -92,6 +92,8 @@ export function useAgentProfilePicker(
     [t],
   );
 
+  const systemPromptLabel = t("settings.host.agentProfiles.systemPromptLabel");
+
   const rows = useMemo<AgentProfilePickerRow[]>(
     () =>
       applicableProfiles.map((profile) => ({
@@ -101,11 +103,16 @@ export function useAgentProfilePicker(
         icon: profile.icon ?? "",
         color: profile.color ?? "",
         name: profile.name,
-        summary: buildAgentProfileTags({ profile, entries, formatFeatureCount })
+        summary: buildAgentProfileTags({
+          profile,
+          entries,
+          formatFeatureCount,
+          systemPromptLabel,
+        })
           .map((tag) => tag.label)
           .join(" · "),
       })),
-    [applicableProfiles, entries, formatFeatureCount],
+    [applicableProfiles, entries, formatFeatureCount, systemPromptLabel],
   );
 
   const persistSelection = useCallback(

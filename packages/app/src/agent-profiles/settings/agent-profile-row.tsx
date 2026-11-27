@@ -349,9 +349,17 @@ export function AgentProfileRow({
     [t],
   );
 
+  const systemPromptLabel = t("settings.host.agentProfiles.systemPromptLabel");
+
   const rosterSummary = useMemo(
-    () => buildAgentProfileRosterSummary({ profile, entries, formatFeatureCount }),
-    [entries, formatFeatureCount, profile],
+    () =>
+      buildAgentProfileRosterSummary({
+        profile,
+        entries,
+        formatFeatureCount,
+        systemPromptLabel,
+      }),
+    [entries, formatFeatureCount, profile, systemPromptLabel],
   );
   const fullSummary = useMemo(
     () => rosterSummary.allTags.map((tag) => tag.label).join(" · "),

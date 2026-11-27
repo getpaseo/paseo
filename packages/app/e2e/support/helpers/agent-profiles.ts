@@ -257,6 +257,7 @@ export interface AgentProfileDraft {
   model?: string;
   thinking?: string;
   mode?: string;
+  systemPrompt?: string;
   notes?: string;
 }
 
@@ -319,7 +320,12 @@ async function fillAgentProfileForm(page: Page, draft: AgentProfileDraft): Promi
   if (draft.name !== undefined) {
     await surface.getByRole("textbox", { name: "Name", exact: true }).fill(draft.name);
   }
-  if (draft.thinking !== undefined || draft.mode !== undefined || draft.notes !== undefined) {
+  if (
+    draft.thinking !== undefined ||
+    draft.mode !== undefined ||
+    draft.systemPrompt !== undefined ||
+    draft.notes !== undefined
+  ) {
     await ensureCustomizeExpanded(surface);
   }
   if (draft.mode !== undefined) {
@@ -336,6 +342,11 @@ async function fillAgentProfileForm(page: Page, draft: AgentProfileDraft): Promi
     } else {
       await chooseSelectFieldOption(page, { field: "thinking", option: draft.thinking });
     }
+  }
+  if (draft.systemPrompt !== undefined) {
+    await surface
+      .getByRole("textbox", { name: "System prompt", exact: true })
+      .fill(draft.systemPrompt);
   }
   if (draft.notes !== undefined) {
     await surface.getByRole("textbox", { name: "When to use", exact: true }).fill(draft.notes);
@@ -518,12 +529,20 @@ export async function browserHistoryJumpWithConfirm(
 export async function expectAgentProfileForm(
   page: Page,
   name: string,
-  expected: { provider?: string; model?: string; mode?: string; notes?: string },
+  expected: {
+    provider?: string;
+    model?: string;
+    mode?: string;
+    systemPrompt?: string;
+    notes?: string;
+  },
 ): Promise<void> {
   await agentProfileRow(page, name).click();
   const surface = editSurface(page);
   await expect(surface).toBeVisible({ timeout: 30_000 });
   await expect(surface.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(name);
+  const systemPromptHint = surface.getByTestId("agent-profile-system-prompt-field-hint");
+  await expect(systemPromptHint).toHaveText("Applies to new agents only");
   const notesHint = surface.getByTestId("agent-profile-notes-field-hint");
   await expect(notesHint).toHaveText("Tells agents when to pick this profile");
   expect(await notesHint.evaluate((element) => getComputedStyle(element).webkitLineClamp)).not.toBe(
@@ -541,6 +560,11 @@ export async function expectAgentProfileForm(
   }
   if (expected.mode) {
     await expect(surface.getByTestId("agent-profile-mode-trigger")).toContainText(expected.mode);
+  }
+  if (expected.systemPrompt !== undefined) {
+    await expect(surface.getByRole("textbox", { name: "System prompt", exact: true })).toHaveValue(
+      expected.systemPrompt,
+    );
   }
   if (expected.notes !== undefined) {
     await expect(surface.getByRole("textbox", { name: "When to use", exact: true })).toHaveValue(

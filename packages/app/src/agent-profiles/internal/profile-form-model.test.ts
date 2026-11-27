@@ -170,6 +170,7 @@ describe("openAgentProfileForm", () => {
     const model = openWithCatalog({ mode: "create" });
     model.setName("  Cheap grunt  ");
     model.setProvider("codex", { label: "Codex" });
+    model.setSystemPrompt("   ");
     model.setNotes("   ");
 
     // Codex declares no thinking options, so that key is genuinely absent —
@@ -181,6 +182,29 @@ describe("openAgentProfileForm", () => {
       modeId: "read-only",
       options: {},
     });
+  });
+
+  it("seeds, tracks dirty state, preserves across provider switches, and submits systemPrompt", () => {
+    const model = openWithCatalog({
+      mode: "edit",
+      profile: {
+        id: "p1",
+        name: "UI work",
+        provider: "claude",
+        model: "claude-opus-5",
+        systemPrompt: "Focus on layout.",
+      },
+    });
+    expect(model.getState().systemPrompt).toBe("Focus on layout.");
+    expect(model.getState().isDirty).toBe(false);
+
+    model.setSystemPrompt("  Focus on layout and tokens.  ");
+    expect(model.getState().isDirty).toBe(true);
+    expect(model.getState().submitValue?.systemPrompt).toBe("Focus on layout and tokens.");
+
+    model.setProvider("codex", { label: "Codex" });
+    expect(model.getState().systemPrompt).toBe("  Focus on layout and tokens.  ");
+    expect(model.getState().submitValue?.systemPrompt).toBe("Focus on layout and tokens.");
   });
 
   it("seeds edit mode from the stored profile before the catalog lands", () => {

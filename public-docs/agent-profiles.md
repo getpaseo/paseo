@@ -10,7 +10,7 @@ category: Orchestration
 
 Save the settings you use together as a named profile. Choose **UI work**, **Planning**, or **Review** when creating an agent instead of selecting its model, thinking level, and mode each time.
 
-- **For you:** one selection applies the saved provider, model, mode, thinking level, and available feature settings.
+- **For you:** one selection applies the saved provider, model, mode, thinking level, system prompt, and available feature settings.
 - **For an orchestrating agent:** profile notes explain when to choose those settings for delegated work.
 
 ## Create a profile
@@ -18,14 +18,15 @@ Save the settings you use together as a named profile. Choose **UI work**, **Pla
 1. Open **Settings → Host → Agent profiles**.
 2. Select **New profile** and give it a name, such as **UI work**.
 3. Choose its provider, model, mode, thinking level, and any available features.
-4. Fill in **When to use** with the kind of work this profile should handle.
-5. Select **Save**.
+4. Optionally add a **System prompt** to guide new agents launched from this profile.
+5. Fill in **When to use** with the kind of work this profile should handle.
+6. Select **Save**.
 
 Profiles are saved on that host. The available settings depend on the provider and model you choose.
 
 ## Apply settings in one click
 
-When creating an agent, open the model picker and select a saved profile under **Profiles**. Paseo applies its settings together; you can still adjust them before sending your prompt.
+When creating an agent, open the model picker and select a saved profile under **Profiles**. Paseo applies its settings together; you can still adjust them before sending your prompt. System prompts apply to new agents only and are skipped when you apply a profile to an already-running agent.
 
 Changing a saved profile affects future selections. It does not update agents you already launched.
 
