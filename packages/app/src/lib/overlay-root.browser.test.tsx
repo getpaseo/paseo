@@ -93,6 +93,28 @@ function TextareaOverlayHarness({
   );
 }
 
+function AutofocusReplacementHarness({
+  open,
+  showInlineInput,
+  blurs,
+}: {
+  open: boolean;
+  showInlineInput: boolean;
+  blurs: string[];
+}) {
+  const handleBlur = useCallback(() => {
+    blurs.push("blur");
+  }, [blurs]);
+  return (
+    <div>
+      <InnerOverlay active={open} />
+      {showInlineInput ? (
+        <input autoFocus data-testid="inline-autofocus-input" onBlur={handleBlur} />
+      ) : null}
+    </div>
+  );
+}
+
 describe("useOverlayRegistration in the browser", () => {
   let root: Root;
   let container: HTMLDivElement;
@@ -279,6 +301,29 @@ describe("useOverlayRegistration in the browser", () => {
     await nextFrame();
 
     expect(document.activeElement).toBe(secondInput);
+  });
+
+  it("does not steal focus from an autofocused input mounted in the same commit", async () => {
+    const blurs: string[] = [];
+
+    flushSync(() =>
+      root.render(<AutofocusReplacementHarness open showInlineInput={false} blurs={blurs} />),
+    );
+    await nextFrame();
+    document.querySelector<HTMLInputElement>('[data-testid="overlay-search"]')?.focus();
+    expect(document.activeElement).not.toBe(opener);
+
+    flushSync(() =>
+      root.render(<AutofocusReplacementHarness open={false} showInlineInput blurs={blurs} />),
+    );
+    await nextFrame();
+
+    const inlineInput = document.querySelector<HTMLInputElement>(
+      '[data-testid="inline-autofocus-input"]',
+    );
+    expect(inlineInput).toBeTruthy();
+    expect(document.activeElement).toBe(inlineInput);
+    expect(blurs).toEqual([]);
   });
 });
 

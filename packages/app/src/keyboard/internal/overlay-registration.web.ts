@@ -17,7 +17,28 @@ function isFocusTarget(value: unknown): value is FocusTarget {
 }
 
 function canRestoreFocusTo(target: FocusTarget): boolean {
-  return !(target instanceof HTMLElement) || document.contains(target);
+  if (typeof document === "undefined") return false;
+  return (
+    typeof HTMLElement === "undefined" ||
+    !(target instanceof HTMLElement) ||
+    document.contains(target)
+  );
+}
+
+function shouldRestoreFocusAfterRemoval(
+  removedScope: HTMLElement | null,
+  openerElement: Element | null,
+  activeAtRemove: Element | null,
+): boolean {
+  if (typeof document === "undefined") return false;
+  const current = document.activeElement;
+  if (!current || current === document.body || current === document.documentElement) {
+    return true;
+  }
+  if (removedScope?.contains(current)) {
+    return true;
+  }
+  return openerElement !== null && current === openerElement && activeAtRemove === openerElement;
 }
 
 interface WebOverlayEntry {
@@ -26,6 +47,7 @@ interface WebOverlayEntry {
   getScope: () => HTMLElement | null;
   getKeyHandler: () => WebOverlayKeyHandler;
   restoreFocus: FocusTarget | null;
+  openerElement: Element | null;
   manageFocus: boolean;
 }
 
@@ -167,6 +189,8 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
 
   return (options) => {
     window.cancelAnimationFrame(focusFrame);
+    const removedScope = entry.getScope();
+    const activeAtRemove = typeof document !== "undefined" ? document.activeElement : null;
     remove();
     detachWebOverlayListeners();
     if (
@@ -179,9 +203,14 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
       const topAfterRemove = overlays.getTop();
       // React runs useLayoutEffect cleanups during its mutation commit phase while its
       // event system is disabled, which drops synchronous focusin events (breaking onFocus
-      // and onSelect on restored text inputs). Defer focus restoration until the commit ends.
+      // and onSelect on restored text inputs). Defer focus restoration until the commit ends,
+      // and skip it if another overlay opened or the commit moved focus to a new target.
       queueMicrotask(() => {
-        if (overlays.getTop() === topAfterRemove && canRestoreFocusTo(target)) {
+        if (
+          overlays.getTop() === topAfterRemove &&
+          shouldRestoreFocusAfterRemoval(removedScope, entry.openerElement, activeAtRemove) &&
+          canRestoreFocusTo(target)
+        ) {
           target.focus();
         }
       });
@@ -208,6 +237,7 @@ export function useOverlayRegistration({
   const layerRef = useRef(layer);
   const keyHandlerRef = useRef(onKeyDown);
   const capturedRestoreFocusRef = useRef<FocusTarget | null>(null);
+  const capturedOpenerElementRef = useRef<Element | null>(null);
   const removeEntryRef = useRef<((options?: RemoveWebOverlayOptions) => void) | null>(null);
   const detachedRemoveEntryRef = useRef<((options?: RemoveWebOverlayOptions) => void) | null>(null);
   const registeredRef = useRef(false);
@@ -218,12 +248,16 @@ export function useOverlayRegistration({
   layerRef.current = layer;
   keyHandlerRef.current = onKeyDown;
   if (active && !wasActiveRef.current && typeof document !== "undefined") {
+    const activeElement =
+      typeof HTMLElement !== "undefined" && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    capturedOpenerElementRef.current = activeElement;
     const requestedRestoreTarget = preferredRestoreFocusRef?.current;
     if (isFocusTarget(requestedRestoreTarget)) {
       capturedRestoreFocusRef.current = requestedRestoreTarget;
     } else {
-      capturedRestoreFocusRef.current =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      capturedRestoreFocusRef.current = activeElement;
     }
   }
   wasActiveRef.current = active;
@@ -252,6 +286,7 @@ export function useOverlayRegistration({
       getScope: () => scopeRef.current,
       getKeyHandler: () => keyHandlerRef.current,
       restoreFocus: capturedRestoreFocusRef.current,
+      openerElement: capturedOpenerElementRef.current,
       manageFocus,
     };
     removeEntryRef.current = addWebOverlay(entry);
