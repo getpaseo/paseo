@@ -346,6 +346,7 @@ class EnrichedMarkdown(
     selectionMenuConfig = config
     dynamicProps.copyLabel = config.copyLabel
     dynamicProps.copyAsMarkdownLabel = config.copyAsMarkdownLabel
+    syncChildCopyLabels()
     segmentViews.filterIsInstance<EnrichedMarkdownInternalText>().forEach {
       it.selectionMenuConfig = config
     }
