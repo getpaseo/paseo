@@ -100,7 +100,11 @@ function checkState(status: string | null): ChangeRequestSnapshot["checksState"]
   return "neutral";
 }
 
-const activitySchema = z.object({ id: z.string(), url: z.string().url() });
+const activitySchema = z.object({
+  id: z.string(),
+  url: z.string().url(),
+  updatedAt: z.string().optional(),
+});
 const reviewSchema = activitySchema.extend({ submittedAt: z.string().nullable() });
 const inlineSchema = activitySchema.extend({ publishedAt: z.string().nullable() });
 const prStates = { OPEN: "open", CLOSED: "closed", MERGED: "merged" } as const;
@@ -124,7 +128,7 @@ function connection(name: string, fields: string, cursor?: string, size = PAGE_S
 function conversation(cursor?: string) {
   return `comments(last: ${PAGE_SIZE}${cursor ? `, before: ${JSON.stringify(cursor)}` : ""}) {
     pageInfo { hasNextPage: hasPreviousPage endCursor: startCursor }
-    nodes { id url }
+    nodes { id url updatedAt }
   }`;
 }
 
@@ -155,7 +159,6 @@ interface ReadOptions {
   batchSize: number;
   firstBatchSize: number;
   onChecks(url: string, headSha: string, contexts: unknown[]): void;
-  knownActivity(url: string): ReadonlySet<string> | undefined;
   isObserved(url: string): boolean;
 }
 
@@ -163,13 +166,13 @@ const pullRequestResult = z
   .object({ pullRequest: z.unknown() })
   .transform((result) => result.pullRequest);
 const threadResult = z.object({ comments: pageSchema });
-const reviewFields = "id url submittedAt";
-const inlineFields = "id url publishedAt";
+const reviewFields = "id url submittedAt updatedAt";
+const inlineFields = "id url publishedAt updatedAt";
 const threadFields = `id ${connection("comments", inlineFields, undefined, 10)}`;
 
 export async function readGitHubChangeRequests(
   urls: string[],
-  { read, batchSize, firstBatchSize, onChecks, knownActivity, isObserved }: ReadOptions,
+  { read, batchSize, firstBatchSize, onChecks, isObserved }: ReadOptions,
 ): Promise<Map<string, ChangeRequestSnapshot | Error>> {
   const snapshots = new Map<string, ChangeRequestSnapshot>();
   const failed = new Map<string, Error>();
@@ -264,26 +267,24 @@ export async function readGitHubChangeRequests(
             },
           );
         }
-        const seen = knownActivity(url);
         schedulePages(
           url,
           pr.comments,
           (nodes) => {
             const comments = z.array(activitySchema).parse(nodes);
             for (const item of comments) {
-              if (!seen?.has(item.id)) snapshot.activity.push({ ...item, kind: "comment" });
+              snapshot.activity.push({ ...item, kind: "comment" });
             }
-            // Walk recent comments first and stop when reaching the committed baseline.
-            return !comments.some(({ id }) => seen?.has(id));
+            // Edits do not move old comments to the newest page. Read metadata
+            // across the connection; the durable watcher deduplicates revisions.
           },
           (cursor) => pullRequest(url, conversation(cursor)),
           (value) =>
             z.object({ comments: pageSchema }).parse(pullRequestResult.parse(value)).comments,
         );
         schedulePullRequestPages(url, "reviews", reviewFields, pr.reviews, (nodes) => {
-          for (const item of z.array(reviewSchema).parse(nodes)) {
-            if (item.submittedAt)
-              snapshot.activity.push({ id: item.id, url: item.url, kind: "review" });
+          for (const { submittedAt, ...item } of z.array(reviewSchema).parse(nodes)) {
+            if (submittedAt) snapshot.activity.push({ ...item, kind: "review" });
           }
         });
         schedulePullRequestPages(
@@ -302,13 +303,8 @@ export async function readGitHubChangeRequests(
                 url,
                 comments,
                 (inlineNodes) => {
-                  for (const item of z.array(inlineSchema).parse(inlineNodes)) {
-                    if (item.publishedAt)
-                      snapshot.activity.push({
-                        id: item.id,
-                        url: item.url,
-                        kind: "inline comment",
-                      });
+                  for (const { publishedAt, ...item } of z.array(inlineSchema).parse(inlineNodes)) {
+                    if (publishedAt) snapshot.activity.push({ ...item, kind: "inline comment" });
                   }
                 },
                 select,

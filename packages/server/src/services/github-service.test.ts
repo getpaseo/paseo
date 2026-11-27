@@ -5190,6 +5190,79 @@ describe("exact GitHub pull request observations", () => {
       vi.useRealTimers();
     }
   });
+  it("observes revisions of known comments on older pages and edited review activity", async () => {
+    vi.useFakeTimers();
+    const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    const address = "https://github.com/owner/repo/pull/42";
+    const recent = { id: "recent", url: `${address}#issuecomment-2`, updatedAt: "2026-11-27T10:00:00Z" };
+    const old = { id: "old", url: `${address}#issuecomment-1` };
+    const rateLimit = { limit: 5000, remaining: 4900, resetAt: new Date(Date.now() + 100_000).toISOString() };
+    const responses: string[] = [];
+    for (const updatedAt of ["2026-11-27T09:00:00Z", "2026-11-27T11:00:00Z"]) {
+      responses.push(
+        JSON.stringify({
+          data: {
+            rateLimit,
+            request0: {
+              pullRequest: {
+                state: "OPEN",
+                headRefOid: "abc",
+                reviewDecision: null,
+                statusCheckRollup: null,
+                comments: {
+                  nodes: [recent],
+                  pageInfo: { hasNextPage: true, endCursor: "older-comments" },
+                },
+                reviews: {
+                  ...empty,
+                  nodes: [{ id: "review", url: `${address}#pullrequestreview-1`, submittedAt: updatedAt, updatedAt }],
+                },
+                reviewThreads: {
+                  ...empty,
+                  nodes: [{
+                    id: "thread",
+                    comments: {
+                      ...empty,
+                      nodes: [{ id: "inline", url: `${address}#discussion_r1`, publishedAt: updatedAt, updatedAt }],
+                    },
+                  }],
+                },
+              },
+            },
+          },
+        }),
+        JSON.stringify({
+          data: {
+            rateLimit,
+            request0: { pullRequest: { comments: { ...empty, nodes: [{ ...old, updatedAt }] } } },
+          },
+        }),
+      );
+    }
+    const runner = createRunner(responses);
+    const service = createGitHubService({ runner: runner.runner, resolveGhPath: async () => "gh" });
+    const received: Array<{ activity: Array<{ id: string; updatedAt?: string }> }> = [];
+    const errors: unknown[] = [];
+    try {
+      service.changeRequests.observe(address, {
+        knownActivity: () => new Set(["recent", "old", "review", "inline"]),
+        async snapshot(snapshot) { received.push(snapshot); },
+        error(error) { errors.push(error); },
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(received[0]?.activity).toContainEqual({ ...old, updatedAt: "2026-11-27T09:00:00Z", kind: "comment" });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(errors).toEqual([]);
+      expect(received[1]?.activity).toEqual(expect.arrayContaining([
+        { ...old, updatedAt: "2026-11-27T11:00:00Z", kind: "comment" },
+        { id: "review", url: `${address}#pullrequestreview-1`, updatedAt: "2026-11-27T11:00:00Z", kind: "review" },
+        { id: "inline", url: `${address}#discussion_r1`, updatedAt: "2026-11-27T11:00:00Z", kind: "inline comment" },
+      ]));
+    } finally {
+      service.dispose?.();
+      vi.useRealTimers();
+    }
+  });
 });
 
 it("batches co-due workspace discovery and exact PR reads with one check rollup", async () => {
