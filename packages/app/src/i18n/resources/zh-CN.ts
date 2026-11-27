@@ -983,6 +983,8 @@ export const zhCN: TranslationResources = {
           deletedLines: "删除 {{count}} 行",
           unpushedCommit: "{{count}} 个未 push 的 commit",
           unpushedCommits: "{{count}} 个未 push 的 commit",
+          worktreeDeleted: "worktree 文件夹将被删除",
+          worktreeKept: "worktree 及其变更会保留，另一个工作区仍在使用它。",
         },
       },
       diff: {

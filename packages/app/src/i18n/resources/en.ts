@@ -1002,6 +1002,8 @@ export const en = {
           deletedLines: "{{count}} deleted lines",
           unpushedCommit: "{{count}} unpushed commit",
           unpushedCommits: "{{count}} unpushed commits",
+          worktreeDeleted: "The worktree folder will be deleted",
+          worktreeKept: "The worktree and its changes stay. Another workspace still uses it.",
         },
       },
       diff: {

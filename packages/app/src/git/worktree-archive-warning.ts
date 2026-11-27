@@ -6,7 +6,12 @@ export interface WorktreeArchiveRisk {
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;
   diffStat?: { additions: number; deletions: number } | null;
+  /** What the archive does to the worktree's directory. Absent when the host doesn't say. */
+  directory?: WorktreeArchiveDirectory | null;
 }
+
+/** `removed`: the archive deletes it. `shared`: another workspace uses it, so it stays. */
+export type WorktreeArchiveDirectory = "removed" | "shared";
 
 export interface WorktreeArchiveRiskInput {
   archiveHasUncommittedChanges?: boolean | null;
@@ -27,6 +32,8 @@ export interface WorktreeArchiveWarningLabels {
   addedLine: (count: number) => string;
   deletedLine: (count: number) => string;
   unpushedCommit: (count: number) => string;
+  worktreeDeleted: string;
+  worktreeKept: string;
 }
 
 export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabels = {
@@ -48,6 +55,12 @@ export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabe
     count === 1
       ? i18n.t("workspace.git.actions.archiveWarning.unpushedCommit", { count })
       : i18n.t("workspace.git.actions.archiveWarning.unpushedCommits", { count }),
+  get worktreeDeleted() {
+    return i18n.t("workspace.git.actions.archiveWarning.worktreeDeleted");
+  },
+  get worktreeKept() {
+    return i18n.t("workspace.git.actions.archiveWarning.worktreeKept");
+  },
 };
 
 /**
@@ -63,6 +76,22 @@ export async function readWorktreeArchiveRisk(
     throw new Error(status.error.message);
   }
   return { isDirty: status.isDirty ?? false, aheadOfOrigin: status.aheadOfOrigin };
+}
+
+interface WorkspaceArchiveInspectClient {
+  inspectWorkspaceArchive: (
+    workspaceId: string,
+  ) => Promise<{ removesDirectory: boolean; usedByOtherWorkspace: boolean }>;
+}
+
+/** Asks the host what archiving the workspace does to its worktree. Rejects when it can't tell. */
+export async function readWorktreeArchiveDirectory(
+  client: WorkspaceArchiveInspectClient,
+  workspaceId: string,
+): Promise<WorktreeArchiveDirectory | null> {
+  const inspection = await client.inspectWorkspaceArchive(workspaceId);
+  if (inspection.removesDirectory) return "removed";
+  return inspection.usedByOtherWorkspace ? "shared" : null;
 }
 
 export function toWorktreeArchiveRisk(input: WorktreeArchiveRiskInput): WorktreeArchiveRisk {
@@ -126,6 +155,13 @@ export function buildWorktreeArchiveConfirmationMessage(
     return null;
   }
 
+  if (input.directory === "shared") {
+    return labels.worktreeKept;
+  }
+  if (input.directory === "removed") {
+    reasons.push(labels.worktreeDeleted);
+  }
+
   return reasons.join("\n");
 }
 
@@ -143,7 +179,7 @@ export async function confirmRiskyWorktreeArchive(
     message,
     confirmLabel: labels.confirm,
     cancelLabel: labels.cancel,
-    destructive: true,
+    destructive: input.directory !== "shared",
   });
 }
 

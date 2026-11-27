@@ -1005,6 +1005,8 @@ export const ja: TranslationResources = {
           deletedLines: "{{count}}行削除",
           unpushedCommit: "{{count}}件の未プッシュコミット",
           unpushedCommits: "{{count}}件の未プッシュコミット",
+          worktreeDeleted: "worktreeのフォルダーは削除されます",
+          worktreeKept: "worktreeと変更内容は残ります。別のワークスペースがまだ使用しています。",
         },
       },
       diff: {

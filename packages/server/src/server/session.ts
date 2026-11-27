@@ -300,6 +300,7 @@ import {
 } from "./worktree-session.js";
 import {
   archiveByScope,
+  inspectWorkspaceArchive,
   resolveWorkspaceBackingPath,
   type ActiveWorkspaceRef,
 } from "./workspace-archive-service.js";
@@ -3648,6 +3649,8 @@ export class Session {
         return this.handleWorkspaceRecoveryRestoreRequest(msg);
       case "workspace.archive.undo.request":
         return this.handleWorkspaceArchiveUndoRequest(msg);
+      case "workspace.archive.inspect.request":
+        return this.handleWorkspaceArchiveInspectRequest(msg);
       case "workspace.clear_attention.request":
         return this.handleWorkspaceClearAttentionRequest(msg);
       case "workspace.mark_unread.request":
@@ -8423,6 +8426,7 @@ export class Session {
               scope: { kind: "workspace", workspaceId: existing.workspaceId },
               requestId: request.requestId,
               signal,
+              expectDirectoryKept: request.expectDirectoryKept,
             },
           );
         },
@@ -8501,6 +8505,43 @@ export class Session {
           workspaceId: request.workspaceId,
           accepted: false,
           error: getErrorMessageOr(error, "Failed to undo the workspace archive"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceArchiveInspectRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.archive.inspect.request" }>,
+  ): Promise<void> {
+    const { requestId, workspaceId } = request;
+    try {
+      const inspection = await inspectWorkspaceArchive(
+        {
+          paseoHome: this.paseoHome,
+          paseoWorktreesBaseRoot: this.worktreesRoot,
+          // A workspace whose own archive is running no longer holds on to the worktree.
+          listActiveWorkspaces: async () =>
+            (await this.listActiveWorkspaceRefs()).filter(
+              (workspace) =>
+                workspace.workspaceId === workspaceId ||
+                this.workspaceArchiveOperations.getArchivingAt(workspace.workspaceId) === null,
+            ),
+        },
+        workspaceId,
+      );
+      this.emit({
+        type: "workspace.archive.inspect.response",
+        payload: { requestId, workspaceId, ...inspection, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "workspace.archive.inspect.response",
+        payload: {
+          requestId,
+          workspaceId,
+          removesDirectory: false,
+          usedByOtherWorkspace: false,
+          error: getErrorMessageOr(error, "Failed to inspect the workspace archive"),
         },
       });
     }

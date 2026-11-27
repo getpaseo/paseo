@@ -1017,6 +1017,9 @@ export const fr: TranslationResources = {
           deletedLines: "{{count}} lignes supprimées",
           unpushedCommit: "{{count}} commit non poussé",
           unpushedCommits: "{{count}} commits non poussés",
+          worktreeDeleted: "Le dossier du worktree sera supprimé",
+          worktreeKept:
+            "Le worktree et ses modifications sont conservés. Un autre espace de travail l'utilise encore.",
         },
       },
       diff: {

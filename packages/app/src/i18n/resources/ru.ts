@@ -1010,6 +1010,9 @@ export const ru: TranslationResources = {
           deletedLines: "Удалено строк: {{count}}",
           unpushedCommit: "Неотправленных коммитов: {{count}}",
           unpushedCommits: "Неотправленных коммитов: {{count}}",
+          worktreeDeleted: "Папка worktree будет удалена",
+          worktreeKept:
+            "Worktree и изменения в нём сохранятся. Его использует другое рабочее пространство.",
         },
       },
       diff: {

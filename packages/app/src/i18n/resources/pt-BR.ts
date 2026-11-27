@@ -1015,6 +1015,8 @@ export const ptBR: TranslationResources = {
           deletedLines: "{{count}} linhas removidas",
           unpushedCommit: "{{count}} commit não enviado",
           unpushedCommits: "{{count}} commits não enviados",
+          worktreeDeleted: "A pasta do worktree será excluída",
+          worktreeKept: "O worktree e suas alterações permanecem. Outro workspace ainda o usa.",
         },
       },
       diff: {

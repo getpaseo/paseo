@@ -5,6 +5,7 @@ import {
   beginOptimisticWorkspaceArchive,
   isWorkspaceListed,
   undoWorkspaceArchiveOptimistically,
+  type WorkspaceArchiveOptions,
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
 import { WorkspaceArchivedToast } from "./workspace-archived-toast";
@@ -13,7 +14,11 @@ import { WorkspaceArchivedToast } from "./workspace-archived-toast";
 export const WORKSPACE_ARCHIVE_UNDO_WINDOW_MS = 6000;
 
 export interface UndoableWorkspaceArchiveClient {
-  archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null; canceled?: boolean }>;
+  archiveWorkspace: (
+    workspaceId: string,
+    requestId?: string,
+    options?: WorkspaceArchiveOptions,
+  ) => Promise<{ error: string | null; canceled?: boolean }>;
   undoWorkspaceArchive: (workspaceId: string) => Promise<void>;
 }
 
@@ -230,6 +235,7 @@ export async function archiveWorkspaceWithUndo(input: {
   client: UndoableWorkspaceArchiveClient;
   workspace: WorkspaceArchiveTarget;
   toast: ToastApi;
+  options?: WorkspaceArchiveOptions;
   onArchiveCommitted: () => void;
 }): Promise<void> {
   const { failures } = await archiveWorkspacesWithUndo({

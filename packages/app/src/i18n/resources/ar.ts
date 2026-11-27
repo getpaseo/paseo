@@ -991,6 +991,8 @@ export const ar: TranslationResources = {
           deletedLines: "الخطوط المحذوفة{{count}}",
           unpushedCommit: "التزام{{count}}غير المدفوعة",
           unpushedCommits: "التزامات{{count}}غير المدفوعة",
+          worktreeDeleted: "سيتم حذف مجلد worktree",
+          worktreeKept: "سيبقى worktree وتغييراته. لا تزال مساحة عمل أخرى تستخدمه.",
         },
       },
       diff: {

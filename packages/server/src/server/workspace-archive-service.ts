@@ -101,6 +101,13 @@ export interface ArchiveByScopeRequest {
   // Aborting cancels the archive at its next checkpoint. Removing the worktree directory is the
   // point of no return: once it starts the archive completes.
   signal?: AbortSignal;
+  // Refuse, before anything is torn down, if this archive would remove the backing directory.
+  expectDirectoryKept?: boolean;
+}
+
+export interface WorkspaceArchiveInspection {
+  removesDirectory: boolean;
+  usedByOtherWorkspace: boolean;
 }
 
 // Cancellation carries the operation stamp even before the workspace record is archived.
@@ -175,6 +182,29 @@ export async function resolveWorkspaceBackingPath(
   return (await resolveWorkspaceBackingDirectory(workspace, dependencies)).path;
 }
 
+// What archiving this workspace would do to its backing directory right now. Follows the same
+// rules as maybeRemoveDirectory.
+export async function inspectWorkspaceArchive(
+  dependencies: Pick<
+    ArchiveDependencies,
+    "listActiveWorkspaces" | "paseoHome" | "paseoWorktreesBaseRoot"
+  >,
+  workspaceId: string,
+): Promise<WorkspaceArchiveInspection> {
+  const workspace = await requireActiveWorkspaceForArchive(dependencies, workspaceId);
+  const backing = await resolveWorkspaceBackingDirectory(workspace, dependencies);
+  if (!backing.isPaseoOwnedWorktree) {
+    return { removesDirectory: false, usedByOtherWorkspace: false };
+  }
+  const removesDirectory = await isDirectoryUnreferenced(
+    await dependencies.listActiveWorkspaces(),
+    backing,
+    new Set([workspaceId]),
+    dependencies,
+  );
+  return { removesDirectory, usedByOtherWorkspace: !removesDirectory };
+}
+
 // Resolves the in-scope record set, tears each down
 // (agents + terminals + record), then removes the backing directory iff it is
 // Paseo-owned AND no active workspace still references it.
@@ -199,6 +229,19 @@ async function archiveByScopeWithPriority(
   checkpoint();
   const runArchive = async (): Promise<ArchiveResult> => {
     checkpoint();
+    if (request.expectDirectoryKept && request.scope.kind === "workspace") {
+      // Refuses while nothing is torn down yet. maybeRemoveDirectory keeps the directory if its
+      // other workspace goes away later, for example with its project.
+      const { removesDirectory } = await inspectWorkspaceArchive(
+        dependencies,
+        request.scope.workspaceId,
+      );
+      if (removesDirectory) {
+        throw new Error(
+          "No other workspace uses this worktree anymore, so archiving would delete it. Archive again to confirm.",
+        );
+      }
+    }
     const target = await resolveArchiveTarget(dependencies, request.scope);
     const targetWorkspaceIds = target.workspaceIds;
 
@@ -242,7 +285,11 @@ async function archiveByScopeWithPriority(
       if (target.backing !== null) {
         const removal = await maybeRemoveDirectory(
           dependencies,
-          { requestId: request.requestId, checkpoint },
+          {
+            requestId: request.requestId,
+            checkpoint,
+            expectDirectoryKept: request.expectDirectoryKept,
+          },
           target,
           archivedWorkspaceIds,
         );
@@ -550,7 +597,7 @@ async function archiveTargetRecords(
 
 async function maybeRemoveDirectory(
   dependencies: ArchiveDependencies,
-  request: { requestId: string; checkpoint: () => void },
+  request: { requestId: string; checkpoint: () => void; expectDirectoryKept?: boolean },
   target: ArchiveTarget,
   archivedWorkspaceIds: string[],
 ): Promise<{
@@ -624,6 +671,10 @@ async function maybeRemoveDirectory(
       dependencies,
     ))
   ) {
+    return { removedDirectory: false };
+  }
+
+  if (request.expectDirectoryKept) {
     return { removedDirectory: false };
   }
 

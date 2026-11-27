@@ -1222,6 +1222,13 @@ export const WorkspaceArchiveUndoRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// Reads what archiving a workspace would do to its directory, without archiving it.
+export const WorkspaceArchiveInspectRequestSchema = z.object({
+  type: z.literal("workspace.archive.inspect.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
@@ -2473,6 +2480,18 @@ export const WorkspaceArchiveUndoResponseSchema = z.object({
   }),
 });
 
+export const WorkspaceArchiveInspectResponseSchema = z.object({
+  type: z.literal("workspace.archive.inspect.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    removesDirectory: z.boolean(),
+    // Another active workspace uses the same worktree, so the archive leaves it in place.
+    usedByOtherWorkspace: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const SetVoiceModeResponseMessageSchema = z.object({
   type: z.literal("set_voice_mode_response"),
   payload: z.object({
@@ -3015,6 +3034,9 @@ export const ProjectGithubCloneRequestSchema = z.object({
 export const ArchiveWorkspaceRequestSchema = z.object({
   type: z.literal("archive_workspace_request"),
   workspaceId: z.string(),
+  // Refuse the archive if it would remove the workspace's directory. Sent when the user was told
+  // that the directory stays.
+  expectDirectoryKept: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -3656,6 +3678,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   WorkspaceArchiveUndoRequestSchema,
+  WorkspaceArchiveInspectRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -4156,6 +4179,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceRecovery: z.boolean().optional(),
         // COMPAT(workspaceArchiveUndo): added in v0.15.3, remove gate after 2027-05-06.
         workspaceArchiveUndo: z.boolean().optional(),
+        // COMPAT(workspaceArchiveInspect): added in v0.17.5, remove gate after 2027-05-25.
+        workspaceArchiveInspect: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(fileByteWrites): added in v0.13.0, remove gate after 2027-04-20.
@@ -7954,6 +7979,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WorkspaceArchiveUndoResponseSchema,
+  WorkspaceArchiveInspectResponseSchema,
   WaitForFinishResponseMessageSchema,
   AgentPermissionRequestMessageSchema,
   AgentPermissionResolvedMessageSchema,

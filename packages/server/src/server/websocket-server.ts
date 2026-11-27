@@ -2248,6 +2248,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceRecovery: true,
         // COMPAT(workspaceArchiveUndo): added in v0.15.3, remove gate after 2027-05-06.
         workspaceArchiveUndo: true,
+        // COMPAT(workspaceArchiveInspect): added in v0.17.5, remove gate after 2027-05-25.
+        workspaceArchiveInspect: true,
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: true,
         // COMPAT(fileByteWrites): added in v0.13.0, remove gate after 2027-04-20.

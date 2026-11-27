@@ -921,6 +921,10 @@ export type WorkspaceLabelDeletePayload = Extract<
   SessionOutboundMessage,
   { type: "workspace.label.delete.response" }
 >["payload"];
+export interface WorkspaceArchiveInspection {
+  removesDirectory: boolean;
+  usedByOtherWorkspace: boolean;
+}
 export type WorkspaceLabelDeleteInspectPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace.label.delete.inspect.response" }
@@ -3343,12 +3347,14 @@ export class DaemonClient {
   async archiveWorkspace(
     workspaceId: string,
     requestId?: string,
+    options?: { expectDirectoryKept?: boolean },
   ): Promise<ArchiveWorkspacePayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "archive_workspace_request",
         workspaceId,
+        ...(options?.expectDirectoryKept ? { expectDirectoryKept: true } : {}),
       },
       responseType: "archive_workspace_response",
       // Archive may wait for a queued checkout operation and then run teardown/manager removal,
@@ -3901,6 +3907,25 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "The host could not undo the workspace archive");
     }
+  }
+
+  /** Rejects when the host can't tell what archiving the workspace would do. */
+  async inspectWorkspaceArchive(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<WorkspaceArchiveInspection> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.archive.inspect.response">({
+        requestId,
+        message: { type: "workspace.archive.inspect.request", workspaceId },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return {
+      removesDirectory: payload.removesDirectory,
+      usedByOtherWorkspace: payload.usedByOtherWorkspace,
+    };
   }
 
   async resumeAgent(

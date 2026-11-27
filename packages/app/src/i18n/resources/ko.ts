@@ -998,6 +998,9 @@ export const ko: TranslationResources = {
           deletedLines: "삭제된 줄 {{count}}개",
           unpushedCommit: "푸시되지 않은 커밋 {{count}}개",
           unpushedCommits: "푸시되지 않은 커밋 {{count}}개",
+          worktreeDeleted: "worktree 폴더가 삭제됩니다",
+          worktreeKept:
+            "worktree와 변경 사항은 유지됩니다. 다른 워크스페이스에서 아직 사용 중입니다.",
         },
       },
       diff: {
