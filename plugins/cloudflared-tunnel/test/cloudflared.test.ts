@@ -114,91 +114,6 @@ setInterval(() => {}, 10_000);
     ]);
   });
 
-  it("supports named tunnels via TUNNEL_TOKEN env without --url, reports stable URL, and redacts token on failure", async () => {
-    const captureFile = path.join(os.tmpdir(), `paseo-cf-named-${Date.now()}-${Math.random()}.txt`);
-    const { binary } = await createFakeCloudflared(`
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-if (args[0] === "--version") {
-  console.log("cloudflared version 2026.5.0");
-  process.exit(0);
-}
-fs.writeFileSync(${JSON.stringify(captureFile)}, JSON.stringify({
-  args,
-  token: process.env.TUNNEL_TOKEN ?? null,
-}));
-if (process.env.TUNNEL_TOKEN === "bad-secret-token") {
-  console.error("ERR invalid token bad-secret-token");
-  process.exit(1);
-}
-console.error("INF Registered tunnel connection connIndex=0");
-process.on("SIGTERM", () => process.exit(0));
-setInterval(() => {}, 10_000);
-`);
-    tempDirs.push(captureFile);
-
-    const provider = createCloudflaredTunnelProvider({
-      readSettings: async () => ({
-        binaryPath: binary,
-        tunnelToken: "secret-named-token",
-        publicBaseUrl: "https://mcp.example.com/",
-      }),
-    });
-
-    const controller = new AbortController();
-    const events: TunnelEvent[] = [];
-    let readyResolve!: () => void;
-    const readyPromise = new Promise<void>((resolve) => {
-      readyResolve = resolve;
-    });
-
-    const running = provider.open(
-      { id: "tun_2", host: "127.0.0.1", port: 9000 },
-      {
-        paseo: unusedPaseo,
-        signal: controller.signal,
-        report(event) {
-          events.push(event);
-          if (event.type === "ready") readyResolve();
-        },
-      },
-    );
-
-    await readyPromise;
-    expect(JSON.parse(await readFile(captureFile, "utf8"))).toEqual({
-      args: ["tunnel", "--no-autoupdate", "run"],
-      token: "secret-named-token",
-    });
-
-    controller.abort();
-    await running;
-
-    expect(events).toEqual([
-      { type: "connecting" },
-      { type: "ready", url: "https://mcp.example.com", stability: "stable" },
-      { type: "closed", reason: "aborted" },
-    ]);
-
-    // Redacts token if named tunnel exits with an error containing the token
-    const failingProvider = createCloudflaredTunnelProvider({
-      readSettings: async () => ({
-        binaryPath: binary,
-        tunnelToken: "bad-secret-token",
-        publicBaseUrl: "https://mcp.example.com",
-      }),
-    });
-    await expect(
-      failingProvider.open(
-        { id: "tun_3", host: "127.0.0.1", port: 9000 },
-        {
-          paseo: unusedPaseo,
-          signal: new AbortController().signal,
-          report() {},
-        },
-      ),
-    ).rejects.toThrow(/\[REDACTED\]/);
-  });
-
   it("brackets IPv6 hosts when launching quick tunnels", async () => {
     const argsFile = path.join(os.tmpdir(), `paseo-cf-v6-${Date.now()}-${Math.random()}.txt`);
     const { binary } = await createFakeCloudflared(`
@@ -266,20 +181,5 @@ process.exit(1);
       ),
     ).rejects.toThrow(/exited before tunnel became ready/);
     expect(events).toEqual([{ type: "connecting" }]);
-  });
-
-  it("reports configuration error when tunnelToken is set without publicBaseUrl", async () => {
-    const provider = createCloudflaredTunnelProvider({
-      readSettings: async () => ({ tunnelToken: "only-token" }),
-    });
-
-    const status = await provider.status({
-      paseo: unusedPaseo,
-      signal: new AbortController().signal,
-    });
-    expect(status).toMatchObject({
-      status: "unavailable",
-      reason: expect.stringContaining("publicBaseUrl"),
-    });
   });
 });

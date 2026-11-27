@@ -105,9 +105,10 @@ before setup and agents, through `worktree.create.after`.
 
 The `cloudflared-tunnel` and `tailscale-funnel` built-ins register tunnel providers through
 `server.registerTunnelProvider()`. Both start without installed binaries or credentials and report
-availability through `status()`. Quick mode in `cloudflared-tunnel` forwards the local HTTP target
-directly with `--url`, while named mode passes `TUNNEL_TOKEN` via environment and runs the
-remotely configured Cloudflare tunnel (`cloudflared tunnel --no-autoupdate run`).
+availability through `status()`. `cloudflared-tunnel` runs quick tunnels only, with `--url` set to
+the exposure target. Named Cloudflare tunnels are not supported: the Cloudflare dashboard sets
+their routing, so their URL does not serve the exposure target. `tailscale-funnel` runs `tailscale funnel` in the foreground: with
+`--bg`, tailscaled keeps the Funnel public after a crash with no owner.
 
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`
