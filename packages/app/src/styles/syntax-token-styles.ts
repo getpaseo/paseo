@@ -26,10 +26,8 @@ export const syntaxTokenStyles = StyleSheet.create((theme) => ({
   meta: { color: theme.colors.syntax.meta },
   heading: { color: theme.colors.syntax.heading },
   link: { color: theme.colors.syntax.link },
-  // Diff +/- in fenced blocks and .diff/.patch files is a semantic signal, so
-  // it uses the theme's diff colors rather than the syntax palette.
-  diffAddition: { color: theme.colors.diffAddition },
-  diffDeletion: { color: theme.colors.diffDeletion },
+  diffAddition: { color: theme.colors.syntax.diffAddition },
+  diffDeletion: { color: theme.colors.syntax.diffDeletion },
 }));
 
 type SyntaxTokenStyleValue = (typeof syntaxTokenStyles)["base"];

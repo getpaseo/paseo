@@ -6,8 +6,12 @@ import { syntaxTokenStyleFor, syntaxTokenStyles } from "./syntax-token-styles";
 
 describe("syntaxTokenStyleFor", () => {
   it("maps diffAddition, diffDeletion, and meta to distinct token colors", () => {
-    expect(syntaxTokenStyleFor("diffAddition")).toEqual({ color: lightTheme.colors.diffAddition });
-    expect(syntaxTokenStyleFor("diffDeletion")).toEqual({ color: lightTheme.colors.diffDeletion });
+    expect(syntaxTokenStyleFor("diffAddition")).toEqual({
+      color: lightHighlightColors.diffAddition,
+    });
+    expect(syntaxTokenStyleFor("diffDeletion")).toEqual({
+      color: lightHighlightColors.diffDeletion,
+    });
     expect(syntaxTokenStyleFor("meta")).toEqual({ color: lightHighlightColors.meta });
   });
 

@@ -104,7 +104,7 @@ const catppuccinLatte: RolePalette = {
   tag: "#8839ef",
   attribute: "#df8e1d",
   operator: "#04a5e5",
-  diffAddition: "#40a02b",
+  diffAddition: "#348921",
   diffDeletion: "#d20f39",
 };
 const catppuccinMocha: RolePalette = {
@@ -150,8 +150,8 @@ const tokyoDay: RolePalette = {
   tag: "#f52a65",
   attribute: "#8c6c3e",
   operator: "#006a83",
-  diffAddition: "#587539",
-  diffDeletion: "#f52a65",
+  diffAddition: "#4a6b2b",
+  diffDeletion: "#d91c54",
 };
 const tokyoNight: RolePalette = {
   base: "#c0caf5",
@@ -180,8 +180,8 @@ const oneLight: RolePalette = {
   tag: "#e45649",
   attribute: "#986801",
   operator: "#0184bc",
-  diffAddition: "#50a14f",
-  diffDeletion: "#e45649",
+  diffAddition: "#348233",
+  diffDeletion: "#d63b2f",
 };
 const oneDark: RolePalette = {
   base: "#abb2bf",
@@ -211,7 +211,7 @@ const nordLight: RolePalette = {
   attribute: "#8f5e91",
   operator: "#5e81ac",
   diffAddition: "#4f6f3a",
-  diffDeletion: "#bf616a",
+  diffDeletion: "#b54953",
 };
 const nordDark: RolePalette = {
   base: "#d8dee9",
@@ -270,7 +270,7 @@ const solarizedLight: RolePalette = {
   tag: "#268bd2",
   attribute: "#b58900",
   operator: "#859900",
-  diffAddition: "#859900",
+  diffAddition: "#6c7c00",
   diffDeletion: "#dc322f",
 };
 const solarizedDark: RolePalette = {

@@ -24,6 +24,8 @@ export const DIFF_HIGHLIGHT_STYLES = [
   "meta",
   "heading",
   "link",
+  "diffAddition",
+  "diffDeletion",
 ] as const;
 const CHANGES = ["added", "modified", "deleted", "renamed"] as const;
 const CONTENTS = ["text", "binary"] as const;

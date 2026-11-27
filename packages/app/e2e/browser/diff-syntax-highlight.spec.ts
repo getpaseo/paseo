@@ -108,13 +108,13 @@ test.describe("diff and patch syntax highlighting", () => {
         const expectedColors =
           theme === "dark"
             ? {
-                addition: "rgb(74, 222, 128)",
-                deletion: "rgb(239, 68, 68)",
+                addition: "rgb(152, 195, 121)",
+                deletion: "rgb(224, 108, 117)",
                 meta: "rgb(92, 99, 112)",
               }
             : {
-                addition: "rgb(21, 128, 61)",
-                deletion: "rgb(185, 28, 28)",
+                addition: "rgb(52, 130, 51)",
+                deletion: "rgb(214, 59, 47)",
                 meta: "rgb(160, 161, 167)",
               };
 
@@ -226,8 +226,8 @@ test.describe("diff and patch syntax highlighting", () => {
       .locator("span")
       .first();
 
-    await expect(addLine).toHaveCSS("color", "rgb(80, 161, 79)");
-    await expect(delLine).toHaveCSS("color", "rgb(228, 86, 73)");
+    await expect(addLine).toHaveCSS("color", "rgb(52, 130, 51)");
+    await expect(delLine).toHaveCSS("color", "rgb(214, 59, 47)");
     await expect(metaLine).toHaveCSS("color", "rgb(160, 161, 167)");
 
     await saveScreenshot(page, "files-viewer-patch-light.png");
