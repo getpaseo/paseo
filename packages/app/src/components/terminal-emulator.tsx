@@ -631,6 +631,7 @@ export default function TerminalEmulator({
   return (
     <div
       ref={rootRef}
+      data-pmono=""
       data-testid={testId}
       data-terminal-scrollbar-root="true"
       style={rootDivStyle}
