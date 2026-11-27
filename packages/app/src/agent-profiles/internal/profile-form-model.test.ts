@@ -175,12 +175,15 @@ describe("openAgentProfileForm", () => {
 
     // Codex declares no thinking options, so that key is genuinely absent —
     // model and mode are seeded, never left for the host to decide.
+    // `options` and `systemPrompt` stay present when empty so the daemon can
+    // distinguish an intentional clear from an older app that predates them.
     expect(model.getState().submitValue).toEqual({
       name: "Cheap grunt",
       provider: "codex",
       model: "gpt-5.2-codex",
       modeId: "read-only",
       options: {},
+      systemPrompt: "",
     });
   });
 

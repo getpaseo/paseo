@@ -497,7 +497,10 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     // Always sent, empty included: the daemon reads a write without `options` as one from an
     // app that predates them and keeps the profile's stored options.
     options: ownOptionsOf(state),
-    ...(systemPrompt ? { systemPrompt } : {}),
+    // COMPAT(agentProfileSystemPrompt): added in v0.17.6, remove after 2027-06-01.
+    // Always sent, empty included: the daemon treats an omitted `systemPrompt` as a write from
+    // an older app and preserves the stored prompt; `""` explicitly clears it.
+    systemPrompt,
     ...(notes ? { notes } : {}),
   };
 }
