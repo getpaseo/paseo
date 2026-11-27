@@ -1017,3 +1017,162 @@ child.on("exit", (code) => process.exit(code ?? 1));
     await connection.close();
   }
 });
+
+it("maps native Antigravity tool cards, read_file content, edit_file fallback, and plan approvals", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    let promptId = null;
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const msg = JSON.parse(line);
+      const update = (u) => send({ method: "session/update", params: { sessionId: "agy-tools", update: u } });
+      if (msg.method === "initialize") send({ id: msg.id, result: { protocolVersion: 1 } });
+      else if (msg.method === "session/new") {
+        send({ id: msg.id, result: { sessionId: "agy-tools", modes: {
+          currentModeId: "default", availableModes: [{ id: "default", name: "Default" }],
+        } } });
+        update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+      } else if (msg.method === "session/set_mode") {
+        send({ id: msg.id, result: {} });
+      } else if (msg.method === "session/prompt") {
+        promptId = msg.id;
+        update({
+          sessionUpdate: "tool_call", toolCallId: "read-with-text", name: "read_file", kind: "read",
+          status: "completed", title: "File a.ts", locations: [{ path: "/repo/a.ts" }],
+          rawInput: { Path: "/repo/a.ts" },
+          content: [{ type: "content", content: { type: "text", text: "export const a = 1;" } }],
+        });
+        update({
+          sessionUpdate: "tool_call", toolCallId: "edit-no-diff", name: "edit_file", kind: "edit",
+          status: "completed", title: "Edit a.ts", locations: [{ path: "/repo/a.ts" }],
+          rawInput: { Path: "/repo/a.ts", Target: "a = 1", Replacement: "a = 2" },
+        });
+        update({
+          sessionUpdate: "tool_call", toolCallId: "sub-1", name: "invoke_subagent", kind: "other",
+          status: "completed", title: "Run invoke_subagent",
+          rawInput: { TypeName: "research", Role: "Codebase Researcher", Prompt: "Find routes" },
+        });
+        update({
+          sessionUpdate: "tool_call", toolCallId: "steps-1", name: "update_steps", kind: "other",
+          status: "completed", title: "Run update_steps",
+          rawInput: { steps: [{ title: "Audit", status: "done" }, { title: "Ship", status: "in_progress" }] },
+        });
+        send({
+          id: "perm-plan",
+          method: "session/request_permission",
+          params: {
+            sessionId: "agy-tools",
+            toolCall: {
+              toolCallId: "plan-1",
+              name: "write_file",
+              kind: "edit",
+              status: "pending",
+              title: "Write implementation plan",
+              rawInput: {
+                Path: "/tmp/plan.md",
+                Content: "# Plan\\n1. Fix parser",
+                ArtifactMetadata: { RequestFeedback: true, Summary: "Plan", UserFacing: true },
+              },
+            },
+            options: [
+              { optionId: "allow", name: "Approve", kind: "allow_once" },
+              { optionId: "deny", name: "Reject", kind: "reject_once" },
+            ],
+          },
+        });
+      } else if (msg.id === "perm-plan") {
+        send({ id: promptId, result: { stopReason: "end_turn" } });
+      } else if (msg.method === "session/close") {
+        send({ id: msg.id, result: {} });
+      }
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message", "permission", "session.configure"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "test",
+      history: "skip",
+      config: {
+        cwd: directory,
+        mode: "default",
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: false,
+      },
+    });
+    await expect.poll(() => events.find((event) => event.type === "session.ready")).toBeDefined();
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "tools-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Run tools" }] },
+      },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.permission"))
+      .toMatchObject({
+        type: "session.permission",
+        request: {
+          kind: "plan",
+          detail: { type: "plan", text: "# Plan\n1. Fix parser" },
+          metadata: { planText: "# Plan\n1. Fix parser" },
+        },
+      });
+    const perm = events.find((event) => event.type === "session.permission");
+    if (perm?.type !== "session.permission") throw new Error("Expected plan permission");
+    await connection.send({
+      type: "session.permission",
+      sessionId: "test",
+      permissionId: perm.request.id,
+      response: { behavior: "allow", selectedActionId: "allow" },
+    });
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "session.turn" && event.state === "completed"),
+      )
+      .toBeDefined();
+    const byId = Object.fromEntries(
+      events.flatMap((event) =>
+        event.type === "timeline.item" && event.item.type === "tool_call"
+          ? [[event.item.id, event.item.detail]]
+          : [],
+      ),
+    );
+    expect(byId["read-with-text"]).toMatchObject({
+      type: "read",
+      filePath: "/repo/a.ts",
+      content: "export const a = 1;",
+    });
+    expect(byId["edit-no-diff"]).toEqual({
+      type: "edit",
+      filePath: "/repo/a.ts",
+      oldString: "a = 1",
+      newString: "a = 2",
+    });
+    expect(byId["sub-1"]).toEqual({
+      type: "sub_agent",
+      subAgentType: "research",
+      description: "Codebase Researcher",
+      log: "",
+    });
+    expect(byId["steps-1"]).toEqual({
+      type: "plain_text",
+      label: "Steps",
+      icon: "sparkles",
+      text: "[done] Audit\n[in_progress] Ship",
+    });
+  } finally {
+    await connection.close();
+  }
+});

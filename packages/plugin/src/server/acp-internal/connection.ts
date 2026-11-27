@@ -1494,6 +1494,8 @@ class AcpRuntime {
     }
     const permissionId = `permission:${request.toolCall.toolCallId}`;
     const { presentation } = this.presentToolCall(request.toolCall);
+    const detail = toolCallDetail(presentation);
+    const isPlan = detail.type === "plan";
     return new Promise((resolve) => {
       this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
       if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
@@ -1503,10 +1505,11 @@ class AcpRuntime {
         request: {
           id: permissionId,
           name: request.toolCall.name ?? request.toolCall.title ?? "Tool",
-          kind: "tool",
+          kind: isPlan ? "plan" : "tool",
           title: request.toolCall.title ?? undefined,
           input: jsonRecord(request.toolCall.rawInput),
-          detail: toolCallDetail(presentation),
+          detail,
+          ...(isPlan ? { metadata: { planText: detail.text } } : {}),
           actions: request.options.map((option) => ({
             id: option.optionId,
             label: option.name,
