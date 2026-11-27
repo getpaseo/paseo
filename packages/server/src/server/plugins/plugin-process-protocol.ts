@@ -2,8 +2,9 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginHookAgent, PluginNotificationSendResult } from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
-  ProviderConnectRequest,
   ProviderCatalogOptions,
+  ProviderCatalogRefreshMode,
+  ProviderConnectRequest,
   ProviderEvent,
   ProviderInput,
   ProviderInstallationLaunch,
@@ -11,6 +12,8 @@ import type {
   ProviderUpdateReport,
 } from "@getpaseo/plugin/server/provider";
 import {
+  ProviderCatalogRefreshModeSchema,
+  ProviderClientInfoSchema,
   ProviderUpdateReportSchema,
   ProviderEventSchema,
   ProviderInputSchema,
@@ -20,6 +23,7 @@ import { z } from "zod";
 
 export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
+  catalogRefresh?: ProviderCatalogRefreshMode;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
   installation?: PluginProviderInstallationMetadata;
@@ -184,6 +188,7 @@ const providerMetadataSchema = z
     iconPath: z.string().optional(),
     docsUrl: z.string().optional(),
     requiresConfiguration: z.boolean().optional(),
+    catalogRefresh: ProviderCatalogRefreshModeSchema.optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
     installation: z
@@ -216,6 +221,7 @@ const ProviderInstallationLaunchSchema = ProviderLaunchSchema.extend({
 const providerConnectRequestSchema = z
   .object({
     launch: ProviderLaunchSchema.optional(),
+    clientInfo: ProviderClientInfoSchema.optional(),
     versions: z.array(z.number().int().positive()),
     capabilities: z.array(z.string()),
   })

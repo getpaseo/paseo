@@ -109,7 +109,10 @@ export interface NewWorkspaceFormProps {
     selectedOptionId: string;
     onSelect: (id: string) => void;
     setSearchQuery: (query: string) => void;
-    emptyText: string;
+    /** True while the initial branch list for this project has not arrived yet. */
+    isBranchesLoading: boolean;
+    isBranchesFetching: boolean;
+    isPrsFetching: boolean;
     showRefPicker: boolean;
     /** Every git worktree of the project, to say where a branch is already checked out. */
     worktrees: readonly CheckoutWorktree[];
@@ -296,10 +299,12 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
   const context = base.changeRequestContext;
   const [list, setList] = useState<RefList>("branch");
   const action = actionFor[list];
-  const options = useMemo(
-    () => refListOptions({ options: allOptions, itemById, selectedOptionId, kind: list, action }),
-    [action, allOptions, itemById, list, selectedOptionId],
-  );
+  const options = useMemo(() => {
+    // Wait for the initial branch list instead of painting a lone base row at index 0 that
+    // jumps down the moment newer branches arrive; the trigger already names the current base.
+    if (list === "branch" && base.isBranchesLoading) return [];
+    return refListOptions({ options: allOptions, itemById, selectedOptionId, kind: list, action });
+  }, [action, allOptions, base.isBranchesLoading, itemById, list, selectedOptionId]);
   // Opens on the list the current pick is in.
   const open = useCallback(() => {
     setList(refListOf(selectedItem));
@@ -351,12 +356,17 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
               : t("newWorkspace.refPicker.branch"),
           qualifier: undefined,
         };
+  const isCurrentListFetching = list === "github-pr" ? base.isPrsFetching : base.isBranchesFetching;
+  const emptyText = isCurrentListFetching
+    ? t("newWorkspace.refPicker.searching")
+    : t("newWorkspace.refPicker.noMatchingRefs");
   return {
     options,
     open,
     onSelect,
     renderOption,
     toolbar,
+    emptyText,
     searchPlaceholder:
       list === "github-pr"
         ? t("newWorkspace.refPicker.searchPullRequests", { context })
@@ -572,9 +582,10 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
         onSearchQueryChange={base.setSearchQuery}
         desktopPlacement="bottom-start"
         desktopMinWidth={440}
+        desktopFixedHeight={400}
         anchorRef={base.anchorRef}
         restoreFocusRef={restoreFocusRef}
-        emptyText={base.emptyText}
+        emptyText={refPicker.emptyText}
         toolbar={refPicker.toolbar}
         renderOption={refPicker.renderOption}
       />

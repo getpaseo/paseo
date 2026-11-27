@@ -95,6 +95,7 @@ import type {
 } from "./rpc-types.js";
 import {
   parseToolArgs,
+  withOmpToolIntent,
   parseToolResult,
   toolFailureMessage,
   isOmpToolFailure,
@@ -1946,7 +1947,7 @@ export class OmpAgentSession implements AgentSession {
         return;
       case "tool_execution_start": {
         this.turnMeter.toolStarted(event.toolCallId, Date.now());
-        const toolCall = parseToolArgs(event.toolName, event.args);
+        const toolCall = parseToolArgs(event.toolName, event.args, event.intent);
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.questionUi.start(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
@@ -2223,7 +2224,7 @@ export class OmpAgentSession implements AgentSession {
       type: "timeline",
       provider: this.provider,
       turnId,
-      item,
+      item: withOmpToolIntent(item, toolCall),
     });
     return true;
   }

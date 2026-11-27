@@ -2593,7 +2593,7 @@ export const es: TranslationResources = {
     metadataGeneration: {
       title: "Generación de metadatos",
       description:
-        "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
+        "Elige el modelo y las instrucciones que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
       selection: "Selección de modelo",
       automatic: "Automática",
       preferred: "Manual",
@@ -2601,6 +2601,10 @@ export const es: TranslationResources = {
       preferredHint: "Elige el modelo que usa Paseo",
       model: "Modelo",
       modelHint: "Solo se usa este modelo. Si falla, Paseo no prueba otro modelo",
+      instructions: "Instrucciones",
+      instructionsHint: "Se aplican a todos los metadatos generados en este host",
+      instructionsPlaceholder:
+        "Ejemplo: Escribe en español. Mantén un estilo coherente entre títulos y commits. No uses rayas largas.",
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
     },

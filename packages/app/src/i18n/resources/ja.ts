@@ -2561,7 +2561,7 @@ export const ja: TranslationResources = {
     metadataGeneration: {
       title: "メタデータ生成",
       description:
-        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルを選択します",
+        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルと指示を選択します",
       selection: "モデル選択",
       automatic: "自動",
       preferred: "手動",
@@ -2569,6 +2569,10 @@ export const ja: TranslationResources = {
       preferredHint: "Paseo が使用するモデルを選択します",
       model: "モデル",
       modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
+      instructions: "指示",
+      instructionsHint: "このホストで生成されるすべてのメタデータに適用されます",
+      instructionsPlaceholder:
+        "例：日本語で書く。タイトルとコミットメッセージの表現を統一する。全角ダッシュを使わない。",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
     },

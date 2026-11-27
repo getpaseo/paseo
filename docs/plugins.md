@@ -972,6 +972,10 @@ reply text once, forks at its message, and shows its duration and stats. Read th
 `getAssistantReply` (`packages/app/src/types/stream.ts`) instead of checking `kind ===
 "assistant_message"`.
 
+A provider-only fact about a tool call goes in the item's `metadata`, which transformers already
+receive. Do not add a shared tool-call field for it. OMP's intent string is
+[`metadata.intent`](../public-docs/plugins/reference.md#timeline-items).
+
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.

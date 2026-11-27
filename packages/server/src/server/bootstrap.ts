@@ -438,6 +438,7 @@ export interface PaseoDaemonConfig {
       model?: string;
       thinkingOptionId?: string;
     }>;
+    instructions?: string;
   };
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
@@ -535,6 +536,16 @@ function createInitialRelayConfig(config: ResolvedDaemonSettings): MutableDaemon
   };
 }
 
+function createInitialMetadataGenerationConfig(
+  config: ResolvedDaemonSettings,
+): MutableDaemonConfig["metadataGeneration"] {
+  const instructions = config.metadataGeneration?.instructions?.trim();
+  return {
+    providers: config.metadataGeneration?.providers ?? [],
+    ...(instructions ? { instructions } : {}),
+  };
+}
+
 function resolveReloadEnv(config: PaseoDaemonConfig): NodeJS.ProcessEnv {
   return config.configReload?.env ?? process.env;
 }
@@ -563,9 +574,7 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     usage: { enabled: config.usageEnabled !== false },
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
-    metadataGeneration: {
-      providers: config.metadataGeneration?.providers ?? [],
-    },
+    metadataGeneration: createInitialMetadataGenerationConfig(config),
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,

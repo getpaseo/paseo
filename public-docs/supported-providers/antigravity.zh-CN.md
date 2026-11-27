@@ -12,11 +12,11 @@ Paseo 通过你已安装的 `agy` CLI 提供的官方 Agent Client Protocol（`a
 
 Antigravity 内置于 Paseo 且默认启用，无需安装插件或额外配置。
 
-1. 在 daemon 主机上安装 1.5.0 或更高版本的 [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)（`agy`）。
+1. 在 daemon 主机上安装 1.5.1 或更高版本的 [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)（`agy`）。
 2. 在终端中运行 `agy` 并登录。
 3. 在 Paseo 中启动 Agent 时选择 **Antigravity**。
 
-如果 `agy` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)，并在参数中保留 `acp` 和 `--disable-telemetry`。
+如果 `agy` 不在 daemon 的 PATH 中，请使用[命令覆盖](/docs/custom-providers#custom-binary)，并在参数中保留 `acp`。
 
 ## 权限 {#permissions}
 
@@ -29,7 +29,9 @@ Paseo 连接到 `agy acp`，并显示 CLI 提供的权限模式。**Full access*
 | Accept edits | Antigravity 会自动批准工作区内的编辑，仍会询问需要审批的命令。                                     |
 | Plan         | Antigravity 先规划，再执行。                                                                       |
 
-定时任务可以使用 **Full access**，无需人为逐次审批工具调用。切换到 **Full access** 或从该模式切换到其他模式前，请先完成或停止当前轮次。
+切换到 **Full access** 或从该模式切换到其他模式前，请先完成或停止当前轮次。
+
+个人 Google 登录（`oauth-personal`）适用于交互式会话。对于无人值守或定时任务，请配置 API 密钥认证（`GEMINI_API_KEY` 或 `agent-platform`），不要使用个人 OAuth。
 
 ## 会话和工具 {#sessions-and-tools}
 
@@ -45,7 +47,7 @@ Paseo 连接到 `agy acp`，并显示 CLI 提供的权限模式。**Full access*
 
 ### 缺少新模型 {#new-models-are-missing}
 
-Paseo 在 daemon 启动时和你选择 **刷新** 时从 `agy` 读取模型列表。如果你的账号在此之后获得了新模型，请打开 **设置 → Providers → Antigravity** 并选择 **刷新**。
+Paseo 会在首次启动（或升级 `agy` CLI 后）探测一次 Antigravity 的模型和思考级别，并将目录缓存到磁盘以便在 daemon 重启后复用，不会在后台定时轮询。当你的账号获得新模型时，请打开 **设置 → Providers → Antigravity** 并选择 **刷新**。
 
 ### Paseo 显示的模型与 `agy models` 不同 {#paseo-shows-different-models-than-agy-models}
 

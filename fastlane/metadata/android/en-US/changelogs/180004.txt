@@ -1,0 +1,4 @@
+- Remote workspace browser proxy: Desktop browser tabs in remote workspaces now route through the workspace daemon, so remote localhost servers open directly in Paseo.
+- Per-device notification preferences: Each device can choose which agent, terminal, and plugin events send notifications, and plugins can send notifications and handle taps.
+
+Full notes: https://paseo.sh/changelog

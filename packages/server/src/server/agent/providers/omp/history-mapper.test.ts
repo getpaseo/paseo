@@ -62,6 +62,70 @@ describe("OMP history mapper", () => {
     );
   });
 
+  test("replays stored intent on historical tool starts and results", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "intent-1",
+            name: "read",
+            arguments: { path: "file", i: "Inspect file." },
+            intent: "Inspect file",
+          },
+          {
+            type: "toolCall",
+            id: "intent-2",
+            name: "bash",
+            arguments: { command: "false" },
+            intent: "Check failure",
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "intent-1",
+        toolName: "read",
+        content: [{ type: "text", text: "contents" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "intent-2",
+        toolName: "bash",
+        content: [{ type: "text", text: "failed" }],
+        isError: true,
+      },
+    ]);
+    expect(events.map((event) => event.item)).toMatchObject([
+      { callId: "intent-1", status: "running", metadata: { intent: "Inspect file" } },
+      { callId: "intent-2", status: "running", metadata: { intent: "Check failure" } },
+      { callId: "intent-1", status: "completed", metadata: { intent: "Inspect file" } },
+      { callId: "intent-2", status: "failed", metadata: { intent: "Check failure" } },
+    ]);
+  });
+
+  test("does not replay a tool argument named i as intent", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "own-i", name: "search", arguments: { i: "ordinary input" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "own-i",
+        toolName: "search",
+        content: [{ type: "text", text: "found" }],
+      },
+    ]);
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      expect(event.item).not.toHaveProperty("metadata");
+    }
+  });
+
   test("replays a web search details error as failed when OMP sets isError false", async () => {
     const events = await collectHistory([
       {
@@ -160,6 +224,61 @@ describe("OMP history mapper", () => {
       status: "failed",
       error: "No browser automation host is connected.",
     });
+  });
+
+  test("ignores non-string persisted tool intents during journal replay", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omp-intent-history-"));
+    try {
+      const sessionFile = join(dir, "session.jsonl");
+      await writeFile(
+        sessionFile,
+        [
+          { type: "session", id: "root" },
+          {
+            type: "message",
+            id: "assistant",
+            parentId: "root",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "valid",
+                  name: "read",
+                  arguments: { path: "file" },
+                  intent: "Read file",
+                },
+                {
+                  type: "toolCall",
+                  id: "number",
+                  name: "read",
+                  arguments: { path: "file" },
+                  intent: 42,
+                },
+                {
+                  type: "toolCall",
+                  id: "object",
+                  name: "read",
+                  arguments: { path: "file" },
+                  intent: { text: "invalid" },
+                },
+              ],
+            },
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n"),
+      );
+      const items: AgentStreamEvent["item"][] = [];
+      for await (const event of streamOmpHistory({ sessionFile, provider: "omp" }))
+        items.push(event.item);
+      expect(items).toHaveLength(3);
+      expect(items[0]).toMatchObject({ callId: "valid", metadata: { intent: "Read file" } });
+      expect(items[1]).not.toHaveProperty("metadata");
+      expect(items[2]).not.toHaveProperty("metadata");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("restores blocked and abandoned todo state from a session file", async () => {

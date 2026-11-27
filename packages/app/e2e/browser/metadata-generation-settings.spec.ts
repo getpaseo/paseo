@@ -111,3 +111,102 @@ test("replaces only the first configured metadata model", async ({ page }) => {
     }
   }
 });
+
+test("saves and clears host-wide metadata instructions without overwriting providers", async ({
+  page,
+}, testInfo) => {
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previousConfig = await client.getDaemonConfig();
+
+  try {
+    await client.patchDaemonConfig({
+      metadataGeneration: {
+        providers: [{ provider: "mock", model: "ten-second-stream" }],
+        instructions: "",
+      },
+    });
+    await openMetadataGenerationSettings(page);
+
+    const instructionsRow = page.getByTestId("metadata-generation-instructions-row");
+    await expect(instructionsRow).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("metadata-instructions-tucked-empty.png"),
+      fullPage: true,
+    });
+
+    await instructionsRow.click();
+
+    const instructionsSheet = page.getByTestId("metadata-generation-instructions-sheet");
+    const instructionsInput = page.getByTestId("metadata-generation-instructions-input");
+    const saveButton = page.getByTestId("metadata-generation-instructions-save");
+
+    await expect(instructionsSheet).toBeVisible();
+    await expect(saveButton).toBeDisabled();
+    await page.screenshot({
+      path: testInfo.outputPath("metadata-instructions-sheet-empty.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
+
+    await instructionsInput.fill("Write in Simplified Chinese. Do not use em dashes.");
+    await expect(saveButton).toBeEnabled();
+    await saveButton.click();
+
+    await expect(instructionsSheet).toHaveCount(0);
+    await expect
+      .poll(async () => (await client.getDaemonConfig()).config.metadataGeneration)
+      .toEqual({
+        providers: [{ provider: "mock", model: "ten-second-stream" }],
+        instructions: "Write in Simplified Chinese. Do not use em dashes.",
+      });
+
+    await page.reload();
+    await expect(
+      page
+        .getByTestId("metadata-generation-instructions-row")
+        .getByText("Write in Simplified Chinese. Do not use em dashes."),
+    ).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("metadata-instructions-tucked-saved.png"),
+      fullPage: true,
+    });
+
+    // Verify compact layout keeps the tucked row and bottom sheet clean.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId("metadata-generation-instructions-row")).toBeVisible();
+    await page.screenshot({
+      path: testInfo.outputPath("metadata-instructions-compact-row.png"),
+      fullPage: true,
+    });
+    await page.getByTestId("metadata-generation-instructions-row").click();
+    await expect(page.getByTestId("metadata-generation-instructions-input")).toHaveValue(
+      "Write in Simplified Chinese. Do not use em dashes.",
+    );
+    await page.screenshot({
+      path: testInfo.outputPath("metadata-instructions-compact-sheet.png"),
+      fullPage: true,
+    });
+
+    await page.getByTestId("metadata-generation-instructions-input").fill("");
+    await expect(page.getByTestId("metadata-generation-instructions-save")).toBeEnabled();
+    await page.getByTestId("metadata-generation-instructions-save").click();
+
+    await expect(page.getByTestId("metadata-generation-instructions-sheet")).toHaveCount(0);
+    await expect
+      .poll(async () => (await client.getDaemonConfig()).config.metadataGeneration)
+      .toEqual({
+        providers: [{ provider: "mock", model: "ten-second-stream" }],
+      });
+  } finally {
+    try {
+      await client.patchDaemonConfig({
+        metadataGeneration: {
+          providers: previousConfig.config.metadataGeneration.providers,
+          instructions: previousConfig.config.metadataGeneration.instructions ?? "",
+        },
+      });
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }
+});

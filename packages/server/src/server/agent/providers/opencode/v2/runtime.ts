@@ -37,6 +37,8 @@ export interface V2Connection {
   client: V2Api;
   release(): Promise<void>;
   retain(): V2Connection;
+  /** True when releasing this lease would stop the server, with every execution inside it. */
+  releaseStopsServer(): boolean;
   bindSession(sessionId: string, cwd: string): Promise<void>;
   unbindSession(sessionId: string, cwd: string): Promise<void>;
   refreshLocation(cwd: string, signal?: AbortSignal): Promise<void>;
@@ -174,6 +176,7 @@ export class V2Runtime {
       client: generation.client,
       release,
       retain: () => this.lease(generation, pending),
+      releaseStopsServer: () => !released && generation.users === 1 && this.current !== pending,
       bindSession: generation.bindSession,
       unbindSession: generation.unbindSession,
       refreshLocation: generation.refreshLocation,

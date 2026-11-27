@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.18.0 - 2026-11-27
+
+- **远程工作区浏览器代理**：远程工作区中的桌面端浏览器标签页现在会通过该工作区的 daemon 转发流量，远程 `localhost` 服务可以直接在 Paseo 中打开。([#10944](https://github.com/getpaseo/paseo/pull/10944)，贡献者：[@airon-assustadus](https://github.com/airon-assustadus))
+- **按设备配置通知偏好**：每台设备都可以分别选择哪些 Agent、终端和插件事件发送通知，插件现在也可以发送通知并处理点击。([#10888](https://github.com/getpaseo/paseo/pull/10888))
+- **智能体配置文件系统提示词**：在智能体配置文件中保存可选的系统提示词，以便在通过该配置启动新 Agent 时应用。([#10996](https://github.com/getpaseo/paseo/pull/10996))
+- **更多语法高亮语言**：语法高亮现已支持 diff 和 patch 文件，以及 Ruby、Kotlin、TOML、SQL、Lua、Protobuf、PowerShell、Groovy、Gradle、Scala、CMake、Properties、INI、R、Perl 和 LaTeX。([#11026](https://github.com/getpaseo/paseo/pull/11026)，贡献者：[@hmalaspina](https://github.com/hmalaspina), [@kukicola](https://github.com/kukicola), [@MaximeConan](https://github.com/MaximeConan), [@singleton11](https://github.com/singleton11), [@chandlerok](https://github.com/chandlerok))
+
+### 变更
+
+- ACP Provider 现在会在 daemon 重启间将已发现的模型目录缓存到磁盘，不再在后台轮询，同时清理了多余的 Antigravity ACP 参数和元数据。需要 [Antigravity CLI 1.5.1 或更高版本](https://paseo.sh/zh-CN/docs/supported-providers/antigravity) ([#10992](https://github.com/getpaseo/paseo/pull/10992))
+
+### 修复
+
+- 修复已启用的客户端插件导入 `react-native` 时，Paseo iOS 在连接后不久崩溃的问题 ([#11011](https://github.com/getpaseo/paseo/pull/11011))
+- 修复流事件丢失或对话历史较大时，OpenCode v2 Agent 在点击停止后仍停留在运行中的问题 ([#10955](https://github.com/getpaseo/paseo/pull/10955))
+- 修复在 Pi Agent 运行其自行启动的轮次时发送引导消息会中止该轮次而不是引导它的问题 ([#10977](https://github.com/getpaseo/paseo/pull/10977)，贡献者：[@viiqswim](https://github.com/viiqswim))
+- 修复在 fork 克隆中根据 PR 创建工作区时，检出到 fork 中同编号 PR 的问题 ([#10987](https://github.com/getpaseo/paseo/pull/10987))
+- 修复向 Composer 拖放图片或文件后输入框未获得焦点的问题 ([#11022](https://github.com/getpaseo/paseo/pull/11022))
+
 ## 0.17.6 - 2026-11-27
 
 ### 改进
