@@ -26,6 +26,15 @@ async function writeFakeCli(dir: string, name: string, script: string): Promise<
   return launcher;
 }
 
+// Windows keeps the original case of environment names, often `Path`. Spreading process.env and
+// setting `PATH` would leave the real `Path` in place beside it.
+function envWithPath(searchPath: string): NodeJS.ProcessEnv {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PATH"),
+  );
+  return { ...env, PATH: searchPath };
+}
+
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -49,17 +58,18 @@ describe("cloudflared-tunnel built-in plugin", () => {
     const emptyDir = await mkdtemp(path.join(os.tmpdir(), "paseo-empty-path-"));
     tempDirs.push(emptyDir);
     const provider = createCloudflaredTunnelProvider({
-      env: { ...process.env, PATH: emptyDir },
+      env: envWithPath(emptyDir),
     });
 
     const status = await provider.status({
       paseo: unusedPaseo,
       signal: new AbortController().signal,
     });
-    expect(status).toMatchObject({
+    expect(status).toEqual({
       status: "unavailable",
+      reason: "cloudflared is not installed or not on PATH.",
       installUrl: expect.stringContaining("cloudflare.com"),
-      fixHint: expect.stringContaining("cloudflared"),
+      fixHint: "Install cloudflared and make sure it is available on PATH.",
     });
   });
 
@@ -81,7 +91,7 @@ setInterval(() => {}, 10_000);
     tempDirs.push(markerFile);
 
     const provider = createCloudflaredTunnelProvider({
-      env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}` },
+      env: envWithPath(`${dir}${path.delimiter}${process.env.PATH ?? ""}`),
     });
 
     const status = await provider.status({
