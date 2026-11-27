@@ -48,6 +48,7 @@ interface FinishNotificationBodyInput {
   serverId?: string;
   title: string;
   reason: FinishNotificationReason;
+  error: string | null;
   lastAssistantMessage: string | null;
   permissionRequest?: AgentPermissionRequest;
   pendingWork?: readonly PendingWork[];
@@ -67,6 +68,17 @@ export function formatFinishNotificationBody(params: FinishNotificationBodyInput
   const statusLine = `Agent ${params.childAgentId} (${params.title}) ${params.reason}${work}.`;
   const sections = [statusLine];
   if (params.serverId) sections.push(`Server: ${params.serverId}`);
+  if (params.reason === "errored") {
+    const error = params.error?.trim();
+    if (error) {
+      const excerpt =
+        error.length > FINISH_NOTIFICATION_MESSAGE_LIMIT
+          ? error.slice(0, FINISH_NOTIFICATION_MESSAGE_LIMIT) + "…"
+          : error;
+      sections.push(`<agent-error>\n${excerpt}\n</agent-error>`);
+    }
+    sections.push("Use get_agent_activity to inspect the child's timeline for details.");
+  }
   if (params.reason === "ended its turn but is still working")
     sections.push(
       "This is not its final reply. You will be notified when it finishes, errors, or needs permission.",
