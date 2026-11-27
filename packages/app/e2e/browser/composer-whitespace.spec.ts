@@ -139,6 +139,31 @@ test("blank composer lines remain present and keep their measured height", async
   }
 });
 
+test("a newline in a Markdown list continues the list and an empty item ends it", async ({
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-list-",
+    title: "Composer list continuation",
+  });
+
+  try {
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    const composer = composerLocator(page);
+    await composer.fill("1. one");
+    await composer.press("Shift+Enter");
+    await composer.pressSequentially("two");
+    await expect(composer).toHaveValue("1. one\n2. two");
+    await composer.press("Shift+Enter");
+    await expect(composer).toHaveValue("1. one\n2. two\n3. ");
+    await composer.press("Shift+Enter");
+    await expect(composer).toHaveValue("1. one\n2. two\n");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("composer growth keeps a bottom-pinned chat at the bottom", async ({ page }) => {
   test.setTimeout(90_000);
   const agent = await seedMockAgentWorkspace({

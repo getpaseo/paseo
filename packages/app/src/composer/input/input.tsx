@@ -119,6 +119,7 @@ import {
   runMessageInputKeyboardAction,
   stopRealtimeVoice,
 } from "./state";
+import { continueMarkdownList } from "./list-continuation";
 
 const DEFAULT_SEND_KEYS: ShortcutKey[][] = [["Enter"]];
 const MOD_ENTER_SEND_KEYS: ShortcutKey[][] = [["mod", "Enter"]];
@@ -1984,12 +1985,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const handleInputChange = useCallback(
       (nextValue: string) => {
+        const caret = selectionRef.current.start;
+        const continuation =
+          caret === selectionRef.current.end
+            ? continueMarkdownList(valueRef.current, nextValue, caret)
+            : null;
+        // ponytail: a programmatic replacement drops the web undo step for the marker; use
+        // execCommand("insertText") there if undo granularity matters.
+        if (continuation) {
+          replaceText(continuation.text, continuation.selection);
+          return;
+        }
         updateComposerHeightForText?.(valueRef.current, nextValue);
         valueRef.current = nextValue;
         updateLiveTextPresence(nextValue);
         onChangeText(nextValue);
       },
-      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
+      [onChangeText, replaceText, updateComposerHeightForText, updateLiveTextPresence],
     );
 
     const handleInputFocus = useCallback(() => {
