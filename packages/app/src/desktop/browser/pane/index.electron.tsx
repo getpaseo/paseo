@@ -10,7 +10,14 @@ import {
   createElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
@@ -20,7 +27,6 @@ import {
   ArrowRight,
   Camera,
   ChevronDown,
-  Laptop,
   Maximize,
   Monitor,
   MousePointer2,
@@ -54,7 +60,12 @@ import {
 import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
 import { persistAttachmentFromDataUrl } from "@/attachments/service";
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { defaultHostAppearance, resolveHostIcon } from "@/hosts/appearance";
+import { HostIconGlyph } from "@/hosts/host-icon-glyph";
 import { getOverlayRoot } from "@/lib/overlay-root";
+import { useHosts } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
+import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 import {
   getDesktopHost,
   isElectronRuntime,
@@ -481,28 +492,49 @@ const ThemedSmartphone = withUnistyles(Smartphone);
 const ThemedTablet = withUnistyles(Tablet);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedChevronDown = withUnistyles(ChevronDown);
-const ThemedLaptop = withUnistyles(Laptop);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const deviceMutedIconMapping = (theme: { colors: { foregroundMuted: string } }) => ({
   color: theme.colors.foregroundMuted,
 });
 
-function BrowserRoutingPill({
+function BrowserRoutingButton({
+  serverId,
   state,
+  style,
   onToggle,
 }: {
+  serverId: string;
   state: BrowserProxyPaneState;
+  style: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
+  const hosts = useHosts();
+  const host = useMemo(
+    () => hosts.find((entry) => entry.serverId === serverId) ?? null,
+    [hosts, serverId],
+  );
+  const detectedMachineKind = useSessionStore(
+    (store) => store.sessions[serverId]?.serverInfo?.machineKind ?? null,
+  );
+  const hostIcon = useMemo(
+    () =>
+      resolveHostIcon({
+        appearance: host?.appearance ?? defaultHostAppearance(),
+        detectedMachineKind,
+      }),
+    [detectedMachineKind, host?.appearance],
+  );
+  const hostColor = host?.appearance.color ?? "none";
+
   const isHostRouted = state.effectiveRoutingMode === "host";
-  const label = isHostRouted ? state.hostLabel : t("workspace.browser.routing.local");
   const tooltipText = isHostRouted
     ? t("workspace.browser.routing.tooltipHost", { hostName: state.hostLabel })
     : t("workspace.browser.routing.tooltipLocal", { hostName: state.hostLabel });
   const accessibilityLabel = isHostRouted
     ? t("workspace.browser.routing.switchToLocal", { hostName: state.hostLabel })
     : t("workspace.browser.routing.switchToHost", { hostName: state.hostLabel });
+  const accessibilityState = useMemo(() => ({ selected: isHostRouted }), [isHostRouted]);
 
   let dotStyle = styles.routingDotPending;
   if (state.kind === "ready" && state.proxyStatus === "ready") {
@@ -514,33 +546,37 @@ function BrowserRoutingPill({
     dotStyle = styles.routingDotError;
   }
 
-  const leftIcon = useMemo(
-    () =>
-      isHostRouted ? (
-        <View style={[styles.routingDot, dotStyle]} />
-      ) : (
-        <ThemedLaptop size={13} uniProps={deviceMutedIconMapping} />
-      ),
-    [dotStyle, isHostRouted],
-  );
-
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>
-        <Button
-          size="sm"
-          variant={isHostRouted ? "secondary" : "outline"}
-          leftIcon={leftIcon}
-          onPress={onToggle}
+        <Pressable
+          accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
+          accessibilityState={accessibilityState}
+          onPress={onToggle}
+          style={style}
           testID="browser-routing-pill"
-          style={styles.routingPillButton}
-          textStyle={styles.routingPillText}
         >
-          {label}
-        </Button>
+          {({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) =>
+            isHostRouted ? (
+              <View style={styles.routingIconFrame}>
+                <HostIconGlyph icon={hostIcon} color={hostColor} size={16} />
+                <View
+                  style={[
+                    styles.routingDotHalo,
+                    hovered || pressed ? styles.routingDotHaloHovered : styles.routingDotHaloRest,
+                  ]}
+                >
+                  <View style={[styles.routingDot, dotStyle]} />
+                </View>
+              </View>
+            ) : (
+              <ThemedMonitor size={16} uniProps={deviceMutedIconMapping} />
+            )
+          }
+        </Pressable>
       </TooltipTrigger>
-      <TooltipContent side="bottom" align="start" offset={8}>
+      <TooltipContent side="bottom" align="center" offset={8}>
         <Text style={styles.toolbarTooltipText}>{tooltipText}</Text>
       </TooltipContent>
     </Tooltip>
@@ -1693,7 +1729,12 @@ export function BrowserPane({
           </ToolbarButton>
         </View>
         {proxyState.isRemoteHost ? (
-          <BrowserRoutingPill state={proxyState} onToggle={handleToggleRoutingMode} />
+          <BrowserRoutingButton
+            serverId={serverId}
+            state={proxyState}
+            style={baseIconButtonStyle}
+            onToggle={handleToggleRoutingMode}
+          />
         ) : null}
         <View style={styles.urlBarWrap}>
           <TextInput
@@ -2090,18 +2131,32 @@ const styles = StyleSheet.create((theme) => ({
   unavailableSubtitle: {
     fontSize: theme.fontSize.sm,
   },
-  routingPillButton: {
-    flexShrink: 0,
-    maxWidth: 168,
-    paddingHorizontal: theme.spacing[2],
-    gap: theme.spacing[1],
+  routingIconFrame: {
+    position: "relative",
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  routingPillText: {
-    maxWidth: 132,
+  routingDotHalo: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: STATUS_INDICATOR_FILLED_DOT_SIZE + 3,
+    height: STATUS_INDICATOR_FILLED_DOT_SIZE + 3,
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routingDotHaloRest: {
+    backgroundColor: theme.colors.surface0,
+  },
+  routingDotHaloHovered: {
+    backgroundColor: theme.colors.surface2,
   },
   routingDot: {
-    width: 6,
-    height: 6,
+    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
   },
   routingDotReady: {

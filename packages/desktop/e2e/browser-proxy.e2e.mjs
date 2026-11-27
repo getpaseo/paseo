@@ -865,7 +865,10 @@ async function main() {
       .and(page.locator(":visible"))
       .first();
     await expect(routingPill).toBeVisible({ timeout: 30_000 });
-    await expect(routingPill).toContainText("Remote Proxy Host");
+    await expect(routingPill).toHaveAttribute(
+      "aria-label",
+      "Switch browser routing from Remote Proxy Host to Local",
+    );
 
     await expect
       .poll(
@@ -916,7 +919,11 @@ async function main() {
     // 2. Toggling <host> <-> Local switches partition cleanly with isolation
     // -------------------------------------------------------------------------
     await routingPill.click();
-    await expect(routingPill).toContainText("Local", { timeout: 15_000 });
+    await expect(routingPill).toHaveAttribute(
+      "aria-label",
+      "Switch browser routing from Local to Remote Proxy Host",
+      { timeout: 15_000 },
+    );
 
     await expect
       .poll(async () => await readGuestState(page, { exactPartition: "persist:paseo-browser" }), {
@@ -935,7 +942,11 @@ async function main() {
 
     // Toggle back to <host>
     await routingPill.click();
-    await expect(routingPill).toContainText("Remote Proxy Host", { timeout: 15_000 });
+    await expect(routingPill).toHaveAttribute(
+      "aria-label",
+      "Switch browser routing from Remote Proxy Host to Local",
+      { timeout: 15_000 },
+    );
 
     await expect
       .poll(async () => await readGuestState(page, { exactPartition: hostGuest.partition }), {
@@ -996,9 +1007,11 @@ async function main() {
       .getByTestId("browser-routing-pill")
       .and(page.locator(":visible"))
       .first();
-    await expect(oldRoutingPill).toContainText("Local", {
-      timeout: 15_000,
-    });
+    await expect(oldRoutingPill).toHaveAttribute(
+      "aria-label",
+      /Switch browser routing from Local to /,
+      { timeout: 15_000 },
+    );
     await expect
       .poll(async () => await readGuestState(page, { exactPartition: "persist:paseo-browser" }), {
         timeout: 30_000,
