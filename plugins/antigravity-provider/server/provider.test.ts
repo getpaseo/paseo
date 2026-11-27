@@ -575,6 +575,95 @@ it.each(["live", "replay"] as const)(
   },
 );
 
+// Recorded from agy 1.5.18 `agy acp`.
+it("shows update_steps as the task list and invoke_subagent as a subagent", async () => {
+  const updates = await readFile(
+    new URL("../test/fixtures/steps-subagent.acp.ndjson", import.meta.url),
+    "utf8",
+  );
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    const updates = ${JSON.stringify(updates)}.trim().split("\\n").map((line) => JSON.parse(line));
+    const modes = { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }] };
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1 } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "agy-session", modes } });
+          send({ method: "session/update", params: { sessionId: "agy-session", update: { sessionUpdate: "available_commands_update", availableCommands: [] } } });
+          break;
+        case "session/prompt":
+          for (const update of updates) send({ method: "session/update", params: { sessionId: "agy-session", update } });
+          send({ id, result: { stopReason: "end_turn" } });
+          break;
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "test",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 4_000 })
+      .toBeDefined();
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "demo",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Demo" }] },
+      },
+    });
+    await expect
+      .poll(() =>
+        events.some((event) => event.type === "session.turn" && event.state === "completed"),
+      )
+      .toBe(true);
+
+    const items = events.flatMap((event) => (event.type === "timeline.item" ? [event.item] : []));
+    const plans = items.flatMap((item) =>
+      item.type === "todo" ? [item.items.map((entry) => entry.status)] : [],
+    );
+    expect(plans.at(0)).toEqual(["in_progress", "pending", "pending"]);
+    expect(plans.at(-1)).toEqual(["completed", "completed", "completed"]);
+    expect(items.find((item) => item.type === "todo")).toMatchObject({
+      id: "acp-plan",
+      items: [{ text: "Write file" }, { text: "Run check" }, { text: "Ask subagent" }],
+    });
+    const tools = items.flatMap((item) => (item.type === "tool_call" ? [item] : []));
+    expect(tools.some((tool) => tool.name === "update_steps")).toBe(false);
+    expect(tools.findLast((tool) => tool.name === "invoke_subagent")).toMatchObject({
+      status: "completed",
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Math Calculator",
+        description: "Compute 6*7 and reply with just the number.",
+      },
+    });
+  } finally {
+    await connection.close();
+  }
+});
+
 // agy 1.5.14 lists `thought_level` only for the selected model and omits it for Orchestrator.
 it("offers each model its own thinking options and opens Orchestrator with its default", async () => {
   const { directory, launch } = await launchAgent(`

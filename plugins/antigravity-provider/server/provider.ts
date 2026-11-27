@@ -7,7 +7,7 @@ import type {
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
-import { mapToolCall } from "./tool-calls.js";
+import { mapPlan, mapToolCall } from "./tool-calls.js";
 
 const legacySession = z.object({
   version: z.literal(1),
@@ -35,6 +35,7 @@ const antigravity: AcpTransformer = {
     return { ...command, kind: builtInCommands.has(command.name) ? "command" : "skill" };
   },
   toolCall: mapToolCall,
+  plan: mapPlan,
   sessionOpen({ persistence, systemPrompt, agentMetadata }) {
     // COMPAT(antigravityStreamJson): added in v0.16.2, remove after 2027-11-19.
     const saved = legacySession.safeParse(persistence);

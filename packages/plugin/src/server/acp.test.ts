@@ -6888,6 +6888,19 @@ describe("ACP tool call rows", () => {
     updates: unknown[],
     transformers?: Parameters<typeof runAcpProvider>[0]["transformers"],
   ) {
+    const rows = (await promptItems(updates, transformers)).flatMap((item) =>
+      item.type === "tool_call" ? [item] : [],
+    );
+    for (const row of rows) {
+      expect(AgentTimelineItemPayloadSchema.safeParse(row).success).toBe(true);
+    }
+    return rows;
+  }
+
+  async function promptItems(
+    updates: unknown[],
+    transformers?: Parameters<typeof runAcpProvider>[0]["transformers"],
+  ) {
     const harness = connectorHarness({ promptUpdates: () => updates });
     const registration = runAcpProvider({
       id: "tool-rows-acp",
@@ -6917,13 +6930,7 @@ describe("ACP tool call rows", () => {
         events,
         (event) => event.type === "session.turn" && event.state === "completed",
       );
-      const rows = events.flatMap((event) =>
-        event.type === "timeline.item" && event.item.type === "tool_call" ? [event.item] : [],
-      );
-      for (const row of rows) {
-        expect(AgentTimelineItemPayloadSchema.safeParse(row).success).toBe(true);
-      }
-      return rows;
+      return events.flatMap((event) => (event.type === "timeline.item" ? [event.item] : []));
     } finally {
       await connection.close();
     }
@@ -7096,6 +7103,52 @@ describe("ACP tool call rows", () => {
       input: { command: "npm test" },
       output: null,
     });
+  });
+
+  it("shows a call a transformer reads as a plan as the task list, through status-only updates", async () => {
+    const items = await promptItems(
+      [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "steps-1",
+          title: "Run steps",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { name: "steps", steps: ["Write", "Test"] },
+        },
+        { sessionUpdate: "tool_call_update", toolCallId: "steps-1", status: "completed" },
+      ],
+      [
+        {
+          plan: (call) => {
+            const input = jsonRecord(call.input);
+            if (input.name !== "steps" || !Array.isArray(input.steps)) return null;
+            return input.steps.map((step) => ({
+              content: String(step),
+              status: call.status === "completed" ? "completed" : "in_progress",
+            }));
+          },
+        },
+      ],
+    );
+    expect(items.filter((item) => item.type !== "user_message")).toEqual([
+      {
+        type: "todo",
+        id: "acp-plan",
+        items: [
+          { id: "0", text: "Write", completed: false, status: "in_progress" },
+          { id: "1", text: "Test", completed: false, status: "in_progress" },
+        ],
+      },
+      {
+        type: "todo",
+        id: "acp-plan",
+        items: [
+          { id: "0", text: "Write", completed: true, status: "completed" },
+          { id: "1", text: "Test", completed: true, status: "completed" },
+        ],
+      },
+    ]);
   });
 
   it("shows the call's row on its approval", async () => {

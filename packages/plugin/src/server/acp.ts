@@ -138,6 +138,11 @@ export type AcpVendorUpdate =
   | { type: "timeline"; item: ProviderTimelineItem }
   | { type: "notice"; notice: ProviderNotice };
 
+export interface AcpPlanEntry {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
 export interface AcpTransformer {
   /** Decode an older saved session and supply extension metadata for session/new or session/load. */
   sessionOpen?(context: {
@@ -168,6 +173,8 @@ export interface AcpTransformer {
       previous?: AcpToolCallSnapshot;
     },
   ): AcpToolCallSnapshot;
+  /** Returns the plan entries a tool call carries, or null; Paseo shows them as the task list instead of the call's row. Runs on every update, merged with the call's earlier updates. */
+  plan?(toolCall: AcpToolCallSnapshot, context: AcpContext): readonly AcpPlanEntry[] | null;
 }
 
 function buildDefaultAcpCatalogCacheKey(options: ProviderCatalogOptions): string {

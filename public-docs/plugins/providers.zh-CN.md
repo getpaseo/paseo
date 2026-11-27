@@ -634,6 +634,8 @@ Paseo 根据每个调用的 ACP `kind` 生成标准工具卡片：`execute` 显�
 
 `toolCall` 会在调用的每次更新时运行，参数是到目前为止合并后的调用。按照 ACP 的定义，发送了 `content` 的更新会替换之前的内容。如果 Agent 只在较早的更新中发送某个值，请从 `context.previous` 读取，它是 Paseo 上一次展示的调用。[Hermes 终端转换器](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)就是这样保留 Hermes 第一次更新中的命令。
 
+有些 Agent 通过工具调用而不是 ACP 的 `plan` 更新来报告计划。从转换器的 `plan` 钩子返回该调用的条目，Paseo 就会把它们显示为 Agent 的任务列表，与显示 `plan` 更新的方式相同，并且不会为该调用显示工具卡片。与 `toolCall` 一样，`plan` 会在调用的每次更新时运行，参数是到目前为止合并后的调用；其他调用请返回 `null`。[Antigravity 转换器](https://github.com/getpaseo/paseo/blob/main/plugins/antigravity-provider/server/tool-calls.ts)就是这样读取 `update_steps`。
+
 如果 Agent 只为当前选中的模型列出 `thought_level` 选项，请设置 `acpOptions.perModelThinkingOptions`。目录发现会依次选中每个模型，并为它记录 Agent 列出的思考选项。没有 `thought_level` 选项的模型不会显示思考选择器。
 
 ## 测试与发布 {#test-and-publish}

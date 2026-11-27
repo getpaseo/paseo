@@ -14,6 +14,28 @@ const fileRead = z.object({
 });
 const fileWrite = z.object({ Path: z.string(), Content: z.string().optional() });
 const webSearch = z.object({ query: z.string() });
+const subagent = z.object({
+  Prompt: z.string().optional(),
+  Role: z.string().optional(),
+  TypeName: z.string().optional(),
+});
+const steps = z.object({
+  steps: z.array(z.object({ title: z.string(), status: z.string() })),
+});
+const stepStatuses: Readonly<Record<string, "in_progress" | "completed">> = {
+  in_progress: "in_progress",
+  done: "completed",
+};
+
+export const mapPlan: NonNullable<AcpTransformer["plan"]> = (call) => {
+  if (call.name !== "update_steps") return null;
+  return (
+    steps.safeParse(call.input).data?.steps.map((step) => ({
+      content: step.title,
+      status: stepStatuses[step.status] ?? "pending",
+    })) ?? null
+  );
+};
 
 export const mapToolCall: NonNullable<AcpTransformer["toolCall"]> = (call, context) => {
   if (call.name?.startsWith("mcp_")) {
@@ -45,6 +67,16 @@ function mapNativeDetail(call: AcpToolCallSnapshot): ProviderToolCallDetail | un
       const input = webSearch.safeParse(call.input).data;
       if (input) return { type: "search", toolName: "web_search", query: input.query };
       break;
+    }
+    case "invoke_subagent": {
+      const input = subagent.safeParse(call.input).data;
+      if (!input) break;
+      return {
+        type: "sub_agent",
+        subAgentType: input.Role || input.TypeName,
+        description: input.Prompt,
+        log: "",
+      };
     }
   }
   if (call.kind !== "read") return undefined;

@@ -768,6 +768,13 @@ early update, read it from `context.previous`, the call as Paseo last presented 
 [Hermes terminal transformer](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)
 keeps the command from Hermes's first update this way.
 
+Some agents report their plan through a tool call instead of ACP's `plan` update. Return that
+call's entries from the transformer's `plan` hook and Paseo shows them as the agent's task list, as
+it shows a `plan` update, with no tool card for the call. Like `toolCall`, `plan` runs on every
+update with the updates merged so far; return `null` for every other call. The
+[Antigravity transformer](https://github.com/getpaseo/paseo/blob/main/plugins/antigravity-provider/server/tool-calls.ts)
+reads `update_steps` this way.
+
 Use `sessionOpen` when an ACP agent needs extension metadata on `session/new` or `session/load`.
 The hook receives the system prompt and the agent capabilities' `_meta` from `initialize`.
 Return `metadata` to add fields to the session request's `_meta`.

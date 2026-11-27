@@ -27,6 +27,7 @@ import type {
   AcpConfigAccess,
   AcpConfigChange,
   AcpConfigureContext,
+  AcpPlanEntry,
   AcpRequest,
   AcpToolCallSnapshot,
   AcpTransformer,
@@ -586,6 +587,7 @@ class AcpRuntime {
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallState>();
+  private readonly planToolCalls = new Map<string, AcpToolCallSnapshot>();
   private mcpServerNames: readonly string[] = [];
   private readonly liveOpenToolIds = new Set<string>();
   private readonly canceledToolCallIds = new Set<string>();
@@ -594,6 +596,7 @@ class AcpRuntime {
   private readonly pendingCompactions = new Set<string>();
   private readonly permissions = new Map<string, PendingPermission>();
   private readonly transformers: readonly AcpTransformer[];
+  private readonly planTransformers: readonly AcpTransformer[];
   private configOptions: SessionConfigOption[] = [];
   private modes: NewSessionResponse["modes"] = null;
   private commandWaiter: (() => void) | null = null;
@@ -720,6 +723,7 @@ class AcpRuntime {
     this.whenConnectorClosed = whenConnectorClosed;
     this.emit = options.emit;
     this.transformers = options.options.transformers ?? [];
+    this.planTransformers = this.transformers.filter((transformer) => transformer.plan);
     const client: Client = {
       requestPermission: (request) => this.requestPermission(request),
       sessionUpdate: (notification) => {
@@ -1651,20 +1655,7 @@ class AcpRuntime {
 
   private reduceStateUpdate(update: SessionUpdate, wireSeq: number): void {
     if (update.sessionUpdate === "plan") {
-      this.emit({
-        type: "timeline.item",
-        sessionId: this.options.boundarySessionId,
-        item: {
-          type: "todo",
-          id: "acp-plan",
-          items: update.entries.map((entry, index) => ({
-            id: String(index),
-            text: entry.content,
-            completed: entry.status === "completed",
-            status: entry.status,
-          })),
-        },
-      });
+      this.emitPlan(update.entries);
       return;
     }
     if (update.sessionUpdate === "available_commands_update") {
@@ -1803,6 +1794,7 @@ class AcpRuntime {
     if (update.sessionUpdate === "tool_call") {
       this.canceledToolCallIds.delete(update.toolCallId);
     }
+    if (this.reducePlanToolCall(update)) return;
     const tool = this.toolCalls.get(update.toolCallId);
     const current = tool?.presentation;
     const wasOpenQualifying =
@@ -1824,6 +1816,37 @@ class AcpRuntime {
     const isOpenQualifying =
       this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
     this.noteDeferredToolTransition(wasOpenQualifying, isOpenQualifying, isOpen, snapshot, wireSeq);
+  }
+
+  private reducePlanToolCall(update: ToolCall | ToolCallUpdate): boolean {
+    if (this.planTransformers.length === 0) return false;
+    const source = mergeToolCallSnapshot(update, this.planToolCalls.get(update.toolCallId));
+    const context = { sessionId: this.options.boundarySessionId };
+    for (const transformer of this.planTransformers) {
+      const entries = transformer.plan?.(source, context);
+      if (!entries) continue;
+      this.planToolCalls.set(source.id, source);
+      this.emitPlan(entries);
+      return true;
+    }
+    return false;
+  }
+
+  private emitPlan(entries: readonly AcpPlanEntry[]): void {
+    this.emit({
+      type: "timeline.item",
+      sessionId: this.options.boundarySessionId,
+      item: {
+        type: "todo",
+        id: "acp-plan",
+        items: entries.map((entry, index) => ({
+          id: String(index),
+          text: entry.content,
+          completed: entry.status === "completed",
+          status: entry.status,
+        })),
+      },
+    });
   }
 
   private vendorNotification(method: string, params: unknown): void {
