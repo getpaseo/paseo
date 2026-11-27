@@ -657,7 +657,6 @@ export const ar: TranslationResources = {
         unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",
       },
       routing: {
-        local: "محلي",
         tooltipHost: "التصفح عبر {{hostName}}. انقر للتصفح محلياً.",
         tooltipLocal: "التصفح محلياً. انقر للتصفح عبر {{hostName}}.",
         switchToLocal: "تبديل توجيه المتصفح من {{hostName}} إلى محلي",

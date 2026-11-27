@@ -657,7 +657,6 @@ export const zhCN: TranslationResources = {
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
       },
       routing: {
-        local: "本地",
         tooltipHost: "正在通过 {{hostName}} 浏览。点击切换为本地浏览。",
         tooltipLocal: "正在本地浏览。点击切换为通过 {{hostName}} 浏览。",
         switchToLocal: "将浏览器路由从 {{hostName}} 切换为本地",

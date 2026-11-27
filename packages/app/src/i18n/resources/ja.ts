@@ -663,7 +663,6 @@ export const ja: TranslationResources = {
         unsupportedProtocol: "サポートされていないブラウザURLをブロック: {{protocol}}",
       },
       routing: {
-        local: "ローカル",
         tooltipHost: "{{hostName}} 経由で閲覧中。クリックしてローカルで閲覧。",
         tooltipLocal: "ローカルで閲覧中。クリックして {{hostName}} 経由で閲覧。",
         switchToLocal: "ブラウザルーティングを {{hostName}} からローカルに切り替え",

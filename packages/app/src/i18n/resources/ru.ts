@@ -665,7 +665,6 @@ export const ru: TranslationResources = {
           "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",
       },
       routing: {
-        local: "Локально",
         tooltipHost: "Просмотр через {{hostName}}. Нажмите, чтобы перейти в локальный режим.",
         tooltipLocal: "Локальный просмотр. Нажмите, чтобы просматривать через {{hostName}}.",
         switchToLocal: "Переключить маршрутизацию браузера с {{hostName}} на локальную",

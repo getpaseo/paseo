@@ -656,7 +656,6 @@ export const en = {
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
       },
       routing: {
-        local: "Local",
         tooltipHost: "Browsing through {{hostName}}. Click to browse locally.",
         tooltipLocal: "Browsing locally. Click to browse through {{hostName}}.",
         switchToLocal: "Switch browser routing from {{hostName}} to Local",

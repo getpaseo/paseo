@@ -663,7 +663,6 @@ export const es: TranslationResources = {
         unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",
       },
       routing: {
-        local: "Local",
         tooltipHost: "Navegando a través de {{hostName}}. Haz clic para navegar localmente.",
         tooltipLocal: "Navegando localmente. Haz clic para navegar a través de {{hostName}}.",
         switchToLocal: "Cambiar el enrutamiento del navegador de {{hostName}} a Local",

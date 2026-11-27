@@ -658,7 +658,6 @@ export const ko: TranslationResources = {
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
       },
       routing: {
-        local: "로컬",
         tooltipHost: "{{hostName}}을(를) 통해 탐색 중입니다. 클릭하여 로컬로 탐색하세요.",
         tooltipLocal: "로컬로 탐색 중입니다. 클릭하여 {{hostName}}을(를) 통해 탐색하세요.",
         switchToLocal: "브라우저 라우팅을 {{hostName}}에서 로컬로 전환",

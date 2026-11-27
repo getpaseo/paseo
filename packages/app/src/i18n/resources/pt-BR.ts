@@ -662,7 +662,6 @@ export const ptBR: TranslationResources = {
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",
       },
       routing: {
-        local: "Local",
         tooltipHost: "Navegando por {{hostName}}. Clique para navegar localmente.",
         tooltipLocal: "Navegando localmente. Clique para navegar por {{hostName}}.",
         switchToLocal: "Alternar roteamento do navegador de {{hostName}} para Local",

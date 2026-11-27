@@ -663,7 +663,6 @@ export const fr: TranslationResources = {
         unsupportedProtocol: "URL bloquée, protocole non pris en charge : {{protocol}}",
       },
       routing: {
-        local: "Local",
         tooltipHost: "Navigation via {{hostName}}. Cliquez pour naviguer en local.",
         tooltipLocal: "Navigation locale. Cliquez pour naviguer via {{hostName}}.",
         switchToLocal: "Basculer le routage du navigateur de {{hostName}} vers Local",
