@@ -5,6 +5,7 @@ import type {
   AgentStreamEvent,
 } from "../../../agent-sdk-types.js";
 import type { PiAgentMessage } from "../rpc-types.js";
+import { PiPermissionResponseError } from "../extension-ui-answer.js";
 import { mapPiChildSession, PiChildSessionFollower } from "./child-session.js";
 import type {
   PiExtension,
@@ -246,9 +247,19 @@ export class PiExtensionHost {
     response: AgentPermissionResponse,
   ): PiExtensionUiReply | undefined {
     for (const { id, adapter } of this.sessions) {
-      const mapped = this.safe(id, "respondToPermission", () =>
-        adapter.respondToPermission?.(request, response),
-      );
+      let mapped: PiExtensionUiReply | undefined;
+      try {
+        mapped = adapter.respondToPermission?.(request, response);
+      } catch (error) {
+        if (error instanceof PiPermissionResponseError) {
+          throw error;
+        }
+        this.logger?.warn(
+          { err: error, extensionId: id, operation: "respondToPermission" },
+          "Pi extension adapter failed",
+        );
+        continue;
+      }
       if (mapped) return mapped;
     }
     return undefined;

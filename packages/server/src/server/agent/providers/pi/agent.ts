@@ -18,6 +18,7 @@ import {
   type McpServerConfig,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
+  type AgentPermissionResponseOptions,
   type AgentProviderNotice,
   type AgentClientInstallation,
   type AgentPersistenceHandle,
@@ -43,6 +44,7 @@ import {
   type ProviderCatalog,
   type ProviderRefreshContext,
 } from "../../agent-sdk-types.js";
+import { envelopeMessage } from "../../agent-messages/envelope.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { createCliInstallation } from "../cli-installation.js";
 import {
@@ -84,6 +86,12 @@ import {
   piExtensionRuntimeBridge,
   type PiExtensionEventOutput,
 } from "./extensions/index.js";
+import {
+  isRecord,
+  optionalString,
+  QUESTION_RESPONSE_HEADER,
+  resolveAllowedExtensionUiAnswer,
+} from "./extension-ui-answer.js";
 import { resolveResumeProcessCwd } from "../resume-process-cwd.js";
 import { revertPiConversation } from "./rewind.js";
 import {
@@ -127,7 +135,20 @@ const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
-const QUESTION_RESPONSE_HEADER = "Response";
+const PI_PERMISSION_DENIAL_STEER_TIMEOUT_MS = 5_000;
+const MAX_STEERED_DENIAL_REASON_CHARS = 2048;
+const STEER_CLEARED_PERMISSION_MESSAGE =
+  "The user answered with a message instead of approving. Their message follows.";
+// Fixed internal / UI dismissal strings that carry no user-authored denial reason to steer.
+const FIXED_PERMISSION_DENY_MESSAGES = new Set([
+  "Denied by user",
+  "Dismissed by user",
+  "Permission request denied",
+  "Permission request canceled",
+  "Interrupted",
+  "Removed by rewind",
+  STEER_CLEARED_PERMISSION_MESSAGE,
+]);
 
 export const PiProviderOptionsSchema = z
   .object({
@@ -877,14 +898,6 @@ function isPiAbortedTerminalResponse(messages: PiAgentMessage[]): boolean {
   return latestAssistant?.stopReason?.toLowerCase() === "aborted";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function toNotificationLevel(value: unknown): "info" | "warning" | "error" {
   if (value === "info" || value === "warning" || value === "error") {
     return value;
@@ -1080,13 +1093,31 @@ function buildExtensionUiQuestionPermission(
   };
 }
 
-function firstPermissionAnswer(input: AgentMetadata | undefined): string | null {
-  const answers = isRecord(input?.answers) ? input.answers : null;
-  if (!answers) {
+function denialReasonToSteer(
+  response: AgentPermissionResponse,
+  options?: AgentPermissionResponseOptions,
+): string | null {
+  if (response.behavior !== "deny" || response.interrupt) {
     return null;
   }
-  const first = Object.values(answers).find((value) => typeof value === "string");
-  return typeof first === "string" ? first : null;
+  const reason = response.message?.trim();
+  if (!reason || FIXED_PERMISSION_DENY_MESSAGES.has(reason)) {
+    return null;
+  }
+  const capped =
+    reason.length > MAX_STEERED_DENIAL_REASON_CHARS
+      ? `${reason.slice(0, MAX_STEERED_DENIAL_REASON_CHARS)}... [truncated]`
+      : reason;
+  const labeled = `Permission response denial reason (supplied via permission response, not typed in chat): ${capped}`;
+  if (options?.callerAgentId) {
+    const wrapped = envelopeMessage(labeled, {
+      kind: "agent-message",
+      agentId: options.callerAgentId,
+      ...(options.callerAgentTitle ? { title: options.callerAgentTitle } : {}),
+    }).prompt;
+    return typeof wrapped === "string" ? wrapped : labeled;
+  }
+  return labeled;
 }
 
 function buildExtensionUiResponse(
@@ -1098,10 +1129,7 @@ function buildExtensionUiResponse(
   }
 
   const method = optionalString(request.metadata?.extensionUiMethod);
-  const answer = firstPermissionAnswer(response.updatedInput);
-  if (answer === null) {
-    return { cancelled: true };
-  }
+  const answer = resolveAllowedExtensionUiAnswer(request, response);
 
   if (method === "confirm") {
     return { confirmed: /^yes$/i.test(answer.trim()) };
@@ -1324,6 +1352,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.autonomousTurnId = null;
     this.pendingSettledMessages = null;
     this.activePromptRequestId = null;
+    this.activeToolCalls.clear();
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     const payload = await convertPromptInput(prompt, { model: this.state.model });
@@ -1371,6 +1400,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.autonomousTurnId = null;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.activeToolCalls.clear();
         this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         if (isPiRequestAbortError(error)) {
@@ -1439,7 +1469,7 @@ export class PiRpcAgentSession implements AgentSession {
       if (!this.pendingExtensionUiRequests.has(requestId)) continue;
       await this.respondToPermission(requestId, {
         behavior: "deny",
-        message: "The user answered with a message instead of approving. Their message follows.",
+        message: STEER_CLEARED_PERMISSION_MESSAGE,
       });
     }
   }
@@ -1513,21 +1543,76 @@ export class PiRpcAgentSession implements AgentSession {
     throw new Error("Pi does not expose selectable modes");
   }
 
+  private hasLiveAgentLoop(): boolean {
+    return this.activeTurnStarted || this.activeToolCalls.size > 0;
+  }
+
   getPendingPermissions(): AgentPermissionRequest[] {
     return [...this.pendingExtensionUiRequests.values()];
   }
 
-  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+  async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+    options?: AgentPermissionResponseOptions,
+  ): Promise<void> {
     const request = this.pendingExtensionUiRequests.get(requestId);
     if (!request) {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
+
+    // Resolve every reply before consuming the request, so an answer that cannot be delivered
+    // leaves the request pending and answerable.
+    const mapped = this.extensionHost.respondToPermission(request, response);
+    const replies = mapped?.responses ?? [
+      { id: requestId, response: buildExtensionUiResponse(request, response) },
+    ];
     this.pendingExtensionUiRequests.delete(requestId);
 
-    const mapped = this.extensionHost.respondToPermission(request, response);
-    for (const reply of mapped?.responses ?? [
-      { id: requestId, response: buildExtensionUiResponse(request, response) },
-    ]) {
+    // Pi's extension_ui_response cancel carries no reason field. Steer the user-supplied reason
+    // BEFORE cancelling while Pi is still parked inside tool execution, so the steering queue
+    // holds it deterministically before the next LLM turn runs.
+    const steerText = denialReasonToSteer(response, options);
+    if (
+      steerText &&
+      replies.length > 0 &&
+      this.hasLiveAgentLoop() &&
+      !this.closed &&
+      !this.runtimeDead
+    ) {
+      const expectedTurnId = this.activeTurnId;
+      const submission: PiPendingSteerSubmission = { text: steerText, clientMessageId: null };
+      const removeSubmission = () => {
+        const index = this.pendingSteerSubmissions.indexOf(submission);
+        if (index >= 0) {
+          this.pendingSteerSubmissions.splice(index, 1);
+        }
+      };
+      // Register before awaiting so that a timed-out steer whose frame already reached Pi's stdin
+      // still correlates with clientMessageId: null instead of hijacking the original prompt row.
+      this.pendingSteerSubmissions.push(submission);
+      try {
+        await this.runtimeSession.steer(
+          steerText,
+          undefined,
+          PI_PERMISSION_DENIAL_STEER_TIMEOUT_MS,
+        );
+      } catch (error) {
+        if (isPiDefinitiveSteerRejection(error)) {
+          removeSubmission();
+        } else {
+          this.logger.warn(
+            { err: error, requestId },
+            "Failed to steer Pi denial reason before cancelling dialog",
+          );
+        }
+      }
+      if (this.closed || !this.hasLiveAgentLoop() || this.activeTurnId !== expectedTurnId) {
+        removeSubmission();
+      }
+    }
+
+    for (const reply of replies) {
       this.runtimeSession.respondToExtensionUiRequest(reply.id, reply.response);
     }
     this.emit({
@@ -1583,6 +1668,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.autonomousTurnId = null;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.activeToolCalls.clear();
         this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         this.emit({
@@ -1608,6 +1694,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.autonomousTurnId = null;
       this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
+      this.activeToolCalls.clear();
       this.pendingSteerSubmissions.length = 0;
       this.clearNoTurnBuffers();
       this.emit({
@@ -2218,6 +2305,7 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.runtimeDead = true;
+    this.activeToolCalls.clear();
     this.rejectAllExtensionResults(new Error(error));
     this.interruptingTurn = null;
     if (!this.activeTurnId && !this.activeTurnStarted) {
@@ -2604,6 +2692,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStartedEmitted = false;
     this.autonomousTurnId = null;
     this.pendingSettledMessages = null;
+    this.activeToolCalls.clear();
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     const measured = this.turnMeter.finish(Date.now());

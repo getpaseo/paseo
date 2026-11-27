@@ -6,6 +6,7 @@ import type {
   AgentPermissionResult,
   AgentRunOptions,
   AgentPermissionResponse,
+  AgentPermissionResponseOptions,
 } from "./agent-sdk-types.js";
 import type { AgentStreamEvent } from "../messages.js";
 import { respondToAgentPermission } from "./permission-response.js";
@@ -18,6 +19,7 @@ class FakePermissionAgentManager {
     agentId: string;
     requestId: string;
     response: AgentPermissionResponse;
+    options?: AgentPermissionResponseOptions;
   }> = [];
   streamRuns: Array<{ agentId: string; prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
   replacementRuns: Array<{ agentId: string; prompt: AgentPromptInput; options?: AgentRunOptions }> =
@@ -27,8 +29,14 @@ class FakePermissionAgentManager {
     agentId: string,
     requestId: string,
     response: AgentPermissionResponse,
+    options?: AgentPermissionResponseOptions,
   ): Promise<AgentPermissionResult | void> {
-    this.permissionResponses.push({ agentId, requestId, response });
+    this.permissionResponses.push({
+      agentId,
+      requestId,
+      response,
+      ...(options ? { options } : {}),
+    });
     return this.permissionResult;
   }
 
@@ -138,6 +146,29 @@ describe("respondToAgentPermission", () => {
       {
         agentId: "agent-1",
         prompt: "continue after approval",
+      },
+    ]);
+  });
+
+  test("forwards caller agent attribution when provided", async () => {
+    const agentManager = new FakePermissionAgentManager();
+
+    await respondToAgentPermission({
+      agentManager,
+      agentId: "agent-1",
+      requestId: "permission-2",
+      response: { behavior: "deny", message: "use read-only mode" },
+      callerAgentId: "lead-agent-1",
+      callerAgentTitle: "Coordinator",
+      logger,
+    });
+
+    expect(agentManager.permissionResponses).toEqual([
+      {
+        agentId: "agent-1",
+        requestId: "permission-2",
+        response: { behavior: "deny", message: "use read-only mode" },
+        options: { callerAgentId: "lead-agent-1", callerAgentTitle: "Coordinator" },
       },
     ]);
   });

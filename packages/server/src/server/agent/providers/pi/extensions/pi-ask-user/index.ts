@@ -5,8 +5,11 @@ import type {
   AgentPermissionResponse,
 } from "../../../../agent-sdk-types.js";
 import type { PiExtension, PiExtensionDialog, PiExtensionUiReply } from "../contract.js";
+import {
+  QUESTION_RESPONSE_HEADER,
+  resolveAllowedExtensionUiAnswer,
+} from "../../extension-ui-answer.js";
 
-const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const FREEFORM_SENTINEL = "✏️ Type custom response...";
 const COMBINED_METADATA = "ask_user_select_optional_comment";
@@ -130,11 +133,9 @@ export const piAskUser: PiExtension = {
           pending = null;
           return { responses: [{ id: request.id, response: { cancelled: true } }] };
         }
-        const selected = answer(response.updatedInput, QUESTION_RESPONSE_HEADER);
-        if (selected === null) {
-          pending = null;
-          return { responses: [{ id: request.id, response: { cancelled: true } }] };
-        }
+        const selected = resolveAllowedExtensionUiAnswer(request, response, {
+          answer: answer(response.updatedInput, QUESTION_RESPONSE_HEADER),
+        });
         const selectOptions = Array.isArray(request.metadata?.selectOptions)
           ? request.metadata.selectOptions.filter(
               (item): item is string => typeof item === "string",

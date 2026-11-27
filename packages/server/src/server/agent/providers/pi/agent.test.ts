@@ -16,8 +16,9 @@ import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
+import { parseAgentMessage } from "../../agent-messages/envelope.js";
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiProviderOptionsSchema, PiRpcAgentClient, PiRpcAgentSession } from "./agent.js";
 import { PiCliRuntime } from "./cli-runtime.js";
@@ -520,6 +521,174 @@ describe("PiRpcAgentSession", () => {
     });
     await expect(session.close()).resolves.toBeUndefined();
   });
+  test("answers a Pi select with selectedActionId when it names an offered label", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "select",
+      title: "Allow bash?",
+      options: ["Yes", "No"],
+    });
+
+    await session.respondToPermission("ui-1", { behavior: "allow", selectedActionId: "Yes" });
+
+    expect(fakeSession.extensionUiResponses).toEqual([{ id: "ui-1", response: { value: "Yes" } }]);
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test("answers a Pi confirm approved by selectedActionId as confirmed", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "confirm",
+      title: "Authorize",
+      message: "Run it?",
+    });
+
+    await session.respondToPermission("ui-1", { behavior: "allow", selectedActionId: "Yes" });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-1", response: { confirmed: true } },
+    ]);
+  });
+
+  test("rejects an undeliverable Pi allow and keeps the request pending for a corrected retry", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "select",
+      title: "Allow bash?",
+      options: ["Yes", "No"],
+    });
+
+    await expect(
+      session.respondToPermission("ui-1", { behavior: "allow", selectedActionId: "Sure" }),
+    ).rejects.toThrow(/"Yes", "No"/);
+    await expect(session.respondToPermission("ui-1", { behavior: "allow" })).rejects.toThrow(
+      /must name the option/,
+    );
+    expect(fakeSession.extensionUiResponses).toEqual([]);
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.respondToPermission("ui-1", { behavior: "allow", selectedActionId: "Yes" });
+    expect(fakeSession.extensionUiResponses).toEqual([{ id: "ui-1", response: { value: "Yes" } }]);
+  });
+
+  test("never answers a free-text Pi input with a generic selectedActionId", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "input",
+      title: "Name?",
+    });
+
+    await expect(
+      session.respondToPermission("ui-1", { behavior: "allow", selectedActionId: "Yes" }),
+    ).rejects.toThrow(/updatedInput\.answers/);
+    expect(fakeSession.extensionUiResponses).toEqual([]);
+    expect(session.getPendingPermissions()).toHaveLength(1);
+  });
+
+  test("prefers updatedInput.answers over selectedActionId and maps a confirm No", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "select",
+      title: "Pick",
+      options: ["A", "B"],
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-2",
+      method: "confirm",
+      title: "Authorize",
+    });
+
+    await session.respondToPermission("ui-1", {
+      behavior: "allow",
+      selectedActionId: "A",
+      updatedInput: { answers: { Response: "B" } },
+    });
+    await session.respondToPermission("ui-2", { behavior: "allow", selectedActionId: "No" });
+
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-1", response: { value: "B" } },
+      { id: "ui-2", response: { confirmed: false } },
+    ]);
+  });
+
+  test("quotes and caps what a rejected Pi allow echoes back", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const options = Array.from({ length: 25 }, (_, index) => `Option ${index}`);
+    options[0] = "Yes', 'No\u001b[31m";
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-1",
+      method: "select",
+      title: "Pick",
+      options,
+    });
+
+    const error = await session
+      .respondToPermission("ui-1", { behavior: "allow", selectedActionId: "x".repeat(500) })
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("\"Yes', 'No\\u001b[31m\"");
+    expect(message).not.toContain("\u001b");
+    expect(message).toContain("and 5 more");
+    expect(message).not.toContain("x".repeat(100));
+    expect(message).toContain(`--input '{"answers":{"Response":"<answer>"}}'`);
+  });
+
+  test("caps each echoed option label length in a rejected Pi allow error", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("ask");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-long-label",
+      method: "select",
+      title: "Pick",
+      options: ["y".repeat(500), "Short"],
+    });
+
+    const error = await session
+      .respondToPermission("ui-long-label", { behavior: "allow" })
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain(`"${"y".repeat(80)}"...`);
+    expect(message).not.toContain("y".repeat(100));
+    expect(message).toContain('"Short"');
+  });
+
   test("bridges Pi RPC select extension UI requests through question permissions", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -740,6 +909,611 @@ describe("PiRpcAgentSession", () => {
 
     expect(fakeSession.extensionUiResponses).toEqual([
       { id: "ui-cancel", response: { cancelled: true } },
+    ]);
+  });
+
+  test("steers a user denial reason before cancelling and records null clientMessageId", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("write file", { clientMessageId: "client-initial-1" });
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-deny-reason",
+      method: "select",
+      title: "Allow write?",
+      options: ["Yes", "No"],
+    });
+    await events.nextPermissionRequest();
+
+    let releaseSteer!: () => void;
+    fakeSession.steerCompletion = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+
+    const respondPromise = session.respondToPermission("ui-deny-reason", {
+      behavior: "deny",
+      message: "  use a scratch path instead  ",
+    });
+    await waitForImmediate();
+
+    // Cancel must wait until steer settles so Pi does not advance the turn first.
+    const expectedSteer =
+      "Permission response denial reason (supplied via permission response, not typed in chat): use a scratch path instead";
+    expect(fakeSession.steerCalls).toEqual([{ message: expectedSteer, imageCount: 0 }]);
+    expect(fakeSession.extensionUiResponses).toEqual([]);
+
+    releaseSteer();
+    await respondPromise;
+
+    expect(fakeSession.rpcCallOrder).toEqual(["steer", "extension_ui_response"]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-deny-reason", response: { cancelled: true } },
+    ]);
+    await expect(events.nextPermissionResolution()).resolves.toMatchObject({
+      requestId: "ui-deny-reason",
+      resolution: { behavior: "deny", message: "  use a scratch path instead  " },
+    });
+
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-deny-steer",
+      parentId: null,
+      text: expectedSteer,
+    });
+    expect(events.timelineItems()).toContainEqual({
+      type: "user_message",
+      text: expectedSteer,
+      messageId: "entry-deny-steer",
+    });
+  });
+
+  test("caps long denial reasons and wraps agent-originated denial reasons in an agent-message envelope", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("write file", { clientMessageId: "client-initial-2" });
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-long-deny",
+      method: "confirm",
+      title: "Allow?",
+    });
+    await session.respondToPermission("ui-long-deny", {
+      behavior: "deny",
+      message: "z".repeat(3000),
+    });
+
+    expect(fakeSession.steerCalls).toHaveLength(1);
+    const cappedSteer = fakeSession.steerCalls[0]?.message ?? "";
+    expect(cappedSteer).toContain(`${"z".repeat(2048)}... [truncated]`);
+    expect(cappedSteer).not.toContain("z".repeat(2049));
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-agent-deny",
+      method: "confirm",
+      title: "Allow?",
+    });
+    await session.respondToPermission(
+      "ui-agent-deny",
+      { behavior: "deny", message: "keep changes in your own worktree" },
+      { callerAgentId: "lead-agent-9", callerAgentTitle: "Coordinator" },
+    );
+
+    expect(fakeSession.steerCalls).toHaveLength(2);
+    const agentSteer = fakeSession.steerCalls[1]?.message ?? "";
+    const parsed = parseAgentMessage(agentSteer);
+    expect(parsed).toMatchObject({
+      source: { kind: "agent-message", agentId: "lead-agent-9", title: "Coordinator" },
+      text: "Permission response denial reason (supplied via permission response, not typed in chat): keep changes in your own worktree",
+    });
+
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-agent-deny-steer",
+      parentId: null,
+      text: agentSteer,
+    });
+    expect(events.timelineItems()).toContainEqual({
+      type: "user_message",
+      text: agentSteer,
+      messageId: "entry-agent-deny-steer",
+    });
+  });
+
+  test("skips denial steer for fixed Paseo messages, blank messages, interrupt, and allow", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    await session.startTurn("work");
+    fakeSession.emit({ type: "agent_start" });
+
+    const skippedDenials = [
+      { behavior: "deny" as const },
+      { behavior: "deny" as const, message: "   " },
+      { behavior: "deny" as const, message: "Denied by user" },
+      { behavior: "deny" as const, message: "Dismissed by user" },
+      { behavior: "deny" as const, message: "Permission request denied" },
+      { behavior: "deny" as const, message: "Permission request canceled" },
+      { behavior: "deny" as const, message: "Interrupted" },
+      { behavior: "deny" as const, message: "Removed by rewind" },
+      {
+        behavior: "deny" as const,
+        message: "The user answered with a message instead of approving. Their message follows.",
+      },
+      { behavior: "deny" as const, message: "stop right now", interrupt: true },
+    ];
+
+    for (const [index, response] of skippedDenials.entries()) {
+      const id = `ui-skip-${index}`;
+      fakeSession.emit({
+        type: "extension_ui_request",
+        id,
+        method: "confirm",
+        title: "Continue?",
+      });
+      await session.respondToPermission(id, response);
+    }
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-allow",
+      method: "select",
+      title: "Pick",
+      options: ["Yes", "No"],
+    });
+    await session.respondToPermission("ui-allow", { behavior: "allow", selectedActionId: "Yes" });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toHaveLength(skippedDenials.length + 1);
+  });
+
+  test("swallows Unknown command: steer and logs other steer failures while still cancelling", async () => {
+    const pi = new FakePi();
+    const logger = pino({ level: "silent" });
+    const warnSpy = vi.spyOn(logger, "warn");
+    const client = new PiRpcAgentClient({ logger, runtime: pi });
+    const session = await client.createSession(createConfig());
+    const fakeSession = pi.latestSession();
+    await session.startTurn("work");
+    fakeSession.emit({ type: "agent_start" });
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-legacy-pi",
+      method: "confirm",
+      title: "Continue?",
+    });
+    fakeSession.steerError = new Error("Unknown command: steer");
+    await session.respondToPermission("ui-legacy-pi", {
+      behavior: "deny",
+      message: "prefer read-only check",
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-legacy-pi", response: { cancelled: true } },
+    ]);
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-steer-error",
+      method: "confirm",
+      title: "Continue?",
+    });
+    fakeSession.steerError = new Error("Pi RPC socket closed");
+    await session.respondToPermission("ui-steer-error", {
+      behavior: "deny",
+      message: "do not overwrite fixtures",
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-legacy-pi", response: { cancelled: true } },
+      { id: "ui-steer-error", response: { cancelled: true } },
+    ]);
+    await session.close();
+  });
+
+  test("steers a denial reason only when a live agent loop or active tool call is running", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    // No turn at all: cancel without steering.
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-idle",
+      method: "confirm",
+      title: "Continue?",
+    });
+    await session.respondToPermission("ui-idle", {
+      behavior: "deny",
+      message: "not while idle",
+    });
+
+    // startTurn set activeTurnId, but no agent_start/turn_start/tool call has started yet
+    // (e.g. a slash or extension command prompt): cancel without steering.
+    await session.startTurn("/ext-command");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-no-agent-start",
+      method: "confirm",
+      title: "Continue?",
+    });
+    await session.respondToPermission("ui-no-agent-start", {
+      behavior: "deny",
+      message: "command dialog denied",
+    });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-idle", response: { cancelled: true } },
+      { id: "ui-no-agent-start", response: { cancelled: true } },
+    ]);
+
+    // Once a tool execution is active, steering is enabled even without agent_start.
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "rm -rf /tmp/x" },
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-tool-active",
+      method: "confirm",
+      title: "Allow bash?",
+    });
+    await session.respondToPermission("ui-tool-active", {
+      behavior: "deny",
+      message: "use ls instead",
+    });
+
+    expect(fakeSession.steerCalls).toHaveLength(1);
+    expect(fakeSession.steerCalls[0]?.message).toContain("use ls instead");
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-idle", response: { cancelled: true } },
+      { id: "ui-no-agent-start", response: { cancelled: true } },
+      { id: "ui-tool-active", response: { cancelled: true } },
+    ]);
+  });
+
+  test("bounds denial-reason steer with a 5 s timeout, keeps the denial row visible after timeout, and splices out on definitive rejection", async () => {
+    const pi = new FakePi();
+    const logger = pino({ level: "silent" });
+    const warnSpy = vi.spyOn(logger, "warn");
+    const client = new PiRpcAgentClient({ logger, runtime: pi });
+    const session = await client.createSession(createConfig());
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      events.push(event);
+    });
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("work", { clientMessageId: "client-initial-timeout" });
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-steer-timeout",
+      method: "confirm",
+      title: "Continue?",
+    });
+    fakeSession.steerError = new Error("Pi RPC request 'steer' timed out after 5000ms");
+
+    await session.respondToPermission("ui-steer-timeout", {
+      behavior: "deny",
+      message: "do not proceed",
+    });
+
+    expect(fakeSession.steerTimeouts).toEqual([5_000]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-steer-timeout", response: { cancelled: true } },
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: "ui-steer-timeout",
+        resolution: { behavior: "deny", message: "do not proceed" },
+      }),
+    );
+
+    // Pi may still read the timed-out steer from stdin; the marker must emit without
+    // inheriting the original prompt's clientMessageId so the denial row stays visible.
+    const timedOutSteerText = fakeSession.steerCalls[0]?.message ?? "";
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-after-timeout",
+      parentId: null,
+      text: timedOutSteerText,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: {
+          type: "user_message",
+          text: timedOutSteerText,
+          messageId: "entry-after-timeout",
+        },
+      }),
+    );
+
+    // Definitive rejection ("Unknown command: steer") splices the entry back out so
+    // pendingSteerSubmissions does not block idle runtime eviction.
+    fakeSession.finishTurn();
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-definitive-reject",
+      method: "confirm",
+      title: "Continue?",
+    });
+    fakeSession.steerError = new Error("Unknown command: steer");
+    await session.respondToPermission("ui-definitive-reject", {
+      behavior: "deny",
+      message: "legacy pi cannot steer",
+    });
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+    await session.close();
+  });
+
+  test("does not steer a denial reason when the session is closed", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("work");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-closed",
+      method: "confirm",
+      title: "Continue?",
+    });
+    await session.close();
+
+    await session.respondToPermission("ui-closed", {
+      behavior: "deny",
+      message: "session already closed",
+    });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-closed", response: { cancelled: true } },
+    ]);
+  });
+
+  test("does not steer a denial reason when the runtime is dead", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-dead-1",
+      toolName: "bash",
+      args: { command: "echo hi" },
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-dead",
+      method: "confirm",
+      title: "Continue?",
+    });
+    fakeSession.emit({ type: "process_exit", error: "exited unexpectedly" });
+
+    await session.respondToPermission("ui-dead", {
+      behavior: "deny",
+      message: "runtime already dead",
+    });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-dead", response: { cancelled: true } },
+    ]);
+  });
+
+  test("does not record pendingSteerSubmissions when the turn ends during denial-reason steer", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("work");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-turn-ended",
+      method: "confirm",
+      title: "Continue?",
+    });
+
+    let releaseSteer!: () => void;
+    fakeSession.steerCompletion = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+
+    const respondPromise = session.respondToPermission("ui-turn-ended", {
+      behavior: "deny",
+      message: "use another command",
+    });
+    await waitForImmediate();
+
+    // Turn settles while steer is still awaiting acknowledgement.
+    fakeSession.finishTurn();
+    releaseSteer();
+    await respondPromise;
+
+    expect(fakeSession.steerCalls).toHaveLength(1);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-turn-ended", response: { cancelled: true } },
+    ]);
+    // A stray push into pendingSteerSubmissions would permanently block idle eviction.
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+  });
+
+  test("clears activeToolCalls on turn end and interrupt so later denials do not steer or block canStopRuntime", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    // Tool starts without tool_execution_end, then the turn completes.
+    await session.startTurn("run tool");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-unended-1",
+      toolName: "bash",
+      args: { command: "echo hi" },
+    });
+    fakeSession.finishTurn();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-after-turn-end",
+      method: "confirm",
+      title: "Continue?",
+    });
+    await session.respondToPermission("ui-after-turn-end", {
+      behavior: "deny",
+      message: "turn already finished",
+    });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-after-turn-end", response: { cancelled: true } },
+    ]);
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+
+    // Tool starts without tool_execution_end, then the turn is interrupted.
+    await session.startTurn("run second tool");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-unended-2",
+      toolName: "bash",
+      args: { command: "sleep 10" },
+    });
+    await session.interrupt();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-after-interrupt",
+      method: "confirm",
+      title: "Continue?",
+    });
+    await session.respondToPermission("ui-after-interrupt", {
+      behavior: "deny",
+      message: "turn already interrupted",
+    });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-after-turn-end", response: { cancelled: true } },
+      { id: "ui-after-interrupt", response: { cancelled: true } },
+    ]);
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+  });
+
+  test("clears activeToolCalls when prompt RPC rejects so later denials do not steer", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.holdNextPrompt();
+    await session.startTurn("run tool");
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-prompt-fail",
+      toolName: "bash",
+      args: { command: "echo hi" },
+    });
+    await fakeSession.failHeldPrompt(new Error("Pi RPC request 'prompt' aborted"));
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-after-prompt-fail",
+      method: "confirm",
+      title: "Continue?",
+    });
+    await session.respondToPermission("ui-after-prompt-fail", {
+      behavior: "deny",
+      message: "prompt already failed",
+    });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-after-prompt-fail", response: { cancelled: true } },
+    ]);
+    await expect(session.canStopRuntime()).resolves.toBe(true);
+  });
+
+  test("clears stale activeToolCalls at startTurn so pre-agent_start denials do not steer", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-orphaned-before-turn",
+      toolName: "bash",
+      args: { command: "echo stale" },
+    });
+    await session.startTurn("fresh prompt");
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-before-agent-start",
+      method: "confirm",
+      title: "Continue?",
+    });
+    await session.respondToPermission("ui-before-agent-start", {
+      behavior: "deny",
+      message: "orphaned tool should not trigger steer",
+    });
+
+    expect(fakeSession.steerCalls).toEqual([]);
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-before-agent-start", response: { cancelled: true } },
+    ]);
+  });
+
+  test("matches a denial-steer user entry marker arriving while steer is still awaited", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("write file", { clientMessageId: "client-initial-in-flight" });
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "ui-in-flight-marker",
+      method: "confirm",
+      title: "Allow?",
+    });
+
+    let releaseSteer!: () => void;
+    fakeSession.steerCompletion = new Promise<void>((resolve) => {
+      releaseSteer = resolve;
+    });
+
+    const respondPromise = session.respondToPermission("ui-in-flight-marker", {
+      behavior: "deny",
+      message: "marker arrived before steer ack",
+    });
+    await waitForImmediate();
+
+    const steerText = fakeSession.steerCalls[0]?.message ?? "";
+    expect(steerText).toContain("marker arrived before steer ack");
+    // Deliver PASEO_SUBMITTED_USER_ENTRY before steer() resolves.
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-during-await",
+      parentId: null,
+      text: steerText,
+    });
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "user_message",
+      text: steerText,
+      messageId: "entry-during-await",
+    });
+
+    releaseSteer();
+    await respondPromise;
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "ui-in-flight-marker", response: { cancelled: true } },
     ]);
   });
 

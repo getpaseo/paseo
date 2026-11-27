@@ -53,6 +53,7 @@ export interface PiRuntimeSession {
   steer(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    timeoutMs?: number | null,
   ): Promise<void>;
   clearQueue(): Promise<void>;
   compact(customInstructions?: string): Promise<void>;
