@@ -24,6 +24,7 @@ import { commands } from "./commands.js";
 import type { V2Api } from "./api.js";
 
 const INTERRUPT_SETTLE_POLL_MS = 25;
+const INTERRUPT_SETTLE_MAX_POLLS = 80;
 const FALLBACK_EXECUTION_ERROR = "OpenCode execution failed";
 
 type ExecutionEvent = Extract<
@@ -121,6 +122,23 @@ async function waitForTurnOrPoll(
   }
 }
 
+async function waitForCompletionOrAbort(
+  completion: Promise<void>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<void>((resolve) => {
+    onAbort = () => resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([completion, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 interface TurnSnapshot {
   info: SessionInfo;
   history: SessionMessageInfo[];
@@ -147,6 +165,7 @@ interface Turn {
   settle(): void;
   accepted: boolean;
   requestDenied: boolean;
+  interruptRequested: boolean;
   baselineIdleTime: number | undefined;
 }
 
@@ -201,6 +220,7 @@ export class SessionTurns {
       accepted,
       output,
       requestDenied: false,
+      interruptRequested: false,
       baselineIdleTime: this.options.sessionIdleTime(),
     };
     this.turn = turn;
@@ -314,7 +334,7 @@ export class SessionTurns {
       return { outcome: "failed", error: execution.data.error.message };
     if (
       execution.type === "session.execution.interrupted" &&
-      (execution.data.reason !== "shutdown" || turn.requestDenied)
+      (execution.data.reason !== "shutdown" || turn.requestDenied || turn.interruptRequested)
     )
       return { outcome: "interrupted" };
     return null;
@@ -343,7 +363,7 @@ export class SessionTurns {
     }
     this.options.updateInfo?.(info);
     if (!isTurnFinalized(info, turn)) {
-      if (turn.requestDenied) return { outcome: "interrupted" };
+      if (turn.requestDenied || turn.interruptRequested) return { outcome: "interrupted" };
       this.logReconcileReturn("turn_not_finalized", turn, {
         outcome: info.outcome,
         idleTime: info.time.idle,
@@ -511,15 +531,23 @@ export class SessionTurns {
     await this.reconcile();
     if (!turn) return;
     // OpenCode's session.interrupt forks Fiber.interrupt asynchronously; if SSE is down while
-    // cleanup clears /api/session/active, poll promptly instead of waiting 5s on scheduleRecovery.
-    while (this.turn === turn && !this.options.signal.aborted) {
+    // cleanup clears /api/session/active, poll promptly for a bounded window before falling back
+    // to SSE and the 5s scheduleRecovery timer.
+    for (
+      let poll = 0;
+      poll < INTERRUPT_SETTLE_MAX_POLLS && this.turn === turn && !this.options.signal.aborted;
+      poll += 1
+    ) {
       const done = await waitForTurnOrPoll(
         turn.completion,
         INTERRUPT_SETTLE_POLL_MS,
         this.options.signal,
       );
-      if (done || this.turn !== turn || this.options.signal.aborted) break;
+      if (done || this.turn !== turn || this.options.signal.aborted) return;
       await this.reconcile();
+    }
+    if (this.turn === turn && !this.options.signal.aborted) {
+      await waitForCompletionOrAbort(turn.completion, this.options.signal);
     }
   }
   async interrupt() {
@@ -530,6 +558,10 @@ export class SessionTurns {
         // A stop sent before the queued prompt is accepted would interrupt an idle session.
         await turn?.submitted;
         await this.options.client().session.interrupt({ sessionID: this.options.id });
+        if (turn && this.turn === turn) {
+          turn.interruptRequested = true;
+          this.revision += 1;
+        }
         await this.settleInterruptedTurn(turn);
       })();
       this.stopping = stop;

@@ -3,7 +3,6 @@ import type {
   SessionInfo,
   SessionMessageInfo,
   SessionCreateInput,
-  SessionLogItem,
 } from "@opencode/client";
 import type { V2Api } from "../v2/api.js";
 import type { V2Connection } from "../v2/runtime.js";
@@ -40,7 +39,7 @@ export class V2Harness {
   private clock = 1;
   private readonly activityListeners = new Set<() => void>();
   constructor(private sequence = 0) {}
-  private executions: SessionLogItem[] = [];
+  private executionCount = 0;
   private tick(): number {
     this.clock = Math.max(
       this.clock + 1,
@@ -137,7 +136,7 @@ export class V2Harness {
       event.type === "session.execution.interrupted"
     ) {
       this.sequence = Math.max(this.sequence, event.durable.seq);
-      this.executions.push(event);
+      this.executionCount += 1;
     }
     if (!publish) return;
     this.pendingEvents.push(event);
@@ -230,20 +229,15 @@ export class V2Harness {
         },
       },
       prompt: async (input, options) => {
-        const before = this.executions.length;
+        const before = this.executionCount;
         await this.prompt(input, options);
-        if (
-          this.autoComplete &&
-          this.executions.length === before &&
-          this.info.outcome !== "failed"
-        )
+        if (this.autoComplete && this.executionCount === before && this.info.outcome !== "failed")
           this.finishExecution();
       },
       interrupt: (input, options) => this.interrupt(input, options),
       command: unexpected,
       compact: unexpected,
       revert: { stage: unexpected, clear: unexpected, commit: unexpected },
-      log: () => this.executionLog(),
     },
     event: { subscribe: (options) => this.events(options) },
   };
@@ -259,12 +253,6 @@ export class V2Harness {
     exited: new Promise<Error>(() => undefined),
   };
   readonly runtime = { acquire: async () => this.connection, shutdown: async () => undefined };
-
-  // Real OpenCode v2 servers default to Bus.configured({ persist: false }), so session.log
-  // returns only log.synced with zero execution events.
-  private async *executionLog(): AsyncGenerator<SessionLogItem> {
-    yield { type: "log.synced", aggregateID: this.info.id, seq: this.sequence };
-  }
 
   private async *events(options?: {
     signal?: AbortSignal;

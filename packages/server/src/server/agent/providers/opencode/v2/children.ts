@@ -40,16 +40,21 @@ export class SessionChildren {
   private readonly pendingChildren = new Set<string>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushDelay: number | null = null;
+  private pendingDelay: number | null = null;
   private draining: Promise<void> | null = null;
   private closed = false;
   constructor(private readonly options: ChildrenOptions) {}
   close() {
     this.closed = true;
+    this.clearFlushTimer();
+    this.pendingDelay = null;
+    this.pendingParents.clear();
+    this.pendingChildren.clear();
+  }
+  private clearFlushTimer() {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = null;
     this.flushDelay = null;
-    this.pendingParents.clear();
-    this.pendingChildren.clear();
   }
   async restoreAdoptions() {
     const { adoptChild } = this.options;
@@ -92,12 +97,14 @@ export class SessionChildren {
         delayMs = delayMs === null ? eventDelay : Math.min(delayMs, eventDelay);
       }
     }
-    if (delayMs !== null) this.scheduleFlush(delayMs);
+    if (delayMs === null) return;
+    this.pendingDelay = this.pendingDelay === null ? delayMs : Math.min(this.pendingDelay, delayMs);
+    if (!this.draining) this.scheduleFlush(this.pendingDelay);
   }
   private scheduleFlush(delayMs: number) {
     if (this.closed) return;
     if (this.flushTimer && this.flushDelay !== null && this.flushDelay <= delayMs) return;
-    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.clearFlushTimer();
     this.flushDelay = delayMs;
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
@@ -111,60 +118,38 @@ export class SessionChildren {
     this.draining = this.runDrain().finally(() => {
       this.draining = null;
       if (!this.closed && (this.pendingParents.size > 0 || this.pendingChildren.size > 0)) {
-        this.scheduleFlush(0);
+        this.scheduleFlush(this.pendingDelay ?? 0);
       }
     });
     return this.draining;
   }
   private async runDrain() {
-    while (!this.closed && (this.pendingParents.size > 0 || this.pendingChildren.size > 0)) {
-      const parents = [...this.pendingParents];
-      this.pendingParents.clear();
-      for (const parentID of parents) {
-        if (this.closed) return;
-        try {
-          await this.reconcile(parentID);
-        } catch (error) {
-          if (!this.closed) this.options.reportError?.(error);
-        }
-      }
-      const childIDs = [...this.pendingChildren];
-      this.pendingChildren.clear();
-      for (const childID of childIDs) {
-        if (this.closed) return;
-        const child = this.children.get(childID);
-        if (!child) continue;
-        try {
-          const info = await this.options.client().session.get({ sessionID: childID });
-          if (this.closed) return;
-          const current = this.children.get(childID);
-          if (current) await this.reconcileChild(info, current.parentID);
-        } catch (error) {
-          if (isSessionNotFoundError(error)) this.remove(childID);
-          else if (!this.closed) this.options.reportError?.(error);
-        }
+    const parents = [...this.pendingParents];
+    this.pendingParents.clear();
+    const childIDs = [...this.pendingChildren];
+    this.pendingChildren.clear();
+    this.pendingDelay = null;
+    for (const parentID of parents) {
+      if (this.closed) return;
+      try {
+        await this.reconcile(parentID);
+      } catch (error) {
+        if (!this.closed) this.options.reportError?.(error);
       }
     }
-  }
-  async observe(event: OpenCodeEvent) {
-    if (event.type === "session.deleted") {
-      this.remove(event.data.sessionID);
-      return;
-    }
-    if (
-      event.type === "session.created" &&
-      event.data.parentID &&
-      (event.data.parentID === this.options.id || this.children.has(event.data.parentID))
-    ) {
-      await this.reconcile(event.data.parentID);
-    }
-    if ("sessionID" in event.data && typeof event.data.sessionID === "string") {
-      const child = this.children.get(event.data.sessionID);
-      if (child)
-        await this.reconcileChild(
-          await this.options.client().session.get({ sessionID: event.data.sessionID }),
-          child.parentID,
-        );
+    for (const childID of childIDs) {
+      if (this.closed) return;
+      const child = this.children.get(childID);
+      if (!child) continue;
+      try {
+        const info = await this.options.client().session.get({ sessionID: childID });
+        if (this.closed) return;
+        const current = this.children.get(childID);
+        if (current) await this.reconcileChild(info, current.parentID);
+      } catch (error) {
+        if (isSessionNotFoundError(error)) this.remove(childID);
+        else if (!this.closed) this.options.reportError?.(error);
+      }
     }
   }
   async reconcile(parentID: string) {
@@ -200,6 +185,10 @@ export class SessionChildren {
   private remove(id: string) {
     this.pendingChildren.delete(id);
     this.pendingParents.delete(id);
+    if (this.pendingChildren.size === 0 && this.pendingParents.size === 0) {
+      this.pendingDelay = null;
+      this.clearFlushTimer();
+    }
     if (!this.children.delete(id)) return;
     // OpenCode deletes a session's descendants with it.
     for (const [childID, child] of this.children) {

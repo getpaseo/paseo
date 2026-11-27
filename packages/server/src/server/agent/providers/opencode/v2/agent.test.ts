@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { FormInfo, ModelInfo, SessionInfo, SessionMessageInfo } from "@opencode/client";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
@@ -1473,9 +1473,13 @@ describe("OpenCode v2 session lifecycle", () => {
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
+    let listReleased = false;
     let releaseList!: () => void;
     const listGate = new Promise<void>((resolve) => {
-      releaseList = resolve;
+      releaseList = () => {
+        listReleased = true;
+        resolve();
+      };
     });
     const originalList = harness.api.message.list;
     try {
@@ -1486,9 +1490,8 @@ describe("OpenCode v2 session lifecycle", () => {
         await listGate;
         return originalList(input, options);
       };
-      const startedAt = Date.now();
       await session.interrupt();
-      expect(Date.now() - startedAt).toBeLessThan(500);
+      expect(listReleased).toBe(false);
       expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
       // Immediate replacement startTurn must succeed without colliding with the stopped turn.
       harness.api.message.list = originalList;
@@ -1503,6 +1506,7 @@ describe("OpenCode v2 session lifecycle", () => {
   });
 
   test("settles interrupt promptly when OpenCode clears active asynchronously without SSE", async () => {
+    vi.useFakeTimers();
     const harness = new V2Harness();
     harness.autoComplete = false;
     harness.interrupt = async () => {
@@ -1522,13 +1526,120 @@ describe("OpenCode v2 session lifecycle", () => {
     session.subscribe((event) => events.push(event));
     try {
       await session.startTurn("async interrupt work");
-      await expect.poll(() => harness.prompts).toEqual(["async interrupt work"]);
-      const startedAt = Date.now();
-      await session.interrupt();
-      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.prompts).toEqual(["async interrupt work"]);
+      let settled = false;
+      const stop = (async () => {
+        await session.interrupt();
+        settled = true;
+      })();
+      // Fast-poll resolves in ~50ms of virtual time rather than waiting 5,000ms on scheduleRecovery.
+      await vi.advanceTimersByTimeAsync(100);
+      await stop;
+      expect(settled).toBe(true);
       expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
     } finally {
       await session.close();
+      vi.useRealTimers();
+    }
+  });
+
+  test("settles explicit Stop when OpenCode is inactive without a recorded terminal while keeping passive shutdown turns resumable", async () => {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    let interruptCalls = 0;
+    harness.interrupt = async () => {
+      interruptCalls += 1;
+      return { interrupted: false };
+    };
+    let getCalls = 0;
+    const originalGet = harness.api.session.get;
+    harness.api.session.get = async (input, options) => {
+      getCalls += 1;
+      return originalGet(input, options);
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("missing terminal work");
+      await expect.poll(() => harness.prompts).toEqual(["missing terminal work"]);
+      // Simulate OpenCode inactive with time.idle < time.busy (no terminal recorded: #8681 / unresumed shutdown).
+      harness.active = false;
+      harness.info.outcome = "succeeded";
+      harness.info.time.idle = 2;
+      harness.info.time.busy = 3;
+
+      // Passive reconciliation without Stop must keep the turn open for restart-resume.
+      const passiveReads = harness.activeReads;
+      harness.push({ id: "reconnect-passive", created: 10, type: "server.connected", data: {} });
+      await expect.poll(() => harness.activeReads).toBeGreaterThan(passiveReads);
+      expect(terminalEvents(events)).toEqual([]);
+
+      // Explicit Stop settles immediately in a single active + get pass without polling.
+      const activeBeforeStop = harness.activeReads;
+      const getsBeforeStop = getCalls;
+      await session.interrupt();
+      expect(interruptCalls).toBe(1);
+      expect(harness.activeReads - activeBeforeStop).toBe(1);
+      expect(getCalls - getsBeforeStop).toBe(1);
+      expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
+
+      // Follow-up send must succeed without colliding with the stopped turn.
+      harness.autoComplete = true;
+      await session.startTurn("follow-up work");
+      await expect.poll(() => harness.prompts).toEqual(["missing terminal work", "follow-up work"]);
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("stops fast-polling during Stop after its bounded window when OpenCode stays active", async () => {
+    vi.useFakeTimers();
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    harness.interrupt = async () => ({ interrupted: true });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("slow cancel work");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.prompts).toEqual(["slow cancel work"]);
+
+      let settled = false;
+      const stop = (async () => {
+        await session.interrupt();
+        settled = true;
+      })();
+      // Exhaust the 80 * 25ms = 2,000ms fast-poll budget while OpenCode remains genuinely active.
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect(settled).toBe(false);
+      const readsAfterBudget = harness.activeReads;
+      expect(readsAfterBudget).toBeGreaterThanOrEqual(80);
+
+      // No further fast-poll reads occur before the 5,000ms scheduleRecovery timer fires.
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(harness.activeReads).toBe(readsAfterBudget);
+
+      // Once OpenCode finally clears active, the 5,000ms recovery timer settles the pending Stop.
+      harness.finishExecution("interrupted", false);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await stop;
+      expect(settled).toBe(true);
+      expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
+    } finally {
+      await session.close();
+      vi.useRealTimers();
     }
   });
 
@@ -1628,9 +1739,13 @@ describe("OpenCode v2 session lifecycle", () => {
       data: input?.parentID === "session" ? [child] : [],
       cursor: {},
     });
+    let childGetReleased = false;
     let releaseChildGet!: () => void;
     const childGetGate = new Promise<void>((resolve) => {
-      releaseChildGet = resolve;
+      releaseChildGet = () => {
+        childGetReleased = true;
+        resolve();
+      };
     });
     let blockChildGet = false;
     const originalGet = harness.api.session.get;
@@ -1660,9 +1775,8 @@ describe("OpenCode v2 session lifecycle", () => {
           data: { sessionID: "child", assistantMessageID: "c-msg", ordinal: 0, delta: "x" },
         });
       }
-      const startedAt = Date.now();
       await session.interrupt();
-      expect(Date.now() - startedAt).toBeLessThan(500);
+      expect(childGetReleased).toBe(false);
       expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
     } finally {
       releaseChildGet();
@@ -1671,6 +1785,7 @@ describe("OpenCode v2 session lifecycle", () => {
   });
 
   test("reconnects and reconciles when a half-open SSE stream stalls without activity", async () => {
+    vi.useFakeTimers();
     const harness = new V2Harness();
     harness.autoComplete = false;
     let subscriptions = 0;
@@ -1693,21 +1808,25 @@ describe("OpenCode v2 session lifecycle", () => {
     await session.initialize();
     try {
       // Keepalive activity frames prevent spurious reconnects while the stream is healthy.
-      const keepalive = setInterval(() => harness.pingActivity(), 40);
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        expect(subscriptions).toBe(1);
-      } finally {
-        clearInterval(keepalive);
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(40);
+        harness.pingActivity();
       }
+      expect(subscriptions).toBe(1);
       // Once the socket goes silent (no events or heartbeats), the watchdog reconnects and reconciles.
       await session.startTurn("finish on silent socket");
-      await expect.poll(() => harness.prompts).toEqual(["finish on silent socket"]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.prompts).toEqual(["finish on silent socket"]);
       harness.finishExecution("succeeded", false);
-      await expect.poll(() => subscriptions, { timeout: 2_000 }).toBeGreaterThanOrEqual(2);
-      await expect.poll(() => terminalEvents(events), { timeout: 2_000 }).toHaveLength(1);
-      expect(terminalEvents(events)[0]).toMatchObject({ type: "turn_completed" });
+      // Fire the 120ms watchdog deterministically, then let consume()'s 100ms reconnect delay run.
+      await vi.advanceTimersByTimeAsync(125);
+      vi.useRealTimers();
+      await expect.poll(() => subscriptions).toBeGreaterThanOrEqual(2);
+      await expect
+        .poll(() => terminalEvents(events))
+        .toEqual([expect.objectContaining({ type: "turn_completed" })]);
     } finally {
+      vi.useRealTimers();
       await session.close();
     }
   });
@@ -2305,7 +2424,6 @@ test("buffers tool promotion and shell events during background history bootstra
 });
 
 test("retries failed background bootstrap and roster without losing stale work", async () => {
-  const { vi } = await import("vitest");
   vi.useFakeTimers();
   try {
     const { OpenCodeBackgroundInventory } = await import("./background-inventory.js");
@@ -2404,7 +2522,6 @@ test("retries failed background bootstrap and roster without losing stale work",
 });
 
 test("does not retry a failed bootstrap from a disconnected generation", async () => {
-  const { vi } = await import("vitest");
   vi.useFakeTimers();
   try {
     const { OpenCodeBackgroundInventory } = await import("./background-inventory.js");
@@ -2533,7 +2650,6 @@ test("closing during reconnect does not restart the background inventory", async
 });
 
 test("keeps a shell available when its stop request times out", async () => {
-  const { vi } = await import("vitest");
   vi.useFakeTimers();
   try {
     const { OpenCodeBackgroundInventory } = await import("./background-inventory.js");
