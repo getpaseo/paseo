@@ -2,10 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager, type AgentManagerEvent } from "../agent-manager.js";
+import { createAgentMessageDelivery } from "../agent-messages/index.js";
+import { toAgentPayload } from "../agent-projections.js";
+import { cancelAgentRunCommand } from "../lifecycle-command.js";
 import type {
   AgentClient,
   AgentLaunchContext,
@@ -634,6 +637,61 @@ test("concurrent session APIs share one reconnect after an idle provider exit", 
   }
 });
 
+test("runtime info cannot reconnect after Stop fails to retire an in-flight reconnect", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-stop-reconnect-"));
+  const initial = createFakeCodexAppServer();
+  const stalled = createFakeCodexAppServer({ "model/list": () => new Promise(() => {}) });
+  stalled.child.kill = () => true;
+  const replacement = createFakeCodexAppServer();
+  const session = await new ProcessExitCodexClient([initial, stalled, replacement]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  try {
+    const first = session.run("save the thread");
+    await initial.waitForTurnStart();
+    initial.startsTurn({ threadId: "thread-1", turnId: "first-turn" });
+    initial.completeTurn();
+    await expect(first).resolves.toMatchObject({ sessionId: "thread-1" });
+    initial.disconnect();
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const starting = expect(session.startTurn("reconnect to the saved thread")).rejects.toThrow(
+      "canceled before starting",
+    );
+    await stalled.waitForRequest("model/list");
+    const stopping = expect(session.interrupt()).rejects.toThrow(
+      "did not report exit after SIGKILL",
+    );
+    await vi.advanceTimersByTimeAsync(4_000);
+    await stopping;
+    await starting;
+
+    await expect(session.getRuntimeInfo()).rejects.toThrow("Try Stop again");
+    expect(replacement.requests()).toEqual([]);
+
+    stalled.child.exitCode = 0;
+    stalled.child.emit("exit", 0, null);
+    await session.interrupt();
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "thread-1" });
+    expect(replacement.requests()).toContainEqual(
+      expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({ threadId: "thread-1" }),
+      }),
+    );
+    await session.startTurn("use the recovered runtime");
+    await expect(replacement.waitForTurnStart()).resolves.toMatchObject({ threadId: "thread-1" });
+  } finally {
+    vi.useRealTimers();
+    stalled.child.exitCode = 0;
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("session close disposes a provider that arrives from an in-flight reconnect", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "codex-process-close-reconnect-"));
   const initialAppServer = createFakeCodexAppServer();
@@ -687,6 +745,687 @@ test("session close disposes a provider that arrives from an in-flight reconnect
   } finally {
     releaseReconnect?.();
     await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("replacement retires an unresponsive Codex app-server before resuming the saved thread", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-interrupt-recovery-"));
+  const stalled = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const resumed = createFakeCodexAppServer();
+  let oldExited = false;
+  stalled.child.once("exit", () => {
+    oldExited = true;
+  });
+  const manager = new AgentManager({
+    clients: { codex: new ProcessExitCodexClient([stalled, resumed]) },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "auto", model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = agent.id;
+    const first = manager.runAgent(agent.id, "working before pressure");
+    void first.catch(() => undefined);
+    const start = await stalled.waitForTurnStart();
+    stalled.startsTurn({ threadId: String(start.threadId), turnId: "stalled-turn" });
+    await manager.waitForAgentRunStart(agent.id);
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement after pressure");
+    expect(oldExited).toBe(true);
+    const result = (async () => {
+      for await (const _event of replacement) {
+      }
+    })();
+    const resumedStart = await resumed.waitForTurnStart();
+    expect(resumedStart.threadId).toBe(start.threadId);
+    expect(resumed.requests()).toContainEqual(
+      expect.objectContaining({
+        method: "thread/resume",
+        params: expect.objectContaining({ threadId: start.threadId }),
+      }),
+    );
+    resumed.startsTurn({ threadId: String(start.threadId), turnId: "resumed-turn" });
+    resumed.completeTurn({ threadId: String(start.threadId) });
+    await result;
+    await expect(first).resolves.toMatchObject({ canceled: true });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    if (agentId) await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed Codex process retirement retains ownership and Stop can retry it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-interrupt-refused-"));
+  const stalled = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const signals: Array<NodeJS.Signals | number | undefined> = [];
+  stalled.child.kill = (signal) => {
+    signals.push(signal);
+    return true;
+  };
+  const client = new ProcessExitCodexClient([stalled, createFakeCodexAppServer()]);
+  const session = await client.createSession({ provider: "codex", cwd: workdir, modeId: "auto" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const run = session.run("keep working");
+    void run.catch(() => undefined);
+    const start = await stalled.waitForTurnStart();
+    stalled.startsTurn({ threadId: String(start.threadId), turnId: "unresponsive-turn" });
+    stalled.requestUserInput({
+      threadId: String(start.threadId),
+      turnId: "unresponsive-turn",
+      itemId: "pending-question",
+      questions: [
+        { id: "choice", header: "Choice", question: "Which?", options: [{ label: "One" }] },
+      ],
+    });
+    const requestId = "permission-pending-question";
+    const pendingRequests = () => session.getPendingPermissions?.().map((request) => request.id);
+    const questionStatuses = () =>
+      events.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "pending-question"
+          ? [event.item.status]
+          : [],
+      );
+    await expect.poll(pendingRequests).toEqual([requestId]);
+
+    await expect(session.interrupt()).rejects.toThrow("did not report exit after SIGKILL");
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    await expect(session.startTurn("must not run concurrently")).rejects.toMatchObject({
+      deliveryOutcome: "not_submitted",
+    });
+    await expect(session.respondToPermission(requestId, { behavior: "allow" })).rejects.toThrow(
+      "Try Stop again",
+    );
+    expect(pendingRequests()).toEqual([requestId]);
+    expect(questionStatuses()).toEqual(["running"]);
+    expect(events.filter((event) => event.type === "permission_resolved")).toEqual([]);
+
+    stalled.child.exitCode = 0;
+    stalled.child.emit("exit", 0, null);
+    await session.interrupt();
+    await expect(run).resolves.toMatchObject({ sessionId: start.threadId, finalText: "" });
+    expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+    expect(pendingRequests()).toEqual([]);
+    expect(questionStatuses()).toEqual(["running", "canceled"]);
+  } finally {
+    stalled.child.exitCode = 0;
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a lost interrupt reply does not retire a newer autonomous Codex turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-interrupt-new-turn-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  let exited = false;
+  appServer.child.once("exit", () => {
+    exited = true;
+  });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.startTurn("first turn");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "old-turn" });
+    const interrupt = session.interrupt();
+    await appServer.waitForRequest("turn/interrupt");
+    appServer.completeTurn({ threadId: "thread-1" });
+    appServer.startsTurn({ threadId: "thread-1", turnId: "new-autonomous-turn" });
+    await interrupt;
+    expect(exited).toBe(false);
+    expect(events.filter((event) => event.type === "turn_started")).toHaveLength(2);
+    expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(0);
+    expect(appServer.requests().filter((request) => request.method === "turn/start")).toHaveLength(
+      1,
+    );
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a timed-out autonomous interrupt leaves its successor running", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-autonomous-interrupt-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  let exited = false;
+  appServer.child.once("exit", () => {
+    exited = true;
+  });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.startTurn("first turn");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "initial-turn" });
+    appServer.completeTurn({ threadId: "thread-1" });
+    appServer.startsTurn({ threadId: "thread-1", turnId: "old-autonomous-turn" });
+    await expect.poll(() => events.filter((event) => event.type === "turn_started").length).toBe(2);
+    const interrupt = session.interrupt();
+    await appServer.waitForRequest("turn/interrupt");
+    appServer.completeTurn({ threadId: "thread-1" });
+    appServer.startsTurn({ threadId: "thread-1", turnId: "successor-turn" });
+    await interrupt;
+    expect(exited).toBe(false);
+    expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(0);
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("interrupt retirement dismisses async questions before cancellation and persistence", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-interrupt-question-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const config: AgentSessionConfig = { provider: "codex", cwd: workdir, modeId: "auto" };
+  const session = await new ProcessExitCodexClient([appServer]).createSession(config);
+  const permissionsAtCancellation: unknown[] = [];
+  session.subscribe((event) => {
+    if (event.type === "turn_canceled")
+      permissionsAtCancellation.push(session.getPendingPermissions());
+  });
+  try {
+    await session.startTurn("ask a question");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "question-turn" });
+    appServer.asksAsyncQuestion({ threadId: "thread-1", turnId: "question-turn" });
+    await expect
+      .poll(() => session.getPendingPermissions().map((request) => request.id))
+      .toEqual(["permission-async-question"]);
+    await session.interrupt();
+    expect(permissionsAtCancellation).toEqual([[]]);
+    const persistence = session.describePersistence();
+    expect(persistence?.metadata?.asyncQuestions).toEqual([
+      expect.objectContaining({ resolution: "dismissed" }),
+    ]);
+    const reopened = new CodexAppServerAgentSession(
+      config,
+      persistence,
+      logger,
+      async () => createFakeCodexAppServer().child,
+    );
+    expect(reopened.getPendingPermissions()).toEqual([]);
+    await reopened.close();
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("interrupt retirement completes pending compaction before cancellation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-interrupt-compaction-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  const lifecycle: string[] = [];
+  session.subscribe((event) => {
+    if (event.type === "turn_canceled") lifecycle.push("canceled");
+    if (event.type === "timeline" && event.item.type === "compaction")
+      lifecycle.push(event.item.status);
+  });
+  try {
+    await session.startTurn("compact this conversation");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "compacting-turn" });
+    appServer.startsCompaction({ threadId: "thread-1", itemId: "pending-compaction" });
+    await expect.poll(() => lifecycle).toEqual(["loading"]);
+    await session.interrupt();
+    expect(lifecycle).toEqual(["loading", "completed", "canceled"]);
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("interrupt retirement cancels a native question in the turn that opened it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-retire-native-question-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  const activity: Array<{ status: string; turnId?: string }> = [];
+  const completed = Promise.withResolvers<void>();
+  session.subscribe((event) => {
+    if (
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "question"
+    )
+      activity.push({ status: event.item.status, turnId: event.turnId });
+    if (event.type === "turn_completed") completed.resolve();
+    if (event.type === "turn_canceled") {
+      activity.push({ status: "turn_canceled", turnId: event.turnId });
+    }
+  });
+  try {
+    const first = await session.startTurn("ask me from a child agent");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "turn" });
+    appServer.startsSubAgent({
+      callId: "launch-child",
+      threadId: "child",
+      agentPath: "/root/child",
+      parentThreadId: "thread-1",
+    });
+    appServer.requestUserInput({
+      threadId: "child",
+      turnId: "child-turn",
+      itemId: "question",
+      questions: [
+        { id: "choice", header: "Choice", question: "Which?", options: [{ label: "One" }] },
+      ],
+    });
+    const runningQuestion = { status: "running", turnId: first.turnId };
+    await expect.poll(() => activity).toEqual([runningQuestion]);
+    appServer.completeTurn();
+    await completed.promise;
+
+    const second = await session.startTurn("start another parent turn");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
+    await session.interrupt();
+    expect(activity).toEqual([
+      runningQuestion,
+      { status: "canceled", turnId: first.turnId },
+      { status: "turn_canceled", turnId: second.turnId },
+    ]);
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("interrupt retirement completes child compaction markers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-retire-child-compaction-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const statuses = () =>
+    events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.item.type === "compaction"
+        ? [event.event.item.status]
+        : [],
+    );
+  try {
+    await session.startTurn("start child");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "turn" });
+    appServer.startsSubAgent({
+      callId: "spawn",
+      threadId: "child",
+      agentPath: "/root/child",
+      parentThreadId: "thread-1",
+    });
+    appServer.startsCompaction({ threadId: "child", itemId: "child-compaction" });
+    await expect.poll(statuses).toEqual(["loading"]);
+    await session.interrupt();
+    expect(statuses()).toEqual(["loading", "completed"]);
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+for (const timeline of ["root", "child"] as const) {
+  test(`interrupt retirement settles ordinary tools in the ${timeline} timeline`, async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "codex-retire-tool-"));
+    const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+    const session = await new ProcessExitCodexClient([appServer]).createSession({
+      provider: "codex",
+      cwd: workdir,
+      modeId: "auto",
+    });
+    const statuses: string[] = [];
+    session.subscribe((event) => {
+      let item;
+      if (event.type === "timeline") item = event.item;
+      else if (event.type === "provider_subagent" && event.event.type === "timeline")
+        item = event.event.item;
+      if (item?.type === "tool_call" && item.callId === "running-tool") statuses.push(item.status);
+    });
+    try {
+      await session.startTurn("run a tool");
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn" });
+      if (timeline === "child")
+        appServer.startsSubAgent({
+          callId: "spawn",
+          threadId: "child",
+          parentThreadId: "thread-1",
+          agentPath: "/root/child",
+        });
+      appServer.startsTerminalCommand({
+        threadId: timeline === "root" ? "thread-1" : "child",
+        turnId: "turn",
+        itemId: "running-tool",
+        command: "sleep 7200",
+      });
+      await expect.poll(() => statuses).toEqual(["running"]);
+      await session.interrupt();
+      expect(statuses).toEqual(["running", "canceled"]);
+    } finally {
+      await session.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const stop of [false, true]) {
+  test(`a lost Codex start acknowledgement ${stop ? "can be stopped" : "retires its runtime"} without claiming non-delivery`, async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "codex-start-unknown-"));
+    const old = createFakeCodexAppServer({ "turn/start": () => new Promise(() => {}) });
+    const replacement = createFakeCodexAppServer();
+    const session = await new ProcessExitCodexClient([old, replacement]).createSession({
+      provider: "codex",
+      cwd: workdir,
+      modeId: "auto",
+    });
+    let exited = false;
+    old.child.once("exit", () => {
+      exited = true;
+    });
+    try {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const starting = session.startTurn("possibly accepted");
+      const rejected = expect(starting).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+      await old.waitForRequest("turn/start");
+      old.startsTurn({ threadId: "thread-1", turnId: "native-start" });
+      if (stop) {
+        const stopping = session.interrupt();
+        await vi.advanceTimersByTimeAsync(5_100);
+        await stopping;
+      } else await vi.advanceTimersByTimeAsync(90_100);
+      await rejected;
+      expect(exited).toBe(true);
+      vi.useRealTimers();
+      await expect(session.startTurn("new prompt")).resolves.toEqual({
+        turnId: expect.any(String),
+      });
+      expect(old.requests().filter((request) => request.method === "turn/start")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("a lost steer acknowledgement has a bounded wait so Stop can proceed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-steer-unknown-"));
+  const appServer = createFakeCodexAppServer({
+    "turn/steer": () => new Promise(() => {}),
+    "turn/interrupt": () => ({}),
+  });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  try {
+    const start = await session.startTurn("keep working");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn" });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const steering = session.steerActiveTurn!("follow-up", { expectedTurnId: start.turnId });
+    const rejected = expect(steering).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+    await appServer.waitForRequest("turn/steer");
+    await vi.advanceTimersByTimeAsync(5_100);
+    await rejected;
+    const stopping = session.interrupt();
+    await appServer.waitForRequest("turn/interrupt");
+    appServer.completeTurn({ threadId: "thread-1" });
+    await stopping;
+  } finally {
+    vi.useRealTimers();
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("retiring a later turn settles background tools under their original turn identity", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-background-tool-turn-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const first = session.run("start background shell");
+    await appServer.waitForTurnStart();
+    appServer.startsTurn({ threadId: "thread-1", turnId: "first-turn" });
+    appServer.startsTerminalCommand({
+      threadId: "thread-1",
+      turnId: "first-turn",
+      itemId: "background-tool",
+      command: "sleep 7200",
+    });
+    await expect
+      .poll(() =>
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.callId === "background-tool",
+        ),
+      )
+      .toBe(true);
+    const originalTurnId = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "background-tool",
+    )?.turnId;
+    expect(originalTurnId).toBeTruthy();
+    appServer.completeTurn({ turnId: "first-turn" });
+    await first;
+    await session.startTurn("next turn");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
+    await session.interrupt();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        turnId: originalTurnId,
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "background-tool",
+          status: "canceled",
+        }),
+      }),
+    );
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("the public Stop command can retry a failed startup retirement after its run is cleared", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-start-stop-recovery-"));
+  const old = createFakeCodexAppServer({ "turn/start": () => new Promise(() => {}) });
+  old.child.kill = () => true;
+  const manager = new AgentManager({
+    clients: { codex: new ProcessExitCodexClient([old]) },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const dispatch = vi.fn(async () => "turn_started" as const);
+  const delivery = createAgentMessageDelivery({
+    isRunning: (agentId) => manager.hasInFlightRun(agentId),
+    onStop: (listener) => manager.onStop(listener),
+    dispatch,
+    onError: (error) => {
+      throw error;
+    },
+  });
+  try {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const run = manager.runAgent(agent.id, "possibly started");
+    const failed = expect(run).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+    await old.waitForRequest("turn/start");
+    await vi.advanceTimersByTimeAsync(94_000);
+    await failed;
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(true);
+    const stopping = cancelAgentRunCommand({ agentManager: manager, logger }, agent.id);
+    const refused = expect(stopping).rejects.toThrow("Try Stop again");
+    await vi.advanceTimersByTimeAsync(4_000);
+    await refused;
+    expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(true);
+
+    const queued = delivery.enqueue({
+      recipientId: agent.id,
+      messageId: "queued-finish",
+      source: { kind: "agent-notification", agentId: "worker", event: "finished" },
+      prompt: "Worker finished",
+    });
+    expect(delivery.hasPending(agent.id)).toBe(true);
+
+    old.child.exitCode = 0;
+    old.child.emit("exit", 0, null);
+    await expect(
+      cancelAgentRunCommand({ agentManager: manager, logger }, agent.id),
+    ).resolves.toMatchObject({ cancelled: true });
+    expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(delivery.hasPending(agent.id)).toBe(false);
+
+    const next = delivery.enqueue({
+      recipientId: agent.id,
+      messageId: "follow-up",
+      source: { kind: "agent-message", agentId: "worker" },
+      prompt: "Follow up",
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(queued.dispatched).resolves.toBe("turn_started");
+    await expect(next.dispatched).resolves.toBe("turn_started");
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ messageIds: ["queued-finish", "follow-up"] }),
+    );
+  } finally {
+    await delivery.close();
+    vi.useRealTimers();
+    old.child.exitCode = 0;
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("retiring a pre-submission startup leaves its cancellation event to the manager", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-unsubmitted-cancel-"));
+  const old = createFakeCodexAppServer({ "thread/loaded/list": () => new Promise(() => {}) });
+  const replacement = createFakeCodexAppServer({
+    "thread/resume": () => {
+      throw new Error("No saved rollout for this thread");
+    },
+  });
+  const session = await new ProcessExitCodexClient([old, replacement]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
+  await session.getRuntimeInfo();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const starting = session.startTurn("never submitted");
+    const canceled = expect(starting).rejects.toThrow("canceled before starting");
+    await old.waitForRequest("thread/loaded/list");
+    await session.interrupt();
+    await canceled;
+    expect(old.requests().filter((request) => request.method === "turn/start")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
+    await session.startTurn("try again on the new process");
+    expect(replacement.requests().map((r) => r.method)).toContain("thread/start");
+    expect(replacement.requests().map((r) => r.method)).not.toContain("thread/resume");
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a lost second startup reply settles the first turn's child and tool rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-child-startup-retirement-"));
+  const nextStart = Promise.withResolvers<void>();
+  let starts = 0;
+  const server = createFakeCodexAppServer({
+    "turn/start": () => {
+      if (++starts === 1) return {};
+      nextStart.resolve();
+      return new Promise(() => {});
+    },
+  });
+  const manager = new AgentManager({
+    clients: { codex: new ProcessExitCodexClient([server]) },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const rows = async () =>
+    (await manager.getTimelineRows(agent.id)).flatMap((row) =>
+      row.item.type === "tool_call" && ["spawn-child", "background-shell"].includes(row.item.callId)
+        ? [{ id: row.item.callId, status: row.item.status, turnId: row.turnId }]
+        : [],
+    );
+  try {
+    const first = manager.runAgent(agent.id, "launch background work");
+    await server.waitForTurnStart();
+    server.startsTurn({ threadId: "thread-1", turnId: "first" });
+    server.startsSubAgent({
+      callId: "spawn-child",
+      threadId: "child",
+      agentPath: "/root/child",
+      parentThreadId: "thread-1",
+    });
+    server.startsTerminalCommand({
+      threadId: "thread-1",
+      turnId: "first",
+      itemId: "background-shell",
+      command: "sleep 90",
+    });
+    await expect.poll(rows).toHaveLength(2);
+    const initial = await rows();
+    expect(initial.every((row) => row.status === "running" && row.turnId)).toBe(true);
+    server.completeTurn();
+    await first;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const failed = expect(manager.runAgent(agent.id, "next prompt")).rejects.toMatchObject({
+      deliveryOutcome: "unknown",
+    });
+    await nextStart.promise;
+    await vi.advanceTimersByTimeAsync(91_000);
+    await failed;
+    vi.useRealTimers();
+    await expect
+      .poll(rows)
+      .toEqual(initial.map(({ id, turnId }) => ({ id, turnId, status: "canceled" })));
+    expect(manager.listProviderSubagents(agent.id)).toContainEqual(
+      expect.objectContaining({ status: "canceled" }),
+    );
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent(agent.id);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

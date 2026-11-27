@@ -514,7 +514,7 @@ test("DaemonClient rejects a replacement prompt when cancellation is not acknowl
     await client.sendMessage(agent.id, "Keep working on the first prompt.");
 
     await expect(client.sendMessage(agent.id, "Replace it with this prompt.")).rejects.toThrow(
-      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+      `Paseo could not confirm the agent stopped. Your message was not sent. Try Stop, then retry your message.`,
     );
   } finally {
     await client.close();
@@ -536,7 +536,7 @@ test("DaemonClient rejects Stop when cancellation is not acknowledged", async ()
     await client.sendMessage(agent.id, "Keep working until stopped.");
 
     await expect(client.cancelAgent(agent.id)).rejects.toThrow(
-      `Cannot stop agent ${agent.id} because its active run cancellation was not acknowledged`,
+      `Paseo could not confirm the agent stopped. Try Stop again.`,
     );
   } finally {
     await client.close();

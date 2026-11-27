@@ -139,7 +139,7 @@ test("interruptAgentIfRunning rejects when graceful cancellation is refused", as
   });
 
   await expect(asSessionInternals(session).interruptAgentIfRunning(agentId)).rejects.toThrow(
-    "active run cancellation was not acknowledged",
+    "Paseo could not confirm the agent stopped.",
   );
 });
 
@@ -172,8 +172,7 @@ test("cancel_agent_request reports refusal only through its response", async () 
         requestId: "cancel-refused",
         agentId,
         agent: null,
-        error:
-          "Cannot stop agent 11111111-1111-4111-8111-111111111111 because its active run cancellation was not acknowledged",
+        error: "Paseo could not confirm the agent stopped. Try Stop again.",
       },
     },
   ]);
@@ -201,7 +200,7 @@ test("legacy cancel_agent_request reports refusal through the activity log", asy
         timestamp: expect.any(Date),
         type: "error",
         content:
-          "Failed to cancel running agent on request: Cannot stop agent 11111111-1111-4111-8111-111111111111 because its active run cancellation was not acknowledged",
+          "Failed to cancel running agent on request: Paseo could not confirm the agent stopped. Try Stop again.",
       },
     },
   ]);

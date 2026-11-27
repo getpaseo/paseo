@@ -63,6 +63,10 @@ export class InMemoryAgentTimelineStore {
     return this.requireState(agentId).projection.getRows().map(cloneRow);
   }
 
+  hasItemInTurn(agentId: string, item: AgentTimelineItem, turnId: string): boolean {
+    return this.states.get(agentId)?.projection.hasItemInTurn(item, turnId) === true;
+  }
+
   getSubmittedUserMessage(agentId: string, clientMessageId: string): AgentTimelineRow | null {
     const row = this.requireState(agentId)
       .projection.getRows()

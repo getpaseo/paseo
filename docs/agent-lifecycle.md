@@ -119,6 +119,20 @@ older cancellation from settling a newer turn. If interruption is rejected or ti
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
+The manager gives provider interruption ten seconds. This outer budget includes the provider's
+own interrupt RPC and any bounded cleanup before acknowledging cancellation. Post-acknowledgement
+settlement still waits two seconds. Waiting for a starting run before replacement uses the same
+outer budget; it cannot hold later interruption requests indefinitely.
+
+Codex retires its app-server when an interrupt or startup acknowledgement is lost, and when Stop
+cancels an in-flight startup. It confirms process exit before allowing another prompt; a failed
+termination retains ownership so Stop can retry. The snapshot reports pending interrupt recovery
+separately from turn activity so Stop stays available even after a failed startup has settled. Stopping the runtime proves it cannot continue,
+but does not prove a prompt was never delivered: a turn may have executed before its reply was
+lost. Startup acknowledgement loss therefore stays explicitly unknown and is never replayed
+automatically. Retirement settles tool rows and questions before publishing cancellation so
+reopening cannot restore activity from the retired runtime.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
@@ -160,7 +174,7 @@ An agent sender picks `queue`, `steer`, or `interrupt` with `activeTurnBehavior`
 - **`steer`** waits for neither the quiet window nor the turn. It is dispatched at admission as one prompt that enters the running turn: the messages queued before it, then the steer. A provider that cannot steer, or that refuses this steer, gets the prompt as a replacing turn instead, the same as a person's steer.
 - **`interrupt`** is dispatched at admission the same way, as one prompt that replaces the running turn. An older queued message cannot start a turn after the newer `interrupt` that countermands it.
 - **A person's prompt** (app, CLI, top-level MCP) is dispatched directly with its existing steer or interrupt behavior and takes the queue along the same way: the messages admitted before it first, then the person's text, in one provider prompt. Messages admitted after it follow it. The person's text keeps its own transcript row. When the turn does not start, the messages return to the queue in their place. That covers a start the provider rejects and a start that is not acknowledged within 60 seconds; a provider that starts the turn after those 60 seconds receives the messages twice.
-- **Stop** (the stop button, Escape, `cancel_agent`, a Hub interrupt) starts nothing. Messages admitted before the Stop are held, not dropped, including an interrupt whose turn had not started yet. They go ahead of the recipient's next prompt, in that prompt's turn: a person's prompt, or an agent message or notification admitted after the Stop. A held steer or interrupt no longer enters the turn; it waits like a queued message. A queue step or dispatch decided before the Stop is void, and the queue is held again when the message that reopened it is withdrawn. A replacing prompt, a reload, and a rewind are not a Stop. Neither is `cancel_agent` on a recipient with no running or starting turn: it stops nothing, reports that it canceled no run, and a queued message keeps its quiet window.
+- **Stop** (the stop button, Escape, `cancel_agent`, a Hub interrupt) starts nothing. Messages admitted before the Stop are held, not dropped, including an interrupt whose turn had not started yet. They go ahead of the recipient's next prompt, in that prompt's turn: a person's prompt, or an agent message or notification admitted after the Stop. A held steer or interrupt no longer enters the turn; it waits like a queued message. A queue step or dispatch decided before the Stop is void, and the queue is held again when the message that reopened it is withdrawn. A replacing prompt, a reload, and a rewind are not a Stop. A Stop retry during pending interrupt recovery holds the queue even after the turn has settled. If the recipient has neither a running or starting turn nor pending interrupt recovery, `cancel_agent` reports that it canceled no run, and a queued message keeps its quiet window.
 
 The queued receipt carries the applied behavior and guidance text for the sender. The text comes from two facts known at admission: whether the recipient has a running turn, and whether its provider can steer (`AgentManager.canSteer`, which is true when the session offers `steerActiveTurn`). It does not wait for the outcome. Guidance for a message queued behind a running turn tells the sender to send a short `steer` or `interrupt` follow-up instead of resending, because the follow-up carries the queued message ahead of it and a resend would be read twice. The MCP tool, the WebSocket `send_agent_message_response`, the CLI, and the connected-host path all relay this one text.
 

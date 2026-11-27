@@ -1144,6 +1144,38 @@ test.describe("Agent message submission", () => {
     }
   });
 
+  test("keeps Stop reachable after the turn has ended and preserves the draft", async ({
+    page,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "interrupt-runtime-recovery-",
+      title: "Runtime recovery",
+      model: "one-minute-stream",
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+      await expectAgentIdle(page);
+      await fillComposerDraft(page, "Keep this draft");
+      gate.setInterruptRecoveryAgent(agent.agentId);
+      await agent.client.updateAgent(agent.agentId, { name: "Runtime recovery pending" });
+
+      const stops = gate.getClientRequestCount("cancel_agent_request");
+      const stop = page.getByRole("button", { name: "Stop agent", exact: true });
+      await expect(stop).toBeEnabled();
+      await stop.click();
+      await expect.poll(() => gate.getClientRequestCount("cancel_agent_request")).toBe(stops + 1);
+
+      gate.setInterruptRecoveryAgent(null);
+      await agent.client.updateAgent(agent.agentId, { name: "Runtime recovered" });
+      await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+      await expect(composerLocator(page)).toHaveValue("Keep this draft");
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("reconciles every agent surface when interrupt completion is missed", async ({ page }) => {
     const gate = await installDaemonWebSocketGate(page);
     const title = "Missed interrupt completion";

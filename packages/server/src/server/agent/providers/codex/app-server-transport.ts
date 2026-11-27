@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
+import { CapturedProcessDescendants, terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 
 import { ProviderLineReader, ProviderStreamLimitError } from "../jsonl-frame-decoder.js";
 
@@ -53,6 +53,13 @@ export class CodexAppServerResponseTooLargeError extends Error {
 
 // Codex serializes a response with `id` first, so its head names the request.
 const OVERSIZED_RESPONSE_HEAD = /^\{"id":(\d+),"result":/;
+
+export class CodexAppServerRequestTimeoutError extends Error {
+  constructor(readonly method: string) {
+    super(`Codex app-server request timed out for ${method}`);
+    this.name = "CodexAppServerRequestTimeoutError";
+  }
+}
 
 export class CodexAppServerRpcError extends Error {
   constructor(
@@ -230,6 +237,8 @@ export class CodexAppServerClient {
   private unexpectedTerminationHandler: UnexpectedTerminationHandler | null = null;
   private nextId = 1;
   private disposed = false;
+  private disposal: Promise<void> | null = null;
+  private readonly descendants = new CapturedProcessDescendants();
   private stderrBuffer = "";
 
   constructor(
@@ -315,7 +324,7 @@ export class CodexAppServerClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Codex app-server request timed out for ${method}`));
+        reject(new CodexAppServerRequestTimeoutError(method));
       }, timeoutMs);
       this.pending.set(id, { method, resolve, reject, timer });
     });
@@ -337,11 +346,20 @@ export class CodexAppServerClient {
     this.child.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    this.disposal ??= this.disposeRuntime().finally(() => {
+      this.disposal = null;
+    });
+    return this.disposal;
+  }
+
+  private async disposeRuntime(): Promise<void> {
     this.disposed = true;
     this.unexpectedTerminationHandler = null;
     this.stdoutLineReader.close();
     this.rejectPending(new Error("Codex app-server client is closed"));
+    // Capture the tools before EOF or a signal can exit the app-server and reparent them.
+    await this.descendants.capture(this.child);
     try {
       this.child.stdin.end();
     } catch {
@@ -360,6 +378,7 @@ export class CodexAppServerClient {
     if (result === "kill-timeout") {
       throw new Error("Codex app-server did not report exit after SIGKILL");
     }
+    await this.descendants.confirmExit(APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS);
   }
 
   private handleStreamLimit(failure: ProviderStreamLimitError): void {

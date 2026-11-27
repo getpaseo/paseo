@@ -153,7 +153,7 @@ describe("AgentManager rewind", () => {
     await run.next();
 
     await expect(manager.rewind(agent.id, "message-1", "files")).rejects.toThrow(
-      `Cannot rewind agent ${agent.id} because its active run cancellation was not acknowledged`,
+      `Paseo could not confirm the agent stopped. Try Stop first.`,
     );
     expect(session.recordedRewinds).toEqual([]);
     expect(manager.getAgent(agent.id)).toMatchObject({

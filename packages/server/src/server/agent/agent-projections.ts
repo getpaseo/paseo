@@ -122,6 +122,13 @@ function projectUsageScopeKey(agent: ManagedAgent): string | undefined {
   return usageSession ? `${usageSession.sessionKey}:${usageSession.model ?? ""}` : undefined;
 }
 
+function projectInterruptRecovery(
+  agent: ManagedAgent,
+): Pick<AgentSnapshotPayload, "interruptRecoveryPending"> {
+  const interruptRecoveryPending = agent.session?.hasPendingInterruptRecovery?.();
+  return interruptRecoveryPending === undefined ? {} : { interruptRecoveryPending };
+}
+
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -146,6 +153,7 @@ export function toAgentPayload(
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     status: agent.lifecycle,
+    ...projectInterruptRecovery(agent),
     activeTurn: agent.activeTurnId
       ? {
           turnId: agent.activeTurnId,

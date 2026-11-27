@@ -108,6 +108,7 @@ import {
   type ForegroundPromptStart,
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
+  type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
@@ -136,7 +137,8 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
-const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const INTERRUPT_SESSION_TIMEOUT_MS = 10_000;
+const INTERRUPT_SETTLEMENT_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
@@ -172,11 +174,20 @@ export class AgentManagerShuttingDownError extends Error {
 type RunCancellationCause = "reload" | "replace" | "rewind" | "stop";
 
 export class AgentRunCancellationError extends Error {
+  readonly deliveryOutcome?: "not_submitted";
+
   constructor(agentId: string, action: RunCancellationCause) {
-    super(
-      `Cannot ${action} agent ${agentId} because its active run cancellation was not acknowledged`,
-    );
+    const reason = "Paseo could not confirm the agent stopped.";
+    const message = {
+      stop: `${reason} Try Stop again.`,
+      replace: `${reason} Your message was not sent. Try Stop, then retry your message.`,
+      reload: `Cannot reload agent ${agentId}. ${reason} Try Stop first.`,
+      rewind: `Cannot rewind agent ${agentId}. ${reason} Try Stop first.`,
+    }[action];
+    super(message);
     this.name = "AgentRunCancellationError";
+    // Replacement stops here, before reserving or submitting the new prompt.
+    if (action === "replace") this.deliveryOutcome = "not_submitted";
   }
 }
 
@@ -4234,10 +4245,15 @@ export class AgentManager {
     agentId: string,
     cause: RunCancellationCause,
   ): Promise<AgentRunCancellationResult> {
-    const cancellation = this.runForegroundMutation(agentId, () => {
-      this.requireSessionAgent(agentId).pendingReplacement = false;
-      return this.cancelAgentRunNow(agentId, cause);
-    });
+    const cancellation = this.runForegroundMutation(
+      agentId,
+      async (): Promise<AgentRunCancellationResult> => {
+        const agent = this.requireAgent(agentId);
+        if (!agent.session) return { status: "not_running" };
+        agent.pendingReplacement = false;
+        return this.cancelAgentRunNow(agentId, cause);
+      },
+    );
     this.pendingCancellations.set(agentId, cancellation);
     try {
       return await cancellation;
@@ -4256,27 +4272,59 @@ export class AgentManager {
     const run =
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
-    if (!run) {
+    if (!run && !agent.session.hasPendingInterruptRecovery?.()) {
       return { status: "not_running" };
     }
     if (cause === "stop") {
       for (const listener of this.stopListeners) listener(agentId);
     }
+    if (!run) return this.retryInterruptRecovery(agent);
 
+    const interruptedPermissions = new Map(agent.pendingPermissions);
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
+        ? INTERRUPT_SETTLEMENT_TIMEOUT_MS
+        : Math.min(this.rescueTimeouts.interruptSessionMs, INTERRUPT_SETTLEMENT_TIMEOUT_MS),
     });
 
     if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
+      return {
+        status:
+          settlement === "completed" && !agent.session.hasPendingInterruptRecovery?.()
+            ? "settled"
+            : "refused",
+      };
+    }
+
+    if (settlement === "timed_out") await this.settleAcknowledgedInterrupt(agent, run);
+
+    if (agent.pendingPermissions.size > 0) {
+      this.resolvePendingPermissionsForAgent(
+        agent,
+        agent.provider,
+        { requests: interruptedPermissions },
+        "Interrupted",
+      );
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+    }
+    return { status: "settled" };
+  }
+
+  private async settleAcknowledgedInterrupt(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+  ): Promise<void> {
+    const agentId = agent.id;
+    // A terminal event can make room for a successor while Stop awaits provider acknowledgement.
+    if (this.runs.getRun(agentId) !== run) {
+      return;
     }
 
     const runTurnId = this.runs.getTurnId(agentId);
-    if (settlement === "timed_out" && runTurnId) {
+    if (runTurnId) {
       this.logger.warn(
         { agentId, turnId: runTurnId, kind: run.kind },
         "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
@@ -4288,7 +4336,7 @@ export class AgentManager {
         turnId: runTurnId,
       });
       await run.settledPromise;
-    } else if (settlement === "timed_out" && run.kind === "foreground") {
+    } else if (run.kind === "foreground") {
       this.logger.warn(
         { agentId, kind: run.kind },
         "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
@@ -4299,7 +4347,7 @@ export class AgentManager {
         this.touchUpdatedAt(agent);
         this.emitState(agent);
       }
-    } else if (settlement === "timed_out" && run.kind === "autonomous") {
+    } else if (run.kind === "autonomous") {
       this.logger.warn(
         { agentId, kind: run.kind },
         "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
@@ -4310,13 +4358,15 @@ export class AgentManager {
         reason: "interrupted",
       });
     }
+  }
 
-    if (agent.pendingPermissions.size > 0) {
-      this.resolvePendingPermissionsForAgent(agent, agent.provider, undefined, "Interrupted");
-      this.touchUpdatedAt(agent);
-      this.emitState(agent);
-    }
-    return { status: "settled" };
+  private async retryInterruptRecovery(
+    agent: ActiveManagedAgent,
+  ): Promise<AgentRunCancellationResult> {
+    const stopped = await this.interruptSession(agent.session, agent.id);
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+    return { status: stopped ? "settled" : "refused" };
   }
 
   private async cancelAgentRunBefore(agentId: string, action: "reload" | "rewind"): Promise<void> {
@@ -5063,6 +5113,17 @@ export class AgentManager {
     agent.unsubscribeSession = unsubscribe;
   }
 
+  // Child activity, runtime inventory, and updates to existing rows survive a failed start.
+  private isIndependentOfPendingStart(agentId: string, event: AgentStreamEvent): boolean {
+    if (event.type === "provider_subagent" || event.type === "background_work") return true;
+    const turnId = getAgentStreamEventTurnId(event);
+    return (
+      event.type === "timeline" &&
+      turnId != null &&
+      this.timelineStore.hasItemInTurn(agentId, event.item, turnId)
+    );
+  }
+
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
     this.logger.trace(
       {
@@ -5080,7 +5141,10 @@ export class AgentManager {
       return;
     }
     const pendingRun = this.runs.getPendingRun(agentId);
-    if (pendingRun?.start.status === "pending") {
+    if (
+      pendingRun?.start.status === "pending" &&
+      !this.isIndependentOfPendingStart(agentId, event)
+    ) {
       pendingRun.stagedEvents.push(event);
       return;
     }
@@ -6028,10 +6092,13 @@ export class AgentManager {
   private resolvePendingPermissionsForAgent(
     agent: ActiveManagedAgent,
     provider: AgentProvider,
-    options: { fromHistory?: boolean } | undefined,
+    options:
+      | { fromHistory?: boolean; requests?: ReadonlyMap<string, AgentPermissionRequest> }
+      | undefined,
     message: string,
   ): void {
-    for (const [requestId] of agent.pendingPermissions) {
+    for (const [requestId, request] of agent.pendingPermissions) {
+      if (options?.requests && options.requests.get(requestId) !== request) continue;
       agent.pendingPermissions.delete(requestId);
       if (!options?.fromHistory) {
         this.dispatchStream(agent.id, {

@@ -126,7 +126,7 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import { AgentManager } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -1870,44 +1870,10 @@ export class Session {
    * Returns once the manager confirms the stream has been cancelled.
    */
   private async interruptAgentIfRunning(agentId: string): Promise<void> {
-    const snapshot = this.agentManager.getAgent(agentId);
-    if (!snapshot) {
-      this.sessionLogger.trace({ agentId }, "agent.session.interrupt.not_found");
-      throw new Error(`Agent ${agentId} not found`);
-    }
-
-    const hasInFlightRun = this.agentManager.hasInFlightRun(agentId);
-    if (!hasInFlightRun) {
-      this.sessionLogger.trace(
-        {
-          agentId,
-          provider: snapshot.provider,
-          lifecycle: snapshot.lifecycle,
-          hasInFlightRun,
-        },
-        "agent.session.interrupt.skip_not_running",
-      );
-      return;
-    }
-
-    this.sessionLogger.debug(
-      { agentId, lifecycle: snapshot.lifecycle, hasInFlightRun },
-      "interruptAgentIfRunning: interrupting",
+    await cancelAgentRunCommand(
+      { agentManager: this.agentManager, logger: this.sessionLogger },
+      agentId,
     );
-
-    const t0 = Date.now();
-    const cancellation = await this.agentManager.cancelAgentRun(agentId);
-    this.sessionLogger.debug(
-      { agentId, cancellation: cancellation.status, durationMs: Date.now() - t0 },
-      "interruptAgentIfRunning: cancelAgentRun completed",
-    );
-    if (cancellation.status === "refused") {
-      this.sessionLogger.warn(
-        { agentId },
-        "interruptAgentIfRunning: reported running but no active run was cancelled",
-      );
-      throw new AgentRunCancellationError(agentId, "stop");
-    }
   }
 
   private hasActiveAgentRun(agentId: string | null): boolean {

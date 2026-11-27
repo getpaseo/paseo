@@ -72,6 +72,7 @@ export interface FakeCodexAppServer {
   disconnect(): void;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
+  asksAsyncQuestion(params: { threadId: string; turnId: string }): void;
   startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
   completeTurn(params?: {
@@ -169,6 +170,10 @@ export function createFakeCodexAppServer(
   handlers: Record<string, FakeCodexAppServerHandler> = {},
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
+  let exited = false;
+  child.once("exit", () => {
+    exited = true;
+  });
   const recordedRollbacks: JsonObject[] = [];
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({ userAgent: "codex/0.150.0" }),
@@ -263,6 +268,7 @@ export function createFakeCodexAppServer(
     }
     Promise.resolve(response)
       .then((result) => {
+        if (exited) return;
         if (result === OVERSIZED_RESPONSE) {
           writeOversizedResponse(message.id as number);
           return undefined;
@@ -276,6 +282,7 @@ export function createFakeCodexAppServer(
         return undefined;
       })
       .catch((error) => {
+        if (exited) return;
         child.stdout.write(
           `${JSON.stringify({
             id: message.id,
@@ -414,6 +421,17 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    asksAsyncQuestion(params) {
+      writeNotification("item/completed", {
+        ...params,
+        item: {
+          type: "agentMessage",
+          id: "async-question",
+          delivery: "async",
+          questions: [{ title: "Which option?", options: ["One", "Two"] }],
+        },
+      });
     },
     startsCompaction(params) {
       writeNotification("item/started", {

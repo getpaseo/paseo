@@ -1,3 +1,6 @@
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -284,3 +287,82 @@ describe("Codex stdout byte admission", () => {
     child.stderr.end();
   });
 });
+
+test.skipIf(process.platform === "win32")(
+  "dispose confirms a tool exits even if the app-server exits first",
+  () =>
+    withStubbornTool(async (client, owner, toolPid) => {
+      await client.dispose();
+      expect(owner.signalCode).toBe("SIGTERM");
+      expect(isExecutingProcess(toolPid)).toBe(false);
+    }),
+);
+
+test.skipIf(process.platform === "win32")(
+  "dispose can retry a surviving tool after the app-server exits",
+  () =>
+    withStubbornTool(async (client, owner, toolPid) => {
+      const kill = process.kill.bind(process);
+      const mock = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        if (pid === toolPid && signal === "SIGKILL") {
+          throw Object.assign(new Error("Cannot signal tool"), { code: "EPERM" });
+        }
+        return kill(pid, signal);
+      });
+      try {
+        await expect(client.dispose()).rejects.toThrow("Cannot signal tool");
+        expect(owner.signalCode).toBe("SIGTERM");
+        expect(isExecutingProcess(toolPid)).toBe(true);
+      } finally {
+        mock.mockRestore();
+      }
+
+      await client.dispose();
+      expect(isExecutingProcess(toolPid)).toBe(false);
+    }),
+);
+
+async function withStubbornTool(
+  run: (client: CodexAppServerClient, owner: ChildProcess, toolPid: number) => Promise<void>,
+): Promise<void> {
+  const owner = spawn(process.execPath, [
+    "-e",
+    `
+    const { spawn } = require("node:child_process");
+    const tool = spawn(process.execPath, ["-e", ${JSON.stringify(`
+      process.on("SIGTERM", () => {});
+      process.send(process.pid);
+      setInterval(() => {}, 1000);
+    `)}], { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    tool.on("message", (pid) => console.log(pid));
+  `,
+  ]);
+  const lines = createInterface({ input: owner.stdout });
+  let toolPid: number | undefined;
+  try {
+    const [pid] = await once(lines, "line", { signal: AbortSignal.timeout(3_000) });
+    toolPid = Number(pid);
+    expect(toolPid).toBeGreaterThan(0);
+    const client = new CodexAppServerClient(owner, createTestLogger());
+    await run(client, owner, toolPid);
+  } finally {
+    lines.close();
+    if (toolPid && isExecutingProcess(toolPid)) process.kill(toolPid, "SIGKILL");
+    owner.kill("SIGKILL");
+  }
+}
+
+// An exited tool can still have a process table entry until its parent reaps it.
+function isExecutingProcess(pid: number): boolean {
+  try {
+    return !execFileSync("ps", ["-p", String(pid), "-o", "stat="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .trim()
+      .startsWith("Z");
+  } catch (error) {
+    if ((error as { status?: number }).status === 1) return false;
+    throw error;
+  }
+}

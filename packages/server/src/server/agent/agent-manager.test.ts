@@ -8768,8 +8768,11 @@ test("failed replacement cancellation preserves an autonomous running state", as
     await running;
 
     await expect(manager.replaceAgentRun(agent.id, "replacement prompt")).rejects.toThrow(
-      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+      `Paseo could not confirm the agent stopped. Your message was not sent. Try Stop, then retry your message.`,
     );
+    await expect(manager.replaceAgentRun(agent.id, "another replacement")).rejects.toMatchObject({
+      deliveryOutcome: "not_submitted",
+    });
     expect(manager.getAgent(agent.id)).toMatchObject({
       lifecycle: "running",
       activeForegroundTurnId: null,
@@ -10158,9 +10161,15 @@ test("canceling a pending Codex start settles as canceled without accepting its 
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-cold-cancel-"));
   const threadLoaded = deferred<{ data: string[] }>();
   const appServer = createFakeCodexAppServer({ "thread/loaded/list": () => threadLoaded.promise });
+  const replacement = createFakeCodexAppServer();
+  const runtimes = [appServer, replacement];
   class ColdStartClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new CodexAppServerAgentSession(config, null, logger, async () => appServer.child);
+      return new CodexAppServerAgentSession(config, null, logger, async () => {
+        const runtime = runtimes.shift();
+        if (!runtime) throw new Error("Unexpected extra runtime");
+        return runtime.child;
+      });
     }
   }
   const manager = new AgentManager({
@@ -10212,11 +10221,13 @@ test("canceling a pending Codex start settles as canceled without accepting its 
     expect(appServer.requests().some((request) => request.method === "turn/start")).toBe(false);
 
     const nextRun = manager.runAgent(agent.id, "Next prompt", { clientMessageId: "next-prompt" });
-    await appServer.waitForRequest("turn/start");
-    appServer.startsTurn({ threadId: "thread-1", turnId: "next-turn" });
-    appServer.completeTurn();
+    void nextRun.catch(() => undefined);
+    await replacement.waitForRequest("turn/start");
+    replacement.startsTurn({ threadId: "thread-1", turnId: "next-turn" });
+    replacement.completeTurn();
     await expect(nextRun).resolves.toMatchObject({ canceled: false });
     appServer.assertNoErrors();
+    replacement.assertNoErrors();
   } finally {
     threadLoaded.resolve({ data: ["thread-1"] });
     manager.prepareForShutdown();
@@ -10230,17 +10241,13 @@ test("stopping a Codex replacement of a stalled start clears replacement activit
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-replacement-cancel-"));
   const firstLoaded = deferred<{ data: string[] }>();
   const firstInterruptRequested = deferred<void>();
-  const replacementLoaded = deferred<{ data: string[] }>();
-  const replacementEntered = deferred<void>();
-  let loadCount = 0;
-  const appServer = createFakeCodexAppServer({
-    "thread/loaded/list": () => {
-      loadCount += 1;
-      if (loadCount === 1) return firstLoaded.promise;
-      replacementEntered.resolve();
-      return replacementLoaded.promise;
-    },
+  const replacementThread = deferred<{ thread: { id: string } }>();
+  const appServer = createFakeCodexAppServer({ "thread/loaded/list": () => firstLoaded.promise });
+  const replacementServer = createFakeCodexAppServer({
+    "thread/start": () => replacementThread.promise,
   });
+  const serversForAssertions = [appServer, replacementServer];
+  const servers = [...serversForAssertions];
   class ColdStartSession extends CodexAppServerAgentSession {
     override async interrupt(): Promise<void> {
       const interruption = super.interrupt();
@@ -10250,7 +10257,7 @@ test("stopping a Codex replacement of a stalled start clears replacement activit
   }
   class ColdStartClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new ColdStartSession(config, null, logger, async () => appServer.child);
+      return new ColdStartSession(config, null, logger, async () => servers.shift()!.child);
     }
   }
   const manager = new AgentManager({
@@ -10272,10 +10279,8 @@ test("stopping a Codex replacement of a stalled start clears replacement activit
     await expect(firstRun).resolves.toBeUndefined();
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
     const replacementEvent = replacementStream.next();
-    await replacementEntered.promise;
+    await replacementServer.waitForRequest("thread/start");
     const cancel = manager.cancelAgentRun(agent.id);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    replacementLoaded.resolve({ data: ["thread-1"] });
     await expect(cancel).resolves.toEqual({ status: "settled" });
     await expect(replacementEvent).resolves.toMatchObject({
       value: { type: "turn_canceled" },
@@ -10283,11 +10288,13 @@ test("stopping a Codex replacement of a stalled start clears replacement activit
     await expect(replacementStream.next()).resolves.toMatchObject({ done: true });
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
-    expect(appServer.requests().some((request) => request.method === "turn/start")).toBe(false);
-    appServer.assertNoErrors();
+    for (const server of serversForAssertions) {
+      expect(server.requests().some((request) => request.method === "turn/start")).toBe(false);
+      server.assertNoErrors();
+    }
   } finally {
     firstLoaded.resolve({ data: ["thread-1"] });
-    replacementLoaded.resolve({ data: ["thread-1"] });
+    replacementThread.resolve({ thread: { id: "thread-1" } });
     manager.prepareForShutdown();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flushForShutdown();
@@ -10299,13 +10306,9 @@ test("a stalled Codex start canceled by its replacement rejects its sender's sta
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-replaced-start-wait-"));
   const firstLoaded = deferred<{ data: string[] }>();
   const firstInterruptRequested = deferred<void>();
-  let loadCount = 0;
-  const appServer = createFakeCodexAppServer({
-    "thread/loaded/list": () => {
-      loadCount += 1;
-      return loadCount === 1 ? firstLoaded.promise : { data: ["thread-1"] };
-    },
-  });
+  const appServer = createFakeCodexAppServer({ "thread/loaded/list": () => firstLoaded.promise });
+  const replacementServer = createFakeCodexAppServer();
+  const servers = [appServer, replacementServer];
   class ColdStartSession extends CodexAppServerAgentSession {
     override async interrupt(): Promise<void> {
       const interruption = super.interrupt();
@@ -10315,7 +10318,7 @@ test("a stalled Codex start canceled by its replacement rejects its sender's sta
   }
   class ColdStartClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new ColdStartSession(config, null, logger, async () => appServer.child);
+      return new ColdStartSession(config, null, logger, async () => servers.shift()!.child);
     }
   }
   const manager = new AgentManager({
@@ -10343,13 +10346,16 @@ test("a stalled Codex start canceled by its replacement rejects its sender's sta
 
     const secondWait = secondStart.started;
     const replacementDrained = drainAsyncGenerator(replacementStream);
-    await appServer.waitForRequest("turn/start");
-    appServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
+    await replacementServer.waitForRequest("turn/start");
+    replacementServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
     await expect(secondWait).resolves.toBeUndefined();
     await expect(firstWait).rejects.toThrow("its prompt was not delivered");
-    appServer.completeTurn();
+    replacementServer.completeTurn();
     await replacementDrained;
-    expect(appServer.requests().filter((request) => request.method === "turn/start")).toEqual([
+    expect(appServer.requests().filter((request) => request.method === "turn/start")).toEqual([]);
+    expect(
+      replacementServer.requests().filter((request) => request.method === "turn/start"),
+    ).toEqual([
       expect.objectContaining({
         params: expect.objectContaining({
           input: [expect.objectContaining({ text: "Second prompt" })],
@@ -10357,6 +10363,7 @@ test("a stalled Codex start canceled by its replacement rejects its sender's sta
       }),
     ]);
     appServer.assertNoErrors();
+    replacementServer.assertNoErrors();
   } finally {
     firstLoaded.resolve({ data: ["thread-1"] });
     manager.prepareForShutdown();
@@ -16460,6 +16467,46 @@ function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): P
   void dispatch.started.catch(() => undefined);
   return dispatch.started;
 }
+
+test("cancelAgentRun preserves permission requests from an autonomous successor", async () => {
+  let fixture!: ControlledInterruptFixture;
+  fixture = await createControlledInterruptFixture({
+    name: "successor-permissions",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "old-turn",
+    interrupt: async (session) => {
+      const settled = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
+      session.pushEvent({ type: "turn_completed", provider: session.provider, turnId: "old-turn" });
+      await settled;
+      session.pushEvent({ type: "turn_started", provider: session.provider, turnId: "successor" });
+      session.pushEvent({
+        type: "permission_requested",
+        provider: session.provider,
+        turnId: "successor",
+        request: {
+          id: "successor-question",
+          provider: session.provider,
+          kind: "tool",
+          name: "Question",
+        },
+      });
+      await expect
+        .poll(() => fixture.manager.getPendingPermissions(fixture.agentId).map((p) => p.id))
+        .toEqual(["successor-question"]);
+    },
+  });
+  try {
+    await fixture.startForegroundRun();
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.manager.getPendingPermissions(fixture.agentId).map((p) => p.id)).toEqual([
+      "successor-question",
+    ]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 test("importProviderSession keeps the stats the provider reported with its history", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-metrics-"));

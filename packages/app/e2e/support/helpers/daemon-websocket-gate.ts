@@ -273,6 +273,17 @@ function matchesAgentUpdate(message: ClientRequest | null, agentUpdate: HeldAgen
   return agent?.id === agentUpdate.agentId && agent.status === agentUpdate.status;
 }
 
+function markInterruptRecovery(
+  message: string | Buffer,
+  parsed: ClientRequest | null,
+  agentId: string | null,
+): string | Buffer {
+  if (!agentId || !matchesAgentUpdate(parsed, { agentId, status: "idle" })) return message;
+  const envelope = JSON.parse(message.toString());
+  (envelope.message ?? envelope).payload.agent.interruptRecoveryPending = true;
+  return JSON.stringify(envelope);
+}
+
 function recordClientRequest(
   request: ClientRequest | null,
   clientRequestCounts: Map<string, number>,
@@ -304,6 +315,7 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
   let stripCanonicalSubmittedPromptsFeature = false;
   let shellToolCommandOverride: string | null = null;
   let failingTimelineAgentId: string | null = null;
+  let interruptRecoveryAgentId: string | null = null;
   let holdingTimelineAgentId: string | null = null;
   const heldTimelineResponses: Array<() => void> = [];
   const heldTimelineResponseWaiters = new Set<() => void>();
@@ -520,6 +532,11 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
         stripCanonicalSubmittedPromptsFeature,
         serverMessage?.type,
       );
+      outboundMessage = markInterruptRecovery(
+        outboundMessage,
+        serverMessage,
+        interruptRecoveryAgentId,
+      );
       const isTimelineResponse = serverMessage?.type === "fetch_agent_timeline_response";
       if (isTimelineResponse) {
         outboundMessage = failTimelineResponse(outboundMessage, failingTimelineAgentId);
@@ -654,6 +671,9 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
       pendingServerMessageHolds.set(serverMessageKey(type), {
         matches: (message) => message?.type === type,
       });
+    },
+    setInterruptRecoveryAgent(agentId: string | null): void {
+      interruptRecoveryAgentId = agentId;
     },
     holdNextAgentUpdate(agentId: string, status: string): void {
       const heldAgentUpdate = { agentId, status };
