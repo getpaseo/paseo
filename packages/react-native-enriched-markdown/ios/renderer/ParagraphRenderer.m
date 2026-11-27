@@ -1,4 +1,5 @@
 #import "ParagraphRenderer.h"
+#import "ENRMBlockSelectionRange.h"
 #import "FontUtils.h"
 #import "MarkdownASTNode.h"
 #import "ParagraphStyleUtils.h"
@@ -80,6 +81,11 @@
   }
 
   applyParagraphSpacingAfter(output, start, marginBottom);
+  if (!isBlockImage && output.length > start) {
+    [output addAttribute:ENRMSelectionBlockAttribute
+                   value:[NSObject new]
+                   range:NSMakeRange(start, output.length - start)];
+  }
 }
 
 @end
