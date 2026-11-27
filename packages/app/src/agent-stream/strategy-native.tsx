@@ -776,6 +776,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         keyExtractor={keyExtractor}
         testID="agent-chat-scroll"
         nativeID="agent-chat-scroll-native-virtualized"
+        keyboardShouldPersistTaps="handled"
         ListHeaderComponent={historyStartContent}
         ListFooterComponent={liveAuxiliaryContent ?? undefined}
         contentContainerStyle={listContentContainerStyle}

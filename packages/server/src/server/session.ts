@@ -3374,10 +3374,19 @@ export class Session {
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
         return this.handleCancelAgentRequest(msg.agentId, msg.requestId);
-      case "agent_permission_response":
-        return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
       case "clear_agent_attention":
         return this.handleClearAgentAttention(msg.agentId, msg.requestId);
+      default:
+        return this.dispatchAgentPermissionMessage(msg);
+    }
+  }
+
+  private dispatchAgentPermissionMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent_permission_response":
+        return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
+      case "agent.plan.review.request":
+        return this.handleAgentPlanReviewRequest(msg);
       default:
         return undefined;
     }
@@ -5840,6 +5849,21 @@ export class Session {
       });
       throw error;
     }
+  }
+
+  private async handleAgentPlanReviewRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.plan.review.request" }>,
+  ): Promise<void> {
+    let error: string | null = null;
+    try {
+      await this.agentManager.reviewPlan(msg);
+    } catch (failure) {
+      error = getErrorMessage(failure);
+    }
+    this.emit({
+      type: "agent.plan.review.response",
+      payload: { requestId: msg.requestId, agentId: msg.agentId, error },
+    });
   }
 
   private async handleDirectorySuggestionsRequest(msg: DirectorySuggestionsRequest): Promise<void> {

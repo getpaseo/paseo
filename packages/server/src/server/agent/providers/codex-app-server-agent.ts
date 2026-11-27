@@ -19,10 +19,12 @@ import {
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentPermissionResult,
+  type AgentPermissionResolutionOptions,
   type AgentProviderNotice,
   type AgentPromptContentBlock,
   type AgentPromptInput,
   type AgentRunOptions,
+  type PlanReviewTurn,
   type AgentRunResult,
   type AgentRuntimeInfo,
   type AgentClientInstallation,
@@ -4892,9 +4894,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
     this.pendingForegroundStart = pendingStart;
 
-    this.dismissPendingPlanApprovals("Dismissed by a new prompt");
+    const review = options?.planReview;
+    if (!review) this.dismissPendingPlanApprovals("Dismissed by a new prompt");
 
     try {
+      review?.signal.throwIfAborted();
       await this.pendingNotifications;
       await this.connect();
       if (!this.client) {
@@ -4944,6 +4948,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (pendingStart.cancelRequested) {
         throw new AgentTurnStartCanceledError();
       }
+      if (review) this.preparePlanReviewDispatch(review, turnStart.params);
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
     } catch (error) {
@@ -4958,6 +4963,24 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       pendingStart.resolve();
     }
+  }
+
+  private preparePlanReviewDispatch(review: PlanReviewTurn, params: Record<string, unknown>): void {
+    review.signal.throwIfAborted();
+    const mode = this.resolvedCollaborationMode;
+    const requiresPlan = review.mode === "plan";
+    if (this.planModeEnabled !== requiresPlan || (mode?.mode === "plan") !== requiresPlan) {
+      throw new Error("Codex changed modes before the plan review could start.");
+    }
+    if (requiresPlan && this.pendingPermissions.get(review.permissionRequestId)?.kind !== "plan") {
+      throw new Error("This plan is no longer awaiting review.");
+    }
+    if (mode) {
+      params.collaborationMode = { mode: mode.mode, settings: mode.settings };
+    } else {
+      delete params.collaborationMode;
+    }
+    this.dismissPendingPlanApprovals("Superseded by plan feedback");
   }
 
   async steerActiveTurn(
@@ -5246,6 +5269,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   async respondToPermission(
     requestId: string,
     response: AgentPermissionResponse,
+    options?: AgentPermissionResolutionOptions,
   ): Promise<AgentPermissionResult | void> {
     if (this.asyncQuestions.hasPending(requestId)) {
       return this.respondToAsyncQuestion(requestId, response);
@@ -5257,7 +5281,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     const pendingRequest = this.pendingPermissions.get(requestId) ?? null;
 
     if (pending.kind === "plan") {
-      return this.handlePlanPermissionResponse({ requestId, response, pending, pendingRequest });
+      return this.handlePlanPermissionResponse({
+        requestId,
+        response,
+        pending,
+        pendingRequest,
+        options,
+      });
     }
 
     this.pendingPermissionHandlers.delete(requestId);
@@ -5375,8 +5405,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     response: AgentPermissionResponse;
     pending: CodexPendingPermissionHandler;
     pendingRequest: AgentPermissionRequest | null;
+    options?: AgentPermissionResolutionOptions;
   }): AgentPermissionResult | void {
-    const { requestId, response, pending, pendingRequest } = params;
+    const { requestId, response, pending, pendingRequest, options } = params;
     let followUpPrompt: string | undefined;
     if (response.behavior === "allow") {
       followUpPrompt = this.preparePlanImplementation({
@@ -5384,7 +5415,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       });
     }
 
-    this.resolvePlanPermission(requestId, response);
+    this.resolvePlanPermission(
+      requestId,
+      options?.planApproval
+        ? { behavior: "allow", selectedActionId: options.planApproval }
+        : response,
+    );
     if (followUpPrompt) {
       return { followUpPrompt };
     }

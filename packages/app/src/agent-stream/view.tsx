@@ -26,7 +26,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { Check, ChevronDown, X } from "lucide-react-native";
+import { Check, ChevronDown, MessageSquare, X } from "lucide-react-native";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openExplorerSidebarView } from "@/workspace-tabs/explorer-sidebar";
 import {
@@ -41,6 +41,7 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
+import { PlanReviewForm } from "./plan-review-form";
 import { getStreamItemMessageId, type StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
@@ -145,22 +146,6 @@ function renderLiveAuxiliaryNode(input: {
 function BottomOverlayInset({ height }: { height: number }) {
   const style = useMemo(() => ({ height }), [height]);
   return <View style={style} />;
-}
-
-function renderPendingPermissionsNode(input: {
-  pendingPermissions: PendingPermission[];
-  client: DaemonClient | null;
-}): ReactNode {
-  if (input.pendingPermissions.length === 0) {
-    return null;
-  }
-  return (
-    <View style={stylesheet.permissionsContainer}>
-      {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
-      ))}
-    </View>
-  );
 }
 
 /**
@@ -984,19 +969,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
 
-    const pendingPermissionItems = useMemo(
-      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
-      [pendingPermissions, agentId],
-    );
-
-    const pendingPermissionsNode = useMemo(
-      () =>
-        renderPendingPermissionsNode({
-          pendingPermissions: pendingPermissionItems,
-          client,
-        }),
-      [client, pendingPermissionItems],
-    );
+    const pendingPermissionsNode = usePendingPermissionsNode({
+      agentId,
+      resolvedServerId,
+      pendingPermissions,
+      client,
+    });
     const turnFooterNode = useMemo(
       () =>
         isTurnActive || bottomTurnFooterHost ? (
@@ -1101,7 +1079,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           viewportRef,
         }),
     );
+    const hasEmptyConversationPrompt = Boolean(listEmptyComponent);
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
+      // The list strategies treat an auxiliary footer as content, even when it is only spacing.
+      if (hasEmptyConversationPrompt) return null;
       const existingTailSpacing =
         auxiliary.turnFooter && !auxiliary.pendingPermissions ? TURN_FOOTER_BOTTOM_SPACING : 0;
       const bottomOverlayInset = resolveBottomOverlayTailInset({
@@ -1113,7 +1094,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         turnFooter: auxiliary.turnFooter,
         bottomOverlayInset,
       });
-    }, [auxiliary.pendingPermissions, auxiliary.turnFooter, bottomOverlayTailClearance]);
+    }, [
+      auxiliary.pendingPermissions,
+      auxiliary.turnFooter,
+      bottomOverlayTailClearance,
+      hasEmptyConversationPrompt,
+    ]);
 
     const renderers = useMemo<StreamSegmentRenderers>(
       () => ({
@@ -1426,6 +1412,7 @@ function ToolCallSlot({
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCheckIcon = withUnistyles(Check);
 const ThemedXIcon = withUnistyles(X);
+const ThemedMessageSquareIcon = withUnistyles(MessageSquare);
 
 const primaryColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -1443,17 +1430,17 @@ const pressableStyle = ({
   pressed ? permissionStyles.optionButtonPressed : null,
 ];
 
-interface PermissionActionButtonProps {
-  action: AgentPermissionAction;
-  isRespondingAction: boolean;
+interface PermissionActionButtonProps<Action extends { label: string }> {
+  action: Action;
+  isRespondingAction?: boolean;
   isResponding: boolean;
-  isPrimary: boolean;
+  isPrimary?: boolean;
   Icon: typeof ThemedCheckIcon;
   testID: string;
-  onPress: (action: AgentPermissionAction) => void;
+  onPress: (action: Action) => void;
 }
 
-function PermissionActionButton({
+function PermissionActionButton<Action extends { label: string }>({
   action,
   isRespondingAction,
   isResponding,
@@ -1461,7 +1448,7 @@ function PermissionActionButton({
   Icon,
   testID,
   onPress,
-}: PermissionActionButtonProps) {
+}: PermissionActionButtonProps<Action>) {
   const handlePress = useCallback(() => onPress(action), [onPress, action]);
   const optionTextStyle = isPrimary
     ? [permissionStyles.optionText, permissionStyles.optionTextPrimary]
@@ -1487,15 +1474,165 @@ function PermissionActionButton({
   );
 }
 
+function usePendingPermissionsNode({
+  agentId,
+  resolvedServerId,
+  pendingPermissions,
+  client,
+}: {
+  agentId: string;
+  resolvedServerId: string;
+  pendingPermissions: AgentStreamViewProps["pendingPermissions"];
+  client: DaemonClient | null;
+}): ReactNode {
+  // COMPAT(planReview): added after v0.18.1, remove when the supported daemon floor advertises planReview.
+  const supportsPlanReview = useSessionStore(
+    (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.planReview === true,
+  );
+  const pendingPermissionItems = useMemo(
+    () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
+    [pendingPermissions, agentId],
+  );
+
+  const permissionScope = JSON.stringify([resolvedServerId, agentId]);
+  const [selectedPlanReview, setSelectedPlanReview] = useState<{
+    scope: string;
+    permission: PendingPermission;
+  } | null>(null);
+  const planReview =
+    selectedPlanReview?.scope === permissionScope ? selectedPlanReview.permission : null;
+  useEffect(() => {
+    setSelectedPlanReview((current) => (current?.scope === permissionScope ? current : null));
+  }, [permissionScope]);
+  const openPlanReview = useCallback(
+    (permission: PendingPermission) =>
+      setSelectedPlanReview({ scope: permissionScope, permission }),
+    [permissionScope],
+  );
+  const closePlanReview = useCallback(() => {
+    setSelectedPlanReview((current) => (current === selectedPlanReview ? null : current));
+  }, [selectedPlanReview]);
+
+  // A selected review keeps its card mounted if the host resolves the permission first.
+  return useMemo(
+    () =>
+      pendingPermissionItems.length > 0 || planReview ? (
+        <PendingPermissionCards
+          key={permissionScope}
+          permissions={pendingPermissionItems}
+          client={client}
+          supportsPlanReview={supportsPlanReview}
+          review={planReview}
+          onOpenReview={openPlanReview}
+          onCloseReview={closePlanReview}
+        />
+      ) : null,
+    [
+      client,
+      closePlanReview,
+      openPlanReview,
+      pendingPermissionItems,
+      permissionScope,
+      planReview,
+      supportsPlanReview,
+    ],
+  );
+}
+
+function PendingPermissionCards({
+  permissions,
+  client,
+  supportsPlanReview,
+  review,
+  onOpenReview,
+  onCloseReview,
+}: {
+  permissions: PendingPermission[];
+  client: DaemonClient | null;
+  supportsPlanReview: boolean;
+  review: PendingPermission | null;
+  onOpenReview: (permission: PendingPermission) => void;
+  onCloseReview: () => void;
+}) {
+  const activeReview = review && permissions.some((permission) => permission.key === review.key);
+  // Keep the draft available if the host consumes or replaces the proposal before replying.
+  const visiblePermissions = review && !activeReview ? [...permissions, review] : permissions;
+  return (
+    <View style={stylesheet.permissionsContainer}>
+      {visiblePermissions.map((permission) => (
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={client}
+          onOpenPlanReview={supportsPlanReview && !review ? onOpenReview : undefined}
+          isPlanReviewOpen={review?.key === permission.key}
+          canSubmitPlanReview={supportsPlanReview && Boolean(activeReview)}
+          onClosePlanReview={onCloseReview}
+        />
+      ))}
+    </View>
+  );
+}
+
+function PlanFeedbackButton({
+  permission,
+  planMarkdown,
+  isResponding,
+  onOpenPlanReview,
+}: {
+  permission: PendingPermission;
+  planMarkdown: string | undefined;
+  isResponding: boolean;
+  onOpenPlanReview?: (permission: PendingPermission) => void;
+}) {
+  const { t } = useTranslation();
+  const { request } = permission;
+  const openFeedback = useCallback(
+    () => onOpenPlanReview?.(permission),
+    [onOpenPlanReview, permission],
+  );
+  const feedbackAction = useMemo(() => ({ label: t("agentStream.permission.addFeedback") }), [t]);
+  if (
+    !onOpenPlanReview ||
+    request.kind !== "plan" ||
+    !planMarkdown?.trim() ||
+    (request.provider !== "codex" && request.provider !== "claude")
+  ) {
+    return null;
+  }
+  return (
+    <PermissionActionButton
+      action={feedbackAction}
+      isResponding={isResponding}
+      Icon={ThemedMessageSquareIcon}
+      testID="plan-add-feedback"
+      onPress={openFeedback}
+    />
+  );
+}
+
 function PermissionRequestCard({
   permission,
   client,
+  onOpenPlanReview,
+  isPlanReviewOpen,
+  canSubmitPlanReview,
+  onClosePlanReview,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  onOpenPlanReview?: (permission: PendingPermission) => void;
+  isPlanReviewOpen: boolean;
+  canSubmitPlanReview: boolean;
+  onClosePlanReview: () => void;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
+  const [planReviewDraft, setPlanReviewDraft] = useState("");
+  const finishPlanReview = useCallback(() => {
+    setPlanReviewDraft("");
+    onClosePlanReview();
+  }, [onClosePlanReview]);
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
@@ -1638,7 +1775,7 @@ function PermissionRequestCard({
     );
   }
 
-  const footer = (
+  const permissionActions = (
     <>
       <Text testID="permission-request-question" style={permissionStyles.question}>
         {t("agentStream.permission.question")}
@@ -1668,9 +1805,30 @@ function PermissionRequestCard({
             />
           );
         })}
+        <PlanFeedbackButton
+          permission={permission}
+          planMarkdown={planMarkdown}
+          isResponding={isResponding}
+          onOpenPlanReview={onOpenPlanReview}
+        />
       </View>
     </>
   );
+  let footer = permissionActions;
+  if (isPlanReviewOpen) {
+    footer = (
+      <PlanReviewForm
+        permission={permission}
+        client={client}
+        isAwaitingReview={canSubmitPlanReview}
+        isCompact={isMobile}
+        draft={planReviewDraft}
+        onChangeDraft={setPlanReviewDraft}
+        onClose={onClosePlanReview}
+        onSubmitSuccess={finishPlanReview}
+      />
+    );
+  }
 
   if (isPlanRequest && planMarkdown) {
     return (

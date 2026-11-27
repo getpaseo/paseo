@@ -5500,6 +5500,67 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test.each(["mode changed", "canceled"] as const)(
+    "never submits a Codex plan revision after startup is %s",
+    async (failure) => {
+      const threadStart = deferred<{ thread: { id: string } }>();
+      const appServer = createFakeCodexAppServer({
+        "thread/start": () => threadStart.promise,
+        "collaborationMode/list": async () => ({
+          data: [
+            { name: "Plan", mode: "plan" },
+            { name: "Code", mode: "default" },
+          ],
+        }),
+      });
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/workspace/project", providerOptions: { plan_mode: true } }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      const internal = asInternals(session);
+      await internal.handleNotification("turn/started", { turn: { id: "planning" } });
+      await internal.handleNotification("turn/plan/updated", {
+        plan: [{ step: "Original plan", status: "pending" }],
+      });
+      await internal.handleNotification("turn/completed", {
+        turn: { status: "completed", error: null },
+      });
+      const proposal = session
+        .getPendingPermissions()
+        .find((permission) => permission.kind === "plan");
+      expect(proposal).toBeDefined();
+      const startup = new AbortController();
+      const start = session.startTurn("revise the plan", {
+        planReview: { mode: "plan", permissionRequestId: proposal!.id, signal: startup.signal },
+      });
+      const rejected = expect(start).rejects.toThrow(
+        failure === "canceled" ? "Review canceled" : "Codex changed modes",
+      );
+
+      try {
+        await appServer.waitForRequest("thread/start");
+        if (failure === "canceled") {
+          startup.abort(new Error("Review canceled"));
+        } else {
+          await session.applyOptions({ plan_mode: false });
+        }
+        threadStart.resolve({ thread: { id: "thread-1" } });
+        await rejected;
+        expect(appServer.requests()).not.toContainEqual(
+          expect.objectContaining({ method: "turn/start" }),
+        );
+        expect(session.getPendingPermissions()).toContainEqual(proposal);
+        appServer.assertNoErrors();
+      } finally {
+        threadStart.resolve({ thread: { id: "thread-1" } });
+        await start.catch(() => undefined);
+        await session.close();
+      }
+    },
+  );
+
   test("cancels a cold start before it can issue a native turn", async () => {
     const threadStart = deferred<{ thread: { id: string } }>();
     const appServer = createFakeCodexAppServer({

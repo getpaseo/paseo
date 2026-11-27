@@ -269,6 +269,12 @@ export const es: TranslationResources = {
       implement: "Implementar",
       question: "¿Cómo le gustaría proceder?",
       proposedPlan: "Plan propuesto",
+      addFeedback: "Añadir comentarios",
+      requestChanges: "Solicitar cambios",
+      implementWithNotes: "Implementar con notas",
+      feedbackPlaceholder: "Escribe tus comentarios sobre el plan",
+      stalePlan: "Este plan ya no está pendiente de revisión.",
+      planReviewFailed: "No se pudieron enviar los comentarios sobre el plan.",
     },
   },
   agentPanel: {
