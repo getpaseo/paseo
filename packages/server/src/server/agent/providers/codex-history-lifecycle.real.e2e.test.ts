@@ -79,13 +79,8 @@ test.runIf(process.env.PASEO_NATIVE_ARCHIVE_QA === "1").each([true, false])(
           return child;
         },
         {},
-        false,
-        false,
-        false,
-        undefined,
-        "history",
       );
-      await history.connect();
+      await history.connectForHistory();
       const text: string[] = [];
       for await (const event of history.streamHistory()) {
         if (event.type === "timeline" && event.item.type === "assistant_message")
@@ -131,14 +126,9 @@ test.runIf(process.env.PASEO_NATIVE_ARCHIVE_QA === "1")(
         return child;
       },
       {},
-      false,
-      false,
-      false,
-      undefined,
-      "history",
     );
     try {
-      await expect(session.connect()).rejects.toThrow();
+      await expect(session.connectForHistory()).rejects.toThrow();
       expect(spawned).toHaveLength(1);
       expect(spawned.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(
         true,

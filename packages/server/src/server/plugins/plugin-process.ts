@@ -34,6 +34,7 @@ import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
   ProviderEventSchema,
+  ProviderHistoryReadResultSchema,
   type ProviderConnection,
   type ProviderRegistration,
   ProviderStatusSchema,
@@ -325,6 +326,7 @@ export function createPluginWorker(options: {
             hasUpdate: provider.installation.update !== undefined,
           }
         : undefined,
+      hasHistoryReader: provider.readSessionHistory !== undefined,
       command: provider.command,
       launchWrap: provider.launchWrap,
     };
@@ -608,6 +610,7 @@ export function createPluginWorker(options: {
       message.type === "provider.installation.inspect" ||
       message.type === "provider.installation.check_updates" ||
       message.type === "provider.installation.update" ||
+      message.type === "provider.history" ||
       message.type === "provider.catalog_key" ||
       message.type === "usage.fetch" ||
       message.type === "usage.discover" ||
@@ -685,6 +688,7 @@ export function createPluginWorker(options: {
     {
       type:
         | "provider.status"
+        | "provider.history"
         | "provider.catalog_key"
         | "provider.installation.inspect"
         | "provider.installation.check_updates"
@@ -714,6 +718,22 @@ export function createPluginWorker(options: {
         send({ type: "result", requestId: message.requestId, output });
       })().catch((error) =>
         send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
+      return true;
+    }
+    if (message.type === "provider.history") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider?.readSessionHistory) {
+          throw new Error(`Provider has no history reader capability: ${message.providerId}`);
+        }
+        return ProviderHistoryReadResultSchema.parse(
+          await provider.readSessionHistory(message.request),
+        );
+      })().then(
+        (output) => send({ type: "result", requestId: message.requestId, output }),
+        (error) =>
+          send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       );
       return true;
     }

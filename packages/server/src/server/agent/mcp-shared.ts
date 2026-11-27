@@ -91,6 +91,19 @@ export interface AgentWaitWithTimeoutResult extends WaitForAgentResult {
   timedOut: boolean;
 }
 
+function readRecentActivity(agentManager: AgentManager, agentId: string): string {
+  const agent = agentManager.getAgent(agentId) ?? agentManager.getHistorySnapshot(agentId);
+  if (!agent || agent.internal) {
+    return curateAgentActivity([]);
+  }
+  const recent = selectItemsByProjectedLimit({
+    items: agentManager.getTimeline(agentId),
+    direction: "tail",
+    limit: 5,
+  });
+  return curateAgentActivity(recent.items);
+}
+
 /**
  * Wraps agentManager.waitForAgentEvent with a self-imposed timeout.
  * Returns a friendly message when timeout occurs, rather than letting
@@ -142,13 +155,7 @@ export async function waitForAgentWithTimeout(
   } catch (error) {
     if (error instanceof Error && error.message === "wait timeout") {
       const snapshot = agentManager.getAgent(agentId);
-      const timeline = agentManager.getTimeline(agentId);
-      const recent = selectItemsByProjectedLimit({
-        items: timeline,
-        direction: "tail",
-        limit: 5,
-      });
-      const recentActivity = curateAgentActivity(recent.items);
+      const recentActivity = readRecentActivity(agentManager, agentId);
       const waitedSeconds = Math.round(AGENT_WAIT_TIMEOUT_MS / 1000);
       const message = `Awaiting the agent timed out after ${waitedSeconds}s. This does not mean the agent failed - it is still running. Call get_agent_status to check on it, or continue with other work if you will receive a finish notification.\n\nRecent activity:\n${recentActivity}`;
       return {

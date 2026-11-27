@@ -46,6 +46,8 @@ import {
   type ProviderConnectRequest,
   type ProviderConnection,
   type ProviderEvent,
+  type ProviderHistoryReadRequest,
+  type ProviderHistoryReadResult,
   type ProviderInput,
   type ProviderLaunch,
   type ProviderModel,
@@ -177,6 +179,36 @@ export async function createAcpProviderConnection(
       return closePromise;
     },
   };
+}
+
+export async function readAcpProviderHistory(
+  options: RunAcpProviderOptions,
+  request: ProviderHistoryReadRequest,
+): Promise<ProviderHistoryReadResult> {
+  const items: ProviderHistoryReadResult["items"] = [];
+  const runtime = await AcpRuntime.start({
+    options,
+    launch: request.launch,
+    boundarySessionId: "history-read",
+    cwd: request.cwd,
+    env: request.env ?? {},
+    wrap: request.wrap,
+    emit: (event) => {
+      if (event.type === "timeline.item") {
+        items.push({
+          item: event.item,
+          ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        });
+      }
+    },
+  });
+  try {
+    await runtime.readHistory(request.persistence, request.cwd);
+    await runtime.drainNotifications();
+    return { items, coverage: { kind: "complete" } };
+  } finally {
+    await runtime.closeSession();
+  }
 }
 
 interface AcpConnectionState {
@@ -758,6 +790,27 @@ class AcpRuntime {
     }
     if (this.processFailed && !isConnectionClosed()) {
       throw new Error(this.processFailureMessage ?? "ACP process exited during session open");
+    }
+  }
+
+  async readHistory(persistence: ProviderPersistence, cwd: string): Promise<void> {
+    const nativeSessionId = readNativeSessionId(persistence);
+    if (!nativeSessionId) throw new Error("ACP history read requires a native session handle");
+    this.nativeSessionId = nativeSessionId;
+    this.replayWindow = "replay";
+    try {
+      await this.call(
+        this.connection.loadSession({
+          sessionId: nativeSessionId,
+          cwd,
+          mcpServers: [],
+        }),
+      );
+      const quietPeriod = this.options.options.acpOptions?.loadReplayQuietPeriodMs;
+      if (quietPeriod && quietPeriod > 0) await this.waitForLoadReplay(quietPeriod, () => false);
+      await this.drainNotifications();
+    } finally {
+      this.replayWindow = null;
     }
   }
 

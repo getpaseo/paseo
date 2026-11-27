@@ -5,8 +5,9 @@ import type {
   AgentSessionConfig,
   AgentLaunchContext,
   AgentCreateSessionOptions,
-  AgentResumeSessionOptions,
   AgentPersistenceHandle,
+  AgentResumeSessionOptions,
+  AgentHistoryReadContext,
   FetchCatalogOptions,
   ProviderRefreshContext,
   ListImportableSessionsOptions,
@@ -173,6 +174,12 @@ export class OpenCodeRuntimeClient implements AgentClient {
     options?: AgentResumeSessionOptions,
   ) {
     return (await this.client()).resumeSession(handle, config, launch, options);
+  }
+  async readSessionHistory(handle: AgentPersistenceHandle, context?: AgentHistoryReadContext) {
+    const client: AgentClient = await this.client();
+    if (!client.readSessionHistory)
+      throw new Error("OpenCode runtime client does not support reading session history");
+    return client.readSessionHistory(handle, context);
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
     if (options.force) await this.reprobeLegacySelection();
