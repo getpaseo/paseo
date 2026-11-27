@@ -134,7 +134,7 @@ class PanelEdgeTest {
     instrumentation.runOnMainSync {
       DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(started)
       SoLoader.init(started, OpenSourceMergedSoMapping)
-      val react = ScrollTestContext(started.applicationContext)
+      val react = MountingReactContext(started.applicationContext)
       val context = ThemedReactContext(react, started)
       manager = PaseoScrollPackage().createViewManager(react, ReactScrollViewManager.REACT_CLASS) as ReactScrollViewManager
       parent = manager.createViewInstance(context)
