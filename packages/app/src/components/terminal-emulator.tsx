@@ -58,16 +58,37 @@ const HOST_DIV_STYLE: CSSProperties = {
   height: "100%",
   overflow: "hidden",
   overscrollBehavior: "none",
-  paddingTop: 0,
-  paddingBottom: 0,
-  paddingLeft: 0,
-  paddingRight: 0,
 };
 
 interface TerminalTouchFocus {
   pointerId: number;
   x: number;
   y: number;
+}
+
+const TERMINAL_PADDING_PX = 8;
+
+// The padding is outside xterm's element, so xterm doesn't hear events that start there.
+function screenBehindPadding(event: Event): Element | null {
+  const { currentTarget, target } = event;
+  if (!(currentTarget instanceof Element) || !(target instanceof Element)) {
+    return null;
+  }
+  return target.closest(".xterm") ? null : currentTarget.querySelector(".xterm-screen");
+}
+
+function forwardPaddingWheel(event: WheelEvent): void {
+  screenBehindPadding(event)?.dispatchEvent(new WheelEvent(event.type, event));
+}
+
+function forwardPaddingMouseDown(event: MouseEvent): void {
+  const screen = screenBehindPadding(event);
+  if (!screen) {
+    return;
+  }
+  // The default action would move focus out of the terminal.
+  event.preventDefault();
+  screen.dispatchEvent(new MouseEvent(event.type, event));
 }
 
 function buildXtermThemeKey(theme: ITheme): string {
@@ -452,6 +473,19 @@ export default function TerminalEmulator({
   }, [onSwipeLeft, onSwipeRight, swipeGesturesEnabled]);
 
   useEffect(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return () => {};
+    }
+    root.addEventListener("wheel", forwardPaddingWheel, { passive: true });
+    root.addEventListener("mousedown", forwardPaddingMouseDown);
+    return () => {
+      root.removeEventListener("wheel", forwardPaddingWheel);
+      root.removeEventListener("mousedown", forwardPaddingMouseDown);
+    };
+  }, []);
+
+  useEffect(() => {
     const host = hostRef.current;
     const root = rootRef.current;
     if (!host || !root) {
@@ -617,6 +651,9 @@ export default function TerminalEmulator({
     () => ({
       position: "relative",
       display: "flex",
+      // Pad the root, not the host: xterm's fit addon counts the host's padding as usable space.
+      boxSizing: "border-box",
+      padding: TERMINAL_PADDING_PX,
       width: "100%",
       height: "100%",
       minHeight: 0,

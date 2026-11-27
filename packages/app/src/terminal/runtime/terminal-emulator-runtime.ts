@@ -323,6 +323,7 @@ export class TerminalEmulatorRuntime {
   private readonly inputModeTracker = new TerminalInputModeTracker();
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
   private themeBackgroundElements: HTMLElement[] = [];
+  private root: HTMLDivElement | null = null;
 
   private handleVisibilityRestore = (): void => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -493,11 +494,10 @@ export class TerminalEmulatorRuntime {
   private findWidgetCoversSelection(): boolean {
     if (!this.findQuery) return false;
     const terminal = this.terminal;
-    const element = terminal?.element;
-    const screen = element?.querySelector(".xterm-screen");
+    const screen = terminal?.element?.querySelector(".xterm-screen");
     const selection = terminal?.getSelectionPosition();
-    if (!terminal || !element || !screen || !selection) return false;
-    const root = element.getBoundingClientRect();
+    if (!terminal || !this.root || !screen || !selection) return false;
+    const root = this.root.getBoundingClientRect();
     const grid = screen.getBoundingClientRect();
     const cellWidth = grid.width / terminal.cols;
     const cellHeight = grid.height / terminal.rows;
@@ -618,6 +618,7 @@ export class TerminalEmulatorRuntime {
     }
     terminal.open(input.host);
     this.themeBackgroundElements = this.collectThemeBackgroundElements(input);
+    this.root = input.root;
     this.applyThemeBackground(input.theme);
 
     const disposeImageAddon = (): void => {
@@ -1134,6 +1135,7 @@ export class TerminalEmulatorRuntime {
     this.fitAndEmitResize = null;
     this.lastSize = null;
     this.themeBackgroundElements = [];
+    this.root = null;
     this.suppressInput = false;
     this.inputModeDecoder.decode();
     this.inputModeTracker.reset();
