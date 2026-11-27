@@ -54,6 +54,12 @@ A delegating principal can grant only authority it already possesses. A session 
 
 Workspace-scoped grants require every resource-bearing operation and outbound observation to enforce the same workspace boundary. File preview currently accepts any daemon-readable regular file, so it must gain resource enforcement before workspace-specific access ships.
 
+## Device preference identifiers
+
+Shared ordering uses the admitted principal plus hello `clientId` only as a preference
+namespace. It does not authenticate a device. See the [ordering persistence contract](data-model.md#shared-ordering)
+for offline inventory retention and explicit forget semantics.
+
 ## Hub
 
 The Hub authenticates as a service principal. Its locally selected grants decide whether it may execute agents, manage the daemon, manage tunnels, or manage access.
