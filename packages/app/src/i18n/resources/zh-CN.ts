@@ -3103,6 +3103,7 @@ export const zhCN: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Agent 配置",
+        sectionDescription: "保存可快速选用的 Agent 设置，Agent 委派工作时也可以使用这些配置",
         unavailable: "连接到这个 Host 以管理 Agent 配置",
         unsupported: "此 Host 运行的 Daemon 尚不支持 Agent 配置",
         emptyState: "还没有配置。添加一个以便使用保存的 Provider 和 Model 启动 Agent。",
@@ -3126,6 +3127,9 @@ export const zhCN: TranslationResources = {
         featuresLabel: "Features",
         featureCount: "{{count}} 个 Feature",
         featureCountOne: "{{count}} 个 Feature",
+        systemPromptLabel: "System prompt",
+        systemPromptPlaceholder: "专注于布局、无障碍和设计 token。",
+        systemPromptHint: "仅适用于新 Agent",
         notesLabel: "适用场景",
         notesPlaceholder: "用于 UI 工作 — 组件、布局和设计 token。",
         notesHint: "帮助 Agent 在启动另一个 Agent 时选择此配置。",

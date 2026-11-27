@@ -3170,6 +3170,8 @@ export const ar: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "ملفات تعريف الوكيل",
+        sectionDescription:
+          "احفظ إعدادات الوكيل لاختيارها بسرعة ولكي يستخدمها الوكلاء عند تفويض العمل",
         unavailable: "اتصل بهذا المضيف لإدارة ملفات تعريف الوكيل",
         unsupported: "يشغّل هذا المضيف نسخة Daemon لا تدعم ملفات تعريف الوكيل بعد",
         emptyState: "لا توجد ملفات تعريف بعد. أضف واحدًا لبدء الوكلاء من مزود ونموذج محفوظين.",
@@ -3193,6 +3195,9 @@ export const ar: TranslationResources = {
         featuresLabel: "السمات",
         featureCount: "{{count}} سمة",
         featureCountOne: "{{count}} سمة",
+        systemPromptLabel: "موجه النظام",
+        systemPromptPlaceholder: "ركز على التخطيط وإمكانية الوصول ورموز التصميم.",
+        systemPromptHint: "ينطبق على الوكلاء الجدد فقط",
         notesLabel: "متى يُستخدم",
         notesPlaceholder: "استخدمه لعمل الواجهة — المكونات والتخطيط ورموز التصميم.",
         notesHint: "يساعد الوكلاء على اختيار ملف التعريف هذا عند بدء وكيل آخر.",

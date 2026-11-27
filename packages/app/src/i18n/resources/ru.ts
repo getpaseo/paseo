@@ -3193,6 +3193,8 @@ export const ru: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Профили агентов",
+        sectionDescription:
+          "Сохраняйте настройки агентов, чтобы быстро выбирать их и позволять агентам использовать их при делегировании задач",
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями агентов",
         unsupported: "На этом хосте запущен демон, который пока не поддерживает профили агентов",
         emptyState:
@@ -3217,6 +3219,9 @@ export const ru: TranslationResources = {
         featuresLabel: "Функции",
         featureCount: "Функции: {{count}}",
         featureCountOne: "{{count}} функция",
+        systemPromptLabel: "Системный промпт",
+        systemPromptPlaceholder: "Сосредоточься на вёрстке, доступности и дизайн-токенах.",
+        systemPromptHint: "Применяется только к новым агентам",
         notesLabel: "Когда использовать",
         notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
         notesHint: "Помогает агентам выбрать этот профиль при запуске другого агента.",

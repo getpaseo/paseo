@@ -3149,6 +3149,8 @@ export const ko: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "에이전트 프로필",
+        sectionDescription:
+          "빠르게 선택할 수 있고 에이전트가 작업을 위임할 때도 사용할 수 있는 에이전트 설정을 저장합니다",
         unavailable: "에이전트 프로필을 관리하려면 이 호스트에 연결하세요",
         unsupported: "이 호스트에서 실행 중인 데몬은 아직 에이전트 프로필을 지원하지 않습니다",
         emptyState:
@@ -3173,6 +3175,9 @@ export const ko: TranslationResources = {
         featuresLabel: "기능",
         featureCount: "기능 {{count}}개",
         featureCountOne: "기능 {{count}}개",
+        systemPromptLabel: "시스템 프롬프트",
+        systemPromptPlaceholder: "레이아웃, 접근성, 디자인 토큰에 집중하세요.",
+        systemPromptHint: "새 에이전트에만 적용됩니다",
         notesLabel: "사용 시점",
         notesPlaceholder: "UI 작업에 사용 — 컴포넌트, 레이아웃, 디자인 토큰.",
         notesHint: "에이전트가 다른 에이전트를 시작할 때 이 프로필을 선택하는 데 사용됩니다.",

@@ -40,6 +40,7 @@ export function buildAgentProfileRosterSummary(input: {
   profile: AgentProfile;
   entries: readonly ProviderSnapshotEntry[] | undefined;
   formatFeatureCount: (count: number) => string;
+  systemPromptLabel?: string;
 }): AgentProfileRosterSummary {
   const allTags = buildAgentProfileTags(input);
   const providerLabel =
@@ -63,6 +64,26 @@ function findEntry(
   return entries.find((entry) => entry.provider === provider) ?? null;
 }
 
+function resolveModelTag(
+  profile: AgentProfile,
+  entry: ProviderSnapshotEntry | null,
+): AgentProfileTag | null {
+  const modelId = profile.model?.trim();
+  if (!modelId) return null;
+  const model = entry?.models?.find((candidate) => candidate.id === modelId);
+  return { id: "model", label: model?.label ?? modelId };
+}
+
+function resolveModeTag(
+  profile: AgentProfile,
+  entry: ProviderSnapshotEntry | null,
+): AgentProfileTag | null {
+  const modeId = profile.modeId?.trim();
+  if (!modeId) return null;
+  const mode = entry?.modes?.find((candidate) => candidate.id === modeId);
+  return { id: "mode", label: mode ? formatAgentModeLabel(mode) : modeId };
+}
+
 /**
  * The one-line résumé of a profile in the settings list. Every label falls back
  * to the stored id: a row must stay readable on a host whose provider catalog
@@ -72,24 +93,16 @@ export function buildAgentProfileTags(input: {
   profile: AgentProfile;
   entries: readonly ProviderSnapshotEntry[] | undefined;
   formatFeatureCount: (count: number) => string;
+  systemPromptLabel?: string;
 }): AgentProfileTag[] {
-  const entries = input.entries ?? [];
-  const entry = findEntry(entries, input.profile.provider);
+  const entry = findEntry(input.entries ?? [], input.profile.provider);
   const tags: AgentProfileTag[] = [
     { id: "provider", label: entry?.label ?? input.profile.provider },
   ];
-
-  const modelId = input.profile.model?.trim();
-  if (modelId) {
-    const model = entry?.models?.find((candidate) => candidate.id === modelId);
-    tags.push({ id: "model", label: model?.label ?? modelId });
-  }
-
-  const modeId = input.profile.modeId?.trim();
-  if (modeId) {
-    const mode = entry?.modes?.find((candidate) => candidate.id === modeId);
-    tags.push({ id: "mode", label: mode ? formatAgentModeLabel(mode) : modeId });
-  }
+  const modelTag = resolveModelTag(input.profile, entry);
+  if (modelTag) tags.push(modelTag);
+  const modeTag = resolveModeTag(input.profile, entry);
+  if (modeTag) tags.push(modeTag);
 
   const thinkingOptionId = input.profile.thinkingOptionId?.trim();
   if (thinkingOptionId) {
@@ -99,6 +112,10 @@ export function buildAgentProfileTags(input: {
   const featureCount = Object.keys(input.profile.options ?? {}).length;
   if (featureCount > 0) {
     tags.push({ id: "features", label: input.formatFeatureCount(featureCount) });
+  }
+
+  if (input.profile.systemPrompt?.trim() && input.systemPromptLabel) {
+    tags.push({ id: "systemPrompt", label: input.systemPromptLabel });
   }
 
   return tags;

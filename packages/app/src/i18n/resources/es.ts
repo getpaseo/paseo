@@ -3203,6 +3203,8 @@ export const es: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Perfiles de agente",
+        sectionDescription:
+          "Guarda configuraciones de agente que puedes elegir rápido y que los agentes pueden usar para delegar trabajo",
         unavailable: "Conéctese a este host para administrar perfiles de agente",
         unsupported: "Este host ejecuta un daemon que aún no admite perfiles de agente",
         emptyState:
@@ -3227,6 +3229,9 @@ export const es: TranslationResources = {
         featuresLabel: "Características",
         featureCount: "{{count}} características",
         featureCountOne: "{{count}} característica",
+        systemPromptLabel: "Aviso del sistema",
+        systemPromptPlaceholder: "Enfócate en el diseño, la accesibilidad y los tokens de diseño.",
+        systemPromptHint: "Solo se aplica a agentes nuevos",
         notesLabel: "Cuándo usarlo",
         notesPlaceholder: "Úselo para trabajo de UI: componentes, diseño y tokens de diseño.",
         notesHint: "Ayuda a los agentes a elegir este perfil al iniciar otro agente.",
