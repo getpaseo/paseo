@@ -137,18 +137,10 @@ opens on press.
 
 ## Item states
 
-`selected` and `active` are different questions and must not be merged.
+Reserve the row fill for hover, focus, and press. An open submenu trigger emphasizes its chevron
+so the current option's fill stays distinct.
 
-| Prop       | Means                      | Draws                     |
-| ---------- | -------------------------- | ------------------------- |
-| `selected` | This is the chosen value   | A check, and nothing else |
-| `active`   | This row's submenu is open | The fill, and no check    |
-
-`selected` also announces itself as `aria-checked`, so a multi-select page is audible as the list
-of on/off things it is.
-
-A selected row does **not** get a background. A check and a fill are two separate claims about the
-same state, and showing both makes a chosen row compete with the row the pointer is actually on.
+`selected` draws a check and exposes its state through `aria-checked`.
 `showSelectedCheck` moves the check to a reserved leading column when a group needs to stay
 aligned whether ticked or not; otherwise it sits at the trailing edge and the leading slot is free
 for the option's icon.

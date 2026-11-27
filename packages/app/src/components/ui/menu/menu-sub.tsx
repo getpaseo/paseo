@@ -18,6 +18,7 @@ import { isHoverPointer } from "./menu-pointer";
 
 const ThemedChevronRight = withUnistyles(ChevronRight);
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const openIconMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 
 /**
  * A row that leads to a submenu page, showing the decision's current value on the way in
@@ -88,8 +89,8 @@ export function MenuSubTrigger({
   );
 
   const trailing = useMemo(
-    () => <MenuSubTrailing value={value} indicator={indicator} />,
-    [value, indicator],
+    () => <MenuSubTrailing value={value} indicator={indicator} open={isOpen} />,
+    [value, indicator, isOpen],
   );
 
   return (
@@ -100,7 +101,7 @@ export function MenuSubTrigger({
       onPointerLeave={isPopover && !disabled ? handlePointerLeave : undefined}
     >
       <MenuItem
-        active={isOpen}
+        expanded={isOpen}
         closeOnSelect={false}
         disabled={disabled}
         onSelect={handleSelect}
@@ -117,9 +118,11 @@ export function MenuSubTrigger({
 function MenuSubTrailing({
   value,
   indicator,
+  open,
 }: {
   value?: string;
   indicator: boolean;
+  open: boolean;
 }): ReactElement {
   return (
     <View style={styles.trailing}>
@@ -129,7 +132,7 @@ function MenuSubTrailing({
         </Text>
       ) : null}
       {indicator ? <View style={styles.indicator} testID="menu-sub-indicator" /> : null}
-      <ThemedChevronRight size={14} uniProps={mutedIconMapping} />
+      <ThemedChevronRight size={14} uniProps={open ? openIconMapping : mutedIconMapping} />
     </View>
   );
 }

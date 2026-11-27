@@ -265,11 +265,8 @@ export interface MenuItemProps {
   selected?: boolean;
   /** Reserves a leading check column so a group of items stays aligned whether ticked or not. */
   showSelectedCheck?: boolean;
-  /**
-   * This row's submenu is open. Distinct from `selected`: it is about where you are, not what
-   * you picked, so it takes the background that `selected` gives up.
-   */
-  active?: boolean;
+  /** Whether this row's submenu is open. Leave unset for rows without a submenu. */
+  expanded?: boolean;
   leading?: ReactElement | null;
   trailing?: ReactElement | null;
   /** @deprecated Use `status` instead */
@@ -323,7 +320,7 @@ function MenuRow({
   destructive,
   selected,
   showSelectedCheck = false,
-  active = false,
+  expanded,
   leading,
   trailing,
   loading,
@@ -374,14 +371,13 @@ function MenuRow({
       focused = false,
     }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
       styles.item,
-      active ? styles.itemActive : null,
       isDisabled ? styles.itemDisabled : null,
       muted && !isDisabled ? styles.itemMuted : null,
       hovered && !pressed && !isDisabled ? styles.itemHovered : null,
       focused && !isDisabled ? styles.itemHovered : null,
       pressed && !isDisabled ? styles.itemPressed : null,
     ],
-    [active, isDisabled, muted],
+    [isDisabled, muted],
   );
 
   const itemTextStyle = useMemo(
@@ -405,6 +401,7 @@ function MenuRow({
       accessibilityRole={accessibilityRole}
       accessibilityState={accessibilityState}
       aria-checked={selected}
+      aria-expanded={expanded}
       // Popovers manage focus via arrow keys; compact sheets rely on the browser's Tab order.
       tabIndex={isSheet ? 0 : -1}
       dataSet={itemDataSet}
@@ -547,10 +544,6 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
   },
   itemPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
-  // The row you are inside, not the value you chose. A chosen value is marked by its check.
-  itemActive: {
     backgroundColor: theme.colors.surface2,
   },
   itemDisabled: {

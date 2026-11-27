@@ -143,6 +143,36 @@ const SUB_PAGES: MenuPageDefinition[] = [
   },
 ];
 
+describe("submenu flyout highlighting on web", () => {
+  it("gives the hovered option a different fill from the open trigger", async () => {
+    await page.viewport(1280, 900);
+    mount(
+      <MenuRoot>
+        <MenuTrigger testID="pill" accessibilityLabel="Open menu">
+          <Text>Open menu</Text>
+        </MenuTrigger>
+        <MenuSurface pages={SUB_PAGES}>
+          <MenuItem>Sort</MenuItem>
+          <MenuSubTrigger id="show" testID="show-row">
+            Show
+          </MenuSubTrigger>
+        </MenuSurface>
+      </MenuRoot>,
+    );
+    await page.getByTestId("pill").click();
+    await page.getByTestId("show-row").hover();
+
+    const option = page.getByTestId("show-option");
+    await option.hover();
+    await expect.element(option).toHaveFocus();
+
+    const trigger = getComputedStyle(element("show-row"));
+    const hovered = getComputedStyle(element("show-option"));
+    expect(trigger.backgroundColor).not.toBe(hovered.backgroundColor);
+    await expect.element(page.getByTestId("show-row")).toHaveAttribute("aria-expanded", "true");
+  });
+});
+
 /** Past the grace a flyout is given after the pointer leaves, so a queued close has landed. */
 const HOVER_CLOSE_SETTLED_MS = 600;
 
