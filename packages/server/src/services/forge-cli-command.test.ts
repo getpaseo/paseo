@@ -371,7 +371,8 @@ describe.runIf(isPlatform("win32"))("createForgeCliRunner (Windows)", () => {
   });
 
   afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
+    // Windows can keep the copied .exe locked for a moment after its process exits.
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   class FakeCommandError extends Error {

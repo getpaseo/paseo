@@ -631,6 +631,37 @@ describe("stream reducer tool call idempotency", () => {
 });
 
 describe("stream reducer canonical tool calls", () => {
+  it("keeps metadata.intent across lifecycle updates that omit it", () => {
+    const base = { provider: "codex" as const, callId: "call-intent", name: "shell" };
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          ...base,
+          status: "running",
+          metadata: { intent: "Inspect" },
+        }),
+        timestamp: new Date(0),
+      },
+      {
+        event: canonicalToolTimeline({ ...base, status: "running" }),
+        timestamp: new Date(1),
+      },
+      {
+        event: canonicalToolTimeline({
+          ...base,
+          status: "completed",
+          metadata: { exitReason: "done" },
+        }),
+        timestamp: new Date(2),
+      },
+    ]);
+
+    expect(findToolByCallId(state, base.callId)?.payload.data.metadata).toEqual({
+      intent: "Inspect",
+      exitReason: "done",
+    });
+  });
+
   it("keeps repeated call ids in different turns as distinct timeline rows", () => {
     const callId = "tool-reused-across-turns";
     const state = hydrateStreamState([

@@ -1,5 +1,9 @@
 import { mapCustomMessageToToolCall } from "../custom-message.js";
-import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import type {
+  AgentStreamEvent,
+  ToolCallDetail,
+  ToolCallTimelineItem,
+} from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
 import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
@@ -14,6 +18,7 @@ import {
   resolveToolCallName,
   toolFailureMessage,
   isOmpToolFailure,
+  withOmpToolIntent,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -186,7 +191,7 @@ export class OmpHistoryMapper {
         continue;
       }
       if (content.type === "toolCall") {
-        const tracked = parseToolArgs(content.name, content.arguments);
+        const tracked = parseToolArgs(content.name, content.arguments, content.intent);
         this.pendingToolCalls.set(content.id, tracked);
         const detail = this.mapToolDetail(content.id, tracked, null);
         if (!detail) {
@@ -195,14 +200,17 @@ export class OmpHistoryMapper {
         events.push({
           type: "timeline",
           provider: this.provider,
-          item: {
-            type: "tool_call",
-            callId: this.resolveToolCallId(content.id, tracked),
-            name: this.toolName(tracked, null),
-            status: "running",
-            detail,
-            error: null,
-          },
+          item: withOmpToolIntent(
+            {
+              type: "tool_call",
+              callId: this.resolveToolCallId(content.id, tracked),
+              name: this.toolName(tracked, null),
+              status: "running",
+              detail,
+              error: null,
+            },
+            tracked,
+          ),
         });
       }
     }
@@ -223,13 +231,16 @@ export class OmpHistoryMapper {
     return {
       type: "timeline",
       provider: this.provider,
-      item: toToolResultTimelineItem({
-        callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: this.toolName(tracked, result),
-        isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
-        detail,
-        errorText: toolFailureMessage(result),
-      }),
+      item: withOmpToolIntent(
+        toToolResultTimelineItem({
+          callId: this.resolveToolCallId(message.toolCallId, tracked),
+          name: this.toolName(tracked, result),
+          isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
+          detail,
+          errorText: toolFailureMessage(result),
+        }),
+        tracked,
+      ),
     };
   }
 
@@ -300,7 +311,7 @@ function toToolResultTimelineItem(input: {
   isError: boolean;
   detail: ToolCallDetail;
   errorText: string;
-}): AgentTimelineItem {
+}): ToolCallTimelineItem {
   if (input.isError) {
     return {
       type: "tool_call",

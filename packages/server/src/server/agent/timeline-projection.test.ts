@@ -128,6 +128,7 @@ describe("projectTimelineRows", () => {
           type: "tool_call",
           callId: "call_1",
           name: "shell",
+          metadata: { intent: "Inspect files" },
           status: "running",
           error: null,
           detail: {
@@ -168,6 +169,7 @@ describe("projectTimelineRows", () => {
     if (tool?.item.type === "tool_call") {
       expect(tool.item.status).toBe("completed");
       expect(tool.item.callId).toBe("call_1");
+      expect(tool.item.metadata).toEqual({ intent: "Inspect files" });
     }
     expect(tool?.sourceSeqRanges).toEqual([
       { startSeq: 1, endSeq: 1 },

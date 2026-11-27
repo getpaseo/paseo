@@ -53,6 +53,35 @@ describe("plugin timeline projection", () => {
     },
   );
 
+  it("passes tool-call metadata to timeline transformers", () => {
+    const source: StreamItem = {
+      kind: "tool_call",
+      id: "tool-intent",
+      timestamp: new Date(0),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "omp",
+          callId: "call-1",
+          name: "bash",
+          status: "running",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+          metadata: { intent: "Inspect files" },
+        },
+      },
+    };
+    const seen: unknown[] = [];
+    const transform: TimelineItemTransform = ({ item }) => {
+      if (item.type === "tool_call") seen.push(item.metadata?.intent);
+      return undefined;
+    };
+
+    projectPluginTimelineItems([source], transform);
+
+    expect(seen).toEqual(["Inspect files"]);
+  });
+
   it("does not expose mutable tool detail from stream state", () => {
     const detail = { type: "read" as const, filePath: "/repo/original.ts" };
     const source: StreamItem = {
