@@ -113,13 +113,33 @@ export async function ensureAgentLoaded(
 
     let snapshot: ManagedAgent;
     if (handle) {
-      snapshot = await deps.agentManager.resumeAgentFromPersistence(
-        handle,
-        buildConfigOverrides(record),
-        agentId,
-        { ...extractTimestamps(record), attention: extractAttention(record) },
-        deps.purpose ? { purpose: deps.purpose } : undefined,
-      );
+      const overrides = buildConfigOverrides(record);
+      const timestamps = { ...extractTimestamps(record), attention: extractAttention(record) };
+      const resumeOptions = deps.purpose ? { purpose: deps.purpose } : undefined;
+      try {
+        snapshot = await deps.agentManager.resumeAgentFromPersistence(
+          handle,
+          overrides,
+          agentId,
+          timestamps,
+          resumeOptions,
+        );
+      } catch (error) {
+        if (deps.purpose !== "history" || !overrides.model) {
+          throw error;
+        }
+        deps.logger.warn(
+          { agentId, provider: record.provider, model: overrides.model, err: error },
+          "Resuming history with stored model failed; retrying without model override",
+        );
+        snapshot = await deps.agentManager.resumeAgentFromPersistence(
+          handle,
+          { ...overrides, model: undefined },
+          agentId,
+          timestamps,
+          resumeOptions,
+        );
+      }
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
       // No provider handle to resume: this starts the agent's first session rather than
