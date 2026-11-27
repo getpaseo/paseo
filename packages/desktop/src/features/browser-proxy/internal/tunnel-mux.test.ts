@@ -1,5 +1,5 @@
 import { Duplex, PassThrough } from "node:stream";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   decodeNetworkTunnelFrame,
   encodeNetworkTunnelFrame,
@@ -278,20 +278,30 @@ describe("TunnelMuxClient", () => {
   });
 
   test("sends heartbeat pings and closes a silent half-open wire after heartbeatTimeoutMs", async () => {
-    const fake = createFakeWire();
-    const mux = new TunnelMuxClient(fake.wire, {
-      heartbeatIntervalMs: 25,
-      heartbeatTimeoutMs: 65,
-    });
+    // The clock is faked: on a slow machine the first real interval tick can land after the
+    // timeout, and then the wire closes before any ping goes out.
+    vi.useFakeTimers();
+    try {
+      const fake = createFakeWire();
+      const mux = new TunnelMuxClient(fake.wire, {
+        heartbeatIntervalMs: 25,
+        heartbeatTimeoutMs: 65,
+      });
+      let closeErr: Error | undefined;
+      mux.onClose((err) => {
+        closeErr = err;
+      });
 
-    const closed = new Promise<Error | undefined>((resolve) => {
-      mux.onClose((err) => resolve(err));
-    });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(fake.sentFrames.filter((f) => f.type === "ping")).toHaveLength(2);
+      expect(mux.isClosed()).toBe(false);
 
-    const closeErr = await closed;
-    expect(mux.isClosed()).toBe(true);
-    expect(fake.sentFrames.some((f) => f.type === "ping")).toBe(true);
-    expect(closeErr?.message).toMatch(/heartbeat/i);
+      await vi.advanceTimersByTimeAsync(25);
+      expect(mux.isClosed()).toBe(true);
+      expect(closeErr?.message).toMatch(/heartbeat/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("closes an unresponsive wire when openStream times out with zero inbound frames", async () => {
