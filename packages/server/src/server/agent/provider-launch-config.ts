@@ -1,10 +1,7 @@
-import { constants as fsConstants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { isAbsolute, resolve as resolvePath } from "node:path";
+import { isAbsolute } from "node:path";
 import {
   executableExists,
   findExecutable,
-  findExecutableWithoutProbing,
 } from "../../executable-resolution/executable-resolution.js";
 import {
   createExternalProcessEnv,
@@ -68,12 +65,16 @@ function normalizeLaunchDefault(
   return defaultBinary;
 }
 
-async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promise<string | null> {
-  const found = await findExecutable(command, { env });
+async function resolveLaunchPath(
+  command: string,
+  env?: ProcessEnvRecord,
+  options?: { probe?: boolean },
+): Promise<string | null> {
+  const found = await findExecutable(command, { env, probe: options?.probe });
   if (found) {
     return found;
   }
-  if (isAbsolute(command)) {
+  if (options?.probe !== false && isAbsolute(command)) {
     return executableExists(command);
   }
   return null;
@@ -81,10 +82,11 @@ async function resolveLaunchPath(command: string, env?: ProcessEnvRecord): Promi
 
 async function resolveDefaultLaunchPath(
   defaultBinary: ProviderLaunchDefault,
+  options?: { probe?: boolean },
 ): Promise<string | null> {
   return defaultBinary.resolvePath
     ? await defaultBinary.resolvePath()
-    : await resolveLaunchPath(defaultBinary.command);
+    : await resolveLaunchPath(defaultBinary.command, undefined, options);
 }
 
 export interface ResolveProviderLaunchOptions {
@@ -117,47 +119,15 @@ export async function resolveProviderLaunch({
   };
 }
 
-async function isExecutableFile(candidate: string): Promise<boolean> {
-  try {
-    const info = await stat(candidate);
-    if (!info.isFile()) return false;
-    if (process.platform !== "win32") {
-      await access(candidate, fsConstants.X_OK);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolveLaunchPathWithoutProbing(
-  command: string,
-  env?: ProcessEnvRecord,
-): Promise<string | null> {
-  const trimmed = command.trim();
-  if (!trimmed) return null;
-  if (isAbsolute(trimmed) || trimmed.includes("/") || trimmed.includes("\\")) {
-    const resolved = isAbsolute(trimmed) ? trimmed : resolvePath(trimmed);
-    const existing = executableExists(resolved);
-    if (!existing) return null;
-    return (await isExecutableFile(existing)) ? existing : null;
-  }
-  return findExecutableWithoutProbing(trimmed, { path: env?.PATH, cwd: process.cwd() });
-}
-
 export async function checkProviderLaunchAvailable(
   launch: ResolvedProviderLaunch,
   defaultBinary?: ProviderLaunchDefault,
   options?: { probe?: boolean },
 ): Promise<ProviderLaunchAvailability> {
-  let resolvedPath: string | null;
-  if (defaultBinary && launch.source !== "override") {
-    resolvedPath = await resolveDefaultLaunchPath(defaultBinary);
-  } else if (options?.probe === false) {
-    resolvedPath = await resolveLaunchPathWithoutProbing(launch.command, launch.env);
-  } else {
-    resolvedPath = await resolveLaunchPath(launch.command, launch.env);
-  }
+  const resolvedPath =
+    defaultBinary && launch.source !== "override"
+      ? await resolveDefaultLaunchPath(defaultBinary, options)
+      : await resolveLaunchPath(launch.command, launch.env, options);
   return {
     available: resolvedPath !== null,
     resolvedPath,
