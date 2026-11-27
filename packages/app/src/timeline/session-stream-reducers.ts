@@ -791,21 +791,38 @@ function reconcileOverlappingProjectedAssistant(params: {
   epoch: string;
   currentEndSeq: number;
 }): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
-  const { unit } = params;
-  if (
-    unit.event.type !== "timeline" ||
-    unit.event.item.type !== "assistant_message" ||
-    !unit.sourceSeqRanges.some(
-      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
-    )
-  ) {
-    return { tail: params.tail, head: params.head, reconciled: false };
+  const { unit, currentEndSeq, epoch } = params;
+  const unchanged = { tail: params.tail, head: params.head, reconciled: false };
+  if (unit.event.type !== "timeline" || unit.event.item.type !== "assistant_message") {
+    return unchanged;
   }
 
   const projectedText = unit.event.item.text;
   const projectedMessageId = unit.event.item.messageId;
+  const crossesCursor = unit.sourceSeqRanges.some(
+    (range) => range.startSeq <= currentEndSeq && range.endSeq > currentEndSeq,
+  );
+  // A steer occupies the gap between source ranges. Match that projected reply
+  // by its source positions because a tool call can split rows with the same id.
+  const coversItem = (item: AssistantMessageItem) => {
+    const cursor = item.timelineCursor;
+    return (
+      cursor?.epoch === epoch &&
+      unit.sourceSeqRanges.some(
+        (range) => range.startSeq <= cursor.seq && cursor.seq <= range.endSeq,
+      )
+    );
+  };
+  const bridgesSteer =
+    unit.sourceSeqRanges.length > 1 &&
+    projectedMessageId !== undefined &&
+    unit.seqEnd > currentEndSeq &&
+    unit.sourceSeqRanges.some((range) => range.endSeq <= currentEndSeq);
+  if (!crossesCursor && !bridgesSteer) return unchanged;
+
   const matches = (item: StreamItem) => {
     if (item.kind !== "assistant_message") return false;
+    if (bridgesSteer) return item.messageId === projectedMessageId && coversItem(item);
     if (projectedMessageId && item.messageId) return item.messageId === projectedMessageId;
     return projectedText.startsWith(item.text);
   };
@@ -817,15 +834,13 @@ function reconcileOverlappingProjectedAssistant(params: {
 
   const headMatch = findMatch(params.head);
   const tailMatch = findMatch(params.tail);
-  const match = headMatch ?? tailMatch;
-  if (!match) {
-    return { tail: params.tail, head: params.head, reconciled: false };
-  }
+  // Keep a cached reply before the steer even if a live suffix also exists.
+  const match = bridgesSteer ? (tailMatch ?? headMatch) : (headMatch ?? tailMatch);
+  if (!match) return unchanged;
 
   const messageId = projectedMessageId ?? match.current.messageId;
   const replacement: AssistantMessageItem = {
-    kind: "assistant_message",
-    id: match.current.id,
+    ...match.current,
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
@@ -837,21 +852,26 @@ function reconcileOverlappingProjectedAssistant(params: {
     return next;
   };
 
+  const removeMatch = (items: StreamItem[], index: number) => [
+    ...items.slice(0, index),
+    ...items.slice(index + 1),
+  ];
+  if (bridgesSteer && tailMatch) {
+    return {
+      tail: replaceMatch(params.tail, tailMatch.index),
+      head: headMatch ? removeMatch(params.head, headMatch.index) : params.head,
+      reconciled: true,
+    };
+  }
   if (headMatch) {
-    const tailCursor = tailMatch?.current.timelineCursor;
-    const replacesCachedPrefix =
-      tailMatch !== null &&
-      tailCursor?.epoch === params.epoch &&
-      unit.sourceSeqRanges.some(
-        (range) => range.startSeq <= tailCursor.seq && tailCursor.seq <= range.endSeq,
-      );
     return {
       // Live chunks can arrive before catch-up while their cached prefix is still painted.
       // The projected reply owns both copies; keeping the prefix would duplicate it and
       // cause completion to discard the updated head as an already-committed item.
-      tail: replacesCachedPrefix
-        ? [...params.tail.slice(0, tailMatch.index), ...params.tail.slice(tailMatch.index + 1)]
-        : params.tail,
+      tail:
+        tailMatch && coversItem(tailMatch.current)
+          ? removeMatch(params.tail, tailMatch.index)
+          : params.tail,
       head: replaceMatch(params.head, headMatch.index),
       reconciled: true,
     };

@@ -2724,6 +2724,7 @@ class ClaudeAgentSession implements AgentSession {
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     await this.ensureHistoryReady();
+    options?.planReview?.signal.throwIfAborted();
     if (this.closed) {
       throw new Error("Claude session is closed");
     }
@@ -2787,12 +2788,33 @@ class ClaudeAgentSession implements AgentSession {
 
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
 
+    await this.submitForegroundPrompt(
+      turnId,
+      sdkMessage,
+      sdkUserMessageId,
+      () => cancelIssued,
+      options,
+    );
+    return { turnId };
+  }
+
+  private async submitForegroundPrompt(
+    turnId: string,
+    sdkMessage: SDKUserMessage,
+    sdkUserMessageId: string | null,
+    isCanceled: () => boolean,
+    options?: AgentRunOptions,
+  ): Promise<void> {
     try {
       await this.ensureQuery();
-      if (cancelIssued) {
+      options?.planReview?.signal.throwIfAborted();
+      if (options?.planReview && this.currentMode !== "acceptEdits") {
+        throw new Error("The Claude implementation mode changed before the review could start.");
+      }
+      if (isCanceled()) {
         // Stopped while Claude was still starting up: withdrawn by never sending it.
         if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
-        return { turnId };
+        return;
       }
       if (!this.input) {
         throw new Error("Claude session input stream not initialized");
@@ -2813,12 +2835,15 @@ class ClaudeAgentSession implements AgentSession {
       }, 0);
     } catch (error) {
       if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
-      this.finishForegroundTurn(
-        this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
-      );
+      if (this.activeForegroundTurnId === turnId) {
+        this.finishForegroundTurn(
+          this.buildTurnFailedEvent(
+            error instanceof Error ? error.message : "Claude stream failed",
+          ),
+        );
+      }
+      if (options?.planReview) throw error;
     }
-
-    return { turnId };
   }
 
   async steerActiveTurn(
@@ -2854,15 +2879,23 @@ class ClaudeAgentSession implements AgentSession {
     ) {
       return { status: "unavailable" };
     }
-    this.enqueueSteer(input, message, options.clearPendingPermissions === true);
+    if (!this.enqueueSteer(input, message, options)) {
+      return { status: "unavailable" };
+    }
     return { status: "accepted", ...(message.uuid ? { providerMessageId: message.uuid } : {}) };
   }
 
   private enqueueSteer(
     input: AsyncMessageInput<SDKUserMessage>,
     message: SDKUserMessage,
-    clearPendingPermissions: boolean,
-  ): void {
+    options: SteerActiveTurnOptions,
+  ): boolean {
+    const scopedPlanId = options.planPermissionRequestId;
+    const plan = scopedPlanId ? this.pendingPermissions.get(scopedPlanId) : undefined;
+    if (scopedPlanId && (plan?.request.kind !== "plan" || this.currentMode !== "plan")) {
+      return false;
+    }
+    const clearPendingPermissions = !plan && options.clearPendingPermissions === true;
     const uuid = message.uuid;
     if (uuid) this.unstartedMessageUuids.add(uuid);
     if (uuid && clearPendingPermissions) {
@@ -2870,9 +2903,12 @@ class ClaudeAgentSession implements AgentSession {
     }
     try {
       input.push(message);
-      if (clearPendingPermissions) {
+      if (plan) {
+        this.denyPendingPermissionSupersededBySteer(plan);
+      } else if (clearPendingPermissions) {
         this.denyPendingPermissionsSupersededBySteer();
       }
+      return true;
     } catch (error) {
       if (uuid) {
         this.unstartedMessageUuids.delete(uuid);
@@ -3254,16 +3290,20 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private denyPendingPermissionsSupersededBySteer(): void {
-    for (const [requestId, pending] of this.pendingPermissions) {
-      this.pendingPermissions.delete(requestId);
-      pending.cleanup?.();
-      pending.resolve(
-        this.resolveDeniedPermission(pending.request, {
-          behavior: "deny",
-          message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
-        }),
-      );
+    for (const pending of this.pendingPermissions.values()) {
+      this.denyPendingPermissionSupersededBySteer(pending);
     }
+  }
+
+  private denyPendingPermissionSupersededBySteer(pending: PendingPermission): void {
+    this.pendingPermissions.delete(pending.request.id);
+    pending.cleanup?.();
+    pending.resolve(
+      this.resolveDeniedPermission(pending.request, {
+        behavior: "deny",
+        message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
+      }),
+    );
   }
 
   async respondToPermission(

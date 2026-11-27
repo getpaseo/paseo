@@ -1485,6 +1485,7 @@ function usePendingPermissionsNode({
   pendingPermissions: AgentStreamViewProps["pendingPermissions"];
   client: DaemonClient | null;
 }): ReactNode {
+  // COMPAT(planReview): added after v0.18.1, remove when the supported daemon floor advertises planReview.
   const supportsPlanReview = useSessionStore(
     (state) => state.sessions[resolvedServerId]?.serverInfo?.features?.planReview === true,
   );

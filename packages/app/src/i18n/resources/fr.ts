@@ -668,6 +668,24 @@ export const fr: TranslationResources = {
         invalidUrl: "URL du navigateur invalide",
         unsupportedProtocol: "URL bloquée, protocole non pris en charge : {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Navigation via {{hostName}}. Cliquez pour naviguer en local.",
+        tooltipLocal: "Navigation locale. Cliquez pour naviguer via {{hostName}}.",
+        switchToLocal: "Basculer le routage du navigateur de {{hostName}} vers Local",
+        switchToHost: "Basculer le routage du navigateur de Local vers {{hostName}}",
+      },
+      proxy: {
+        connecting: "Connexion à {{hostName}}...",
+        reconnecting: "Reconnexion à {{hostName}}...",
+        updateTitle: "Mettez à jour {{hostName}} pour naviguer via cet hôte",
+        updateDescription: "Cet hôte ne prend pas encore en charge le proxy du navigateur.",
+        routedTitle: "Le proxy du navigateur n’est pas disponible pour les hôtes routés",
+        routedDescription: "Connectez-vous directement à cet hôte ou naviguez en local.",
+        offlineTitle: "{{hostName}} est hors ligne",
+        offlineDescription: "Attendez la reconnexion de l’hôte ou naviguez en local.",
+        errorTitle: "Impossible de connecter le proxy du navigateur",
+        browseLocally: "Naviguer en local",
+      },
     },
     terminal: {
       hostDisconnected: "L’hôte n’est pas connecté",
@@ -2578,7 +2596,7 @@ export const fr: TranslationResources = {
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:
-        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
+        "Choisissez le modèle et les instructions utilisés par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
       selection: "Sélection du modèle",
       automatic: "Automatique",
       preferred: "Manuel",
@@ -2586,6 +2604,10 @@ export const fr: TranslationResources = {
       preferredHint: "Choisissez le modèle utilisé par Paseo",
       model: "Modèle",
       modelHint: "Seul ce modèle est utilisé. S’il échoue, Paseo n’essaie pas d’autre modèle",
+      instructions: "Instructions",
+      instructionsHint: "Appliquées à toutes les métadonnées générées sur cet hôte",
+      instructionsPlaceholder:
+        "Exemple : Écrire en français. Garder une formulation cohérente entre les titres et les commits. Ne pas utiliser de tirets cadratins.",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
     },
@@ -3194,6 +3216,8 @@ export const fr: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Profils d’agent",
+        sectionDescription:
+          "Enregistrez des réglages d’agent à sélectionner rapidement et utilisables par les agents pour déléguer du travail",
         unavailable: "Connectez-vous à cet hôte pour gérer les profils d’agent",
         unsupported: "Le daemon de cet hôte ne prend pas encore en charge les profils d’agent",
         emptyState:
@@ -3218,6 +3242,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Fonctionnalités",
         featureCount: "{{count}} fonctionnalités",
         featureCountOne: "{{count}} fonctionnalité",
+        systemPromptLabel: "Prompt système",
+        systemPromptPlaceholder:
+          "Concentre-toi sur la mise en page, l’accessibilité et les jetons de design.",
+        systemPromptHint: "S’applique uniquement aux nouveaux agents",
         notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l’UI : composants, mise en page et design tokens.",

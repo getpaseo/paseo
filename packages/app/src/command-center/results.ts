@@ -1,9 +1,8 @@
 import {
-  compareMatchScores,
   type MatchClass,
-  type MatchScore,
-  scoreTextFields,
+  scoreMatch,
   textFieldsMatchClass,
+  tokenizeQuery,
 } from "@getpaseo/protocol/search/text-match";
 import type { CommandCenterContribution } from "./contributions";
 import type { CommandCenterListMetrics } from "./list-metrics";
@@ -20,10 +19,26 @@ const VISIBLE_FIELD_RANK = 0;
 /** At least one token only matched a hidden keyword. */
 const KEYWORD_FIELD_RANK = 1;
 
+/**
+ * Left-edge match ranks for Command Center scoring, best to worst.
+ *
+ * Right-edge promotions (`TIER_EXACT`, `TIER_WHOLE_WORD`) are deliberately excluded here:
+ * whether a word or title happens to end on the latest keystroke flips row order mid-word as
+ * the user types (e.g., `"renam"` → `"rename"` jumping a shorter title ahead of `"Rename
+ * workspace"`, or `"t"` → `"to"` jumping `"Pin to top"` ahead of `"Toggle Explorer sidebar"`).
+ * Left-edge ranks can only stay the same or worsen as characters are appended to a token, so
+ * two rows that keep matching at the same left edge never swap places.
+ */
+const FIELD_START_RANK = 0;
+const WORD_START_RANK = 1;
+const INSIDE_WORD_RANK = 2;
+const SCATTERED_RANK = 3;
+
 export interface CommandCenterScore {
   /** VISIBLE_FIELD_RANK or KEYWORD_FIELD_RANK. Compared before match quality. */
   fieldRank: number;
-  match: MatchScore;
+  /** Sum of per-token left-edge ranks (FIELD_START..SCATTERED). Lower is better. */
+  matchRank: number;
 }
 
 /**
@@ -44,7 +59,7 @@ export function compareCommandCenterScores(
   left: CommandCenterScore,
   right: CommandCenterScore,
 ): number {
-  return left.fieldRank - right.fieldRank || compareMatchScores(left.match, right.match);
+  return left.fieldRank - right.fieldRank || left.matchRank - right.matchRank;
 }
 
 export interface CommandCenterWorkspaceProject {
@@ -148,12 +163,41 @@ export interface CommandCenterSearchFields {
   hidden: readonly string[];
 }
 
+function scoreTokenInField(token: string, field: string): number | null {
+  // Check start-of-field first: `scoreMatch` prefers a later whole word (tier 1) over a leading
+  // prefix (tier 2), which would otherwise demote a field starting with the token when the same
+  // token also appears as a standalone word later in the field.
+  if (field.toLowerCase().startsWith(token)) return FIELD_START_RANK;
+  const score = scoreMatch(token, field);
+  if (!score) return null;
+  if (score.tier <= 3) return WORD_START_RANK;
+  if (score.tier === 4) return INSIDE_WORD_RANK;
+  return SCATTERED_RANK;
+}
+
+function scoreFieldsLeftEdge(tokens: readonly string[], fields: readonly string[]): number | null {
+  let total = 0;
+  for (const token of tokens) {
+    let best: number | null = null;
+    for (const field of fields) {
+      const rank = scoreTokenInField(token, field);
+      if (rank !== null && (best === null || rank < best)) {
+        best = rank;
+        if (best === FIELD_START_RANK) break;
+      }
+    }
+    if (best === null) return null;
+    total += best;
+  }
+  return total;
+}
+
 /**
  * The one definition of "how well did this row match", shared by every scored row kind. Null
  * means the row is filtered out, so scoring and filtering are the same pass — a separate boolean
  * predicate would throw this result away and force the token scan a second time.
  *
- * Matching is per-token (`scoreTextFields` splits on whitespace and every token must land in
+ * Matching is per-token (`tokenizeQuery` splits on whitespace and every token must land in
  * some field), so token order does not matter and `lab des` finds "Label as Design". This can
  * only ever widen the result set: tokens hold no whitespace, so any token that was found in the
  * old space-joined haystack lies entirely within one field and is still found here.
@@ -165,11 +209,12 @@ export function scoreSearchFields(
   query: string,
   fields: CommandCenterSearchFields,
 ): CommandCenterScore | null {
-  const visible = scoreTextFields(query, [...fields.visible]);
-  if (visible) return { fieldRank: VISIBLE_FIELD_RANK, match: visible };
+  const tokens = tokenizeQuery(query);
+  const visible = scoreFieldsLeftEdge(tokens, fields.visible);
+  if (visible !== null) return { fieldRank: VISIBLE_FIELD_RANK, matchRank: visible };
   if (fields.hidden.length === 0) return null;
-  const match = scoreTextFields(query, [...fields.visible, ...fields.hidden]);
-  return match ? { fieldRank: KEYWORD_FIELD_RANK, match } : null;
+  const matchRank = scoreFieldsLeftEdge(tokens, [...fields.visible, ...fields.hidden]);
+  return matchRank !== null ? { fieldRank: KEYWORD_FIELD_RANK, matchRank } : null;
 }
 
 /** How closely the query matched the fields; see `MatchClass`. Null when it does not match. */
@@ -243,16 +288,6 @@ export interface CommandCenterRecentRow {
 /** Most recent first. A row with no timestamp sorts after every row that has one. */
 export function compareByRecency(left: CommandCenterRecentRow, right: CommandCenterRecentRow) {
   return (right.activityAt?.getTime() ?? 0) - (left.activityAt?.getTime() ?? 0);
-}
-
-/**
- * Rank built-in rows by the kind of match they made: which fields matched, then the matcher's
- * tier. Offset and spread are deliberately left out. They only say where in the title the word
- * happened to sit, so "usage" in "Deliver sidebar usage" and in "expose usage data" would be
- * ordered by sentence position. Leaving them out makes those rows equal, and recency decides.
- */
-export function compareBuiltInScores(left: CommandCenterScore, right: CommandCenterScore): number {
-  return left.fieldRank - right.fieldRank || left.match.tier - right.match.tier;
 }
 
 /**

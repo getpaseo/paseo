@@ -128,6 +128,8 @@ buildNpmPackage {
         cd packages/desktop
         # The Nix output is not a distributable DMG, so leave it unsigned and
         # disable the hardened runtime that requires a matching signature.
+        # Compiling the Icon Composer document needs Xcode, which the build
+        # does not have, so use the prebuilt icns.
         CSC_IDENTITY_AUTO_DISCOVERY=false \
           npm exec --offline -- electron-builder \
             --config electron-builder.yml \
@@ -138,7 +140,8 @@ buildNpmPackage {
             --config.buildVersion=${lib.escapeShellArg buildVersion} \
             --config.mac.identity=null \
             --config.mac.hardenedRuntime=false \
-            --config.mac.notarize=false
+            --config.mac.notarize=false \
+            --config.mac.icon=assets/icon.icns
       )
     ''}
 

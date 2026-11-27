@@ -667,6 +667,24 @@ export const ptBR: TranslationResources = {
         invalidUrl: "URL de navegador inválida",
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Navegando por {{hostName}}. Clique para navegar localmente.",
+        tooltipLocal: "Navegando localmente. Clique para navegar por {{hostName}}.",
+        switchToLocal: "Alternar roteamento do navegador de {{hostName}} para Local",
+        switchToHost: "Alternar roteamento do navegador de Local para {{hostName}}",
+      },
+      proxy: {
+        connecting: "Conectando a {{hostName}}...",
+        reconnecting: "Reconectando a {{hostName}}...",
+        updateTitle: "Atualize {{hostName}} para navegar por este host",
+        updateDescription: "Este host ainda não oferece suporte ao proxy do navegador.",
+        routedTitle: "O proxy do navegador não está disponível para hosts roteados",
+        routedDescription: "Conecte-se diretamente a este host ou navegue localmente.",
+        offlineTitle: "{{hostName}} está offline",
+        offlineDescription: "Aguarde o host reconectar ou navegue localmente.",
+        errorTitle: "Não foi possível conectar o proxy do navegador",
+        browseLocally: "Navegar localmente",
+      },
     },
     terminal: {
       hostDisconnected: "Host não está conectado",
@@ -2563,7 +2581,7 @@ export const ptBR: TranslationResources = {
     metadataGeneration: {
       title: "Geração de metadados",
       description:
-        "Escolha o modelo usado pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit e rascunhos de pull request",
+        "Escolha o modelo e as instruções usados pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit e rascunhos de pull request",
       selection: "Seleção de modelo",
       automatic: "Automática",
       preferred: "Manual",
@@ -2571,6 +2589,10 @@ export const ptBR: TranslationResources = {
       preferredHint: "Escolha o modelo que o Paseo usa",
       model: "Modelo",
       modelHint: "Somente este modelo é usado. Se ele falhar, o Paseo não tenta outro modelo",
+      instructions: "Instruções",
+      instructionsHint: "Aplicadas a todos os metadados gerados neste host",
+      instructionsPlaceholder:
+        "Exemplo: Escreva em português. Mantenha o estilo coerente entre títulos e commits. Não use travessões.",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
     },
@@ -3173,6 +3195,8 @@ export const ptBR: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Perfis de agente",
+        sectionDescription:
+          "Salve configurações de agente para escolher rapidamente e para outros agentes usarem ao delegar trabalho",
         unavailable: "Conecte-se a este host para gerenciar perfis de agente",
         unsupported: "Este host executa um daemon que ainda não é compatível com perfis de agente",
         emptyState:
@@ -3197,6 +3221,9 @@ export const ptBR: TranslationResources = {
         featuresLabel: "Recursos",
         featureCount: "{{count}} recursos",
         featureCountOne: "{{count}} recurso",
+        systemPromptLabel: "Prompt do sistema",
+        systemPromptPlaceholder: "Foque em layout, acessibilidade e tokens de design.",
+        systemPromptHint: "Aplica-se apenas a novos agentes",
         notesLabel: "Quando usar",
         notesPlaceholder: "Use para trabalho de UI — componentes, layout e tokens de design.",
         notesHint: "Ajuda os agentes a escolher este perfil ao iniciar outro agente.",

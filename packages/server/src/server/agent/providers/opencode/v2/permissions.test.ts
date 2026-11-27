@@ -4,6 +4,8 @@ import { createTestLogger } from "../../../../../test-utils/test-logger.js";
 import type { V2Api } from "./api.js";
 import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
+import { ClientError } from "@opencode/client";
+import { OpenCodeHttpError } from "../http-error.js";
 import type { AgentPermissionResponse } from "../../../agent-sdk-types.js";
 
 describe("OpenCode v2 denial reasons", () => {
@@ -375,6 +377,97 @@ describe("OpenCode v2 permission routing", () => {
         data: { sessionID: "session", requestID: "approval", reply: "once" },
       });
       await expect.poll(() => session.getPendingPermissions()).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
+// OpenCode drops a pending request without a `permission.replied` event when the tool call that
+// asked is interrupted, and answers a later reply to it with HTTP 404.
+describe("OpenCode v2 requests that OpenCode dropped", () => {
+  function droppingHarness() {
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const state = { dropped: false };
+    harness.api.permission.list = async () =>
+      state.dropped
+        ? []
+        : [{ id: "approval", sessionID: "session", action: "shell", resources: ["sudo -n true"] }];
+    harness.api.permission.reply = async (input) => {
+      if (state.dropped)
+        // The client reports a failed response as a transport error caused by Paseo's check.
+        throw new ClientError("Transport", {
+          cause: new OpenCodeHttpError(
+            `/api/session/${input.sessionID}/permission/${input.requestID}/reply`,
+            404,
+            false,
+          ),
+        });
+      state.dropped = true;
+    };
+    return { harness, state };
+  }
+
+  async function startSession(harness: V2Harness) {
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const resolved: string[] = [];
+    session.subscribe((event) => {
+      if (event.type === "permission_resolved") resolved.push(event.requestId);
+    });
+    return { session, resolved };
+  }
+
+  test("a steer accepts and clears an approval that OpenCode dropped", async () => {
+    const { harness, state } = droppingHarness();
+    const { session, resolved } = await startSession(harness);
+    try {
+      const { turnId } = await session.startTurn("Run sudo -n true");
+      await expect.poll(() => harness.prompts).toEqual(["Run sudo -n true"]);
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      state.dropped = true;
+      await expect(
+        session.steerActiveTurn!("Never mind", {
+          expectedTurnId: turnId,
+          clearPendingPermissions: true,
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(resolved).toEqual(["approval"]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("answering an approval that OpenCode dropped clears it", async () => {
+    const { harness, state } = droppingHarness();
+    const { session, resolved } = await startSession(harness);
+    try {
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      state.dropped = true;
+      await session.respondToPermission("approval", { behavior: "allow" });
+      expect(session.getPendingPermissions()).toEqual([]);
+      expect(resolved).toEqual(["approval"]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("an interrupted turn clears an approval that OpenCode dropped without an event", async () => {
+    const { harness, state } = droppingHarness();
+    const { session, resolved } = await startSession(harness);
+    try {
+      await session.startTurn("Run sudo -n true");
+      await expect.poll(() => harness.prompts).toEqual(["Run sudo -n true"]);
+      expect(session.getPendingPermissions()).toHaveLength(1);
+      state.dropped = true;
+      harness.finishExecution("interrupted");
+      await expect.poll(() => session.getPendingPermissions()).toEqual([]);
+      expect(resolved).toEqual(["approval"]);
     } finally {
       await session.close();
     }

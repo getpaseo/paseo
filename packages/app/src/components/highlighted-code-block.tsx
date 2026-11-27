@@ -39,9 +39,18 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   markdown: "md",
   elixir: "ex",
   terraform: "tf",
+  shell: "sh",
+  ruby: "rb",
+  kotlin: "kt",
+  powershell: "ps1",
+  pwsh: "ps1",
+  protobuf: "proto",
+  perl: "pl",
+  latex: "tex",
+  stex: "tex",
 };
 
-function fenceLanguageToExtension(info: string | null | undefined): string | null {
+export function fenceLanguageToExtension(info: string | null | undefined): string | null {
   if (!info) return null;
   const first = info.trim().split(/\s+/)[0]?.toLowerCase();
   if (!first) return null;

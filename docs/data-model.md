@@ -240,7 +240,8 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     // `extends` (one of the built-ins or `"acp"`) and `label`. See `provider-launch-config.ts`.
     providers: Record<providerId, ProviderOverride>,
     metadataGeneration: {
-      providers: [{ provider, model?, thinkingOptionId? }]
+      providers: [{ provider, model?, thinkingOptionId? }],
+      instructions?: string
     }
   },
   pluginsEnabled: boolean,
@@ -319,7 +320,7 @@ Paseo tools; otherwise the provider policy applies. Provider and global policy a
 session is created, resumed, imported, or reloaded, so configuration changes affect the next
 session rather than an already-running one.
 
-`agents.metadataGeneration.providers` selects the models for daemon-side metadata tasks: commit messages, PR text, branch names, and generated titles. An empty list is Automatic; a non-empty list is Manual and only those models are tried. See [public-docs/metadata-generation.md](../public-docs/metadata-generation.md#how-a-model-is-chosen).
+`agents.metadataGeneration.providers` selects the models for daemon-side metadata tasks: commit messages, PR text, branch names, and generated titles. An empty list is Automatic; a non-empty list is Manual and only those models are tried. `agents.metadataGeneration.instructions` adds host-wide guidance to every metadata generation prompt alongside the built-in or per-project style. See [public-docs/metadata-generation.md](../public-docs/metadata-generation.md#how-a-model-is-chosen).
 
 ### Git process limits
 

@@ -940,6 +940,7 @@ export class AgentManager {
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
+  private readonly planReviewStarts = new Map<string, AbortController>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly replacementMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
@@ -2692,21 +2693,29 @@ export class AgentManager {
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     return this.runLifecycleMutation(agentId, () =>
-      this.withLiveInteractiveSessionUnlocked(agentId, async (agent) => {
-        const notice = (await agent.session.setMode(modeId)) ?? null;
-        await this.drainSessionEvents(agentId);
-        const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
-        agent.config.modeId = currentMode ?? undefined;
-        agent.currentModeId = currentMode;
-        // Update runtimeInfo to reflect the new mode
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
-        }
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-        return notice;
-      }),
+      this.withLiveInteractiveSessionUnlocked(agentId, (agent) =>
+        this.setAgentModeUnlocked(agent, modeId),
+      ),
     );
+  }
+
+  private async setAgentModeUnlocked(
+    agent: ActiveManagedAgent,
+    modeId: string,
+  ): Promise<AgentProviderNotice | null> {
+    const agentId = agent.id;
+    const notice = (await agent.session.setMode(modeId)) ?? null;
+    await this.drainSessionEvents(agentId);
+    const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
+    agent.config.modeId = currentMode ?? undefined;
+    agent.currentModeId = currentMode;
+    // Update runtimeInfo to reflect the new mode
+    if (agent.runtimeInfo) {
+      agent.runtimeInfo = { ...agent.runtimeInfo, modeId: currentMode };
+    }
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+    return notice;
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -2778,44 +2787,50 @@ export class AgentManager {
    */
   async setAgentOptions(agentId: string, requested: ProviderOptionsPatch): Promise<void> {
     return this.runLifecycleMutation(agentId, () =>
-      this.withLiveInteractiveSessionUnlocked(agentId, async (agent) => {
-        const patch = this.convertLegacyOptions(agent.provider, requested);
-        let ended: ProviderOptionsPatch = {};
-        let sent: ProviderOptionsPatch = {};
-        if (Object.keys(patch).length > 0) {
-          // A provider that cannot apply options to a running agent must not store them either.
-          if (!agent.session.applyOptions) {
-            throw new ProviderOptionsValidationError(
-              agent.provider,
-              Object.keys(patch).map((key) => ({
-                path: [key],
-                message: "cannot change on a running session; it applies when the agent is opened",
-              })),
-            );
-          }
-          const set = Object.fromEntries(
-            Object.entries(patch).filter(([, value]) => value != null),
-          );
-          const resolved = this.effectiveOptionsFor(agent.provider, set);
-          sent = Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null]));
-          const modelBefore = agent.runtimeInfo?.model;
-          ended = (await agent.session.applyOptions(sent)) ?? {};
-          // Changes the provider made on its own while applying are older than its final answer.
-          await this.drainSessionEvents(agentId);
-          await this.refreshRuntimeInfo(agent, { emit: false });
-          // An option can choose the model too, as an fx connection does. Reopening the agent on
-          // the earlier preference would send that model to the new connection.
-          const modelAfter = agent.runtimeInfo?.model;
-          if (agent.config.model && modelAfter && modelAfter !== modelBefore) {
-            agent.config.model = modelAfter;
-          }
-        }
-        this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
-        this.updateEffectiveOptions({ agent, sent, reported: ended });
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-      }),
+      this.withLiveInteractiveSessionUnlocked(agentId, (agent) =>
+        this.setAgentOptionsUnlocked(agent, requested),
+      ),
     );
+  }
+
+  private async setAgentOptionsUnlocked(
+    agent: ActiveManagedAgent,
+    requested: ProviderOptionsPatch,
+  ): Promise<void> {
+    const agentId = agent.id;
+    const patch = this.convertLegacyOptions(agent.provider, requested);
+    let ended: ProviderOptionsPatch = {};
+    let sent: ProviderOptionsPatch = {};
+    if (Object.keys(patch).length > 0) {
+      // A provider that cannot apply options to a running agent must not store them either.
+      if (!agent.session.applyOptions) {
+        throw new ProviderOptionsValidationError(
+          agent.provider,
+          Object.keys(patch).map((key) => ({
+            path: [key],
+            message: "cannot change on a running session; it applies when the agent is opened",
+          })),
+        );
+      }
+      const set = Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null));
+      const resolved = this.effectiveOptionsFor(agent.provider, set);
+      sent = Object.fromEntries(Object.keys(patch).map((key) => [key, resolved[key] ?? null]));
+      const modelBefore = agent.runtimeInfo?.model;
+      ended = (await agent.session.applyOptions(sent)) ?? {};
+      // Changes the provider made on its own while applying are older than its final answer.
+      await this.drainSessionEvents(agentId);
+      await this.refreshRuntimeInfo(agent, { emit: false });
+      // An option can choose the model too, as an fx connection does. Reopening the agent on
+      // the earlier preference would send that model to the new connection.
+      const modelAfter = agent.runtimeInfo?.model;
+      if (agent.config.model && modelAfter && modelAfter !== modelBefore) {
+        agent.config.model = modelAfter;
+      }
+    }
+    this.storeOptionsPatch({ agent, patch: { ...patch, ...ended } });
+    this.updateEffectiveOptions({ agent, sent, reported: ended });
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
   }
 
   /** The config as the opened session left it: its own difference from the options it was given. */
@@ -3445,27 +3460,20 @@ export class AgentManager {
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
     promptStart?: ForegroundPromptStart;
-    prepare?: () => Promise<() => Promise<void>>;
   }): Promise<string | null> {
-    const { agent, agentId, pendingRun, prompt, options, promptStart, prepare } = params;
+    const { agent, agentId, pendingRun, prompt, options, promptStart } = params;
     if (promptStart?.admit?.() === false) {
       this.runs.settleForegroundRun(agentId, pendingRun.token);
       return null;
     }
-    let restoreMode: (() => Promise<void>) | undefined;
     try {
-      if (prepare) restoreMode = await prepare();
+      options?.planReview?.signal.throwIfAborted();
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
       return result.turnId;
     } catch (error) {
-      if (restoreMode) {
-        await restoreMode().catch((restoreError) => {
-          this.logger.warn({ err: restoreError, agentId }, "Failed to restore plan mode");
-        });
-      }
       if (error instanceof AgentTurnStartCanceledError) {
         if (!pendingRun.settled) {
           if (options?.clientMessageId) {
@@ -3623,7 +3631,6 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
     promptStart?: ForegroundPromptStart,
-    prepare?: () => Promise<() => Promise<void>>,
   ): AsyncGenerator<AgentStreamEvent> {
     const agentId = existingAgent.id;
     this.logger.trace(
@@ -3670,7 +3677,6 @@ export class AgentManager {
         prompt,
         options,
         promptStart,
-        prepare,
       });
       if (turnId === null) {
         const canceledEvent: AgentStreamEvent = {
@@ -4276,110 +4282,187 @@ export class AgentManager {
     const notes = input.text.trim();
     if (!notes) throw new Error("Enter feedback for this plan.");
 
-    await this.runForegroundMutation(agentId, async () => {
-      const agent = this.requireSessionAgent(agentId);
-      await this.drainSessionEvents(agentId);
-      const readPlan = () => {
-        const request = agent.session
-          .getPendingPermissions()
-          .find((pending) => pending.id === permissionRequestId && pending.kind === "plan");
-        if (!request) throw new Error("This plan is no longer awaiting review.");
-        const isClaude = agent.provider === "claude";
-        if (!isClaude && agent.provider !== "codex") {
-          throw new Error("This provider does not support plan feedback.");
+    const startup = new AbortController();
+    try {
+      const review = await this.runForegroundMutation(agentId, async () => {
+        const agent = this.requireSessionAgent(agentId);
+        await this.drainSessionEvents(agentId);
+        const { provider, plan } = this.readPlanReview(agent, permissionRequestId);
+        if (this.planReviewStarts.has(agentId)) {
+          throw new Error("A plan review is already being submitted.");
         }
-        const inPlanMode = isClaude
-          ? agent.currentModeId === "plan"
-          : agent.effectiveOptions?.plan_mode === true;
-        if (!inPlanMode) throw new Error("The agent has left Plan mode.");
-        const plan =
-          typeof request.metadata?.planText === "string"
-            ? request.metadata.planText
-            : request.input?.plan;
-        if (typeof plan !== "string" || !plan.trim()) {
-          throw new Error("This proposal has no plan text to review.");
-        }
-        return plan;
-      };
-      const plan = readPlan();
-      const clientMessageId = randomUUID();
-      const run = this.runs.getRun(agentId);
-      const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+        this.planReviewStarts.set(agentId, startup);
 
-      if (action === "request_changes") {
+        const clientMessageId = randomUUID();
+        const run = this.runs.getRun(agentId);
+        if (action === "request_changes") {
+          const prompt = [
+            "Revise the proposed plan using the feedback below. Stay in Plan mode and present the revised plan for approval before implementing.",
+            notes,
+          ].join("\n\n");
+          if (provider === "claude") {
+            await this.steerClaudePlanReview(agent, permissionRequestId, prompt, clientMessageId);
+            return null;
+          }
+          return { agent, provider, run, prompt, clientMessageId };
+        }
+
+        // Settle the parked ExitPlanMode turn before starting the annotated implementation.
+        if (provider === "claude" && !run) {
+          throw new Error("The planning turn is no longer active.");
+        }
+        await this.respondToPermissionNow(
+          agent,
+          permissionRequestId,
+          {
+            behavior: "deny",
+            message: "The user approved implementation with notes in a separate turn.",
+            interrupt: provider === "claude",
+          },
+          { planApproval: "implement_with_notes" },
+        );
         const prompt = [
-          "Revise the proposed plan using the feedback below. Stay in Plan mode and present the revised plan for approval before implementing.",
-          notes,
+          "Implement the approved plan. Follow the user's notes where they change the plan.",
+          "Approved plan:\n" + plan,
+          "User's implementation notes:\n" + notes,
         ].join("\n\n");
-        if (agent.provider === "claude") {
-          if (!expectedTurnId) throw new Error("The planning turn is no longer active.");
-          await this.deliverSteer(agent, expectedTurnId, async () => {
-            readPlan();
-            const admission = await agent.session.steerActiveTurn?.(prompt, {
-              expectedTurnId,
-              clientMessageId,
-              clearPendingPermissions: true,
-            });
-            if (admission?.status !== "accepted") {
-              throw new Error("The planning turn could not receive feedback. Try again.");
-            }
-            await this.recordAcceptedSteer(
-              agent,
-              prompt,
-              clientMessageId,
-              expectedTurnId,
-              admission.providerMessageId,
-            );
-          });
-          return;
-        }
-        if (run) {
-          await this.waitForPlanReviewTurn(run.settledPromise);
-          readPlan();
-        }
-        await this.startPlanReviewTurn(agentId, prompt, { clientMessageId });
-        return;
-      }
-
-      // Claude must never resume from ExitPlanMode with an unannotated approval.
-      // A denial with interrupt lets the SDK settle the parked turn in Plan mode.
-      if (agent.provider === "claude" && !run) {
-        throw new Error("The planning turn is no longer active.");
-      }
-      await this.respondToPermissionNow(
-        agent,
-        permissionRequestId,
-        {
-          behavior: "deny",
-          message: "The user approved implementation with notes in a separate turn.",
-          interrupt: agent.provider === "claude",
-        },
-        { planApproval: "implement_with_notes" },
-      );
-      if (run) {
-        await this.waitForPlanReviewTurn(run.settledPromise);
-      }
-      if (this.agents.get(agentId) !== agent || this.hasInFlightRun(agentId)) {
-        throw new Error("The agent changed before implementation could start.");
-      }
-
-      const prompt = [
-        "Implement the approved plan. Follow the user's notes where they change the plan.",
-        "Approved plan:\n" + plan,
-        "User's implementation notes:\n" + notes,
-      ].join("\n\n");
-      await this.startPlanReviewTurn(agentId, prompt, { clientMessageId }, async () => {
-        if (agent.provider === "claude") {
-          await this.setAgentMode(agentId, "acceptEdits");
-          return async () => {
-            await this.setAgentMode(agentId, "plan");
-          };
-        }
-        const previousPlanOption = agent.config.providerOptions?.plan_mode ?? null;
-        await this.setAgentOptions(agentId, { plan_mode: false });
-        return () => this.setAgentOptions(agentId, { plan_mode: previousPlanOption });
+        return { agent, provider, run, prompt, clientMessageId };
       });
+      if (!review) return;
+
+      if (review.run) await this.waitForPlanReviewTurn(review.run.settledPromise);
+      const { agent, provider, prompt, clientMessageId } = review;
+      const mode = action === "request_changes" ? "plan" : "implement";
+      const reserve = () => {
+        startup.signal.throwIfAborted();
+        if (this.agents.get(agentId) !== agent || this.hasInFlightRun(agentId)) {
+          throw new Error("The agent changed before the plan review could start.");
+        }
+        if (mode === "plan") this.readPlanReview(agent, permissionRequestId);
+        return this.streamInteractiveAgent(agent, prompt, {
+          clientMessageId,
+          planReview: { mode, permissionRequestId, signal: startup.signal },
+        });
+      };
+
+      if (mode === "plan") {
+        const stream = await this.runForegroundMutation(agentId, async () => reserve());
+        await this.startPlanReviewTurn(agentId, stream);
+      } else {
+        await this.startPlanImplementation(agent, provider, reserve);
+      }
+    } finally {
+      if (this.planReviewStarts.get(agentId) === startup) this.planReviewStarts.delete(agentId);
+    }
+  }
+
+  private readPlanReview(
+    agent: ActiveManagedAgent,
+    permissionRequestId: string,
+  ): { provider: "claude" | "codex"; plan: string } {
+    const request = agent.session
+      .getPendingPermissions()
+      .find((pending) => pending.id === permissionRequestId && pending.kind === "plan");
+    if (!request) throw new Error("This plan is no longer awaiting review.");
+    // The permission belongs to the underlying adapter, including for custom profiles.
+    const { provider } = request;
+    if (provider !== "claude" && provider !== "codex") {
+      throw new Error("This provider does not support plan feedback.");
+    }
+    const inPlanMode =
+      provider === "claude"
+        ? agent.currentModeId === "plan"
+        : agent.effectiveOptions?.plan_mode === true;
+    if (!inPlanMode) throw new Error("The agent has left Plan mode.");
+    const plan =
+      typeof request.metadata?.planText === "string"
+        ? request.metadata.planText
+        : request.input?.plan;
+    if (typeof plan !== "string" || !plan.trim()) {
+      throw new Error("This proposal has no plan text to review.");
+    }
+    return { provider, plan };
+  }
+
+  private async steerClaudePlanReview(
+    agent: ActiveManagedAgent,
+    permissionRequestId: string,
+    prompt: string,
+    clientMessageId: string,
+  ): Promise<void> {
+    const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
+    if (!expectedTurnId) throw new Error("The planning turn is no longer active.");
+    await this.deliverSteer(agent, expectedTurnId, async () => {
+      this.readPlanReview(agent, permissionRequestId);
+      const admission = await agent.session.steerActiveTurn?.(prompt, {
+        expectedTurnId,
+        clientMessageId,
+        planPermissionRequestId: permissionRequestId,
+      });
+      if (admission?.status !== "accepted") {
+        throw new Error("The planning turn could not receive feedback. Try again.");
+      }
+      await this.recordAcceptedSteer(
+        agent,
+        prompt,
+        clientMessageId,
+        expectedTurnId,
+        admission.providerMessageId,
+      );
     });
+  }
+
+  private async startPlanImplementation(
+    agent: ActiveManagedAgent,
+    provider: "claude" | "codex",
+    reserve: () => AsyncGenerator<AgentStreamEvent>,
+  ): Promise<void> {
+    const { id: agentId } = agent;
+    // Reload acquires lifecycle before foreground. Reserve and configure in that same order.
+    const { stream, restoreMode } = await this.runLifecycleMutation(agentId, () =>
+      this.runForegroundMutation(agentId, async () => {
+        const iterator = reserve();
+        const pending = this.runs.getPendingRun(agentId);
+        try {
+          const rollback = await this.preparePlanImplementation(agent, provider);
+          return { stream: iterator, restoreMode: rollback };
+        } catch (error) {
+          if (pending) this.runs.settleForegroundRun(agentId, pending.token);
+          throw error;
+        }
+      }),
+    );
+    try {
+      // The provider may do slow startup work. Stop must be able to enter the lane meanwhile.
+      await this.startPlanReviewTurn(agentId, stream);
+    } catch (error) {
+      await this.runLifecycleMutation(agentId, async () => {
+        if (this.agents.get(agentId) === agent && !this.hasInFlightRun(agentId)) {
+          await restoreMode();
+        }
+      }).catch((restoreError: unknown) => {
+        this.logger.warn({ err: restoreError, agentId }, "Failed to restore plan mode");
+      });
+      throw error;
+    }
+  }
+
+  private async preparePlanImplementation(
+    agent: ActiveManagedAgent,
+    provider: "claude" | "codex",
+  ): Promise<() => Promise<void>> {
+    if (provider === "claude") {
+      await this.setAgentModeUnlocked(agent, "acceptEdits");
+      return async () => {
+        if (agent.currentModeId === "acceptEdits") await this.setAgentModeUnlocked(agent, "plan");
+      };
+    }
+    const previous = agent.config.providerOptions?.plan_mode ?? null;
+    await this.setAgentOptionsUnlocked(agent, { plan_mode: false });
+    return async () => {
+      if (agent.effectiveOptions?.plan_mode === false)
+        await this.setAgentOptionsUnlocked(agent, { plan_mode: previous });
+    };
   }
 
   private async waitForPlanReviewTurn(settledPromise: Promise<void>): Promise<void> {
@@ -4387,19 +4470,13 @@ export class AgentManager {
       operation: settledPromise,
       timeoutMs: PLAN_REVIEW_SETTLE_TIMEOUT_MS,
     });
-    if (status !== "completed") {
-      throw new Error("The planning turn did not finish in time.");
-    }
+    if (status !== "completed") throw new Error("The planning turn did not finish in time.");
   }
 
   private async startPlanReviewTurn(
     agentId: string,
-    prompt: string,
-    options: AgentRunOptions,
-    prepare?: () => Promise<() => Promise<void>>,
+    stream: AsyncGenerator<AgentStreamEvent>,
   ): Promise<void> {
-    const agent = this.requireSessionAgent(agentId);
-    const stream = this.streamInteractiveAgent(agent, prompt, options, undefined, prepare);
     const start = await stream.next();
     if (start.done || start.value.type !== "turn_started") {
       await stream.return(undefined);
@@ -4439,6 +4516,7 @@ export class AgentManager {
     agentId: string,
     cause: RunCancellationCause,
   ): Promise<AgentRunCancellationResult> {
+    this.planReviewStarts.get(agentId)?.abort(new Error("The plan review was canceled."));
     const agent = this.requireSessionAgent(agentId);
     const run =
       this.runs.getRun(agentId) ??

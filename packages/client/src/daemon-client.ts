@@ -61,6 +61,7 @@ import type {
   CreatePaseoWorktreeRequest,
   FileDownloadTokenResponse,
   FileUploadResponse,
+  NetworkTunnelCreateTicketPayload,
   FileExplorerResponse,
   FileVersion,
   FileWriteResult,
@@ -4381,9 +4382,16 @@ export class DaemonClient {
     const payload = await this.sendNamespacedCorrelatedSessionRequest<"agent.plan.review.response">(
       {
         message: { type: "agent.plan.review.request", ...input },
-        timeout: 60_000,
+        timeout: 180_000,
       },
-    );
+    ).catch((error: unknown) => {
+      if (error instanceof DaemonConnectionError && error.code === "DAEMON_REQUEST_TIMEOUT") {
+        throw new Error(
+          "Could not confirm the plan review. Check the conversation before trying again.",
+        );
+      }
+      throw error;
+    });
     if (payload.error) {
       throw new Error(payload.error);
     }
@@ -5986,6 +5994,27 @@ export class DaemonClient {
         path,
       },
       responseType: "file_download_token_response",
+    });
+  }
+
+  /**
+   * Requests a short-lived single-use ticket for opening a dedicated binary
+   * network tunnel WebSocket against this daemon.
+   * Gated on `server_info.features.networkTunnel`.
+   */
+  async createNetworkTunnelTicket(requestId?: string): Promise<NetworkTunnelCreateTicketPayload> {
+    if (!this.isConnected) {
+      throw this.unavailableError();
+    }
+    // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
+    if (this.getLastServerInfoMessage()?.features?.networkTunnel !== true) {
+      throw Object.assign(new Error("Update the daemon to use the network tunnel"), {
+        code: "unsupported_capability",
+      });
+    }
+    return this.sendNamespacedCorrelatedSessionRequest<"network.tunnel.create_ticket.response">({
+      requestId,
+      message: { type: "network.tunnel.create_ticket.request" },
     });
   }
 

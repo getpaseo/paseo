@@ -6,6 +6,7 @@ import { useToast } from "@/contexts/toast-context";
 import { getDesktopHost } from "@/desktop/host";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useBrowserStore } from "@/desktop/browser/store";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
@@ -39,7 +40,10 @@ export function BrowserDataSection() {
         throw new Error("Electron browser profile bridge is unavailable");
       }
 
-      await clearProfile(Object.keys(useBrowserStore.getState().browsersById));
+      const hostServerIds = getHostRuntimeStore()
+        .getHosts()
+        .map((host) => host.serverId);
+      await clearProfile(Object.keys(useBrowserStore.getState().browsersById), hostServerIds);
       toast.show(t("settings.general.browserData.success"), { variant: "success" });
     } catch {
       toast.error(t("settings.general.browserData.error"));

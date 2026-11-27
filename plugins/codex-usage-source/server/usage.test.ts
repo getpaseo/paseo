@@ -117,6 +117,56 @@ test("coerces credit balance and marks a 96 percent window dangerous", async () 
   ]);
 });
 
+test("reports enterprise individual spend limit percentage and reset", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      plan_type: "enterprise",
+      spend_control: {
+        individual_limit: { used_percent: 5, remaining_percent: 95, reset_at: 1795996800 },
+      },
+    }),
+  );
+
+  expect(report).toMatchObject({
+    planLabel: "enterprise",
+    windows: [
+      expect.objectContaining({
+        id: "individual_limit",
+        label: "Individual spend limit",
+        summary: true,
+        usedPct: 5,
+        remainingPct: 95,
+        resetsAt: new Date(1795996800 * 1000).toISOString(),
+      }),
+    ],
+  });
+});
+
+test.each([
+  [{ used_percent: 5 }, 5, 95],
+  [{ remaining_percent: 95 }, 5, 95],
+  [{ used_percent: 5, remaining_percent: 90 }, 5, 90],
+  [{ used_percent: 110 }, 110, 0],
+])(
+  "completes individual spending percentages for %j",
+  async (individual_limit, usedPct, remainingPct) => {
+    const report = await fetchUsage(authInput(fixtureHome), async () =>
+      Response.json({ spend_control: { individual_limit } }),
+    );
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [expect.objectContaining({ id: "individual_limit", usedPct, remainingPct })],
+    });
+  },
+);
+
+test("omits individual spend limit without a percentage", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({ spend_control: { individual_limit: { reset_at: 1795996800 } } }),
+  );
+  expect(report.windows).toEqual([]);
+});
+
 test("summarizes the session and weekly windows by default, not code review", async () => {
   const report = await fetchUsage(
     authInput(fixtureHome),

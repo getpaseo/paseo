@@ -445,6 +445,26 @@ describe("PiCliRuntime", () => {
     expect(child.killedSignals).toContain("SIGTERM");
   });
 
+  test("queues a prompt that arrives while Pi runs a turn it started itself", async () => {
+    // Pi starts runs on its own (an extension message, a background result) and reports
+    // them only at agent_start. Until then it rejects a prompt without streamingBehavior.
+    const child = createPiChild();
+    replyToCommands(child, (command) => {
+      if (command.type !== "prompt") return {};
+      if (!command.streamingBehavior) {
+        throw new Error(
+          "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+        );
+      }
+      return { disposition: "queued" };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.prompt("check the build")).resolves.toMatchObject({
+      requestId: expect.any(String),
+    });
+  });
+
   test("sends the steer RPC frame", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));

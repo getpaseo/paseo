@@ -1834,6 +1834,90 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("a plan review steer keeps existing and newly requested tool permissions actionable", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      modeId: "plan",
+    });
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+    };
+
+    try {
+      const { turnId } = await session.startTurn("prepare a plan");
+      const proposal = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: "First plan" },
+        { toolUseID: "plan-tool" },
+      );
+      const existing = internal.handlePermissionRequest("Write", {}, { toolUseID: "existing" });
+      const planId = session
+        .getPendingPermissions()
+        .find((permission) => permission.kind === "plan")!.id;
+      await expect(
+        session.steerActiveTurn?.("revise the plan", {
+          expectedTurnId: turnId,
+          planPermissionRequestId: planId,
+        }),
+      ).resolves.toMatchObject({ status: "accepted" });
+
+      await expect(proposal).resolves.toMatchObject({ behavior: "deny" });
+      const later = internal.handlePermissionRequest("Write", {}, { toolUseID: "later" });
+      const requests = session.getPendingPermissions();
+      expect(requests.map((permission) => permission.name)).toEqual(["Write", "Write"]);
+      for (const request of requests) {
+        await session.respondToPermission(request.id, { behavior: "allow" });
+      }
+      await expect(Promise.all([existing, later])).resolves.toMatchObject([
+        { behavior: "allow" },
+        { behavior: "allow" },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("rejects a plan review start when Claude cannot initialize the prompt stream", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      modeId: "acceptEdits",
+    });
+    const launch = session as unknown as { ensureQuery(): Promise<unknown> };
+    vi.spyOn(launch, "ensureQuery").mockRejectedValueOnce(new Error("Claude input startup failed"));
+
+    try {
+      await expect(
+        session.startTurn("implement with notes", {
+          planReview: {
+            mode: "implement",
+            permissionRequestId: "plan",
+            signal: new AbortController().signal,
+          },
+        }),
+      ).rejects.toThrow("Claude input startup failed");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("a non-human steer leaves a pending permission for the user", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

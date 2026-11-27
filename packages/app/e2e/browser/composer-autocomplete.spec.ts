@@ -12,14 +12,25 @@ import {
 import { expectWorkspaceTabVisible, openSessions } from "../support/helpers/archive-tab";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
-import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
+import {
+  switchWorkspaceViaSidebar,
+  waitForSidebarHydration,
+} from "../support/helpers/workspace-ui";
 import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
 } from "../support/helpers/sidebar";
-import { expectNewWorkspaceProjectSelected } from "../support/helpers/new-workspace";
+import {
+  expectNewWorkspaceProjectSelected,
+  openGlobalNewWorkspaceComposer,
+  openStartingRefPicker,
+  selectBranchInPicker,
+  selectWorkspaceIsolation,
+} from "../support/helpers/new-workspace";
+import { gotoAppShell } from "../support/helpers/app";
+import { seedWorkspace } from "../support/helpers/seed-client";
 
 const TEST_COMMANDS = [
   {
@@ -119,11 +130,18 @@ const TEST_COMMANDS_REPLY: ListCommandsReply = { commands: TEST_COMMANDS, error:
 async function installListCommandsStub(
   page: Page,
   reply: () => ListCommandsReply | Promise<ListCommandsReply> = () => TEST_COMMANDS_REPLY,
+  options?: {
+    onClientMessage?: (message: string | Buffer, forward: () => void) => void;
+  },
 ): Promise<void> {
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
+      if (options?.onClientMessage) {
+        options.onClientMessage(message, () => server.send(message));
+        return;
+      }
       server.send(message);
     });
 
@@ -167,6 +185,24 @@ async function installListCommandsStub(
       ws.send(message);
     });
   });
+}
+
+async function holdWorkspaceCreateWithCommandsStub(page: Page): Promise<{ release: () => void }> {
+  let release: (() => void) | null = null;
+  await installListCommandsStub(page, undefined, {
+    onClientMessage(message, forward) {
+      if (typeof message === "string" && message.includes('"workspace.create.request"')) {
+        release = forward;
+        return;
+      }
+      forward();
+    },
+  });
+  return {
+    release: () => {
+      release?.();
+    },
+  };
 }
 
 function createHeldReply(): {
@@ -447,6 +483,44 @@ test.describe("Composer autocomplete", () => {
       expect(requests).toHaveLength(1);
     } finally {
       await session.cleanup();
+    }
+  });
+
+  test("shows autocomplete after closing the New Workspace branch picker and hides it while submitting", async ({
+    page,
+  }) => {
+    const heldCreate = await holdWorkspaceCreateWithCommandsStub(page);
+
+    const seeded = await seedWorkspace({ repoPrefix: "autocomplete-branch-picker-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openGlobalNewWorkspaceComposer(page);
+
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await selectWorkspaceIsolation(page, "worktree");
+      await expect(page.getByTestId("new-workspace-ref-picker-trigger")).toBeVisible({
+        timeout: 30_000,
+      });
+
+      await openStartingRefPicker(page);
+      await selectBranchInPicker(page, "main");
+      await expect(input).toBeFocused();
+
+      await page.keyboard.type("/h");
+      const popover = page.getByTestId("composer-autocomplete-popover");
+      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+
+      // Submitting while locked hides the autocomplete popover instead of leaving it over loading.
+      await page.getByTestId("workspace-create-submit").click();
+      await expect(input).not.toBeEditable({ timeout: 10_000 });
+      await expect(popover).toHaveCount(0);
+    } finally {
+      heldCreate.release();
+      await seeded.cleanup();
     }
   });
 

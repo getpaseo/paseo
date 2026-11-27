@@ -697,10 +697,16 @@ describe("createGitLabService", () => {
 
   it("surfaces the head pipeline id and url on the gitlab status facts", async () => {
     const pipelineMr = mergeRequestWithPipeline("canceling");
+    const { jobs, ...pipelineMetadata } = PIPELINE_WITH_JOBS;
     const { service } = makeService((args) => {
       if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
       if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
-      if (args[0] === "ci" && args[1] === "get") return ok(JSON.stringify(PIPELINE_WITH_JOBS));
+      if (args[0] === "api" && args[1] === "projects/101/pipelines/306") {
+        return ok(JSON.stringify(pipelineMetadata));
+      }
+      if (args[0] === "api" && args[1] === "projects/101/pipelines/306/jobs?per_page=100&page=1") {
+        return ok(JSON.stringify(jobs));
+      }
       return ok("{}");
     });
 
@@ -722,35 +728,37 @@ describe("createGitLabService", () => {
 
   it("populates sidebar checks from the merge request head pipeline", async () => {
     const pipelineMr = mergeRequestWithPipeline();
-    const pipeline = {
-      ...PIPELINE_WITH_JOBS,
-      status: "success",
-      jobs: [
-        PIPELINE_WITH_JOBS.jobs[0],
-        PIPELINE_WITH_JOBS.jobs[2],
-        {
-          id: 934,
-          name: "optional-deploy",
-          stage: "deploy",
-          status: "manual",
-          allow_failure: true,
-          web_url: "https://gitlab.example.com/example-group/example-project/-/jobs/934",
-        },
-        {
-          id: 935,
-          name: "release",
-          stage: "deploy",
-          status: "manual",
-          allow_failure: false,
-          web_url: "https://gitlab.example.com/example-group/example-project/-/jobs/935",
-        },
-      ],
-    };
+    const { jobs: _defaultJobs, ...pipelineMetadata } = PIPELINE_WITH_JOBS;
+    const pipelineJobs = [
+      PIPELINE_WITH_JOBS.jobs[0],
+      PIPELINE_WITH_JOBS.jobs[2],
+      {
+        id: 934,
+        name: "optional-deploy",
+        stage: "deploy",
+        status: "manual",
+        allow_failure: true,
+        web_url: "https://gitlab.example.com/example-group/example-project/-/jobs/934",
+      },
+      {
+        id: 935,
+        name: "release",
+        stage: "deploy",
+        status: "manual",
+        allow_failure: false,
+        web_url: "https://gitlab.example.com/example-group/example-project/-/jobs/935",
+      },
+    ];
     const { service, calls } = makeService((args) => {
       if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
       if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
       if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
-      if (args[0] === "ci" && args[1] === "get") return ok(JSON.stringify(pipeline));
+      if (args[0] === "api" && args[1] === "projects/101/pipelines/306") {
+        return ok(JSON.stringify({ ...pipelineMetadata, status: "success" }));
+      }
+      if (args[0] === "api" && args[1] === "projects/101/pipelines/306/jobs?per_page=100&page=1") {
+        return ok(JSON.stringify(pipelineJobs));
+      }
       throw new Error(`unexpected call: ${args.join(" ")}`);
     });
 
@@ -759,15 +767,8 @@ describe("createGitLabService", () => {
       headRef: "release/v0.4.0",
     });
 
-    expect(calls[3]).toEqual([
-      "ci",
-      "get",
-      "--merge-request",
-      "14",
-      "--with-job-details",
-      "-F",
-      "json",
-    ]);
+    expect(calls).toContainEqual(["api", "projects/101/pipelines/306"]);
+    expect(calls).toContainEqual(["api", "projects/101/pipelines/306/jobs?per_page=100&page=1"]);
     expect(status?.checksStatus).toBe("success");
     expect(status?.checks).toEqual([
       {
@@ -820,7 +821,7 @@ describe("createGitLabService", () => {
         if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([pipelineMr]));
         if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
         if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
-        if (args[0] === "ci" && args[1] === "get") return load();
+        if (args[0] === "api" && args[1].includes("/pipelines/306")) return load();
         throw new Error(`unexpected call: ${args.join(" ")}`);
       });
 
@@ -838,21 +839,29 @@ describe("createGitLabService", () => {
   });
 
   it("fetches a pipeline's stages and jobs as neutral check details", async () => {
-    const { service, calls } = makeService(() => ok(JSON.stringify(PIPELINE_WITH_JOBS)));
+    const { jobs, ...pipelineMetadata } = PIPELINE_WITH_JOBS;
+    const { service, calls } = makeService((args) => {
+      if (args[0] === "api" && args[1] === "projects/:fullpath/pipelines/306") {
+        return ok(JSON.stringify(pipelineMetadata));
+      }
+      if (
+        args[0] === "api" &&
+        args[1] === "projects/:fullpath/pipelines/306/jobs?per_page=100&page=1"
+      ) {
+        return ok(JSON.stringify(jobs));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
 
     const details = await service.getCheckDetails({
       cwd: "/repo",
       checkRunId: 306,
     });
 
-    expect(calls[0]).toEqual([
-      "ci",
-      "get",
-      "--pipeline-id",
-      "306",
-      "--with-job-details",
-      "-F",
-      "json",
+    expect(calls).toContainEqual(["api", "projects/:fullpath/pipelines/306"]);
+    expect(calls).toContainEqual([
+      "api",
+      "projects/:fullpath/pipelines/306/jobs?per_page=100&page=1",
     ]);
     expect(details).toMatchObject({
       checkRunId: 306,
@@ -891,8 +900,19 @@ describe("createGitLabService", () => {
     });
   });
 
-  it("addresses the change request's head pipeline by iid (fork/detached safe)", async () => {
-    const { service, calls } = makeService(() => ok(JSON.stringify(PIPELINE_WITH_JOBS)));
+  it("addresses the change request's head pipeline via mr view and pipeline project", async () => {
+    const pipelineMr = mergeRequestWithPipeline();
+    const { jobs, ...pipelineMetadata } = PIPELINE_WITH_JOBS;
+    const { service, calls } = makeService((args) => {
+      if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(pipelineMr));
+      if (args[0] === "api" && args[1] === "projects/101/pipelines/306") {
+        return ok(JSON.stringify(pipelineMetadata));
+      }
+      if (args[0] === "api" && args[1] === "projects/101/pipelines/306/jobs?per_page=100&page=1") {
+        return ok(JSON.stringify(jobs));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
 
     await service.getCheckDetails({
       cwd: "/repo",
@@ -900,15 +920,174 @@ describe("createGitLabService", () => {
       changeRequestNumber: 14,
     });
 
-    expect(calls[0]).toEqual([
-      "ci",
-      "get",
-      "--merge-request",
-      "14",
-      "--with-job-details",
-      "-F",
-      "json",
+    expect(calls).toEqual([
+      ["mr", "view", "14", "-F", "json"],
+      ["api", "projects/101/pipelines/306"],
+      ["api", "projects/101/pipelines/306/jobs?per_page=100&page=1"],
     ]);
+  });
+
+  it("paginates pipeline jobs beyond a single page of 100", async () => {
+    const { jobs: _defaultJobs, ...pipelineMetadata } = PIPELINE_WITH_JOBS;
+    const page1 = Array.from({ length: 100 }, (_, index) => ({
+      id: 1000 + index,
+      name: `job-${index}`,
+      stage: "test",
+      status: "success",
+      allow_failure: false,
+    }));
+    const page2 = [
+      {
+        id: 1100,
+        name: "job-100",
+        stage: "deploy",
+        status: "failed",
+        allow_failure: false,
+      },
+    ];
+    const { service, calls } = makeService((args) => {
+      if (args[0] === "api" && args[1] === "projects/:fullpath/pipelines/306") {
+        return ok(JSON.stringify(pipelineMetadata));
+      }
+      if (
+        args[0] === "api" &&
+        args[1] === "projects/:fullpath/pipelines/306/jobs?per_page=100&page=1"
+      ) {
+        return ok(JSON.stringify(page1));
+      }
+      if (
+        args[0] === "api" &&
+        args[1] === "projects/:fullpath/pipelines/306/jobs?per_page=100&page=2"
+      ) {
+        return ok(JSON.stringify(page2));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const details = await service.getCheckDetails({ cwd: "/repo", checkRunId: 306 });
+    expect(calls).toContainEqual([
+      "api",
+      "projects/:fullpath/pipelines/306/jobs?per_page=100&page=2",
+    ]);
+    const totalJobs = details.pipeline?.stages.reduce((sum, stage) => sum + stage.jobs.length, 0);
+    expect(totalJobs).toBe(101);
+  });
+
+  it("throws when getCheckDetails targets an MR without a head pipeline", async () => {
+    const mrWithoutPipeline = { ...OPEN_MR, head_pipeline: null };
+    const { service } = makeService((args) => {
+      if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(mrWithoutPipeline));
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    await expect(
+      service.getCheckDetails({ cwd: "/repo", checkRunId: 306, changeRequestNumber: 14 }),
+    ).rejects.toThrow("No pipeline found for merge request !14");
+  });
+
+  it("loads fork MR pipeline checks from head_pipeline.project_id instead of the target project", async () => {
+    const forkMr = {
+      ...OPEN_MR,
+      iid: 42,
+      source_project_id: 202,
+      target_project_id: 101,
+      references: { full: "example-group/example-project!42", short: "!42" },
+      web_url: "https://gitlab.example.com/example-group/example-project/-/merge_requests/42",
+      head_pipeline: {
+        id: 7001,
+        project_id: 202,
+        status: "running",
+        ref: "feat/fork-change",
+        sha: "2222222222222222222222222222222222222222",
+        web_url: "https://gitlab.example.com/contributor/example-project/-/pipelines/7001",
+      },
+    };
+    const forkPipeline = {
+      id: 7001,
+      project_id: 202,
+      status: "running",
+      ref: "feat/fork-change",
+      sha: "2222222222222222222222222222222222222222",
+      web_url: "https://gitlab.example.com/contributor/example-project/-/pipelines/7001",
+    };
+    const forkJobs = [
+      {
+        id: 8002,
+        name: "lint",
+        stage: "test",
+        status: "success",
+        allow_failure: false,
+        web_url: "https://gitlab.example.com/contributor/example-project/-/jobs/8002",
+        duration: 18.5,
+      },
+      {
+        id: 8001,
+        name: "build",
+        stage: "test",
+        status: "running",
+        allow_failure: false,
+        web_url: "https://gitlab.example.com/contributor/example-project/-/jobs/8001",
+        duration: null,
+      },
+    ];
+
+    const { service, calls } = makeService((args) => {
+      if (args[0] === "mr" && args[1] === "list") return ok(JSON.stringify([forkMr]));
+      if (args[0] === "mr" && args[1] === "view") return ok(JSON.stringify(forkMr));
+      if (args[0] === "api" && args[1].endsWith("/approvals")) return ok("{}");
+      if (args[0] === "api" && args[1] === "projects/202/pipelines/7001") {
+        return ok(JSON.stringify(forkPipeline));
+      }
+      if (args[0] === "api" && args[1] === "projects/202/pipelines/7001/jobs?per_page=100&page=1") {
+        return ok(JSON.stringify(forkJobs));
+      }
+      throw { code: 1, stderr: "No pipeline found for merge request !42: 404 Not Found." };
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "release/v0.4.0",
+    });
+
+    expect(status?.checksStatus).toBe("pending");
+    expect(status?.checks).toEqual([
+      {
+        name: "build",
+        status: "pending",
+        url: "https://gitlab.example.com/contributor/example-project/-/jobs/8001",
+        workflow: "test",
+        checkRunId: 8001,
+      },
+      {
+        name: "lint",
+        status: "success",
+        url: "https://gitlab.example.com/contributor/example-project/-/jobs/8002",
+        workflow: "test",
+        checkRunId: 8002,
+      },
+    ]);
+    expect(calls).toContainEqual(["api", "projects/202/pipelines/7001"]);
+    expect(calls).toContainEqual(["api", "projects/202/pipelines/7001/jobs?per_page=100&page=1"]);
+
+    const details = await service.getCheckDetails({
+      cwd: "/repo",
+      checkRunId: 7001,
+      changeRequestNumber: 42,
+    });
+    expect(details.pipeline).toMatchObject({
+      id: 7001,
+      status: "running",
+      stages: [
+        {
+          name: "test",
+          status: "running",
+          jobs: [
+            { id: 8001, name: "build", status: "running" },
+            { id: 8002, name: "lint", status: "success" },
+          ],
+        },
+      ],
+    });
   });
 
   it.each([
@@ -927,12 +1106,17 @@ describe("createGitLabService", () => {
       expectedStage,
       expectedJob,
     ) => {
-      const { service } = makeService(() =>
-        ok(
-          JSON.stringify({
-            ...PIPELINE_WITH_JOBS,
-            status: pipelineStatus,
-            jobs: [
+      const { jobs: _defaultJobs, ...pipelineMetadata } = PIPELINE_WITH_JOBS;
+      const { service } = makeService((args) => {
+        if (args[0] === "api" && args[1] === "projects/:fullpath/pipelines/306") {
+          return ok(JSON.stringify({ ...pipelineMetadata, status: pipelineStatus }));
+        }
+        if (
+          args[0] === "api" &&
+          args[1] === "projects/:fullpath/pipelines/306/jobs?per_page=100&page=1"
+        ) {
+          return ok(
+            JSON.stringify([
               {
                 id: 940,
                 name: "build",
@@ -947,10 +1131,11 @@ describe("createGitLabService", () => {
                 status: jobStatus,
                 allow_failure: allowFailure,
               },
-            ],
-          }),
-        ),
-      );
+            ]),
+          );
+        }
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      });
 
       const details = await service.getCheckDetails({ cwd: "/repo", checkRunId: 306 });
       expect(details.pipeline).toMatchObject({

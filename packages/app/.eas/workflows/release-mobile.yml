@@ -69,4 +69,5 @@ jobs:
         run: |
           export APP_VERSION="${{ needs.build_ios.outputs.app_version }}"
           export APP_BUILD_VERSION="${{ needs.build_ios.outputs.app_build_version }}"
+          export REPLACE_IN_REVIEW="false"
           bundle exec fastlane ios submit_review

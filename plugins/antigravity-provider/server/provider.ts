@@ -1,9 +1,10 @@
+import { stat } from "node:fs/promises";
 import { execCommand } from "@getpaseo/plugin/server";
 import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
-import {
-  PROVIDER_PROTOCOL_VERSION,
-  type ProviderInstallationLaunch,
-  type ProviderRegistration,
+import type {
+  ProviderInstallationLaunch,
+  ProviderLaunch,
+  ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 import { mapToolCall } from "./tool-calls.js";
@@ -68,22 +69,89 @@ const antigravity: AcpTransformer = {
   },
 };
 
+const MIN_AGY_VERSION = [1, 5, 1] as const;
+const MIN_AGY_VERSION_LABEL = "1.5.1";
+const VERSION_CACHE_LIMIT = 32;
+
+const agyVersionCache = new Map<string, string | undefined>();
+const agyVersionInFlight = new Map<string, Promise<string | undefined>>();
+
+function parseSemverTriplet(version: string): readonly [number, number, number] | null {
+  const match = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(version);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function isVersionAtLeast(
+  actual: readonly [number, number, number],
+  minimum: readonly [number, number, number],
+): boolean {
+  for (let index = 0; index < 3; index += 1) {
+    if (actual[index]! !== minimum[index]!) return actual[index]! > minimum[index]!;
+  }
+  return true;
+}
+
+async function statSignature(filePath: string): Promise<string | null> {
+  try {
+    const info = await stat(filePath);
+    return `${info.mtimeMs}:${info.size}`;
+  } catch {
+    return null;
+  }
+}
+
+async function agyVersionCacheKey(
+  launch: Pick<ProviderLaunch, "command" | "args">,
+  prefix: readonly string[],
+): Promise<string | null> {
+  const binarySignature = await statSignature(launch.command);
+  if (!binarySignature) return null;
+  // Wrappers or test harnesses may invoke `[node, script.cjs, "acp"]`; include the script stat
+  // when the first prefix arg points to an existing file so edits invalidate the cache.
+  const scriptSignature = prefix[0] ? await statSignature(prefix[0]) : null;
+  return JSON.stringify([launch.command, binarySignature, prefix, scriptSignature]);
+}
+
 /** The release `agy --version` reports, or its first line when it names no release. */
 async function readAgyVersion(
-  launch: ProviderInstallationLaunch,
-  signal: AbortSignal,
+  launch: Pick<ProviderInstallationLaunch, "command" | "args" | "env">,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   // The launch ends with the `acp` subcommand and its flags; the version comes from the CLI itself.
   const acp = launch.args.indexOf("acp");
   const prefix = acp === -1 ? launch.args : launch.args.slice(0, acp);
-  const { stdout } = await execCommand(launch.command, [...prefix, "--version"], {
+  const cacheKey = await agyVersionCacheKey(launch, prefix);
+  if (cacheKey !== null) {
+    if (agyVersionCache.has(cacheKey)) {
+      return agyVersionCache.get(cacheKey);
+    }
+    const existing = agyVersionInFlight.get(cacheKey);
+    if (existing) return existing;
+  }
+  const run = execCommand(launch.command, [...prefix, "--version"], {
     env: launch.env,
     timeout: 5000,
     maxBuffer: 8192,
     signal,
+  }).then(({ stdout }) => {
+    const firstLine = stdout.trim().split("\n")[0]?.trim();
+    const version = /\b\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? (firstLine || undefined);
+    if (cacheKey !== null) {
+      if (agyVersionCache.size >= VERSION_CACHE_LIMIT) agyVersionCache.clear();
+      agyVersionCache.set(cacheKey, version);
+    }
+    return version;
   });
-  const firstLine = stdout.trim().split("\n")[0]?.trim();
-  return /\b\d+\.\d+\.\d+\S*/.exec(stdout)?.[0] ?? (firstLine || undefined);
+  if (cacheKey !== null) {
+    agyVersionInFlight.set(cacheKey, run);
+    try {
+      return await run;
+    } finally {
+      if (agyVersionInFlight.get(cacheKey) === run) agyVersionInFlight.delete(cacheKey);
+    }
+  }
+  return run;
 }
 
 // agy 1.5.14 reads its sign-in from a token file when any of these is set, and from the OS keyring
@@ -107,7 +175,7 @@ export function createAntigravityProvider(): ProviderRegistration {
     label: "Antigravity",
     description: "Antigravity CLI on your host",
     icon: "icon.svg",
-    command: ["agy", "acp", "--disable-telemetry"],
+    command: ["agy", "acp"],
     acpOptions: {
       // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
       perModelThinkingOptions: true,
@@ -155,23 +223,37 @@ export function createAntigravityProvider(): ProviderRegistration {
       },
     },
     async status({ launch }) {
-      if (!launch) return { available: false, diagnostic: "Install Antigravity 1.5.0 or later." };
+      if (!launch) {
+        return {
+          available: false,
+          diagnostic: `Install Antigravity ${MIN_AGY_VERSION_LABEL} or later.`,
+        };
+      }
       // A sign-in problem can stop ACP from starting, so the report says which sign-in either way.
       const signIn = describeSignIn(launch.env);
+      let version: string | undefined;
       try {
-        const connection = await provider.connect({
-          launch,
-          versions: [PROVIDER_PROTOCOL_VERSION],
-          capabilities: [],
-        });
-        await connection.close();
-        return { available: true, diagnostic: signIn };
+        version = await readAgyVersion(launch);
       } catch {
         return {
           available: false,
-          diagnostic: `Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.\n${signIn}`,
+          diagnostic: `Antigravity CLI did not report its version. Install Antigravity ${MIN_AGY_VERSION_LABEL} or later.\n${signIn}`,
         };
       }
+      if (!version) {
+        return {
+          available: false,
+          diagnostic: `Antigravity CLI did not report its version. Install Antigravity ${MIN_AGY_VERSION_LABEL} or later.\n${signIn}`,
+        };
+      }
+      const parsed = parseSemverTriplet(version);
+      if (parsed && !isVersionAtLeast(parsed, MIN_AGY_VERSION)) {
+        return {
+          available: false,
+          diagnostic: `Antigravity CLI ${version} is older than ${MIN_AGY_VERSION_LABEL}. Update Antigravity CLI to ${MIN_AGY_VERSION_LABEL} or later (earlier versions restrict model access for ACP clients).\n${signIn}`,
+        };
+      }
+      return { available: true, diagnostic: signIn };
     },
   };
 }

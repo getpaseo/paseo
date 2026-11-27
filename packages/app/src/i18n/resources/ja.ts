@@ -668,6 +668,24 @@ export const ja: TranslationResources = {
         invalidUrl: "無効なブラウザURL",
         unsupportedProtocol: "サポートされていないブラウザURLをブロック: {{protocol}}",
       },
+      routing: {
+        tooltipHost: "{{hostName}} 経由で閲覧中。クリックしてローカルで閲覧。",
+        tooltipLocal: "ローカルで閲覧中。クリックして {{hostName}} 経由で閲覧。",
+        switchToLocal: "ブラウザルーティングを {{hostName}} からローカルに切り替え",
+        switchToHost: "ブラウザルーティングをローカルから {{hostName}} に切り替え",
+      },
+      proxy: {
+        connecting: "{{hostName}} に接続中...",
+        reconnecting: "{{hostName}} に再接続中...",
+        updateTitle: "このホスト経由で閲覧するには {{hostName}} を更新してください",
+        updateDescription: "このホストはまだブラウザプロキシに対応していません。",
+        routedTitle: "ルーティングされたホストではブラウザプロキシを利用できません",
+        routedDescription: "このホストに直接接続するか、ローカルで閲覧してください。",
+        offlineTitle: "{{hostName}} はオフラインです",
+        offlineDescription: "ホストの再接続を待つか、ローカルで閲覧してください。",
+        errorTitle: "ブラウザプロキシに接続できませんでした",
+        browseLocally: "ローカルで閲覧",
+      },
     },
     terminal: {
       hostDisconnected: "ホストが接続されていません",
@@ -2546,7 +2564,7 @@ export const ja: TranslationResources = {
     metadataGeneration: {
       title: "メタデータ生成",
       description:
-        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルを選択します",
+        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルと指示を選択します",
       selection: "モデル選択",
       automatic: "自動",
       preferred: "手動",
@@ -2554,6 +2572,10 @@ export const ja: TranslationResources = {
       preferredHint: "Paseo が使用するモデルを選択します",
       model: "モデル",
       modelHint: "このモデルのみを使用します。失敗しても、Paseo は別のモデルを試しません",
+      instructions: "指示",
+      instructionsHint: "このホストで生成されるすべてのメタデータに適用されます",
+      instructionsPlaceholder:
+        "例：日本語で書く。タイトルとコミットメッセージの表現を統一する。全角ダッシュを使わない。",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
     },
@@ -3154,6 +3176,8 @@ export const ja: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "エージェントプロファイル",
+        sectionDescription:
+          "素早く選べるエージェント設定を保存します。エージェントが作業を委任するときにも使えます",
         unavailable: "エージェントプロファイルを管理するにはこのホストに接続してください",
         unsupported: "このホストで動作するデーモンはまだエージェントプロファイルに対応していません",
         emptyState:
@@ -3178,6 +3202,10 @@ export const ja: TranslationResources = {
         featuresLabel: "機能",
         featureCount: "{{count}}個の機能",
         featureCountOne: "{{count}}個の機能",
+        systemPromptLabel: "システムプロンプト",
+        systemPromptPlaceholder:
+          "レイアウト、アクセシビリティ、デザイントークンに集中してください。",
+        systemPromptHint: "新しいエージェントにのみ適用されます",
         notesLabel: "使用する場面",
         notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
         notesHint: "別のエージェントを起動するとき、このプロファイルを選ぶために使用されます。",

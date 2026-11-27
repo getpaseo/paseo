@@ -4,7 +4,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const STAMP_CACHE_VERSION = "v2";
+// Stamped icons are cached under this version. Bump it when the stamp or the base icon art changes.
+const STAMP_CACHE_VERSION = "v3";
 
 export const MONOSPACE_FONT_CANDIDATES = [
   "Menlo-Bold",

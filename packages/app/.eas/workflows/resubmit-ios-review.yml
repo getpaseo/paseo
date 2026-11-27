@@ -1,9 +1,11 @@
 name: Resubmit iOS for App Store review
 
-# Standalone re-trigger for the App Store review submission step. The iOS
-# binary is already uploaded to TestFlight via the EAS GitHub app's tag-push
-# build; this workflow just runs the fastlane submit_review lane against the
-# latest TestFlight build, without rebuilding or re-uploading.
+# Standalone trigger for the App Store review submission step. The iOS binary
+# is already uploaded to TestFlight via the EAS GitHub app's tag-push build;
+# this workflow runs fastlane ios submit_review without rebuilding or
+# re-uploading. By default (replace_in_review=false) it skips cleanly if
+# another App Store review is already in flight; pass replace_in_review=true
+# to cancel an in-flight review and submit an urgent replacement.
 
 on:
   workflow_dispatch:
@@ -16,6 +18,11 @@ on:
         type: string
         required: false
         description: "CFBundleVersion to resubmit, e.g. 2. Only used when app_version is set."
+      replace_in_review:
+        type: boolean
+        required: false
+        default: false
+        description: "Cancel an in-flight App Store review and submit this build instead. Leave false to skip safely while another review is active."
 
 jobs:
   submit_ios_for_review:
@@ -30,4 +37,5 @@ jobs:
         run: |
           export APP_VERSION="${{ inputs.app_version }}"
           export APP_BUILD_VERSION="${{ inputs.app_build_version }}"
+          export REPLACE_IN_REVIEW="${{ inputs.replace_in_review }}"
           bundle exec fastlane ios submit_review

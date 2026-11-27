@@ -981,6 +981,84 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("preserves tool intent across live updates and completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "tool_execution_start",
+        toolCallId: "intent-call",
+        toolName: "bash",
+        args: { command: "echo hello" },
+        intent: "Inspect output",
+      }),
+    );
+    omp.emit({
+      type: "tool_execution_update",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      partialResult: { output: "hello" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      result: { output: "hello" },
+    });
+    expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
+      { status: "running", metadata: { intent: "Inspect output" } },
+      { status: "running", metadata: { intent: "Inspect output" } },
+      { status: "completed", metadata: { intent: "Inspect output" } },
+    ]);
+  });
+
+  test("does not treat a live tool argument named i as intent", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "tool_execution_start",
+        toolCallId: "ordinary-i",
+        toolName: "bash",
+        args: { command: "echo hello", i: "ordinary input" },
+      }),
+    );
+    expect(omp.timeline().find((item) => item.type === "tool_call")).not.toHaveProperty("metadata");
+  });
+
+  test.each([
+    { outcome: "failed", isError: true },
+    { outcome: "canceled", isError: false },
+  ])("keeps tool intent on a $outcome live tool call", async ({ outcome, isError }) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.startTurn("run it");
+    omp.emit({ type: "agent_start" });
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      args: { command: "sleep 10" },
+      intent: "Wait for output",
+    });
+    if (isError) {
+      omp.emit({
+        type: "tool_execution_end",
+        toolCallId: "intent-call",
+        toolName: "bash",
+        result: { output: "boom" },
+        isError,
+      });
+    } else {
+      await omp.interrupt();
+    }
+
+    expect(omp.timeline().findLast((item) => item.type === "tool_call")).toMatchObject({
+      status: outcome,
+      metadata: { intent: "Wait for output" },
+    });
+  });
+
   test("shows a concise error for a failed tool while keeping shell output", async () => {
     const omp = new OmpHarness();
     await omp.start();

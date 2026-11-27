@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ToolCallDetail } from "../../agent-sdk-types.js";
+import type { ToolCallDetail, ToolCallTimelineItem } from "../../agent-sdk-types.js";
 import { omitNullArgs } from "../tool-call-args.js";
 
 interface BashToolInput {
@@ -129,7 +129,7 @@ interface OmpUnknownToolCall {
   args: unknown;
 }
 
-export type OmpTrackedToolCall =
+export type OmpTrackedToolCall = (
   | OmpBashToolCall
   | OmpReadToolCall
   | OmpEditToolCall
@@ -137,7 +137,8 @@ export type OmpTrackedToolCall =
   | OmpFindToolCall
   | OmpGrepToolCall
   | OmpLsToolCall
-  | OmpUnknownToolCall;
+  | OmpUnknownToolCall
+) & { intent?: string };
 
 interface ToolCallOutputSummary {
   output?: string;
@@ -319,7 +320,29 @@ export function isOmpToolFailure(
   );
 }
 
-export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
+/**
+ * `intent` is the harness-level value OMP reports beside the arguments. Never derive it from
+ * `rawArgs.i`: OMP copies its own `i` into `intent`, and any other `i` belongs to the tool.
+ */
+export function parseToolArgs(
+  toolName: string,
+  rawArgs: unknown,
+  intent?: unknown,
+): OmpTrackedToolCall {
+  const toolCall = parseToolArgsByName(toolName, rawArgs);
+  // Replayed session files are unvalidated, so a non-string intent is dropped here.
+  return typeof intent === "string" ? { ...toolCall, intent } : toolCall;
+}
+
+export function withOmpToolIntent(
+  item: ToolCallTimelineItem,
+  toolCall: OmpTrackedToolCall,
+): ToolCallTimelineItem {
+  if (toolCall.intent === undefined) return item;
+  return { ...item, metadata: { ...item.metadata, intent: toolCall.intent } };
+}
+
+function parseToolArgsByName(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
   if (toolName === "edit") {
     return parseEditToolArgs(rawArgs);
   }

@@ -62,6 +62,10 @@ class CodeBlockContainerView(
   // the root mutates the one instance in place, so this view and any sibling
   // created later see the same current values. See DynamicBlockProps.
   var dynamicProps: DynamicBlockProps = DynamicBlockProps()
+    set(value) {
+      field = value
+      syncCopyLabel()
+    }
 
   private var code: String = ""
   private var language: String? = null
@@ -120,7 +124,8 @@ class CodeBlockContainerView(
     }
 
   private val copyButton =
-    HeaderCopyButton(context, codeBlockStyle) { dynamicProps.copyLabel }.apply {
+    HeaderCopyButton(context, codeBlockStyle).apply {
+      contentDescription = dynamicProps.copyLabel
       setOnClickListener { copyCode() }
     }
 
@@ -161,9 +166,14 @@ class CodeBlockContainerView(
     addView(copyButton, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
   }
 
+  internal fun syncCopyLabel() {
+    copyButton.contentDescription = dynamicProps.copyLabel
+  }
+
   fun applyCodeBlockNode(node: MarkdownASTNode) {
     code = CodeBlockNode.extractCode(node)
     fenceChar = CodeBlockNode.fenceChar(node)
+    syncCopyLabel()
 
     val newLanguage = CodeBlockNode.language(node)
     if (newLanguage != language) {

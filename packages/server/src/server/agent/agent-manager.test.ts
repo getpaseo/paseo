@@ -1,3 +1,4 @@
+import { wrapSessionProvider } from "./provider-registry.js";
 import type { AttachedAgentTool, PluginSessionsRuntime } from "../plugins/agent-tools.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
@@ -29,6 +30,8 @@ import {
 } from "./providers/codex-app-server-agent.js";
 import { spawnProcess } from "../../utils/spawn.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
+import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { FakePi } from "./providers/pi/test-utils/fake-pi.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
@@ -1482,6 +1485,74 @@ test("a steer the provider names without echoing it can be rewound to", async ()
   }
 });
 
+test("keeps one assistant message whole when a steer lands between its chunks", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-split-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    // Zero window: every streamed chunk flushes on the coalescer's leading edge,
+    // so the timeline reaches its next state without waiting on a timer.
+    agentStreamCoalesceWindowMs: 0,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const conversation = () =>
+      manager
+        .fetchTimeline(agent.id, { limit: 0 })
+        .rows.filter(
+          (row) => row.item.type === "assistant_message" || row.item.type === "user_message",
+        )
+        .map((row) => row.item);
+
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+    });
+    await expect
+      .poll(conversation)
+      .toMatchObject([
+        { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+      ]);
+    await expect(
+      manager.steerAgentRun(agent.id, "keep going", { clientMessageId: "keep-going-client" }),
+    ).resolves.toEqual({ status: "accepted" });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: { type: "assistant_message", text: "ted changes.", messageId: "msg-1" },
+    });
+
+    await expect.poll(conversation).toMatchObject([
+      { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders a concurrent replacement after a pending accepted steer", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
@@ -1768,6 +1839,51 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
         clientMessageId: "autonomous-follow-up-client",
       }),
     );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("steers a run Pi started by itself instead of aborting it", async () => {
+  const runtime = new FakePi();
+  const manager = new AgentManager({
+    clients: {
+      pi: new PiRpcAgentClient({
+        runtime,
+        logger,
+        runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+      }),
+    },
+    logger,
+  });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-pi-autonomous-steer-"));
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "pi", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const fakeSession = runtime.latestSession();
+    // An extension message or a process exit notice starts a run without a Paseo prompt.
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    await vi.waitFor(() =>
+      expect(manager.getAgent(agent.id)?.activeTurnId).toEqual(expect.any(String)),
+    );
+
+    const result = await startAgentRun(manager, agent.id, "message from another agent", logger, {
+      activeTurnBehavior: "steer",
+      replaceRunning: true,
+    });
+
+    expect(result).toEqual({ disposition: "steered" });
+    expect(fakeSession.steerCalls).toEqual([
+      { message: "message from another agent", imageCount: 0 },
+    ]);
+    expect(fakeSession.controlRequests).toEqual([]);
+    expect(fakeSession.prompts).toEqual([]);
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
@@ -11767,9 +11883,19 @@ test("permission request notifies once without forcing unread attention state", 
   expect(attentionReasons).toContain("permission");
 });
 
-test.each(["claude", "codex"] as const)(
-  "plan review for %s consumes the proposal once and delivers notes before implementation",
-  async (provider) => {
+test.each([
+  ["claude", "claude", "success"],
+  ["codex", "codex", "success"],
+  ["claude", "custom-claude", "success"],
+  ["codex", "custom-codex", "success"],
+  ["claude", "claude", "startup failed"],
+  ["codex", "codex", "stopped"],
+  ["claude", "claude", "reloaded"],
+] as const)(
+  "plan review for %s as %s with %s implementation",
+  async (provider, configuredProvider, outcome) => {
+    const startingImplementation = deferred<AbortSignal>();
+    const releaseImplementation = deferred<void>();
     const releasePlanningTurn = deferred<void>();
     const permissionAnswered = deferred<void>();
     const calls: string[] = [];
@@ -11804,7 +11930,7 @@ test.each(["claude", "codex"] as const)(
         calls.push(`plan-mode:${options.plan_mode}`);
       }
 
-      override async startTurn(prompt?: AgentPromptInput) {
+      override async startTurn(prompt?: AgentPromptInput, options?: AgentRunOptions) {
         if (prompt === "prepare") {
           if (request) this.pushEvent({ type: "permission_requested", provider, request });
           void (async () => {
@@ -11813,9 +11939,20 @@ test.each(["claude", "codex"] as const)(
           })();
           return { turnId: "planning" };
         }
+        if (outcome === "startup failed") throw new Error("Claude input startup failed");
+        if (outcome === "stopped") {
+          startingImplementation.resolve(options!.planReview!.signal);
+          await releaseImplementation.promise;
+          options!.planReview!.signal.throwIfAborted();
+        }
         calls.push(String(prompt));
         this.pushEvent({ type: "turn_completed", provider, turnId: "implement" });
         return { turnId: "implement" };
+      }
+
+      override async interrupt() {
+        releasePlanningTurn.resolve();
+        releaseImplementation.resolve();
       }
 
       override async respondToPermission(
@@ -11839,17 +11976,17 @@ test.each(["claude", "codex"] as const)(
 
     class ReviewClient extends TestAgentClient {
       override async createSession(config: AgentSessionConfig) {
-        return new ReviewSession(config);
+        return wrapSessionProvider(configuredProvider, new ReviewSession(config));
       }
     }
 
     const manager = new AgentManager({
-      clients: { [provider]: new ReviewClient(provider) },
+      clients: { [configuredProvider]: new ReviewClient(configuredProvider) },
       logger,
     });
     const agent = await manager.createAgent(
       {
-        provider,
+        provider: configuredProvider,
         cwd: process.cwd(),
         modeId: "plan",
         providerOptions: provider === "codex" ? { plan_mode: true } : undefined,
@@ -11872,17 +12009,45 @@ test.each(["claude", "codex"] as const)(
       };
       await expect(manager.reviewPlan({ ...input, text: "  " })).rejects.toThrow("Enter feedback");
       const review = manager.reviewPlan(input);
+      const outcomeCheck =
+        outcome === "success"
+          ? expect(review).resolves.toBeUndefined()
+          : expect(review).rejects.toThrow(
+              outcome === "startup failed"
+                ? "Claude input startup failed"
+                : "The plan review was canceled",
+            );
       const duplicate = expect(manager.reviewPlan(input)).rejects.toThrow(
         "no longer awaiting review",
       );
       await permissionAnswered.promise;
+      if (outcome === "reloaded") {
+        await manager.reloadAgentSession(agent.id);
+        await outcomeCheck;
+        await duplicate;
+        expect(calls).toEqual([]);
+        return;
+      }
       if (provider === "claude") {
         expect(calls).toEqual([]);
         releasePlanningTurn.resolve();
         await planning;
       }
-      await review;
+      if (outcome === "stopped") {
+        const signal = await startingImplementation.promise;
+        await manager.cancelAgentRun(agent.id);
+        expect(signal.aborted).toBe(true);
+      }
+      await outcomeCheck;
       await duplicate;
+      if (outcome !== "success") {
+        expect(calls).toEqual(
+          provider === "claude"
+            ? ["mode:acceptEdits", "mode:plan"]
+            : ["plan-mode:false", "plan-mode:true"],
+        );
+        return;
+      }
       expect(calls).toEqual([
         provider === "claude" ? "mode:acceptEdits" : "plan-mode:false",
         expect.stringContaining("Add the original text."),
@@ -11892,6 +12057,7 @@ test.each(["claude", "codex"] as const)(
         expect.objectContaining({ type: "user_message", text: calls[1] }),
       );
     } finally {
+      releaseImplementation.resolve();
       releasePlanningTurn.resolve();
       await planning.catch(() => undefined);
       await manager.closeAgent(agent.id);

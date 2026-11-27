@@ -19,4 +19,18 @@ describe("workspace-draft-agent-config", () => {
       thinkingOptionId: "high",
     });
   });
+
+  it("includes systemPrompt when set", () => {
+    expect(
+      buildWorkspaceDraftAgentConfig({
+        provider: "codex",
+        cwd: "/tmp/project",
+        systemPrompt: "Always write tests first.",
+      }),
+    ).toEqual({
+      provider: "codex",
+      cwd: "/tmp/project",
+      systemPrompt: "Always write tests first.",
+    });
+  });
 });

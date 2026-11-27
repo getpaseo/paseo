@@ -7,6 +7,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
   model?: string;
   thinkingOptionId?: string;
   providerOptions?: Record<string, unknown>;
+  systemPrompt?: string;
 }): AgentSessionConfig {
   return {
     provider: input.provider,
@@ -15,5 +16,6 @@ export function buildWorkspaceDraftAgentConfig(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+    ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
   };
 }

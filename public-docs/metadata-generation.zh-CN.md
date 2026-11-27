@@ -65,6 +65,22 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 
 设置界面只替换第一项，并保留自定义列表的其余部分。直接编辑文件后，请重启 daemon。
 
+## 主机级指令 {#host-wide-instructions}
+
+如需统一调整同一主机上生成的所有元数据，打开 **设置 → 主机 → Workspaces**，在 **元数据生成** 下编辑 **指令**，或在 `~/.paseo/config.json` 中设置 `agents.metadataGeneration.instructions`。
+
+```json
+{
+  "agents": {
+    "metadataGeneration": {
+      "instructions": "Write in Simplified Chinese. Keep phrasing consistent across titles and commits. Do not use em dashes."
+    }
+  }
+}
+```
+
+主机级指令会与 Paseo 的默认风格一起作用于工作区标题、分支名、提交信息和 PR 草稿。留空则仅使用默认风格。如果项目在 `paseo.json` 中设置了自己的风格指令，两者会同时生效，发生冲突时以项目风格为准。功能性要求（合法的 git 分支名与 JSON 输出格式）始终适用。
+
 ## 按项目设置指令 {#per-project-instructions}
 
 你可以在仓库根目录的 `paseo.json` 文件中，按仓库调整每类元数据的措辞。Paseo 从基础分支已提交的版本中读取它，方式与读取 worktree 配置相同。
