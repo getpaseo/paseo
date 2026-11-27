@@ -391,6 +391,26 @@ describe("PiCliRuntime", () => {
     }
   });
 
+  test("prompt waits beyond the control-plane timeout while Pi runs extension preflight", async () => {
+    vi.useFakeTimers();
+    const child = createPiChild();
+    const pendingPrompt = capturePendingCommand(child, "prompt");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    try {
+      const promptPromise = session.prompt("hello");
+      const promptCommand = await pendingPrompt;
+      // An extension asks the user a question before the run starts; they answer two minutes later.
+      await vi.advanceTimersByTimeAsync(120_000);
+      writePiResponse(child, promptCommand, {});
+
+      await expect(promptPromise).resolves.toMatchObject({ requestId: promptCommand.id });
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
   test("compact waits beyond the default control-plane timeout for a late response", async () => {
     vi.useFakeTimers();
     const child = createPiChild();

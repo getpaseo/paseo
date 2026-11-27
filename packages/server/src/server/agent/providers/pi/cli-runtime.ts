@@ -124,11 +124,16 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<PiPromptAck> {
-    const { id: requestId, promise } = this.options.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
-    });
+    // Pi answers after extension preflight, which can wait on a person (an extension's question)
+    // or on a compaction, so there is no deadline that fits every prompt.
+    const { id: requestId, promise } = this.options.process.startRequest(
+      {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+      },
+      JSONL_RPC_NO_TIMEOUT,
+    );
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
       const { agentInvoked } = data as Record<string, unknown>;
