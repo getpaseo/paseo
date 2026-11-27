@@ -189,19 +189,43 @@ test.describe("Settings host page", () => {
       await openHostSection(page, serverId, "daemon");
     };
     try {
-      await test.step("idle agent release starts on and turns off", async () => {
+      const forceSwitch = page.getByRole("switch", { name: "Force release idle agents" });
+      const editHook = page.getByRole("button", { name: "Idle release hook" });
+      const scriptInput = page.getByRole("textbox", { name: "Idle release hook" });
+      const save = page.getByRole("button", { name: "Save", exact: true });
+      const script = 'echo "idle release"\necho "done"';
+
+      await test.step("idle agent release starts on and saves an optional hook", async () => {
         await openHostAgentsInFreshApp(daemon.serverId);
         await expectIdleAgentRelease(page, true);
+        await expect(forceSwitch).toHaveAttribute("aria-checked", "false");
+        await forceSwitch.click();
+        await expect(forceSwitch).toHaveAttribute("aria-checked", "true");
+        expect((await client.getDaemonConfig()).config.forceIdleRuntimeCleanup).toBe(true);
+        await editHook.click();
+        await scriptInput.fill(script);
+        await save.click();
+        await expect(scriptInput).toHaveCount(0);
+        expect((await client.getDaemonConfig()).config.idleRuntimeCleanupHook).toBe(script);
         await setIdleAgentRelease(page, false);
+        await expect(forceSwitch).toHaveCount(0);
+        await expect(editHook).toHaveCount(0);
         await expectLiveSavedSetting(false);
       });
 
-      await test.step("a fresh app reads the saved setting from the same running host", async () => {
+      await test.step("a fresh app can re-enable idle release and clear the saved hook", async () => {
         await openHostAgentsInFreshApp(daemon.serverId);
         await expectIdleAgentRelease(page, false);
         await expectLiveSavedSetting(false);
         await setIdleAgentRelease(page, true);
         await expectLiveSavedSetting(true);
+        await expect(forceSwitch).toHaveAttribute("aria-checked", "true");
+        await editHook.click();
+        await expect(scriptInput).toHaveValue(script);
+        await scriptInput.fill("");
+        await save.click();
+        await expect(scriptInput).toHaveCount(0);
+        expect((await client.getDaemonConfig()).config.idleRuntimeCleanupHook).toBeUndefined();
         await setIdleAgentRelease(page, false);
       });
 
@@ -218,6 +242,7 @@ test.describe("Settings host page", () => {
   });
 
   test("a failed idle release save stays visible and retry applies it live", async ({ page }) => {
+    test.setTimeout(120_000);
     const daemon = await startIsolatedHostDaemon("srv_e2e_idle_release_failure");
     const configPath = path.join(daemon.paseoHome, "config.json");
     try {
@@ -236,8 +261,19 @@ test.describe("Settings host page", () => {
         "Failed to read",
       );
       await expectIdleAgentRelease(page, true);
+
+      await page.getByRole("button", { name: "Idle release hook" }).click();
+      const scriptInput = page.getByRole("textbox", { name: "Idle release hook" });
+      const save = page.getByRole("button", { name: "Save", exact: true });
+      await scriptInput.fill("echo released");
+      await save.click();
+      await expect(page.getByRole("alert").filter({ hasText: "Failed to read" })).toBeVisible();
+      await expect(scriptInput).toHaveValue("echo released");
+
       await rm(configPath, { recursive: true });
       await rename(`${configPath}.saved`, configPath);
+      await save.click();
+      await expect(scriptInput).toHaveCount(0);
       await setIdleAgentRelease(page, false);
       await expect(page.getByTestId("host-page-idle-runtime-cleanup-error")).toHaveCount(0);
     } finally {

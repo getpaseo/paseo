@@ -77,6 +77,7 @@ function liveCleanupHost() {
       relay: { enabled: true },
       mcp: { injectIntoAgents: false },
       idleRuntimeCleanup: true,
+      forceIdleRuntimeCleanup: false,
     }),
     undefined,
     {
@@ -86,6 +87,7 @@ function liveCleanupHost() {
             relay: { enabled: true },
             mcp: { injectIntoAgents: false },
             idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
+            forceIdleRuntimeCleanup: persisted.agents?.forceIdleRuntimeCleanup ?? false,
           }),
           overrideControlledPaths: [],
         }),
@@ -167,6 +169,19 @@ test("bootstrap's config-file reload binding disables and enables eligible colle
     });
     expect((await host.sweep()).collected).toHaveLength(enabled ? 1 : 0);
   }
+});
+
+test("bootstrap applies forced idle cleanup after reloading host config", async () => {
+  const host = liveCleanupHost();
+  host.protect(true);
+  expect((await host.sweep()).collected).toHaveLength(0);
+
+  writeFileSync(
+    path.join(host.home, "config.json"),
+    JSON.stringify({ version: 1, agents: { forceIdleRuntimeCleanup: true } }),
+  );
+  expect((await host.store.reload()).appliedPaths).toEqual(["agents.forceIdleRuntimeCleanup"]);
+  expect((await host.sweep()).collected).toHaveLength(1);
 });
 
 test.each([false, true])(

@@ -267,6 +267,8 @@ export const MutableDaemonConfigSchema = z
     // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, keep optional while old daemons are supported.
     // Persisted host-wide value, applied live by the daemon.
     idleRuntimeCleanup: z.boolean().optional(),
+    idleRuntimeCleanupHook: z.string().optional(),
+    forceIdleRuntimeCleanup: z.boolean().optional(),
     // COMPAT(restartRecovery): added in v0.14.0, keep optional for older hosts.
     resumeOnStartup: z.boolean().optional(),
     resumePrompt: z.string().optional(),
@@ -296,6 +298,8 @@ export const MutableDaemonConfigPatchSchema = z
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
+    idleRuntimeCleanupHook: z.string().optional(),
+    forceIdleRuntimeCleanup: z.boolean().optional(),
     resumeOnStartup: z.boolean().optional(),
     resumePrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
@@ -4124,6 +4128,10 @@ export const ServerInfoStatusPayloadSchema = z
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
         idleRuntimeCleanupSetting: z.boolean().optional(),
+        // COMPAT(idleRuntimeCleanupHook): added in v0.18.0, remove gate after 2027-05-27.
+        idleRuntimeCleanupHook: z.boolean().optional(),
+        // COMPAT(forceIdleRuntimeCleanup): added in v0.18.0, remove gate after 2027-05-27.
+        forceIdleRuntimeCleanup: z.boolean().optional(),
         // COMPAT(restartRecovery): added in v0.14.0, remove gate after 2027-04-28.
         resumeOnStartupSetting: z.boolean().optional(),
         // COMPAT(metadataGenerationInstructions): added in v0.18.0, remove gate after 2027-06-01.

@@ -531,6 +531,12 @@
         "idleRuntimeCleanup": {
           "type": "boolean"
         },
+        "idleRuntimeCleanupHook": {
+          "type": "string"
+        },
+        "forceIdleRuntimeCleanup": {
+          "type": "boolean"
+        },
         "resumeOnStartup": {
           "type": "boolean"
         },

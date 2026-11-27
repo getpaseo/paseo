@@ -3076,6 +3076,12 @@ export const zhCN: TranslationResources = {
           title: "释放空闲 Agent",
           hint: "空闲一小时后释放内存。",
           info: "停止 Agent 进程，但保留对话。发送消息即可继续。\n\n进行中的工作、待处理的通知和 Provider 安全检查会阻止清理。",
+          forceTitle: "强制释放空闲代理",
+          forceHint: "跳过待处理通知和提供方检查。预览等后台任务可能会停止。",
+          hook: "空闲释放钩子",
+          hookAdd: "添加",
+          hookHint: "空闲清理释放最后一个代理时运行 Shell 脚本。",
+          hookHelp: "以守护进程用户身份在此主机上运行。保存空脚本即可移除钩子。",
         },
       },
       workspaces: {

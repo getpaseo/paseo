@@ -3243,6 +3243,14 @@ export const en = {
           title: "Release idle agents",
           hint: "Free up memory after an hour of inactivity.",
           info: "Stops the agent's process while keeping its conversation. Send a message to resume.\n\nActive work, pending notifications, and provider safety checks prevent cleanup.",
+          forceTitle: "Force release idle agents",
+          forceHint:
+            "Skip pending-notification and provider checks. Background work such as previews may stop.",
+          hook: "Idle release hook",
+          hookAdd: "Add",
+          hookHint: "Run a shell script when idle cleanup releases the last agent.",
+          hookHelp:
+            "Runs on this host as the daemon user. Save an empty script to remove the hook.",
         },
       },
       workspaces: {

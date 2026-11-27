@@ -597,6 +597,8 @@ export type ResolvedDaemonSettings = Pick<
   | "relayRequireProtectedSecurity"
   | "appBaseUrl"
   | "idleRuntimeCleanup"
+  | "idleRuntimeCleanupHook"
+  | "forceIdleRuntimeCleanup"
   | "resumeOnStartup"
   | "resumePrompt"
   | "providerCatalogRefreshTimeoutMs"
@@ -667,6 +669,7 @@ export function resolveReloadableConfig(
 ): ResolvedDaemonSettings & { overrideControlledPaths: string[] } {
   const env = configurationEnvironment(options?.env ?? process.env);
   const cli = options?.cli;
+  const { agents = {} } = persisted;
   const relay = resolveRelayConfig({
     env,
     persisted,
@@ -680,17 +683,19 @@ export function resolveReloadableConfig(
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     git: resolveGitProcessConfig(env, persisted),
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
-    skillSelection: persisted.agents?.skills?.selection,
+    skillSelection: agents.skills?.selection,
     pluginsEnabled: persisted.pluginsEnabled ?? false,
     plugins: persisted.plugins,
     relayEnabled: relay.enabled,
     relayRequireProtectedSecurity: relay.requireProtectedSecurity,
-    idleRuntimeCleanup: persisted.agents?.idleRuntimeCleanup ?? true,
-    ...resolveRestartRecoveryConfig(persisted.agents),
-    providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
-    metadataGeneration: persisted.agents?.metadataGeneration,
+    idleRuntimeCleanup: agents.idleRuntimeCleanup ?? true,
+    idleRuntimeCleanupHook: agents.idleRuntimeCleanupHook,
+    forceIdleRuntimeCleanup: agents.forceIdleRuntimeCleanup === true,
+    ...resolveRestartRecoveryConfig(agents),
+    providerCatalogRefreshTimeoutMs: agents.catalogRefreshTimeoutMs,
+    metadataGeneration: agents.metadataGeneration,
     providerOverrides: extractProviderOverrides(
-      persisted.agents?.providers as Record<string, unknown> | undefined,
+      agents.providers as Record<string, unknown> | undefined,
     ),
     overrideControlledPaths: resolveOverrideControlledPaths(env, cli, persisted),
   };

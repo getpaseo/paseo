@@ -2323,6 +2323,10 @@ export class AgentManager {
     });
   }
 
+  hasPendingAgentRegistrations(): boolean {
+    return this.agentRegistrationTasks.size > 0;
+  }
+
   /** Capture runtime capabilities without handing lifecycle ownership to the collector. */
   getRuntimeCleanupCandidates(): RuntimeCleanupCandidate[] {
     if (!this.registry) return [];

@@ -39,6 +39,8 @@ interface SupportedMutableConfigPatch {
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   idleRuntimeCleanup?: boolean;
+  idleRuntimeCleanupHook?: string;
+  forceIdleRuntimeCleanup?: boolean;
   resumeOnStartup?: boolean;
   resumePrompt?: string;
   appendSystemPrompt?: string;
@@ -116,6 +118,15 @@ function deepMerge<T extends Record<string, unknown>>(
   }
 
   return next as T;
+}
+
+function mergeMutableConfigPatch(
+  current: MutableDaemonConfig,
+  patch: Omit<SupportedMutableConfigPatch, "features" | "removeProviders">,
+): MutableDaemonConfig {
+  const merged = deepMerge(current, patch);
+  if (patch.idleRuntimeCleanupHook?.trim() === "") delete merged.idleRuntimeCleanupHook;
+  return merged;
 }
 
 function omitProvidersFromConfig<T extends { providers?: Record<string, unknown> }>(
@@ -303,6 +314,8 @@ const RELOADABLE_PATHS = [
   "daemon.agentProfiles",
   "app.baseUrl",
   "agents.idleRuntimeCleanup",
+  "agents.idleRuntimeCleanupHook",
+  "agents.forceIdleRuntimeCleanup",
   "agents.resumeOnStartup",
   "agents.resumePrompt",
   "agents.providers",
@@ -331,6 +344,8 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.agentProfiles", "agentProfiles"],
   ["app.baseUrl", "app.baseUrl"],
   ["agents.idleRuntimeCleanup", "idleRuntimeCleanup"],
+  ["agents.idleRuntimeCleanupHook", "idleRuntimeCleanupHook"],
+  ["agents.forceIdleRuntimeCleanup", "forceIdleRuntimeCleanup"],
   ["agents.resumeOnStartup", "resumeOnStartup"],
   ["agents.resumePrompt", "resumePrompt"],
   ["agents.providers", "providers"],
@@ -424,6 +439,12 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
     ...(patch.resumePrompt !== undefined ? { resumePrompt: patch.resumePrompt } : {}),
     ...(patch.idleRuntimeCleanup !== undefined
       ? { idleRuntimeCleanup: patch.idleRuntimeCleanup }
+      : {}),
+    ...(patch.idleRuntimeCleanupHook !== undefined
+      ? { idleRuntimeCleanupHook: patch.idleRuntimeCleanupHook }
+      : {}),
+    ...(patch.forceIdleRuntimeCleanup !== undefined
+      ? { forceIdleRuntimeCleanup: patch.forceIdleRuntimeCleanup }
       : {}),
     ...(patch.appendSystemPrompt !== undefined
       ? { appendSystemPrompt: patch.appendSystemPrompt }
@@ -553,7 +574,7 @@ export class DaemonConfigStore {
     const patch = this.foldPatchProfiles(submittedPatch);
     const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
-    const merged = deepMerge(this.current, configPatch);
+    const merged = mergeMutableConfigPatch(this.current, configPatch);
     if (speechPatch !== undefined) Object.assign(merged, this.readPatchedSpeech(speechPatch));
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };
@@ -906,6 +927,8 @@ function mergeMutableAgentPatch(
     patch.skills === undefined &&
     !hasRestartRecoveryPatch(patch) &&
     patch.idleRuntimeCleanup === undefined &&
+    patch.idleRuntimeCleanupHook === undefined &&
+    patch.forceIdleRuntimeCleanup === undefined &&
     removeProviders.length === 0
   ) {
     return persistedAgents;
@@ -938,6 +961,16 @@ function mergeMutableAgentPatch(
   Object.assign(next, restartRecoveryPatch(patch));
   if (patch.idleRuntimeCleanup !== undefined) {
     next["idleRuntimeCleanup"] = patch.idleRuntimeCleanup;
+  }
+  if (patch.forceIdleRuntimeCleanup !== undefined) {
+    next["forceIdleRuntimeCleanup"] = patch.forceIdleRuntimeCleanup;
+  }
+  if (patch.idleRuntimeCleanupHook !== undefined) {
+    if (patch.idleRuntimeCleanupHook.trim()) {
+      next["idleRuntimeCleanupHook"] = patch.idleRuntimeCleanupHook;
+    } else {
+      delete next["idleRuntimeCleanupHook"];
+    }
   }
 
   return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;

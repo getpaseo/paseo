@@ -15,6 +15,7 @@ import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
 import { open, rm, stat } from "fs/promises";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { getCachedHostMachineKind, primeHostMachineKind } from "./host-machine-kind.js";
 import { getHostName } from "./host-name.js";
@@ -429,6 +430,8 @@ export interface PaseoDaemonConfig {
   downloadTokenTtlMs?: number;
   agentProviderSettings?: AgentProviderRuntimeSettingsMap;
   idleRuntimeCleanup?: boolean;
+  idleRuntimeCleanupHook?: string;
+  forceIdleRuntimeCleanup?: boolean;
   resumeOnStartup?: boolean;
   resumePrompt?: string;
   providerCatalogRefreshTimeoutMs?: number;
@@ -578,6 +581,8 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     idleRuntimeCleanup: config.idleRuntimeCleanup !== false,
+    idleRuntimeCleanupHook: config.idleRuntimeCleanupHook,
+    forceIdleRuntimeCleanup: config.forceIdleRuntimeCleanup === true,
     resumeOnStartup: config.resumeOnStartup === true,
     resumePrompt: config.resumePrompt ?? "Resume working.",
     appendSystemPrompt: config.appendSystemPrompt ?? "",
@@ -1564,7 +1569,21 @@ export async function createPaseoDaemon(
 
   const idleRuntimeCleanup = createIdleRuntimeCleanup({
     enabled: daemonConfigStore.get().idleRuntimeCleanup !== false,
+    force: daemonConfigStore.get().forceIdleRuntimeCleanup === true,
     runtimes: () => agentManager.getRuntimeCleanupCandidates(),
+    onAllReleased: () => {
+      const script = daemonConfigStore.get().idleRuntimeCleanupHook;
+      if (!script?.trim() || agentManager.hasPendingAgentRegistrations()) return;
+
+      const child = spawn(script, { shell: true, cwd: config.paseoHome, stdio: "ignore" });
+      child.once("error", () => {
+        logger.warn("Idle agent release hook failed to start");
+      });
+      child.once("exit", (code, signal) => {
+        if (code !== 0) logger.warn({ code, signal }, "Idle agent release hook failed");
+      });
+      child.unref();
+    },
     isProtected: (agentId) =>
       finishSubscriptions.hasPendingForCaller(agentId) ||
       (wsServer?.agentMessages.hasPending(agentId) ?? false),
@@ -2179,8 +2198,18 @@ async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promi
 
 export function connectIdleRuntimeCleanupConfig(
   store: DaemonConfigStore,
-  cleanup: Pick<ReturnType<typeof createIdleRuntimeCleanup>, "setEnabled">,
+  cleanup: Pick<ReturnType<typeof createIdleRuntimeCleanup>, "setEnabled" | "setForce">,
 ): () => void {
   cleanup.setEnabled(store.get().idleRuntimeCleanup !== false);
-  return store.onFieldChange("idleRuntimeCleanup", (value) => cleanup.setEnabled(value !== false));
+  cleanup.setForce(store.get().forceIdleRuntimeCleanup === true);
+  const unsubscribeEnabled = store.onFieldChange("idleRuntimeCleanup", (value) =>
+    cleanup.setEnabled(value !== false),
+  );
+  const unsubscribeForce = store.onFieldChange("forceIdleRuntimeCleanup", (value) =>
+    cleanup.setForce(value === true),
+  );
+  return () => {
+    unsubscribeEnabled();
+    unsubscribeForce();
+  };
 }

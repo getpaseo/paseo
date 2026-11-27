@@ -3157,6 +3157,14 @@ export const ptBR: TranslationResources = {
           title: "Liberar agentes ociosos",
           hint: "Libera memória após uma hora de inatividade.",
           info: "Encerra o processo do agente e mantém a conversa. Envie uma mensagem para retomar.\n\nTrabalho ativo, notificações pendentes e verificações de segurança do provedor impedem a limpeza.",
+          forceTitle: "Forçar a liberação de agentes ociosos",
+          forceHint:
+            "Ignora notificações pendentes e verificações do provedor. Tarefas em segundo plano, como prévias, podem parar.",
+          hook: "Script de liberação",
+          hookAdd: "Adicionar",
+          hookHint: "Executa um script de shell quando o último agente ocioso é liberado.",
+          hookHelp:
+            "É executado neste host como o usuário do daemon. Salve um script vazio para removê-lo.",
         },
       },
       workspaces: {

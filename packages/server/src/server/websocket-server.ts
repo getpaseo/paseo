@@ -2212,6 +2212,8 @@ export class VoiceAssistantWebSocketServer {
         skillManagement: true,
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
         idleRuntimeCleanupSetting: true,
+        idleRuntimeCleanupHook: true,
+        forceIdleRuntimeCleanup: true,
         resumeOnStartupSetting: true,
         // COMPAT(metadataGenerationInstructions): added in v0.18.0, remove gate after 2027-06-01.
         metadataGenerationInstructions: true,

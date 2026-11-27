@@ -53,12 +53,23 @@ host config to disable automatic collection. The host setting applies immediatel
 apply on reload. Disabling invalidates pending safety checks and close admission. A close already
 started finishes. Re-enabling keeps the existing idle timestamps.
 
-Foreground runs, permissions and responses, queued deliveries, lifecycle operations, and working
-managed or native descendants prevent collection. Outstanding local or remote finish subscriptions
-also protect their caller, including registration, recovery and notification dispatch acknowledgment.
+In **Host → Daemon**, enable **Force release idle agents** (`agents.forceIdleRuntimeCleanup`) to
+skip provider safety checks and pending agent deliveries. The one-hour idle period still applies.
+Provider-owned background work such as previews can stop when its runtime is released.
+
+Set an **Idle release hook** to run a shell script after an idle sweep releases the final agent
+runtime on that host in either mode. The script can also be set in `agents.idleRuntimeCleanupHook`.
+It runs with the daemon user's permissions, in the Paseo home directory, using the host's default
+system shell. A sweep must release at least one runtime to trigger it, and pending agent launches
+block it. Save an empty script to remove the hook. Disabling idle release keeps the saved script
+for later.
+
+Foreground runs, permissions and responses, lifecycle operations, and working managed or native
+descendants prevent collection in both modes. In normal mode, queued deliveries and local or
+remote finish subscriptions also protect their caller through delivery acknowledgment.
 An idle managed child can still own background work.
 
-The daemon baseline always applies. An optional provider `canStopRuntime()` adds a veto: false,
+In normal mode, an optional provider `canStopRuntime()` adds a veto: false,
 errors and timeouts retain ownership, while true cannot override daemon blockers. Without a provider
 check, the baseline decides collection after the same one-hour idle period. Once protected work
 finishes, a fresh idle hour starts. There is no deadline that overrides a veto.

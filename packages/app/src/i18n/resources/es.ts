@@ -3176,6 +3176,14 @@ export const es: TranslationResources = {
           title: "Liberar agentes inactivos",
           hint: "Libera memoria tras una hora de inactividad.",
           info: "Detiene el proceso del agente y conserva la conversación. Envía un mensaje para reanudarla.\n\nEl trabajo activo, las notificaciones pendientes y las comprobaciones de seguridad del proveedor impiden la limpieza.",
+          forceTitle: "Forzar la liberación de agentes inactivos",
+          forceHint:
+            "Omite las comprobaciones de notificaciones pendientes y del proveedor. Las tareas en segundo plano, como las vistas previas, pueden detenerse.",
+          hook: "Script de liberación",
+          hookAdd: "Añadir",
+          hookHint: "Ejecuta un script de shell cuando se libera el último agente inactivo.",
+          hookHelp:
+            "Se ejecuta en este host como el usuario del daemon. Guarda un script vacío para quitarlo.",
         },
       },
       workspaces: {

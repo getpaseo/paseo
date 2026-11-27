@@ -47,12 +47,16 @@ function scenario(enabled = true) {
   let time = 0;
   let protectedCaller = false;
   let tick!: () => void;
+  let hookRuns = 0;
   const cleanup = createIdleRuntimeCleanup({
     enabled,
     logger: createTestLogger(),
     now: () => time,
     runtimes: () => runtimes.filter((item) => !item.closed).map((item) => item.capture()),
     isProtected: () => protectedCaller,
+    onAllReleased: () => {
+      hookRuns++;
+    },
     schedule: (callback, interval) => {
       expect(interval).toBe(60_000);
       tick = callback;
@@ -65,6 +69,7 @@ function scenario(enabled = true) {
     runtimes,
     cleanup,
     tick: () => tick(),
+    hookRuns: () => hookRuns,
     protect: (value: boolean) => {
       protectedCaller = value;
     },
@@ -81,6 +86,111 @@ test("a runtime without a provider check is collected at exactly one hour", asyn
   expect((await s.sweep(60)).collected).toEqual([
     { agentId: "agent", provider: "test", sessionId: "agent" },
   ]);
+});
+
+test("the hook runs once after cleanup releases the final runtime", async () => {
+  const s = scenario();
+  const active = new Runtime("active");
+  active.activity = 30 * 60_000;
+  s.runtimes.push(active);
+
+  expect((await s.sweep(60)).collected).toHaveLength(1);
+  expect(s.hookRuns()).toBe(0);
+  expect((await s.sweep(90)).collected).toHaveLength(1);
+  expect(s.hookRuns()).toBe(1);
+
+  await s.sweep(91);
+  expect(s.hookRuns()).toBe(1);
+
+  s.runtimes.push(new Runtime("resumed"));
+  await s.sweep(92);
+  expect(s.hookRuns()).toBe(2);
+});
+
+test("the hook is skipped if cleanup is disabled while finishing the last release", async () => {
+  const s = scenario();
+  const closing = deferred<void>();
+  const finish = deferred<void>();
+  s.runtime.finishClose = () => {
+    closing.resolve();
+    return finish.promise;
+  };
+  const sweep = s.sweep(60);
+  await closing.promise;
+  s.cleanup.setEnabled(false);
+  finish.resolve();
+  expect((await sweep).collected).toHaveLength(1);
+  expect(s.hookRuns()).toBe(0);
+});
+
+test("force releases an idle runtime despite a queued delivery or provider veto and runs the hook", async () => {
+  const s = scenario();
+  let providerChecks = 0;
+  s.runtime.probe = async () => {
+    providerChecks++;
+    return false;
+  };
+  expect((await s.sweep(60)).collected).toHaveLength(0);
+  expect(providerChecks).toBe(1);
+  s.protect(true);
+  s.cleanup.setForce(true);
+
+  expect((await s.sweep(61)).collected).toHaveLength(1);
+  expect(providerChecks).toBe(1);
+  expect(s.hookRuns()).toBe(1);
+});
+
+test("force still waits for the idle timeout and active work", async () => {
+  const s = scenario();
+  s.cleanup.setForce(true);
+  expect((await s.sweep(59)).collected).toHaveLength(0);
+
+  s.runtime.busy = true;
+  expect((await s.sweep(60)).collected).toHaveLength(0);
+  expect(s.hookRuns()).toBe(0);
+
+  s.runtime.busy = false;
+  expect((await s.sweep(61)).collected).toHaveLength(0);
+  expect((await s.sweep(121)).collected).toHaveLength(1);
+  expect(s.hookRuns()).toBe(1);
+});
+
+test("turning force off revalidates a close that was waiting for admission", async () => {
+  const s = scenario();
+  const closing = deferred<void>();
+  const admit = deferred<void>();
+  s.runtime.admitClose = () => {
+    closing.resolve();
+    return admit.promise;
+  };
+  s.protect(true);
+  s.cleanup.setForce(true);
+  const pending = s.sweep(60);
+  await closing.promise;
+  s.cleanup.setForce(false);
+  admit.resolve();
+
+  expect((await pending).collected).toHaveLength(0);
+  expect((await s.sweep(61)).collected).toHaveLength(0);
+  expect(s.hookRuns()).toBe(0);
+});
+
+test("changing force mode after the last close starts still runs the hook", async () => {
+  const s = scenario();
+  const closing = deferred<void>();
+  const finish = deferred<void>();
+  s.runtime.finishClose = () => {
+    closing.resolve();
+    return finish.promise;
+  };
+  s.cleanup.setForce(true);
+  const sweep = s.sweep(60);
+  await closing.promise;
+  s.cleanup.setForce(false);
+  finish.resolve();
+
+  expect((await sweep).collected).toHaveLength(1);
+  expect(s.hookRuns()).toBe(1);
 });
 
 test("activity restarts the single one-hour idle period", async () => {

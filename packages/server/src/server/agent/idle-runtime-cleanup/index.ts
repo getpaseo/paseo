@@ -15,8 +15,10 @@ export interface RuntimeCleanupCandidate {
 }
 interface Options {
   enabled: boolean;
+  force?: boolean;
   runtimes(): readonly RuntimeCleanupCandidate[];
   isProtected?(agentId: string): boolean;
+  onAllReleased?(): void;
   logger: Pick<Logger, "debug" | "info" | "warn">;
   now?: () => number;
   schedule?: (tick: () => void, intervalMs: number) => () => void;
@@ -34,11 +36,14 @@ const IDLE_PERIOD_MS = 60 * 60_000;
 
 /** Owns idle clocks, baseline eligibility, optional provider vetoes and the sweep lifetime. */
 export function createIdleRuntimeCleanup(options: Options) {
-  const protectedAt = new WeakMap<object, { at: number; protected: boolean }>();
+  const normalProtection = new WeakMap<object, { at: number; protected: boolean }>();
+  const forceProtection = new WeakMap<object, { at: number; protected: boolean }>();
   let collection: Promise<CollectionResult> | null = null;
   let stopped = false;
   let enabled = options.enabled;
+  let force = options.force === true;
   let generation = 0;
+  let forceGeneration = 0;
   const isProtected = options.isProtected ?? (() => false);
   const now = options.now ?? Date.now;
 
@@ -52,12 +57,15 @@ export function createIdleRuntimeCleanup(options: Options) {
     return [...family.values()];
   }
   function baselineAllows(family: readonly RuntimeCleanupCandidate[]) {
-    return family.every((runtime) => runtime.isEligible() && !isProtected(runtime.agentId));
+    return family.every(
+      (runtime) => runtime.isEligible() && (force || !isProtected(runtime.agentId)),
+    );
   }
   async function providersAllow(
     family: readonly RuntimeCleanupCandidate[],
     isCurrent: () => boolean,
   ) {
+    if (force) return true;
     for (const runtime of family) {
       if (!isCurrent()) return false;
       if (!runtime.canStopRuntime) continue;
@@ -73,8 +81,14 @@ export function createIdleRuntimeCleanup(options: Options) {
   async function collect(): Promise<CollectionResult> {
     const result: CollectionResult = { collected: [], failures: [] };
     const sweepGeneration = generation;
-    const isCurrent = () => enabled && !stopped && generation === sweepGeneration;
+    const sweepForceGeneration = forceGeneration;
+    const isCurrent = () =>
+      enabled &&
+      !stopped &&
+      generation === sweepGeneration &&
+      forceGeneration === sweepForceGeneration;
     if (!isCurrent()) return result;
+    const protectedAt = force ? forceProtection : normalProtection;
     const timestamp = now();
     const runtimes = options.runtimes();
     for (const runtime of runtimes) {
@@ -134,11 +148,31 @@ export function createIdleRuntimeCleanup(options: Options) {
     }
     return result;
   }
+  function notifyAllReleased(result: CollectionResult, sweepGeneration: number): CollectionResult {
+    if (
+      options.onAllReleased &&
+      enabled &&
+      !stopped &&
+      generation === sweepGeneration &&
+      result.collected.length > 0 &&
+      options.runtimes().length === 0
+    ) {
+      try {
+        options.onAllReleased();
+      } catch {
+        options.logger.warn("Idle agent release hook failed to start");
+      }
+    }
+    return result;
+  }
   function sweep(): Promise<CollectionResult> {
     if (collection) return collection;
-    collection = collect().finally(() => {
-      collection = null;
-    });
+    const sweepGeneration = generation;
+    collection = collect()
+      .then((result) => notifyAllReleased(result, sweepGeneration))
+      .finally(() => {
+        collection = null;
+      });
     return collection;
   }
   const schedule =
@@ -157,6 +191,11 @@ export function createIdleRuntimeCleanup(options: Options) {
       if (enabled === value) return;
       enabled = value;
       generation++;
+    },
+    setForce(value: boolean) {
+      if (force === value) return;
+      force = value;
+      forceGeneration++;
     },
     async close() {
       stopped = true;
