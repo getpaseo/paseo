@@ -647,6 +647,8 @@ The GitHub Release body is populated automatically by the `Release Notes Sync` w
 
 **NEVER bump the version to fix a build problem.** New versions are reserved for meaningful product changes (features, fixes, improvements). Build/CI failures are fixed on the current version.
 
+If `npm run release:publish` or `npm run release:publish:beta` fails after `npm run release:push` pushed the tag, fix the npm authentication, OTP, or local build issue and rerun the publish command on the same commit. Do not move or force-push the `v*` tag, because `scripts/publish-release-packages.mjs` skips packages already visible on npm and resumes from the remaining packages.
+
 **Do not rely on `workflow_dispatch` for tagged code fixes.** The `workflow_dispatch` trigger runs the workflow file from the default branch but checks out the code at the tag ref (`ref: ${{ inputs.tag }}`). That means fixes committed to `main` won't change the tagged source tree being built. `workflow_dispatch` only helps when the fix lives in the workflow file itself.
 
 For Docker-only retries, **do not push or force-push a `v*` release tag**.
