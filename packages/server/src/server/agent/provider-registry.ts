@@ -507,6 +507,21 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
   } satisfies ForwardedAgentSession;
 }
 
+function bindClientDirectMethods(inner: AgentClient) {
+  return {
+    shutdown: inner.shutdown?.bind(inner),
+    resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
+    resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
+    isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    resolveUsageLaunch: inner.resolveUsageLaunch?.bind(inner),
+    requireLaunchWrap: inner.requireLaunchWrap?.bind(inner),
+    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
+    getCatalogBinaryFingerprint: inner.getCatalogBinaryFingerprint?.bind(inner),
+    checkAvailability: inner.checkAvailability?.bind(inner),
+    getDiagnostic: inner.getDiagnostic?.bind(inner),
+  };
+}
+
 function wrapClientProvider(
   provider: AgentProvider,
   inner: AgentClient,
@@ -530,12 +545,13 @@ function wrapClientProvider(
     mergeProviderOptions(configuredDefaults(), own);
 
   return {
+    ...bindClientDirectMethods(inner),
     provider,
     get capabilities() {
       return inner.capabilities;
     },
+    catalogRefresh: inner.catalogRefresh,
     supportsLaunchWrap,
-    shutdown: inner.shutdown?.bind(inner),
     createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
         provider,
@@ -591,9 +607,6 @@ function wrapClientProvider(
             signal,
           })
       : undefined,
-    resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
-    resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
-    isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
     effectiveOptions: (own) => withDefaults(own) ?? {},
     listControls: listControls
       ? async (config) =>
@@ -643,11 +656,7 @@ function wrapClientProvider(
     unarchiveNativeSession: unarchiveNativeSession
       ? async (handle) => await unarchiveNativeSession({ ...handle, provider: inner.provider })
       : undefined,
-    resolveUsageLaunch: inner.resolveUsageLaunch?.bind(inner),
-    requireLaunchWrap: inner.requireLaunchWrap?.bind(inner),
-    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
-    getDiagnostic: inner.getDiagnostic?.bind(inner),
     installation: inner.installation,
   };
 }
@@ -685,6 +694,8 @@ function createRegistryEntry(
   const { createBaseClient: _createBaseClient, contract: _contract, ...configuration } = resolved;
   return {
     ...resolved.definition,
+    catalogRefresh:
+      resolved.definition.catalogRefresh ?? modelClient.catalogRefresh ?? "background",
     configuration,
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,

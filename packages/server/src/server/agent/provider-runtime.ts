@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { Logger } from "pino";
 
 import {
@@ -31,6 +32,7 @@ export async function createAgentProviderRuntime(
   try {
     await bridge.start();
     const snapshotManager = new ProviderSnapshotManager({
+      catalogCachePath: join(options.paseoHome, "cache", "provider-catalogs.json"),
       ...options.snapshotManager,
       logger: options.logger.child({ module: "provider-snapshot-manager" }),
       openCodeBridge: bridge,

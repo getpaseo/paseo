@@ -13,6 +13,7 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import {
   filterSelectableAgentModels,
   type AgentClient,
+  type AgentClientAvailability,
   type AgentCreateConfigParent,
   type AgentMode,
   type AgentModelDefinition,
@@ -20,6 +21,7 @@ import {
   type FetchCatalogOptions,
   type ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
+import { ProviderCatalogCache } from "./provider-catalog-cache.js";
 import {
   raceProviderRefreshAbort,
   runProviderRefreshWithDeadline,
@@ -133,6 +135,8 @@ export interface ProviderSnapshotManagerOptions {
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
   openCodeBridge?: OpenCodeBridge;
+  /** Optional path to persist non-background provider catalogs across daemon restarts. */
+  catalogCachePath?: string;
   /** Refreshes enabled providers in the background; omitted, catalogues refresh only on request. */
   backgroundRefresh?: ProviderBackgroundRefreshOptions;
 }
@@ -292,10 +296,14 @@ export class ProviderSnapshotManager {
   /** Installation links and versions; separate from availability and discovery. */
   readonly installations: ProviderInstallations;
   private pluginProvidersSettled = false;
+  private readonly catalogCache: ProviderCatalogCache | null;
   private readonly refreshSchedule: ProviderRefreshSchedule | null;
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
+    this.catalogCache = options.catalogCachePath
+      ? new ProviderCatalogCache(options.catalogCachePath, this.logger)
+      : null;
     this.pluginProviders = new PluginAgentClientRegistry(
       options.logger.child({ module: "plugin-providers" }),
     );
@@ -336,7 +344,7 @@ export class ProviderSnapshotManager {
           logger: options.logger,
         })
       : null;
-    this.refreshSchedule?.setProviders(this.getEnabledProviderIds());
+    this.refreshSchedule?.setProviders(this.getBackgroundRefreshProviderIds());
   }
 
   getSnapshot(cwd?: string): ProviderSnapshot {
@@ -366,8 +374,17 @@ export class ProviderSnapshotManager {
     const target = createGlobalSnapshotTarget();
     const homeCwd = target.snapshotCwd;
     this.getOrCreateTarget(homeCwd);
-    for (const catalogs of this.catalogs.values()) {
+    // Refresh the global target first so passive workspace warmUps in flight cannot steal a
+    // premature stale marker on a shared provider key and spawn a duplicate probe.
+    await this.refreshProviders(target, providers, reason);
+    const refreshedGlobalKeys = new Map<AgentProvider, string | undefined>();
+    const globalTarget = this.targets.get(homeCwd);
+    for (const provider of providers) {
+      refreshedGlobalKeys.set(provider, globalTarget?.bindings.get(provider)?.key);
+    }
+    for (const [catalogKey, catalogs] of this.catalogs) {
       for (const provider of providers) {
+        if (refreshedGlobalKeys.get(provider) === catalogKey) continue;
         const catalog = catalogs.get(provider);
         if (!catalog || (reason === "background" && catalog.load)) continue;
         catalogs.set(provider, {
@@ -376,9 +393,8 @@ export class ProviderSnapshotManager {
         });
       }
     }
-    // Refresh each known target: provider keys coalesce reads, while target-scoped
-    // providers must discover again in their own execution context.
-    await this.refreshProviders(target, providers, reason);
+    // Refresh each known workspace target: provider keys hit the freshly populated global
+    // catalogue above, while target-scoped providers discover again in their own context.
     await Promise.all(
       [...this.targets.keys()]
         .filter((cwd) => cwd !== homeCwd)
@@ -809,6 +825,13 @@ export class ProviderSnapshotManager {
     for (const provider of changed) {
       this.generation.providerStates.get(provider)?.discoveryLimit.clearQueue();
       this.usageActivityCache.delete(provider);
+      const before = this.generation.definitions[provider];
+      const after = generation.definitions[provider];
+      // Clear persisted disk cache only when an existing provider's config changed or was removed,
+      // not when a built-in/plugin provider registers for the first time during startup.
+      if (before && (!after || !isDeepStrictEqual(before.configuration, after.configuration))) {
+        this.catalogCache?.deleteProvider(provider);
+      }
     }
     this.generation = generation;
     this.providerClients = clients;
@@ -821,7 +844,7 @@ export class ProviderSnapshotManager {
       for (const provider of changed) target.bindings.delete(provider);
     }
     this.publishTargets(this.targets.keys());
-    this.refreshSchedule?.setProviders(this.getEnabledProviderIds());
+    this.refreshSchedule?.setProviders(this.getBackgroundRefreshProviderIds());
     this.refreshSchedule?.recordRefresh([...changed]);
     const providers = [...changed].filter((provider) => generation.definitions[provider]);
     if (providers.length === 0) return;
@@ -863,7 +886,10 @@ export class ProviderSnapshotManager {
     // (background processes, sockets, etc.) get a chance to release even when
     // a given provider hasn't been touched yet during this daemon's lifetime.
     this.getAgentManagerProviderState();
-    await shutdownAgentClients(this.ownedClients, this.logger);
+    await Promise.all([
+      shutdownAgentClients(this.ownedClients, this.logger),
+      this.catalogCache?.flush(),
+    ]);
   }
 
   destroy(): void {
@@ -902,6 +928,7 @@ export class ProviderSnapshotManager {
       if (!definition) continue;
       registry[provider] = {
         ...definition,
+        catalogRefresh: client.catalogRefresh ?? definition.catalogRefresh,
         createClient: () => client,
         resolveCreateConfig:
           client.resolveCreateConfig?.bind(client) ?? definition.resolveCreateConfig,
@@ -1156,7 +1183,8 @@ export class ProviderSnapshotManager {
     this.publishTargets([snapshotCwd]);
     if (refresh !== "manual" && catalog.load) return catalog.load;
     if (!refresh && catalog.result && !catalog.stale) return;
-    const background = strongerRefresh(refresh, catalog.stale) === "background";
+    const effectiveRefresh = strongerRefresh(refresh, catalog.stale);
+    const background = effectiveRefresh === "background";
     catalog.stale = undefined;
 
     const current = catalog;
@@ -1168,6 +1196,8 @@ export class ProviderSnapshotManager {
         if (!isCurrent()) return;
         return this.trackProbe(
           this.refreshProvider({
+            cacheKey: key,
+            refresh: effectiveRefresh,
             catalogOptions,
             provider,
             definition,
@@ -1239,6 +1269,8 @@ export class ProviderSnapshotManager {
   }
 
   private async refreshProvider(options: {
+    cacheKey: string;
+    refresh?: RefreshReason;
     catalogOptions: FetchCatalogOptions;
     provider: AgentProvider;
     definition: ProviderDefinition;
@@ -1247,6 +1279,8 @@ export class ProviderSnapshotManager {
     publish: (entry: ProviderSnapshotEntry, result: { incomplete: boolean }) => boolean;
   }): Promise<void> {
     const {
+      cacheKey,
+      refresh,
       catalogOptions,
       provider,
       definition,
@@ -1254,31 +1288,125 @@ export class ProviderSnapshotManager {
       client,
       publish: setEntry,
     } = options;
+    const refreshMode = definition.catalogRefresh ?? "background";
+    const isManualRefresh = refresh === "manual";
 
     try {
-      const catalog = await runProviderRefreshWithDeadline({
+      const outcome = await runProviderRefreshWithDeadline({
         label: definition.label,
         timeoutMs: this.refreshTimeoutMs,
         signal: this.stopped.signal,
         operation: async (context) => {
-          const available = await context.runActivity("availability", () =>
+          const availability = await context.runActivity("availability", () =>
             raceProviderRefreshAbort(
               context.signal,
-              client.isAvailable(context.signal, catalogOptions),
+              client.checkAvailability
+                ? client.checkAvailability(context.signal, catalogOptions)
+                : client.isAvailable(context.signal, catalogOptions).then(
+                    (available): AgentClientAvailability => ({
+                      status: available ? "available" : "unavailable",
+                    }),
+                  ),
             ),
           );
-          if (!available) {
-            return null;
+          if (availability.status === "unavailable") {
+            return { kind: "unavailable" as const };
+          }
+          if (availability.status === "error") {
+            return { kind: "error" as const, message: availability.message };
           }
 
-          return await definition.fetchCatalog(catalogOptions, client, context);
+          if (!isManualRefresh) {
+            const persisted = this.catalogCache
+              ? await this.catalogCache.get(provider, cacheKey)
+              : undefined;
+            if (persisted) {
+              if (refreshMode === "manual") {
+                return { kind: "hydrated" as const, persisted };
+              }
+              if (!refresh) {
+                const currentFingerprint = await context.runActivity("binary-fingerprint", () =>
+                  raceProviderRefreshAbort(
+                    context.signal,
+                    client.getCatalogBinaryFingerprint?.(catalogOptions) ??
+                      Promise.resolve(undefined),
+                  ),
+                );
+                const fingerprintMatches =
+                  !persisted.binaryFingerprint ||
+                  !currentFingerprint ||
+                  persisted.binaryFingerprint === currentFingerprint;
+                if (fingerprintMatches) {
+                  return { kind: "hydrated" as const, persisted };
+                }
+              }
+            }
+            if (refreshMode === "manual") {
+              return { kind: "manual_empty" as const };
+            }
+          }
+
+          const catalog = await definition.fetchCatalog(catalogOptions, client, context);
+          const binaryFingerprint =
+            this.catalogCache && catalog.incomplete !== true && refreshMode !== "background"
+              ? await context
+                  .runActivity("binary-fingerprint", () =>
+                    raceProviderRefreshAbort(
+                      context.signal,
+                      client.getCatalogBinaryFingerprint?.(catalogOptions) ??
+                        Promise.resolve(undefined),
+                    ),
+                  )
+                  .catch(() => undefined)
+              : undefined;
+          return { kind: "fetched" as const, catalog, binaryFingerprint };
         },
       });
-      if (!catalog) {
+      if (outcome.kind === "unavailable") {
         setEntry({ ...base, status: "unavailable", enabled: true }, { incomplete: false });
         return;
       }
+      if (outcome.kind === "error") {
+        setEntry(
+          { ...base, status: "error", enabled: true, error: outcome.message },
+          { incomplete: false },
+        );
+        return;
+      }
+      if (outcome.kind === "manual_empty") {
+        setEntry(
+          {
+            ...base,
+            status: "ready",
+            enabled: true,
+            models: [],
+            modes: [],
+          },
+          { incomplete: false },
+        );
+        return;
+      }
+      if (outcome.kind === "hydrated") {
+        const { persisted } = outcome;
+        setEntry(
+          {
+            ...base,
+            defaultModeId:
+              persisted.catalog.defaultModeId === undefined
+                ? base.defaultModeId
+                : persisted.catalog.defaultModeId,
+            status: "ready",
+            enabled: true,
+            models: persisted.catalog.models,
+            modes: persisted.catalog.modes,
+            fetchedAt: persisted.fetchedAt,
+          },
+          { incomplete: false },
+        );
+        return;
+      }
 
+      const { catalog, binaryFingerprint } = outcome;
       const models = normalizeAgentModelCatalog(catalog.models);
       if (models.length !== catalog.models.length) {
         this.logger.warn(
@@ -1286,6 +1414,7 @@ export class ProviderSnapshotManager {
           "Provider catalog contains repeated model IDs; retaining the first definition",
         );
       }
+      const fetchedAt = new Date().toISOString();
       setEntry(
         {
           ...base,
@@ -1295,10 +1424,23 @@ export class ProviderSnapshotManager {
           enabled: true,
           models,
           modes: catalog.modes,
-          fetchedAt: new Date().toISOString(),
+          fetchedAt,
         },
         { incomplete: catalog.incomplete === true },
       );
+      if (this.catalogCache && catalog.incomplete !== true && refreshMode !== "background") {
+        this.catalogCache.set(provider, cacheKey, {
+          fetchedAt,
+          ...(binaryFingerprint ? { binaryFingerprint } : {}),
+          catalog: {
+            models,
+            modes: catalog.modes,
+            ...(catalog.defaultModeId !== undefined
+              ? { defaultModeId: catalog.defaultModeId }
+              : {}),
+          },
+        });
+      }
     } catch (error) {
       const emitted = setEntry(
         { ...base, status: "error", enabled: true, error: toErrorMessage(error) },
@@ -1366,10 +1508,11 @@ export class ProviderSnapshotManager {
     return [...this.generation.order];
   }
 
-  private getEnabledProviderIds(): AgentProvider[] {
-    return this.generation.order.filter(
-      (provider) => this.generation.definitions[provider]!.enabled,
-    );
+  private getBackgroundRefreshProviderIds(): AgentProvider[] {
+    return this.generation.order.filter((provider) => {
+      const definition = this.generation.definitions[provider]!;
+      return definition.enabled && (definition.catalogRefresh ?? "background") === "background";
+    });
   }
 
   private resolveRefreshProviders(providers?: AgentProvider[]): AgentProvider[] | undefined {
