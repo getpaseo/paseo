@@ -36,6 +36,8 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   SessionOutboundMessage,
   WorkspaceDescriptorPayload,
+  WorkspacePrStatusEntry,
+  WorkspacePrStatusRefreshResult,
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient, type CreateAgentRequestOptions } from "./daemon-client.js";
@@ -112,6 +114,9 @@ export interface PaseoClientConfig {
   runtimeMetricsIntervalMs?: number;
   runtimeMetricsWindowMs?: number;
 }
+
+export type PaseoWorkspacePrStatus = WorkspacePrStatusEntry;
+export type PaseoWorkspacePrStatusRefreshResult = WorkspacePrStatusRefreshResult;
 
 export type PaseoWorkspace = WorkspaceDescriptorPayload;
 export type PaseoAgent = AgentSnapshotPayload;
@@ -226,6 +231,10 @@ export interface PaseoWorkspaceActions {
     }
   >;
   list(options?: PaseoWorkspaceListOptions): Promise<PaseoWorkspaceListResult>;
+  /** Reads up to 100 active workspace IDs from the daemon cache without starting Git or forge work. */
+  listPrStatuses(workspaceIds: readonly string[]): Promise<PaseoWorkspacePrStatus[]>;
+  /** Requests a live forge read for an active workspace. */
+  refreshPrStatus(workspaceId: string): Promise<PaseoWorkspacePrStatusRefreshResult>;
   ref(workspace: string | PaseoWorkspace): PaseoWorkspaceHandle;
   open(
     input: string | PaseoWorkspaceOpenOptions,
@@ -836,6 +845,9 @@ export function createPaseoApi(
     },
     workspaces: {
       list: listWorkspaces,
+      listPrStatuses: async (workspaceIds) =>
+        (await daemonClient.listWorkspacePrStatuses(workspaceIds)).entries,
+      refreshPrStatus: (workspaceId) => daemonClient.refreshWorkspacePrStatus(workspaceId),
       ref: (workspace) => createWorkspaceHandle(workspace),
       open: (input, requestId) =>
         openWorkspace(daemonClient, createWorkspaceHandle, input, requestId),

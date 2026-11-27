@@ -107,7 +107,11 @@ import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-uti
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { applyRecordPatch } from "./record-patch.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import {
+  EMPTY_WORKSPACE_PR_STATUS,
+  type WorkspaceGitRuntimeSnapshot,
+  type WorkspaceGitService,
+} from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -3642,6 +3646,10 @@ export class Session {
 
   private dispatchWorkspaceStateMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "workspace.pr_status.list.request":
+        return this.handleListWorkspacePrStatuses(msg);
+      case "workspace.pr_status.refresh.request":
+        return this.handleRefreshWorkspacePrStatus(msg);
       case "workspace.recovery.inspect.request":
         return this.handleWorkspaceRecoveryInspectRequest(msg);
       case "workspace.recovery.restore.request":
@@ -6537,6 +6545,60 @@ export class Session {
   // where the request carries a worktree path (unique to one workspace) rather
   // than a workspaceId. This is a directory lookup for an archive target, not a
   // status/ownership attribution.
+  private async resolvePrStatusWorkspace(workspaceId: string) {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (
+      !workspace ||
+      workspace.archivedAt ||
+      this.workspaceRegistry.isBroadcastDeferred?.(workspaceId)
+    ) {
+      return null;
+    }
+    return workspace;
+  }
+
+  private async readWorkspacePrStatus(workspaceId: string) {
+    const workspace = await this.resolvePrStatusWorkspace(workspaceId);
+    return workspace
+      ? { workspaceId, ...this.workspaceGitService.readPrStatus(workspace.cwd) }
+      : {
+          workspaceId,
+          ...EMPTY_WORKSPACE_PR_STATUS,
+          state: "workspace_not_found" as const,
+          error: "Active workspace not found.",
+        };
+  }
+
+  private async handleListWorkspacePrStatuses(
+    msg: Extract<SessionInboundMessage, { type: "workspace.pr_status.list.request" }>,
+  ): Promise<void> {
+    this.emit({
+      type: "workspace.pr_status.list.response",
+      payload: {
+        entries: await Promise.all(msg.workspaceIds.map((id) => this.readWorkspacePrStatus(id))),
+        requestId: msg.requestId,
+      },
+    });
+  }
+
+  private async handleRefreshWorkspacePrStatus(
+    msg: Extract<SessionInboundMessage, { type: "workspace.pr_status.refresh.request" }>,
+  ): Promise<void> {
+    const workspace = await this.resolvePrStatusWorkspace(msg.workspaceId);
+    const result = workspace ? await this.workspaceGitService.refreshPrStatus(workspace.cwd) : null;
+    const entry = await this.readWorkspacePrStatus(msg.workspaceId);
+    this.emit({
+      type: "workspace.pr_status.refresh.response",
+      payload: {
+        ...(result && entry.state !== "workspace_not_found"
+          ? result
+          : { outcome: "workspace_not_found" as const, error: entry.error }),
+        entry,
+        requestId: msg.requestId,
+      },
+    });
+  }
+
   private async findWorkspaceIdForCwd(cwd: string): Promise<string | null> {
     // Explicit archive administration must prefer an archived exact match to an active ancestor.
     const workspaces = await this.workspaceRegistry.listAll();

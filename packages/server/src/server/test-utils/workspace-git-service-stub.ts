@@ -1,6 +1,10 @@
 import type { CheckoutDiffResult } from "../../utils/checkout-git.js";
 import { deriveProjectSlug } from "../workspace-git-metadata.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "../workspace-git-service.js";
+import {
+  EMPTY_WORKSPACE_PR_STATUS,
+  type WorkspaceGitRuntimeSnapshot,
+  type WorkspaceGitService,
+} from "../workspace-git-service.js";
 
 export function createNoGitWorkspaceRuntimeSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
@@ -32,6 +36,11 @@ export function createNoopWorkspaceGitService(
   overrides: Partial<WorkspaceGitService> = {},
 ): WorkspaceGitService {
   const service: WorkspaceGitService = {
+    readPrStatus: () => EMPTY_WORKSPACE_PR_STATUS,
+    refreshPrStatus: async () => ({
+      outcome: "failed",
+      error: "Workspace Git status is unavailable.",
+    }),
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),

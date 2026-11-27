@@ -696,6 +696,142 @@ describe("WorkspaceGitServiceImpl", () => {
     }
   });
 
+  test("cached PR reads start no work and coalesced refreshes keep the previous status visible", async () => {
+    const started = createDeferred<void>();
+    const next = createDeferred<PullRequestStatusResult>();
+    const getPullRequestStatus = vi
+      .fn(async () => createPullRequestStatusResult())
+      .mockImplementationOnce(async () => createPullRequestStatusResult())
+      .mockImplementationOnce(() => {
+        started.resolve();
+        return next.promise;
+      });
+    const service = createService({ getPullRequestStatus, now: () => new Date() });
+    try {
+      expect(service.readPrStatus(REPO_CWD)).toMatchObject({
+        state: "pending",
+        status: null,
+        refreshing: false,
+        updatedAt: null,
+      });
+      expect(getPullRequestStatus).not.toHaveBeenCalled();
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+
+      await service.getSnapshot(REPO_CWD);
+      const original = service.readPrStatus(REPO_CWD);
+      expect(original).toMatchObject({
+        state: "ready",
+        stale: false,
+        status: { state: "open" },
+        updatedAt: expect.any(String),
+      });
+      await vi.advanceTimersByTimeAsync(240_000);
+      expect(service.readPrStatus(REPO_CWD)).toEqual({ ...original, stale: true });
+
+      const first = service.refreshPrStatus(REPO_CWD);
+      await started.promise;
+      const second = service.refreshPrStatus(REPO_CWD);
+      expect(service.readPrStatus(REPO_CWD)).toEqual({
+        ...original,
+        refreshing: true,
+        stale: true,
+      });
+      next.resolve(createPullRequestStatusResult({ status: null }));
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        { outcome: "completed", error: null },
+        { outcome: "completed", error: null },
+      ]);
+      expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
+      expect(getPullRequestStatus).toHaveBeenLastCalledWith(
+        REPO_CWD,
+        expect.anything(),
+        expect.objectContaining({ force: true }),
+        expect.anything(),
+      );
+      expect(service.readPrStatus(REPO_CWD)).toMatchObject({
+        state: "ready",
+        status: null,
+        refreshing: false,
+        stale: false,
+        updatedAt: new Date().toISOString(),
+      });
+      await expect(service.refreshPrStatus(REPO_CWD)).resolves.toMatchObject({
+        outcome: "throttled",
+        retryAfterMs: 5_000,
+      });
+      expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      next.resolve(createPullRequestStatusResult());
+      await service.dispose();
+    }
+  });
+
+  test("a failed PR refresh preserves the previous status and authentication is explicit", async () => {
+    const getPullRequestStatus = vi
+      .fn(async () => createPullRequestStatusResult())
+      .mockImplementationOnce(async () => createPullRequestStatusResult())
+      .mockRejectedValueOnce(new Error("Forge lookup failed"))
+      .mockResolvedValueOnce(
+        createPullRequestStatusResult({
+          status: null,
+          authState: "unauthenticated",
+        }),
+      );
+    const service = createService({ getPullRequestStatus, now: () => new Date() });
+    try {
+      await service.getSnapshot(REPO_CWD);
+      const original = service.readPrStatus(REPO_CWD);
+      await expect(service.refreshPrStatus(REPO_CWD)).resolves.toEqual({
+        outcome: "failed",
+        error: "Forge lookup failed",
+      });
+      expect(service.readPrStatus(REPO_CWD)).toEqual({
+        ...original,
+        state: "error",
+        stale: true,
+        error: "Forge lookup failed",
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(service.refreshPrStatus(REPO_CWD)).resolves.toMatchObject({ outcome: "failed" });
+      expect(service.readPrStatus(REPO_CWD)).toMatchObject({
+        state: "error",
+        authState: "unauthenticated",
+        status: original.status,
+        stale: true,
+      });
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  test("a timed-out PR refresh stays coalesced until its work settles", async () => {
+    const next = createDeferred<PullRequestStatusResult>();
+    const getPullRequestStatus = vi.fn(() => next.promise);
+    const service = createService({ getPullRequestStatus, now: () => new Date() });
+    try {
+      const request = service.refreshPrStatus(REPO_CWD);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(request).resolves.toMatchObject({ outcome: "timed_out" });
+      await expect(service.refreshPrStatus(REPO_CWD)).resolves.toMatchObject({
+        outcome: "timed_out",
+      });
+      expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
+      expect(service.readPrStatus(REPO_CWD)).toMatchObject({ state: "error", refreshing: true });
+      next.resolve(createPullRequestStatusResult());
+      await service.getSnapshot(REPO_CWD);
+      await flushPromises();
+      expect(service.readPrStatus(REPO_CWD)).toMatchObject({
+        state: "ready",
+        refreshing: false,
+        error: null,
+      });
+    } finally {
+      next.resolve(createPullRequestStatusResult());
+      await service.dispose();
+    }
+  });
+
   test("getSnapshot populates github pull request state in the runtime snapshot", async () => {
     const getPullRequestStatus = vi.fn(async () =>
       createPullRequestStatusResult({

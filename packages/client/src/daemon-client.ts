@@ -3299,6 +3299,29 @@ export class DaemonClient {
     });
   }
 
+  async listWorkspacePrStatuses(workspaceIds: readonly string[]) {
+    this.requireWorkspacePrStatus();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "workspace.pr_status.list.request", workspaceIds: [...workspaceIds] },
+      responseType: "workspace.pr_status.list.response",
+    });
+  }
+
+  async refreshWorkspacePrStatus(workspaceId: string) {
+    this.requireWorkspacePrStatus();
+    return this.sendCorrelatedSessionRequest({
+      message: { type: "workspace.pr_status.refresh.request", workspaceId },
+      responseType: "workspace.pr_status.refresh.response",
+      timeout: 20_000,
+    });
+  }
+
+  private requireWorkspacePrStatus(): void {
+    if (this.lastServerInfoMessage?.features?.workspacePrStatus !== true) {
+      throw new Error("Update the host to use workspace PR status.");
+    }
+  }
+
   async listWorkspaceScripts(
     workspaceId: string,
     requestId?: string,

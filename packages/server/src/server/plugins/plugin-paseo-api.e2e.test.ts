@@ -114,6 +114,17 @@ const append = defineRpc({
   output: z.object({ seq: z.number(), epoch: z.string() }),
 });
 
+const prStatus = defineRpc({
+  name: "pr-status",
+  input: z.object({ workspaceId: z.string() }),
+  output: z.object({
+    missing: z.string(),
+    status: z.string(),
+    cached: z.string(),
+    refresh: z.string(),
+  }),
+});
+
 export default function contribute(server: PluginServerContext) {
   server.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
@@ -129,6 +140,16 @@ export default function contribute(server: PluginServerContext) {
   server.handle(list, async (_input, { paseo }) => {
     const result = await paseo.agents.list({ page: { limit: 100 } });
     return { agentIds: result.entries.map((entry) => entry.agent.id) };
+  });
+  server.handle(prStatus, async ({ workspaceId }, { paseo }) => {
+    const refreshed = await paseo.workspaces.refreshPrStatus(workspaceId);
+    const [active, missing] = await paseo.workspaces.listPrStatuses([workspaceId, "missing"]);
+    return {
+      missing: missing.state,
+      status: refreshed.entry.state,
+      cached: active.state,
+      refresh: refreshed.outcome,
+    };
   });
   server.handle(append, ({ agentId, status }, { paseo }) =>
     paseo.agents.ref(agentId).timeline.append({
@@ -173,6 +194,16 @@ export default function contribute(server: PluginServerContext) {
     const listed = await client.invokePluginRpc("paseo-api", "list", {});
     expect(listed).toEqual({
       agentIds: expect.arrayContaining([Reflect.get(created, "agentId")]),
+    });
+    await expect(
+      client.invokePluginRpc("paseo-api", "pr-status", {
+        workspaceId: Reflect.get(created, "workspaceId"),
+      }),
+    ).resolves.toEqual({
+      missing: "workspace_not_found",
+      status: "unavailable",
+      cached: "unavailable",
+      refresh: "completed",
     });
     const agentId = Reflect.get(created, "agentId");
     await expect(

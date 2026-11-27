@@ -133,14 +133,16 @@ See [events](./events.md#follow-provider-catalog-changes) for explicit event obs
 
 ## `client.workspaces`
 
-| Method                   | Result                        | Behavior                                                                                                                 |
-| ------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                                                         |
-| `open(cwd)`              | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one.                                                              |
-| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace. `background: true` hides it from default discovery. |
-| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                                                                  |
-| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                                                                |
-| `subscribe(handler)`     | Unsubscribe function          | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation.                           |
+| Method                         | Result                                | Behavior                                                                                                                 |
+| ------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `listPrStatuses(workspaceIds)` | `PaseoWorkspacePrStatus[]`            | Reads cached PR status by workspace ID in one request.                                                                   |
+| `refreshPrStatus(workspaceId)` | `PaseoWorkspacePrStatusRefreshResult` | Requests a live forge refresh for one workspace.                                                                         |
+| `list(options?)`               | `PaseoWorkspaceListResult`            | Lists, filters, pages, or subscribes to the workspace directory.                                                         |
+| `open(cwd)`                    | `PaseoWorkspaceHandle`                | Reuses the active workspace for a directory or creates one.                                                              |
+| `create(options)`              | `PaseoWorkspaceHandle`                | Always creates a fresh directory-backed or Paseo-worktree workspace. `background: true` hides it from default discovery. |
+| `ref(workspaceOrId)`           | `PaseoWorkspaceHandle`                | Creates a local handle.                                                                                                  |
+| `archive(workspaceOrId)`       | `PaseoWorkspaceArchiveResult`         | Archives without first creating a handle.                                                                                |
+| `subscribe(handler)`           | Unsubscribe function                  | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation.                           |
 
 `create({ source, agent, background })` creates a workspace and its initial agent together.
 `agent` accepts agent creation options except `worktree`, `git`, `onEvent`, `idempotencyKey`,
@@ -148,6 +150,38 @@ and `requestId`. Set `background` on the workspace options; `agent.background` i
 See the [combined creation example](./agents.md#run-work-in-a-background-workspace).
 
 A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
+
+### Workspace PR status
+
+Both SDK clients and plugins can use these methods with a host that advertises `workspacePrStatus`.
+In a client plugin, get the API from `usePaseo()`. In a backend handler, use its `paseo` context.
+
+```ts
+const entries = await paseo.workspaces.listPrStatuses(workspaceIds);
+const result = await paseo.workspaces.refreshPrStatus(workspaceId);
+```
+
+Pass up to 100 active workspace IDs from the same host. You receive one entry per input ID, in input order.
+The batch reads the daemon's cache without starting Git or forge work. `status` carries the same PR
+identity, lifecycle, checks, review decision, and mergeability as the workspace UI.
+
+| Entry state           | Meaning                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `pending`             | The daemon has yet to cache status for this checkout.                                                           |
+| `ready`               | The lookup succeeded. A null `status` means there is no PR.                                                     |
+| `unavailable`         | There is no applicable forge lookup for the checkout.                                                           |
+| `error`               | The latest lookup failed. Read `error` and `authState` for details. The entry can retain the last known status. |
+| `workspace_not_found` | The workspace ID is unknown or archived on this host.                                                           |
+
+`updatedAt` is the ISO timestamp of the last successful observation for the entry, or null before one
+exists. A known result becomes `stale` after four minutes or when a subsequent attempt fails.
+When `refreshing` is true, the previous snapshot stays available until the daemon publishes an update.
+
+`refreshPrStatus` returns the current `entry` and an `outcome` of `completed`, `failed`, `throttled`,
+`timed_out`, or `workspace_not_found`. Concurrent requests for the same checkout share a refresh.
+The daemon limits pending refreshes and applies a five-second cooldown per checkout. If supplied,
+`retryAfterMs` tells you when to retry. A refresh can take up to 15 seconds to answer. After a timeout,
+the shared refresh can still finish and update the cache.
 
 ## `client.terminals`
 
