@@ -35,7 +35,7 @@ describe("Claude SDK env", () => {
       [undefined, "Paseo", "custom-client"].map((entrypoint) => ({ command, entrypoint })),
     ),
   )(
-    "preserves explicit launch identity $entrypoint in $command while clearing inherited session env",
+    "preserves explicit launch identity $entrypoint and the SDK version in $command while clearing inherited session env",
     async ({ command, entrypoint }) => {
       let output = "";
       let exited = Promise.resolve<unknown[]>([]);
@@ -52,10 +52,15 @@ describe("Claude SDK env", () => {
               command,
               args: [
                 "-e",
-                "process.stdout.write(JSON.stringify({ entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT, parentSession: process.env.CLAUDECODE ?? null }))",
+                "process.stdout.write(JSON.stringify({ entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT, parentSession: process.env.CLAUDECODE ?? null, sdkVersion: process.env.CLAUDE_AGENT_SDK_VERSION ?? null }))",
               ],
               cwd: process.cwd(),
-              env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sdk-ts", CLAUDECODE: "1" },
+              env: {
+                ...process.env,
+                CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
+                CLAUDECODE: "1",
+                CLAUDE_AGENT_SDK_VERSION: "0.3.326",
+              },
               signal: new AbortController().signal,
             });
             child.stdout.on("data", (chunk: Buffer) => {
@@ -72,6 +77,7 @@ describe("Claude SDK env", () => {
         expect(JSON.parse(output)).toEqual({
           ...(entrypoint === undefined ? {} : { entrypoint }),
           parentSession: null,
+          sdkVersion: "0.3.326",
         });
       } finally {
         query.close();
