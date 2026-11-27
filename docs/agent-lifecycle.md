@@ -80,7 +80,9 @@ Provider checks follow the signals their runtimes expose:
 - Codex queries background terminals for loaded threads, including native children, and protects
   pending provider requests. App servers without the terminal-list RPC stay resident.
 - OpenCode checks active executions and descendants. V1 checks PTYs; v2 also checks shell and
-  inbox inventories. The shared server remains leased while a session vetoes collection.
+  inbox inventories. The shared server remains leased while a session vetoes collection. V2 lets
+  another session's execution veto only when releasing the lease would stop the server; the shared
+  server stays up after its last lease goes.
 - Pi checks streaming, compaction, pending replies, and adapter-owned operations. Known native
   subagent signals also protect their parent through the daemon's subagent store.
 - OMP additionally requires `get_state.isSettled: true` and `hasPendingAsyncWork: false`.
