@@ -7585,4 +7585,79 @@ describe("respectful ACP probing defaults and hygiene", () => {
       await connection.close();
     }
   });
+
+  it("materializes tool call and assistant image content blocks without leaking base64 into tool details", async () => {
+    const pngBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
+    const harness = connectorHarness({
+      promptUpdates() {
+        return [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "shot-1",
+            name: "browser_screenshot",
+            title: "Take screenshot",
+            kind: "other",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: { type: "image", data: pngBase64, mimeType: "image/png" },
+              },
+            ],
+          },
+          {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "image", data: pngBase64, mimeType: "image/png" },
+          },
+          {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Here is the preview." },
+          },
+        ];
+      },
+    });
+    const registration = runAcpProvider({
+      id: "image-outputs",
+      label: "Image Outputs",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "img-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Take a screenshot" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      const imageMessages = events.flatMap((event) =>
+        event.type === "timeline.item" &&
+        event.item.type === "assistant_message" &&
+        event.item.text.includes("![Image](file://")
+          ? [event.item.text]
+          : [],
+      );
+      expect(imageMessages).toHaveLength(2);
+      const toolCalls = events.flatMap((event) =>
+        event.type === "timeline.item" && event.item.type === "tool_call" ? [event.item] : [],
+      );
+      expect(JSON.stringify(toolCalls)).not.toContain(pngBase64);
+    } finally {
+      await connection.close();
+    }
+  });
 });

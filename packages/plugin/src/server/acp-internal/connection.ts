@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
@@ -33,6 +34,12 @@ import type {
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
+import {
+  extractToolCallContentImages,
+  isLocalImageFilePath,
+  renderAcpImageAsMarkdown,
+  stripToolCallContentImages,
+} from "./image-output.js";
 import { standardToolCallDetail } from "./tool-call-detail.js";
 import {
   PROVIDER_PROTOCOL_VERSION,
@@ -586,6 +593,7 @@ class AcpRuntime {
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallState>();
+  private readonly emittedToolImages = new Map<string, Set<string>>();
   private mcpServerNames: readonly string[] = [];
   private readonly liveOpenToolIds = new Set<string>();
   private readonly canceledToolCallIds = new Set<string>();
@@ -1541,7 +1549,7 @@ class AcpRuntime {
     return active.lastPromptResponseWireSeq !== null && wireSeq > active.lastPromptResponseWireSeq;
   }
 
-  private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
+  private async sessionUpdate(notification: SessionNotification, wireSeq: number): Promise<void> {
     if (notification.sessionId !== this.nativeSessionId) return;
     if (this.replayWindow && isReplayHistoryUpdate(notification.update)) {
       this.lastLoadHistoryAt = performance.now();
@@ -1556,13 +1564,13 @@ class AcpRuntime {
       this.replayWindow === "replay" &&
       notification.update.sessionUpdate === "user_message_chunk"
     ) {
-      this.reduceUserMessageChunk(notification.update);
+      await this.reduceUserMessageChunk(notification.update);
       return;
     }
-    this.reduceUpdate(notification.update, wireSeq);
+    await this.reduceUpdate(notification.update, wireSeq);
   }
 
-  private reduceUpdate(update: SessionUpdate, wireSeq: number): void {
+  private async reduceUpdate(update: SessionUpdate, wireSeq: number): Promise<void> {
     if (
       update.sessionUpdate === "agent_message_chunk" ||
       update.sessionUpdate === "agent_thought_chunk" ||
@@ -1580,6 +1588,26 @@ class AcpRuntime {
           : "agent_message_chunk",
       );
       this.fallbackChunkIds.delete("user_message_chunk");
+      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "image") {
+        const markdown = await renderAcpImageAsMarkdown({
+          data: update.content.data,
+          url: update.content.uri,
+          mimeType: update.content.mimeType,
+        });
+        if (!markdown) return;
+        this.fallbackChunkIds.clear();
+        this.emit({
+          type: "timeline.item",
+          sessionId: this.options.boundarySessionId,
+          item: {
+            type: "assistant_message",
+            id: `agent_image:${++this.messageSequence}`,
+            text: markdown,
+          },
+        });
+        this.noteDeferredChunk("agent_message_chunk", wireSeq);
+        return;
+      }
       if (update.content.type !== "text") return;
       const id = this.resolveChunkId(update.sessionUpdate, update.messageId);
       const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
@@ -1601,7 +1629,7 @@ class AcpRuntime {
     }
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
       if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
-      this.reduceToolCall(update, wireSeq);
+      await this.reduceToolCall(update, wireSeq);
       return;
     }
     if (update.sessionUpdate === "plan") this.fallbackChunkIds.clear();
@@ -1610,14 +1638,24 @@ class AcpRuntime {
 
   // Historical user messages arrive only as replayed chunks; a live prompt
   // already echoes its own user message when it is admitted.
-  private reduceUserMessageChunk(
+  private async reduceUserMessageChunk(
     update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
-  ): void {
+  ): Promise<void> {
     this.fallbackChunkIds.delete("agent_message_chunk");
     this.fallbackChunkIds.delete("agent_thought_chunk");
-    if (update.content.type !== "text") return;
+    let chunkText: string | null = null;
+    if (update.content.type === "text") {
+      chunkText = update.content.text;
+    } else if (update.content.type === "image") {
+      chunkText = await renderAcpImageAsMarkdown({
+        data: update.content.data,
+        url: update.content.uri,
+        mimeType: update.content.mimeType,
+      });
+    }
+    if (!chunkText) return;
     const id = this.resolveChunkId("user_message_chunk", update.messageId);
-    const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
+    const text = `${this.messages.get(id) ?? ""}${chunkText}`;
     this.messages.set(id, text);
     this.emit({
       type: "timeline.item",
@@ -1790,10 +1828,10 @@ class AcpRuntime {
     return { source, presentation };
   }
 
-  private reduceToolCall(
+  private async reduceToolCall(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
     wireSeq: number,
-  ): void {
+  ): Promise<void> {
     if (
       update.sessionUpdate === "tool_call_update" &&
       this.canceledToolCallIds.has(update.toolCallId)
@@ -1803,6 +1841,8 @@ class AcpRuntime {
     if (update.sessionUpdate === "tool_call") {
       this.canceledToolCallIds.delete(update.toolCallId);
     }
+    const contentImages =
+      update.content === undefined ? [] : extractToolCallContentImages(jsonValue(update.content));
     const tool = this.toolCalls.get(update.toolCallId);
     const current = tool?.presentation;
     const wasOpenQualifying =
@@ -1816,14 +1856,64 @@ class AcpRuntime {
       if (isOpen) this.liveOpenToolIds.add(snapshot.id);
       else this.liveOpenToolIds.delete(snapshot.id);
     }
+    const item = toolTimelineItem(snapshot);
     this.emit({
       type: "timeline.item",
       sessionId: this.options.boundarySessionId,
-      item: toolTimelineItem(snapshot),
+      item,
     });
+    await this.emitToolCallImages(snapshot, item.detail, contentImages);
     const isOpenQualifying =
       this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
     this.noteDeferredToolTransition(wasOpenQualifying, isOpenQualifying, isOpen, snapshot, wireSeq);
+  }
+
+  private async emitToolCallImages(
+    snapshot: AcpToolCallSnapshot,
+    detail: ProviderToolCallDetail,
+    contentImages: ReturnType<typeof extractToolCallContentImages>,
+  ): Promise<void> {
+    const seen = this.emittedToolImages.get(snapshot.id) ?? new Set<string>();
+    for (const image of contentImages) {
+      const markdown = await renderAcpImageAsMarkdown(image);
+      if (!markdown || seen.has(markdown)) continue;
+      seen.add(markdown);
+      this.emittedToolImages.set(snapshot.id, seen);
+      this.fallbackChunkIds.clear();
+      this.emit({
+        type: "timeline.item",
+        sessionId: this.options.boundarySessionId,
+        item: {
+          type: "assistant_message",
+          id: `tool_image:${snapshot.id}:${seen.size}`,
+          text: markdown,
+        },
+      });
+    }
+    if (
+      snapshot.status === "completed" &&
+      seen.size === 0 &&
+      detail.type === "read" &&
+      isLocalImageFilePath(detail.filePath)
+    ) {
+      const markdown = await renderAcpImageAsMarkdown({
+        path: detail.filePath,
+        altText: path.basename(detail.filePath) || "Image",
+      });
+      if (!markdown) return;
+      seen.add(markdown);
+      this.emittedToolImages.set(snapshot.id, seen);
+      this.fallbackChunkIds.clear();
+      this.emit({
+        type: "timeline.item",
+        sessionId: this.options.boundarySessionId,
+        item: {
+          type: "assistant_message",
+          id: `tool_image:${snapshot.id}:1`,
+          text: markdown,
+        },
+      });
+    }
   }
 
   private vendorNotification(method: string, params: unknown): void {
@@ -1878,7 +1968,7 @@ class AcpRuntime {
     ]);
   }
 
-  private enqueueNotification(operation: () => void): Promise<void> {
+  private enqueueNotification(operation: () => Promise<void> | void): Promise<void> {
     const result = this.notificationLane.then(operation);
     this.notificationLane = result.catch(() => undefined);
     return result;
@@ -2400,7 +2490,10 @@ function mergeToolCallSnapshot(
     input: jsonValue(firstDefined(update.rawInput, current?.input, null)),
     output: jsonValue(firstDefined(update.rawOutput, current?.output, null)),
     locations: update.locations?.map((location) => location.path) ?? current?.locations ?? [],
-    content: update.content === undefined ? current?.content : jsonValue(update.content),
+    content:
+      update.content === undefined
+        ? current?.content
+        : stripToolCallContentImages(jsonValue(update.content)),
   };
 }
 

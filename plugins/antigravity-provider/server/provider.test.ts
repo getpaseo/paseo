@@ -1017,3 +1017,78 @@ child.on("exit", (code) => process.exit(code ?? 1));
     await connection.close();
   }
 });
+
+it("emits an inline markdown image preview when Antigravity read_file completes on a local image", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      if (method === "initialize") send({ id, result: { protocolVersion: 1 } });
+      if (method === "session/new") {
+        send({ id, result: { sessionId: "agy-img", modes: {
+          currentModeId: "default", availableModes: [{ id: "default", name: "Default" }],
+        } } });
+        send({ method: "session/update", params: { sessionId: "agy-img", update: {
+          sessionUpdate: "available_commands_update", availableCommands: [],
+        } } });
+      }
+      if (method === "session/prompt") {
+        send({ method: "session/update", params: { sessionId: "agy-img", update: {
+          sessionUpdate: "tool_call", toolCallId: "read-img", name: "read_file",
+          kind: "read", status: "in_progress", title: "File shot.png",
+          locations: [{ path: "/tmp/shot.png" }], rawInput: { Path: "/tmp/shot.png" },
+        } } });
+        send({ method: "session/update", params: { sessionId: "agy-img", update: {
+          sessionUpdate: "tool_call_update", toolCallId: "read-img", name: "read_file",
+          kind: "read", status: "completed", title: "File shot.png",
+          locations: [{ path: "/tmp/shot.png" }], rawInput: { Path: "/tmp/shot.png" },
+        } } });
+        send({ id, result: { stopReason: "end_turn" } });
+      }
+      if (method === "session/close") send({ id, result: {} });
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "test",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+    });
+    await expect.poll(() => events.find((event) => event.type === "session.ready")).toBeDefined();
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "img-read",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Inspect /tmp/shot.png" }] },
+      },
+    });
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "session.turn" && event.state === "completed"),
+      )
+      .toBeDefined();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "assistant_message",
+          text: "\n\n![shot.png](file:///tmp/shot.png)\n\n",
+        }),
+      }),
+    );
+  } finally {
+    await connection.close();
+  }
+});
