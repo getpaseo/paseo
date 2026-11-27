@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { setImmediate } from "node:timers/promises";
 import { highlightCodeWithBudget, HIGHLIGHT_MAX_SOURCE_BYTES } from "../budgeted-highlighter.js";
 import type { HighlightToken } from "../types.js";
@@ -80,6 +80,41 @@ describe("highlightCode", () => {
     const stringToken = result[1].find((t) => t.text.includes("hello"));
     expect(stringToken?.style).toBe("string");
   });
+
+  it.each(["changes.diff", "bug.patch", "diff", "patch"])(
+    "highlights unified diffs for %s without trailing-whitespace warnings",
+    (target) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const code = [
+          "diff --git a/app.py b/app.py",
+          "index 1111111..2222222 100644",
+          "--- a/app.py",
+          "+++ b/app.py",
+          "@@ -1,3 +1,3 @@ def greet():",
+          " print('hello')",
+          " ",
+          "-old = 1  ",
+          "+new = 2  ",
+        ].join("\n");
+        const result = highlightCode(code, target);
+
+        expect(result).toHaveLength(9);
+        expect(result[0]).toEqual([{ text: "diff --git a/app.py b/app.py", style: null }]);
+        expect(result[1]).toEqual([{ text: "index 1111111..2222222 100644", style: null }]);
+        expect(result[2]).toEqual([{ text: "--- a/app.py", style: "diffDeletion" }]);
+        expect(result[3]).toEqual([{ text: "+++ b/app.py", style: "diffAddition" }]);
+        expect(result[4]).toEqual([{ text: "@@ -1,3 +1,3 @@ def greet():", style: "meta" }]);
+        expect(result[5]).toEqual([{ text: " print('hello')", style: null }]);
+        expect(result[6]).toEqual([{ text: " ", style: null }]);
+        expect(result[7]).toEqual([{ text: "-old = 1  ", style: "diffDeletion" }]);
+        expect(result[8]).toEqual([{ text: "+new = 2  ", style: "diffAddition" }]);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
 
   it("highlights C# code", () => {
     const code = 'class Greeter {\n    string message = "hello";\n}';
@@ -346,6 +381,8 @@ const title = "Hello";
       "meta",
       "heading",
       "link",
+      "diffAddition",
+      "diffDeletion",
       null,
     ]);
 

@@ -24,6 +24,8 @@ const allStyles: HighlightStyle[] = [
   "meta",
   "heading",
   "link",
+  "diffAddition",
+  "diffDeletion",
 ];
 
 const colorSchemes: ("light" | "dark")[] = ["light", "dark"];

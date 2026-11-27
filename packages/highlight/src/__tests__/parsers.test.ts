@@ -20,6 +20,10 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("test.java")).toBe(true);
     expect(isLanguageSupported("test.swift")).toBe(true);
     expect(isLanguageSupported("test.dart")).toBe(true);
+    expect(isLanguageSupported("changes.diff")).toBe(true);
+    expect(isLanguageSupported("bug.patch")).toBe(true);
+    expect(isLanguageSupported("diff")).toBe(true);
+    expect(isLanguageSupported("patch")).toBe(true);
     expect(isLanguageSupported("test.cs")).toBe(true);
     expect(isLanguageSupported("test.nix")).toBe(true);
     expect(isLanguageSupported("main.tf")).toBe(true);
@@ -68,6 +72,8 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("rs");
     expect(extensions).toContain("swift");
     expect(extensions).toContain("dart");
+    expect(extensions).toContain("diff");
+    expect(extensions).toContain("patch");
     expect(extensions).toContain("cs");
     expect(extensions).toContain("nix");
     expect(extensions).toContain("tf");

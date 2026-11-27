@@ -1,5 +1,6 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
@@ -32,6 +33,16 @@ function language(parser: Parser): Language {
 
 const shellLanguage = StreamLanguage.define(shell);
 const dockerfileLanguage = StreamLanguage.define(dockerFile);
+const diffLanguage = StreamLanguage.define({
+  ...diff,
+  token(stream, state) {
+    const token = diff.token?.(stream, state) ?? null;
+    if (!token || token === "error") return null;
+    // Legacy diff mode prefixes trailing-whitespace tokens with "error ", which triggers
+    // CodeMirror's "Unknown highlighting tag error" warning on compound tokens.
+    return token.startsWith("error ") ? token.slice("error ".length) : token;
+  },
+});
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -90,6 +101,9 @@ const languagesByExtension: Record<string, Language> = {
   swift: StreamLanguage.define(swift),
   // Dart
   dart: StreamLanguage.define(dart),
+  // Diff / patch (unified diff format)
+  diff: diffLanguage,
+  patch: diffLanguage,
   // C#
   cs: csharpLanguage,
   // Nix
