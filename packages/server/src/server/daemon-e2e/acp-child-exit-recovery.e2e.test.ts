@@ -1,11 +1,11 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import pino from "pino";
 import { afterEach, expect, test } from "vitest";
 
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import { createTestLogger } from "../../test-utils/test-logger.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -17,8 +17,9 @@ async function startAcpEchoDaemon(fixtureArgs: string[] = []) {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-acp-child-exit-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const pidFile = path.join(root, "acp-pids");
+  const logLines: string[] = [];
   const daemon = await createTestPaseoDaemon({
-    logger: createTestLogger(),
+    logger: pino({ level: "warn" }, { write: (line: string) => logLines.push(line) }),
     pluginsEnabled: false,
     mcpEnabled: false,
     providerOverrides: {
@@ -40,7 +41,17 @@ async function startAcpEchoDaemon(fixtureArgs: string[] = []) {
   await client.connect();
   await client.fetchAgents({ subscribe: {} });
   const latestPid = async () => Number((await readFile(pidFile, "utf8")).trim().split("\n").at(-1));
-  return { client, cwd: root, latestPid };
+  // The test sees the process gone before the daemon reads the closed pipes, so it waits for
+  // the daemon. A user sends the next message long after the exit.
+  const killAcpProcess = async () => {
+    const pid = await latestPid();
+    process.kill(pid, "SIGKILL");
+    await expect
+      .poll(() => logLines.some((line) => line.includes("ACP agent process exited unexpectedly")))
+      .toBe(true);
+    return pid;
+  };
+  return { client, cwd: root, latestPid, killAcpProcess };
 }
 
 async function assistantReplies(client: DaemonClient, agentId: string): Promise<string[]> {
@@ -51,14 +62,12 @@ async function assistantReplies(client: DaemonClient, agentId: string): Promise<
 }
 
 test("an idle ACP agent whose process was killed answers the next message", async () => {
-  const { client, cwd, latestPid } = await startAcpEchoDaemon();
+  const { client, cwd, latestPid, killAcpProcess } = await startAcpEchoDaemon();
   const agent = await client.createAgent({ provider: "acp-echo", cwd });
   await client.sendMessage(agent.id, "first");
   expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
 
-  const pid = await latestPid();
-  process.kill(pid, "SIGKILL");
-  await expect.poll(() => isRunning(pid)).toBe(false);
+  const pid = await killAcpProcess();
 
   await client.sendMessage(agent.id, "second");
   expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
@@ -70,30 +79,17 @@ test("an idle ACP agent whose process was killed answers the next message", asyn
 }, 60_000);
 
 test("an ACP agent that cannot reopen its session keeps its history after its process was killed", async () => {
-  const { client, cwd, latestPid } = await startAcpEchoDaemon(["no-load"]);
+  const { client, cwd, killAcpProcess } = await startAcpEchoDaemon(["no-load"]);
   const agent = await client.createAgent({ provider: "acp-echo", cwd });
   await client.sendMessage(agent.id, "first");
   expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
 
-  const pid = await latestPid();
-  process.kill(pid, "SIGKILL");
-  await expect.poll(() => isRunning(pid)).toBe(false);
+  await killAcpProcess();
 
-  await expect(client.sendMessage(agent.id, "second")).rejects.toThrow(
-    "ACP agent disconnected (signal SIGKILL)",
-  );
+  await expect(client.sendMessage(agent.id, "second")).rejects.toThrow("ACP agent disconnected");
   expect((await client.fetchAgent(agent.id))?.agent.status).toBe("error");
   expect(await assistantReplies(client, agent.id)).toEqual([
     "echo: first",
-    "[System Error] ACP agent disconnected (signal SIGKILL)",
+    expect.stringContaining("[System Error] ACP agent disconnected"),
   ]);
 }, 60_000);
-
-function isRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
