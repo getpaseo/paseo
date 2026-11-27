@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { buildWorkspaceStructureProjects, createProjectViewKey } from "./workspace-structure";
+import {
+  filterWorkspaceProjectsForHost,
+  getHostProjectSourceDirectory,
+  hostProjectFromWorkspace,
+  resolveInitialWorkspaceProject,
+} from "./host-project-model";
 
 function project(input: {
   id: string;
@@ -271,7 +277,7 @@ describe("buildWorkspaceStructureProjects", () => {
     });
   });
 
-  test("clears daemon equivalence keys when a saved local link is blocked", () => {
+  test("blocks remembered cross-host project matching when a saved local link is disabled", () => {
     const key = "remote:github.com/acme/app#subdir:packages/web";
     const projectA = project({ id: "prj_a", key, root: "/repos/app/packages/web" });
     const projectB = project({ id: "prj_b", key, root: "/work/app/packages/web" });
@@ -297,20 +303,19 @@ describe("buildWorkspaceStructureProjects", () => {
         },
       },
     });
+    const rememberedWorkspace = workspaceWithGitFacts({
+      id: "ws-a",
+      project: projectA,
+      worktreeRoot: "/repos/app",
+      remoteUrl: "https://github.com/acme/app.git",
+    });
 
     const result = buildWorkspaceStructureProjects({
       sessions: [
         {
           serverId: "host-a",
           projects: [projectA],
-          workspaces: [
-            workspaceWithGitFacts({
-              id: "ws-a",
-              project: projectA,
-              worktreeRoot: "/repos/app",
-              remoteUrl: "https://github.com/acme/app.git",
-            }),
-          ],
+          workspaces: [rememberedWorkspace],
         },
         {
           serverId: "host-b",
@@ -323,6 +328,14 @@ describe("buildWorkspaceStructureProjects", () => {
               remoteUrl: "https://github.com/acme/other.git",
             }),
           ],
+        },
+        {
+          serverId: "host-c",
+          projects: [
+            project({ id: "prj_c", key, root: "/remote/app/packages/web" }),
+            project({ id: "prj_default", key: null, root: "/remote/default", name: "A project" }),
+          ],
+          workspaces: [],
         },
       ],
       localProjectLinks: [
@@ -337,9 +350,26 @@ describe("buildWorkspaceStructureProjects", () => {
       ],
     });
 
-    expect(result).toHaveLength(2);
-    expect(result.map((item) => item.projectKey)).toEqual([null, null]);
-    expect(new Set(result.map((item) => item.viewKey)).size).toBe(2);
+    const blockedProjects = result.filter((item) => item.hosts[0]?.serverId !== "host-c");
+    expect(blockedProjects.map((item) => item.projectKey)).toEqual([null, null]);
+    expect(new Set(blockedProjects.map((item) => item.viewKey)).size).toBe(2);
+
+    const lastActiveProject = hostProjectFromWorkspace({
+      serverId: "host-a",
+      workspace: rememberedWorkspace,
+      projects: result,
+    });
+    const serverId = "host-c";
+    const allowAllProjects = false;
+    const selected = resolveInitialWorkspaceProject({
+      routeProject: null,
+      lastActiveProject,
+      projects: filterWorkspaceProjectsForHost({ projects: result, serverId, allowAllProjects }),
+      serverId,
+      allowAllProjects,
+    });
+
+    expect(getHostProjectSourceDirectory(selected!, serverId)).toBe("/remote/default");
   });
 
   test("keeps opaque project keys separate from placement view keys", () => {

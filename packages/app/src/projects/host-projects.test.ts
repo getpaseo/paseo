@@ -201,10 +201,10 @@ describe("host project lookups", () => {
     });
   });
 
-  test("keeps canonical equivalence identity separate from host placement identity", () => {
+  test("keeps the remembered project host-local until its placement is projected", () => {
     const workspace = normalizeWorkspaceDescriptor({
       id: "workspace-a",
-      projectId: "project-a",
+      projectId: "prj_a",
       projectDisplayName: "App",
       projectRootPath: "/repo/app",
       workspaceDirectory: "/repo/app",
@@ -232,10 +232,20 @@ describe("host project lookups", () => {
       },
     });
 
-    expect(hostProjectFromWorkspace({ serverId: "host-a", workspace })).toMatchObject({
-      viewKey: JSON.stringify(["host-a", "project-a"]),
-      projectKey: "remote:github.com/acme/app",
-      hosts: [{ serverId: "host-a", projectId: "project-a" }],
+    expect(hostProjectFromWorkspace({ serverId: "host-a", workspace, projects: [] })).toMatchObject(
+      {
+        viewKey: JSON.stringify(["host-a", "prj_a"]),
+        projectKey: null,
+        hosts: [{ serverId: "host-a", projectId: "prj_a" }],
+      },
+    );
+    const projected = project();
+    expect(
+      hostProjectFromWorkspace({ serverId: "host-a", workspace, projects: [projected] }),
+    ).toMatchObject({
+      viewKey: projected.viewKey,
+      projectKey: projected.projectKey,
+      hosts: [projected.hosts[0]],
     });
   });
 });

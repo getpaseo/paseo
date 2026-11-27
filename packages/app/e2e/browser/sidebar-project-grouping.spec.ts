@@ -31,6 +31,8 @@ import {
 } from "../support/helpers/sidebar";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import { openProjectSettings, returnToProjectsList } from "../support/helpers/project-settings";
+import { buildProjectSettingsRoute, buildProjectsSettingsRoute } from "@/utils/host-routes";
 
 const PRIMARY_HOST_LABEL = "Primary Host";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -585,19 +587,41 @@ test.describe("Sidebar project grouping", () => {
 
   test("renames only the selected host's grouped project", async ({ page, crossHostProject }) => {
     await openScenario(page, crossHostProject);
-    await openGroupedProjectSettings(page, {
-      serverId: getServerId(),
-      projectName: GROUPED_PROJECT_NAME,
+    await openProjectsSettings(page, getServerId());
+    const projectsList = page.getByTestId("projects-list");
+    const groupedProjectRow = projectsList.getByRole("button", {
+      name: `Edit ${GROUPED_PROJECT_NAME}`,
+      exact: true,
     });
+    await expect(groupedProjectRow.getByText(GROUPED_PROJECT_NAME, { exact: true })).toBeVisible();
+    await expect(groupedProjectRow.getByRole("button")).toHaveCount(0);
+    await openProjectSettings(page, GROUPED_PROJECT_NAME);
+    await expect(page).toHaveURL(
+      buildProjectSettingsRoute(getServerId(), crossHostProject.primaryProjectId),
+    );
     await renameProject(page, "Primary-only project name");
     await expectProjectSettingsName(page, "Primary-only project name");
+    await returnToProjectsList(page);
+    await expect(
+      projectsList.getByRole("button", { name: "Edit Primary-only project name", exact: true }),
+    ).toBeVisible();
+
     const secondaryHost = crossHostProject.hosts[0];
     if (!secondaryHost) throw new Error("Expected a secondary host");
     await openProjectsForSettingsHost(page, {
       serverId: secondaryHost.serverId,
       projectName: GROUPED_PROJECT_NAME,
     });
+    await expect(page).toHaveURL(
+      buildProjectSettingsRoute(secondaryHost.serverId, crossHostProject.secondaryProjectId),
+    );
     await expectProjectSettingsName(page, GROUPED_PROJECT_NAME);
+    await page.goBack();
+    await expect(page).toHaveURL(buildProjectsSettingsRoute(secondaryHost.serverId));
+    await expect(groupedProjectRow).toBeVisible();
+    await expect(
+      projectsList.getByRole("button", { name: "Edit Primary-only project name", exact: true }),
+    ).toHaveCount(0);
   });
 
   test("creates a workspace on the selected host from a grouped project", async ({

@@ -52,6 +52,7 @@ export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjec
 export function hostProjectFromWorkspace(input: {
   serverId: string;
   workspace: WorkspaceDescriptor | null;
+  projects: readonly HostProjectListItem[];
 }): HostProjectListItem | null {
   if (!input.workspace) {
     return null;
@@ -59,6 +60,12 @@ export function hostProjectFromWorkspace(input: {
   const projectId = input.workspace.projectId.trim() || undefined;
   if (!projectId) {
     return null;
+  }
+  for (const project of input.projects) {
+    const placement = getHostProjectPlacement(project, input.serverId);
+    if (placement?.projectId === projectId) {
+      return { ...project, iconWorkingDir: placement.iconWorkingDir, hosts: [placement] };
+    }
   }
   const iconWorkingDir = input.workspace.projectRootPath.trim();
   if (!iconWorkingDir) {
@@ -71,14 +78,15 @@ export function hostProjectFromWorkspace(input: {
       serverId: input.serverId,
       projectId,
     }),
-    projectKey: input.workspace.project?.projectKey ?? null,
+    // Cross-host matching uses the projected key because the daemon key can predate a disabled link.
+    projectKey: null,
     projectName: input.workspace.projectDisplayName || projectId,
     projectKind: input.workspace.projectKind,
     iconWorkingDir,
     hosts: [
       {
         serverId: input.serverId,
-        projectId: input.workspace.projectId,
+        projectId,
         iconWorkingDir,
         worktreeSupport: canCreate ? "supported" : "unsupported",
         customIconRevision: input.workspace.projectCustomIconRevision,
