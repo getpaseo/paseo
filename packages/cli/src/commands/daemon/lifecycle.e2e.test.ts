@@ -22,6 +22,10 @@ async function port() {
   return value;
 }
 
+// Port zero lets the daemon bind its own port, with no gap for another
+// process to take a reserved one. Use it when the test needs no fixed port.
+const ownPort = "127.0.0.1:0";
+
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "paseo lifecycle "));
   const env = {
@@ -201,7 +205,7 @@ test("local status uses the credential and reports the server id of a password-p
   const f = await fixture();
   const home = f.homes[0]!;
   try {
-    await f.configure(home, `127.0.0.1:${await port()}`);
+    await f.configure(home, ownPort);
     const configPath = path.join(home, "config.json");
     const config = JSON.parse(await readFile(configPath, "utf8"));
     config.daemon.auth = { password: await hashDaemonPassword("secret") };
@@ -415,7 +419,7 @@ test("empty explicit selectors never select the ambient daemon or create local s
   const f = await fixture();
   const home = f.homes[0]!;
   try {
-    await f.configure(home, `127.0.0.1:${await port()}`);
+    await f.configure(home, ownPort);
     await f.ok(["start", "--home", home]);
     const before = await f.liveStatus(home);
     for (const args of [
@@ -489,8 +493,8 @@ test("raw log following subscribes to a stored agent that exists only in B", asy
   const [a, b] = f.homes as [string, string];
   let follower: ReturnType<typeof spawn> | undefined;
   try {
-    await f.configure(a, `127.0.0.1:${await port()}`);
-    await f.configure(b, `127.0.0.1:${await port()}`);
+    await f.configure(a, ownPort);
+    await f.configure(b, ownPort);
     const agentId = "4de8b157-7614-4c38-b189-e50e57fb9498";
     const now = new Date().toISOString();
     await mkdir(path.join(b, "agents"));
