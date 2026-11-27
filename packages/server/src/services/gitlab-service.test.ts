@@ -593,6 +593,35 @@ describe("createGitLabService", () => {
     ]);
   });
 
+  it("passes draft creation to glab", async () => {
+    const { service, calls } = makeService(() =>
+      ok("https://gitlab.example.com/example-group/example-project/-/merge_requests/15"),
+    );
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "Ship it",
+      head: "feature",
+      base: "main",
+      draft: true,
+    });
+    expect(calls[0]).toContain("--draft");
+  });
+
+  it("pins merge request creation to the approved repository URL", async () => {
+    const { service, calls } = makeService(() =>
+      ok("https://approved.example/team/project/-/merge_requests/15"),
+    );
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "Approved",
+      head: "feature",
+      base: "main",
+      repositoryUrl: "https://approved.example/team/project.git",
+    });
+    expect(calls[0]).toContain("--repo");
+    expect(calls[0]).toContain("https://approved.example/team/project.git");
+  });
+
   it("merges with the requested strategy when GitLab reports the MR as mergeable", async () => {
     const { service, calls } = makeService(() => ok(""));
     const result = await service.mergePullRequest({

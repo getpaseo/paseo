@@ -1300,6 +1300,10 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         input.base,
         "--yes",
       ];
+      if (input.draft) {
+        args.push("--draft");
+      }
+      if (input.repositoryUrl) args.push("--repo", input.repositoryUrl);
       const stdout = await run(args, { cwd: input.cwd });
       const url = extractMergeRequestUrl(stdout);
       if (!url) {

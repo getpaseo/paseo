@@ -64,6 +64,7 @@ import type {
 } from "./forge-service.js";
 import {
   findTeaLoginNameForHost,
+  findTeaLoginNameForBaseUrl,
   getGiteaActionRunIdFromUrl,
   getGiteaActionTaskName,
   getUrlOrigin,
@@ -1940,6 +1941,27 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         "--base",
         input.base,
       ];
+      if (input.draft) {
+        args.push("--draft");
+      }
+      if (input.repositoryUrl) {
+        const location = parseGitRemoteLocation(input.repositoryUrl);
+        if (!location) throw new Error("Invalid approved Gitea repository URL");
+        const logins = await run(["login", "list", "-o", "json"], { cwd: input.cwd });
+        let repositoryPath = location.path;
+        let login: string | null;
+        if (location.transport === "http" || location.transport === "https") {
+          const url = new URL(input.repositoryUrl);
+          const prefix = url.pathname.split("/").filter(Boolean).slice(0, -2).join("/");
+          const baseUrl = url.origin + (prefix ? `/${prefix}` : "");
+          login = findTeaLoginNameForBaseUrl(logins, baseUrl);
+          repositoryPath = location.path.split("/").slice(-2).join("/");
+        } else {
+          login = findTeaLoginNameForHost(logins, location.host);
+        }
+        if (!login) throw new Error("No login for the approved Gitea host");
+        args.push("--repo", repositoryPath, "--login", login);
+      }
       const stdout = await run(args, { cwd: input.cwd });
       const url = extractPullRequestUrl(stdout);
       if (!url) {

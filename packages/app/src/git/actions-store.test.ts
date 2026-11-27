@@ -163,6 +163,86 @@ describe("checkout-git-actions-store", () => {
     ).toBe("success");
   });
 
+  it("previews a PR before submitting only approved issue links", async () => {
+    const proposal = {
+      id: "proposal-1",
+      title: "Fix retry failure",
+      body: "Retries transient errors.",
+      draft: true,
+      issues: [{ number: 7, title: "Retry failure", url: "https://example.com/issues/7" }],
+    };
+    const checkoutPrCreate = vi
+      .fn()
+      .mockResolvedValueOnce({ proposal, error: null })
+      .mockResolvedValueOnce({ url: "https://example.com/pull/1", number: 1, error: null });
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client: { checkoutPrCreate } } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+    const store = useCheckoutGitActionsStore.getState();
+
+    await expect(store.preparePr({ serverId, cwd })).resolves.toEqual(proposal);
+    expect(checkoutPrCreate).toHaveBeenNthCalledWith(1, cwd, { previewOnly: true });
+    expect(store.getStatus({ serverId, cwd, actionId: "create-pr" })).toBe("idle");
+
+    await store.createPr({
+      serverId,
+      cwd,
+      proposalId: proposal.id,
+      issueLinks: [{ number: 7, relation: "close" }],
+    });
+    expect(checkoutPrCreate).toHaveBeenNthCalledWith(2, cwd, {
+      proposalId: "proposal-1",
+      issueLinks: [{ number: 7, relation: "close" }],
+    });
+    expect(store.getStatus({ serverId, cwd, actionId: "create-pr" })).toBe("success");
+  });
+
+  it("shares the PR workflow lock across entry points through generation and approval", async () => {
+    const generation = createDeferred<unknown>();
+    const checkoutPrCreate = vi.fn(() => generation.promise);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client: { checkoutPrCreate } } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+    const toolbar = useCheckoutGitActionsStore.getState();
+    const release = toolbar.acquirePrWorkflow({ serverId, cwd });
+    expect(typeof release).toBe("function");
+    if (!release) throw new Error("Expected toolbar to acquire the workflow");
+    const preview = toolbar.preparePr({ serverId, cwd });
+    const commandCenter = useCheckoutGitActionsStore.getState();
+    expect(commandCenter.isPrWorkflowPending({ serverId, cwd })).toBe(true);
+    expect(commandCenter.acquirePrWorkflow({ serverId, cwd })).toBeNull();
+    generation.resolve({ error: null, proposal: { id: "preview" } });
+    await preview;
+    // Generation is done, but the approval dialog still owns the workflow.
+    expect(commandCenter.isPrWorkflowPending({ serverId, cwd })).toBe(true);
+    expect(commandCenter.acquirePrWorkflow({ serverId, cwd })).toBeNull();
+    expect(checkoutPrCreate).toHaveBeenCalledTimes(1);
+    release();
+    expect(toolbar.isPrWorkflowPending({ serverId, cwd })).toBe(false);
+    const nextRelease = commandCenter.acquirePrWorkflow({ serverId, cwd });
+    expect(typeof nextRelease).toBe("function");
+    release();
+    expect(toolbar.isPrWorkflowPending({ serverId, cwd })).toBe(true);
+    nextRelease?.();
+    expect(toolbar.isPrWorkflowPending({ serverId, cwd })).toBe(false);
+  });
+
+  it("does not lock another checkout or host during PR approval", () => {
+    const store = useCheckoutGitActionsStore.getState();
+    const release = store.acquirePrWorkflow({ serverId, cwd });
+    expect(store.isPrWorkflowPending({ serverId, cwd: "/other" })).toBe(false);
+    expect(store.isPrWorkflowPending({ serverId: "other-host", cwd })).toBe(false);
+    release?.();
+  });
+
   it("surfaces a refresh error and returns to idle", async () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ error: { message: "not a git repository" } })),

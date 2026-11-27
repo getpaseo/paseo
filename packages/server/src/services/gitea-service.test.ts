@@ -2636,6 +2636,96 @@ describe("createGiteaService", () => {
     );
   });
 
+  it("passes draft creation to tea", async () => {
+    const { service, calls } = makeService(() =>
+      ok("https://gitea.com/example-user/sample-repo/pulls/7"),
+    );
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "New feature",
+      head: "feature",
+      base: "main",
+      draft: true,
+    });
+    expect(calls[0]).toContain("--draft");
+  });
+
+  it("pins PR creation to the approved repository and host login", async () => {
+    const { service, calls } = makeService((args) =>
+      args[0] === "login"
+        ? ok(JSON.stringify([{ name: "approved-login", url: "https://approved.example" }]))
+        : ok("https://approved.example/team/project/pulls/7"),
+    );
+    await service.createPullRequest({
+      cwd: "/repo",
+      title: "Approved",
+      head: "feature",
+      base: "main",
+      repositoryUrl: "https://approved.example/team/project.git",
+    });
+    expect(calls[1]).toEqual(
+      expect.arrayContaining(["--repo", "team/project", "--login", "approved-login"]),
+    );
+  });
+
+  it.each(["http", "https"])(
+    "selects the approved %s origin when logins share a hostname",
+    async (scheme) => {
+      const { service, calls } = makeService((args) =>
+        args[0] === "login"
+          ? ok(
+              JSON.stringify([
+                { name: "wrong-port", url: `${scheme}://forge.example:3000` },
+                {
+                  name: "wrong-scheme",
+                  url: `${scheme === "https" ? "http" : "https"}://forge.example:4000`,
+                },
+                { name: "approved", url: `${scheme}://forge.example:4000/` },
+              ]),
+            )
+          : ok(`${scheme}://forge.example:4000/team/project/pulls/7`),
+      );
+      await service.createPullRequest({
+        cwd: "/repo",
+        title: "Approved",
+        head: "feature",
+        base: "main",
+        repositoryUrl: `${scheme}://forge.example:4000/team/project.git`,
+      });
+      expect(calls[1]).toEqual(
+        expect.arrayContaining(["--repo", "team/project", "--login", "approved"]),
+      );
+    },
+  );
+
+  it.each(["apps/gitea", "nested/forge/prefix"])(
+    "selects the approved path-mounted Gitea login at %s",
+    async (prefix) => {
+      const { service, calls } = makeService((args) =>
+        args[0] === "login"
+          ? ok(
+              JSON.stringify([
+                { name: "root", url: "https://forge.example:4000" },
+                { name: "other-prefix", url: "https://forge.example:4000/unrelated" },
+                { name: "mounted", url: `https://forge.example:4000/${prefix}/` },
+              ]),
+            )
+          : ok(`https://forge.example:4000/${prefix}/team/project/pulls/7`),
+      );
+      await service.createPullRequest({
+        cwd: "/repo",
+        title: "Approved",
+        head: "feature",
+        base: "main",
+        repositoryUrl: `https://forge.example:4000/${prefix}/team/project.git`,
+      });
+      expect(calls[1]).toEqual(
+        expect.arrayContaining(["--repo", "team/project", "--login", "mounted"]),
+      );
+      expect(calls[1]).not.toContain(`${prefix}/team/project`);
+    },
+  );
+
   it("merges a mergeable pull request with the requested style", async () => {
     const { service, calls } = makeService(() => ok(""));
 

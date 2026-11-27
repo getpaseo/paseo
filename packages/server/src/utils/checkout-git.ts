@@ -1,4 +1,5 @@
 import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
+import { randomUUID } from "node:crypto";
 import { resolve, dirname, basename } from "path";
 import {
   open as openFile,
@@ -4738,6 +4739,11 @@ function parseHeadPushRefspec(refspec: string | null): string | null {
 }
 
 export interface CreatePullRequestOptions {
+  approvedApiHost?: string;
+  approvedRepositoryUrl?: string;
+  approvedOriginConfig?: Array<[string, string]>;
+  approvedPushUrls?: string[];
+  approvedHeadSha?: string;
   title: string;
   body?: string;
   base?: string;
@@ -4803,6 +4809,56 @@ export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
 export type ReviewDecision = "approved" | "changes_requested" | "pending" | null;
 
+function approvedPushConfigEnv(config: Array<[string, string]>): Record<string, string> {
+  const offset = Number(process.env.GIT_CONFIG_COUNT ?? "0");
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(offset + config.length) };
+  for (const [index, [key, value]] of config.entries()) {
+    env[`GIT_CONFIG_KEY_${offset + index}`] = key;
+    env[`GIT_CONFIG_VALUE_${offset + index}`] = value;
+  }
+  return env;
+}
+
+export async function capturePrCheckoutState(
+  cwd: string,
+  requestedBaseRef?: string,
+  context?: CheckoutContext,
+) {
+  const attachedHead = await runGitCommand(["symbolic-ref", "--quiet", "HEAD"], {
+    cwd,
+    acceptExitCodes: [0, 1],
+  });
+  const headRef = attachedHead.stdout.trim();
+  if (!headRef.startsWith("refs/heads/"))
+    throw new Error("Finish the rebase or attach a branch before preparing a PR");
+  const head = headRef.slice("refs/heads/".length);
+  const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
+  const base = resolveOperationBaseRef({ storedBaseRef, resolvedBaseRef, requestedBaseRef });
+  if (!head || !base) throw new Error("Unable to determine PR head and base");
+  const git = async (...args: string[]) => (await runGitCommand(args, { cwd })).stdout.trim();
+  const config = await runGitCommand(["config", "--null", "--get-regexp", "^remote\\.origin\\."], {
+    cwd,
+    acceptExitCodes: [0, 1],
+  });
+  const originConfig = config.stdout
+    .split("\0")
+    .filter(Boolean)
+    .map((entry): [string, string] => {
+      const separator = entry.indexOf("\n");
+      return [entry.slice("remote.origin.".length, separator), entry.slice(separator + 1)];
+    })
+    .filter(([key]) => key !== "url" && key !== "pushurl");
+  return {
+    head,
+    base,
+    headSha: await git("rev-parse", "HEAD"),
+    baseSha: await git("rev-parse", await resolveBestComparisonBaseRef(cwd, base)),
+    origin: await git("remote", "get-url", "origin"),
+    pushUrls: (await git("remote", "get-url", "--push", "--all", "origin")).split("\n"),
+    originConfig,
+  };
+}
+
 export async function createPullRequest(
   cwd: string,
   options: CreatePullRequestOptions,
@@ -4826,18 +4882,100 @@ export async function createPullRequest(
   }
   const normalizedBase = branchNameFromRef(base);
 
-  // The push deliberately happens before the adapter resolves the target
-  // repository: slug resolution is adapter-internal (e.g. `gh repo view`, which
-  // handles GHES and renamed repos), and the RPC path only reaches here after
-  // the forge resolver has already matched the origin remote to a forge. If the
-  // adapter still fails after the push, retrying is safe — the non-force push
-  // of the head branch is idempotent.
-  await runGitCommand(["push", "-u", "origin", head], { cwd, timeout: 120_000 });
+  // Approved workflows pin both the transport and API repository before any
+  // hook can change origin. Legacy callers still let the adapter resolve it.
+  // Push the approved commit rather than a branch tip that may have moved
+  // since confirmation. This remains a non-force push.
+  const originSettings = new Map(
+    options.approvedOriginConfig?.map(([key, value]) => [key.toLowerCase(), value]),
+  );
+  for (const destination of options.approvedPushUrls ?? ["origin"]) {
+    const remote = `paseo-approved-${randomUUID()}`;
+    const remoteConfig: Array<[string, string]> = options.approvedOriginConfig
+      ? [
+          [`remote.${remote}.url`, destination],
+          [`remote.${remote}.pushurl`, destination],
+          // This URL is already expanded by remote get-url. An identity rule
+          // at the full destination takes precedence over shorter rewrites.
+          [`url.${destination}.insteadOf`, destination],
+          [`url.${destination}.pushInsteadOf`, destination],
+          ...options.approvedOriginConfig.map(([key, value]): [string, string] => [
+            `remote.${remote}.${key}`,
+            value,
+          ]),
+        ]
+      : [];
+    if (remoteConfig.length) {
+      const resolved = await runGitCommand(["ls-remote", "--get-url", remote], {
+        cwd,
+        envOverlay: approvedPushConfigEnv(remoteConfig),
+      });
+      if (resolved.stdout.trim() !== destination)
+        throw new Error("Approved push URL cannot be preserved by Git's URL configuration");
+    }
+    const pushArgs = options.approvedHeadSha
+      ? [
+          "push",
+          ...(originSettings.has("receivepack")
+            ? [`--receive-pack=${originSettings.get("receivepack")}`]
+            : []),
+          "--",
+          // An unconfigured URL keeps the superproject's SHA refspec out of
+          // recursive pushes. Submodules use their own remotes/refspecs.
+          originSettings.has("vcs") ? `${originSettings.get("vcs")}::${destination}` : destination,
+          `${options.approvedHeadSha}:refs/heads/${head}`,
+        ]
+      : ["push", "-u", "origin", head];
+    const recursivePushConfig: Array<[string, string]> = options.approvedHeadSha
+      ? [["push.default", "current"]]
+      : [];
+    const pushConfig = [
+      ...remoteConfig,
+      // Recursive URL pushes run the child's default push. A fresh matching
+      // branch must publish without requiring or writing upstream tracking.
+      ...recursivePushConfig,
+      ...["proxy", "proxyauthmethod"].flatMap(
+        (key): Array<[string, string]> =>
+          originSettings.has(key) ? [[`http.${destination}.${key}`, originSettings.get(key)!]] : [],
+      ),
+    ];
+    // Unlike -c name=value, this preserves '=' inside URL-bearing keys.
+    await runGitCommand(pushArgs, {
+      cwd,
+      timeout: 120_000,
+      envOverlay: approvedPushConfigEnv(pushConfig),
+    });
+  }
+  if (options.approvedHeadSha) {
+    // Match push -u without requiring a remote-tracking ref: single-branch
+    // clones may deliberately exclude this branch from origin's fetch refspec.
+    await runGitCommand(["config", `branch.${head}.remote`, "origin"], { cwd });
+    await runGitCommand(["config", `branch.${head}.merge`, `refs/heads/${head}`], { cwd });
+    // Literal-URL pushes do not update origin's tracking refs. Let Git resolve
+    // the configured fetch mapping (which may deliberately exclude this head).
+    const upstream = (
+      await runGitCommand(["for-each-ref", "--format=%(upstream)", `refs/heads/${head}`], { cwd })
+    ).stdout.trim();
+    if (upstream.startsWith("refs/remotes/")) {
+      const symbolic = await runGitCommand(["symbolic-ref", "--quiet", upstream], {
+        cwd,
+        acceptExitCodes: [0, 1],
+      });
+      if (symbolic.exitCode === 1) {
+        await runGitCommand(["update-ref", "--no-deref", upstream, options.approvedHeadSha], {
+          cwd,
+        });
+      }
+    }
+  }
 
   const result = await forgeService.createPullRequest({
     cwd,
+    ...(options.approvedRepositoryUrl ? { repositoryUrl: options.approvedRepositoryUrl } : {}),
+    ...(options.approvedApiHost ? { repositoryApiHost: options.approvedApiHost } : {}),
     title: options.title,
     body: options.body,
+    draft: options.draft,
     head,
     base: normalizedBase,
   });

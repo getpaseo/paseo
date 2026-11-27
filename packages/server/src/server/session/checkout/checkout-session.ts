@@ -1,6 +1,7 @@
 import type pino from "pino";
 import type { SessionDelivery } from "../owned-subscriptions/index.js";
 import { isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import { getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
@@ -38,12 +39,14 @@ import type { GitMutationService } from "../git-mutation/git-mutation-service.js
 import type {
   ForgeAuthState,
   ForgeService,
+  IssueSummary,
   PullRequestTimelineItem,
   SearchResult,
 } from "../../../services/forge-service.js";
 import {
   commitChanges,
   createPullRequest,
+  capturePrCheckoutState,
   discardChanges,
   forgeAuthStateFromError,
   isForgeAuthError,
@@ -54,6 +57,7 @@ import {
   listCheckoutCommits,
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
+import { resolveGitHubApiHost } from "../../../services/github-service.js";
 import { expandTilde } from "../../../utils/path.js";
 import { listGitWorktrees } from "../../../utils/worktree.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
@@ -93,6 +97,75 @@ class NoResolvedForgeServiceError extends Error {
 }
 
 type ForgeSearchResultItem = SearchResult["items"][number];
+interface PrIssueLink {
+  number: number;
+  relation: "reference" | "close";
+}
+
+interface PrIssueCandidate {
+  number: number;
+  title: string;
+  url: string;
+}
+
+interface PrCreateInput {
+  approvedApiHost?: string;
+  approvedRepositoryUrl?: string;
+  approvedOriginConfig?: Array<[string, string]>;
+  approvedPushUrls?: string[];
+  approvedHeadSha?: string;
+  head?: string;
+  title: string;
+  body: string;
+  draft?: boolean;
+  baseRef?: string;
+}
+
+interface PrCreateProposal {
+  approvedApiHost?: string;
+  checkoutState: Awaited<ReturnType<typeof capturePrCheckoutState>>;
+  requestedBaseRef?: string;
+  id: string;
+  cwd: string;
+  headSha: string;
+  baseRef?: string;
+  title: string;
+  body: string;
+  draft: boolean;
+  issueSearchQuery?: string;
+  issues: PrIssueCandidate[];
+  expiresAt: number;
+}
+
+const PR_PROPOSAL_LIFETIME_MS = 10 * 60_000;
+const MAX_PR_PROPOSALS = 20;
+
+function isOpenIssue(item: IssueSummary): boolean {
+  return /^(open|opened)$/i.test(item.state);
+}
+
+function toPrIssueCandidates(items: IssueSummary[]): PrIssueCandidate[] {
+  const seen = new Set<number>();
+  return items.filter(isOpenIssue).flatMap((item) => {
+    if (seen.has(item.number)) return [];
+    seen.add(item.number);
+    return [{ number: item.number, title: item.title, url: item.url }];
+  });
+}
+
+function appendIssueLinks(
+  body: string,
+  links: PrIssueLink[],
+  candidates: PrIssueCandidate[],
+): string {
+  if (links.length === 0) return body;
+  return `${body.trimEnd()}\n\n${links
+    .map(
+      (link) =>
+        `${link.relation === "close" ? "Closes" : "Related to"} ${candidates.find((issue) => issue.number === link.number)!.url}`,
+    )
+    .join("\n")}`;
+}
 type LegacyGithubSearchResultItem = Omit<ForgeSearchResultItem, "kind"> & { kind: "issue" | "pr" };
 
 function toLegacyGithubSearchItems(items: ForgeSearchResultItem[]): LegacyGithubSearchResultItem[] {
@@ -159,6 +232,7 @@ export class CheckoutSession {
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
   private readonly statusUpdateFingerprints = new Map<string, string>();
+  private readonly prCreateProposals = new Map<string, PrCreateProposal>();
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
@@ -989,27 +1063,55 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      let title = msg.title?.trim() ?? "";
-      let body = msg.body?.trim() ?? "";
-
-      if (!title || !body) {
-        const generated = await this.gitMetadataGenerator.generatePullRequestText(cwd, msg.baseRef);
-        if (!title) title = generated.title;
-        if (!body) body = generated.body;
+      if (msg.previewOnly) {
+        const proposal = await this.preparePrCreate(msg);
+        this.host.emit({
+          type: "checkout_pr_create_response",
+          payload: {
+            cwd,
+            url: null,
+            number: null,
+            proposal: {
+              id: proposal.id,
+              title: proposal.title,
+              body: proposal.body,
+              draft: proposal.draft,
+              issues: proposal.issues,
+            },
+            error: null,
+            requestId,
+          },
+        });
+        return;
       }
 
+      const input = msg.proposalId
+        ? await this.resolveApprovedPrCreateInput(msg)
+        : await this.resolveLegacyPrCreateInput(msg);
       const { service } = await this.requireForgeService(cwd);
       const result = await createPullRequest(
         cwd,
         {
-          title,
-          body,
-          base: msg.baseRef,
+          title: input.title,
+          body: input.body,
+          draft: input.draft,
+          base: input.baseRef,
+          ...(input.head ? { head: input.head } : {}),
+          ...(input.approvedHeadSha ? { approvedHeadSha: input.approvedHeadSha } : {}),
+          ...(input.approvedApiHost ? { approvedApiHost: input.approvedApiHost } : {}),
+          ...(input.approvedPushUrls ? { approvedPushUrls: input.approvedPushUrls } : {}),
+          ...(input.approvedRepositoryUrl
+            ? { approvedRepositoryUrl: input.approvedRepositoryUrl }
+            : {}),
+          ...(input.approvedOriginConfig
+            ? { approvedOriginConfig: input.approvedOriginConfig }
+            : {}),
         },
         service,
         { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
       );
       await this.gitMutation.notifyGitMutation(cwd, "create-pr", { invalidateForge: true });
+      if (msg.proposalId) this.prCreateProposals.delete(msg.proposalId);
 
       this.host.emit({
         type: "checkout_pr_create_response",
@@ -1033,6 +1135,126 @@ export class CheckoutSession {
         },
       });
     }
+  }
+
+  private async preparePrCreate(
+    msg: Extract<SessionInboundMessage, { type: "checkout_pr_create_request" }>,
+  ): Promise<PrCreateProposal> {
+    if (msg.proposalId || msg.issueLinks?.length) {
+      throw new Error("A PR preview cannot submit an existing proposal or issue links");
+    }
+    const context = { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot };
+    const checkoutState = await capturePrCheckoutState(msg.cwd, msg.baseRef, context);
+    const { service, forge } = await this.requireForgeService(msg.cwd);
+    const approvedApiHost =
+      forge === "github" ? await resolveGitHubApiHost(checkoutState.origin) : null;
+    const generated = await this.gitMetadataGenerator.generatePullRequestText(
+      msg.cwd,
+      checkoutState.base,
+    );
+    if (
+      /\b(?:clos(?:e[sd]?|ing)|fix(?:e[sd]|ing)?|resolv(?:e[sd]?|ing)|implement(?:s|ed|ing)?)\s*:?\s+(?:issues?\s+)?(?:#\d+\b|(?:[\w.-]+\/)+[\w.-]+#\d+\b|https?:\/\/[^\s?#]+\/(?:issues?|work_items)\/\d+\b|[A-Z][A-Z0-9_]+-\d+\b)/i.test(
+        `${generated.title}\n${generated.body}`,
+      )
+    ) {
+      throw new Error(
+        "Generated PR text contains issue-closing directives; regenerate without issue directives and select relationships in the preview",
+      );
+    }
+    const matches = generated.issueSearchQuery
+      ? await service.listIssues({
+          cwd: msg.cwd,
+          query: generated.issueSearchQuery,
+          limit: 5,
+          force: true,
+          reason: "pr-create-preview",
+        })
+      : [];
+    const current = await capturePrCheckoutState(msg.cwd, msg.baseRef, context);
+    if (JSON.stringify(current) !== JSON.stringify(checkoutState))
+      throw new Error("Branch or base changed during PR generation; preview the PR again");
+    const proposal: PrCreateProposal = {
+      ...(approvedApiHost ? { approvedApiHost } : {}),
+      id: randomUUID(),
+      cwd: msg.cwd,
+      headSha: checkoutState.headSha,
+      checkoutState,
+      requestedBaseRef: msg.baseRef,
+      baseRef: checkoutState.base,
+      title: generated.title,
+      body: generated.body,
+      draft: msg.draft ?? generated.draft,
+      issueSearchQuery: generated.issueSearchQuery,
+      issues: toPrIssueCandidates(matches),
+      expiresAt: Date.now() + PR_PROPOSAL_LIFETIME_MS,
+    };
+    for (const [id, existing] of this.prCreateProposals) {
+      if (existing.expiresAt <= Date.now()) this.prCreateProposals.delete(id);
+    }
+    if (this.prCreateProposals.size >= MAX_PR_PROPOSALS) {
+      const oldestId = this.prCreateProposals.keys().next().value;
+      if (oldestId) this.prCreateProposals.delete(oldestId);
+    }
+    this.prCreateProposals.set(proposal.id, proposal);
+    return proposal;
+  }
+
+  private async resolveApprovedPrCreateInput(
+    msg: Extract<SessionInboundMessage, { type: "checkout_pr_create_request" }>,
+  ): Promise<PrCreateInput> {
+    const proposal = this.prCreateProposals.get(msg.proposalId ?? "");
+    if (!proposal || proposal.cwd !== msg.cwd || proposal.expiresAt <= Date.now()) {
+      throw new Error("PR preview expired; preview the PR again");
+    }
+    const current = await capturePrCheckoutState(msg.cwd, proposal.requestedBaseRef, {
+      paseoHome: this.paseoHome,
+      worktreesRoot: this.worktreesRoot,
+    });
+    if (JSON.stringify(current) !== JSON.stringify(proposal.checkoutState)) {
+      throw new Error("Branch changed since the PR preview; preview the PR again");
+    }
+    const issueLinks = msg.issueLinks ?? [];
+    const candidateNumbers = new Set(proposal.issues.map((issue) => issue.number));
+    if (
+      new Set(issueLinks.map((link) => link.number)).size !== issueLinks.length ||
+      issueLinks.some((link) => !candidateNumbers.has(link.number))
+    ) {
+      throw new Error("Issue links must be selected from the PR preview");
+    }
+    return {
+      head: proposal.checkoutState.head,
+      approvedHeadSha: proposal.checkoutState.headSha,
+      approvedPushUrls: proposal.checkoutState.pushUrls,
+      approvedRepositoryUrl: proposal.checkoutState.origin,
+      approvedApiHost: proposal.approvedApiHost,
+      approvedOriginConfig: proposal.checkoutState.originConfig,
+      title: proposal.title,
+      body: appendIssueLinks(proposal.body, issueLinks, proposal.issues),
+      draft: proposal.draft,
+      baseRef: proposal.baseRef,
+    };
+  }
+
+  private async resolveLegacyPrCreateInput(
+    msg: Extract<SessionInboundMessage, { type: "checkout_pr_create_request" }>,
+  ): Promise<PrCreateInput> {
+    if (msg.issueLinks?.length) throw new Error("Issue links require an approved PR preview");
+    let title = msg.title?.trim() ?? "";
+    let body = msg.body?.trim() ?? "";
+    let draft = msg.draft;
+    if (!title || !body) {
+      const generated = await this.gitMetadataGenerator.generatePullRequestText(
+        msg.cwd,
+        msg.baseRef,
+      );
+      if (generated.issueSearchQuery) {
+        throw new Error("Project PR instructions require a preview before creation");
+      }
+      if (!title) title = generated.title;
+      if (!body) body = generated.body;
+      draft ??= generated.draft;
+    }
+    return { title, body, draft, baseRef: msg.baseRef };
   }
 
   async handleCheckoutPrMergeRequest(

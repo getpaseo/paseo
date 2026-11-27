@@ -1,4 +1,4 @@
-import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
+import type { CheckoutPrCreateResponse, CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import { queryClient as appQueryClient } from "@/data/query-client";
 import { useSessionStore } from "@/stores/session-store";
@@ -95,6 +95,9 @@ function inFlightKey(key: CheckoutKey, actionId: CheckoutGitAsyncActionId): stri
 
 interface CheckoutGitActionsStoreState {
   statusByCheckout: Record<CheckoutKey, StatusMap>;
+  prWorkflowByCheckout: Record<CheckoutKey, boolean>;
+  isPrWorkflowPending: (params: { serverId: string; cwd: string }) => boolean;
+  acquirePrWorkflow: (params: { serverId: string; cwd: string }) => (() => void) | null;
 
   getStatus: (params: {
     serverId: string;
@@ -107,7 +110,16 @@ interface CheckoutGitActionsStoreState {
   push: (params: { serverId: string; cwd: string }) => Promise<void>;
   pullAndPush: (params: { serverId: string; cwd: string }) => Promise<void>;
   refresh: (params: { serverId: string; cwd: string }) => Promise<void>;
-  createPr: (params: { serverId: string; cwd: string }) => Promise<void>;
+  preparePr: (params: {
+    serverId: string;
+    cwd: string;
+  }) => Promise<NonNullable<CheckoutPrCreateResponse["payload"]["proposal"]>>;
+  createPr: (params: {
+    serverId: string;
+    cwd: string;
+    proposalId?: string;
+    issueLinks?: Array<{ number: number; relation: "reference" | "close" }>;
+  }) => Promise<void>;
   mergePr: (params: {
     serverId: string;
     cwd: string;
@@ -176,6 +188,20 @@ async function runCheckoutAction({
 
 export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()((set, get) => ({
   statusByCheckout: {},
+  prWorkflowByCheckout: {},
+  isPrWorkflowPending: ({ serverId, cwd }) =>
+    get().prWorkflowByCheckout[checkoutKey(serverId, cwd)] === true,
+  acquirePrWorkflow: ({ serverId, cwd }) => {
+    const key = checkoutKey(serverId, cwd);
+    if (get().prWorkflowByCheckout[key]) return null;
+    set((state) => ({ prWorkflowByCheckout: { ...state.prWorkflowByCheckout, [key]: true } }));
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      set((state) => ({ prWorkflowByCheckout: { ...state.prWorkflowByCheckout, [key]: false } }));
+    };
+  },
 
   getStatus: ({ serverId, cwd, actionId }) => {
     const key = checkoutKey(serverId, cwd);
@@ -261,14 +287,22 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
     });
   },
 
-  createPr: async ({ serverId, cwd }) => {
+  preparePr: async ({ serverId, cwd }) => {
+    const client = resolveClient(serverId);
+    const payload = await client.checkoutPrCreate(cwd, { previewOnly: true });
+    if (payload.error) throw new Error(payload.error.message);
+    if (!payload.proposal) throw new Error("The host did not return a PR preview");
+    return payload.proposal;
+  },
+
+  createPr: async ({ serverId, cwd, proposalId, issueLinks }) => {
     await runCheckoutAction({
       serverId,
       cwd,
       actionId: "create-pr",
       run: async () => {
         const client = resolveClient(serverId);
-        const payload = await client.checkoutPrCreate(cwd, {});
+        const payload = await client.checkoutPrCreate(cwd, { proposalId, issueLinks });
         if (payload.error) {
           throw new Error(payload.error.message);
         }
@@ -396,5 +430,5 @@ export function __resetCheckoutGitActionsStoreForTests() {
   }
   successTimers.clear();
   inFlight.clear();
-  useCheckoutGitActionsStore.setState({ statusByCheckout: {} });
+  useCheckoutGitActionsStore.setState({ statusByCheckout: {}, prWorkflowByCheckout: {} });
 }

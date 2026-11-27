@@ -1,6 +1,14 @@
 import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -30,6 +38,7 @@ import {
 import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
+import { capturePrCheckoutState, createPullRequest } from "../../../utils/checkout-git.js";
 
 function isCheckDetailsResponse(msg: SessionOutboundMessage): boolean {
   return msg.type === "checkout.forge.get_check_details.response";
@@ -161,7 +170,7 @@ function makeCheckoutSession(options?: {
     },
     generatePullRequestText: async (cwd, baseRef) => {
       generatorCalls.generatePullRequestText.push({ cwd, baseRef });
-      return { title: "", body: "" };
+      return { title: "", body: "", draft: false };
     },
     ...options?.gitMetadataGenerator,
   };
@@ -1789,6 +1798,7 @@ it("creates a PR from a restored exact base using the host metadata and a forge 
       baseRef: "main",
       title: "Feature",
       body: "Description",
+      draft: true,
       requestId: "right-base",
     });
     expect(emitted.at(-1)).toMatchObject({
@@ -1802,11 +1812,385 @@ it("creates a PR from a restored exact base using the host metadata and a forge 
         head: created.branchName,
         title: "Feature",
         body: "Description",
+        draft: true,
       },
     ]);
     expect(git(remote, "rev-parse", `refs/heads/${created.branchName}`)).toBe(
       git(restored.worktreePath, "rev-parse", "HEAD"),
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("previews related issues and creates only explicitly approved issue links", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "paseo-pr-preview-")));
+  const repo = join(root, "repo");
+  const remote = join(root, "remote.git");
+  const paseoHome = join(root, "home");
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+  try {
+    git(root, "init", "-b", "main", repo);
+    git(repo, "config", "user.name", "Test");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "commit", "--allow-empty", "-m", "base");
+    git(root, "init", "--bare", remote);
+    git(repo, "remote", "add", "origin", remote);
+    git(repo, "push", "-u", "origin", "main");
+    const created = await createWorktree({
+      cwd: repo,
+      paseoHome,
+      worktreeSlug: "preview-pr",
+      source: {
+        kind: "branch-off",
+        baseBranch: "refs/remotes/origin/main",
+        branchName: "preview-pr",
+      },
+    });
+    writeFileSync(join(created.worktreePath, "feature.txt"), "feature\n");
+    git(created.worktreePath, "add", "feature.txt");
+    git(created.worktreePath, "commit", "-m", "feature");
+    const requests: Array<Parameters<ForgeService["createPullRequest"]>[0]> = [];
+    const searches: Array<Parameters<ForgeService["listIssues"]>[0]> = [];
+    let issueOpen = true;
+    let generatedBody = "Retries transient failures.";
+    let duringGeneration = () => {};
+    const service: ForgeService = {
+      ...createGitHubService(),
+      listIssues: async (input) => {
+        searches.push(input);
+        return [
+          {
+            number: 7,
+            title: "Retry failure",
+            url: "https://example.com/issues/7",
+            state: issueOpen ? "open" : "closed",
+            body: null,
+            labels: [],
+            updatedAt: "2026-10-23T00:00:00Z",
+          },
+          {
+            number: 8,
+            title: "Old retry failure",
+            url: "https://example.com/issues/8",
+            state: "closed",
+            body: null,
+            labels: [],
+            updatedAt: "2026-10-23T00:00:00Z",
+          },
+        ];
+      },
+      createPullRequest: async (input) => {
+        requests.push(input);
+        return { url: "https://example.com/pull/1", number: 1 };
+      },
+    };
+    const { checkout, emitted } = makeCheckoutSession({
+      paseoHome,
+      git: { resolveForge: async () => ({ forge: "github", host: "github.com", service }) },
+      gitMetadataGenerator: {
+        generatePullRequestText: async () => {
+          duringGeneration();
+          return {
+            title: "Fix retry failure",
+            body: generatedBody,
+            draft: true,
+            issueSearchQuery: "retry failure",
+          };
+        },
+      },
+    });
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      requestId: "legacy-create",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: { message: "Project PR instructions require a preview before creation" } },
+    });
+    expect(requests).toEqual([]);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "preview",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: {
+        error: null,
+        url: null,
+        proposal: {
+          title: "Fix retry failure",
+          draft: true,
+          issues: [{ number: 7, title: "Retry failure" }],
+        },
+      },
+    });
+    expect(requests).toEqual([]);
+    const previewResponse = emitted.at(-1) as Extract<
+      SessionOutboundMessage,
+      { type: "checkout_pr_create_response" }
+    >;
+    const proposalId = previewResponse.payload.proposal?.id ?? "";
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId,
+      issueLinks: [{ number: 8, relation: "close" }],
+      requestId: "unapproved",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: { message: "Issue links must be selected from the PR preview" } },
+    });
+    expect(requests).toEqual([]);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId,
+      issueLinks: [{ number: 7, relation: "close" }],
+      requestId: "approved",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: null, number: 1 },
+    });
+    expect(searches).toHaveLength(1);
+    expect(requests).toEqual([
+      {
+        cwd: created.worktreePath,
+        base: "main",
+        head: created.branchName,
+        title: "Fix retry failure",
+        body: "Retries transient failures.\n\nCloses https://example.com/issues/7",
+        draft: true,
+        repositoryUrl: remote,
+      },
+    ]);
+
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "preview-before-close",
+    });
+    const freshProposal = (
+      emitted.at(-1) as Extract<SessionOutboundMessage, { type: "checkout_pr_create_response" }>
+    ).payload.proposal;
+    issueOpen = false;
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId: freshProposal?.id,
+      issueLinks: [{ number: 7, relation: "close" }],
+      requestId: "issue-closed",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: { error: null, number: 1 },
+    });
+    // A closed or lower-ranked issue is still the same approved identity.
+    expect(requests).toHaveLength(2);
+    expect(git(created.worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(
+      `origin/${created.branchName}`,
+    );
+    for (const directive of [
+      "Closing #7",
+      "Fixing #7",
+      "Implements #7",
+      "Resolving issue #7",
+      "Implemented group/subgroup/project#7",
+      "Implementing https://gitlab.example/project/-/issues/7",
+      "Fixes https://github.com/owner/repo/issues/7",
+      "Closes https://gitlab.example/groups/team/-/work_items/7",
+      "Closed PROJ-7",
+    ]) {
+      generatedBody = directive;
+      await checkout.handleCheckoutPrCreateRequest({
+        type: "checkout_pr_create_request",
+        cwd: created.worktreePath,
+        previewOnly: true,
+        requestId: "gitlab-directive",
+      });
+      expect(emitted.at(-1)).toMatchObject({
+        payload: { error: { message: expect.stringContaining("issue-closing directives") } },
+      });
+    }
+    expect(requests).toHaveLength(2);
+    generatedBody = "Closes\n#7";
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "unsafe-body",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: {
+        error: { message: expect.stringContaining("issue-closing directives") },
+      },
+    });
+    for (const description of [
+      "Change the background to #123456 and #0f172a.",
+      "Fixes https://paseo.sh/docs/setup to use the current installation command.",
+    ]) {
+      generatedBody = description;
+      await checkout.handleCheckoutPrCreateRequest({
+        type: "checkout_pr_create_request",
+        cwd: created.worktreePath,
+        previewOnly: true,
+        requestId: "color-literals",
+      });
+      expect(emitted.at(-1)).toMatchObject({
+        payload: { error: null, proposal: { body: generatedBody } },
+      });
+    }
+    generatedBody = "Retries transient failures.";
+    duringGeneration = () => {
+      git(created.worktreePath, "commit", "--allow-empty", "-m", "concurrent change");
+    };
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "generation-race",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: {
+        error: { message: "Branch or base changed during PR generation; preview the PR again" },
+      },
+    });
+    duringGeneration = () => {};
+
+    issueOpen = true;
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "preview-before-commit",
+    });
+    const staleProposal = (
+      emitted.at(-1) as Extract<SessionOutboundMessage, { type: "checkout_pr_create_response" }>
+    ).payload.proposal;
+    git(created.worktreePath, "commit", "--allow-empty", "-m", "new change");
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId: staleProposal?.id,
+      requestId: "branch-changed",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: { error: { message: "Branch changed since the PR preview; preview the PR again" } },
+    });
+    expect(requests).toHaveLength(2);
+    git(repo, "checkout", "--detach");
+    const otherRemote = join(root, "other.git");
+    git(root, "init", "--bare", otherRemote);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "before-pushurl-change",
+    });
+    const destinationProposal = (
+      emitted.at(-1) as Extract<SessionOutboundMessage, { type: "checkout_pr_create_response" }>
+    ).payload.proposal;
+    git(repo, "config", "remote.origin.pushurl", otherRemote);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      proposalId: destinationProposal?.id,
+      requestId: "pushurl-changed",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: { error: { message: "Branch changed since the PR preview; preview the PR again" } },
+    });
+    expect(requests).toHaveLength(2);
+    git(repo, "config", "--unset", "remote.origin.pushurl");
+    git(repo, "branch", "-D", "main");
+    const receivePack = join(root, "receive-pack");
+    const marker = join(root, "receive-pack-invoked");
+    writeFileSync(
+      receivePack,
+      `#!/bin/sh\nprintf invoked > "${marker}"\nexec git-receive-pack "$@"\n`,
+    );
+    chmodSync(receivePack, 0o755);
+    git(repo, "config", "remote.origin.receivepack", receivePack);
+    const approved = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
+    expect(approved.baseSha).toBe(git(repo, "rev-parse", "origin/main"));
+    expect(approved.pushUrls).toEqual([remote]);
+    // Simulate a destination change after approval validation but before push.
+    git(repo, "config", "remote.origin.pushurl", otherRemote);
+    git(created.worktreePath, "commit", "--allow-empty", "-m", "after approval");
+    git(repo, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main");
+    git(repo, "update-ref", "-d", `refs/remotes/origin/${created.branchName}`);
+    const hook = join(repo, ".git", "hooks", "pre-push");
+    writeFileSync(hook, `#!/bin/sh\ngit remote set-url origin "${otherRemote}"\n`);
+    chmodSync(hook, 0o755);
+    await createPullRequest(
+      created.worktreePath,
+      {
+        title: "Approved change",
+        body: "Approved only",
+        head: approved.head,
+        base: approved.base,
+        approvedHeadSha: approved.headSha,
+        approvedPushUrls: approved.pushUrls,
+        approvedRepositoryUrl: approved.origin,
+        approvedOriginConfig: approved.originConfig,
+      },
+      service,
+      { paseoHome },
+    );
+    expect(git(root, "--git-dir", remote, "rev-parse", `refs/heads/${created.branchName}`)).toBe(
+      approved.headSha,
+    );
+    expect(git(created.worktreePath, "rev-parse", "HEAD")).not.toBe(approved.headSha);
+    expect(git(created.worktreePath, "config", `branch.${created.branchName}.remote`)).toBe(
+      "origin",
+    );
+    expect(git(created.worktreePath, "config", `branch.${created.branchName}.merge`)).toBe(
+      `refs/heads/${created.branchName}`,
+    );
+    expect(requests).toHaveLength(3);
+    expect(requests.at(-1)?.repositoryUrl).toBe(remote);
+    expect(git(repo, "remote", "get-url", "origin")).toBe(otherRemote);
+    expect(readFileSync(marker, "utf8")).toBe("invoked");
+    expect(() =>
+      git(root, "--git-dir", otherRemote, "rev-parse", `refs/heads/${created.branchName}`),
+    ).toThrow();
+    mkdirSync(join(root, "nested", "nested"), { recursive: true });
+    const expandedRemote = join(root, "nested", "remote.git");
+    const doubleExpandedRemote = join(root, "nested", "nested", "remote.git");
+    git(root, "init", "--bare", expandedRemote);
+    git(root, "init", "--bare", doubleExpandedRemote);
+    git(repo, "remote", "set-url", "origin", remote);
+    git(repo, "config", "remote.origin.pushurl", remote);
+    git(repo, "config", `url.${root}/nested/.insteadOf`, `${root}/`);
+    git(repo, "config", `url.${root}/nested/.pushInsteadOf`, `${root}/`);
+    const rewritten = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
+    expect(rewritten.pushUrls).toEqual([expandedRemote]);
+    await createPullRequest(
+      created.worktreePath,
+      {
+        title: "One expansion",
+        head: rewritten.head,
+        base: rewritten.base,
+        approvedHeadSha: rewritten.headSha,
+        approvedPushUrls: rewritten.pushUrls,
+        approvedOriginConfig: rewritten.originConfig,
+        approvedRepositoryUrl: rewritten.origin,
+      },
+      service,
+      { paseoHome },
+    );
+    expect(
+      git(root, "--git-dir", expandedRemote, "rev-parse", `refs/heads/${created.branchName}`),
+    ).toBe(rewritten.headSha);
+    expect(() =>
+      git(root, "--git-dir", doubleExpandedRemote, "rev-parse", `refs/heads/${created.branchName}`),
+    ).toThrow();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
