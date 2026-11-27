@@ -14,7 +14,7 @@ import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provide
 import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
-import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
+import { AcpStartupError, runAcpProvider, type AcpStreamMessage } from "./acp.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -1013,9 +1013,83 @@ lines.on("line", (line) => {
       acpOptions: { startupTimeoutMs: 250 },
     });
 
-    await expect(
-      registration.connect({ versions: [1], capabilities: ["prompt.message"] }),
-    ).rejects.toThrow(/ENOENT|spawn/u);
+    let thrown: unknown;
+    try {
+      await registration.connect({ versions: [1], capabilities: ["prompt.message"] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AcpStartupError);
+    if (!(thrown instanceof AcpStartupError)) throw new Error("Expected AcpStartupError");
+    expect(thrown).toMatchObject({ reason: "spawn", code: "ENOENT" });
+    expect(thrown.message).toMatch(/ENOENT|spawn/u);
+  });
+
+  it("classifies startup timeout and early exit without wrapping RPC rejections", async () => {
+    const silent = await fakeAcp(`setInterval(() => {}, 10_000);`);
+    const timeoutRegistration = runAcpProvider({
+      id: "slow-acp",
+      label: "Slow ACP",
+      command: [process.execPath, silent],
+      acpOptions: { startupTimeoutMs: 80 },
+    });
+    let timeoutError: unknown;
+    try {
+      await timeoutRegistration.connect({ versions: [1], capabilities: ["prompt.message"] });
+    } catch (error) {
+      timeoutError = error;
+    }
+    expect(timeoutError).toBeInstanceOf(AcpStartupError);
+    expect(timeoutError).toMatchObject({ reason: "timeout", timeoutMs: 80 });
+
+    const crashing = await fakeAcp(`process.exit(1);`);
+    const closedRegistration = runAcpProvider({
+      id: "crashing-acp",
+      label: "Crashing ACP",
+      command: [process.execPath, crashing],
+      acpOptions: { startupTimeoutMs: 1_000 },
+    });
+    let closedError: unknown;
+    try {
+      await closedRegistration.connect({ versions: [1], capabilities: ["prompt.message"] });
+    } catch (error) {
+      closedError = error;
+    }
+    expect(closedError).toBeInstanceOf(AcpStartupError);
+    expect(closedError).toMatchObject({ reason: "closed" });
+
+    const rejecting = await fakeAcp(`
+      const { createInterface } = require("node:readline");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method } = JSON.parse(line);
+        if (method === "initialize") {
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: -32000,
+                message: "Authentication required: local keyring did not initialize",
+              },
+            }) + "\\n",
+          );
+        }
+      });
+    `);
+    const rpcRejectRegistration = runAcpProvider({
+      id: "rejecting-acp",
+      label: "Rejecting ACP",
+      command: [process.execPath, rejecting],
+      acpOptions: { startupTimeoutMs: 1_000 },
+    });
+    let rpcError: unknown;
+    try {
+      await rpcRejectRegistration.connect({ versions: [1], capabilities: ["prompt.message"] });
+    } catch (error) {
+      rpcError = error;
+    }
+    expect(rpcError).toBeInstanceOf(Error);
+    expect(rpcError).not.toBeInstanceOf(AcpStartupError);
   });
 
   it("accepts an official ACP SDK stream connector instead of a command", async () => {

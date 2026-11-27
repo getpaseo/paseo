@@ -158,6 +158,8 @@ export type ProviderLaunch = z.infer<typeof ProviderLaunchSchema>;
 
 export interface ProviderStatusRequest {
   launch?: ProviderLaunch;
+  /** True when the caller explicitly requested a fresh check (for example Refresh or Diagnostics). */
+  force?: boolean;
 }
 
 export const ProviderStatusSchema = z.discriminatedUnion("available", [

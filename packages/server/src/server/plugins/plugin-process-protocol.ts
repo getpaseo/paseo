@@ -255,7 +255,12 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         type: z.literal("provider.status"),
         requestId: z.string().min(1),
         providerId: z.string().min(1),
-        request: z.object({ launch: ProviderLaunchSchema.optional() }).strict(),
+        request: z
+          .object({
+            launch: ProviderLaunchSchema.optional(),
+            force: z.boolean().optional(),
+          })
+          .strict(),
       })
       .strict(),
     z
