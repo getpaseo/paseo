@@ -2410,13 +2410,15 @@ export const zhCN: TranslationResources = {
       about: "关于",
     },
     clientHosts: {
-      title: "已保存的主机",
-      info: "此设备连接的主机。这里的名称、图标、徽章和连接路径仅影响此设备。",
+      title: "已保存和已发现的主机",
+      info: "查看保存在此应用中的主机，以及通过已连接的守护进程发现的主机。",
       backToHosts: "返回主机",
       routesTitle: "此设备的连接方式",
-      routesInfo: "此设备连接到该主机的已保存路径。Paseo 会自动选择最快的可用路径。",
+      routesInfo: "此应用中保存的连接或通过守护进程发现的连接。Paseo 会选择最快的可用路径。",
       addRoute: "添加路径",
       activeRoute: "当前使用",
+      savedInApp: "已保存在此应用中",
+      discoveredVia: "通过 {{host}} 发现",
     },
     layout: en.settings.layout,
     editor: {

@@ -2489,14 +2489,16 @@ export const es: TranslationResources = {
       about: "Acerca de",
     },
     clientHosts: {
-      title: "Hosts guardados",
-      info: "Hosts a los que se conecta este dispositivo. Los nombres, iconos, insignias y rutas aquí solo afectan a este dispositivo.",
+      title: "Hosts guardados y descubiertos",
+      info: "Consulta los hosts guardados en esta app y los que descubre a través de daemons conectados.",
       backToHosts: "Volver a hosts",
       routesTitle: "Cómo se conecta este dispositivo",
       routesInfo:
-        "Rutas guardadas que usa este dispositivo para llegar a este host. Paseo elige la más rápida disponible.",
+        "Conexiones guardadas en esta app o descubiertas a través de un daemon. Paseo elige la ruta disponible más rápida.",
       addRoute: "Añadir ruta",
       activeRoute: "Activa",
+      savedInApp: "Guardado en esta app",
+      discoveredVia: "Descubierto a través de {{host}}",
     },
     layout: en.settings.layout,
     editor: {

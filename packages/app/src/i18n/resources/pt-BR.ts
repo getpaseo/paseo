@@ -2473,14 +2473,16 @@ export const ptBR: TranslationResources = {
       about: "Sobre",
     },
     clientHosts: {
-      title: "Hosts salvos",
-      info: "Hosts aos quais este dispositivo se conecta. Nomes, ícones, selos e rotas aqui afetam apenas este dispositivo.",
+      title: "Hosts salvos e descobertos",
+      info: "Veja os hosts salvos neste app e os que ele descobre por meio de daemons conectados.",
       backToHosts: "Voltar para hosts",
       routesTitle: "Como este dispositivo se conecta",
       routesInfo:
-        "Rotas salvas que este dispositivo usa para alcançar este host. O Paseo escolhe a mais rápida disponível.",
+        "Conexões salvas neste app ou descobertas por meio de um daemon. O Paseo escolhe a rota disponível mais rápida.",
       addRoute: "Adicionar rota",
       activeRoute: "Ativa",
+      savedInApp: "Salvo neste app",
+      discoveredVia: "Descoberto via {{host}}",
     },
     layout: en.settings.layout,
     editor: {

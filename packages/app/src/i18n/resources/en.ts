@@ -2463,14 +2463,16 @@ export const en = {
       about: "About",
     },
     clientHosts: {
-      title: "Saved hosts",
-      info: "Hosts this device connects to. Names, icons, badges, and routes here only affect this device.",
+      title: "Saved and discovered hosts",
+      info: "See the hosts saved in this app and the hosts it discovers through connected daemons.",
       backToHosts: "Back to hosts",
       routesTitle: "How this device connects",
       routesInfo:
-        "Saved routes this device uses to reach this host. Paseo picks the fastest available route.",
+        "Connections saved in this app or discovered through a daemon. Paseo picks the fastest available route.",
       addRoute: "Add route",
       activeRoute: "Active",
+      savedInApp: "Saved in this app",
+      discoveredVia: "Discovered via {{host}}",
     },
     layout: {
       openInSidePane: {

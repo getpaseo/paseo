@@ -2445,14 +2445,16 @@ export const ko: TranslationResources = {
       about: "정보",
     },
     clientHosts: {
-      title: "저장된 호스트",
-      info: "이 기기가 연결하는 호스트입니다. 이름, 아이콘, 배지 및 경로는 이 기기에만 적용됩니다.",
+      title: "저장된 호스트와 검색된 호스트",
+      info: "이 앱에 저장한 호스트와 연결된 데몬을 통해 검색된 호스트를 확인할 수 있습니다.",
       backToHosts: "호스트로 돌아가기",
       routesTitle: "이 기기의 연결 방식",
       routesInfo:
-        "이 기기가 이 호스트에 연결할 때 사용하는 저장된 경로입니다. Paseo가 가장 빠른 경로를 선택합니다.",
+        "이 앱에 저장했거나 데몬을 통해 검색된 연결입니다. Paseo는 사용 가능한 가장 빠른 경로를 선택합니다.",
       addRoute: "경로 추가",
       activeRoute: "활성",
+      savedInApp: "이 앱에 저장됨",
+      discoveredVia: "{{host}}을(를) 통해 검색됨",
     },
     layout: en.settings.layout,
     editor: {

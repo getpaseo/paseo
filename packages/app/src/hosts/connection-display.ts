@@ -118,3 +118,19 @@ export function describeHostConnection(
     }
   }
 }
+
+export function describeHostConnectionSources(connections: readonly HostConnection[]): {
+  savedInApp: boolean;
+  discoveredVia: string[];
+} {
+  let savedInApp = false;
+  const discoveredVia = new Set<string>();
+  for (const connection of connections) {
+    if (connection.type === "routed") {
+      discoveredVia.add(connection.originServerId);
+    } else {
+      savedInApp = true;
+    }
+  }
+  return { savedInApp, discoveredVia: [...discoveredVia] };
+}

@@ -2458,14 +2458,16 @@ export const ja: TranslationResources = {
       about: "アプリ情報",
     },
     clientHosts: {
-      title: "保存済みホスト",
-      info: "このデバイスが接続するホストです。ここでの名前、アイコン、バッジ、経路はこのデバイスにのみ反映されます。",
+      title: "保存済みと検出済みのホスト",
+      info: "このアプリに保存したホストと、接続済みのデーモン経由で検出したホストを確認できます。",
       backToHosts: "ホスト一覧に戻る",
       routesTitle: "このデバイスの接続経路",
       routesInfo:
-        "このデバイスがこのホストに到達するために保存された経路です。Paseoは利用可能な最速の経路を選びます。",
+        "このアプリに保存した接続と、デーモン経由で検出した接続です。Paseo は利用可能な最速のルートを選びます。",
       addRoute: "経路を追加",
       activeRoute: "接続中",
+      savedInApp: "このアプリに保存済み",
+      discoveredVia: "{{host}} 経由で検出",
     },
     layout: en.settings.layout,
     editor: {

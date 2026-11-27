@@ -86,6 +86,48 @@ test.describe("Settings host page", () => {
     });
   });
 
+  test("shows both sources on a host saved in the app and discovered through a daemon", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const daemon = await startIsolatedHostDaemon("srv_e2e_host_sources");
+    let client: DaemonClient | undefined;
+    let registrationId: string | undefined;
+    const source = `Discovered via ${TEST_HOST_LABEL}`;
+    try {
+      client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "host-sources" });
+      const registration = await client.addHost({
+        connection: `127.0.0.1:${daemon.port}`,
+        label: "Discovered host",
+      });
+      registrationId = registration.registrationId;
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openClientHostSettings(page, daemon.serverId);
+      const connections = page.getByTestId("host-page-connections-card");
+      await expect(connections).toContainText(source);
+      await expect(connections).not.toContainText("Saved in this app");
+
+      await page.getByTestId("client-host-add-route").click();
+      await selectHostConnectionType(page, "direct");
+      await page.getByTestId("direct-host-input").fill("127.0.0.1");
+      await page.getByTestId("direct-port-input").fill(String(daemon.port));
+      await page.getByTestId("direct-host-submit").click();
+      await expect(page.getByTestId("add-host-modal")).toHaveCount(0);
+      await expect(connections).toContainText("Saved in this app");
+      await expect(connections).toContainText(source);
+
+      await page.getByTestId("client-host-detail-back").click();
+      const hostRow = page.getByTestId(`client-host-row-${daemon.serverId}`);
+      await expect(hostRow).toHaveCount(1);
+      await expect(hostRow).toContainText("Saved in this app");
+      await expect(hostRow).toContainText(source);
+    } finally {
+      if (registrationId) await client?.removeHost(registrationId).catch(() => undefined);
+      await Promise.allSettled([client?.close(), daemon.close()]);
+    }
+  });
+
   test("a failed remote daemon update remains visible in the host UI", async ({
     page,
     outdatedDaemon,

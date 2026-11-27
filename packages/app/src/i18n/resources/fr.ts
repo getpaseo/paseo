@@ -2488,14 +2488,16 @@ export const fr: TranslationResources = {
       about: "À propos",
     },
     clientHosts: {
-      title: "Hôtes enregistrés",
-      info: "Hôtes auxquels cet appareil se connecte. Les noms, icônes, badges et routes ici ne concernent que cet appareil.",
+      title: "Hôtes enregistrés et découverts",
+      info: "Consultez les hôtes enregistrés dans cette application et ceux qu’elle découvre via les daemons connectés.",
       backToHosts: "Retour aux hôtes",
       routesTitle: "Comment cet appareil se connecte",
       routesInfo:
-        "Routes enregistrées utilisées par cet appareil pour joindre cet hôte. Paseo choisit la plus rapide disponible.",
+        "Connexions enregistrées dans cette application ou découvertes via un daemon. Paseo choisit la route disponible la plus rapide.",
       addRoute: "Ajouter une route",
       activeRoute: "Active",
+      savedInApp: "Enregistré dans cette application",
+      discoveredVia: "Découvert via {{host}}",
     },
     layout: en.settings.layout,
     editor: {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeActiveConnection,
   describeHostConnection,
+  describeHostConnectionSources,
   formatConnectionEndpoint,
   isTailscaleEndpoint,
 } from "./connection-display";
@@ -131,4 +132,28 @@ describe("describeActiveConnection", () => {
       }),
     ).toEqual({ kind: "ssh", endpoint: "mo@workstation" });
   });
+});
+
+describe("describeHostConnectionSources", () => {
+  const saved = {
+    id: "ssh:bakery",
+    type: "remoteSsh",
+    host: "bakery",
+  } as const;
+  const viaBakery = { id: "via:srv_bakery", type: "routed", originServerId: "srv_bakery" } as const;
+  const viaMac = { id: "via:srv_mac", type: "routed", originServerId: "srv_mac" } as const;
+
+  it.each([
+    [[saved], { savedInApp: true, discoveredVia: [] }],
+    [[viaBakery], { savedInApp: false, discoveredVia: ["srv_bakery"] }],
+    [
+      [viaBakery, saved, viaMac, viaBakery],
+      { savedInApp: true, discoveredVia: ["srv_bakery", "srv_mac"] },
+    ],
+  ] as const)(
+    "summarizes the sources of every connection on one host (%j)",
+    (connections, expected) => {
+      expect(describeHostConnectionSources(connections)).toEqual(expected);
+    },
+  );
 });

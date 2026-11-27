@@ -23,7 +23,11 @@ import { useDaemonStatus } from "@/desktop/hooks/use-daemon-status";
 import { useDesktopSettings } from "@/desktop/settings/desktop-settings";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { resolveHostIcon } from "@/hosts/appearance";
-import { describeActiveConnection, describeHostConnection } from "@/hosts/connection-display";
+import {
+  describeActiveConnection,
+  describeHostConnection,
+  describeHostConnectionSources,
+} from "@/hosts/connection-display";
 import { HostIconGlyph } from "@/hosts/host-icon-glyph";
 import { useHostMutations, useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
@@ -58,6 +62,10 @@ function formatConnectionTitle(
   return t(`settings.host.connectionKinds.${described.kind}`);
 }
 
+function resolveHostLabel(serverId: string, hosts: readonly HostProfile[]): string {
+  return hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
+}
+
 function formatConnectionEndpoint(
   connection: HostConnection,
   isLocalHost: boolean,
@@ -65,7 +73,7 @@ function formatConnectionEndpoint(
 ): string | undefined {
   const described = describeHostConnection(connection, { isLocalHost });
   if (described.kind === "routed" && described.endpoint) {
-    return hosts.find((host) => host.serverId === described.endpoint)?.label ?? described.endpoint;
+    return resolveHostLabel(described.endpoint, hosts);
   }
   return described.endpoint ?? undefined;
 }
@@ -122,23 +130,20 @@ function ClientHostListRow({
     } else if (fallbackConnection) {
       described = describeHostConnection(fallbackConnection, { isLocalHost });
     }
-    const parts: string[] = [];
-    if (described) {
+    const sources = describeHostConnectionSources(host.connections);
+    const parts = sources.savedInApp ? [t("settings.clientHosts.savedInApp")] : [];
+    for (const origin of sources.discoveredVia) {
+      parts.push(
+        t("settings.clientHosts.discoveredVia", { host: resolveHostLabel(origin, hosts) }),
+      );
+    }
+    if (described && described.kind !== "routed") {
       parts.push(t(`settings.host.connectionKinds.${described.kind}`));
-      if (described.endpoint) {
-        const endpoint =
-          described.kind === "routed"
-            ? (hosts.find((candidate) => candidate.serverId === described.endpoint)?.label ??
-              described.endpoint)
-            : described.endpoint;
-        parts.push(endpoint);
-      }
+      if (described.endpoint) parts.push(described.endpoint);
     }
-    if (latencyMs !== null) {
-      parts.push(formatLatency(latencyMs));
-    }
+    if (latencyMs !== null) parts.push(formatLatency(latencyMs));
     return parts.join(" · ") || undefined;
-  }, [activeConnection, fallbackConnection, hosts, isLocalHost, latencyMs, t]);
+  }, [activeConnection, fallbackConnection, host.connections, hosts, isLocalHost, latencyMs, t]);
 
   let summary: string | undefined;
   if (status === "online") {
@@ -163,6 +168,7 @@ function ClientHostListRow({
       leading={leading}
       hint={hint}
       summary={summary}
+      accessibilityLabel={[host.label, hint, summary].filter(Boolean).join(", ")}
       onPress={handleOpen}
       testID={`client-host-row-${host.serverId}`}
     />
@@ -242,6 +248,12 @@ function ClientHostRouteRow({
   const { t } = useTranslation();
   const title = formatConnectionTitle(connection, isLocalHost, t);
   const endpoint = formatConnectionEndpoint(connection, isLocalHost, hosts);
+  const hint =
+    connection.type === "routed"
+      ? t("settings.clientHosts.discoveredVia", {
+          host: endpoint ?? connection.originServerId,
+        })
+      : [t("settings.clientHosts.savedInApp"), endpoint].filter(Boolean).join(" · ");
 
   const latencyText = (() => {
     if (latencyLoading) return "...";
@@ -263,7 +275,7 @@ function ClientHostRouteRow({
   );
 
   return (
-    <SettingsRow label={title} labelAccessory={activeBadge} hint={endpoint}>
+    <SettingsRow label={title} labelAccessory={activeBadge} hint={hint}>
       <View style={styles.routeTrailing}>
         <Text style={latencyError ? styles.latencyError : styles.latencyText}>{latencyText}</Text>
         <Button variant="ghost" textStyle={styles.destructiveText} onPress={handlePressRemove}>
