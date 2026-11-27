@@ -10,6 +10,7 @@ export {
   settleCommittedProviderSwitch,
   settleStagedProviderSwitch,
   useFailedStartupSettings,
+  useIsStagedProviderSwitchInFlight,
   useStagedProviderSwitch,
   useStagedProviderSwitchStore,
   type FailedStartupSettings,

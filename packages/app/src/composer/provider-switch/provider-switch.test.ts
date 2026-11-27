@@ -13,7 +13,16 @@ import type { ReplicaRow, ReplicaRowStore } from "@/runtime/replica-cache/row-st
 import { HostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { ProviderSwitchItem, StreamItem, UserMessageItem } from "@/types/stream";
+import {
+  appendSubmittedUserMessage,
+  createPendingProviderSwitchItem,
+  createUserMessage,
+  removeSubmittedUserMessage,
+  replaceWithCanonicalStream,
+  type ProviderSwitchItem,
+  type StreamItem,
+  type UserMessageItem,
+} from "@/types/stream";
 import {
   clearStagedProviderSwitch,
   getFailedStartupSettings,
@@ -125,6 +134,8 @@ describe("app provider switching integration", () => {
       attachments: [],
       encodeImages: async () => [],
       submission,
+      currentProvider: "claude",
+      currentModel: "sonnet",
       stagedProviderSwitch: staged,
       onProviderSwitchCommitted: (agent) => {
         committed.push(agent);
@@ -133,6 +144,19 @@ describe("app provider switching integration", () => {
 
     expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(switchAgentProvider).toHaveBeenCalledTimes(1);
+    expect(submission.begin).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({ kind: "user_message", text: "Continue with Codex" }),
+      expect.objectContaining({
+        providerSwitch: expect.objectContaining({
+          kind: "provider_switch",
+          fromProvider: "claude",
+          toProvider: "codex",
+          fromModel: "sonnet",
+          toModel: "gpt-5.4",
+        }),
+      }),
+    );
     expect(committed).toEqual([expect.objectContaining({ provider: "codex" })]);
     expect(submission.accept).toHaveBeenCalledTimes(1);
 
@@ -1153,5 +1177,184 @@ describe("app provider switching integration", () => {
     expect(getFailedStartupSettings(serverId, "agent-1")).toBeNull();
 
     sessionStore.clearSession(serverId);
+  });
+
+  it("places optimistic switch marker above submitted message, upgrades in place on commit, and handles failure and cache cleanly", async () => {
+    const preSwitchPrompt: UserMessageItem = {
+      kind: "user_message",
+      id: "u1",
+      messageId: "u1",
+      text: "First prompt",
+      timestamp: new Date(TS),
+      timelineCursor: { epoch: "ep-1", seq: 1, anchorSeq: 1 },
+    };
+    const submittedMsg = createUserMessage({
+      clientMessageId: "cm-switch-1",
+      text: "Switched prompt",
+      timestamp: new Date(TS),
+    });
+    const pendingMarker = createPendingProviderSwitchItem({
+      clientMessageId: "cm-switch-1",
+      fromProvider: "claude",
+      toProvider: "codex",
+      fromModel: "sonnet",
+      toModel: "gpt-5.4",
+      timestamp: new Date(TS),
+    });
+
+    // 1. Atomic optimistic insert puts marker ABOVE the submitted user message.
+    const submitted = appendSubmittedUserMessage({
+      tail: [preSwitchPrompt],
+      head: [],
+      message: submittedMsg,
+      providerSwitch: pendingMarker,
+    });
+    expect(submitted.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "provider_switch",
+      "user_message",
+    ]);
+    expect(submitted.tail[1]?.id).toBe(pendingMarker.id);
+
+    // 2. ReplicaCache skips pending provider_switch markers (no context yet).
+    const rowStore = createInMemoryRowStore();
+    const cache = new ReplicaCache(rowStore);
+    cache.setHosts(["srv-pending"]);
+    cache.commitTimeline("srv-pending", "agent-1", {
+      agentId: "agent-1",
+      items: submitted.tail,
+      range: { epoch: "ep-1", startSeq: 1, endSeq: 1 },
+      hasOlder: false,
+    });
+    await cache.flush();
+    const cachedPending = await cache.readTimeline("srv-pending", "agent-1");
+    expect(cachedPending?.items.some((item) => item.kind === "provider_switch")).toBe(false);
+
+    // 3. Canonical refresh while switch is still pending preserves [pendingMarker, submittedMsg].
+    const refreshed = replaceWithCanonicalStream({
+      previousTail: submitted.tail,
+      previousHead: [],
+      canonical: [preSwitchPrompt],
+      sendingClientMessageIds: ["cm-switch-1"],
+      preserveContinuity: true,
+      canonicalCoverage: { epoch: "ep-1", endSeq: 1 },
+    });
+    expect(refreshed.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "provider_switch",
+      "user_message",
+    ]);
+    expect(refreshed.tail[1]?.id).toBe(pendingMarker.id);
+
+    // 4. Authoritative provider_switch upgrades the pending marker IN PLACE keeping its exact id and order.
+    const committedSwitch = processAgentStreamEvent({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "provider_switch",
+          fromProvider: "claude",
+          toProvider: "codex",
+          fromModel: "sonnet",
+          toModel: "gpt-5.4",
+          fromSessionId: "s1",
+          toSessionId: "s2",
+          context: { includedItems: 1, truncated: false, charCount: 42, budgetChars: 100_000 },
+        },
+      },
+      seq: 2,
+      epoch: "ep-1",
+      currentTail: submitted.tail,
+      currentHead: [],
+      currentCursor: { epoch: "ep-1", startSeq: 1, endSeq: 1 },
+      hasAuthoritativeBaseline: true,
+      timestamp: new Date(TS),
+    });
+    expect(committedSwitch.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "provider_switch",
+      "user_message",
+    ]);
+    const upgradedMarker = committedSwitch.tail[1] as ProviderSwitchItem;
+    expect(upgradedMarker.id).toBe(pendingMarker.id);
+    expect(upgradedMarker.pendingClientMessageId).toBeUndefined();
+    expect(upgradedMarker.timelineCursor).toEqual({ epoch: "ep-1", seq: 2, anchorSeq: 2 });
+    expect(upgradedMarker.context?.includedItems).toBe(1);
+
+    // 5. Canonical user_message reconciles in place after the upgraded marker without reordering.
+    const committedPrompt = processAgentStreamEvent({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "Switched prompt",
+          messageId: "cm-switch-1",
+        },
+      },
+      seq: 3,
+      epoch: "ep-1",
+      currentTail: committedSwitch.tail,
+      currentHead: [],
+      currentCursor: committedSwitch.cursor ?? undefined,
+      hasAuthoritativeBaseline: true,
+      timestamp: new Date(TS),
+    });
+    expect(committedPrompt.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "provider_switch",
+      "user_message",
+    ]);
+    expect(committedPrompt.tail[1]?.id).toBe(pendingMarker.id);
+
+    // 6. Pre-commit rejection removes BOTH pending marker and optimistic user message.
+    const preCommitRemoved = removeSubmittedUserMessage({
+      tail: submitted.tail,
+      head: [],
+      clientMessageId: "cm-switch-1",
+    });
+    expect(preCommitRemoved.tail.map((item) => item.id)).toEqual(["u1"]);
+
+    // 7. Post-commit rejection removes only the optimistic user message and preserves the committed marker.
+    const postCommitRemoved = removeSubmittedUserMessage({
+      tail: committedSwitch.tail,
+      head: [],
+      clientMessageId: "cm-switch-1",
+    });
+    expect(postCommitRemoved.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "provider_switch",
+    ]);
+
+    // 8. Defense in depth: arriving provider_switch without an optimistic marker inserts BEFORE trailing local user_message.
+    const withoutPending = appendSubmittedUserMessage({
+      tail: [preSwitchPrompt],
+      head: [],
+      message: submittedMsg,
+    });
+    const insertedBeforeLocal = processAgentStreamEvent({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "provider_switch",
+          fromProvider: "claude",
+          toProvider: "codex",
+          context: { includedItems: 1, truncated: false, charCount: 42, budgetChars: 100_000 },
+        },
+      },
+      seq: 2,
+      epoch: "ep-1",
+      currentTail: withoutPending.tail,
+      currentHead: [],
+      currentCursor: { epoch: "ep-1", startSeq: 1, endSeq: 1 },
+      hasAuthoritativeBaseline: true,
+      timestamp: new Date(TS),
+    });
+    expect(insertedBeforeLocal.tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "provider_switch",
+      "user_message",
+    ]);
   });
 });

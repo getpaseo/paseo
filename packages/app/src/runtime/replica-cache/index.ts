@@ -503,7 +503,10 @@ function serializeAgentToolCall(data: AgentToolCallData): StoredToolCall {
 function serializeProviderSwitchItem(
   base: ReturnType<typeof timelineBase>,
   item: Extract<StreamItem, { kind: "provider_switch" }>,
-): StoredTimelineItem {
+): StoredTimelineItem | null {
+  if (!item.context || item.pendingClientMessageId !== undefined) {
+    return null;
+  }
   return {
     ...base,
     kind: item.kind,

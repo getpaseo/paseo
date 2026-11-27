@@ -18,6 +18,7 @@ import {
   isStagedProviderSwitchInFlight,
   settleCommittedProviderSwitch,
   useFailedStartupSettings,
+  useIsStagedProviderSwitchInFlight,
   useStagedProviderSwitch,
 } from "@/composer/provider-switch";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -1383,6 +1384,7 @@ function ComposerContentImpl({
     (state) => state.sessions[serverId]?.serverInfo?.features?.providerSwitching === true,
   );
   const rawStagedSwitch = useStagedProviderSwitch(serverId, agentId);
+  const isStagedSwitchInFlight = useIsStagedProviderSwitchInFlight(serverId, agentId);
   const failedStartupSettings = useFailedStartupSettings(serverId, agentId);
   const stagedSwitch =
     supportsProviderSwitching &&
@@ -1804,6 +1806,8 @@ function ComposerContentImpl({
           }),
           encodeImages,
           submission: createMessageSubmissionWriter(serverId),
+          currentProvider: liveProvider ?? null,
+          currentModel: sessionState?.agents.get(targetAgentId)?.model ?? null,
           stagedProviderSwitch,
           onProviderSwitchCommitted: async (agent) => {
             if (agent) {
@@ -2709,7 +2713,7 @@ function ComposerContentImpl({
     : t("composer.github.noResults");
 
   const stagedSwitchBannerNode = useMemo(() => {
-    if (!stagedSwitch || !stagedProviderLabel) return null;
+    if (!stagedSwitch || !stagedProviderLabel || isStagedSwitchInFlight) return null;
     const message = isAgentRunning
       ? t("composer.providerSwitch.switchingAfterTurn", { provider: stagedProviderLabel })
       : t("composer.providerSwitch.switchingNextMessage", { provider: stagedProviderLabel });
@@ -2731,7 +2735,14 @@ function ComposerContentImpl({
         </Button>
       </View>
     );
-  }, [handleCancelStagedSwitch, isAgentRunning, stagedProviderLabel, stagedSwitch, t]);
+  }, [
+    handleCancelStagedSwitch,
+    isAgentRunning,
+    isStagedSwitchInFlight,
+    stagedProviderLabel,
+    stagedSwitch,
+    t,
+  ]);
 
   return (
     <>

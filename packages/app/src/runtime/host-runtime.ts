@@ -2991,6 +2991,8 @@ export class HostRuntimeStore {
             }),
             encodeImages,
             submission: createMessageSubmissionWriter(serverId),
+            currentProvider: liveProvider ?? null,
+            currentModel: currentSession?.agents.get(agentId)?.model ?? null,
             stagedProviderSwitch,
             onProviderSwitchCommitted: async (agent) => {
               if (agent) {

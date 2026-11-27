@@ -399,3 +399,9 @@ export function useStagedProviderSwitch(
     (state) => state.stagedByKey.get(stagedKey(serverId, agentId)) ?? null,
   );
 }
+
+export function useIsStagedProviderSwitchInFlight(serverId: string, agentId: string): boolean {
+  return useStagedProviderSwitchStore(
+    (state) => (state.inFlightByKey.get(stagedKey(serverId, agentId)) ?? 0) > 0,
+  );
+}

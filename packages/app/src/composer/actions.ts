@@ -21,7 +21,13 @@ import {
   splitComposerAttachmentsForSubmit,
   type ComposerAttachmentSubmitFormat,
 } from "@/composer/attachments/submit";
-import { createUserMessage, generateMessageId, type UserMessageItem } from "@/types/stream";
+import {
+  createPendingProviderSwitchItem,
+  createUserMessage,
+  generateMessageId,
+  type ProviderSwitchItem,
+  type UserMessageItem,
+} from "@/types/stream";
 import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/model";
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { i18n } from "@/i18n/i18next";
@@ -95,7 +101,11 @@ export interface ComposerCancelClient {
 }
 
 export interface MessageSubmissionWriter {
-  begin: (agentId: string, message: UserMessageItem) => void;
+  begin: (
+    agentId: string,
+    message: UserMessageItem,
+    options?: { providerSwitch?: ProviderSwitchItem },
+  ) => void;
   accept: (agentId: string, clientMessageId: string) => void;
   reject: (agentId: string, clientMessageId: string) => MessageSubmissionRejectionOutcome;
 }
@@ -217,6 +227,8 @@ export interface DispatchComposerAgentMessageInput {
   submission: MessageSubmissionWriter;
   activeTurnBehavior?: ActiveTurnBehavior;
   activeTurnId?: string;
+  currentProvider?: AgentProvider | null;
+  currentModel?: string | null;
   stagedProviderSwitch?: StagedProviderSwitch | null;
   onProviderSwitchCommitted?: (agent: AgentSnapshotPayload | undefined) => void | Promise<void>;
 }
@@ -228,17 +240,36 @@ export async function dispatchComposerAgentMessage(
     format: input.attachmentSubmitFormat,
   });
   const clientMessageId = generateMessageId();
+  const timestamp = new Date();
   const userMessage = createUserMessage({
     clientMessageId,
     text: input.text,
-    timestamp: new Date(),
+    timestamp,
     images: wirePayload.images,
     attachments: wirePayload.attachments,
     ...(input.activeTurnBehavior === "steer" && input.activeTurnId && !input.stagedProviderSwitch
       ? { turnId: input.activeTurnId }
       : {}),
   });
-  input.submission.begin(input.agentId, userMessage);
+  const pendingProviderSwitch =
+    input.stagedProviderSwitch &&
+    input.client.switchAgentProvider &&
+    input.currentProvider &&
+    input.stagedProviderSwitch.provider !== input.currentProvider
+      ? createPendingProviderSwitchItem({
+          clientMessageId,
+          fromProvider: input.currentProvider,
+          toProvider: input.stagedProviderSwitch.provider,
+          fromModel: input.currentModel ?? null,
+          toModel: input.stagedProviderSwitch.model,
+          timestamp,
+        })
+      : undefined;
+  input.submission.begin(
+    input.agentId,
+    userMessage,
+    pendingProviderSwitch ? { providerSwitch: pendingProviderSwitch } : undefined,
+  );
   try {
     const imagesData = await input.encodeImages(wirePayload.images);
     if (input.stagedProviderSwitch && input.client.switchAgentProvider) {

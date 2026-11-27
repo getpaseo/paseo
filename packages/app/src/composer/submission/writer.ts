@@ -3,17 +3,30 @@ import { useSessionStore } from "@/stores/session-store";
 import {
   appendSubmittedUserMessage,
   removeSubmittedUserMessage,
+  type ProviderSwitchItem,
   type UserMessageItem,
 } from "@/types/stream";
 
-function appendUntrackedSubmission(serverId: string, agentId: string, message: UserMessageItem) {
+function appendUntrackedSubmission(
+  serverId: string,
+  agentId: string,
+  message: UserMessageItem,
+  options?: { providerSwitch?: ProviderSwitchItem },
+) {
   const session = useSessionStore.getState().sessions[serverId];
   if (!session) return;
   const tail = session.agentStreamTail.get(agentId) ?? [];
   const head = session.agentStreamHead.get(agentId) ?? [];
-  useSessionStore
-    .getState()
-    .setAgentStreamState(serverId, agentId, appendSubmittedUserMessage({ tail, head, message }));
+  useSessionStore.getState().setAgentStreamState(
+    serverId,
+    agentId,
+    appendSubmittedUserMessage({
+      tail,
+      head,
+      message,
+      providerSwitch: options?.providerSwitch,
+    }),
+  );
 }
 
 function removeUntrackedSubmission(
@@ -36,7 +49,8 @@ function removeUntrackedSubmission(
 
 function createUntrackedMessageSubmissionWriter(serverId: string): MessageSubmissionWriter {
   return {
-    begin: (agentId, message) => appendUntrackedSubmission(serverId, agentId, message),
+    begin: (agentId, message, options) =>
+      appendUntrackedSubmission(serverId, agentId, message, options),
     accept: () => undefined,
     reject: (agentId, clientMessageId) => {
       removeUntrackedSubmission(serverId, agentId, clientMessageId);
@@ -54,8 +68,8 @@ export function createMessageSubmissionWriter(serverId: string): MessageSubmissi
     return createUntrackedMessageSubmissionWriter(serverId);
   }
   return {
-    begin: (agentId, message) =>
-      useSessionStore.getState().beginAgentMessageSubmission(serverId, agentId, message),
+    begin: (agentId, message, options) =>
+      useSessionStore.getState().beginAgentMessageSubmission(serverId, agentId, message, options),
     accept: (agentId, clientMessageId) =>
       useSessionStore.getState().acceptAgentMessageSubmission(serverId, agentId, clientMessageId),
     reject: (agentId, clientMessageId) =>

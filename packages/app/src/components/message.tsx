@@ -1509,13 +1509,12 @@ export interface ProviderSwitchMarkerProps {
   toProvider: AgentProvider;
   fromModel?: string | null;
   toModel?: string | null;
-  context: ProviderSwitchContextSummary;
+  context?: ProviderSwitchContextSummary;
 }
 
 const providerSwitchStylesheet = StyleSheet.create((theme) => ({
   wrapper: {
     paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[4],
     gap: theme.spacing[2],
   },
   row: {
@@ -1549,6 +1548,12 @@ const providerSwitchStylesheet = StyleSheet.create((theme) => ({
     fontFamily: theme.fontFamily.ui,
     fontSize: 13,
     color: theme.colors.foregroundMuted,
+  },
+  chevronSlot: {
+    width: 12,
+    height: 12,
+    alignItems: "center",
+    justifyContent: "center",
   },
   detailsCard: {
     alignSelf: "center",
@@ -1612,13 +1617,15 @@ export const ProviderSwitchMarker = memo(function ProviderSwitchMarker({
     from: fromLabel,
     to: toLabel,
   });
-  const contextLine = t("message.providerSwitch.contextSummary", {
-    count: context.includedItems,
-    chars: context.charCount.toLocaleString(),
-    budget: context.budgetChars.toLocaleString(),
-  });
+  const contextLine = context
+    ? t("message.providerSwitch.contextSummary", {
+        count: context.includedItems,
+        chars: context.charCount.toLocaleString(),
+        budget: context.budgetChars.toLocaleString(),
+      })
+    : null;
   const reasonsLine =
-    context.truncated && context.omittedReasons?.length
+    context?.truncated && context.omittedReasons?.length
       ? t("message.providerSwitch.trimmed", {
           reasons: context.omittedReasons
             .map((reason) => {
@@ -1634,6 +1641,15 @@ export const ProviderSwitchMarker = memo(function ProviderSwitchMarker({
         })
       : null;
 
+  let chevronIcon: React.ReactNode = null;
+  if (context) {
+    chevronIcon = expanded ? (
+      <StyledChevronDownIcon size={12} />
+    ) : (
+      <StyledChevronRightIcon size={12} />
+    );
+  }
+
   return (
     <View style={providerSwitchStylesheet.wrapper} testID="provider-switch-marker">
       <View style={providerSwitchStylesheet.row}>
@@ -1642,7 +1658,7 @@ export const ProviderSwitchMarker = memo(function ProviderSwitchMarker({
           variant="ghost"
           size="sm"
           style={providerSwitchStylesheet.triggerButton}
-          onPress={handleToggle}
+          onPress={context ? handleToggle : undefined}
           accessibilityLabel={title}
           testID="provider-switch-marker-toggle"
         >
@@ -1655,17 +1671,19 @@ export const ProviderSwitchMarker = memo(function ProviderSwitchMarker({
             >
               {title}
             </Text>
-            {expanded ? <StyledChevronDownIcon size={12} /> : <StyledChevronRightIcon size={12} />}
+            <View style={providerSwitchStylesheet.chevronSlot}>{chevronIcon}</View>
           </View>
         </Button>
         <View style={providerSwitchStylesheet.line} />
       </View>
-      {expanded ? (
+      {expanded && context ? (
         <View style={providerSwitchStylesheet.detailsCard} testID="provider-switch-marker-details">
           <Text style={providerSwitchStylesheet.detailRow}>
             {`${formatProviderSwitchEndpoint(fromLabel, fromModelLabel)} → ${formatProviderSwitchEndpoint(toLabel, toModelLabel)}`}
           </Text>
-          <Text style={providerSwitchStylesheet.detailRow}>{contextLine}</Text>
+          {contextLine ? (
+            <Text style={providerSwitchStylesheet.detailRow}>{contextLine}</Text>
+          ) : null}
           {reasonsLine ? (
             <Text style={providerSwitchStylesheet.detailRow}>{reasonsLine}</Text>
           ) : null}

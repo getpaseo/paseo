@@ -9,6 +9,7 @@ import {
   appendSubmittedUserMessage,
   handoffCreatedAgentUserMessageToStream,
   removeSubmittedUserMessage,
+  type ProviderSwitchItem,
   type StreamItem,
   type TodoEntry,
   type UserMessageItem,
@@ -596,6 +597,7 @@ interface SessionStoreActions {
     serverId: string,
     agentId: string,
     message: UserMessageItem,
+    options?: { providerSwitch?: ProviderSwitchItem },
   ) => void;
   acceptAgentMessageSubmission: (
     serverId: string,
@@ -1190,7 +1192,7 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
-      beginAgentMessageSubmission: (serverId, agentId, message) => {
+      beginAgentMessageSubmission: (serverId, agentId, message, options) => {
         set((prev) => {
           const session = prev.sessions[serverId];
           if (!session) return prev;
@@ -1203,6 +1205,7 @@ export const useSessionStore = create<SessionStore>()(
             tail: currentTail,
             head: currentHead,
             message,
+            providerSwitch: options?.providerSwitch,
           });
           const submissions = beginMessageSubmission(
             session.messageSubmissions.get(agentId) ?? [],

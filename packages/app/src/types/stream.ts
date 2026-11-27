@@ -97,6 +97,8 @@ export type StreamItem =
 export interface ProviderSwitchItem {
   kind: "provider_switch";
   id: string;
+  /** Present only while optimistically shown for an in-flight provider switch submission. */
+  pendingClientMessageId?: string;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
@@ -106,7 +108,27 @@ export interface ProviderSwitchItem {
   toModel?: string | null;
   fromSessionId?: string | null;
   toSessionId?: string | null;
-  context: ProviderSwitchContextSummary;
+  context?: ProviderSwitchContextSummary;
+}
+
+export function createPendingProviderSwitchItem(params: {
+  clientMessageId: string;
+  fromProvider: AgentProvider;
+  toProvider: AgentProvider;
+  fromModel?: string | null;
+  toModel?: string | null;
+  timestamp: Date;
+}): ProviderSwitchItem {
+  return {
+    kind: "provider_switch",
+    id: `provider_switch:pending:${params.clientMessageId}`,
+    pendingClientMessageId: params.clientMessageId,
+    timestamp: params.timestamp,
+    fromProvider: params.fromProvider,
+    toProvider: params.toProvider,
+    ...(params.fromModel !== undefined ? { fromModel: params.fromModel } : {}),
+    ...(params.toModel !== undefined ? { toModel: params.toModel } : {}),
+  };
 }
 
 export type UserMessageImageAttachment = AttachmentMetadata;
@@ -171,6 +193,7 @@ export function appendSubmittedUserMessage(input: {
   tail: StreamItem[];
   head: StreamItem[];
   message: UserMessageItem;
+  providerSwitch?: ProviderSwitchItem;
 }): { tail: StreamItem[]; head: StreamItem[] } {
   const clientMessageId = input.message.clientMessageId;
   if (!clientMessageId) {
@@ -182,9 +205,12 @@ export function appendSubmittedUserMessage(input: {
   if (alreadyExists) {
     throw new Error(`Submitted user message already exists: ${clientMessageId}`);
   }
+  const appended: StreamItem[] = input.providerSwitch
+    ? [input.providerSwitch, input.message]
+    : [input.message];
   return input.head.length > 0
-    ? { tail: input.tail, head: [...input.head, input.message] }
-    : { tail: [...input.tail, input.message], head: input.head };
+    ? { tail: input.tail, head: [...input.head, ...appended] }
+    : { tail: [...input.tail, ...appended], head: input.head };
 }
 
 export function removeSubmittedUserMessage(input: {
@@ -193,12 +219,20 @@ export function removeSubmittedUserMessage(input: {
   clientMessageId: string;
 }): { tail: StreamItem[]; head: StreamItem[] } {
   const remove = (items: StreamItem[]) => {
-    const next = items.filter(
-      (item) =>
+    const next = items.filter((item) => {
+      if (
+        item.kind === "provider_switch" &&
+        item.pendingClientMessageId === input.clientMessageId &&
+        item.timelineCursor === undefined
+      ) {
+        return false;
+      }
+      return (
         item.kind !== "user_message" ||
         item.clientMessageId !== input.clientMessageId ||
-        !isUnreconciledLocalUserMessage(item),
-    );
+        !isUnreconciledLocalUserMessage(item)
+      );
+    });
     return next.length === items.length ? items : next;
   };
   return { tail: remove(input.tail), head: remove(input.head) };
@@ -665,10 +699,50 @@ function preserveReplacementHead(
   };
 }
 
+function collectPendingProviderSwitches(
+  tail: readonly StreamItem[],
+  head: readonly StreamItem[],
+): Map<string, ProviderSwitchItem> {
+  const byClientId = new Map<string, ProviderSwitchItem>();
+  for (const item of [...tail, ...head]) {
+    if (
+      item.kind === "provider_switch" &&
+      item.pendingClientMessageId !== undefined &&
+      item.timelineCursor === undefined
+    ) {
+      byClientId.set(item.pendingClientMessageId, item);
+    }
+  }
+  return byClientId;
+}
+
+function appendPendingProviderSwitchIfUncommitted(
+  nextTail: StreamItem[],
+  local: UserMessageItem,
+  pendingSwitchesByClientId: ReadonlyMap<string, ProviderSwitchItem>,
+): void {
+  const pendingSwitch = local.clientMessageId
+    ? pendingSwitchesByClientId.get(local.clientMessageId)
+    : undefined;
+  if (!pendingSwitch) return;
+  const lastCanonical = nextTail.at(-1);
+  const alreadyCommittedAtTail =
+    lastCanonical?.kind === "provider_switch" &&
+    lastCanonical.fromProvider === pendingSwitch.fromProvider &&
+    lastCanonical.toProvider === pendingSwitch.toProvider;
+  if (!alreadyCommittedAtTail) {
+    nextTail.push(pendingSwitch);
+  }
+}
+
 export function replaceWithCanonicalStream(
   input: CanonicalStreamReplacementInput,
 ): CanonicalStreamReplacementResult {
   const sendingClientMessageIds = new Set(input.sendingClientMessageIds);
+  const pendingSwitchesByClientId = collectPendingProviderSwitches(
+    input.previousTail,
+    input.previousHead,
+  );
   let unmatchedTailMessages = input.previousTail.filter(
     (item): item is UserMessageItem =>
       item.kind === "user_message" && item.clientMessageId !== undefined,
@@ -715,6 +789,7 @@ export function replaceWithCanonicalStream(
       ? isUnreconciledLocalUserMessage(local)
       : local.clientMessageId !== undefined && sendingClientMessageIds.has(local.clientMessageId);
     if (preserveLocal) {
+      appendPendingProviderSwitchIfUncommitted(nextTail, local, pendingSwitchesByClientId);
       nextTail.push(local);
     } else if (
       input.preserveContinuity &&
@@ -1612,9 +1687,47 @@ function reduceTimelineProviderSwitch(
           `${item.fromProvider}->${item.toProvider}`,
           timestamp,
         );
-  if (state.some((existing) => existing.kind === "provider_switch" && existing.id === switchId)) {
+  const alreadyPresent = state.some(
+    (existing) =>
+      existing.kind === "provider_switch" &&
+      (existing.id === switchId ||
+        (timelineCursor !== undefined &&
+          existing.timelineCursor !== undefined &&
+          existing.timelineCursor.epoch === timelineCursor.epoch &&
+          existing.timelineCursor.anchorSeq === timelineCursor.anchorSeq)),
+  );
+  if (alreadyPresent) {
     return state;
   }
+
+  // Reconcile an optimistic pending marker in place, keeping its stable id so the mounted
+  // row never unmounts, remounts, or shifts position when the daemon commits the switch.
+  const pendingIndex = state.findIndex(
+    (existing) =>
+      existing.kind === "provider_switch" &&
+      existing.pendingClientMessageId !== undefined &&
+      existing.timelineCursor === undefined &&
+      existing.fromProvider === item.fromProvider &&
+      existing.toProvider === item.toProvider,
+  );
+  if (pendingIndex >= 0) {
+    const existing = state[pendingIndex] as ProviderSwitchItem;
+    const upgraded: ProviderSwitchItem = {
+      kind: "provider_switch",
+      id: existing.id,
+      ...(timelineCursor ? { timelineCursor } : {}),
+      timestamp,
+      fromProvider: item.fromProvider,
+      toProvider: item.toProvider,
+      ...(item.fromModel !== undefined ? { fromModel: item.fromModel } : {}),
+      ...(item.toModel !== undefined ? { toModel: item.toModel } : {}),
+      ...(item.fromSessionId !== undefined ? { fromSessionId: item.fromSessionId } : {}),
+      ...(item.toSessionId !== undefined ? { toSessionId: item.toSessionId } : {}),
+      context: item.context,
+    };
+    return [...state.slice(0, pendingIndex), upgraded, ...state.slice(pendingIndex + 1)];
+  }
+
   const marker: ProviderSwitchItem = {
     kind: "provider_switch",
     id: switchId,
@@ -1628,7 +1741,19 @@ function reduceTimelineProviderSwitch(
     ...(item.toSessionId !== undefined ? { toSessionId: item.toSessionId } : {}),
     context: item.context,
   };
-  return [...state, marker];
+
+  // Defense in depth: if an unanchored optimistic user message is already at the tail,
+  // place the committed switch marker directly above it so the marker never paints below it.
+  let insertAt = state.length;
+  while (insertAt > 0) {
+    const candidate = state[insertAt - 1];
+    if (candidate?.kind === "user_message" && isUnreconciledLocalUserMessage(candidate)) {
+      insertAt -= 1;
+      continue;
+    }
+    break;
+  }
+  return [...state.slice(0, insertAt), marker, ...state.slice(insertAt)];
 }
 
 function reduceTimelineEvent(
@@ -1869,6 +1994,8 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
       return "notification";
     case "plugin":
       return "plugin";
+    case "provider_switch":
+      return "provider_switch";
     default:
       return null;
   }

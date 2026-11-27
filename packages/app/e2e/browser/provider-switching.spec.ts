@@ -95,6 +95,54 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
+async function startSwitchOrderGuard(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const violations: string[] = [];
+    let stopped = false;
+    const step = () => {
+      const msgs = Array.from(document.querySelectorAll('[data-testid="user-message"]'));
+      const markers = Array.from(
+        document.querySelectorAll('[data-testid="provider-switch-marker"]'),
+      );
+      const banner = document.querySelector('[data-testid="staged-provider-switch-banner"]');
+      if (msgs.length >= 2) {
+        const secondMsg = msgs[msgs.length - 1];
+        const lastMarker = markers[markers.length - 1];
+        if (!lastMarker) {
+          violations.push("user-message painted without switch marker");
+        } else {
+          const msgRect = secondMsg.getBoundingClientRect();
+          const markerRect = lastMarker.getBoundingClientRect();
+          if (markerRect.top > msgRect.top) {
+            violations.push(
+              `switch marker painted below user-message (${Math.round(markerRect.top)} > ${Math.round(msgRect.top)})`,
+            );
+          }
+        }
+        if (banner && banner.getBoundingClientRect().height > 0) {
+          violations.push("staged-provider-switch-banner stayed visible after submit");
+        }
+      }
+      if (!stopped) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    (window as unknown as { __stopSwitchOrderGuard?: () => string[] }).__stopSwitchOrderGuard =
+      () => {
+        stopped = true;
+        return violations;
+      };
+  });
+}
+
+async function stopSwitchOrderGuard(page: Page): Promise<string[]> {
+  return await page.evaluate(
+    () =>
+      (
+        window as unknown as { __stopSwitchOrderGuard?: () => string[] }
+      ).__stopSwitchOrderGuard?.() ?? [],
+  );
+}
+
 async function completeMockTurn(
   page: Page,
   agent: Awaited<ReturnType<typeof seedMockAgentWorkspace>>,
@@ -279,7 +327,9 @@ test.describe.serial("Provider switching in chat", () => {
 
       await test.step("submitting commits the switch in place with clean user display text and inspectable marker", async () => {
         await stageDirectProviderDesktop(page);
+        await startSwitchOrderGuard(page);
         const switchedMessage = await completeDirectTurn(page, workspace, postSwitchPrompt);
+        expect(await stopSwitchOrderGuard(page)).toEqual([]);
 
         expect(page.url()).toBe(initialUrl);
         await expect(page.getByTestId("staged-provider-switch-banner")).toHaveCount(0);
