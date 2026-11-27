@@ -12,6 +12,8 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
  */
 export interface WorkspaceArchiveIntent {
   readonly kind: "archive" | "undo";
+  /** Active agent IDs in the workspace when this client archived it, so undo only marks those agents as restoring. */
+  readonly archivedAgentIds?: ReadonlySet<string>;
 }
 
 const intentsByServer = new Map<string, Map<string, WorkspaceArchiveIntent>>();
@@ -44,9 +46,10 @@ function readIntent(input: WorkspaceIntentTarget): WorkspaceArchiveIntent | null
 function setIntent(
   input: WorkspaceIntentTarget,
   kind: WorkspaceArchiveIntent["kind"],
+  archivedAgentIds?: ReadonlySet<string>,
 ): WorkspaceArchiveIntent {
-  const intent: WorkspaceArchiveIntent = { kind };
   const target = resolveTarget(input);
+  const intent: WorkspaceArchiveIntent = archivedAgentIds ? { kind, archivedAgentIds } : { kind };
   if (!target) return intent;
   targetByIntent.set(intent, target);
   const intents = intentsByServer.get(target.serverId) ?? new Map();
@@ -119,12 +122,40 @@ export function isWorkspaceArchivePending(input: WorkspaceIntentTarget): boolean
 export function markWorkspaceArchiveUndoPending(input: {
   serverId: string;
   workspaceId: string;
+  archivedAgentIds?: ReadonlySet<string>;
 }): WorkspaceArchiveIntent {
-  return setIntent(input, "undo");
+  return setIntent(input, "undo", input.archivedAgentIds);
 }
 
 export function isWorkspaceArchiveUndoPending(input: WorkspaceIntentTarget): boolean {
   return readIntent(input)?.kind === "undo";
+}
+
+/** Returns the active agent IDs captured by a pending workspace undo, if any. */
+export function getWorkspaceArchiveUndoArchivedAgentIds(
+  input: WorkspaceIntentTarget,
+): ReadonlySet<string> | null {
+  const intent = readIntent(input);
+  if (intent?.kind !== "undo") return null;
+  return intent.archivedAgentIds ?? null;
+}
+
+/**
+ * True while this client's workspace undo is pending and `agentId` was active in that
+ * workspace when archived. Agents that were already archived before the workspace archive
+ * return false so they are not mislabeled as unarchiving.
+ */
+export function isWorkspaceArchiveUndoRestoringAgent(input: {
+  serverId: string;
+  workspaceId?: string | null;
+  agentId?: string | null;
+}): boolean {
+  const intent = readIntent(input);
+  if (intent?.kind !== "undo") return false;
+  const agentId = input.agentId?.trim();
+  if (!agentId) return false;
+  if (!intent.archivedAgentIds) return false;
+  return intent.archivedAgentIds.has(agentId);
 }
 
 export function shouldSuppressWorkspaceForLocalArchive(input: {

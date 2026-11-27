@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
-import { SettingsInfoTip } from "@/components/settings/headings/settings-info-tip";
+import { SettingsInfoTip, SettingsRow } from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -16,7 +16,7 @@ import { settingsStyles } from "@/styles/settings";
 const DEFAULT_RESUME_PROMPT = "Resume working.";
 
 // COMPAT(restartRecovery): added in v0.14.0, remove gate after 2027-04-28.
-export function RestartRecoveryCard({ serverId }: { serverId: string }) {
+export function RestartRecoveryRow({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isSupported = useHostFeature(serverId, "resumeOnStartupSetting");
@@ -57,53 +57,48 @@ export function RestartRecoveryCard({ serverId }: { serverId: string }) {
     [mutation],
   );
 
+  const infoTip = useMemo(
+    () => (
+      <SettingsInfoTip
+        title={t("settings.host.agents.resumeOnStartup.title")}
+        info={t("settings.host.agents.resumeOnStartup.info")}
+      />
+    ),
+    [t],
+  );
+
   if (!isConnected || !isSupported || !config) return null;
 
   const isEnabled = config.resumeOnStartup === true;
 
   return (
     <>
-      <View style={settingsStyles.card} testID="host-page-restart-recovery-card">
-        <View style={settingsStyles.row}>
-          <View style={settingsStyles.rowContent}>
-            <View style={styles.titleRow}>
-              <Text style={settingsStyles.rowTitle}>
-                {t("settings.host.agents.resumeOnStartup.title")}
-              </Text>
-              <SettingsInfoTip
-                title={t("settings.host.agents.resumeOnStartup.title")}
-                info={t("settings.host.agents.resumeOnStartup.info")}
-              />
-            </View>
-            <Text style={settingsStyles.rowHint}>
-              {t("settings.host.agents.resumeOnStartup.hint")}
-            </Text>
-            {mutation.error && !isEditing ? (
-              <Text style={settingsStyles.rowError} testID="host-page-restart-recovery-error">
-                {mutation.error.message}
-              </Text>
-            ) : null}
-          </View>
-          <View style={styles.trailing}>
-            <Button
-              variant="outline"
-              onPress={handleOpen}
-              disabled={!isEnabled || mutation.isPending}
-              accessibilityLabel={t("settings.host.agents.resumeOnStartup.editAccessibilityLabel")}
-              testID="host-page-restart-recovery-edit"
-            >
-              {t("settings.host.agents.resumeOnStartup.edit")}
-            </Button>
-            <Switch
-              value={isEnabled}
-              onValueChange={handleValueChange}
-              disabled={mutation.isPending}
-              accessibilityLabel={t("settings.host.agents.resumeOnStartup.title")}
-              testID="host-page-restart-recovery-switch"
-            />
-          </View>
+      <SettingsRow
+        label={t("settings.host.agents.resumeOnStartup.title")}
+        labelAccessory={infoTip}
+        hint={t("settings.host.agents.resumeOnStartup.hint")}
+        error={mutation.error && !isEditing ? mutation.error.message : undefined}
+        testID="host-page-restart-recovery-card"
+      >
+        <View style={styles.trailing}>
+          <Button
+            variant="outline"
+            onPress={handleOpen}
+            disabled={!isEnabled || mutation.isPending}
+            accessibilityLabel={t("settings.host.agents.resumeOnStartup.editAccessibilityLabel")}
+            testID="host-page-restart-recovery-edit"
+          >
+            {t("settings.host.agents.resumeOnStartup.edit")}
+          </Button>
+          <Switch
+            value={isEnabled}
+            onValueChange={handleValueChange}
+            disabled={mutation.isPending}
+            accessibilityLabel={t("settings.host.agents.resumeOnStartup.title")}
+            testID="host-page-restart-recovery-switch"
+          />
         </View>
-      </View>
+      </SettingsRow>
 
       {isEditing ? (
         <ResumePromptSheet
@@ -179,11 +174,6 @@ function ResumePromptSheet({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
   trailing: {
     flexDirection: "row",
     alignItems: "center",

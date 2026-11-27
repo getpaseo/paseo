@@ -1,4 +1,4 @@
-export type { MarkdownRenderers, CodeBlockRendererProps, LinkRendererProps, } from './types/MarkdownRenderers';
+export type { MarkdownRenderers, CodeBlockRendererProps, BlockquoteRendererProps, LinkRendererProps, } from './types/MarkdownRenderers';
 export type { LinkVariantStyle, LinkPillStyle } from './types/MarkdownStyle';
 export type { LinkPillContent } from './types/MarkdownTextProps';
 export type { LinkContextMenuItem, LinkRecognition, } from './types/MarkdownTextProps';

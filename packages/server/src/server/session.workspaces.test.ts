@@ -1652,6 +1652,23 @@ test("agent_update emits remove when the agent has no workspaceId", async () => 
   const getSnapshot = vi.fn(async () => {
     throw new Error("getSnapshot should not be called for unregistered agent_update placement");
   });
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
   const session = asTestSession(
     createSessionForWorkspaceTests({
       onMessage: (message) => emitted.push(message),
@@ -1661,15 +1678,31 @@ test("agent_update emits remove when the agent has no workspaceId", async () => 
       },
     }),
   );
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.workspaceRegistry.listActive = async () => [workspace];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
 
   await activateAgentUpdatesSubscription(session, "sub-agents", {});
+
+  // First include the agent in the subscription, then forward an update with no workspaceId.
+  await session.agentUpdates.forwardLiveAgent(
+    makeManagedAgent({
+      id: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: workspace.workspaceId,
+      lifecycle: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+    }),
+  );
+  emitted.length = 0;
 
   await session.agentUpdates.forwardLiveAgent(
     makeManagedAgent({
       id: "agent-1",
       cwd: UNREGISTERED_CWD,
       lifecycle: "running",
-      updatedAt: "2026-03-30T15:00:00.000Z",
+      updatedAt: "2026-03-30T15:00:01.000Z",
     }),
   );
 

@@ -22,11 +22,33 @@
 // lines never wrap, the height is independent of the available width.
 
 static const CGFloat kENRMHeaderLabelScale = 0.85;
-// The copy glyph reads cleaner a touch smaller than the language label and at a
-// regular (not medium) weight; sized independently so the two never couple.
-static const CGFloat kENRMHeaderIconScale = 0.72;
+// The copy glyph's box as a multiple of the code font size; Android uses the same
+// scale. Sized independently of the language label so the two never couple.
+static const CGFloat kENRMHeaderIconScale = 1.08;
 static const CGFloat kENRMHeaderSecondaryAlpha = 0.6;
 static const CGFloat kENRMHeaderDividerAlpha = 0.2;
+
+// Lucide's Copy icon, the glyph the app's own copy controls use, on its 24-unit
+// grid with its 2-unit stroke. Copyright Lucide Icons and Contributors (ISC); see COPY-ICON-LICENSE.
+static void ENRMDrawCopyIcon(CGContextRef context, CGFloat size)
+{
+  CGContextScaleCTM(context, size / 24.0, size / 24.0);
+  CGContextSetLineWidth(context, 2);
+  CGContextSetLineCap(context, kCGLineCapRound);
+  CGContextSetLineJoin(context, kCGLineJoinRound);
+  CGContextSetRGBStrokeColor(context, 0, 0, 0, 1);
+  CGMutablePathRef path = CGPathCreateMutable();
+  CGPathAddRoundedRect(path, NULL, CGRectMake(8, 8, 14, 14), 2, 2);
+  CGPathMoveToPoint(path, NULL, 4, 16);
+  CGPathAddCurveToPoint(path, NULL, 2.9, 16, 2, 15.1, 2, 14);
+  CGPathAddLineToPoint(path, NULL, 2, 4);
+  CGPathAddCurveToPoint(path, NULL, 2, 2.9, 2.9, 2, 4, 2);
+  CGPathAddLineToPoint(path, NULL, 14, 2);
+  CGPathAddCurveToPoint(path, NULL, 15.1, 2, 16, 2.9, 16, 4);
+  CGContextAddPath(context, path);
+  CGContextStrokePath(context);
+  CGPathRelease(path);
+}
 
 // Height geometry and code-run construction shared by the instance layout path
 // and the view-free measureHeightForCodeBlockNode:, so the two cannot drift.
@@ -231,6 +253,52 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
 #endif
 }
 
++ (CGFloat)headerCopyBandHeightForConfig:(StyleConfig *)config
+{
+  return ENRMCodeBlockContentInset(config) + ENRMCodeBlockHeaderLabelLineHeight(ENRMCodeBlockHeaderFont(config));
+}
+
++ (ENRMHeaderCopyButton *)headerCopyButtonForConfig:(StyleConfig *)config target:(id)target action:(SEL)action
+{
+#if !TARGET_OS_OSX
+  UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+  CGFloat size = [config codeBlockFont].pointSize * kENRMHeaderIconScale;
+  UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(size, size)];
+  UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+    ENRMDrawCopyIcon(context.CGContext, size);
+  }];
+  [button setImage:[image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] forState:UIControlStateNormal];
+  button.tintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
+  [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+#else
+  CGFloat size = [config codeBlockFont].pointSize * kENRMHeaderIconScale;
+  NSImage *copyImage = [NSImage imageWithSize:NSMakeSize(size, size) flipped:YES drawingHandler:^BOOL(NSRect rect) {
+    ENRMDrawCopyIcon(NSGraphicsContext.currentContext.CGContext, size);
+    return YES;
+  }];
+  copyImage.template = YES;
+  NSButton *button = [NSButton buttonWithImage:copyImage target:target action:action];
+  button.bordered = NO;
+  button.contentTintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
+#endif
+  return button;
+}
+
++ (void)layoutHeaderCopyButton:(ENRMHeaderCopyButton *)button width:(CGFloat)width config:(StyleConfig *)config
+{
+  CGFloat headerH = [self headerCopyBandHeightForConfig:config];
+  CGFloat inset = ENRMCodeBlockContentInset(config);
+  CGFloat iconWidth = button.intrinsicContentSize.width;
+  if (iconWidth <= 0 || iconWidth > headerH) {
+    iconWidth = headerH;
+  }
+  CGFloat iconSlack = (headerH - iconWidth) / 2;
+  CGFloat buttonLeft = MAX(width - inset - headerH + iconSlack, 0);
+  CGFloat headerCenterY = (headerH + inset / 2) / 2;
+  CGFloat buttonTop = MAX(headerCenterY - headerH / 2, 0);
+  button.frame = CGRectMake(buttonLeft, buttonTop, headerH, headerH);
+}
+
 - (void)setPending:(BOOL)pending
 {
   if (_pending == pending) {
@@ -273,28 +341,18 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
     UIContextMenuInteraction *contextMenu = [[UIContextMenuInteraction alloc] initWithDelegate:self];
     [self addInteraction:contextMenu];
 
-    _copyButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    UIImageSymbolConfiguration *symbolConfig =
-        [UIImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
-                                                        weight:UIImageSymbolWeightRegular];
-    [_copyButton setImage:[UIImage systemImageNamed:@"doc.on.doc" withConfiguration:symbolConfig]
-                 forState:UIControlStateNormal];
-    _copyButton.tintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
-    [_copyButton addTarget:self action:@selector(copyCodeToPasteboard) forControlEvents:UIControlEventTouchUpInside];
+    _copyButton = [ENRMCodeBlockContainerView headerCopyButtonForConfig:config
+                                                                 target:self
+                                                                 action:@selector(copyCodeToPasteboard)];
     [self addSubview:_copyButton];
 
     _tapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleCodeBlockTap:)];
     _tapRecognizer.delegate = self;
     [self addGestureRecognizer:_tapRecognizer];
 #else
-    NSImageSymbolConfiguration *symbolConfig =
-        [NSImageSymbolConfiguration configurationWithPointSize:[config codeBlockFont].pointSize * kENRMHeaderIconScale
-                                                        weight:NSFontWeightRegular];
-    NSImage *copyImage = [[NSImage imageWithSystemSymbolName:@"doc.on.doc"
-                                    accessibilityDescription:nil] imageWithSymbolConfiguration:symbolConfig];
-    _copyButton = [NSButton buttonWithImage:copyImage target:self action:@selector(copyCodeToPasteboard)];
-    _copyButton.bordered = NO;
-    _copyButton.contentTintColor = [[config codeBlockColor] colorWithAlphaComponent:kENRMHeaderSecondaryAlpha];
+    _copyButton = [ENRMCodeBlockContainerView headerCopyButtonForConfig:config
+                                                                 target:self
+                                                                 action:@selector(copyCodeToPasteboard)];
     [self addSubview:_copyButton];
 #endif
   }
@@ -363,15 +421,7 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
 
 - (void)layoutHeaderButton
 {
-  CGFloat headerH = [self headerHeight];
-  CGFloat iconWidth = _copyButton.intrinsicContentSize.width;
-  if (iconWidth <= 0 || iconWidth > headerH) {
-    iconWidth = headerH;
-  }
-  CGFloat iconSlack = (headerH - iconWidth) / 2;
-  CGFloat buttonLeft = MAX(self.bounds.size.width - [self contentInset] - headerH + iconSlack, 0);
-  CGFloat buttonTop = MAX([self headerCenterY] - headerH / 2, 0);
-  _copyButton.frame = CGRectMake(buttonLeft, buttonTop, headerH, headerH);
+  [ENRMCodeBlockContainerView layoutHeaderCopyButton:_copyButton width:self.bounds.size.width config:_config];
 }
 
 #if !TARGET_OS_OSX

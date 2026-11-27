@@ -117,6 +117,8 @@ export const ptBR: TranslationResources = {
       groupByProject: "Agrupar por projeto",
       groupByStatus: "Agrupar por status",
       copyBrowserHostName: "Copiar o nome do host do navegador",
+      profileGroupLabel: "Perfil",
+      profileSearchKeywords: "perfil aplicar perfil perfil do agente predefinição",
       modelGroupLabel: "Modelo",
       modelSearchKeywords: "trocar modelo mudar modelo definir modelo selecionar modelo",
       thinkingGroupLabel: "Raciocínio",
@@ -305,6 +307,7 @@ export const ptBR: TranslationResources = {
     archived: {
       callout: "Este agente está arquivado",
       unarchive: "Desarquivar",
+      unarchiving: "Desarquivando...",
     },
   },
   sessions: {
@@ -1299,6 +1302,7 @@ export const ptBR: TranslationResources = {
       viewDiagram: "Ver diagrama",
     },
     actions: {
+      copyQuote: "Copiar citação",
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensagem",
@@ -1606,6 +1610,24 @@ export const ptBR: TranslationResources = {
         failedToLoad: "Falha ao carregar página",
         invalidUrl: "URL de navegador inválida",
         unsupportedProtocol: "URL de navegador sem suporte bloqueada: {{protocol}}",
+      },
+      routing: {
+        tooltipHost: "Navegando por {{hostName}}. Clique para navegar localmente.",
+        tooltipLocal: "Navegando localmente. Clique para navegar por {{hostName}}.",
+        switchToLocal: "Alternar roteamento do navegador de {{hostName}} para Local",
+        switchToHost: "Alternar roteamento do navegador de Local para {{hostName}}",
+      },
+      proxy: {
+        connecting: "Conectando a {{hostName}}...",
+        reconnecting: "Reconectando a {{hostName}}...",
+        updateTitle: "Atualize {{hostName}} para navegar por este host",
+        updateDescription: "Este host ainda não oferece suporte ao proxy do navegador.",
+        routedTitle: "O proxy do navegador não está disponível para hosts roteados",
+        routedDescription: "Conecte-se diretamente a este host ou navegue localmente.",
+        offlineTitle: "{{hostName}} está offline",
+        offlineDescription: "Aguarde o host reconectar ou navegue localmente.",
+        errorTitle: "Não foi possível conectar o proxy do navegador",
+        browseLocally: "Navegar localmente",
       },
     },
     terminal: {
@@ -1932,6 +1954,8 @@ export const ptBR: TranslationResources = {
         },
         archiveWarning: {
           title: 'Arquivar "{{workspaceName}}"?',
+          bulkTitle: "Arquivar {{count}} workspaces?",
+          bulkWorkspaceReason: "{{workspaceName}}: {{reason}}",
           confirm: "Arquivar",
           cancel: "Cancelar",
           uncommittedChanges: "Alterações sem commit",
@@ -2345,6 +2369,7 @@ export const ptBR: TranslationResources = {
         rename: "Renomear workspace",
         pin: "Fixar no topo",
         unpin: "Desafixar",
+        select: "Selecionar",
         archive: "Arquivar",
         archiveWorkspace: "Arquivar workspace",
         hideFromSidebar: "Ocultar da barra lateral",
@@ -2363,6 +2388,10 @@ export const ptBR: TranslationResources = {
         submit: "Renomear",
         invalidBranchName: "Nome de branch inválido",
       },
+      selection: {
+        count: "{{count}} selecionados",
+        exit: "Sair da seleção",
+      },
       toasts: {
         workspacePathUnavailable: "Caminho do workspace indisponível",
         pathCopied: "Caminho copiado",
@@ -2370,7 +2399,9 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
         archiveFailed: "Falha ao arquivar workspace",
+        archiveMultipleFailed: "Falha ao arquivar {{count}} workspaces",
         archived: "Workspace arquivado",
+        archivedCount: "{{count}} workspaces arquivados",
         undoArchive: "Desfazer",
         undoArchiveFailed: "Não foi possível desfazer o arquivamento",
       },
@@ -2517,6 +2548,8 @@ export const ptBR: TranslationResources = {
       status: {
         checking: "Verificando atualizações do app...",
         installing: "Instalando atualização do app...",
+        downloadingVersionProgress: "Baixando {{version}}... {{percent}}%",
+        downloadingProgress: "Baixando atualização do app... {{percent}}%",
         upToDate: "O app está atualizado.",
         upToDateWithLastChecked: "Atualizado. Última verificação às {{time}}.",
         pending: "Avisaremos quando a atualização estiver pronta.",
@@ -2525,6 +2558,15 @@ export const ptBR: TranslationResources = {
         pendingWithVersion: "Atualização encontrada: {{version}}. Baixando...",
         pendingWithVersionAndLastChecked:
           "Atualização encontrada: {{version}}. Baixando... Última verificação às {{time}}.",
+        pendingWithVersionProgress: "Atualização encontrada: {{version}}. Baixando... {{percent}}%",
+        pendingWithVersionProgressAndLastChecked:
+          "Atualização encontrada: {{version}}. Baixando... {{percent}}% Última verificação às {{time}}.",
+        downloadAvailableWithVersion: "Atualização disponível: {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Atualização disponível: {{version}}. Última verificação às {{time}}.",
+        downloadAvailable: "Há uma atualização do app disponível.",
+        downloadAvailableWithLastChecked:
+          "Há uma atualização do app disponível. Última verificação às {{time}}.",
         availableWithVersion: "Atualização pronta: {{version}}",
         availableWithVersionAndLastChecked:
           "Atualização pronta: {{version}}. Última verificação às {{time}}.",
@@ -2537,14 +2579,21 @@ export const ptBR: TranslationResources = {
       },
       installError: "Não foi possível instalar a atualização do app desktop.",
       callout: {
+        downloadingTitle: "Baixando atualização",
         installingTitle: "Instalando atualização",
         failedTitle: "Falha na atualização",
         availableTitle: "Atualização disponível",
         genericError: "Algo deu errado.",
         whatsNew: "Novidades",
+        downloadingAction: "Baixando...",
         installingAction: "Instalando...",
+        downloadAndRestart: "Baixar",
         installAndRestart: "Instalar e reiniciar",
+        downloadingVersionDescription: "Baixando {{version}}... {{percent}}%",
+        downloadingDescription: "Baixando atualização... {{percent}}%",
         installingDescription: "Instalando e reiniciando...",
+        versionAvailable: "{{version}} está disponível para download.",
+        newVersionAvailable: "Uma nova versão está disponível para download.",
         versionReady: "{{version}} está pronta para instalar.",
         newVersionReady: "Uma nova versão está pronta para instalar.",
         restartWarning:
@@ -2764,12 +2813,6 @@ export const ptBR: TranslationResources = {
             "O app móvel nativo completo permite controlar qualquer computador com Paseo pelo seu celular",
           appStore: "App Store",
           googlePlay: "Google Play",
-          connectTitle: "Escolha como se conectar",
-          connectDocs: "Docs",
-          openConnectDocs: "Abrir documentação de conectividade",
-          recommended: "Recomendado",
-          relay: { title: "Relay", hint: "Criptografia de ponta a ponta, escaneie um código QR" },
-          tailscale: { title: "Tailscale", hint: "Requer alguma configuração" },
         },
       },
     },
@@ -2790,11 +2833,15 @@ export const ptBR: TranslationResources = {
     defaultModel: "Padrão",
     profiles: "Perfis",
     providers: "Provedores",
+    models: "Modelos",
     model: "Modelo",
     editProfiles: "Editar",
     editProfilesLabel: "Editar perfis de agente",
     createProfile: "Criar perfil",
     createProfileFromModel: "Criar perfil a partir deste modelo",
+    profileSaved: 'Salvo "{{name}}"',
+    undo: "Desfazer",
+    undoProfileSave: "Desfazer salvamento do perfil",
     editProfileLabel: "Editar {{name}}",
     editProfilesCount: "Editar perfis ({{count}})",
     modelCount: "{{count}} modelo",
@@ -2842,6 +2889,37 @@ export const ptBR: TranslationResources = {
       noModelAvailable: "Nenhum modelo disponível para o provedor selecionado",
       workspaceDirectoryNotFound: "Diretório do workspace não encontrado",
       hostDisconnected: "Host não está conectado",
+    },
+  },
+  devices: {
+    title: "Dispositivos",
+    waysToConnect: "Formas de conexão",
+    docs: "Docs",
+    docsAccessibility: "Abrir documentação de conectividade",
+    relay: {
+      title: "Relay",
+      hint: "Sem configuração, criptografia de ponta a ponta, escaneie um código QR",
+    },
+    tailscale: {
+      hint: "Conexão direta pela sua tailnet, digite um endereço",
+      unavailable: "O Tailscale não está em execução neste host",
+      install: "Baixar o Tailscale",
+      refresh: "Atualizar",
+      refreshing: "Atualizando...",
+      waiting: "Aguardando o Tailscale iniciar neste host",
+      alwaysOn: "Sempre ativado, porque este host já aceita conexões do Tailscale",
+      socket: "Desativado, porque este host escuta em um socket local",
+      launch: "Controlado pelo comando que inicia este host",
+      update: "Atualize este host para usar o Tailscale",
+      updateDocs: "Como atualizar",
+      address: "Em um celular com Tailscale, adicione um host com este endereço",
+      statusError: "Não foi possível verificar o Tailscale",
+      turnOnError: "Não foi possível ativar o Tailscale",
+      turnOffError: "Não foi possível desativar o Tailscale",
+      confirmTitle: "Desativar o Tailscale?",
+      confirmMessage:
+        "Este dispositivo está conectado pelo Tailscale e perderá a conexão com o host.",
+      confirmAction: "Desativar",
     },
   },
   pairing: {
@@ -3312,7 +3390,7 @@ export const ptBR: TranslationResources = {
     title: "Configurações",
     loading: "Carregando configurações...",
     groups: {
-      app: "App",
+      app: "Este dispositivo",
       host: "Host",
     },
     hostPicker: {
@@ -3330,7 +3408,9 @@ export const ptBR: TranslationResources = {
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat e painéis",
       appearance: "Aparência",
       sidebar: "Barra lateral",
       terminal: "Terminal",
@@ -3343,6 +3423,16 @@ export const ptBR: TranslationResources = {
       permissions: "Permissões",
       diagnostics: "Diagnósticos",
       about: "Sobre",
+    },
+    clientHosts: {
+      title: "Hosts salvos",
+      info: "Hosts aos quais este dispositivo se conecta. Nomes, ícones, selos e rotas aqui afetam apenas este dispositivo.",
+      backToHosts: "Voltar para hosts",
+      routesTitle: "Como este dispositivo se conecta",
+      routesInfo:
+        "Rotas salvas que este dispositivo usa para alcançar este host. O Paseo escolhe a mais rápida disponível.",
+      addRoute: "Adicionar rota",
+      activeRoute: "Ativa",
     },
     layout: en.settings.layout,
     editor: {
@@ -3360,6 +3450,50 @@ export const ptBR: TranslationResources = {
     },
     notifications: {
       title: "Notificações",
+      enabled: {
+        label: "Ativar notificações",
+        description: "Receba notificações de agentes, terminais e plugins neste dispositivo",
+        pausedDescription:
+          "Todas as notificações, incluindo as de plugins, estão pausadas neste dispositivo",
+      },
+      events: {
+        title: "Eventos",
+        agentPermission: {
+          label: "Agente precisa de permissão",
+          description: "Aprovações, planos e perguntas",
+        },
+        agentError: {
+          label: "Erro no agente",
+          description: "Quando um agente para com erro",
+        },
+        agentFinished: {
+          label: "Agente concluiu",
+          description: "Quando um agente conclui um turno",
+        },
+        terminalNeedsInput: {
+          label: "Terminal aguarda entrada",
+          description: "Quando um comando do terminal aguarda entrada",
+        },
+        terminalFinished: {
+          label: "Terminal concluiu",
+          description: "Quando um comando do terminal termina",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Notificações de plugins",
+          description: "Permitir que plugins instalados enviem notificações",
+        },
+        empty:
+          "Os plugins instalados aparecem aqui para que você possa silenciá-los individualmente",
+      },
+      legacyHostTitle: "Atualize o host para preferências de push",
+      legacyHostHint:
+        "Atualize os hosts conectados para sincronizar as preferências de notificações push deste dispositivo",
+      desktop: {
+        title: "Sistema",
+      },
       permission: "Permissão de notificações",
       refreshAccessibility: "Atualizar permissão de notificações",
       playSound: "Reproduzir som",
@@ -3377,6 +3511,8 @@ export const ptBR: TranslationResources = {
       projects: "Projetos",
       connections: "Conexões",
       agents: "Agentes",
+      tools: "Ferramentas e instruções",
+      agentProfiles: "Perfis de agente",
       metadata: "Metadados",
       voice: "Voz",
       workspaces: "Workspaces",
@@ -3385,6 +3521,7 @@ export const ptBR: TranslationResources = {
       terminals: "Terminais",
       plugins: "Plugins",
       host: "Visão geral",
+      daemon: "Daemon",
     },
     plugins: pluginSettings["pt-BR"],
     metadataGeneration: {
@@ -3594,9 +3731,28 @@ export const ptBR: TranslationResources = {
         stable: "Stable",
         beta: "Beta",
       },
+      autoUpdate: {
+        label: "Atualizações automáticas",
+        options: {
+          automatic: "Auto",
+          notify: "Notificar",
+          off: "Desativado",
+        },
+        descriptions: {
+          automatic: "Verificar e baixar atualizações em segundo plano",
+          notify: "Verificar atualizações, mas baixar apenas quando você escolher",
+          off: "Nunca verificar automaticamente. Verificar apenas ao clicar em Verificar",
+        },
+      },
       updates: {
         label: "Atualizações do app",
         readyToInstall: "Pronta para instalar: {{version}}",
+        downloadTitle: "Baixar atualização desktop",
+        downloadMessage: "Isso baixa e instala a atualização do Paseo neste computador",
+        downloadConfirm: "Baixar e instalar",
+        download: "Baixar",
+        downloadTo: "Baixar {{version}}",
+        downloading: "Baixando...",
         installTitle: "Instalar atualização desktop",
         installMessage: "Isso atualiza o Paseo neste computador",
         installConfirm: "Instalar atualização",
@@ -3869,9 +4025,7 @@ export const ptBR: TranslationResources = {
         timeout: "Timeout",
       },
       pairDevices: {
-        title: "Parear dispositivos",
         rowTitle: "Parear um dispositivo",
-        rowHint: "Escaneie um QR code ou copie um link para conectar seu celular a este host",
       },
       skills: {
         ...en.settings.host.skills,
@@ -3911,6 +4065,10 @@ export const ptBR: TranslationResources = {
           update: "Atualizar skill",
           delete: "Excluir skill",
         },
+      },
+      tools: {
+        instructionsTitle: "Instruções",
+        toolsTitle: "Ferramentas de agentes",
       },
       orchestration: {
         title: "Orquestração",
@@ -3979,6 +4137,8 @@ export const ptBR: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Perfis de agente",
+        sectionDescription:
+          "Salve configurações de agente para escolher rapidamente e para outros agentes usarem ao delegar trabalho",
         unavailable: "Conecte-se a este host para gerenciar perfis de agente",
         unsupported: "Este host executa um daemon que ainda não é compatível com perfis de agente",
         emptyState:
@@ -4003,6 +4163,9 @@ export const ptBR: TranslationResources = {
         featuresLabel: "Recursos",
         featureCount: "{{count}} recursos",
         featureCountOne: "{{count}} recurso",
+        systemPromptLabel: "Prompt do sistema",
+        systemPromptPlaceholder: "Foque em layout, acessibilidade e tokens de design.",
+        systemPromptHint: "Aplica-se apenas a novos agentes",
         notesLabel: "Quando usar",
         notesPlaceholder: "Use para trabalho de UI — componentes, layout e tokens de design.",
         notesHint: "Ajuda os agentes a escolher este perfil ao iniciar outro agente.",
@@ -4013,6 +4176,31 @@ export const ptBR: TranslationResources = {
         removeConfirmMessage: 'Remover "{{name}}"?',
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
+        searchPlaceholder: "Buscar perfis",
+        clearSearch: "Limpar busca",
+        noSearchMatches: 'Nenhum perfil corresponde a "{{query}}"',
+        noRoutingNote: "Sem nota",
+        duplicate: "Duplicar",
+        copyName: "{{name}} (cópia)",
+        moveToTop: "Mover para o topo",
+        profileActions: "Ações para {{name}}",
+        reorderProfile: "Reordenar {{name}}",
+        previousProfile: "Perfil anterior",
+        nextProfile: "Próximo perfil",
+        chooseModelPlaceholder: "Selecionar um modelo",
+        searchModelsPlaceholder: "Buscar modelos",
+        chooseModelSubtitle: "Selecionar um modelo",
+        customizeSettings: "Personalizar configurações",
+        addRoutingNoteShort: "Adicionar uma nota",
+        providerOptionsLabel: "Opções de {{provider}}",
+        discardTitle: "Descartar alterações?",
+        discardMessage: "Você tem alterações não salvas neste perfil.",
+        discardConfirm: "Descartar",
+        columns: {
+          profile: "Perfil",
+          runtime: "Modelo e execução",
+          whenToUse: "Quando usar",
+        },
       },
       goalRunCap: {
         sectionTitle: "Objetivos",
@@ -4064,6 +4252,7 @@ export const ptBR: TranslationResources = {
         removeConfirmMessage: 'Remover "{{name}}"? Chats já iniciados com ela mantêm a lista.',
       },
       daemon: {
+        runtimeTitle: "Execução de agentes",
         rename: {
           editLabel: "Editar rótulo",
           title: "Renomear host",

@@ -481,7 +481,17 @@ async function getLocalDaemonVersion(): Promise<{ version: string | null; error:
 async function resolveRequestedReleaseChannel(
   args: Record<string, unknown> | undefined,
 ): Promise<AppReleaseChannel> {
-  return parseReleaseChannel(args) ?? (await getDesktopSettingsStore().get()).releaseChannel;
+  const explicit = parseReleaseChannel(args);
+  if (explicit) return explicit;
+  try {
+    return (await getDesktopSettingsStore().get()).releaseChannel;
+  } catch (error) {
+    console.warn(
+      "[auto-updater] Failed to read release channel from desktop settings, defaulting to stable:",
+      error,
+    );
+    return "stable";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -541,10 +551,12 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     },
     check_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();
+      const releaseChannel = await resolveRequestedReleaseChannel(args);
+      const intent = parseAppUpdateCheckIntent(args);
       return checkForAppUpdate({
         currentVersion,
-        releaseChannel: await resolveRequestedReleaseChannel(args),
-        intent: parseAppUpdateCheckIntent(args),
+        releaseChannel,
+        intent,
       });
     },
     install_app_update: async (args) => {

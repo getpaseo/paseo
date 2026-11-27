@@ -4,6 +4,7 @@ import type { FormInfo } from "@opencode/client";
 import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { OpenCodeBridge } from "../agent/providers/opencode/bridge.js";
 import { OpenCodeV2AgentClient } from "../agent/providers/opencode/v2/agent.js";
 import { V2Harness } from "../agent/providers/opencode/test-utils/v2-harness.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -38,9 +39,16 @@ async function createQuestionHarness() {
     runtime.prompts.push(input.text);
     if (runtime.prompts.length === 1) runtime.startExecution();
   };
+  // The daemon always runs the bridge, which gives OpenCode agents their Paseo tools.
+  const bridge = new OpenCodeBridge({
+    paseoHome: path.join(root, "bridge"),
+    logger: createTestLogger(),
+  });
+  await bridge.start();
   const provider = new OpenCodeV2AgentClient({
     logger: createTestLogger(),
     runtime: runtime.runtime,
+    bridge,
   });
   const daemon = await createTestPaseoDaemon({
     agentClients: { ...createTestAgentClients(), opencode: provider },
@@ -78,12 +86,14 @@ async function createQuestionHarness() {
       async close() {
         await client.close();
         await daemon.close();
+        await bridge.close();
         await rm(root, { recursive: true, force: true });
       },
     };
   } catch (error) {
     await client.close();
     await daemon.close();
+    await bridge.close();
     await rm(root, { recursive: true, force: true });
     throw error;
   }

@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { constants as fsConstants, existsSync } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, resolve } from "node:path";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import { execCommand } from "../utils/spawn.js";
@@ -35,7 +36,11 @@ function extractAbsolutePathDirs(rawPath: string | undefined): string[] {
     .filter((entry) => entry.length > 0 && isAbsolute(entry));
 }
 
-async function enumerateCandidates(name: string, env?: ProcessEnvRecord): Promise<string[]> {
+async function enumerateCandidates(
+  name: string,
+  env?: ProcessEnvRecord,
+  probe = true,
+): Promise<string[]> {
   const rawPath = env?.PATH !== undefined ? env.PATH : process.env.PATH;
   const absolutePathDirs = extractAbsolutePathDirs(rawPath);
   if (absolutePathDirs.length === 0) {
@@ -47,7 +52,7 @@ async function enumerateCandidates(name: string, env?: ProcessEnvRecord): Promis
   };
   const allowedDirs = new Set(absolutePathDirs.map(normalizeDirectory));
   const candidates =
-    process.platform !== "win32" && existsSync("/usr/bin/which")
+    probe && process.platform !== "win32" && existsSync("/usr/bin/which")
       ? await enumerateCandidatesViaSystemWhich(name, filteredEnv)
       : await enumerateCandidatesViaLibrary(name, filteredEnv);
   return candidates.filter((candidate) => allowedDirs.has(normalizeDirectory(dirname(candidate))));
@@ -172,39 +177,62 @@ export async function findExecutableWithoutProbing(
   return candidates[0] ?? null;
 }
 
+async function isLocalExecutable(candidate: string): Promise<boolean> {
+  try {
+    const info = await stat(candidate);
+    if (!info.isFile()) return false;
+    if (process.platform !== "win32") {
+      await access(candidate, fsConstants.X_OK);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface ExecutableResolutionOptions {
   probeTimeoutMs?: number;
   env?: ProcessEnvRecord;
+  /** When false, resolves using the same candidate rules (including Windows WinGet fallback) without spawning `--version`. */
+  probe?: boolean;
 }
 
 export async function findExecutable(
   name: string,
   options: number | ExecutableResolutionOptions = PROBE_TIMEOUT_MS,
 ): Promise<string | null> {
-  const { probeTimeoutMs = PROBE_TIMEOUT_MS, env } =
-    typeof options === "number" ? { probeTimeoutMs: options } : options;
+  const {
+    probeTimeoutMs = PROBE_TIMEOUT_MS,
+    env,
+    probe = true,
+  } = typeof options === "number" ? { probeTimeoutMs: options } : options;
   const trimmed = name.trim();
   if (!trimmed) {
     return null;
   }
 
+  const checkCandidate = probe
+    ? (command: string, timeout: number) =>
+        probeExecutable(command, { probeTimeoutMs: timeout, env })
+    : (command: string) => isLocalExecutable(command);
+
   if (process.platform === "win32") {
     return windowsExecutableResolution.find(trimmed, {
-      enumeratePathCandidates: (command) => enumerateCandidates(command, env),
-      probeExecutable: (command, timeout) =>
-        probeExecutable(command, { probeTimeoutMs: timeout, env }),
+      enumeratePathCandidates: (command) => enumerateCandidates(command, env, probe),
+      probeExecutable: checkCandidate,
       exists: existsSync,
+      localAppData: env?.LOCALAPPDATA,
       probeTimeoutMs,
     });
   }
 
   if (hasPathSeparator(trimmed)) {
-    return (await probeExecutable(trimmed, { probeTimeoutMs, env })) ? trimmed : null;
+    return (await checkCandidate(trimmed, probeTimeoutMs)) ? trimmed : null;
   }
 
-  const candidates = await enumerateCandidates(trimmed, env);
+  const candidates = await enumerateCandidates(trimmed, env, probe);
   for (const candidate of candidates) {
-    if (await probeExecutable(candidate, { probeTimeoutMs, env })) {
+    if (await checkCandidate(candidate, probeTimeoutMs)) {
       return candidate;
     }
   }

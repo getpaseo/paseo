@@ -1,3 +1,5 @@
+import path from "node:path";
+
 const PASEO_NODE_ENV = "PASEO_NODE_ENV";
 const ELECTRON_RUN_AS_NODE = "ELECTRON_RUN_AS_NODE";
 
@@ -10,9 +12,82 @@ const RUNTIME_CONTROL_ENV_KEYS = [
   "ESBUILD_BINARY_PATH",
 ] as const;
 
+const APPIMAGE_RUNTIME_ENV_KEYS = [
+  "APPIMAGE",
+  "APPDIR",
+  "ARGV0",
+  "OWD",
+  "APPIMAGE_LIBRARY_PATH",
+] as const;
+
+const APPIMAGE_PATH_LIST_VARS = [
+  { key: "PATH", splitRegex: /:/ },
+  { key: "LD_LIBRARY_PATH", splitRegex: /[:;]/ },
+  { key: "XDG_DATA_DIRS", splitRegex: /:/ },
+  { key: "GSETTINGS_SCHEMA_DIR", splitRegex: /:/ },
+] as const;
+
 export type PaseoNodeEnv = "development" | "production" | "test";
 export type ProcessEnvRecord = Record<string, string | undefined>;
 export type ExternalProcessEnv = NodeJS.ProcessEnv & Record<string, string>;
+
+function normalizeAppDir(rawAppDir: string | undefined): string | null {
+  if (!rawAppDir) return null;
+  const normalized = path.posix.normalize(rawAppDir).replace(/\/+$/, "");
+  return normalized.startsWith("/") ? normalized : null;
+}
+
+function isAppDirPathSegment(segment: string, appDir: string): boolean {
+  if (!segment.startsWith("/")) return false;
+  const normalized = path.posix.normalize(segment).replace(/\/+$/, "");
+  return normalized === appDir || normalized.startsWith(`${appDir}/`);
+}
+
+function stripAppDirSegments(
+  value: string,
+  appDir: string,
+  splitRegex: RegExp,
+): string | undefined {
+  const segments = value.split(splitRegex);
+  const filtered = segments.filter((segment) => !isAppDirPathSegment(segment, appDir));
+  if (filtered.length === segments.length) {
+    return value.length === 0 ? undefined : value;
+  }
+  const joined = filtered.join(":");
+  return joined.length === 0 ? undefined : joined;
+}
+
+/**
+ * Remove Linux AppImage runtime variables and `$APPDIR` path-list entries from a
+ * child environment object without touching Electron main's own `process.env`.
+ */
+export function stripAppImageRuntimeEnv(
+  env: ProcessEnvRecord,
+  options?: { platform?: NodeJS.Platform },
+): void {
+  const platform = options?.platform ?? process.platform;
+  if (platform !== "linux") return;
+  if (!env.APPIMAGE && !env.APPDIR) return;
+
+  const appDir = normalizeAppDir(env.APPDIR);
+
+  for (const key of APPIMAGE_RUNTIME_ENV_KEYS) {
+    delete env[key];
+  }
+
+  if (!appDir) return;
+
+  for (const { key, splitRegex } of APPIMAGE_PATH_LIST_VARS) {
+    const value = env[key];
+    if (typeof value !== "string") continue;
+    const scrubbed = stripAppDirSegments(value, appDir, splitRegex);
+    if (scrubbed === undefined) {
+      delete env[key];
+    } else {
+      env[key] = scrubbed;
+    }
+  }
+}
 
 function buildInternalProcessEnv<T extends ProcessEnvRecord>(baseEnv: T): T {
   return { ...baseEnv };
@@ -26,6 +101,7 @@ function buildExternalProcessEnv(
   for (const key of RUNTIME_CONTROL_ENV_KEYS) {
     delete sanitized[key];
   }
+  stripAppImageRuntimeEnv(sanitized);
   for (const [key, value] of Object.entries(sanitized)) {
     if (value === undefined) {
       delete sanitized[key];

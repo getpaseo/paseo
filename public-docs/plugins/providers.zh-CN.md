@@ -89,6 +89,25 @@ const { stdout } = await execCommand(launch.command, [...launch.args, "--version
 });
 ```
 
+### 在启动包装之后运行会话 {#run-sessions-behind-a-launch-wrap}
+
+来自 `agent.open.before` 的[启动包装](./hooks.zh-CN.md#launch-wraps)会作为 `session.open` 的 `config.wrap` 传给你的 Provider。要支持它：
+
+1. 在注册信息上设置 `launchWrap: true`。Paseo 会在 Provider 快照中发布 `launchWrap: true`，这样插件可以在你的 Provider 连接之前选择它。
+2. 把 `session.launch_wrap` 加入连接支持的能力。Paseo 只把 `config.wrap` 发给协商了该能力的连接，在其他连接上带包装的打开会失败。
+3. 用 `wrap` 选项启动会话的进程。`spawnProcess` 随后启动 `[...wrap, command, ...args]`，并为包装的可执行文件处理 Windows 启动器：
+
+```ts
+const child = spawnProcess(launch.command, [...launch.args, "serve"], {
+  wrap: input.config.wrap,
+  env: launch.env,
+  cwd: input.config.cwd,
+  stdio: "pipe",
+});
+```
+
+在包装之后启动所有为会话工作的进程。如果一个进程服务多个会话，就为带包装的会话单独启动一个。`runAcpProvider({ command })` 会为 ACP Agent 完成以上所有工作。
+
 ## 返回模型、模式和思考选项 {#return-models-modes-and-thinking-options}
 
 Paseo 在创建会话之前会请求目录。返回 Agent 表单需要的选项：
@@ -122,6 +141,42 @@ if (input.type === "catalog") {
 对于 Agent 不提供的类别，返回空数组。选中的 `model`、`mode` 和 `thinkingOption` 会出现在会话配置中。
 
 目录描述的是会话存在之前可用的选项。会话专属的控件之后通过 `session.config` 提供。
+
+### 停止 Paseo 取消的请求 {#stop-a-request-paseo-cancels}
+
+Paseo 为每次目录刷新设置期限。Paseo 不再等待某个请求时，会发送带有该请求 `requestId` 的 `request.cancel`。停止这项工作，并释放它启动的资源，例如为读取目录而启动的进程。之后你为该请求发出的事件都会被 Paseo 忽略。同一连接上的会话继续运行。
+
+把 `request.cancel` 加入你支持的能力。Paseo 只向提供该能力的连接发送这个输入：
+
+```ts
+const pending = new Map<string, AbortController>();
+
+if (input.type === "catalog") {
+  const controller = new AbortController();
+  pending.set(input.requestId, controller);
+  void readCatalog({ signal: controller.signal })
+    .then(
+      (catalog) => {
+        if (!controller.signal.aborted)
+          emit({ type: "catalog", requestId: input.requestId, catalog });
+      },
+      (error) => {
+        if (!controller.signal.aborted)
+          emit({
+            type: "request.failed",
+            requestId: input.requestId,
+            error: { message: String(error) },
+          });
+      },
+    )
+    .finally(() => pending.delete(input.requestId));
+}
+if (input.type === "request.cancel") {
+  pending.get(input.requestId)?.abort();
+}
+```
+
+取消可能在请求完成之后才到达。忽略你已不再跟踪的 `requestId`。`runAcpProvider` 提供这项能力，并会停止目录探测进程。
 
 ## 打开会话 {#open-a-session}
 

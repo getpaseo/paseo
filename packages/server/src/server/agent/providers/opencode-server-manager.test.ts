@@ -296,7 +296,7 @@ describe("OpenCodeServerManager generations", () => {
     runtime.processForPort(4473).announceListening();
     const currentAcquisition = await currentStart;
 
-    const dedicatedStart = manager.acquireDedicated({ TEST_ENV: "custom" });
+    const dedicatedStart = manager.acquireDedicated({ env: { TEST_ENV: "custom" } });
     await runtime.settle();
 
     await currentAcquisition.release();
@@ -311,10 +311,29 @@ describe("OpenCodeServerManager generations", () => {
     expect(runtime.terminatedPorts).toEqual([4473, 4474]);
   });
 
+  test("a dedicated server starts behind its session's wrap and the shared server does not", async () => {
+    const { manager, runtime } = createTestManager([4477, 4478]);
+
+    const shared = await manager.acquireCurrent();
+    const wrapped = await manager.acquireDedicated({
+      env: { PASEO_AGENT_ID: "wrapped" },
+      wrap: ["/opt/sandbox/bin/run", "--profile", "a b"],
+    });
+
+    expect(runtime.spawnCalls.map(({ args, options }) => ({ args, wrap: options.wrap }))).toEqual([
+      { args: ["serve", "--port", "4477"], wrap: undefined },
+      { args: ["serve", "--port", "4478"], wrap: ["/opt/sandbox/bin/run", "--profile", "a b"] },
+    ]);
+    await shared.release();
+    await wrapped.release();
+  });
+
   test("acquireExisting keeps a retired dedicated server alive until every reference releases", async () => {
     const { manager, runtime } = createTestManager([4475]);
 
-    const dedicatedAcquisition = await manager.acquireDedicated({ PASEO_AGENT_ID: "parent" });
+    const dedicatedAcquisition = await manager.acquireDedicated({
+      env: { PASEO_AGENT_ID: "parent" },
+    });
     const existingAcquisition = manager.acquireExisting(dedicatedAcquisition.server.url);
 
     expect(existingAcquisition?.server.url).toBe("http://127.0.0.1:4475");
@@ -329,7 +348,7 @@ describe("OpenCodeServerManager generations", () => {
   test("acquireExisting returns null for unknown or dead server urls", async () => {
     const { manager, runtime } = createTestManager([4476]);
 
-    const acquisition = await manager.acquireDedicated({ PASEO_AGENT_ID: "parent" });
+    const acquisition = await manager.acquireDedicated({ env: { PASEO_AGENT_ID: "parent" } });
     const url = acquisition.server.url;
 
     expect(manager.acquireExisting("http://127.0.0.1:9999")).toBe(null);

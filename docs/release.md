@@ -17,6 +17,7 @@ A release has exactly two steps. The agent does the first, the user authorizes t
   run `npm run release:prep:<mode>` to create the `chore(release): cut <version>` commit without a tag
 - push the `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` branch and confirm its `CI` and
   `Desktop Packages` runs pass (never wait on `main` CI)
+- run the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 
 **Go-ahead** (user says "go ahead"):
 
@@ -47,7 +48,7 @@ the shipped source.
 The user decides when the changes on `main` warrant a release and how much risk it takes:
 
 1. **Direct stable release** for a low-risk batch of polish and bug fixes. Stable desktop updates
-   already ramp over 36 hours (see [Staged rollout](#staged-rollout-stable-channel)), and store
+   start with a 5% canary and ramp over 18 hours (see [Staged rollout](#staged-rollout-stable-channel)), and store
    review often takes about a day, with no guaranteed timing.
 2. **Beta flow**, the default for changes that need testing. Release candidates on the `beta`
    channel. Each beta folds into the series' single changelog entry, publishes npm only on the
@@ -107,6 +108,7 @@ An explicit user instruction can select another base.
    `CI` (all 21 jobs) and `Desktop Packages` (Linux user-namespace smoke) in their own concurrency
    groups, isolated from `main` traffic. Never wait on `main` CI, because `main` cancels in-progress
    runs on every merge. Wait for both runs on the release branch commit to pass before shipping.
+   Complete the [pre-release dependency checks](#pre-release-dependency-checks) on that commit.
    Pushing a `release/**` branch without a `v*` tag triggers no publish workflows.
 6. After go-ahead, run `npm run release:ship` (stable) or `npm run release:ship:beta` (beta). This
    publishes to npm and pushes the `v*` tag on the already-verified commit. Because the release
@@ -126,7 +128,9 @@ shipping while `0.13.3-beta.2` soaks. Never republish or reuse a shipped version
 as the next unused patch beta, `0.13.4-beta.1`, from the tested beta tag. No `version:all:*` mode
 computes that from a prerelease, so run `npm run release:check`, bump with
 `npm version 0.13.4-beta.1 --include-workspace-root --no-git-tag-version && git commit -m "chore(release): cut 0.13.4-beta.1"`,
-push the release branch for `CI` and `Desktop Packages`, then ship with `npm run release:ship:beta`.
+push the release branch for `CI` and `Desktop Packages`, and complete the
+[pre-release dependency checks](#pre-release-dependency-checks) before shipping with
+`npm run release:ship:beta`.
 Record the tested beta tag as its source so its soak still counts for the unchanged content.
 
 ## Release inventory
@@ -234,6 +238,7 @@ npm run release:prep:minor
 
 # 2. Push the release branch and wait for CI + Desktop Packages on this commit.
 git push -u origin HEAD
+# Complete the pre-release dependency checks on this commit.
 
 # 3. After go-ahead and green release-branch checks: publish npm and push the tag.
 npm run release:ship
@@ -269,7 +274,8 @@ npm run release:check        # Typecheck, build, dry-run pack
 npm run version:all:patch
 npm run version:all:minor
 git push -u origin HEAD      # Trigger CI + Desktop Packages on release/vX.Y.Z
-# Wait for CI and Desktop Packages on this branch to pass, then after go-ahead:
+# Wait for CI and Desktop Packages and complete the pre-release dependency checks.
+# After go-ahead:
 npm run release:publish      # Publish to npm (idempotent, with propagation + beta dist-tag sync)
 npm run release:push         # Create tag vX.Y.Z on HEAD and push (triggers release workflows)
 ```
@@ -286,6 +292,7 @@ npm run release:prep:beta:next   # Cut X.Y.Z-beta.2, beta.3, ...
 
 # 2. Push the release branch and wait for CI + Desktop Packages to pass:
 git push -u origin HEAD
+# Complete the pre-release dependency checks on this commit.
 
 # 3. After go-ahead:
 npm run release:ship:beta
@@ -293,7 +300,8 @@ npm run release:ship:beta
 # Later, after soak, promote on release/vX.Y.Z:
 npm run release:prep:promote
 git push -u origin HEAD
-# Wait for CI + Desktop Packages to pass, then after go-ahead:
+# Wait for CI + Desktop Packages and complete the pre-release dependency checks.
+# After go-ahead:
 npm run release:ship
 ```
 
@@ -316,11 +324,33 @@ Use the beta path when you need to:
 
 ## Staged rollout (stable channel)
 
-Stable desktop releases go out via a linear time-based rollout for automatic update checks: 0% admitted when the updater manifests appear, 100% admitted 36 hours later, linear ramp in between. Manual checks bypass the rollout so a user can install immediately when they click **Check**. Beta releases bypass the rollout entirely — beta users always receive updates immediately.
+A stable desktop release reaches automatic updates in stages, so a bad release reaches few installs before you stop it. Each install decides locally from two fields in the release manifests, `releaseDate` and `rolloutHours`. No server tracks installs.
 
-The rollout is driven by a `rolloutHours` field stamped into the GitHub Release manifests (`latest-mac.yml`, `latest-linux.yml`, `latest.yml`) by the `finalize-rollout` job in `desktop-release.yml`.
+| Stage          | Rule                                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| Canary         | For the first 8 hours, 5% of installs are admitted.                                                      |
+| Ramp           | From 8 hours to `rolloutHours` (18 by default), admission rises in a straight line from 5% to 100%.      |
+| Check interval | An install asks GitHub for the latest release at most once every 6 hours.                                |
+| Cooldown       | After an install updates, it skips paced releases for 24 hours.                                          |
+| Staged update  | An install that holds a downloaded update keeps it and does not download the paced release that follows. |
 
-Desktop release builds now publish in two phases:
+A paced release is a stable release with `rolloutHours` above 0. When `rolloutHours` is under 16, the canary hold is half of `rolloutHours`.
+
+Every release places each install at a new position in the rollout, so the canary group changes with each release. With one or two releases per day, an install updates at most once every 24 hours and skips the releases in between.
+
+These paths skip the stages:
+
+- A manual check (**Check**) always asks GitHub and always offers the latest release.
+- A release with `rolloutHours: 0` is an emergency release. Every install takes it at its next check, during a cooldown too, and it replaces a staged update.
+- The beta channel has no stages. A beta install takes each release at its next check.
+
+The **Notify** update mode follows the same stages and prompts instead of downloading. **Off** makes no automatic requests.
+
+`packages/desktop/src/features/app-update-rollout.ts` owns the curve. `app-update-pacing.ts` owns the check interval and the cooldown, and `app-update-service.ts` owns the staged update.
+
+### How a release is published
+
+The `finalize-rollout` job in `desktop-release.yml` stamps `releaseDate` and `rolloutHours` into the GitHub Release manifests (`latest-mac.yml`, `latest-linux.yml`, `latest.yml`). Desktop release builds publish in two phases:
 
 - The GitHub Release stays a draft while platform build jobs upload the installers/packages (`.dmg`, `.zip`, `.exe`, `.AppImage`, etc.).
 - The final job merges and stamps every channel manifest, uploads them with the final `releaseDate` and `rolloutHours`, then publishes the GitHub Release.
@@ -329,22 +359,21 @@ Drafts do not appear in GitHub's releases feed. Updater clients continue to see 
 
 ### Default behavior
 
-`npm run release:prep:patch` or `npm run release:prep:minor` → push release branch → green checks → `npm run release:ship` → tag push → 36h ramp. No extra action needed.
+Follow the [standard stable release procedure](#standard-release-stable). The tag push starts
+the desktop release workflow, which sets an 18-hour rollout when it publishes the release.
 
-The `rollout_hours` input on `desktop-release.yml` is **only read on `workflow_dispatch`** — tag-push runs always default to 36. To get any other rollout duration on a fresh release, use the post-publish flip below.
+The `rollout_hours` input on `desktop-release.yml` is read only on `workflow_dispatch`. Tag-push runs always use 18. To get any other rollout duration on a fresh release, use the post-publish flip below.
 
-### Instant-admit release (rollout_hours=0)
+### Emergency release (rollout_hours=0)
 
-Tag-push runs from `npm run release:ship` always stamp 36 hours. To admit everyone immediately (hotfix, doc-only change, a release you want out fast), ship the release normally, wait for it to publish, then flip the manifests:
+Follow the [standard stable release procedure](#standard-release-stable). Wait for Desktop
+Release to publish, then update the manifests to admit everyone at once.
 
 ```bash
-# 1. Ship the verified release branch (36h ramp from tag push).
-npm run release:ship
-
-# 2. Wait for Desktop Release to publish the GitHub Release.
+# 1. Wait for Desktop Release to publish the GitHub Release.
 gh run watch <desktop-release-run-id> --exit-status
 
-# 3. Flip the published manifests to instant admit.
+# 2. Flip the published manifests to an emergency release.
 gh workflow run desktop-rollout.yml \
   -f tag=v0.1.64 \
   -f rollout_hours=0
@@ -352,23 +381,13 @@ gh workflow run desktop-rollout.yml \
 
 Dispatch only after `finalize-rollout` has published the release. Until then the release is a draft, and a draft has no tag: `desktop-rollout.yml` looks the release up by tag and fails with `release not found`. The concurrency group `desktop-rollout-<tag>` that the two workflows share orders them only once both are queued; it does not hold an early dispatch until the draft is published.
 
-The first public manifests carry `rolloutHours=36` for the minutes between publish and the flip. The renderer polls every 30 minutes, so active stable users pick up the new manifest on their next check.
+The first public manifests carry `rolloutHours=18` for the minutes between publish and the flip. An install sees the flip at its next check, which is up to 6 hours after its previous one. In automatic mode it then downloads the release and installs it when the app quits.
 
 ### Adjusting an already-published release
 
-To change the rollout duration on a release that's already shipped — e.g. flip a hotfix to instant admit, or slow a release down — use the dedicated `desktop-rollout.yml` workflow. It edits the manifests in place on the GitHub release without rebuilding anything. It only rewrites `rolloutHours`; `releaseDate` is preserved, so the rollout clock keeps ticking from the original publish time.
+To change the rollout duration on a release that already shipped, use the `desktop-rollout.yml` workflow. It edits the manifests in place on the GitHub release without rebuilding anything. It rewrites only `rolloutHours`. `releaseDate` is preserved, so the rollout clock keeps running from the original publish time.
 
-**Hotfix (instant admit) on an already-shipped release:**
-
-```bash
-gh workflow run desktop-rollout.yml \
-  -f tag=v0.1.42 \
-  -f rollout_hours=0
-```
-
-`rollout_hours=0` admits 100% of stable users on their next update check (within ~30 min for active clients).
-
-**Slow a rollout down** (e.g. extend total duration to 72h since the original release):
+To slow a rollout down, for example to 72 hours since the original release:
 
 ```bash
 gh workflow run desktop-rollout.yml \
@@ -376,13 +395,59 @@ gh workflow run desktop-rollout.yml \
   -f rollout_hours=72
 ```
 
-`rollout_hours` is **total duration since the original release date**, not "extend by N more hours from now." If `v0.1.42` was published 2h ago and you set `rollout_hours=72`, the ramp finishes 70h from now.
+`rollout_hours` is the total duration since the original release date. If `v0.1.42` was published 2 hours ago and you set `rollout_hours=72`, the ramp finishes 70 hours from now.
+
+A longer rollout does not stop a release. The canary group still updates. To stop a release, [halt it](#halt-a-release).
 
 The dispatch is idempotent and shares the `desktop-rollout-<tag>` concurrency group with `desktop-release.yml`'s `finalize-rollout` job, so it serializes safely against an in-flight tag-push pipeline targeting the same release.
 
+### Halt a release
+
+Stable installs and the download page follow the release that GitHub marks as latest. To stop a release, mark the last good release as latest:
+
+```bash
+# v0.1.41 is the last good release.
+gh release edit v0.1.41 --latest
+
+# Prints v0.1.41 when the halt is in effect.
+gh api repos/getpaseo/paseo/releases/latest --jq .tag_name
+```
+
+The halt applies to every stable install from its next check, including installs older than the staged rollout:
+
+- An install that has not downloaded the halted release no longer sees it.
+- An install that downloaded it asks GitHub again before it installs at quit, and drops the download.
+- An install that already runs the halted release stays on it, because the app never downgrades. [Ship a fix](#fix-a-bad-release).
+
+A halt does not reach the beta channel. Beta installs read the release list by date and still take the halted release.
+
+To resume a halted release, run `gh release edit v0.1.42 --latest` with its tag.
+
+### Fix a bad release
+
+1. [Halt](#halt-a-release) the bad release.
+2. Ship the fix as the next patch with the [standard stable release procedure](#standard-release-stable).
+3. After Desktop Release publishes the fix, make sure that GitHub marks it as latest:
+
+   ```bash
+   gh api repos/getpaseo/paseo/releases/latest --jq .tag_name
+   ```
+
+   If the command prints another tag, run `gh release edit <fix-tag> --latest`.
+
+4. Flip the fix to an [emergency release](#emergency-release-rollout_hours0):
+
+   ```bash
+   gh workflow run desktop-rollout.yml \
+     -f tag=<fix-tag> \
+     -f rollout_hours=0
+   ```
+
+Do not leave the fix as a paced release. The installs that took the bad release are in their 24-hour cooldown and skip a paced release. An install that holds the bad release as a staged update, and did not check during the halt, keeps it when a paced release follows. An emergency release reaches both.
+
 ### Custom ramp on a manually-dispatched build
 
-`desktop-release.yml` accepts `rollout_hours` only on `workflow_dispatch`, which is the path used to **rebuild an existing tag** (retry a failed release, force a rebuild on a different ref). When you go that route, you can stamp a non-default ramp directly:
+`desktop-release.yml` accepts `rollout_hours` only on `workflow_dispatch`, which is the path used to rebuild an existing tag (retry a failed release, force a rebuild on a different ref). On that path, you can stamp a different ramp directly:
 
 ```bash
 gh workflow run desktop-release.yml \
@@ -390,13 +455,18 @@ gh workflow run desktop-release.yml \
   -f rollout_hours=6
 ```
 
-This does **not** apply to fresh releases shipped via `npm run release:ship` — tag-push runs always stamp 36. For a fresh release with a custom ramp, ship normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
+For a fresh release with a custom ramp, follow the [emergency release procedure](#emergency-release-rollout_hours0)
+and set `rollout_hours` to your chosen duration.
 
 ### Releasing during an active rollout
 
-If you ship N+1 while N is still ramping, N+1 starts a fresh rollout from its own publish timestamp. N's rollout effectively ends — the newer manifest supersedes it. Rollout-aware clients revalidate the manifest for up to five seconds before installing a downloaded update on quit. If N+1 has replaced N but the client is not admitted to N+1 yet, it skips the downloaded N and waits rather than installing two updates in succession. If revalidation times out, the app exits without installing the cached update.
+If you ship N+1 while N is still ramping, N+1 starts a new rollout from its own publish time, and the rollout of N ends because installs no longer see its manifests.
 
-If N+1 is a hotfix for a bug in N, dispatch `desktop-rollout.yml -f tag=v0.1.<N+1> -f rollout_hours=0` after N+1 publishes so the users who already got N reach the fix fast.
+An install that holds N as a staged update keeps N when N+1 is a paced release, and installs N when the app quits. It then waits out its cooldown before it takes a later paced release. The hold covers only paced patch releases that the install saw one after the other. If the install missed a release, it evaluates the newest release instead: it replaces N when it is admitted, and drops N when it is not.
+
+A minor or major release always ends the hold. The version numbers do not show whether a fix shipped between `0.17.4` and `0.18.0`, so the install treats `0.18.0` as if it missed a release.
+
+Before an install at quit, the app asks GitHub for the latest release for up to five seconds. If that check does not finish in time, the app exits without installing the staged update.
 
 ### macOS system floor
 
@@ -409,10 +479,10 @@ macOS 13 maps to Darwin 22. The two values use different version domains; do not
 
 ### Limitations
 
-- **No pause / kill switch.** To stop new admissions, ship a superseding release. Clients revalidate on quit and will not install the superseded download, but a client that already completed installation cannot be recalled; ship a hotfix `+1` patch.
-- **No rollback.** `allowDowngrade = false`. Bad release = ship a hotfix.
-- **Bootstrap caveat.** Clients running a build older than the rollout feature ignore `rolloutHours` and admit immediately. Rollout protection only applies to clients running the rollout-aware version or later.
-- **Up to ~30 min automatic admission latency.** Renderer polls every 30 minutes, so a stable user may take up to that long to be evaluated against the rollout window. Clicking **Check** is manual and bypasses rollout admission.
+- A release cannot be recalled from an install that runs it. `allowDowngrade` is `false`. [Halt](#halt-a-release) the release to protect the other installs, then [ship a fix](#fix-a-bad-release).
+- An emergency release reaches a running install at its next check, up to 6 hours after its previous one. A manual check sees it at once.
+- Installs older than the canary and cooldown build have neither. They ramp in a straight line over `rolloutHours` and check every 30 minutes. Installs older than the staged rollout ignore `rolloutHours` and update at once.
+- The app window starts every automatic check. A release whose window does not load cannot update itself, and its users must download a new build from the website. Smoke the packaged app before you publish.
 
 ## Mobile builds (EAS)
 
@@ -859,6 +929,18 @@ Bullets within each section (Added, Changed, Fixed) follow this order:
 2. **Quality-of-life improvements** — polish, performance, smoother interactions.
 3. **Internal/infra changes last** — only include if they have a tangible user benefit (e.g. "faster startup" is user-facing even if the fix was internal).
 
+## Pre-release dependency checks
+
+Run these checks from the repository root on the release commit before shipping a beta or stable release.
+Use Linux x64 so the audit includes the platform-specific dependencies that the CI job checked.
+
+1. Review changes to dependency versions, download URLs, and integrity hashes in `git diff <previous-release-tag> HEAD -- package-lock.json`.
+2. Install the exact dependencies from the release lockfile with `npm ci`.
+3. Run `npm audit signatures`. Investigate failures before shipping. See [Dependency signature audit](development.md#dependency-signature-audit) for help.
+
+Checking signatures and reviewing the lockfile diff reduce the risk of shipping compromised dependencies.
+These checks help prevent supply-chain attacks from reaching users through Paseo.
+
 ## Pre-release sanity check
 
 Before cutting a **stable** release, the release agent reviews the diff as a last line of defence against shipping bugs. Skip this for betas — the beta itself is the smoke test, and gating each beta on a code review defeats the point of using betas as fast release candidates.
@@ -886,6 +968,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] Fold this beta into the series' single `CHANGELOG.md` entry (heading `## X.Y.Z-beta.N - YYYY-MM-DD`, previous stable → release source), review it against the changelog policy, get approval, and commit it with its [`CHANGELOG.zh-CN.md` translation](#changelog-translations) before running `release:prep:*`
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
 - [ ] `npm run release:prep:beta:patch`, `release:prep:beta:minor`, or `release:prep:beta:next` created the version commit on `release/vX.Y.Z-beta.N` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 - [ ] After go-ahead, `npm run release:ship:beta` published npm and pushed the `vX.Y.Z-beta.N` tag without triggering a second CI run
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] The GitHub prerelease was published only after the three beta manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
@@ -909,6 +992,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] Ensure local format, lint, and typecheck pass and the working tree is clean before running `release:prep:*`
 - [ ] `npm run release:prep:patch`, `release:prep:minor`, or `release:prep:promote` created the version commit on `release/vX.Y.Z` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
+- [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
 - [ ] After go-ahead, `npm run release:ship` published npm, updated dist-tags, and pushed the `vX.Y.Z` tag without triggering a second CI run
 - [ ] `latest` resolves to the new stable, and `beta` resolves to it too unless an active newer beta holds `beta`
 - [ ] The GitHub Release was published only after the three stable manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset

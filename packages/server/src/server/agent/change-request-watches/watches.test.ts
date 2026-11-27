@@ -146,8 +146,8 @@ test("lists and stops each agent's subscription through the background work regi
       canStop: true,
     });
     expect(second).toMatchObject({ id: first.id, description: first.description });
-    expect(h.backgroundWork.summary("first")).toEqual({ count: 1 });
-    expect(h.backgroundWork.summary("second")).toEqual({ count: 1 });
+    expect(h.backgroundWork.summary("first")).toEqual({ count: 1, runningCount: 0 });
+    expect(h.backgroundWork.summary("second")).toEqual({ count: 1, runningCount: 0 });
 
     await h.watches.subscribe("first", url);
     await h.observations.get(url)!.snapshot(initial);
@@ -417,7 +417,7 @@ test("recovers active watches even when pruning archived watchers cannot be writ
     });
     await h.watches.start();
     expect(h.backgroundWork.list("archived")).toEqual([]);
-    expect(h.backgroundWork.summary("active")).toEqual({ count: 1 });
+    expect(h.backgroundWork.summary("active")).toEqual({ count: 1, runningCount: 0 });
     await expect(h.watches.unsubscribe("archived", url)).resolves.toMatchObject({ removed: false });
     await expect(h.watches.subscribe("active", url)).resolves.toMatchObject({ subscribed: true });
     expect(await readFile(backup, "utf8")).toBe(stored);

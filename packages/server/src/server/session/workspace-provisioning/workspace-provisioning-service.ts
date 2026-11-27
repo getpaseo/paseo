@@ -486,6 +486,46 @@ export function createWorkspaceProvisioningService(deps: {
       : workspace.autoArchivedChangeRequestUrl;
   }
 
+  async function commitUnarchivedWorkspaceAndAgents(input: {
+    workspace: PersistedWorkspaceRecord;
+    next: PersistedWorkspaceRecord | null;
+    archivedAt: string | null;
+  }): Promise<PersistedWorkspaceRecord> {
+    const { workspace, next, archivedAt } = input;
+    const deferPublish = Boolean(
+      archivedAt && workspaceRegistry.publishUpsert && (next || workspaceRegistry.deferBroadcast),
+    );
+    const deferToken = deferPublish ? Symbol("workspace-unarchive") : undefined;
+    if (next) {
+      // Persist the recovered workspace before unarchiving agents so a failed write leaves
+      // agents archived for retry, while deferring broadcast until agents finish unarchiving.
+      await workspaceRegistry.upsert(
+        next,
+        deferPublish ? { publish: false, deferToken } : undefined,
+      );
+    } else if (deferPublish && deferToken) {
+      // Canceled mid-teardown undo: the workspace record is still active, so keep it visible
+      // in WorkspaceDirectory reads for other clients while holding `workspace_update`
+      // broadcast until all workspace-archived agents finish unarchiving.
+      workspaceRegistry.deferBroadcast?.(workspace.workspaceId, deferToken);
+    }
+    // A canceled archive supplies a modern stamp before the record itself is archived.
+    if (archivedAt) {
+      try {
+        await deps.unarchiveWorkspaceAgents({
+          workspaceId: workspace.workspaceId,
+          archivedAt,
+          allowLegacyFallback: Boolean(workspace.archivedAt),
+        });
+      } finally {
+        if (deferPublish) {
+          await workspaceRegistry.publishUpsert?.(next ?? workspace, { deferToken });
+        }
+      }
+    }
+    return next ?? workspace;
+  }
+
   async function ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
     archivedAt = workspace.archivedAt,
@@ -536,16 +576,7 @@ export function createWorkspaceProvisioningService(deps: {
         });
       }
     }
-    if (next) await workspaceRegistry.upsert(next);
-    // A canceled archive supplies a modern stamp before the record itself is archived.
-    if (archivedAt) {
-      await deps.unarchiveWorkspaceAgents({
-        workspaceId: workspace.workspaceId,
-        archivedAt,
-        allowLegacyFallback: Boolean(workspace.archivedAt),
-      });
-    }
-    return next ?? workspace;
+    return commitUnarchivedWorkspaceAndAgents({ workspace, next, archivedAt });
   }
 
   async function refreshWorkspaceRecord(

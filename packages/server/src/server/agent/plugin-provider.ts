@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import { PluginSessionHistory } from "./plugin-session-history.js";
 import { resolve as resolvePath } from "node:path";
@@ -12,6 +13,8 @@ import {
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderStatusSchema,
+  type ProviderCatalogRefreshMode,
+  type ProviderClientInfo,
   type ProviderStatus,
   type ProviderInspection,
   type ProviderUpdateCheck,
@@ -37,6 +40,7 @@ import {
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentClientAvailability,
   AgentClientInstallation,
   AgentClientUpdateCheckContext,
   AgentClientUpdateContext,
@@ -81,9 +85,33 @@ import {
   formatProviderDiagnostic,
   type DiagnosticEntry,
 } from "./providers/diagnostic-utils.js";
+import { LaunchWrapUnsupportedError, ToolPolicyUnsupportedError } from "./provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
+import { resolveDaemonVersion } from "../daemon-version.js";
+
+let cachedPluginClientInfo: ProviderClientInfo | null = null;
+
+function resolvePluginClientInfo(): ProviderClientInfo {
+  if (!cachedPluginClientInfo) {
+    cachedPluginClientInfo = {
+      name: "paseo",
+      title: "Paseo",
+      version: resolveDaemonVersion(import.meta.url),
+    };
+  }
+  return cachedPluginClientInfo;
+}
+
+function firstDiagnosticLine(diagnostic: string): string {
+  return (
+    diagnostic
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? diagnostic
+  );
+}
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -150,6 +178,10 @@ function describeVersion(inspection: ProviderInstallationInspection): string {
   return inspection.version?.trim() || "unknown";
 }
 
+function toProviderLaunch(launch: ProviderInstallationLaunch): ProviderLaunch {
+  return { command: launch.command, args: launch.args, env: launch.env };
+}
+
 class ProviderRuntime {
   private connection: ProviderConnection | null = null;
   connectedLaunch: ProviderLaunch | undefined;
@@ -180,7 +212,7 @@ class ProviderRuntime {
   ) {}
 
   /** The launch after overrides, and where its executable resolves. */
-  private async resolveConfiguredLaunch() {
+  private async resolveConfiguredLaunch(options?: { probe?: boolean }) {
     const command = this.registration.command;
     if (!command) return undefined;
     const launch = await resolveProviderLaunch({
@@ -190,12 +222,18 @@ class ProviderRuntime {
     if (launch.source !== "override") launch.args.unshift(...command.slice(1));
     const env = createProviderEnv({ runtimeSettings: this.runtimeSettings });
     launch.env = env;
-    return { launch, env, availability: await checkProviderLaunchAvailable(launch) };
+    return {
+      launch,
+      env,
+      availability: await checkProviderLaunchAvailable(launch, undefined, options),
+    };
   }
 
   /** The effective launch, including when its executable does not resolve. */
-  private async resolveEffectiveLaunch(): Promise<ProviderInstallationLaunch | undefined> {
-    const configured = await this.resolveConfiguredLaunch();
+  private async resolveEffectiveLaunch(options?: {
+    probe?: boolean;
+  }): Promise<ProviderInstallationLaunch | undefined> {
+    const configured = await this.resolveConfiguredLaunch(options);
     if (!configured) return undefined;
     const { launch, env, availability } = configured;
     if (!availability.resolvedPath)
@@ -209,16 +247,18 @@ class ProviderRuntime {
   }
 
   private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
-    const launch = await this.resolveEffectiveLaunch();
+    const launch = await this.resolveEffectiveLaunch(
+      this.registration.status ? { probe: false } : undefined,
+    );
     if (!launch) return undefined;
     if (!launch.resolved) throw new Error(`${launch.command} not found on PATH`);
-    return { command: launch.command, args: launch.args, env: launch.env };
+    return toProviderLaunch(launch);
   }
 
   async resolveUsageLaunch(): Promise<ProviderLaunch | undefined> {
     const launch = await this.resolveEffectiveLaunch();
     if (!launch?.resolved) return undefined;
-    return { command: launch.command, args: launch.args, env: launch.env };
+    return toProviderLaunch(launch);
   }
 
   async inspectInstallation(signal: AbortSignal): Promise<ProviderInspection> {
@@ -263,11 +303,62 @@ class ProviderRuntime {
     return rows;
   }
 
+  async checkAvailability(): Promise<AgentClientAvailability> {
+    // When the provider owns a custom status() probe, resolve the path without running a separate
+    // `--version` probe first so availability runs at most one local check.
+    const launch = await this.resolveEffectiveLaunch(
+      this.registration.status ? { probe: false } : undefined,
+    );
+    if (launch && !launch.resolved) {
+      return { status: "unavailable" };
+    }
+    const providerLaunch = launch ? toProviderLaunch(launch) : undefined;
+    if (!this.registration.status) {
+      if (!this.registration.command) {
+        try {
+          await this.getConnection();
+        } catch {
+          return { status: "unavailable" };
+        }
+      }
+      return { status: "available" };
+    }
+    try {
+      const status = ProviderStatusSchema.parse(
+        await this.registration.status({ launch: providerLaunch }),
+      );
+      if (status.available) return { status: "available" };
+      return { status: "error", message: firstDiagnosticLine(status.diagnostic) };
+    } catch (error) {
+      return {
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async binaryFingerprint(): Promise<string | undefined> {
+    const launch = await this.resolveEffectiveLaunch({ probe: false });
+    if (!launch?.resolved) return undefined;
+    try {
+      const info = await stat(launch.command);
+      return `${info.mtimeMs}:${info.size}`;
+    } catch {
+      return undefined;
+    }
+  }
+
   async status(): Promise<ProviderStatus> {
     try {
-      const launch = await this.resolveLaunch();
+      const launch = await this.resolveEffectiveLaunch(
+        this.registration.status ? { probe: false } : undefined,
+      );
+      if (launch && !launch.resolved) throw new Error(`${launch.command} not found on PATH`);
+      const providerLaunch = launch ? toProviderLaunch(launch) : undefined;
       if (this.registration.status)
-        return ProviderStatusSchema.parse(await this.registration.status({ launch }));
+        return ProviderStatusSchema.parse(
+          await this.registration.status({ launch: providerLaunch }),
+        );
       if (!this.registration.command) await this.getConnection();
       return { available: true };
     } catch (error) {
@@ -281,11 +372,20 @@ class ProviderRuntime {
   async catalogCacheKey(options: FetchCatalogOptions): Promise<string | undefined> {
     const callback = this.registration.getCatalogCacheKey;
     if (!callback) return undefined;
-    return callback({ ...options, launch: await this.resolveLaunch() });
+    const launch = await this.resolveEffectiveLaunch({ probe: false });
+    // A missing executable gets its own catalogue, so refresh reports it unavailable instead of
+    // failing the key or reusing a catalogue cached while it was installed.
+    if (launch && !launch.resolved) return JSON.stringify(["unresolved", launch.command]);
+    return callback({ ...options, launch: launch && toProviderLaunch(launch) });
   }
 
   get negotiatedCapabilities(): readonly string[] {
     return this.connection?.capabilities ?? [];
+  }
+
+  /** The live connection's capabilities, connecting first when no connection exists yet. */
+  async connectedCapabilities(): Promise<readonly string[]> {
+    return (await this.getConnection()).capabilities;
   }
 
   get isClosed(): boolean {
@@ -335,6 +435,12 @@ class ProviderRuntime {
       throw new Error(`Provider session already exists: ${input.sessionId}`);
     }
     const connection = await this.getConnection();
+    if (input.config.toolPolicy && !connection.capabilities.includes("permission.tool_policy")) {
+      throw new ToolPolicyUnsupportedError(
+        this.registration.id,
+        `Provider '${this.registration.id}' cannot preapprove exact MCP tools: its connection does not offer permission.tool_policy`,
+      );
+    }
     requireProviderCapabilities(connection.capabilities, {
       type: "session.open",
       requestId: "capability-check",
@@ -433,6 +539,12 @@ class ProviderRuntime {
       pending.reject(
         signal?.reason instanceof Error ? signal.reason : new Error("Provider request aborted"),
       );
+      // Without the cancel, a provider keeps the abandoned work and whatever it spawned (#10734).
+      if (connection.capabilities.includes("request.cancel")) {
+        void connection
+          .send({ type: "request.cancel", requestId: input.requestId })
+          .catch(() => undefined);
+      }
     };
     signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -475,6 +587,7 @@ class ProviderRuntime {
     const launch = await this.resolveLaunch();
     const rawConnection = await this.registration.connect({
       launch,
+      clientInfo: resolvePluginClientInfo(),
       versions: [PROVIDER_PROTOCOL_VERSION],
       capabilities: PROVIDER_CAPABILITIES,
     });
@@ -1041,9 +1154,13 @@ function createPluginProviderDefinition(
     iconSvg: registration.icon,
     docsUrl: registration.docsUrl,
     requiresConfiguration: registration.requiresConfiguration,
+    catalogRefresh: registration.catalogRefresh,
     defaultModeId: null,
     modes: [],
+    // Each connection negotiates permission.tool_policy, so the registry lets a policy through and
+    // ProviderRuntime.openSession refuses it with ToolPolicyUnsupportedError when it is not offered.
     supportsExactMcpPreapproval: true,
+    supportsLaunchWrap: registration.launchWrap === true,
     createClient,
   };
 }
@@ -1060,12 +1177,16 @@ class PluginAgentClient implements AgentClient {
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];
 
+  readonly catalogRefresh?: ProviderCatalogRefreshMode;
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
   readonly installation?: AgentClientInstallation;
+  readonly supportsLaunchWrap: boolean;
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
     this.label = registration.label;
+    this.catalogRefresh = registration.catalogRefresh;
+    this.supportsLaunchWrap = registration.launchWrap === true;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
@@ -1091,6 +1212,15 @@ class PluginAgentClient implements AgentClient {
 
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.runtime.negotiatedCapabilities);
+  }
+
+  async requireLaunchWrap(): Promise<void> {
+    if (!(await this.runtime.connectedCapabilities()).includes("session.launch_wrap")) {
+      throw new LaunchWrapUnsupportedError(
+        this.provider,
+        `Provider '${this.provider}' declares launch wrap support, but its connection does not offer session.launch_wrap`,
+      );
+    }
   }
 
   async createSession(
@@ -1149,6 +1279,15 @@ class PluginAgentClient implements AgentClient {
   async isAvailable(signal?: AbortSignal): Promise<boolean> {
     signal?.throwIfAborted();
     return await this.runtime.isAvailable();
+  }
+
+  async checkAvailability(signal?: AbortSignal): Promise<AgentClientAvailability> {
+    signal?.throwIfAborted();
+    return await this.runtime.checkAvailability();
+  }
+
+  async getCatalogBinaryFingerprint(): Promise<string | undefined> {
+    return await this.runtime.binaryFingerprint();
   }
 
   async getDiagnostic(context: AgentClientDiagnosticContext): Promise<{ diagnostic: string }> {
@@ -2135,6 +2274,7 @@ function mapSessionConfig(
     providerOptions: config.providerOptions,
     title: config.title ?? undefined,
     persist,
+    ...(launchContext?.wrap ? { wrap: launchContext.wrap } : {}),
   };
 }
 

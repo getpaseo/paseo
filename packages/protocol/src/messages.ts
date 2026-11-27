@@ -43,6 +43,18 @@ export {
 } from "./plugin-config.js";
 import { TerminalProfileSchema } from "./terminal-profile.js";
 export { TerminalProfileSchema, type TerminalProfile } from "./terminal-profile.js";
+import { NotificationPreferencesSchema } from "./notification-preferences.js";
+export {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  NotificationEventsPreferencesSchema,
+  NotificationPluginsPreferencesSchema,
+  NotificationPreferencesSchema,
+  normalizeNotificationPreferences,
+  shouldDeliverNotification,
+  type NotificationKind,
+  type NotificationPreferences,
+  type NotificationPreferencesInput,
+} from "./notification-preferences.js";
 import { AgentTeamsConfigWireSchema } from "./agent-team-config.js";
 export {
   AgentTeamsConfigWireSchema,
@@ -516,6 +528,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   iconSvg: z.string().optional(),
   docsUrl: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
+  launchWrap: z.boolean().optional(),
 });
 
 export const CompactProviderSnapshotModelSchema = AgentModelDefinitionSchema.omit({
@@ -1635,9 +1648,17 @@ export const WaitForFinishRequestSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+export const DaemonTailscaleSetRequestSchema = z.object({
+  type: z.literal("daemon.tailscale.set.request"),
+  requestId: z.string(),
+  enabled: z.boolean(),
+  confirmed: z.boolean().optional(),
+});
+
 export const DaemonGetStatusRequestSchema = z.object({
   type: z.literal("daemon.get_status.request"),
   requestId: z.string(),
+  includeProviders: z.boolean().optional(),
 });
 
 export const DaemonGetPairingOfferRequestSchema = z.object({
@@ -3312,6 +3333,11 @@ export const FileDownloadTokenRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const NetworkTunnelCreateTicketRequestSchema = z.object({
+  type: z.literal("network.tunnel.create_ticket.request"),
+  requestId: z.string(),
+});
+
 export const FileUploadRequestSchema = z.object({
   type: z.literal("file.upload.request"),
   fileName: z.string().min(1),
@@ -3377,6 +3403,7 @@ export const ListCommandsRequestSchema = z.object({
 export const RegisterPushTokenMessageSchema = z.object({
   type: z.literal("register_push_token"),
   token: z.string(),
+  preferences: NotificationPreferencesSchema.optional(),
 });
 
 export const PushUnregisterRequestSchema = z.object({
@@ -3620,6 +3647,7 @@ export const SessionEventSubscriptionSchema = z.enum([
   "agent.provider_subagents.update",
   "agent.background_work.update",
   "terminal_attention_required",
+  "plugin.notification",
   "status.server_info",
   "status.daemon_config_changed",
   "status.plugin_catalog_changed",
@@ -3676,6 +3704,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HostsRouteOpenRequestSchema,
   HostsRouteFrameRequestSchema,
   HostsRouteCloseRequestSchema,
+  NetworkTunnelCreateTicketRequestSchema,
 
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
@@ -3718,6 +3747,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
+  DaemonTailscaleSetRequestSchema,
   DaemonGetPairingOfferRequestSchema,
   DaemonConfigReloadRequestSchema,
   HubManagementDaemonConnectRequestSchema,
@@ -4169,6 +4199,7 @@ export const ServerInfoStatusPayloadSchema = z
         forgeSearch: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
+        tailscale: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: z.boolean().optional(),
         // COMPAT(speechSettings): added in v0.12.0, remove gate after 2027-04-18.
@@ -4177,6 +4208,8 @@ export const ServerInfoStatusPayloadSchema = z
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
         pushTokenRevocation: z.boolean().optional(),
+        // COMPAT(pushNotificationPreferences): added in v0.18.0, remove gate after 2027-06-01.
+        pushNotificationPreferences: z.boolean().optional(),
         // COMPAT(plugins): added in v0.3.0, remove gate after 2027-08-07.
         plugins: z.boolean().optional(),
         // COMPAT(pluginManagement): added in v0.4.0, remove gate after 2027-08-14.
@@ -4199,6 +4232,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginTimelineItems: z.boolean().optional(),
         // COMPAT(pluginSubscriptions): added in v0.15.0, remove gate after 2027-05-02.
         pluginSubscriptions: z.boolean().optional(),
+        // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+        pluginNotifications: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -4433,6 +4468,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
+        networkTunnel: z.boolean().optional(),
         // COMPAT(agentTeams): added in v0.12.0, remove gate after 2027-10-21.
         // Covers agent.teams.list and the create-agent `team` and `teamModelOverrides` fields.
         agentTeams: z.boolean().optional(),
@@ -5794,6 +5831,32 @@ export const GetDaemonConfigResponseMessageSchema = z.object({
     .passthrough(),
 });
 
+const TailscaleStatusSchema = z.object({
+  ip: z.string().nullable(),
+  address: z.string().nullable(),
+  state: z.enum(["unavailable", "off", "waiting", "on"]),
+  lockedBy: z.enum(["main", "launch"]).optional(),
+  // COMPAT(tailscale): keep lockedBy "main" for older clients when the main listener is a socket.
+  mainIsSocket: z.literal(true).optional(),
+  // Whether turning off Tailscale would disconnect the source of this request.
+  disconnectsCurrentConnection: z.boolean().optional(),
+});
+
+const ExtraListenerStatusSchema = z.object({
+  address: z.string(),
+  state: z.enum(["waiting", "listening"]),
+});
+
+export const DaemonTailscaleSetResponseSchema = z.object({
+  type: z.literal("daemon.tailscale.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    confirmationRequired: z.boolean(),
+    tailscale: TailscaleStatusSchema,
+    extraListeners: z.array(ExtraListenerStatusSchema),
+  }),
+});
+
 export const DaemonGetStatusResponseSchema = z.object({
   type: z.literal("daemon.get_status.response"),
   payload: z
@@ -5805,6 +5868,8 @@ export const DaemonGetStatusResponseSchema = z.object({
       nodePath: z.string(),
       startedAt: z.string().nullable().optional(),
       listen: z.string().nullable(),
+      tailscale: TailscaleStatusSchema.optional(),
+      extraListeners: z.array(ExtraListenerStatusSchema).optional(),
       relay: z
         .object({
           enabled: z.boolean(),
@@ -6988,6 +7053,15 @@ export const FileDownloadTokenResponseSchema = z.object({
   }),
 });
 
+export const NetworkTunnelCreateTicketResponseSchema = z.object({
+  type: z.literal("network.tunnel.create_ticket.response"),
+  payload: z.object({
+    requestId: z.string(),
+    ticket: z.string().min(1),
+    expiresAtMs: z.number().int(),
+  }),
+});
+
 export const FileUploadResponseSchema = z.object({
   type: z.literal("file.upload.response"),
   payload: z.object({
@@ -7563,6 +7637,41 @@ export const TerminalAttentionRequiredSchema = z.object({
   }),
 });
 
+export const PluginNotificationOpenTargetSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("agent"),
+    agentId: z.string(),
+  }),
+  z.object({
+    type: z.literal("workspace"),
+    workspaceId: z.string(),
+  }),
+  z.object({
+    type: z.literal("screen"),
+    screenId: z.string(),
+    params: z.record(z.string(), z.string()).optional(),
+  }),
+]);
+
+export type PluginNotificationOpenTarget = z.infer<typeof PluginNotificationOpenTargetSchema>;
+
+export const PluginNotificationMessageSchema = z.object({
+  type: z.literal("plugin.notification"),
+  payload: z.object({
+    subscriptionId: z.string().optional(),
+    serverId: z.string().optional(),
+    pluginId: z.string(),
+    notificationId: z.string(),
+    title: z.string(),
+    body: z.string(),
+    open: PluginNotificationOpenTargetSchema.optional(),
+    data: z.record(z.string(), JsonWireValueSchema).optional(),
+    shouldNotify: z.boolean(),
+  }),
+});
+
+export type PluginNotificationMessage = z.infer<typeof PluginNotificationMessageSchema>;
+
 export const DaemonUpdateResponseSchema = z.object({
   type: z.literal("daemon.update.response"),
   payload: z.object({
@@ -7931,6 +8040,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HostsRouteOpenResponseSchema,
   HostsRouteFrameSchema,
   HostsRouteClosedSchema,
+  NetworkTunnelCreateTicketResponseSchema,
 
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
@@ -8042,6 +8152,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
+  DaemonTailscaleSetResponseSchema,
   DaemonGetPairingOfferResponseSchema,
   DaemonConfigReloadResponseSchema,
   HubManagementDaemonConnectResponseSchema,
@@ -8157,6 +8268,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CaptureTerminalResponseSchema,
   TerminalStreamExitSchema,
   TerminalAttentionRequiredSchema,
+  PluginNotificationMessageSchema,
   ChatCreateResponseSchema,
   ChatListResponseSchema,
   ChatInspectResponseSchema,
@@ -8662,6 +8774,13 @@ export type ProjectIconGetResponse = z.infer<typeof ProjectIconGetResponseSchema
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
+export type NetworkTunnelCreateTicketRequest = z.infer<
+  typeof NetworkTunnelCreateTicketRequestSchema
+>;
+export type NetworkTunnelCreateTicketResponse = z.infer<
+  typeof NetworkTunnelCreateTicketResponseSchema
+>;
+export type NetworkTunnelCreateTicketPayload = NetworkTunnelCreateTicketResponse["payload"];
 export type FileUploadRequest = z.infer<typeof FileUploadRequestSchema>;
 export type FileUploadResponse = z.infer<typeof FileUploadResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
@@ -8794,10 +8913,34 @@ export const WSHelloRejectedMessageSchema = z.object({
   accepts: z.array(z.literal("password")),
 });
 
+export const WSTunnelHelloMessageSchema = z.object({
+  type: z.literal("tunnel_hello"),
+  ticket: z.string().min(1),
+});
+
+export const WSTunnelReadyMessageSchema = z.object({
+  type: z.literal("tunnel_ready"),
+  maxFramePayloadBytes: z.number().int().positive(),
+  initialStreamWindowBytes: z.number().int().positive(),
+  initialConnectionWindowBytes: z.number().int().positive(),
+});
+
+export const WSTunnelErrorMessageSchema = z.object({
+  type: z.literal("tunnel_error"),
+  code: z.string().min(1),
+  message: z.string(),
+});
+
+export const WSTunnelHandshakeResponseSchema = z.discriminatedUnion("type", [
+  WSTunnelReadyMessageSchema,
+  WSTunnelErrorMessageSchema,
+]);
+
 // Complete WebSocket message schemas
 export const WSInboundMessageSchema = z.discriminatedUnion("type", [
   WSPingMessageSchema,
   WSHelloMessageSchema,
+  WSTunnelHelloMessageSchema,
   WSRecordingStateMessageSchema,
   WSSessionInboundSchema,
 ]);
@@ -8811,6 +8954,10 @@ export const WSOutboundMessageSchema = z.discriminatedUnion("type", [
 export type WSInboundMessage = z.infer<typeof WSInboundMessageSchema>;
 export type WSOutboundMessage = z.infer<typeof WSOutboundMessageSchema>;
 export type WSHelloMessage = z.infer<typeof WSHelloMessageSchema>;
+export type WSTunnelHelloMessage = z.infer<typeof WSTunnelHelloMessageSchema>;
+export type WSTunnelReadyMessage = z.infer<typeof WSTunnelReadyMessageSchema>;
+export type WSTunnelErrorMessage = z.infer<typeof WSTunnelErrorMessageSchema>;
+export type WSTunnelHandshakeResponse = z.infer<typeof WSTunnelHandshakeResponseSchema>;
 
 // ============================================================================
 // Helper functions for message conversion
@@ -8845,3 +8992,6 @@ export function parseServerInfoStatusPayload(payload: unknown): ServerInfoStatus
   }
   return parsed.data;
 }
+
+export type TailscaleStatus = z.infer<typeof TailscaleStatusSchema>;
+export type DaemonTailscaleSetResponse = z.infer<typeof DaemonTailscaleSetResponseSchema>;

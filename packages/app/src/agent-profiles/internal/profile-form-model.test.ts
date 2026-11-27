@@ -2,6 +2,7 @@ import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { describe, expect, it } from "vitest";
 import {
   buildControlsRequestKey,
+  buildInstantAgentProfile,
   openAgentProfileForm,
   type AgentProfileFormModel,
 } from "./profile-form-model";
@@ -68,6 +69,10 @@ function selectClaude(model: AgentProfileFormModel): void {
 
 function optionValues(options: readonly { value: string }[]): string[] {
   return options.map((option) => option.value);
+}
+
+function optionIds(options: readonly { id: string }[]): string[] {
+  return options.map((option) => option.id);
 }
 
 const FAST = {
@@ -165,17 +170,44 @@ describe("openAgentProfileForm", () => {
     const model = openWithCatalog({ mode: "create" });
     model.setName("  Cheap grunt  ");
     model.setProvider("codex", { label: "Codex" });
+    model.setSystemPrompt("   ");
     model.setNotes("   ");
 
     // Codex declares no thinking options, so that key is genuinely absent —
     // model and mode are seeded, never left for the host to decide.
+    // `options` and `systemPrompt` stay present when empty so the daemon can
+    // distinguish an intentional clear from an older app that predates them.
     expect(model.getState().submitValue).toEqual({
       name: "Cheap grunt",
       provider: "codex",
       model: "gpt-5.2-codex",
       modeId: "read-only",
       options: {},
+      systemPrompt: "",
     });
+  });
+
+  it("seeds, tracks dirty state, preserves across provider switches, and submits systemPrompt", () => {
+    const model = openWithCatalog({
+      mode: "edit",
+      profile: {
+        id: "p1",
+        name: "UI work",
+        provider: "claude",
+        model: "claude-opus-5",
+        systemPrompt: "Focus on layout.",
+      },
+    });
+    expect(model.getState().systemPrompt).toBe("Focus on layout.");
+    expect(model.getState().isDirty).toBe(false);
+
+    model.setSystemPrompt("  Focus on layout and tokens.  ");
+    expect(model.getState().isDirty).toBe(true);
+    expect(model.getState().submitValue?.systemPrompt).toBe("Focus on layout and tokens.");
+
+    model.setProvider("codex", { label: "Codex" });
+    expect(model.getState().systemPrompt).toBe("  Focus on layout and tokens.  ");
+    expect(model.getState().submitValue?.systemPrompt).toBe("Focus on layout and tokens.");
   });
 
   it("seeds edit mode from the stored profile before the catalog lands", () => {
@@ -528,14 +560,69 @@ describe("openAgentProfileForm", () => {
       });
     });
 
-    it("draws no controls for the previous model while another model's answer is pending", () => {
+    it("keeps previous provider controls mounted while another model's answer is pending to prevent layout jank", () => {
       const model = openWithCatalog({ mode: "create" });
       selectClaude(model);
       model.applyControls(model.getState().controlsRequestKey ?? "", WEB_SEARCH_CONTROLS);
 
       model.setModel("claude-haiku-4-5", { label: "Haiku 4.5" });
 
+      expect(model.getState().controlsResolution).toBe("pending");
+      expect(model.getState().controlsPending).toBe(true);
+      expect(model.getState().controls).toHaveLength(1);
+
+      // Switching providers clears controls immediately so stale controls never cross providers.
+      model.setProvider("codex", { label: "Codex" });
       expect(model.getState().controls).toEqual([]);
+    });
+
+    it("seeds the catalog synchronously when entries are passed in the initial snapshot", () => {
+      const model = openAgentProfileForm({
+        mode: "edit",
+        profile: { id: "p1", name: "UI work", provider: "claude", model: "claude-opus-5" },
+        entries: ENTRIES,
+      });
+      const state = model.getState();
+
+      expect(state.catalogResolution).toBe("complete");
+      expect(state.providerDisplay).toEqual({ label: "Claude Code" });
+      expect(state.modelDisplay).toEqual({ label: "Opus 5" });
+      expect(optionIds(state.unifiedModelOptions)).toEqual([
+        "claude:claude-opus-5",
+        "claude:claude-haiku-4-5",
+        "codex:gpt-5.2-codex",
+      ]);
+    });
+
+    it("updates provider, model, and auto-suggested name together via setProviderModel", () => {
+      const model = openAgentProfileForm({ mode: "create", entries: ENTRIES });
+
+      model.setProviderModel("claude", "claude-opus-5", {
+        provider: { label: "Claude Code" },
+        model: { label: "Opus 5" },
+      });
+      expect(model.getState().name).toBe("Opus 5");
+      expect(model.getState().provider).toBe("claude");
+      expect(model.getState().modelId).toBe("claude-opus-5");
+      expect(model.getState().modeId).toBe("plan");
+      expect(model.getState().thinkingOptionId).toBe("think");
+
+      // Switching to another model while untouched updates the suggested name.
+      model.setProviderModel("codex", "gpt-5.2-codex", {
+        provider: { label: "Codex" },
+        model: { label: "GPT-5.2 Codex" },
+      });
+      expect(model.getState().name).toBe("GPT-5.2 Codex");
+      expect(model.getState().provider).toBe("codex");
+      expect(model.getState().modeId).toBe("read-only");
+
+      // Once the user types a custom name, changing model preserves it.
+      model.setName("My Custom Worker");
+      model.setProviderModel("claude", "claude-haiku-4-5", {
+        provider: { label: "Claude Code" },
+        model: { label: "Haiku 4.5" },
+      });
+      expect(model.getState().name).toBe("My Custom Worker");
     });
 
     it("does not save a toggle once the model that drew it is replaced by one without it", () => {
@@ -643,6 +730,36 @@ describe("openAgentProfileForm", () => {
     expect(notifications).toBe(1);
     expect(model.getState().name).toBe("a");
   });
+
+  it("does not treat catalog-prefilled defaults on a minimal profile as an unsaved edit", () => {
+    const model = openAgentProfileForm({
+      mode: "edit",
+      profile: {
+        id: "legacy_favorite:claude:claude-opus-5",
+        name: "Opus 5",
+        provider: "claude",
+        model: "claude-opus-5",
+      },
+    });
+    expect(model.getState().isDirty).toBe(false);
+
+    // Catalog fills in default modeId ("plan") and thinkingOptionId ("think").
+    model.applyProviderCatalog(ENTRIES);
+    expect(model.getState().modeId).toBe("plan");
+    expect(model.getState().thinkingOptionId).toBe("think");
+    expect(model.getState().isDirty).toBe(false);
+
+    // User edit marks dirty and advances draftRevision; a subsequent edit advances it again.
+    expect(model.getState().draftRevision).toBe(0);
+    model.setName("Renamed");
+    expect(model.getState().isDirty).toBe(true);
+    expect(model.getState().draftRevision).toBe(1);
+    model.setName("Renamed again");
+    expect(model.getState().draftRevision).toBe(2);
+    model.setName("Opus 5");
+    expect(model.getState().isDirty).toBe(false);
+    expect(model.getState().draftRevision).toBe(3);
+  });
 });
 
 describe("buildControlsRequestKey", () => {
@@ -655,5 +772,57 @@ describe("buildControlsRequestKey", () => {
     expect(buildControlsRequestKey({ provider: "claude", modeId: "a" })).not.toBe(
       buildControlsRequestKey({ provider: "claude", model: "a" }),
     );
+  });
+});
+
+describe("buildInstantAgentProfile", () => {
+  it("builds a concrete profile with provider defaults from a model seed", () => {
+    expect(
+      buildInstantAgentProfile({
+        seed: { provider: "claude", modelId: "claude-opus-5", name: "Opus 5" },
+        entries: ENTRIES,
+      }),
+    ).toEqual({
+      name: "Opus 5",
+      provider: "claude",
+      model: "claude-opus-5",
+      modeId: "plan",
+      thinkingOptionId: "think",
+      options: {},
+    });
+  });
+
+  it("keeps compatible preferred mode and thinking levels and ignores incompatible ones", () => {
+    expect(
+      buildInstantAgentProfile({
+        seed: { provider: "claude", modelId: "claude-opus-5" },
+        entries: ENTRIES,
+        preferredModeId: "accept-edits",
+        preferredThinkingOptionId: "think-hard",
+      }),
+    ).toEqual({
+      name: "Opus 5",
+      provider: "claude",
+      model: "claude-opus-5",
+      modeId: "accept-edits",
+      thinkingOptionId: "think-hard",
+      options: {},
+    });
+
+    expect(
+      buildInstantAgentProfile({
+        seed: { provider: "claude", modelId: "claude-haiku-4-5" },
+        entries: ENTRIES,
+        preferredModeId: "unknown-mode",
+        preferredThinkingOptionId: "think-hard",
+      }),
+    ).toEqual({
+      name: "Haiku 4.5",
+      provider: "claude",
+      model: "claude-haiku-4-5",
+      modeId: "plan",
+      thinkingOptionId: "think",
+      options: {},
+    });
   });
 });

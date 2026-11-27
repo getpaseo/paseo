@@ -24,7 +24,8 @@ const sourceSchema = z.discriminatedUnion("kind", [
     agentId: agentIdSchema,
     serverId: z.string().min(1).optional(),
     title: z.string().min(1).optional(),
-    event: z.enum(["finished", "errored", "permission-required", "closed"]),
+    // "message" reports a child that ended its turn but has not finished its work.
+    event: z.enum(["message", "finished", "errored", "permission-required", "closed"]),
   }),
 ]);
 export type AgentPromptSource = z.infer<typeof sourceSchema>;

@@ -14,6 +14,7 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import type { Theme } from "@/styles/theme";
 import { MermaidFence } from "./fence/mermaid";
 import { isRecognizedLink, markdownLinkSource } from "./source";
+import { WebBlockquote } from "./quote-block.web";
 
 const ThemedCodeBlock = withUnistyles(HighlightedCodeBlock);
 const codeStyle = (theme: Theme) => ({
@@ -111,4 +112,8 @@ const styles = StyleSheet.create((theme) => ({
   },
 }));
 
-export const WEB_RENDERERS: MarkdownRenderers = { codeBlock: WebCodeBlock, link: WebLink };
+export const WEB_RENDERERS: MarkdownRenderers = {
+  codeBlock: WebCodeBlock,
+  link: WebLink,
+  blockquote: WebBlockquote,
+};

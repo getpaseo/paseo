@@ -1,6 +1,7 @@
 import pino from "pino";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type {
   ProviderEvent,
@@ -8,6 +9,7 @@ import type {
   ProviderLaunch,
 } from "@getpaseo/plugin/server/provider";
 
+import { isPlatform } from "../../test-utils/platform.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
@@ -216,6 +218,97 @@ describe("ProviderSnapshotManager public surface", () => {
       manager.destroy();
     }
   });
+
+  test("reports a plugin provider whose command is not installed as unavailable", async () => {
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+    manager.replacePluginProviders([
+      {
+        id: "uninstalled-plugin",
+        label: "Uninstalled plugin",
+        command: ["paseo-test-command-that-is-not-installed"],
+        async getCatalogCacheKey({ launch }) {
+          if (!launch) throw new Error("requires a daemon-resolved executable");
+          return launch.command;
+        },
+        async status({ launch }) {
+          return launch ? { available: true } : { available: false, diagnostic: "Install it" };
+        },
+        async connect() {
+          throw new Error("an uninstalled provider is never connected");
+        },
+      },
+    ]);
+    try {
+      const entry = await manager.getProvider({
+        provider: "uninstalled-plugin",
+        cwd: "/tmp/project",
+        wait: true,
+      });
+      expect(entry).toMatchObject({ status: "unavailable" });
+      expect(entry.error).toBeUndefined();
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test.skipIf(isPlatform("win32"))(
+    "reports a workspace-cached plugin provider as unavailable after its executable is removed",
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-removed-plugin-"));
+      const executable = join(directory, "removed-plugin");
+      writeFileSync(executable, "#!/bin/sh\necho 1.0.0\n");
+      chmodSync(executable, 0o755);
+      const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+      manager.replacePluginProviders([
+        {
+          id: "removed-plugin",
+          label: "Removed plugin",
+          command: [executable],
+          // undefined asks the snapshot manager to cache the catalogue per workspace.
+          async getCatalogCacheKey() {
+            return undefined;
+          },
+          async status({ launch }) {
+            return launch ? { available: true } : { available: false, diagnostic: "Install it" };
+          },
+          async connect() {
+            let listener: ((event: ProviderEvent) => void) | undefined;
+            return {
+              version: 1,
+              capabilities: [],
+              async send(input) {
+                if (input.type === "catalog")
+                  listener?.({
+                    type: "catalog",
+                    requestId: input.requestId,
+                    catalog: { models: [{ id: "model", label: "Model" }], modes: [] },
+                  });
+              },
+              onEvent(next) {
+                listener = next;
+                return () => {
+                  listener = undefined;
+                };
+              },
+              async close() {},
+            };
+          },
+        },
+      ]);
+      try {
+        const read = () =>
+          manager.getProvider({ provider: "removed-plugin", cwd: "/tmp/project", wait: true });
+        expect(await read()).toMatchObject({ status: "ready" });
+
+        rmSync(directory, { recursive: true, force: true });
+
+        expect(await read()).toMatchObject({ status: "unavailable" });
+      } finally {
+        manager.destroy();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("carries a plugin provider icon and docs link in snapshot metadata", () => {
     const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
@@ -444,6 +537,23 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(claude?.label).toBe("Claude");
       expect(claude?.defaultModeId).toBe("auto");
       expect(codex?.defaultModeId).toBe("auto-review");
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("loading entries already report launch-wrap support, before any discovery", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { "my-codex": { extends: "codex", label: "My Codex" } },
+    });
+    try {
+      const snapshot = manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry);
+      const byProvider = (provider: string) =>
+        snapshot.find((entry) => entry.provider === provider);
+      expect(byProvider("codex")).toMatchObject({ status: "loading", launchWrap: true });
+      expect(byProvider("my-codex")).toMatchObject({ status: "loading", launchWrap: true });
+      expect(byProvider("claude")).toMatchObject({ status: "loading", launchWrap: true });
     } finally {
       manager.destroy();
     }
@@ -3624,7 +3734,8 @@ describe("plugin provider overrides and launch", () => {
     try {
       manager.replacePluginProviders([registration]);
       expect(await manager.getProvider({ provider: registration.id, wait: true })).toMatchObject({
-        status: "unavailable",
+        status: "error",
+        error: "Sign in to the provider",
       });
       expect((await manager.getProviderDiagnostic(registration.id)).diagnostic).toContain(
         "Sign in to the provider",
@@ -3682,7 +3793,8 @@ describe("plugin provider overrides and launch", () => {
       });
       expect(manager.getAgentManagerProviderState().clients[registration.id]).not.toBe(previous);
       expect(await manager.getProvider({ provider: registration.id, wait: true })).toMatchObject({
-        status: "unavailable",
+        status: "error",
+        error: "Sign in to the provider",
       });
       manager.applyMutableProviderConfig({
         [registration.id]: {

@@ -130,6 +130,16 @@ describe("sidebar entity snapshots", () => {
     );
   });
 
+  it("points a dispatched workspace at its parent's ref, and a root workspace at null", () => {
+    const parent = createPluginWorkspaceSnapshot(workspace, "host-1");
+    const child = createPluginWorkspaceSnapshot(
+      { ...workspace, id: "workspace-2", parentWorkspaceId: workspace.id },
+      "host-1",
+    );
+    expect(parent.parentWorkspace).toBeNull();
+    expect(child.parentWorkspace).toBe(parent.ref);
+  });
+
   it("reads projects without requiring a workspace", () => {
     const project = {
       projectId: "empty",

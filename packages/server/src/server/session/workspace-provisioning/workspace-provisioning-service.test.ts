@@ -21,6 +21,7 @@ import {
   FileBackedWorkspaceRegistry,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
+  type WorkspaceMutationContext,
   createPersistedWorkspaceRecord,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
@@ -1137,9 +1138,12 @@ test("a failed workspace unarchive write keeps agents archived and permits retry
 
   class FailingWorkspaceRegistry extends FileBackedWorkspaceRegistry {
     failWrites = true;
-    override async upsert(record: PersistedWorkspaceRecord): Promise<void> {
+    override async upsert(
+      record: PersistedWorkspaceRecord,
+      context?: WorkspaceMutationContext,
+    ): Promise<void> {
       if (this.failWrites && !record.archivedAt) throw new Error("Workspace write failed");
-      await super.upsert(record);
+      await super.upsert(record, context);
     }
   }
   const registry = new FailingWorkspaceRegistry(
@@ -1168,6 +1172,84 @@ test("a failed workspace unarchive write keeps agents archived and permits retry
   await recovery.ensureWorkspaceRecordUnarchived(archived);
   expect((await registry.get(workspace.workspaceId))?.archivedAt).toBeNull();
   expect(agentArchived).toBe(false);
+});
+
+test("ensureWorkspaceRecordUnarchived defers workspace publication until agents finish unarchiving", async () => {
+  const repo = path.join(tmpDir, "restore-deferred-publish");
+  mkdirSync(repo, { recursive: true });
+  const workspace = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(workspace.workspaceId, ARCHIVED_AT);
+  const archived = (await workspaceRegistry.get(workspace.workspaceId))!;
+
+  const publishedEvents: Array<{ kind: string; workspaceId: string; archivedAt: string | null }> =
+    [];
+  const unsubscribe = workspaceRegistry.subscribeToMutations((event) => {
+    publishedEvents.push({
+      kind: event.kind,
+      workspaceId: event.workspaceId,
+      archivedAt: event.workspace?.archivedAt ?? null,
+    });
+  });
+
+  let deferredDuringAgents = false;
+  let publishedCountDuringAgents = -1;
+  let persistedArchivedAtDuringAgents: string | null | undefined;
+  try {
+    const recovery = createWorkspaceProvisioningService({
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: gitService(),
+      isDirectory,
+      logger,
+      unarchiveWorkspaceAgents: async () => {
+        deferredDuringAgents = workspaceRegistry.isPublicationDeferred(workspace.workspaceId);
+        publishedCountDuringAgents = publishedEvents.length;
+        persistedArchivedAtDuringAgents = (await workspaceRegistry.get(workspace.workspaceId))
+          ?.archivedAt;
+      },
+    });
+
+    await recovery.ensureWorkspaceRecordUnarchived(archived);
+  } finally {
+    unsubscribe();
+  }
+
+  expect(persistedArchivedAtDuringAgents).toBeNull();
+  expect(deferredDuringAgents).toBe(true);
+  expect(publishedCountDuringAgents).toBe(0);
+  expect(workspaceRegistry.isPublicationDeferred(workspace.workspaceId)).toBe(false);
+  expect(publishedEvents).toEqual([
+    { kind: "upsert", workspaceId: workspace.workspaceId, archivedAt: null },
+  ]);
+});
+
+test("publishUpsert keeps publication deferred while before-publish flush hooks run", async () => {
+  const repo = path.join(tmpDir, "restore-before-publish-barrier");
+  mkdirSync(repo, { recursive: true });
+  const workspace = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  await workspaceRegistry.archive(workspace.workspaceId, ARCHIVED_AT);
+  const archived = (await workspaceRegistry.get(workspace.workspaceId))!;
+
+  const trace: string[] = [];
+  let deferredDuringBeforePublish = false;
+  const unsubBefore = workspaceRegistry.subscribeBeforePublish(async (workspaceId) => {
+    deferredDuringBeforePublish = workspaceRegistry.isPublicationDeferred(workspaceId);
+    trace.push("before-publish");
+  });
+  const unsubMutation = workspaceRegistry.subscribeToMutations((event) => {
+    trace.push(
+      `mutation:${event.kind}:${workspaceRegistry.isPublicationDeferred(event.workspaceId)}`,
+    );
+  });
+  try {
+    await provisioning.ensureWorkspaceRecordUnarchived(archived);
+  } finally {
+    unsubBefore();
+    unsubMutation();
+  }
+
+  expect(deferredDuringBeforePublish).toBe(true);
+  expect(trace).toEqual(["before-publish", "mutation:upsert:false"]);
 });
 
 describe("checkout approval state on open and unarchive", () => {
@@ -1313,5 +1395,61 @@ describe("checkout approval state on open and unarchive", () => {
     expect(
       (await workspaceRegistry.get(oldUntrusted.workspaceId))?.untrustedSource,
     ).toBeUndefined();
+  });
+
+  test("canceled-archive undo with an active workspace record holds broadcast without hiding directory reads", async () => {
+    const dirs = createCheckoutDirs("canceled-undo-defer");
+    const active = await addWorktreeRecord(dirs, "feature/canceled-undo");
+    const observedStates: Array<{ publicationDeferred: boolean; broadcastDeferred: boolean }> = [];
+    const customProvisioning = createWorkspaceProvisioningService({
+      serverId: "srv_test",
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: gitService(),
+      unarchiveWorkspaceAgents: async ({ workspaceId }) => {
+        observedStates.push({
+          publicationDeferred: workspaceRegistry.isPublicationDeferred(workspaceId),
+          broadcastDeferred: workspaceRegistry.isBroadcastDeferred(workspaceId),
+        });
+      },
+      isDirectory,
+      logger,
+    });
+
+    await customProvisioning.ensureWorkspaceRecordUnarchived(active, ARCHIVED_AT);
+
+    expect(observedStates).toEqual([{ publicationDeferred: false, broadcastDeferred: true }]);
+    expect(workspaceRegistry.isPublicationDeferred(active.workspaceId)).toBe(false);
+    expect(workspaceRegistry.isBroadcastDeferred(active.workspaceId)).toBe(false);
+  });
+
+  test("agent unarchive failure still releases deferred publication and publishes the recovered workspace", async () => {
+    const dirs = createCheckoutDirs("partial-unarchive-failure");
+    const record = await addWorktreeRecord(dirs, "feature/partial-failure");
+    await workspaceRegistry.archive(record.workspaceId, ARCHIVED_AT);
+    const archivedRecord = (await workspaceRegistry.get(record.workspaceId))!;
+    const publishedIds: string[] = [];
+    const unsub = workspaceRegistry.subscribeToMutations((mutation) => {
+      if (mutation.kind === "upsert") publishedIds.push(mutation.workspaceId);
+    });
+    const failingProvisioning = createWorkspaceProvisioningService({
+      serverId: "srv_test",
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: gitService(),
+      unarchiveWorkspaceAgents: async () => {
+        throw new Error("provider unarchive failed");
+      },
+      isDirectory,
+      logger,
+    });
+
+    await expect(
+      failingProvisioning.ensureWorkspaceRecordUnarchived(archivedRecord),
+    ).rejects.toThrow("provider unarchive failed");
+    unsub();
+
+    expect(workspaceRegistry.isPublicationDeferred(record.workspaceId)).toBe(false);
+    expect(publishedIds).toEqual([record.workspaceId]);
   });
 });

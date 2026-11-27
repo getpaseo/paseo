@@ -754,13 +754,14 @@ class DaemonClientSession {
   private readonly daemon = new FakeDaemon();
   private readonly client: DaemonClient;
 
-  constructor() {
+  constructor(options: { livenessHeartbeat?: boolean } = {}) {
     this.client = new DaemonClient({
       url: "ws://test",
       clientId: "clsk_heartbeat_test",
       logger: noopLogger,
       reconnect: { enabled: false },
       transportFactory: () => this.daemon.transport,
+      ...options,
     });
     clients.push(this.client);
   }
@@ -1538,6 +1539,47 @@ test("waits for the daemon to acknowledge push token revocation", async () => {
   await revocation;
 });
 
+test("registers a push token with or without notification preferences", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_push_preferences",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { pushNotificationPreferences: true } });
+  await connectPromise;
+
+  client.registerPushToken("ExponentPushToken[legacy-call]");
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "register_push_token",
+    token: "ExponentPushToken[legacy-call]",
+  });
+
+  const preferences = {
+    enabled: true,
+    events: {
+      agentPermission: true,
+      agentError: true,
+      agentFinished: true,
+      terminalNeedsInput: true,
+      terminalFinished: false,
+    },
+    plugins: {
+      enabled: true,
+      muted: ["review-bot"],
+    },
+  };
+  client.registerPushToken("ExponentPushToken[with-prefs]", preferences);
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "register_push_token",
+    token: "ExponentPushToken[with-prefs]",
+    preferences,
+  });
+});
+
 test("a retry's time mode is sent only to a host with goalTimeBase", async () => {
   for (const timeBase of [false, true]) {
     const mock = createMockTransport();
@@ -1641,7 +1683,6 @@ test("recovery requests and a retry's guidance are sent only to a host with goal
     }
   }
 });
-
 test("userWaitMinutes is sent only to a host with goalUserWait", async () => {
   for (const userWait of [false, true]) {
     const mock = createMockTransport();
@@ -1694,7 +1735,6 @@ test("userWaitMinutes is sent only to a host with goalUserWait", async () => {
     });
   }
 });
-
 test("accepting a goal as is is sent only to a host with goalAccept", async () => {
   for (const accept of [false, true]) {
     const mock = createMockTransport();
@@ -1739,7 +1779,6 @@ test("accepting a goal as is is sent only to a host with goalAccept", async () =
     await expect(pending).resolves.toMatchObject({ error: "refused" });
   }
 });
-
 test("bounds the wait for push token revocation", async () => {
   useHeartbeatClock();
   const mock = createMockTransport();
@@ -3606,6 +3645,18 @@ test("starts pinging one interval after connecting and holds the cadence", async
 
   await session.advance(20_001);
   expect(session.pingTimestamps()).toEqual(["10s", "20s", "30s"]);
+});
+
+test("a client with the liveness heartbeat off never pings on its own", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession({ livenessHeartbeat: false });
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(60_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.pingTimestamps()).toEqual([]);
 });
 
 test("stops pinging once the connection is gone", async () => {
@@ -6771,6 +6822,108 @@ test("fetches scoped recent provider sessions", async () => {
       },
     ],
   });
+});
+
+test.each([
+  {
+    scenario: "successful rows after the default RPC deadline",
+    delayMs: 61_000,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [
+        {
+          providerId: "slow-acp",
+          providerLabel: "Slow ACP",
+          providerHandleId: "slow-session",
+          cwd: "/tmp/import-listing",
+          title: "Slow provider session",
+          firstPromptPreview: null,
+          lastPromptPreview: null,
+          lastActivityAt: "2026-04-30T12:34:56.000Z",
+        },
+      ],
+    },
+  },
+  {
+    scenario: "the server's provider timeout after ninety seconds",
+    delayMs: 90_001,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [],
+      providerErrors: [
+        {
+          provider: "slow-acp",
+          message: "Timed out listing importable sessions for provider 'slow-acp' after 90000ms",
+        },
+      ],
+    },
+  },
+])("recent provider listing receives $scenario", async ({ delayMs, payload }) => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_deadline",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const outcome = client
+    .fetchRecentProviderSessions({
+      requestId: "recent-listing-deadline",
+      providers: ["slow-acp"],
+      limit: 1,
+    })
+    .then(
+      (response) => ({ status: "success", response }),
+      (error: unknown) => ({ status: "error", error }),
+    );
+
+  await vi.advanceTimersByTimeAsync(delayMs);
+  transport.triggerMessage(
+    wrapSessionMessage({ type: "fetch_recent_provider_sessions_response", payload }),
+  );
+
+  expect(await outcome).toEqual({ status: "success", response: payload });
+  expect(client.isConnected).toBe(true);
+});
+
+test("recent provider listing still expires when the daemon never answers", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_no_response",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const errors: unknown[] = [];
+  const listing = client
+    .fetchRecentProviderSessions({ providers: ["slow-acp"] })
+    .catch((error: unknown) => {
+      errors.push(error);
+    });
+
+  await vi.advanceTimersByTimeAsync(90_001);
+  expect(errors).toEqual([]);
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(errors).toEqual([
+    expect.objectContaining({
+      name: "DaemonConnectionError",
+      code: "DAEMON_REQUEST_TIMEOUT",
+    }),
+  ]);
+  await listing;
+  expect(client.isConnected).toBe(true);
 });
 
 test("imports an agent by provider handle id", async () => {
@@ -10575,64 +10728,6 @@ describe("provider options across daemon versions", () => {
     });
   });
 });
-test("rejects team listing and team creation before sending when the host predates teams", async () => {
-  const mock = createMockTransport();
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger: createMockLogger(),
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-  const connectPromise = client.connect();
-  mock.triggerOpen({ features: {} });
-  await connectPromise;
-  expect(client.supportsAgentTeams()).toBe(false);
-  await expect(client.listAgentTeams()).rejects.toThrow("Update the host to use teams.");
-  await expect(
-    client.createAgent({ provider: "claude", cwd: "/tmp/project", team: "full-stack" }),
-  ).rejects.toThrow("Update the host to use teams.");
-  expect(mock.sent).toHaveLength(0);
-});
-test("sends agent.teams.list.request and sends the team on agent creation", async () => {
-  const mock = createMockTransport();
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "clsk_unit_test",
-    logger: createMockLogger(),
-    reconnect: { enabled: false },
-    transportFactory: () => mock.transport,
-  });
-  clients.push(client);
-  const connectPromise = client.connect();
-  mock.triggerOpen({ features: { agentTeams: true } });
-  await connectPromise;
-  const listPromise = client.listAgentTeams({ requestId: "teams-1" });
-  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
-    type: "session",
-    message: { type: "agent.teams.list.request", requestId: "teams-1" },
-  });
-  const teams = [
-    {
-      name: "full-stack",
-      roles: [{ name: "reviewer", description: "Reviews.", provider: "claude" }],
-    },
-  ];
-  mock.triggerMessage(
-    wrapSessionMessage({
-      type: "agent.teams.list.response",
-      payload: { requestId: "teams-1", teams, error: null },
-    }),
-  );
-  await expect(listPromise).resolves.toEqual({ requestId: "teams-1", teams, error: null });
-  void client
-    .createAgent({ provider: "claude", cwd: "/tmp/project", team: "full-stack" })
-    .catch(() => undefined);
-  const created = mock.sent.map((frame) => parseSentFrame(frame)).at(-1);
-  expect(created).toMatchObject({ team: "full-stack", config: { provider: "claude" } });
-  expect(created).not.toHaveProperty("config.team");
-});
 
 test.each([
   { name: "route", initialRouteId: null, link: false },
@@ -10698,4 +10793,62 @@ test("disposing a route before its deferred close does not reopen it on origin r
   await vi.advanceTimersByTimeAsync(0);
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
+});
+test("rejects team listing and team creation before sending when the host predates teams", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+  expect(client.supportsAgentTeams()).toBe(false);
+  await expect(client.listAgentTeams()).rejects.toThrow("Update the host to use teams.");
+  await expect(
+    client.createAgent({ provider: "claude", cwd: "/tmp/project", team: "full-stack" }),
+  ).rejects.toThrow("Update the host to use teams.");
+  expect(mock.sent).toHaveLength(0);
+});
+test("sends agent.teams.list.request and sends the team on agent creation", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentTeams: true } });
+  await connectPromise;
+  const listPromise = client.listAgentTeams({ requestId: "teams-1" });
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: { type: "agent.teams.list.request", requestId: "teams-1" },
+  });
+  const teams = [
+    {
+      name: "full-stack",
+      roles: [{ name: "reviewer", description: "Reviews.", provider: "claude" }],
+    },
+  ];
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.teams.list.response",
+      payload: { requestId: "teams-1", teams, error: null },
+    }),
+  );
+  await expect(listPromise).resolves.toEqual({ requestId: "teams-1", teams, error: null });
+  void client
+    .createAgent({ provider: "claude", cwd: "/tmp/project", team: "full-stack" })
+    .catch(() => undefined);
+  const created = mock.sent.map((frame) => parseSentFrame(frame)).at(-1);
+  expect(created).toMatchObject({ team: "full-stack", config: { provider: "claude" } });
+  expect(created).not.toHaveProperty("config.team");
 });

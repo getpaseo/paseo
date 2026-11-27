@@ -4,11 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.ColorFilter
 import android.graphics.Paint
-import android.graphics.PixelFormat
 import android.graphics.Typeface
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.text.Layout
@@ -21,8 +18,6 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.ImageView
-import androidx.appcompat.widget.AppCompatImageButton
 import androidx.appcompat.widget.AppCompatTextView
 import com.swmansion.enriched.markdown.parser.MarkdownASTNode
 import com.swmansion.enriched.markdown.spans.LineHeightSpan
@@ -34,7 +29,6 @@ import com.swmansion.enriched.markdown.utils.text.extensions.applyCodeBlockTextS
 import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
 import com.swmansion.enriched.markdown.views.ClaimingHorizontalScrollView
 import com.swmansion.enriched.markdown.views.ContextMenuPopup
-import com.swmansion.enriched.markdown.views.CopyGlyph
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -68,6 +62,10 @@ class CodeBlockContainerView(
   // the root mutates the one instance in place, so this view and any sibling
   // created later see the same current values. See DynamicBlockProps.
   var dynamicProps: DynamicBlockProps = DynamicBlockProps()
+    set(value) {
+      field = value
+      syncCopyLabel()
+    }
 
   private var code: String = ""
   private var language: String? = null
@@ -125,20 +123,9 @@ class CodeBlockContainerView(
       setTextColor(secondaryColor(codeBlockStyle.color))
     }
 
-  // contentDescription reads the shared label live so a runtime label change is
-  // reflected for TalkBack without a push (mirrors the live block-menu reads).
   private val copyButton =
-    object : AppCompatImageButton(context) {
-      override fun getContentDescription(): CharSequence = dynamicProps.copyLabel
-    }.apply {
-      background = null
-      scaleType = ImageView.ScaleType.CENTER
-      setImageDrawable(
-        CopyIconDrawable(
-          secondaryColor(codeBlockStyle.color),
-          ceil(codeBlockStyle.fontSize * HEADER_ICON_SCALE).toInt(),
-        ),
-      )
+    HeaderCopyButton(context, codeBlockStyle).apply {
+      contentDescription = dynamicProps.copyLabel
       setOnClickListener { copyCode() }
     }
 
@@ -179,9 +166,14 @@ class CodeBlockContainerView(
     addView(copyButton, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
   }
 
+  internal fun syncCopyLabel() {
+    copyButton.contentDescription = dynamicProps.copyLabel
+  }
+
   fun applyCodeBlockNode(node: MarkdownASTNode) {
     code = CodeBlockNode.extractCode(node)
     fenceChar = CodeBlockNode.fenceChar(node)
+    syncCopyLabel()
 
     val newLanguage = CodeBlockNode.language(node)
     if (newLanguage != language) {
@@ -210,10 +202,7 @@ class CodeBlockContainerView(
       MeasureSpec.makeMeasureSpec((measuredWidth - borderW * 2).coerceAtLeast(0), MeasureSpec.EXACTLY),
       MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
     )
-    copyButton.measure(
-      MeasureSpec.makeMeasureSpec(headerH, MeasureSpec.EXACTLY),
-      MeasureSpec.makeMeasureSpec(headerH, MeasureSpec.EXACTLY),
-    )
+    copyButton.measureInBand()
     val labelMaxWidth = (measuredWidth - inset * 2 - headerH).coerceAtLeast(0)
     languageView.measure(
       MeasureSpec.makeMeasureSpec(labelMaxWidth, MeasureSpec.AT_MOST),
@@ -230,8 +219,7 @@ class CodeBlockContainerView(
     bottom: Int,
   ) {
     val width = right - left
-    // The divider sits halfway into the code pane's top inset.
-    val headerCenterY = (headerH + inset / 2f) / 2f
+    val headerCenterY = copyButton.bandCenterY
     val labelTop = (headerCenterY - languageView.measuredHeight / 2f).roundToInt()
     languageView.layout(
       inset,
@@ -240,16 +228,7 @@ class CodeBlockContainerView(
       labelTop + languageView.measuredHeight,
     )
 
-    val iconWidth = copyButton.drawable?.intrinsicWidth ?: copyButton.measuredWidth
-    val iconSlack = ((copyButton.measuredWidth - iconWidth) / 2).coerceAtLeast(0)
-    val buttonLeft = (width - inset - copyButton.measuredWidth + iconSlack).coerceAtLeast(0)
-    val buttonTop = (headerCenterY - copyButton.measuredHeight / 2f).roundToInt().coerceAtLeast(0)
-    copyButton.layout(
-      buttonLeft,
-      buttonTop,
-      buttonLeft + copyButton.measuredWidth,
-      buttonTop + copyButton.measuredHeight,
-    )
+    copyButton.layoutInBand(width)
 
     scrollView.layout(borderW, headerH, width - borderW, bottom - top - borderW)
   }
@@ -305,63 +284,22 @@ class CodeBlockContainerView(
     clipboard.setPrimaryClip(ClipData.newPlainText("Code", text))
   }
 
-  private class CopyIconDrawable(
-    color: Int,
-    private val size: Int,
-  ) : Drawable() {
-    private val paint =
-      Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = size / 20f
-        strokeJoin = Paint.Join.ROUND
-        strokeCap = Paint.Cap.ROUND
-        this.color = color
-      }
-
-    private val glyph = CopyGlyph()
-
-    override fun draw(canvas: Canvas) {
-      glyph.draw(canvas, bounds.width().toFloat(), paint)
-    }
-
-    override fun getIntrinsicWidth() = size
-
-    override fun getIntrinsicHeight() = size
-
-    override fun setAlpha(alpha: Int) {
-      paint.alpha = alpha
-    }
-
-    override fun setColorFilter(colorFilter: ColorFilter?) {
-      paint.colorFilter = colorFilter
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun getOpacity() = PixelFormat.TRANSLUCENT
-  }
-
   companion object {
     private const val HEADER_LABEL_SCALE = 0.85f
 
-    // Drawable box for the copy glyph, as a multiple of the code font size.
-    // iOS sizes the SF Symbol by point size (kENRMHeaderIconScale = 0.72) but
-    // the symbol renders roughly half again as tall as its point size; this box
-    // is scaled up to land the drawn glyph at the same on-screen size.
-    private const val HEADER_ICON_SCALE = 1.08f
-
     private val headerTypeface: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
 
-    private fun secondaryColor(color: Int): Int = (color and 0x00FFFFFF) or (0x99 shl 24)
+    internal fun secondaryColor(color: Int): Int = (color and 0x00FFFFFF) or (0x99 shl 24)
 
     private fun dividerColor(color: Int): Int = (color and 0x00FFFFFF) or (0x33 shl 24)
 
-    private fun contentInset(style: CodeBlockStyle): Int = ceil(style.padding + style.borderWidth).toInt()
+    internal fun contentInset(style: CodeBlockStyle): Int = ceil(style.padding + style.borderWidth).toInt()
 
     private fun borderPx(style: CodeBlockStyle): Int = ceil(style.borderWidth).toInt()
 
     // Header is the top content inset plus one label line; the code text
     // view's own top inset then forms the single gap below the label.
-    private fun headerHeight(style: CodeBlockStyle): Int {
+    internal fun headerHeight(style: CodeBlockStyle): Int {
       val paint =
         TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
           textSize = style.fontSize * HEADER_LABEL_SCALE

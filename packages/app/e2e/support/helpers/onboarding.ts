@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { addProjectFlow, addProjectFlowInput, chooseAddProjectMethod } from "./add-project-flow";
+import { addProjectFlow, addProjectFlowInput, expectAddProjectTab } from "./add-project-flow";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 import { startIsolatedHostDaemon, type IsolatedHostDaemonOptions } from "./isolated-host-daemon";
@@ -122,7 +122,7 @@ export async function skipSetup(page: Page): Promise<void> {
 export async function addProjectFromSetup(page: Page, projectPath: string): Promise<void> {
   await setupModal(page).getByRole("button", { name: "Add project", exact: true }).click();
   await expect(addProjectFlow(page)).toBeVisible({ timeout: 30_000 });
-  await chooseAddProjectMethod(page, "directory-search");
+  await expectAddProjectTab(page, "existing");
   await addProjectFlowInput(page).fill(projectPath);
   await page.keyboard.press("Enter");
   await expect(addProjectFlow(page)).toHaveCount(0, { timeout: 30_000 });
@@ -161,7 +161,7 @@ export async function finishSetup(page: Page): Promise<void> {
 /** Opens the Phone step's Relay row: the pair device modal, over setup. */
 export async function openRelayPairingFromSetup(page: Page): Promise<Locator> {
   await setupModal(page).getByRole("button", { name: "Relay", exact: true }).click();
-  const pairing = page.getByTestId("onboarding-pair-device-card");
+  const pairing = page.getByTestId("devices-relay-pairing");
   await expect(pairing).toBeVisible();
   return pairing;
 }
@@ -171,20 +171,9 @@ export async function closeRelayPairing(pairing: Locator): Promise<void> {
   await expect(pairing).toHaveCount(0);
 }
 
-/** Clicks the Phone step's Tailscale row and returns the docs page it opened. */
-export async function openTailscaleDocsFromSetup(page: Page): Promise<string> {
-  await page
-    .context()
-    .route("https://paseo.sh/**", (route) =>
-      route.fulfill({ contentType: "text/html", body: "<title>Paseo docs</title>" }),
-    );
-  const popup = page.waitForEvent("popup");
-  await setupModal(page).getByRole("link", { name: "Tailscale, Docs", exact: true }).click();
-  const docs = await popup;
-  await docs.waitForLoadState("domcontentloaded");
-  const url = docs.url();
-  await docs.close();
-  return url;
+export async function expectTailscaleSwitchDisabled(page: Page): Promise<void> {
+  const setup = setupModal(page);
+  await expect(setup.getByRole("switch", { name: "Tailscale", exact: true })).toBeDisabled();
 }
 
 export interface SetupHost {

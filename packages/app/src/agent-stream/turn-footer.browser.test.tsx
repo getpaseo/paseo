@@ -150,3 +150,44 @@ describe("turn stats", () => {
     expect(host.getBoundingClientRect().height).toBe(without);
   });
 });
+
+const projectedReply: StreamItem = {
+  kind: "plugin",
+  id: "genui/reply/1",
+  source: {
+    kind: "assistant_message",
+    id: "reply",
+    messageId: "provider-reply-1",
+    text: 'Done.\n\n```ui\nCard("Summary", [])\n```',
+    timelineCursor: { epoch: "e1", seq: 5 },
+    timestamp: FRIDAY_NIGHT,
+  },
+  timelineCursor: { epoch: "e1", seq: 5 },
+  timestamp: FRIDAY_NIGHT,
+  pluginId: "genui",
+  pluginItemId: "reply/1",
+  itemKind: "genui-block",
+  version: 1,
+  data: {},
+};
+
+it("renders copy, fork, and duration for a plugin-projected assistant reply", () => {
+  const onFork = vi.fn();
+
+  act(() =>
+    root.render(
+      <CompletedTurnFooterRow
+        strategy={createNativeStreamStrategy()}
+        items={[projectedReply]}
+        timing={COMPLETED_TIMING}
+        startIndex={0}
+        supportsTimelineCursor={true}
+        onForkAssistantTurn={onFork}
+      />,
+    ),
+  );
+
+  expect(host.querySelector('[aria-label="Copy turn"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="Fork chat from here"]')).not.toBeNull();
+  expect(host.textContent).toContain("Worked for 26s");
+});

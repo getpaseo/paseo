@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
@@ -41,6 +42,7 @@ import {
   requireProviderCapabilities,
   type ProviderCatalog,
   type ProviderCapability,
+  type ProviderClientInfo,
   type ProviderCommand,
   type ProviderConfigState,
   type ProviderConnectRequest,
@@ -63,7 +65,30 @@ const ADAPTER_CAPABILITIES = [
   "prompt.command",
   "session.configure",
   "permission",
+  "request.cancel",
 ] as const;
+
+const WARM_PROBE_IDLE_MS = 5_000;
+
+function readPluginPackageVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { version?: unknown };
+    if (typeof manifest.version === "string" && manifest.version.trim().length > 0) {
+      return manifest.version.trim();
+    }
+  } catch {
+    // Bundled or standalone callers without adjacent package.json fall back below.
+  }
+  return "0.0.0";
+}
+
+const DEFAULT_CLIENT_INFO: ProviderClientInfo = {
+  name: "paseo",
+  title: "Paseo",
+  version: readPluginPackageVersion(),
+};
 
 interface AcpBoundarySession {
   runtime: AcpRuntime;
@@ -78,14 +103,18 @@ export async function createAcpProviderConnection(
   if (!request.versions.includes(PROVIDER_PROTOCOL_VERSION)) {
     throw new Error(`ACP adapter requires provider protocol ${PROVIDER_PROTOCOL_VERSION}`);
   }
+  const clientInfo = request.clientInfo ?? DEFAULT_CLIENT_INFO;
   const probe = await AcpRuntime.start({
     options,
     launch: request.launch,
+    clientInfo,
     boundarySessionId: "capability-probe",
     env: {},
     emit: () => undefined,
   });
   const supportedCapabilities: ProviderCapability[] = [...ADAPTER_CAPABILITIES];
+  // A connector stream has no process of its own to wrap.
+  if (options.command) supportedCapabilities.push("session.launch_wrap");
   if (probe.agentCapabilities.promptCapabilities?.image) {
     supportedCapabilities.push("prompt.image");
   }
@@ -98,13 +127,50 @@ export async function createAcpProviderConnection(
   if (options.acpOptions?.deferTurnOnRunningTools) {
     supportedCapabilities.push("prompt.steer");
   }
-  await probe.close();
   const capabilities = negotiateProviderCapabilities(request.capabilities, supportedCapabilities);
   const listeners = new Set<(event: ProviderEvent) => void>();
   const sessions = new Map<string, AcpBoundarySession>();
   const inFlight = new Set<Promise<void>>();
+  // Catalogue and listing requests each run a probe runtime that cancellation stops.
+  const cancellable = new Map<string, AbortController>();
   let closed = false;
   let closePromise: Promise<void> | null = null;
+
+  // Keep the initialized capability probe briefly so an immediate global catalog/sessions
+  // request reuses the already-initialized process instead of spawning a second one.
+  let warmProbe: { runtime: AcpRuntime; timer: ReturnType<typeof setTimeout> } | null = null;
+  let warmProbeClose: Promise<void> | null = null;
+  const disposeWarmProbe = (): Promise<void> => {
+    if (warmProbe) {
+      const { runtime, timer } = warmProbe;
+      warmProbe = null;
+      clearTimeout(timer);
+      warmProbeClose = runtime.close().catch(() => undefined);
+    }
+    return warmProbeClose ?? Promise.resolve();
+  };
+  const discardWarmProbe = (): void => {
+    void disposeWarmProbe();
+  };
+  const claimWarmProbe = (binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): AcpRuntime | null => {
+    if (!warmProbe) return null;
+    const { runtime, timer } = warmProbe;
+    warmProbe = null;
+    clearTimeout(timer);
+    if (!runtime.isUsable()) {
+      warmProbeClose = runtime.close().catch(() => undefined);
+      return null;
+    }
+    runtime.rebindRequest(binding);
+    return runtime;
+  };
+  const warmProbeTimer = setTimeout(discardWarmProbe, WARM_PROBE_IDLE_MS);
+  warmProbeTimer.unref?.();
+  warmProbe = { runtime: probe, timer: warmProbeTimer };
+
   const emit = (event: ProviderEvent) => {
     if (closed) return;
     const parsed = ProviderEventSchema.parse(event);
@@ -113,10 +179,13 @@ export async function createAcpProviderConnection(
   const state: AcpConnectionState = {
     options,
     launch: request.launch,
+    clientInfo,
     capabilities,
     sessions,
     emit,
     isClosed: () => closed,
+    claimWarmProbe,
+    discardWarmProbe,
   };
 
   return {
@@ -126,16 +195,31 @@ export async function createAcpProviderConnection(
       if (closed) throw new Error("ACP provider connection is closed");
       input = ProviderInputSchema.parse(input);
       validateAdmission(input, { capabilities, sessions });
+      if (input.type === "request.cancel") {
+        cancellable.get(input.requestId)?.abort(new Error("Paseo canceled the request"));
+        return;
+      }
+      const admitted = input;
+      const controller = new AbortController();
+      const { signal } = controller;
+      if (admitted.type === "catalog" || admitted.type === "sessions") {
+        cancellable.set(admitted.requestId, controller);
+      }
       const operation = Promise.resolve().then(async () => {
         if (closed) return undefined;
-        await dispatch(input, state);
+        await dispatch(admitted, state, signal);
         return undefined;
       });
       const settled = operation.catch((error) => {
-        emitOperationFailure(input, emit, error);
+        if (!signal.aborted) emitOperationFailure(admitted, emit, error);
       });
       inFlight.add(settled);
-      void settled.finally(() => inFlight.delete(settled));
+      void settled.finally(() => {
+        inFlight.delete(settled);
+        if ("requestId" in admitted && cancellable.get(admitted.requestId) === controller) {
+          cancellable.delete(admitted.requestId);
+        }
+      });
     },
     onEvent(listener) {
       listeners.add(listener);
@@ -145,10 +229,17 @@ export async function createAcpProviderConnection(
       if (closePromise) return closePromise;
       closed = true;
       closePromise = (async () => {
+        const closingWarmProbe = disposeWarmProbe();
+        for (const controller of cancellable.values()) {
+          controller.abort(new Error("ACP provider connection closed"));
+        }
         await Promise.all(inFlight);
         const active = [...sessions.values()];
         sessions.clear();
-        await Promise.all(active.map(({ runtime }) => runtime.closeSession()));
+        await Promise.all([
+          closingWarmProbe,
+          ...active.map(({ runtime }) => runtime.closeSession()),
+        ]);
         listeners.clear();
       })();
       return closePromise;
@@ -158,11 +249,17 @@ export async function createAcpProviderConnection(
 
 interface AcpConnectionState {
   launch?: ProviderLaunch;
+  clientInfo: ProviderClientInfo;
   options: RunAcpProviderOptions;
   capabilities: readonly ProviderCapability[];
   sessions: Map<string, AcpBoundarySession>;
   emit(event: ProviderEvent): void;
   isClosed(): boolean;
+  claimWarmProbe(binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): AcpRuntime | null;
+  discardWarmProbe(): void;
 }
 
 function validateAdmission(
@@ -207,13 +304,17 @@ function emitOperationFailure(
   }
 }
 
-async function dispatch(input: ProviderInput, state: AcpConnectionState): Promise<void> {
+async function dispatch(
+  input: Exclude<ProviderInput, { type: "request.cancel" }>,
+  state: AcpConnectionState,
+  signal: AbortSignal,
+): Promise<void> {
   switch (input.type) {
     case "catalog":
-      await discover(input, state);
+      await discover(input, state, signal);
       return;
     case "sessions":
-      await listSessions(input, state);
+      await listSessions(input, state, signal);
       return;
     case "session.open":
       await openSession(input, state);
@@ -261,58 +362,107 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
   }
 }
 
+/**
+ * Runs one request in its own short-lived runtime and publishes its result before shutting the
+ * runtime down, so a slow session close cannot delay the reply. Aborting `signal` until shutdown
+ * ends closes the runtime, which terminates its process and fails whatever the request awaits.
+ */
+async function withRequestRuntime<Result>(
+  state: AcpConnectionState,
+  request: {
+    boundarySessionId: string;
+    cwd?: string;
+    signal: AbortSignal;
+    run(runtime: AcpRuntime): Promise<Result>;
+    publish(result: Result): void;
+  },
+): Promise<void> {
+  const { signal } = request;
+  signal.throwIfAborted();
+  let runtime: AcpRuntime | null = null;
+  if (request.cwd === undefined) {
+    runtime = state.claimWarmProbe({
+      boundarySessionId: request.boundarySessionId,
+      emit: state.emit,
+    });
+  } else {
+    state.discardWarmProbe();
+  }
+  runtime ??= await AcpRuntime.start({
+    options: state.options,
+    launch: state.launch,
+    clientInfo: state.clientInfo,
+    boundarySessionId: request.boundarySessionId,
+    cwd: request.cwd,
+    env: {},
+    emit: state.emit,
+    signal,
+  });
+  const closeOnAbort = () => void runtime.close().catch(() => undefined);
+  signal.addEventListener("abort", closeOnAbort, { once: true });
+  try {
+    signal.throwIfAborted();
+    const result = await request.run(runtime);
+    signal.throwIfAborted();
+    request.publish(result);
+  } finally {
+    await (signal.aborted ? runtime.close() : runtime.closeSession());
+    signal.removeEventListener("abort", closeOnAbort);
+  }
+}
+
 async function discover(
   input: Extract<ProviderInput, { type: "catalog" }>,
   state: AcpConnectionState,
+  signal: AbortSignal,
 ): Promise<void> {
-  const runtime = await AcpRuntime.start({
-    options: state.options,
-    launch: state.launch,
+  if (input.cwd === undefined && state.options.acpOptions?.workspaceOnlyCatalog) {
+    state.discardWarmProbe();
+    state.emit({ type: "catalog", requestId: input.requestId, catalog: { models: [], modes: [] } });
+    return;
+  }
+  await withRequestRuntime(state, {
     boundarySessionId: "catalog",
     cwd: input.cwd,
-    env: {},
-    emit: state.emit,
-  });
-  try {
-    let catalog = await runtime.discover(input.cwd);
-    const context = runtime.configContext();
-    for (const transformer of state.options.transformers ?? []) {
-      if (transformer.discover) {
-        catalog = await transformer.discover(catalog, context);
+    signal,
+    async run(runtime) {
+      let catalog = await runtime.discover(input.cwd);
+      const context = runtime.configContext();
+      for (const transformer of state.options.transformers ?? []) {
+        if (transformer.discover) {
+          catalog = await transformer.discover(catalog, context);
+        }
       }
-    }
-    state.emit({ type: "catalog", requestId: input.requestId, catalog });
-  } finally {
-    await runtime.closeSession();
-  }
+      return catalog;
+    },
+    publish(catalog) {
+      state.emit({ type: "catalog", requestId: input.requestId, catalog });
+    },
+  });
 }
 
 async function listSessions(
   input: Extract<ProviderInput, { type: "sessions" }>,
   state: AcpConnectionState,
+  signal: AbortSignal,
 ): Promise<void> {
-  const runtime = await AcpRuntime.start({
-    options: state.options,
-    launch: state.launch,
+  await withRequestRuntime(state, {
     boundarySessionId: "sessions",
-    env: {},
-    emit: state.emit,
+    signal,
+    run: (runtime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit }),
+    publish(selected) {
+      state.emit({
+        type: "sessions",
+        requestId: input.requestId,
+        sessions: selected.map((session) => ({
+          persistence: nativePersistence(session.sessionId),
+          cwd: session.cwd,
+          title: session.title ?? undefined,
+          updatedAt: session.updatedAt ?? undefined,
+        })),
+      });
+    },
   });
-  try {
-    const selected = await runtime.listSessions({ cwd: input.cwd, limit: input.limit });
-    state.emit({
-      type: "sessions",
-      requestId: input.requestId,
-      sessions: selected.map((session) => ({
-        persistence: nativePersistence(session.sessionId),
-        cwd: session.cwd,
-        title: session.title ?? undefined,
-        updatedAt: session.updatedAt ?? undefined,
-      })),
-    });
-  } finally {
-    await runtime.close();
-  }
 }
 
 function retireSession(state: AcpConnectionState, sessionId: string): void {
@@ -327,12 +477,15 @@ async function openSession(
 ): Promise<void> {
   if (state.sessions.has(input.sessionId))
     throw new Error(`Session already exists: ${input.sessionId}`);
+  state.discardWarmProbe();
   const runtime = await AcpRuntime.start({
     options: state.options,
     launch: state.launch,
+    clientInfo: state.clientInfo,
     boundarySessionId: input.sessionId,
     cwd: input.config.cwd,
     env: input.config.env,
+    wrap: input.config.wrap,
     emit: state.emit,
     onRetired: () => retireSession(state, input.sessionId),
   });
@@ -371,10 +524,14 @@ function requireSession(state: AcpConnectionState, sessionId: string): AcpBounda
 
 interface StartRuntimeOptions {
   launch?: ProviderLaunch;
+  clientInfo?: ProviderClientInfo;
   options: RunAcpProviderOptions;
   boundarySessionId: string;
   cwd?: string;
   env: Readonly<Record<string, string>>;
+  wrap?: readonly [string, ...string[]];
+  /** Aborting it during startup closes the runtime and rejects with the abort reason. */
+  signal?: AbortSignal;
   emit(event: ProviderEvent): void;
   onRetired?: () => void;
 }
@@ -480,6 +637,7 @@ class AcpRuntime {
   private lastUsage: ProviderUsage = {};
 
   static async start(options: StartRuntimeOptions): Promise<AcpRuntime> {
+    options.signal?.throwIfAborted();
     let child: ChildProcessWithoutNullStreams | null = null;
     let spawnFailure: Promise<never> | null = null;
     let stream: Stream;
@@ -498,6 +656,7 @@ class AcpRuntime {
         env: process.env,
       };
       child = spawnProcess(launch.command, launch.args, {
+        wrap: options.wrap,
         cwd: options.cwd,
         env: { ...launch.env, ...options.env },
         stdio: "pipe",
@@ -511,6 +670,7 @@ class AcpRuntime {
       >[1];
       stream = ndJsonStream(output, input);
     } else {
+      if (options.wrap) throw new Error("An ACP connector cannot run behind a launch wrap");
       const owned = ownConnectorStream(await options.options.connector());
       stream = owned.stream;
       closeConnector = owned.close;
@@ -518,13 +678,16 @@ class AcpRuntime {
     }
     const runtime = new AcpRuntime(stream, child, closeConnector, whenConnectorClosed, options);
     onPartialWireRead = () => runtime.notePartialWireRead();
+    // Closing ends the transport, which fails the pending initialize below.
+    const closeOnAbort = () => void runtime.close().catch(() => undefined);
+    options.signal?.addEventListener("abort", closeOnAbort, { once: true });
     try {
       const initialize = withTimeout(
         runtime.call(
           runtime.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
             clientCapabilities: {},
-            clientInfo: { name: "paseo", version: "1" },
+            clientInfo: options.clientInfo ?? DEFAULT_CLIENT_INFO,
           }),
         ),
         options.options.acpOptions?.startupTimeoutMs ?? 10_000,
@@ -533,11 +696,15 @@ class AcpRuntime {
       const initialized = spawnFailure
         ? await Promise.race([initialize, spawnFailure])
         : await initialize;
+      options.signal?.throwIfAborted();
       runtime.agentCapabilities = initialized.agentCapabilities ?? {};
       return runtime;
     } catch (error) {
       await runtime.close();
+      options.signal?.throwIfAborted();
       throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", closeOnAbort);
     }
   }
 
@@ -595,6 +762,21 @@ class AcpRuntime {
     });
   }
 
+  isUsable(): boolean {
+    if (this.closing || this.processFailed) return false;
+    if (this.child && (this.child.exitCode !== null || this.child.signalCode !== null))
+      return false;
+    return true;
+  }
+
+  rebindRequest(binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): void {
+    this.options.boundarySessionId = binding.boundarySessionId;
+    this.emit = binding.emit;
+  }
+
   async open(
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
@@ -603,14 +785,7 @@ class AcpRuntime {
     const mcpServers = toAcpMcpServers(input.config);
     this.mcpServerNames = mcpServers.map((server) => server.name);
     let nativeSessionId = readNativeSessionId(input.persistence);
-    const metadata: Record<string, unknown> = {
-      _paseo: {
-        systemPrompt: input.config.systemPrompt,
-        providerOptions: input.config.providerOptions,
-        toolPolicy: input.config.toolPolicy,
-        persist: input.config.persist,
-      },
-    };
+    const metadata: Record<string, unknown> = {};
     for (const transformer of this.transformers) {
       const prepared = transformer.sessionOpen?.({
         persistence: input.persistence,
@@ -620,6 +795,7 @@ class AcpRuntime {
       nativeSessionId ??= prepared?.sessionId ?? null;
       Object.assign(metadata, prepared?.metadata);
     }
+    const meta = Object.keys(metadata).length > 0 ? metadata : undefined;
     let response: Pick<NewSessionResponse, "modes" | "configOptions">;
     if (nativeSessionId) {
       // ACP agents replay the loaded session's updates before session/load resolves,
@@ -631,7 +807,7 @@ class AcpRuntime {
           sessionId: nativeSessionId,
           cwd: input.config.cwd,
           mcpServers,
-          _meta: metadata,
+          ...(meta ? { _meta: meta } : {}),
         }),
       );
       await this.drainNotifications();
@@ -641,7 +817,7 @@ class AcpRuntime {
         this.connection.newSession({
           cwd: input.config.cwd,
           mcpServers,
-          _meta: metadata,
+          ...(meta ? { _meta: meta } : {}),
         }),
       );
       response = newSession;
