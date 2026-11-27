@@ -464,6 +464,12 @@ export interface PaseoAgentHandle {
    * rejecting.
    */
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
+  /**
+   * Stops the current turn and keeps the agent alive for later prompts. Resolves
+   * once the provider has interrupted; a turn started by another client after
+   * this call is not affected. Rejects when the provider cannot stop the turn.
+   */
+  cancel(): Promise<void>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
@@ -1185,6 +1191,10 @@ function createAgentHandleFactory(
         return result;
       },
       commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
+      cancel: async () => {
+        const snapshot = await daemonClient.cancelAgent(id);
+        if (snapshot) current = snapshot;
+      },
       archive: async () => {
         const result = await daemonClient.archiveAgent(id);
         if (current) {

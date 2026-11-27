@@ -1134,6 +1134,57 @@ test("agent handles list the session's own commands through the existing daemon 
   await client.close();
 });
 
+test("agent handles cancel the active turn and adopt the returned snapshot", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+
+  const cancelPromise = agent.cancel();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "cancel_agent_request",
+    agentId: "agent_sdk",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: createAgent({ status: "idle" }),
+        error: null,
+      },
+    }),
+  );
+
+  await expect(cancelPromise).resolves.toBeUndefined();
+  expect(agent.status).toBe("idle");
+  await client.close();
+});
+
+test("agent handle cancel rejects when the provider cannot stop the turn", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+
+  const cancelPromise = agent.cancel();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: null,
+        error: "The provider rejected the interrupt",
+      },
+    }),
+  );
+
+  await expect(cancelPromise).rejects.toThrow("The provider rejected the interrupt");
+  expect(agent.status).toBeNull();
+  await client.close();
+});
+
 test("agent handles expose the observed snapshot through readonly properties", async () => {
   const { client, ws } = await connectClient();
   const agent = client.agents.ref("agent_sdk");

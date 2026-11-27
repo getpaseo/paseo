@@ -100,6 +100,7 @@ nav: API 参考
 | `waitForFinish(timeoutMs?)`                    | `PaseoAgentRunResult`                     | 等待当前轮次结束，包括初始提示词。默认超时：10 分钟。                                                                                         |
 | `commands(options?)`                           | `PaseoAgentCommandsResult`                | 向正在运行的会话查询它的斜杠命令和技能，包括内置的。选项：`requestId`。                                                                       |
 | `subscribe(handler)`                           | 取消订阅函数                              | 把 Agent 目录更新过滤到此 ID，并刷新句柄的属性。                                                                                              |
+| `cancel()`                                     | `Promise<void>`                           | 停止当前轮次，并保留 Agent 供后续提示词使用。                                                                                                 |
 | `archive()`                                    | `{ archivedAt }`                          | 软删除 Agent 并关闭它的运行时。                                                                                                               |
 | `detach()`                                     | `Promise<void>`                           | 解除父子关系，但不停止 Agent。                                                                                                                |
 | `backgroundWork.list(options?)`                | `Promise<PaseoAgentBackgroundWorkItem[]>` | 单次读取 Agent 当前的后台工作。需要 `features.agentBackgroundWork`；选项为 `requestId` 和 `timeout`。                                         |

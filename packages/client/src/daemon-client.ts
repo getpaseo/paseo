@@ -4406,7 +4406,7 @@ export class DaemonClient {
     return payload;
   }
 
-  async cancelAgent(agentId: string): Promise<void> {
+  async cancelAgent(agentId: string): Promise<AgentSnapshotPayload | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "cancel_agent_request",
@@ -4430,6 +4430,7 @@ export class DaemonClient {
     if (payload.error) {
       throw new Error(payload.error);
     }
+    return payload.agent ?? null;
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
