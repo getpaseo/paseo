@@ -242,6 +242,53 @@ export async function removeProjectScript(page: Page, scriptName: string): Promi
   await page.getByRole("menuitem", { name: "Remove" }).click();
 }
 
+function projectLaunchRows(page: Page) {
+  return page
+    .getByTestId("launches-list")
+    .locator('[data-testid^="launch-row-"]:not([data-testid*="-menu-"])');
+}
+
+export async function cancelProjectLaunchEdit(
+  page: Page,
+  input: {
+    launchName: string;
+    nextName: string;
+    nextCommand: string;
+    originalCommand: string;
+  },
+): Promise<void> {
+  const launchRow = projectLaunchRows(page).filter({ hasText: input.launchName });
+  await launchRow.getByText(input.launchName, { exact: true }).click();
+  await page.getByRole("textbox", { name: "Launch name" }).fill(input.nextName);
+  await page.getByRole("textbox", { name: "Launch command" }).fill(input.nextCommand);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(launchRow).toContainText(input.launchName);
+  await expect(launchRow).toContainText(input.originalCommand);
+}
+
+export async function cancelNewProjectLaunch(page: Page, partialName: string): Promise<void> {
+  const launches = projectLaunchRows(page);
+  const originalCount = await launches.count();
+  await page.getByRole("button", { name: "Add launch", exact: true }).click();
+  await page.getByRole("textbox", { name: "Launch name" }).fill(partialName);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(launches).toHaveCount(originalCount);
+}
+
+export async function expectProjectLaunchesSaved(
+  repoPath: string,
+  launches: Record<string, unknown>,
+): Promise<void> {
+  await expect
+    .poll(async () => {
+      const config = JSON.parse(await readFile(path.join(repoPath, "paseo.json"), "utf8")) as {
+        launches?: unknown;
+      };
+      return config.launches;
+    })
+    .toEqual(launches);
+}
+
 // --- File manipulation ---
 
 export async function corruptPaseoConfig(repoPath: string): Promise<void> {

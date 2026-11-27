@@ -93,6 +93,16 @@ export interface TerminalActivityTransition {
   previous: TerminalActivity | null;
 }
 
+export interface WorkspacePortBlockTerminalMetadata {
+  portBase: number;
+  portCount: number;
+}
+
+export interface WorkspaceLaunchTerminalMetadata extends WorkspacePortBlockTerminalMetadata {
+  launchName: string;
+  command: string;
+}
+
 export interface TerminalSession {
   /** Absent on terminal workers started before creation timestamps were tracked. */
   createdAt?: string;
@@ -100,6 +110,11 @@ export interface TerminalSession {
   name: string;
   cwd: string;
   workspaceId: string;
+  readonly workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+  readonly workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  readonly workspaceScriptName?: string;
+  /** Previous-protocol workers cannot distinguish script terminals from named user terminals. */
+  readonly mayBeUnstampedWorkspaceScript?: boolean;
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
@@ -150,6 +165,9 @@ export interface CreateTerminalOptions {
   id?: string;
   cwd: string;
   workspaceId: string;
+  workspaceLaunch?: WorkspaceLaunchTerminalMetadata;
+  workspacePortBlock?: WorkspacePortBlockTerminalMetadata;
+  workspaceScriptName?: string;
   shell?: string;
   env?: Record<string, string>;
   activityEnv?: Record<string, string>;
@@ -705,6 +723,8 @@ export async function createTerminal(
   let disposed = false;
   let exitEmitted = false;
   let processExited = false;
+  let pendingOutputWrites = 0;
+  let finishNaturalExit: (() => void) | undefined;
   const processExitWaiters = new Set<() => void>();
   let exitInfo: TerminalExitInfo | null = null;
   // Recent output is retained as whole chunks plus a running char length so we
@@ -961,24 +981,29 @@ export async function createTerminal(
   }
 
   function writeOutputToHeadless(data: string): void {
+    pendingOutputWrites += 1;
     terminal.write(data, () => {
+      pendingOutputWrites -= 1;
       if (disposed || killed) {
         return;
       }
       // Commit protocol modes with the parsed bytes, so a replay cut cannot
       // combine an older xterm buffer with modes from queued future output.
       const inputModeUpdate = inputModeTracker.feed(data);
-      for (const response of inputModeUpdate.responses) ptyProcess.write(response);
+      if (!processExited) {
+        for (const response of inputModeUpdate.responses) ptyProcess.write(response);
+      }
       stateRevision += 1;
       for (const listener of listeners) {
         listener({ type: "output", data, revision: stateRevision });
       }
+      if (pendingOutputWrites === 0) finishNaturalExit?.();
     });
   }
 
   // Pipe PTY output to terminal emulator
   ptyProcess.onData((data) => {
-    if (killed) return;
+    if (killed || processExited) return;
     recentOutputChunks.push(data);
     recentOutputLength += data.length;
     // Drop whole leading chunks while the rest still covers the char limit, so
@@ -1001,7 +1026,6 @@ export async function createTerminal(
   });
 
   ptyProcess.onExit((event) => {
-    killed = true;
     processExited = true;
     for (const waiter of Array.from(processExitWaiters)) {
       try {
@@ -1011,13 +1035,15 @@ export async function createTerminal(
       }
     }
     processExitWaiters.clear();
-    emitExit(
-      buildExitInfo({
-        exitCode: event.exitCode,
-        signal: event.signal,
-      }),
-    );
-    disposeResources();
+    finishNaturalExit = () => {
+      finishNaturalExit = undefined;
+      killed = true;
+      emitExit(buildExitInfo({ exitCode: event.exitCode, signal: event.signal }));
+      disposeResources();
+    };
+    // xterm parses queued writes asynchronously. Publish exit only after the
+    // last chunk is available to live observers and the retained replay.
+    if (killed || pendingOutputWrites === 0) finishNaturalExit();
   });
 
   async function waitForPtyProcessStart(): Promise<void> {
@@ -1069,7 +1095,7 @@ export async function createTerminal(
     }
     const data = pendingInput;
     pendingInput = "";
-    if (!data || killed || disposed) {
+    if (!data || killed || disposed || processExited) {
       return;
     }
     writeInputToPty(data);
@@ -1086,7 +1112,7 @@ export async function createTerminal(
   }
 
   function send(msg: ClientMessage): void {
-    if (killed) return;
+    if (killed || processExited) return;
 
     switch (msg.type) {
       case "input": {
@@ -1275,25 +1301,28 @@ export async function createTerminal(
     const gracefulTimeoutMs = killOptions?.gracefulTimeoutMs ?? 2000;
     const forceTimeoutMs = killOptions?.forceTimeoutMs ?? 1000;
 
-    if (processExited) {
-      kill();
-      return;
-    }
-
-    try {
-      killPtyProcess();
-    } catch {
-      // process may already be gone
-    }
-
-    const exitedGracefully = await waitForProcessExit(gracefulTimeoutMs);
-    if (!exitedGracefully) {
+    if (!processExited) {
       try {
-        killPtyProcess("SIGKILL");
+        killPtyProcess();
       } catch {
         // process may already be gone
       }
-      await waitForProcessExit(forceTimeoutMs);
+      if (!(await waitForProcessExit(gracefulTimeoutMs))) {
+        try {
+          killPtyProcess("SIGKILL");
+        } catch {
+          // process may already be gone
+        }
+        await waitForProcessExit(forceTimeoutMs);
+      }
+    }
+
+    // A stopped launch may retain its terminal. Let the parser finish its
+    // accepted output before the kill fallback disposes it.
+    if (finishNaturalExit) {
+      await new Promise<TerminalExitInfo>((resolve) => {
+        onExit(resolve);
+      });
     }
 
     // Finalize bookkeeping (idempotent if ptyProcess.onExit already fired).
@@ -1312,6 +1341,9 @@ export async function createTerminal(
     name,
     cwd,
     workspaceId,
+    workspaceLaunch: options.workspaceLaunch,
+    workspacePortBlock: options.workspacePortBlock,
+    workspaceScriptName: options.workspaceScriptName,
     send,
     subscribe,
     onExit,

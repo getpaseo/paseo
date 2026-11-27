@@ -634,7 +634,7 @@ describe("createTerminal", () => {
         command: process.execPath,
         args: [
           "-e",
-          "process.stdout.write('launch failed\\ncommand missing\\n'); process.exit(127);",
+          "require('node:fs').writeSync(1, 'launch failed\\ncommand missing\\n'); process.exit(127);",
         ],
       }),
     );
@@ -647,8 +647,8 @@ describe("createTerminal", () => {
 
     expect(exitInfo.exitCode).toBe(127);
     expect(exitInfo.signal).toBeNull();
-    // lastOutputLines may be empty if the process exits before xterm processes the data write
-    expect(Array.isArray(exitInfo.lastOutputLines)).toBe(true);
+    expect(exitInfo.lastOutputLines).toEqual(["launch failed", "command missing"]);
+    expect(new TextDecoder().decode(session.serializeReplay().data)).toContain("command missing");
     expect(session.getExitInfo()).toEqual(exitInfo);
   });
 

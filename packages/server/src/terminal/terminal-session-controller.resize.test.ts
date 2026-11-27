@@ -46,10 +46,12 @@ function createFixture(): {
     },
     subscribe: () => () => {},
     onExit: () => () => {},
+    getExitInfo: () => null,
   } as unknown as TerminalSession;
   const terminalManager = {
     getTerminal: () => terminal,
     getTerminalState: async () => ({ state: state(), revision: 0 }),
+    subscribeTerminalsChanged: () => () => {},
   } as unknown as TerminalManager;
   return { terminal, terminalManager, appliedSizes };
 }

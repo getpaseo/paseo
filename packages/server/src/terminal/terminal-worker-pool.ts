@@ -90,7 +90,12 @@ export function createTerminalWorkerPool(
 
   function ownerOf(terminalId: string): DaemonTerminalManager | null {
     for (const member of members()) {
-      if (member.manager.getTerminal(terminalId)) return member.manager;
+      const closing = member.manager.getClosingTerminals?.() ?? [];
+      if (
+        member.manager.getTerminal(terminalId) ||
+        closing.some((session) => session.id === terminalId)
+      )
+        return member.manager;
     }
     return null;
   }
@@ -105,7 +110,9 @@ export function createTerminalWorkerPool(
   }
 
   function releaseIfDrained(member: TerminalWorkerPoolMember): void {
-    if (!draining.has(member) || member.manager.listDirectories().length > 0) return;
+    const hasClosingTerminals = (member.manager.getClosingTerminals?.().length ?? 0) > 0;
+    if (!draining.has(member) || member.manager.listDirectories().length > 0 || hasClosingTerminals)
+      return;
     draining.delete(member);
     // With no controller and no terminals the worker exits on its own. The request that closed
     // the last terminal is still waiting for its answer.
@@ -235,6 +242,10 @@ export function createTerminalWorkerPool(
 
     killTerminal(id) {
       ownerOf(id)?.killTerminal(id);
+    },
+
+    getClosingTerminals() {
+      return members().flatMap((member) => member.manager.getClosingTerminals?.() ?? []);
     },
 
     async killTerminalAndWait(id, waitOptions) {

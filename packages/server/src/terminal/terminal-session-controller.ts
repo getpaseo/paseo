@@ -61,7 +61,7 @@ interface ActiveTerminalStream {
   owner: OwnedSubscription;
   snapshotTask?: Promise<void>;
   snapshotOutput?: Buffer;
-  exiting: boolean;
+  completion: "none" | "retain" | "close";
   unsubscribe: () => void;
   needsSnapshot: boolean;
   snapshotInFlight: boolean;
@@ -175,6 +175,12 @@ export class TerminalSessionController {
       releaseManager();
       releaseMetadata?.();
     };
+  }
+
+  private stopListeningWhenIdle(): void {
+    if (this.subscribedDirectories.size > 0 || this.activeStreams.size > 0) return;
+    this.unsubscribeTerminalsChanged?.();
+    this.unsubscribeTerminalsChanged = null;
   }
 
   getMetrics(): TerminalSessionControllerMetrics {
@@ -327,6 +333,13 @@ export class TerminalSessionController {
   }
 
   private async handleTerminalsChanged(event: TerminalsChangedEvent): Promise<void> {
+    // Retained streams outlive their process listeners, but not their terminal records.
+    for (const stream of this.activeStreams.values()) {
+      if (stream.completion === "close") continue;
+      if (!this.terminalManager?.getTerminal(stream.terminalId)) {
+        this.detachStream(stream.terminalId, { emitExit: true });
+      }
+    }
     // A terminal can live in a subdirectory of a subscribed workspace root (an
     // agent can open one there). Deliver the change to every subscribed root at
     // or above the terminal's cwd, keyed by that root, carrying the full
@@ -352,10 +365,7 @@ export class TerminalSessionController {
       undefined,
       async (id) => {
         this.subscribedDirectories.delete(id);
-        if (this.subscribedDirectories.size === 0) {
-          this.unsubscribeTerminalsChanged?.();
-          this.unsubscribeTerminalsChanged = null;
-        }
+        this.stopListeningWhenIdle();
         await subscription?.refresh?.catch(() => undefined);
       },
       `terminal-directory:${terminalSubscriptionKey(msg.cwd, msg.workspaceId)}`,
@@ -915,6 +925,7 @@ export class TerminalSessionController {
       return null;
     }
 
+    const isCompleted = terminal.getExitInfo() !== null;
     const activeStream: ActiveTerminalStream = {
       terminalId: terminal.id,
       slot,
@@ -923,8 +934,8 @@ export class TerminalSessionController {
       needsSnapshot: true,
       snapshotInFlight: false,
       retrySnapshotErrors: options.retrySnapshotErrors,
-      exiting: false,
-      snapshotReady: false,
+      completion: "none",
+      snapshotReady: isCompleted,
       restore: options?.restore,
       bufferedOutputs: [],
       bufferedOutputBytes: 0,
@@ -948,7 +959,7 @@ export class TerminalSessionController {
           // keep a slow relay client from falling unboundedly behind.
           const clientBufferedAmount = this.getClientBufferedAmount(owner.source);
           if (
-            !activeStream.exiting &&
+            activeStream.completion === "none" &&
             activeStream.outputBytesSinceSnapshot > MAX_TERMINAL_OUTPUT_FRAME_BYTES &&
             (clientBufferedAmount === null || clientBufferedAmount > MAX_CLIENT_BUFFERED_BYTES)
           ) {
@@ -971,6 +982,14 @@ export class TerminalSessionController {
     };
 
     this.activeStreams.set(slot, activeStream);
+    this.start();
+
+    // Completed launch terminals stay registered so their final snapshot can
+    // be opened later. They have no live output or future exit to subscribe to.
+    if (isCompleted) {
+      activeStream.unsubscribe = () => {};
+      return slot;
+    }
 
     const unsubscribeOutput = terminal.subscribe((message) => {
       if (this.activeStreams.get(slot) !== activeStream) {
@@ -981,6 +1000,7 @@ export class TerminalSessionController {
         activeStream.outputCoalescer.flush();
         activeStream.needsSnapshot = true;
         void this.trySendSnapshot(activeStream);
+        if (activeStream.completion === "retain") this.scheduleStreamCompletion(activeStream);
         return;
       }
       if (message.type === "titleChange") {
@@ -1011,9 +1031,18 @@ export class TerminalSessionController {
       }
       activeStream.outputCoalescer.handle(message.data);
     });
-    const unsubscribeExit = terminal.onExit(() =>
-      this.detachStream(terminal.id, { emitExit: true }),
-    );
+    const unsubscribeExit = terminal.onExit(() => {
+      if (this.activeStreams.get(slot) !== activeStream || activeStream.completion !== "none")
+        return;
+      const retainOutput = terminal.workspaceLaunch !== undefined;
+      activeStream.completion = retainOutput ? "retain" : "close";
+      if (retainOutput) {
+        activeStream.snapshotReady = true;
+        activeStream.needsSnapshot = true;
+        void this.trySendSnapshot(activeStream);
+      }
+      this.scheduleStreamCompletion(activeStream);
+    });
     activeStream.unsubscribe = () => {
       unsubscribeOutput();
       unsubscribeExit();
@@ -1077,7 +1106,7 @@ export class TerminalSessionController {
         "Failed to pull terminal snapshot",
       );
       // Natural completion owns the buffered final bytes and waits for this read.
-      if (activeStream.exiting) return;
+      if (activeStream.completion !== "none") return;
       // COMPAT(terminalSnapshotErrors): restored in v0.8.0; remove after 2027-03-11 once client floor >= v0.8.0.
       // Old clients interpret every stream exit as PTY exit. Preserve their
       // attached stream after failure. Another snapshot notification can retry;
@@ -1186,8 +1215,9 @@ export class TerminalSessionController {
     for (const stream of this.activeStreams.values()) {
       if (stream.terminalId !== terminalId) continue;
       detached = true;
-      if (stream.exiting) continue;
-      stream.exiting = true;
+      if (stream.completion === "close") continue;
+      // Explicit close overrides retention while its final replay is pending.
+      stream.completion = "close";
       const completion = options?.emitExit ? this.completeStream(stream) : stream.owner.release();
       void completion.catch((error) =>
         this.sessionLogger.warn({ err: error }, "Failed to release terminal stream"),
@@ -1196,11 +1226,20 @@ export class TerminalSessionController {
     return detached;
   }
 
+  private scheduleStreamCompletion(stream: ActiveTerminalStream): void {
+    void this.completeStream(stream).catch((error) =>
+      this.sessionLogger.warn({ err: error }, "Failed to complete terminal stream"),
+    );
+  }
+
   private async completeStream(stream: ActiveTerminalStream): Promise<void> {
     // Preserve bootstrap/snapshot ordering. Explicit release can remove this
     // registration while the read is pending, in which case it discards delivery.
     await stream.snapshotTask;
-    if (this.activeStreams.get(stream.slot) !== stream) return;
+    if (this.activeStreams.get(stream.slot) !== stream || stream.completion === "none") return;
+    // The worker can recover again after a failed final replay. Keep the
+    // snapshot-ready listener and live tail until replay succeeds or the view closes.
+    if (stream.completion === "retain" && stream.needsSnapshot) return;
     if (stream.snapshotOutput) {
       stream.outputCoalescer.handle(stream.snapshotOutput.toString("utf8"));
       stream.snapshotOutput = undefined;
@@ -1210,12 +1249,19 @@ export class TerminalSessionController {
     }
     // Completion must not turn this final flush into another backpressure read.
     stream.outputCoalescer.flush();
+    if (stream.completion === "retain") {
+      stream.unsubscribe();
+      stream.completion = "none";
+      return;
+    }
+    stream.completion = "none";
     stream.owner.emit({ type: "terminal_stream_exit", payload: { terminalId: stream.terminalId } });
     await stream.owner.release();
   }
 
   private detachRegistration(stream: ActiveTerminalStream): void {
     this.activeStreams.delete(stream.slot);
+    this.stopListeningWhenIdle();
     stream.outputCoalescer.dispose();
     stream.snapshotOutput = undefined;
     stream.bufferedOutputs.length = 0;

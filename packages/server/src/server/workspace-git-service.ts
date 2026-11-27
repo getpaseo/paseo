@@ -258,6 +258,7 @@ export interface WorkspaceGitService {
     cwd: string,
     options?: WorkspaceGitSnapshotOptions,
   ): Promise<WorkspaceGitRuntimeSnapshot>;
+  peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null;
   resolveForge(cwd: string): Promise<ForgeResolution | null>;
   getCheckoutDiff(
     cwd: string,
@@ -902,6 +903,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     return this.requestWorkspaceSnapshot(target, request);
+  }
+
+  peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
+    this.assertNotDisposed();
+    return this.getCachedSnapshot(cwd);
   }
 
   async getCheckout(

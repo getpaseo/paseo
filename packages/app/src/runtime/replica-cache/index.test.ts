@@ -391,6 +391,49 @@ describe("ReplicaCache", () => {
     expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
   });
 
+  it("restores a running workspace launch with its current directory cursor", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      launches: [
+        {
+          launchName: "dev",
+          lifecycle: "running",
+          active: true,
+          portBase: 42000,
+          portEnd: 42000,
+          portCount: 1,
+          composeProjectName: "paseo-dev",
+          endpoints: [
+            {
+              id: "endpoint-1",
+              port: 42000,
+              hostname: "localhost",
+              protocol: "tcp",
+              proxyUrl: null,
+              health: null,
+            },
+          ],
+          exitCode: null,
+          terminalId: "terminal-1",
+        },
+      ],
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual(baseline.checkpoint);
+    expect(restored.workspaces.get(workspace.id)?.launches).toEqual(workspace.launches);
+    expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace.launches).toEqual(
+      workspace.launches,
+    );
+  });
+
   it.each(["createdAt", "lastUserMessageAt"])(
     "refetches workspaces cached without %s",
     async (field) => {
@@ -447,12 +490,20 @@ describe("ReplicaCache", () => {
       "before the eviction fix",
       (checkpoint: DirectoryCheckpoint): unknown => ({ version: 1, cursors: checkpoint }),
     ],
+    [
+      "before the cross-tab eviction fix",
+      (checkpoint: DirectoryCheckpoint): unknown => ({ version: 2, cursors: checkpoint }),
+    ],
+    [
+      "before launch persistence",
+      (checkpoint: DirectoryCheckpoint): unknown => ({ version: 3, cursors: checkpoint }),
+    ],
   ])(
     "rejects checkpoints written %s without discarding cached rows or timelines",
     async (_era, legacyPayload) => {
       const storage = new MemoryStorage();
       const writer = createCache(storage);
-      const baseline = directory();
+      const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
       writer.replaceDirectoryBaseline(SERVER_ID, baseline);
       writer.commitTimeline(SERVER_ID, "agent-1", timeline());
       await writer.flush();

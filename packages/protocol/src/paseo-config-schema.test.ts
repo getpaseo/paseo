@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { PaseoConfigRawSchema, PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
+import { z } from "zod";
+import {
+  getWorkspaceServicePortAllocation,
+  PaseoConfigRawSchema,
+  PaseoConfigSchema,
+  toPaseoConfigRpcShape,
+} from "@getpaseo/protocol/paseo-config-schema";
 
 describe("paseo config schema", () => {
   it("parses an empty config without metadata generation", () => {
@@ -46,6 +52,71 @@ describe("paseo config schema", () => {
         teardown: [],
         servicePorts: { range: "3000-4000", portScript: "/usr/bin/portmake" },
       },
+    });
+  });
+
+  it("parses a workspace launch and its port block", () => {
+    expect(
+      PaseoConfigSchema.parse({
+        worktree: { servicePorts: { range: "20000-50000", blockSize: 100 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    ).toEqual({
+      worktree: {
+        setup: [],
+        teardown: [],
+        servicePorts: { range: "20000-50000", blockSize: 100 },
+      },
+      launches: { dev: { command: "./bin/dev" } },
+    });
+  });
+
+  it.each([{ invalid: null }, { invalid: 42 }, { invalid: "bad" }, { invalid: [] }])(
+    "preserves valid launch siblings when one runtime entry is $invalid",
+    ({ invalid }) => {
+      const config = { launches: { dev: { command: "./bin/dev" }, broken: invalid } };
+      expect(PaseoConfigSchema.parse(config).launches).toEqual({
+        dev: { command: "./bin/dev" },
+        broken: {},
+      });
+      expect(PaseoConfigRawSchema.safeParse(config).success).toBe(false);
+    },
+  );
+
+  it("sends port block size outside the strict service ports object for old clients", () => {
+    const oldConfigClientSchema = z
+      .object({
+        worktree: z
+          .object({
+            servicePorts: z
+              .object({
+                range: z.string().optional(),
+                portScript: z.string().optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .passthrough()
+          .optional(),
+      })
+      .passthrough();
+    const rpcConfig = toPaseoConfigRpcShape({
+      worktree: { servicePorts: { range: "20000-50000", blockSize: 100 } },
+    });
+
+    expect(rpcConfig).toEqual({
+      worktree: { portBlockSize: 100, servicePorts: { range: "20000-50000" } },
+    });
+    expect(oldConfigClientSchema.parse(rpcConfig)).toEqual(rpcConfig);
+    expect(getWorkspaceServicePortAllocation(PaseoConfigSchema.parse(rpcConfig).worktree)).toEqual({
+      range: "20000-50000",
+      blockSize: 100,
+    });
+  });
+
+  it("moves a block-size-only legacy allocation into a passthrough field", () => {
+    expect(toPaseoConfigRpcShape({ worktree: { servicePorts: { blockSize: 4 } } })).toEqual({
+      worktree: { portBlockSize: 4 },
     });
   });
 

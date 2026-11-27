@@ -28,6 +28,7 @@ import {
   type TerminalWorkerListResult,
   type TerminalWorkerRequest,
   type TerminalWorkerToParentMessage,
+  type WorkerListedTerminal,
   type WorkerTerminalInfo,
 } from "./terminal-worker-protocol.js";
 
@@ -174,6 +175,7 @@ function runWorker(argv: string[]): void {
   const manager = createTerminalManager();
   const inspector = createTerminalWorkerProcessInspector();
   const sessionsById = new Map<string, LocalTerminalSession>();
+  const retainedTerminalIds = new Set<string>();
   const unsubscribeByTerminalId = new Map<string, Array<() => void>>();
   const outputCoalescerByTerminalId = new Map<string, TerminalOutputCoalescer>();
   // A terminal is published (terminalCreated) only once its program is recorded. An exit that
@@ -228,6 +230,15 @@ function runWorker(argv: string[]): void {
     await recordPublisher.publish(record);
   }
 
+  async function removeTerminalProgramRecord(terminalId: string): Promise<void> {
+    if (!record || exiting) return;
+    record = {
+      ...record,
+      terminals: record.terminals.filter((entry) => entry.id !== terminalId),
+    };
+    await recordPublisher.publish(record);
+  }
+
   function removeOwnFiles(): void {
     rmSync(terminalWorkerRecordPath(args.paseoHome, process.pid), { force: true });
     if (record && process.platform !== "win32") {
@@ -268,6 +279,9 @@ function runWorker(argv: string[]): void {
       createdAt: session.createdAt,
       hasOutput: session.hasOutput(),
       title: session.getTitle(),
+      workspaceLaunch: session.workspaceLaunch,
+      workspacePortBlock: session.workspacePortBlock,
+      workspaceScriptName: session.workspaceScriptName,
     };
   }
 
@@ -279,6 +293,7 @@ function runWorker(argv: string[]): void {
       workspaceId: session.workspaceId,
       ...(session.getTitle() ? { title: session.getTitle() } : {}),
       activity: session.getActivity(),
+      ...(retainedTerminalIds.has(session.id) ? { retainOnExit: true } : {}),
     };
   }
 
@@ -359,8 +374,10 @@ function runWorker(argv: string[]): void {
     const unsubscribeExit = session.onExit((info) => {
       outputCoalescer.flush();
       clearTerminalSubscriptions(session.id);
-      sessionsById.delete(session.id);
-      void persistRecord().catch((error) => {
+      if (!retainedTerminalIds.has(session.id)) {
+        sessionsById.delete(session.id);
+      }
+      void removeTerminalProgramRecord(session.id).catch((error) => {
         if (!exiting) console.error("Cannot publish terminal exit:", error);
       });
       if (exitsHeldDuringCreation.has(session.id)) {
@@ -463,10 +480,13 @@ function runWorker(argv: string[]): void {
       }
       const session = await manager.createTerminal({ ...message.options, workspaceId });
       if (request.errorReported) {
-        session.kill();
+        manager.killTerminal(session.id);
         return;
       }
       sessionsById.set(session.id, session);
+      if (message.options.retainOnExit === true) {
+        retainedTerminalIds.add(session.id);
+      }
       exitsHeldDuringCreation.set(session.id, null);
       watchTerminal(session);
       try {
@@ -475,7 +495,8 @@ function runWorker(argv: string[]): void {
         exitsHeldDuringCreation.delete(session.id);
         clearTerminalSubscriptions(session.id);
         sessionsById.delete(session.id);
-        await session.killAndWait().catch(() => undefined);
+        retainedTerminalIds.delete(session.id);
+        await manager.killTerminalAndWait(session.id).catch(() => undefined);
         throw error;
       }
       const state = terminalMetadata(session);
@@ -521,13 +542,80 @@ function runWorker(argv: string[]): void {
       // Buffered output is already in the headless state; flushing first keeps a later
       // batch from carrying bytes the snapshot already shows.
       outputCoalescerByTerminalId.get(session.id)?.flush();
-      return {
+      const exitInfo = session.getExitInfo();
+      const listed: WorkerListedTerminal = {
         terminal: toTerminalInfo(session),
         state: terminalMetadata(session),
         activityToken: manager.getTerminalActivityToken(session.id),
         replayPreamble: session.getReplayPreamble(),
       };
+      if (exitInfo) listed.exitInfo = exitInfo;
+      return listed;
     });
+  }
+
+  function handleKillTerminalRequest(
+    message: Extract<TerminalWorkerRequest, { type: "killTerminal" }>,
+  ): void {
+    const session = sessionsById.get(message.terminalId);
+    const exitInfo = session?.getExitInfo() ?? null;
+    retainedTerminalIds.delete(message.terminalId);
+    manager.killTerminal(message.terminalId);
+    if (exitInfo) {
+      clearTerminalSubscriptions(message.terminalId);
+      sessionsById.delete(message.terminalId);
+      void removeTerminalProgramRecord(message.terminalId).catch((error) => {
+        if (!exiting) console.error("Cannot publish terminal dismissal:", error);
+      });
+      sendToController({
+        type: "terminalExit",
+        terminalId: message.terminalId,
+        info: exitInfo,
+      });
+      exitIfIdle();
+    }
+    // Removal is owned by session.onExit -> terminalExit; the parent mirror
+    // clears contribution and emits terminalsChanged from that single path.
+    sendToController({ type: "response", requestId: message.requestId, ok: true });
+  }
+
+  async function handleKillTerminalAndWaitRequest(
+    message: Extract<TerminalWorkerRequest, { type: "killTerminalAndWait" }>,
+  ): Promise<void> {
+    // A lost creation reply can be followed by cancellation while creation is
+    // still queued. A close acknowledgement must also cover that terminal.
+    await createTerminalQueue;
+    const preserveSession =
+      message.options?.preserveSession === true && retainedTerminalIds.has(message.terminalId);
+    if (preserveSession) {
+      const session = sessionsById.get(message.terminalId);
+      if (session) {
+        await session.killAndWait({
+          ...(message.options?.gracefulTimeoutMs === undefined
+            ? {}
+            : { gracefulTimeoutMs: message.options.gracefulTimeoutMs }),
+          ...(message.options?.forceTimeoutMs === undefined
+            ? {}
+            : { forceTimeoutMs: message.options.forceTimeoutMs }),
+        });
+      }
+    } else {
+      const exitInfo = sessionsById.get(message.terminalId)?.getExitInfo() ?? null;
+      retainedTerminalIds.delete(message.terminalId);
+      await manager.killTerminalAndWait(message.terminalId, message.options);
+      clearTerminalSubscriptions(message.terminalId);
+      sessionsById.delete(message.terminalId);
+      await removeTerminalProgramRecord(message.terminalId);
+      if (exitInfo) {
+        sendToController({
+          type: "terminalExit",
+          terminalId: message.terminalId,
+          info: exitInfo,
+        });
+      }
+    }
+    exitIfIdle();
+    sendToController({ type: "response", requestId: message.requestId, ok: true });
   }
 
   async function handleRequest(message: TerminalWorkerRequest): Promise<void> {
@@ -556,16 +644,12 @@ function runWorker(argv: string[]): void {
       }
 
       case "killTerminal": {
-        manager.killTerminal(message.terminalId);
-        // Removal is owned by session.onExit -> terminalExit; the parent mirror
-        // clears contribution and emits terminalsChanged from that single path.
-        sendToController({ type: "response", requestId: message.requestId, ok: true });
+        handleKillTerminalRequest(message);
         return;
       }
 
       case "killTerminalAndWait": {
-        await manager.killTerminalAndWait(message.terminalId, message.options);
-        sendToController({ type: "response", requestId: message.requestId, ok: true });
+        await handleKillTerminalAndWaitRequest(message);
         return;
       }
 
@@ -593,6 +677,8 @@ function runWorker(argv: string[]): void {
       }
 
       case "listTerminals": {
+        // Recovery must include creations accepted before the disconnect.
+        await createTerminalQueue;
         sendToController({
           type: "response",
           requestId: message.requestId,
@@ -604,6 +690,7 @@ function runWorker(argv: string[]): void {
 
       case "shutdown": {
         const sessions = Array.from(sessionsById.values());
+        retainedTerminalIds.clear();
         await Promise.all(sessions.map((session) => session.killAndWait().catch(() => undefined)));
         // Exit once the response frame is flushed, so the requester sees the confirmation.
         const requester = controller;
