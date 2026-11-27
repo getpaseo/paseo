@@ -49,7 +49,8 @@ function source(gitActions: GitActions): {
         previousTab: "Previous tab",
         nextTab: "Next tab",
         closeCurrentTab: "Close current tab",
-        renameTab: "Rename",
+        renameAgent: "Rename agent",
+        renameTerminal: "Rename terminal",
         reloadAgent: "Reload agent",
         copyResumeCommand: "Copy resume command",
         copyAgentId: "Copy agent id",
@@ -280,6 +281,26 @@ describe("workspace command center contributions", () => {
     rename?.run();
 
     expect(fixture.dispatched).toEqual([{ id: "workspace.rename", scope: "workspace" }]);
+  });
+
+  it("labels active tab rename by the active tab kind", () => {
+    const agentFixture = source({ primary: null, secondary: [], menu: [] });
+    agentFixture.value.activeTabCount = 1;
+    agentFixture.value.activeTabIndex = 0;
+    agentFixture.value.activeTabKind = "agent";
+    const agentRename = buildWorkspaceCommandCenterContributions(agentFixture.value).find(
+      (item) => item.id === "tab:rename-current",
+    );
+    expect(agentRename?.presentation).toMatchObject({ title: "Rename agent" });
+
+    const terminalFixture = source({ primary: null, secondary: [], menu: [] });
+    terminalFixture.value.activeTabCount = 1;
+    terminalFixture.value.activeTabIndex = 0;
+    terminalFixture.value.activeTabKind = "terminal";
+    const terminalRename = buildWorkspaceCommandCenterContributions(terminalFixture.value).find(
+      (item) => item.id === "tab:rename-current",
+    );
+    expect(terminalRename?.presentation).toMatchObject({ title: "Rename terminal" });
   });
 
   it("copies the workspace path without going through the dispatcher", () => {
