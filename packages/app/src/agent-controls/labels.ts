@@ -1,5 +1,3 @@
-import { i18n } from "@/i18n/i18next";
-
 interface ControlLabelInput {
   id: string;
   label?: string | null;
@@ -37,7 +35,7 @@ export function formatThinkingOptionLabel(option: ControlLabelInput): string {
   const compactLabel = rawLabel.replace(/[\s_-]+/g, "").toLowerCase();
 
   if (compactLabel === "xhigh" || compactLabel === "extrahigh") {
-    return i18n.t("agentControls.thinking.extraHigh");
+    return "Extra high";
   }
 
   return formatControlLabel(option, true);
