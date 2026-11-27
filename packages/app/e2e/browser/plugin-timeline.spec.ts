@@ -12,6 +12,7 @@ import {
   requestPluginTimeline,
   interactWithStreamingCard,
   expectWholeCompletedCard,
+  expectCachedCatalogTimelineBeforeNetworkRefresh,
   expectBothConsecutiveTools,
   trackPluginChatRecovery,
   reconnectPluginChat,
@@ -80,5 +81,17 @@ test("plugin-transformed assistant reply keeps copy, fork, and turn duration in 
     await forkMostRecentAssistantTurnToNewTab(page);
     await expectChatHistoryAttachment(page);
     expect(await forkAttachment.waitForText()).toContain(ASSISTANT_TEXT);
+  });
+});
+
+test("reopens transformed timeline from the cached catalog before network refresh", async ({
+  page,
+}, info) => {
+  const gate = await installDaemonWebSocketGate(page);
+  await withTimelinePlugin(page, info, "assistant", async (agent) => {
+    await requestPluginTimeline(agent);
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await expectWholeCompletedCard(page);
+    await expectCachedCatalogTimelineBeforeNetworkRefresh(page, info, gate);
   });
 });
