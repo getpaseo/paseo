@@ -7187,6 +7187,42 @@ describe("ACP tool call rows", () => {
     }
   });
 
+  it("returns enough sessions and closes the connection when another page stalls", async () => {
+    const harness = connectorHarness({
+      capabilities: { sessionCapabilities: { list: {} } },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/list") return false;
+        const { cursor } = request.params as { cursor?: string };
+        if (!cursor) {
+          runtime.respond(request, {
+            sessions: [{ sessionId: "s1", cwd: "/repo", title: "First page" }],
+            nextCursor: "stalled",
+          });
+        }
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "stalled-listing",
+      label: "Stalled listing",
+      connector: harness.connector,
+    }).connect({ versions: [1], capabilities: ["prompt.message", "session.list"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({ type: "sessions", requestId: "list", limit: 1 });
+      await expect.poll(() => countRequests(harness.instances[1], "session/list")).toBe(2);
+      const listed = await waitForEvent(events, (event) => event.type === "sessions");
+      expect(listed).toMatchObject({ sessions: [{ title: "First page" }] });
+      await expect.poll(() => harness.instances[1].readsCanceled).toBe(true);
+      expect(harness.instances[1].writesClosed).toBe(true);
+    } finally {
+      const listing = harness.instances[1];
+      if (listing && !listing.readsCanceled) listing.closeFromAgent();
+      await connection.close();
+    }
+  });
+
   it("resumes the generic ACP adapter's saved Auto Accept toggle in the unattended mode", async () => {
     const harness = connectorHarness({
       configOptions: [

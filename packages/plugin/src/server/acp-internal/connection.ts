@@ -446,10 +446,12 @@ async function listSessions(
   state: AcpConnectionState,
   signal: AbortSignal,
 ): Promise<void> {
+  const extraScanDeadline = performance.now() + EXTRA_SESSION_SCAN_BUDGET_MS;
   await withRequestRuntime(state, {
     boundarySessionId: "sessions",
     signal,
-    run: (runtime) => runtime.listSessions({ cwd: input.cwd, limit: input.limit }),
+    run: (runtime) =>
+      runtime.listSessions({ cwd: input.cwd, limit: input.limit, extraScanDeadline }),
     publish(selected) {
       state.emit({
         type: "sessions",
@@ -463,6 +465,10 @@ async function listSessions(
       });
     },
   });
+}
+
+function sessionUpdatedAt(session: SessionInfo): number {
+  return Date.parse(session.updatedAt ?? "") || 0;
 }
 
 function retireSession(state: AcpConnectionState, sessionId: string): void {
@@ -568,6 +574,7 @@ interface ActivePrompt {
 
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
 const SESSION_SCAN_LIMIT = 500;
+const EXTRA_SESSION_SCAN_BUDGET_MS = 2_000;
 // COMPAT(acpAutoAccept): added in v0.17.4, remove after 2027-05-23. The generic ACP adapter saves
 // its Auto Accept toggle as this setting on agents that later moved to a bundled ACP provider.
 const LEGACY_AUTO_ACCEPT_SETTING = "auto_accept";
@@ -1094,17 +1101,38 @@ class AcpRuntime {
     return true;
   }
 
-  /** Follows `nextCursor` until `limit` sessions, the last page, or the scan cap. */
-  async listSessions({ cwd, limit }: { cwd?: string; limit?: number }): Promise<SessionInfo[]> {
+  /** Selects the most recent sessions from a bounded scan of the provider's pages. */
+  async listSessions({
+    cwd,
+    limit,
+    extraScanDeadline,
+  }: {
+    cwd?: string;
+    limit?: number;
+    extraScanDeadline: number;
+  }): Promise<SessionInfo[]> {
     const wanted = Math.min(limit ?? SESSION_SCAN_LIMIT, SESSION_SCAN_LIMIT);
     const sessions: SessionInfo[] = [];
     let cursor: string | undefined;
-    do {
-      const page = await this.call(this.connection.listSessions({ cwd, cursor }));
-      sessions.push(...page.sessions);
+    // ACP does not guarantee that sessions arrive in recency order.
+    for (let pages = 0; pages < SESSION_SCAN_LIMIT; pages += 1) {
+      // Once we have enough rows, pages can improve the order only within the original budget.
+      const remainingMs =
+        cursor && sessions.length >= wanted ? extraScanDeadline - performance.now() : undefined;
+      if (remainingMs !== undefined && remainingMs <= 0) break;
+      const request = this.call(this.connection.listSessions({ cwd, cursor }));
+      const page =
+        remainingMs === undefined
+          ? await request
+          : await withTimeout(request, remainingMs, "ACP listing scan budget expired").catch(
+              () => undefined,
+            );
+      if (!page) break;
+      sessions.push(...page.sessions.slice(0, SESSION_SCAN_LIMIT - sessions.length));
       cursor = page.nextCursor ?? undefined;
-    } while (cursor && sessions.length < wanted);
-    return sessions.slice(0, wanted);
+      if (!cursor || sessions.length === SESSION_SCAN_LIMIT) break;
+    }
+    return sessions.sort((a, b) => sessionUpdatedAt(b) - sessionUpdatedAt(a)).slice(0, wanted);
   }
 
   async drainNotifications(): Promise<void> {

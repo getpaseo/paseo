@@ -194,12 +194,14 @@ test("classifies a removed file as deleted", async () => {
   const root = await createRoot();
   const target = join(root, "removed.txt");
   await writeFile(target, "before");
+  const canary = createWatcherLivenessCanary(root);
   const events: FileChange[] = [];
   const subscription = await subscribeToFileChanges(root, (error, batch) => {
     expect(error).toBeNull();
-    events.push(...batch);
+    events.push(...canary.filterEvents(batch));
   });
 
+  await canary.verify();
   await rm(target);
   // macOS FSEvents can replay the write above as a create after the subscription starts,
   // so the delete is the latest event for the path, not the first. Native recursive delivery
