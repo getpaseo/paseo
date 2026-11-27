@@ -1017,3 +1017,163 @@ child.on("exit", (code) => process.exit(code ?? 1));
     await connection.close();
   }
 });
+
+it("publishes turn and session metrics, uses session/resume on skip history, and guards idle stop", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    const methods = [];
+    let pendingPromptId = null;
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const msg = JSON.parse(line);
+      methods.push(msg.method);
+      const update = (u) => send({ method: "session/update", params: { sessionId: "resumed-1", update: u } });
+      if (msg.method === "initialize") {
+        send({
+          id: msg.id,
+          result: {
+            protocolVersion: 1,
+            agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
+          },
+        });
+      } else if (msg.method === "session/resume") {
+        send({
+          id: msg.id,
+          result: {
+            modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }] },
+            configOptions: [
+              {
+                id: "model",
+                name: "Model",
+                category: "model",
+                type: "select",
+                currentValue: "gemini-pro",
+                options: [{ value: "gemini-pro", name: "Gemini Pro" }],
+              },
+            ],
+          },
+        });
+        update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+      } else if (msg.method === "session/set_mode") {
+        send({ id: msg.id, result: {} });
+      } else if (msg.method === "session/prompt") {
+        pendingPromptId = msg.id;
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Methods: " + methods.join(",") } });
+        setTimeout(() => {
+          send({
+            id: pendingPromptId,
+            result: {
+              stopReason: "end_turn",
+              usage: {
+                inputTokens: 1000,
+                outputTokens: 200,
+                cachedReadTokens: 3000,
+                cachedWriteTokens: 0,
+                thoughtTokens: 50,
+                totalTokens: 4200,
+              },
+            },
+          });
+        }, 120);
+      } else if (msg.method === "session/close") {
+        send({ id: msg.id, result: {} });
+      }
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: [
+      "prompt.message",
+      "session.persistence",
+      "session.configure",
+      "session.metrics",
+      "session.can_stop_runtime",
+    ],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open-resume",
+      sessionId: "test",
+      persistence: { version: 1, data: { sessionId: "resumed-1" } },
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: true },
+    });
+    await expect.poll(() => events.find((event) => event.type === "session.ready")).toBeDefined();
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "m-1",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Hi" }] },
+      },
+    });
+    await expect
+      .poll(() =>
+        events.find(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "assistant_message" &&
+            event.item.text.includes("session/resume"),
+        ),
+      )
+      .toBeDefined();
+
+    await connection.send({
+      type: "session.can_stop_runtime",
+      requestId: "stop-while-busy",
+      sessionId: "test",
+    });
+    await expect
+      .poll(() =>
+        events.find(
+          (event) =>
+            event.type === "session.can_stop_runtime" && event.requestId === "stop-while-busy",
+        ),
+      )
+      .toMatchObject({ canStop: false });
+
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "session.turn" && event.state === "completed"),
+      )
+      .toMatchObject({
+        state: "completed",
+        metrics: expect.arrayContaining([
+          { label: "Model", value: "Gemini Pro" },
+          { label: "Tokens", value: "4.0K ↑ · 200 ↓" },
+          { label: "Cache", value: "75%", tone: "ok" },
+          { label: "Thinking", value: "50" },
+        ]),
+      });
+
+    expect(events.find((event) => event.type === "session.metrics")).toMatchObject({
+      metrics: expect.arrayContaining([
+        { label: "Turns", value: "1" },
+        { label: "Tokens", value: "4.0K ↑ · 200 ↓" },
+        { label: "Cache", value: "75%", tone: "ok" },
+      ]),
+    });
+
+    await connection.send({
+      type: "session.can_stop_runtime",
+      requestId: "stop-when-idle",
+      sessionId: "test",
+    });
+    await expect
+      .poll(() =>
+        events.find(
+          (event) =>
+            event.type === "session.can_stop_runtime" && event.requestId === "stop-when-idle",
+        ),
+      )
+      .toMatchObject({ canStop: true });
+  } finally {
+    await connection.close();
+  }
+});

@@ -20,6 +20,7 @@ import {
   type ToolCall,
   type ToolCallUpdate,
   type Stream,
+  type Usage,
 } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
@@ -33,6 +34,12 @@ import type {
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
+import {
+  buildAcpSessionMetrics,
+  buildAcpTurnMetrics,
+  createEmptySessionMetricTotals,
+  recordTurnMetrics,
+} from "./metrics.js";
 import { standardToolCallDetail } from "./tool-call-detail.js";
 import {
   PROVIDER_PROTOCOL_VERSION,
@@ -50,6 +57,7 @@ import {
   type ProviderEvent,
   type ProviderInput,
   type ProviderLaunch,
+  type ProviderMetric,
   type ProviderModel,
   type ProviderPermissionResponse,
   type ProviderToolCallDetail,
@@ -63,7 +71,9 @@ import {
 const ADAPTER_CAPABILITIES = [
   "prompt.message",
   "prompt.command",
+  "session.can_stop_runtime",
   "session.configure",
+  "session.metrics",
   "permission",
   "request.cancel",
 ] as const;
@@ -121,7 +131,10 @@ export async function createAcpProviderConnection(
   if (probe.agentCapabilities.sessionCapabilities?.list) {
     supportedCapabilities.push("session.list");
   }
-  if (probe.agentCapabilities.loadSession) {
+  if (
+    probe.agentCapabilities.loadSession ||
+    probe.agentCapabilities.sessionCapabilities?.resume !== undefined
+  ) {
     supportedCapabilities.push("session.persistence");
   }
   if (options.acpOptions?.deferTurnOnRunningTools) {
@@ -343,6 +356,16 @@ async function dispatch(
       state.emit({ type: "request.completed", requestId: input.requestId });
       return;
     }
+    case "session.can_stop_runtime": {
+      const session = requireSession(state, input.sessionId);
+      state.emit({
+        type: "session.can_stop_runtime",
+        requestId: input.requestId,
+        sessionId: input.sessionId,
+        canStop: session.runtime.canStopRuntime(),
+      });
+      return;
+    }
     case "session.close": {
       const session = requireSession(state, input.sessionId);
       state.sessions.delete(input.sessionId);
@@ -556,6 +579,8 @@ type DeferredReplyState = "idle" | "open" | "settled_with_open_tools" | "settled
 
 interface ActivePrompt {
   turnId: string;
+  startedAt: number;
+  usage: Usage | undefined;
   settled: Promise<void>;
   cancelling: boolean;
   wirePromptsInFlight: number;
@@ -635,6 +660,9 @@ class AcpRuntime {
   private autoAccept = false;
   private activePrompt: ActivePrompt | null = null;
   private lastUsage: ProviderUsage = {};
+  private emitMetrics = false;
+  private readonly sessionMetrics = createEmptySessionMetricTotals();
+  private lastPublishedSessionMetrics = "[]";
 
   static async start(options: StartRuntimeOptions): Promise<AcpRuntime> {
     options.signal?.throwIfAborted();
@@ -769,6 +797,15 @@ class AcpRuntime {
     return true;
   }
 
+  canStopRuntime(): boolean {
+    return (
+      this.activePrompt === null &&
+      this.permissions.size === 0 &&
+      this.pendingCompactions.size === 0 &&
+      !this.hasQualifyingOpenTools()
+    );
+  }
+
   rebindRequest(binding: {
     boundarySessionId: string;
     emit: (event: ProviderEvent) => void;
@@ -796,22 +833,10 @@ class AcpRuntime {
       Object.assign(metadata, prepared?.metadata);
     }
     const meta = Object.keys(metadata).length > 0 ? metadata : undefined;
+    this.emitMetrics = connectionCapabilities.includes("session.metrics");
     let response: Pick<NewSessionResponse, "modes" | "configOptions">;
     if (nativeSessionId) {
-      // ACP agents replay the loaded session's updates before session/load resolves,
-      // so the native id must be registered first for them to pass the session filter.
-      this.nativeSessionId = nativeSessionId;
-      this.replayWindow = input.history === "replay" ? "replay" : "skip";
-      response = await this.call(
-        this.connection.loadSession({
-          sessionId: nativeSessionId,
-          cwd: input.config.cwd,
-          mcpServers,
-          ...(meta ? { _meta: meta } : {}),
-        }),
-      );
-      await this.drainNotifications();
-      if (!this.options.options.acpOptions?.loadReplayQuietPeriodMs) this.replayWindow = null;
+      response = await this.openExistingSession(nativeSessionId, input, mcpServers, meta);
     } else {
       const newSession = await this.call(
         this.connection.newSession({
@@ -847,6 +872,36 @@ class AcpRuntime {
     this.emitConfig();
     await this.finishSessionOpen(isConnectionClosed);
     return sessionCapabilities;
+  }
+
+  private async openExistingSession(
+    nativeSessionId: string,
+    input: Extract<ProviderInput, { type: "session.open" }>,
+    mcpServers: ReturnType<typeof toAcpMcpServers>,
+    meta: Record<string, unknown> | undefined,
+  ): Promise<Pick<NewSessionResponse, "modes" | "configOptions">> {
+    // ACP agents replay the loaded session's updates before session/load resolves,
+    // so the native id must be registered first for them to pass the session filter.
+    this.nativeSessionId = nativeSessionId;
+    const canResumeWithoutReplay =
+      input.history === "skip" && this.agentCapabilities.sessionCapabilities?.resume !== undefined;
+    this.replayWindow = input.history === "replay" ? "replay" : "skip";
+    const params = {
+      sessionId: nativeSessionId,
+      cwd: input.config.cwd,
+      mcpServers,
+      ...(meta ? { _meta: meta } : {}),
+    };
+    const response = await this.call(
+      canResumeWithoutReplay
+        ? this.connection.resumeSession(params)
+        : this.connection.loadSession(params),
+    );
+    await this.drainNotifications();
+    if (canResumeWithoutReplay || !this.options.options.acpOptions?.loadReplayQuietPeriodMs) {
+      this.replayWindow = null;
+    }
+    return response;
   }
 
   private async finishSessionOpen(isConnectionClosed: () => boolean): Promise<void> {
@@ -971,6 +1026,8 @@ class AcpRuntime {
     });
     const activePrompt: ActivePrompt = {
       turnId,
+      startedAt: performance.now(),
+      usage: undefined,
       settled: Promise.resolve(),
       cancelling: false,
       wirePromptsInFlight: 1,
@@ -989,6 +1046,7 @@ class AcpRuntime {
         await this.drainNotifications();
         activePrompt.wirePromptsInFlight -= 1;
         if (response.usage) {
+          activePrompt.usage = response.usage;
           this.lastUsage = {
             ...this.lastUsage,
             inputTokens: response.usage.inputTokens,
@@ -1702,12 +1760,17 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "usage_update") {
+      const costUsd = update.cost?.currency === "USD" ? update.cost.amount : undefined;
       this.lastUsage = {
         ...this.lastUsage,
         contextWindowUsedTokens: update.used,
         contextWindowMaxTokens: update.size,
-        totalCostUsd: update.cost?.currency === "USD" ? update.cost.amount : undefined,
+        totalCostUsd: costUsd,
       };
+      if (costUsd !== undefined) {
+        this.sessionMetrics.costUsd = costUsd;
+        this.publishSessionMetrics();
+      }
       this.emit({
         type: "session.usage",
         sessionId: this.options.boundarySessionId,
@@ -1932,11 +1995,48 @@ class AcpRuntime {
       });
       return;
     }
+    const turnMetrics = state === "completed" ? this.finalizeTurnMetrics(turnId) : undefined;
     this.emit({
       type: "session.turn",
       sessionId: this.options.boundarySessionId,
       turnId,
       state,
+      ...(turnMetrics && turnMetrics.length > 0 ? { metrics: turnMetrics } : {}),
+    });
+  }
+
+  private currentModelLabel(): string | undefined {
+    const model = modelOption(this.configOptions);
+    const id = selectedValue(model);
+    if (!id) return undefined;
+    return selectOptions(model).find((option) => option.value === id)?.label ?? id;
+  }
+
+  private finalizeTurnMetrics(turnId: string): ProviderMetric[] | undefined {
+    const active = this.activePrompt?.turnId === turnId ? this.activePrompt : null;
+    if (!active) return undefined;
+    const durationMs = Math.max(0, performance.now() - active.startedAt);
+    recordTurnMetrics(this.sessionMetrics, durationMs, active.usage);
+    if (!this.emitMetrics) return undefined;
+    this.publishSessionMetrics();
+    return buildAcpTurnMetrics({
+      modelLabel: this.currentModelLabel(),
+      durationMs,
+      usage: active.usage,
+      costUsd: this.lastUsage.totalCostUsd,
+    });
+  }
+
+  private publishSessionMetrics(): void {
+    if (!this.emitMetrics) return;
+    const metrics = buildAcpSessionMetrics(this.sessionMetrics);
+    const encoded = JSON.stringify(metrics);
+    if (encoded === this.lastPublishedSessionMetrics) return;
+    this.lastPublishedSessionMetrics = encoded;
+    this.emit({
+      type: "session.metrics",
+      sessionId: this.options.boundarySessionId,
+      metrics,
     });
   }
 
