@@ -66,6 +66,7 @@ import { SplitContainer } from "@/components/split-container";
 import { RetainedPanel } from "@/components/retained-panel";
 import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
+import { useWorkspacePortForwardLifetime } from "@/desktop/workspace-port-forward";
 import { WorkspaceScriptsButton, useWorkspaceScriptActions } from "@/screens/workspace/scripts";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
@@ -1079,6 +1080,12 @@ function WorkspaceScreenContent({
       normalizedWorkspaceId,
     );
   }, [isRouteFocused, normalizedServerId, normalizedWorkspaceId]);
+  useWorkspacePortForwardLifetime(
+    normalizedServerId,
+    normalizedWorkspaceId,
+    workspaceDescriptor,
+    isRouteFocused,
+  );
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);

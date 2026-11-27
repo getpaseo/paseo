@@ -819,6 +819,9 @@ export const en = {
       actions: {
         chooseUrl: "Choose URL",
         copyUrl: "Copy URL",
+        forwardLocally: "Forward to this computer",
+        stopForwarding: "Stop forwarding",
+        copyForward: "Copy {{address}}",
         openService: "View service",
         restart: "Restart",
         run: "Run",

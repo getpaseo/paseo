@@ -7,7 +7,7 @@ import {
   type DecodedNetworkTunnelFrame,
   type NetworkTunnelFrame,
 } from "@getpaseo/protocol/network-tunnel";
-import { TunnelMuxClient } from "./tunnel-mux.js";
+import { TunnelMuxClient } from "@getpaseo/client/internal/node-network-tunnel";
 import type { TunnelWireConnection } from "./tunnel-transport.js";
 
 function createFakeWire(ready?: Partial<TunnelWireConnection["ready"]>) {

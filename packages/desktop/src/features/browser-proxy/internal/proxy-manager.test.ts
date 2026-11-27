@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   decodeNetworkTunnelFrame,
   encodeNetworkTunnelFrame,
+  NetworkTunnelCloseReason,
   type DecodedNetworkTunnelFrame,
   type NetworkTunnelFrame,
 } from "@getpaseo/protocol/network-tunnel";
@@ -43,11 +44,12 @@ function createFakeSession(resolveProxyResult?: (url: string, proxyRules: string
   return sessionObj;
 }
 
-function createEchoTunnelWire() {
+function createEchoTunnelWire(replyAfterEof = false, ipv6Only = false) {
   const binaryListeners = new Set<(bytes: Uint8Array) => void>();
   const closeListeners = new Set<(error?: Error) => void>();
   const openedTargets: Array<{ host: string; port: number }> = [];
   let closed = false;
+  const uploaded = new Map<number, Buffer[]>();
 
   const emit = (frame: NetworkTunnelFrame) => {
     const encoded = encodeNetworkTunnelFrame(frame);
@@ -65,10 +67,26 @@ function createEchoTunnelWire() {
       const frame: DecodedNetworkTunnelFrame = decodeNetworkTunnelFrame(bytes);
       if (frame.type === "open") {
         openedTargets.push({ host: frame.host, port: frame.port });
+        if (ipv6Only && frame.host === "127.0.0.1") {
+          queueMicrotask(() =>
+            emit({
+              type: "close",
+              streamId: frame.streamId,
+              reason: NetworkTunnelCloseReason.ConnectRefused,
+            }),
+          );
+          return;
+        }
         queueMicrotask(() => {
           emit({ type: "opened", streamId: frame.streamId, initialWindowBytes: 512 * 1024 });
         });
       } else if (frame.type === "data") {
+        if (replyAfterEof) {
+          const chunks = uploaded.get(frame.streamId) ?? [];
+          chunks.push(Buffer.from(frame.data));
+          uploaded.set(frame.streamId, chunks);
+          return;
+        }
         queueMicrotask(() => {
           emit({
             type: "data",
@@ -78,6 +96,14 @@ function createEchoTunnelWire() {
         });
       } else if (frame.type === "half_close") {
         queueMicrotask(() => {
+          if (replyAfterEof) {
+            emit({
+              type: "data",
+              streamId: frame.streamId,
+              data: Buffer.concat(uploaded.get(frame.streamId) ?? []),
+            });
+            uploaded.delete(frame.streamId);
+          }
           emit({ type: "half_close", streamId: frame.streamId });
         });
       }
@@ -171,6 +197,51 @@ describe("BrowserProxyManager", () => {
     while (managers.length > 0) {
       await managers.pop()!.disposeAll();
     }
+  });
+
+  test("forwards local TCP through the existing tunnel without a browser session", async () => {
+    const tunnel = createEchoTunnelWire(true, true);
+    let allowSocket = false;
+    const manager = createBrowserProxyManager({
+      verifySocketOwner: async () => allowSocket,
+      requestTicket: async () => "ticket",
+      openTunnelWire: async () => tunnel.wire,
+      getSessionForPartition: () => {
+        throw new Error("Forwarding must not create a browser session");
+      },
+    });
+    managers.push(manager);
+    const scope = { serverId: "test-host", workspaceId: "ws", terminalId: "terminal", port: 43127 };
+    const port = await manager.workspacePortForward(1, {
+      ...scope,
+      action: "start",
+      target: { type: "directTcp", endpoint: "remote.test:6767" },
+    });
+    if (!port) throw new Error("Expected a forwarding port");
+    await expect(manager.workspacePortForward(2, { ...scope, action: "get" })).resolves.toBeNull();
+    const denied = net.createConnection({ host: "127.0.0.1", port });
+    await new Promise<void>((resolve) => {
+      denied.once("error", () => {});
+      denied.once("close", () => resolve());
+    });
+    expect(tunnel.openedTargets).toEqual([]);
+    allowSocket = true;
+    const reply = await new Promise<string>((resolve, reject) => {
+      const client = net.createConnection({ host: "127.0.0.1", port });
+      const chunks: Buffer[] = [];
+      client.on("data", (chunk) => chunks.push(chunk));
+      client.once("error", reject);
+      client.once("end", () => resolve(Buffer.concat(chunks).toString()));
+      client.end("request up to EOF");
+    });
+    expect(reply).toBe("request up to EOF");
+    expect(tunnel.openedTargets).toEqual([
+      { host: "127.0.0.1", port: scope.port },
+      { host: "::1", port: scope.port },
+    ]);
+
+    tunnel.drop();
+    await expect(manager.workspacePortForward(1, { ...scope, action: "get" })).resolves.toBeNull();
   });
 
   test("configures fixed-port SOCKS5 + session proxy, verifies resolveProxy, and keeps the same port across tunnel reconnect", async () => {

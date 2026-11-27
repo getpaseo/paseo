@@ -613,6 +613,34 @@ async function openNewBrowserTabAndNavigate(page, url) {
   await urlInput.press("Enter");
 }
 
+async function verifyServiceForward(page, artifactDir) {
+  await page.getByTestId("workspace-scripts-button").click();
+  await page.getByTestId("workspace-scripts-start-web").click();
+  const menu = page.getByTestId("workspace-scripts-menu");
+  if (!(await menu.isVisible())) await page.getByTestId("workspace-scripts-button").click();
+  const startForward = menu.getByRole("button", { name: "Forward to this computer" });
+  await expect(startForward).toBeVisible();
+  await menu.screenshot({ path: path.join(artifactDir, "05-service-menu.png") });
+  await startForward.click();
+  const addressButton = menu.getByRole("button", { name: /^Copy 127\.0\.0\.1:/ });
+  await expect(addressButton).toBeVisible();
+  const address = (await addressButton.textContent()).trim();
+  await expect
+    .poll(async () => {
+      try {
+        return await (await fetch(`http://${address}`)).text();
+      } catch {
+        return "";
+      }
+    })
+    .toBe("remote service");
+  await menu.screenshot({ path: path.join(artifactDir, "05-forward-to-computer.png") });
+  await menu.getByRole("button", { name: "Stop forwarding" }).click();
+  await expect(startForward).toBeVisible();
+  await expect(fetch(`http://${address}`)).rejects.toThrow();
+  await page.getByTestId("workspace-scripts-stop-web").click();
+}
+
 async function main() {
   const artifactDir =
     process.env.PASEO_DESKTOP_BROWSER_PROXY_E2E_ARTIFACT_DIR ??
@@ -658,6 +686,14 @@ async function main() {
         enabled: true,
         endpoint: `127.0.0.1:${relayBridge.port}`,
         useTls: false,
+      },
+    });
+    writeJson(path.join(workspaceRoot, "wks-remote-proxy", "paseo.json"), {
+      scripts: {
+        web: {
+          type: "service",
+          command: `node -e "require('node:http').createServer((req,res) => res.end('remote service')).listen(Number(process.env.PASEO_PORT),'127.0.0.1')"`,
+        },
       },
     });
     seedPaseoHome({
@@ -858,6 +894,14 @@ async function main() {
     await expect(remoteWsButton).toBeVisible({ timeout: timeoutMs });
     await remoteWsButton.click();
 
+    if (process.env.PASEO_DESKTOP_SERVICE_FORWARD_ONLY === "1") {
+      await verifyServiceForward(page, artifactDir);
+      console.log(
+        "PASS: enabled Desktop forwarding over the protected relay, fetched the service from outside Electron and closed the listener.",
+      );
+      return;
+    }
+
     await openNewBrowserTabAndNavigate(page, targetUrl);
 
     const routingPill = page
@@ -1025,6 +1069,8 @@ async function main() {
 
     await page.screenshot({ path: path.join(artifactDir, "04-old-daemon-browse-locally.png") });
 
+    await remoteWsButton.click();
+    await verifyServiceForward(page, artifactDir);
     console.log(
       JSON.stringify(
         {

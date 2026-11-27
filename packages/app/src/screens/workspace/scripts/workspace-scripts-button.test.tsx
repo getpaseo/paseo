@@ -3,7 +3,7 @@
  */
 import { i18n as testI18n } from "@/i18n/i18next";
 import React, { type ReactElement } from "react";
-import { act, fireEvent } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -93,7 +93,16 @@ vi.mock("react-native-unistyles", () => ({
     },
 }));
 
+const { electron, forward } = vi.hoisted(() => ({
+  electron: vi.fn(() => false),
+  forward: vi.fn(),
+}));
+vi.mock("@/desktop/browser/proxy", () => ({
+  readHostBrowserRouting: () => ({ kind: "remote", support: "supported" }),
+}));
+vi.mock("@/desktop/workspace-port-forward", () => ({ invokeWorkspacePortForward: forward }));
 vi.mock("@/constants/platform", () => ({
+  getIsElectron: electron,
   isNative: false,
   isWeb: true,
 }));
@@ -190,6 +199,7 @@ vi.mock("lucide-react-native", () => {
       "data-testid": props.testID,
     });
   return {
+    ArrowLeftRight: createIcon("ArrowLeftRight"),
     ChevronDown: createIcon("ChevronDown"),
     Copy: createIcon("Copy"),
     Eye: createIcon("Eye"),
@@ -349,7 +359,36 @@ describe("WorkspaceScriptsButton", () => {
   afterEach(() => {
     current?.unmount();
     current = null;
+    electron.mockReturnValue(false);
     vi.unstubAllGlobals();
+  });
+
+  it("starts and stops a service forward independently of opening the preview", async () => {
+    electron.mockReturnValue(true);
+    forward.mockImplementation(async (action) => (action === "start" ? 34343 : null));
+    current = renderScripts([
+      script({
+        scriptName: "web",
+        type: "service",
+        lifecycle: "running",
+        terminalId: "term",
+        port: 3000,
+      }),
+    ]);
+    const start = screen.getByRole("button", { name: "Forward to this computer" });
+    await waitFor(() => expect(start.getAttribute("aria-disabled")).not.toBe("true"));
+    fireEvent.click(start);
+    const stop = await screen.findByRole("button", { name: "Stop forwarding" });
+    expect(screen.getByText("127.0.0.1:34343")).toBeTruthy();
+    fireEvent.click(stop);
+    const target = {
+      serverId: "test-server",
+      workspaceId: "workspace-1",
+      terminalId: "term",
+      port: 3000,
+    };
+    await waitFor(() => expect(forward).toHaveBeenCalledWith("stop", target));
+    expect(forward).toHaveBeenCalledWith("start", target);
   });
 
   it("keeps completed script row icons visible and muted while the menu content stays mounted", async () => {

@@ -831,6 +831,9 @@ export const ru: TranslationResources = {
       actions: {
         chooseUrl: "Выбрать URL",
         copyUrl: "Скопировать URL",
+        forwardLocally: "Пробросить на локальный порт",
+        stopForwarding: "Остановить проброс порта",
+        copyForward: "Скопировать {{address}}",
         openService: "Открыть сервис",
         restart: "Перезапустить",
         run: "Запустить",

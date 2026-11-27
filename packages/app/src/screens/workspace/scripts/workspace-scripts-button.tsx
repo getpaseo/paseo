@@ -1,7 +1,15 @@
 import { useCallback, useMemo, type ReactElement } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useFetchQuery } from "@/data/query";
+import { getIsElectron } from "@/constants/platform";
+import { readHostBrowserRouting } from "@/desktop/browser/proxy";
+import { invokeWorkspacePortForward } from "@/desktop/workspace-port-forward";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
+import { useToast } from "@/contexts/toast-context";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
 import {
+  ArrowLeftRight,
   ChevronDown,
   Copy,
   Eye,
@@ -45,6 +53,7 @@ interface WorkspaceScriptsButtonProps {
   hideLabels?: boolean;
 }
 
+const ThemedForward = withUnistyles(ArrowLeftRight);
 const ThemedPlay = withUnistyles(Play);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -296,12 +305,100 @@ function ServiceLinkRow({
   );
 }
 
+function ServiceForwardControls({
+  target,
+}: {
+  target: Parameters<typeof invokeWorkspacePortForward>[1];
+}): ReactElement {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const client = useQueryClient();
+  const key = ["workspace-port-forward", target] as const;
+  const current = useFetchQuery({
+    queryKey: key,
+    queryFn: () => invokeWorkspacePortForward("get", target),
+    dataShape: "value",
+    staleTimeMs: 0,
+    refetchInterval: 2000,
+    retry: false,
+  });
+  const {
+    mutate,
+    error: mutationError,
+    isPending,
+  } = useMutation({
+    mutationFn: (action: "start" | "stop") => invokeWorkspacePortForward(action, target),
+    onSuccess: (port) => client.setQueryData(key, port),
+  });
+  const address = current.data ? `127.0.0.1:${current.data}` : null;
+  const label = t(
+    address
+      ? "workspace.scripts.actions.stopForwarding"
+      : "workspace.scripts.actions.forwardLocally",
+  );
+  const toggle = useCallback(() => mutate(address ? "stop" : "start"), [address, mutate]);
+  const copy = useCallback(() => {
+    if (address)
+      void copyToClipboard(address)
+        .then(() => toast.copied(address))
+        .catch((error) => toast.show(String(error), { variant: "error" }));
+  }, [address, toast]);
+  return (
+    <View style={styles.hostList}>
+      <Pressable
+        style={styles.hostRow}
+        accessibilityRole="button"
+        disabled={current.isPending || isPending}
+        onPress={toggle}
+      >
+        <ThemedForward size={14} uniProps={mutedColorMapping} />
+        <Text style={styles.hostLabel}>{label}</Text>
+      </Pressable>
+      {address && (
+        <Pressable
+          style={styles.hostRow}
+          accessibilityRole="button"
+          accessibilityLabel={t("workspace.scripts.actions.copyForward", { address })}
+          onPress={copy}
+        >
+          <ThemedCopy size={14} uniProps={mutedColorMapping} />
+          <Text style={styles.hostLabel}>{address}</Text>
+        </Pressable>
+      )}
+      {(mutationError || current.error) && (
+        <Text accessibilityRole="alert" style={styles.hostLabel}>
+          {(mutationError ?? current.error)?.message}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 interface ScriptRowProps {
   script: WorkspaceDescriptor["scripts"][number];
   liveTerminalIdSet: Set<string>;
   actions: WorkspaceScriptActions;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
+}
+
+function resolveForwardTarget(
+  script: ScriptRowProps["script"],
+  { serverId, workspaceId }: WorkspaceScriptActions,
+) {
+  if (
+    !serverId ||
+    !workspaceId ||
+    script.type !== "service" ||
+    script.lifecycle !== "running" ||
+    !script.port ||
+    !script.terminalId ||
+    !getIsElectron()
+  )
+    return null;
+  const routing = readHostBrowserRouting(serverId);
+  if (routing.kind !== "remote" || routing.support !== "supported") return null;
+  return { serverId, workspaceId, port: script.port, terminalId: script.terminalId };
 }
 
 function ScriptRow({
@@ -317,6 +414,7 @@ function ScriptRow({
   const { selected: selectedLink, targets: linkTargets } = actions.resolveLinks(script);
   const liveTerminalId =
     script.terminalId && liveTerminalIdSet.has(script.terminalId) ? script.terminalId : null;
+  const forwardTarget = resolveForwardTarget(script, actions);
   const showExitBadge = !isRunning && exitCode !== null;
   const { start, stop, restart } = actions;
   const closeMenu = useDropdownMenuClose();
@@ -441,6 +539,7 @@ function ScriptRow({
           />
         </View>
       ) : null}
+      {forwardTarget ? <ServiceForwardControls target={forwardTarget} /> : null}
     </View>
   );
 }

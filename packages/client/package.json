@@ -33,6 +33,10 @@
     "./internal/hosts": {
       "types": "./dist/hosts/index.d.ts",
       "default": "./dist/hosts/index.js"
+    },
+    "./internal/node-network-tunnel": {
+      "types": "./dist/node/network-tunnel/index.d.ts",
+      "default": "./dist/node/network-tunnel/index.js"
     }
   },
   "publishConfig": {

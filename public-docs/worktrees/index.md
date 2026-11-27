@@ -248,6 +248,15 @@ http://<script>--<project>.localhost:<daemon-port>
 
 `*.localhost` resolves to `127.0.0.1` on modern systems, so these URLs work out of the box. The proxy supports WebSocket upgrades.
 
+### Access a remote service from your computer
+
+- **Preview HTTP inside Paseo Desktop.** Open a service URL in the workspace browser with the remote host selected. The browser reaches the host through its authenticated tunnel without reserving a port on your computer.
+- **Use an external browser or TCP tool.** In the remote workspace’s Scripts menu, choose **Forward to this computer** under a running service. Click the displayed address to copy it. Use that port with curl, your browser, or a localhost OAuth callback. If the service port is busy locally, Desktop assigns a free port. **Stop forwarding**, leaving the workspace, stopping the service, or losing the tunnel closes the listener.
+- **Forward from a terminal.** Run `paseo script forward web --host dev.example:6767 --workspace <id>` for a running service named `web`. Use the printed workspace hostname or loopback address. Add `--local-port 3000` for a fixed callback port. An explicitly requested port must be free. Keep the command running and press Ctrl+C to close it. The CLI supports direct TCP and WebSocket daemon endpoints, including TLS. Desktop also supports SSH and encrypted relay connections where its host tunnel is available.
+- **Access from a phone.** Phone-local listeners are a separate feature. A forward on a computer only serves applications on that computer.
+
+Both listeners bind to `127.0.0.1` and check that the connecting socket belongs to your OS user. Each forwards TCP to the selected service port on the daemon’s loopback interface. For OAuth, register the exact callback hostname, port, and path you will use.
+
 ### Service-to-service
 
 Services launched from the same workspace see each other's ports and proxy URLs. Given `web` and `api` above, each process gets:

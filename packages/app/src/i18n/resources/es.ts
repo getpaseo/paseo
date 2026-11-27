@@ -830,6 +830,9 @@ export const es: TranslationResources = {
       actions: {
         chooseUrl: "Elegir URL",
         copyUrl: "Copiar URL",
+        forwardLocally: "Reenviar localmente",
+        stopForwarding: "Detener el reenvío",
+        copyForward: "Copiar {{address}}",
         openService: "Ver servicio",
         restart: "Reiniciar",
         run: "Correr",

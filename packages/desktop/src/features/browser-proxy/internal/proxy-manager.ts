@@ -1,6 +1,12 @@
 import net, { type AddressInfo, type Server, type Socket } from "node:net";
 import { getHostBrowserProxyPartition, isHostBrowserProxyPartition } from "./partition.js";
-import { createOsSocketOwnerVerifier, type SocketOwnerVerifier } from "./socket-owner.js";
+import {
+  TunnelMuxClient,
+  startLocalForward,
+  type LocalForward,
+  createOsSocketOwnerVerifier,
+  type SocketOwnerVerifier,
+} from "@getpaseo/client/internal/node-network-tunnel";
 import {
   performSocks5Handshake,
   Socks5Error,
@@ -8,7 +14,6 @@ import {
   socks5ReplyForTunnelCloseReason,
   writeSocks5Reply,
 } from "./socks5.js";
-import { TunnelMuxClient } from "./tunnel-mux.js";
 import {
   openTunnelWireConnection,
   type BrowserProxyTarget,
@@ -65,6 +70,28 @@ export interface BrowserProxyManager {
   listKnownPartitions(): string[];
   releaseHostProxy(serverId: string): Promise<void>;
   disposeAll(): Promise<void>;
+  workspacePortForward(owner: number, request: WorkspacePortForwardRequest): Promise<number | null>;
+  closeWorkspaceForwardsForOwner(owner: number): Promise<void>;
+}
+
+interface ForwardScope {
+  serverId: string;
+  workspaceId: string;
+}
+interface ForwardEndpoint {
+  terminalId: string;
+  port: number;
+}
+export type WorkspacePortForwardRequest = ForwardScope &
+  (
+    | ({ action: "get" | "stop" } & ForwardEndpoint)
+    | ({ action: "start"; target: BrowserProxyTarget } & ForwardEndpoint)
+    | { action: "prune"; endpoints: ForwardEndpoint[] }
+  );
+
+interface ForwardEntry extends ForwardScope, ForwardEndpoint {
+  owner: number;
+  listener: Promise<LocalForward>;
 }
 
 interface HostProxyEntry {
@@ -132,6 +159,85 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
   const allowedPartitions = new Set<string>();
   const knownPartitions = new Set<string>();
   const proxiedSessions = new WeakSet<object>();
+  const forwards = new Map<string, ForwardEntry>();
+
+  async function releaseUnusedForwardHost(serverId: string): Promise<void> {
+    const entry = entriesByServerId.get(serverId);
+    if (!entry || entry.socksServer || entry.ensurePromise) return;
+    if (![...forwards.values()].some((forward) => forward.serverId === serverId))
+      await disposeEntry(entry);
+  }
+
+  async function closeForwards(predicate: (forward: ForwardEntry) => boolean): Promise<void> {
+    const closing: Promise<void>[] = [];
+    const hosts = new Set<string>();
+    for (const [key, entry] of forwards) {
+      if (!predicate(entry)) continue;
+      forwards.delete(key);
+      hosts.add(entry.serverId);
+      closing.push(
+        entry.listener.then(
+          (listener) => listener.close(),
+          () => {},
+        ),
+      );
+    }
+    await Promise.all(closing);
+    await Promise.all([...hosts].map(releaseUnusedForwardHost));
+  }
+
+  async function workspacePortForward(
+    owner: number,
+    request: WorkspacePortForwardRequest,
+  ): Promise<number | null> {
+    const { serverId, workspaceId } = request;
+    if (request.action === "prune") {
+      const live = new Set(
+        request.endpoints.map(({ terminalId, port }) => JSON.stringify([terminalId, port])),
+      );
+      await closeForwards(
+        (forward) =>
+          forward.owner === owner &&
+          forward.serverId === serverId &&
+          forward.workspaceId === workspaceId &&
+          !live.has(JSON.stringify([forward.terminalId, forward.port])),
+      );
+      return null;
+    }
+    const { terminalId, port } = request;
+    const key = JSON.stringify([owner, serverId, workspaceId, terminalId, port]);
+    const existing = forwards.get(key);
+    if (request.action === "get") return existing ? (await existing.listener).port : null;
+    if (request.action === "stop") {
+      if (existing) await closeForwards((forward) => forward === existing);
+      return null;
+    }
+    if (request.action !== "start") return null;
+    if (existing) return (await existing.listener).port;
+    if (forwards.size >= 32) throw new Error("Too many local forwards. Stop one to continue.");
+    const host = getOrCreateEntry(serverId, request.target);
+    // Starting the forward is an explicit opt-in, independent of any tab's routing preference.
+    const listener = ensureTunnelConnected(host).then((mux) =>
+      startLocalForward({
+        remotePort: port,
+        verifyOwner: verifySocketOwner,
+        mux,
+      }),
+    );
+    const entry = { owner, serverId, workspaceId, terminalId, port, listener };
+    forwards.set(key, entry);
+    try {
+      const bound = await listener;
+      if (forwards.get(key) !== entry) throw new Error("The local forward was closed.");
+      return bound.port;
+    } catch (error) {
+      if (forwards.get(key) === entry) {
+        forwards.delete(key);
+        await releaseUnusedForwardHost(serverId);
+      }
+      throw error;
+    }
+  }
 
   function snapshotOf(entry: HostProxyEntry): BrowserProxyStatusSnapshot {
     return {
@@ -263,6 +369,7 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
       entry.mux = mux;
       mux.onClose(() => {
         if (entry.mux === mux) {
+          void closeForwards((forward) => forward.serverId === entry.serverId);
           entry.mux = null;
           if (!entry.disposed && entry.sessionConfigured) {
             setEntryStatus(entry, "reconnecting", null);
@@ -486,6 +593,7 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
     entry.disposed = true;
     entriesByServerId.delete(entry.serverId);
     allowedPartitions.delete(entry.partition);
+    const closingForwards = closeForwards((forward) => forward.serverId === entry.serverId);
 
     entry.mux?.close();
     entry.mux = null;
@@ -502,6 +610,7 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
         server.close(() => resolve());
       });
     }
+    await closingForwards;
   }
 
   async function releaseHostProxy(serverId: string): Promise<void> {
@@ -525,5 +634,7 @@ export function createBrowserProxyManager(deps: BrowserProxyManagerDeps): Browse
     listKnownPartitions,
     releaseHostProxy,
     disposeAll,
+    workspacePortForward,
+    closeWorkspaceForwardsForOwner: (owner) => closeForwards((forward) => forward.owner === owner),
   };
 }

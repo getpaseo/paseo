@@ -1,6 +1,11 @@
 import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
-import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import { runForwardCommand } from "./forward.js";
+import {
+  withGlobalOptions,
+  addDaemonHostOption,
+  addJsonAndDaemonHostOptions,
+} from "../../utils/command-options.js";
 import { runLsCommand } from "./ls.js";
 import { runStartCommand } from "./start.js";
 import { runStopCommand } from "./stop.js";
@@ -35,5 +40,19 @@ export function createScriptCommand(): Command {
     ),
   ).action(withOutput(runStopCommand));
 
+  addDaemonHostOption(
+    addWorkspaceSelectionOptions(
+      script
+        .command("forward")
+        .description(
+          "Forward a running service to this computer through a direct daemon connection",
+        )
+        .argument("<name>")
+        .option(
+          "--local-port <port>",
+          "Require this local loopback port (default: prefer the service port)",
+        ),
+    ),
+  ).action(withGlobalOptions(runForwardCommand));
   return script;
 }
