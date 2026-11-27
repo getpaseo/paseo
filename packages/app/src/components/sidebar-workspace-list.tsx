@@ -250,7 +250,6 @@ interface SidebarWorkspaceListProps {
   listHeaderComponent?: ReactElement | null;
   /** Gesture ref for coordinating with parent gestures (e.g., sidebar close) */
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  dragGestureHostActive?: boolean;
 }
 
 interface ProjectHeaderRowProps {
@@ -1576,7 +1575,6 @@ function ProjectBlock({
   parentGestureRef,
   onWorkspaceReorder,
   useNestable,
-  dragGestureHostActive,
   manualSort,
   onWorktreeCreated,
   drag,
@@ -1605,7 +1603,6 @@ function ProjectBlock({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   onWorkspaceReorder: (projectViewKey: string, workspaces: SidebarWorkspacePlacement[]) => void;
   useNestable: boolean;
-  dragGestureHostActive?: boolean;
   manualSort: boolean;
   onWorktreeCreated?: (workspaceId: string) => void;
   drag: () => void;
@@ -1811,7 +1808,6 @@ function ProjectBlock({
                 useDragHandle
                 nestable={useNestable}
                 simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostActive}
                 containerStyle={styles.workspaceListContainer}
               />
             </>
@@ -1903,7 +1899,6 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.parentGestureRef === next.parentGestureRef &&
     previous.onWorkspaceReorder === next.onWorkspaceReorder &&
     previous.useNestable === next.useNestable &&
-    previous.dragGestureHostActive === next.dragGestureHostActive &&
     previous.manualSort === next.manualSort &&
     previous.onWorktreeCreated === next.onWorktreeCreated &&
     previous.drag === next.drag &&
@@ -1968,7 +1963,7 @@ function areProjectBlockSelectionsEqual(
 
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
-export function SidebarWorkspaceList({
+function SidebarWorkspaceListBase({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
@@ -1988,7 +1983,6 @@ export function SidebarWorkspaceList({
   listFooterComponent,
   listHeaderComponent,
   parentGestureRef,
-  dragGestureHostActive,
 }: SidebarWorkspaceListProps) {
   const pathname = usePathname();
   const hosts = useHosts();
@@ -2061,7 +2055,6 @@ export function SidebarWorkspaceList({
         listHeaderComponent={listHeaderComponent}
         sidebarFilterEmpty={sidebarFilterEmpty}
         parentGestureRef={parentGestureRef}
-        dragGestureHostActive={dragGestureHostActive}
       />
     ) : (
       <ProjectModeList
@@ -2080,7 +2073,6 @@ export function SidebarWorkspaceList({
         sidebarFilterEmpty={sidebarFilterEmpty}
         hasActiveProjectFilter={hasActiveProjectFilter}
         parentGestureRef={parentGestureRef}
-        dragGestureHostActive={dragGestureHostActive}
         pathname={pathname}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
@@ -2092,6 +2084,10 @@ export function SidebarWorkspaceList({
 
   return content;
 }
+
+// The sidebar re-renders for presentation changes (dock and overlay, the resize grip) that never
+// reach the list. Its props come from the memoized sidebar model and stable handlers.
+export const SidebarWorkspaceList = memo(SidebarWorkspaceListBase);
 
 /**
  * Every grouping mode except project: the rows are grouped by something that is not a project, so
@@ -2113,7 +2109,6 @@ function SidebarGroupedModeList({
   listHeaderComponent,
   sidebarFilterEmpty,
   parentGestureRef,
-  dragGestureHostActive,
 }: {
   workspaceGroups: SidebarWorkspaceGroup[];
   pinnedGroups: PinnedSidebarGroups;
@@ -2128,7 +2123,6 @@ function SidebarGroupedModeList({
   listHeaderComponent?: ReactElement | null;
   sidebarFilterEmpty: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  dragGestureHostActive?: boolean;
 }) {
   const showShortcutBadges = useShowShortcutBadges();
   const pinnedWorkspaces = useMemo(
@@ -2155,7 +2149,6 @@ function SidebarGroupedModeList({
       listHeaderComponent={listHeaderComponent}
       sidebarFilterEmpty={sidebarFilterEmpty}
       parentGestureRef={parentGestureRef}
-      dragGestureHostActive={dragGestureHostActive}
     />
   );
 }
@@ -2176,7 +2169,6 @@ function ProjectModeList({
   sidebarFilterEmpty,
   hasActiveProjectFilter,
   parentGestureRef,
-  dragGestureHostActive,
   pathname,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
@@ -2468,7 +2460,6 @@ function ProjectModeList({
           parentGestureRef={parentGestureRef}
           onWorkspaceReorder={handleWorkspaceReorder}
           useNestable={platformIsNative}
-          dragGestureHostActive={dragGestureHostActive}
           onWorktreeCreated={handleWorktreeCreated}
           drag={dragState.drag}
           isDragging={dragState.isDragging}
@@ -2490,7 +2481,6 @@ function ProjectModeList({
       handleWorktreeCreated,
       manualSort,
       parentGestureRef,
-      dragGestureHostActive,
       handleWorkspaceReorder,
       hostBadgeByServerId,
       supportsMultiplicityByServerId,
@@ -2591,7 +2581,6 @@ function ProjectModeList({
         useDragHandle
         nestable={platformIsNative}
         simultaneousGestureRef={parentGestureRef}
-        gestureHostPresented={dragGestureHostActive}
         containerStyle={styles.projectListContainer}
       />
     );
@@ -2620,7 +2609,6 @@ function ProjectModeList({
                 useDragHandle
                 nestable={platformIsNative}
                 simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostActive}
                 containerStyle={styles.workspaceListContainer}
               />
               {canTogglePinnedChats ? (
