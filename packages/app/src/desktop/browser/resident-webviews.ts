@@ -299,14 +299,12 @@ export function prepareBrowserWebview(
     browserId: string;
     workspaceId: string;
     initialUrl?: string | null;
-    partition?: string;
     profileHost?: BrowserWebviewProfileHost;
   },
 ): void {
   const browser = getBrowserBridge(input.profileHost);
-  const targetPartition = input.partition ?? browser.profilePartition;
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
-  webview.setAttribute("partition", targetPartition);
+  webview.setAttribute("partition", browser.profilePartition);
   webview.setAttribute("allowpopups", "true");
   webview.setAttribute("spellcheck", "false");
   webview.setAttribute("autosize", "on");
@@ -316,15 +314,10 @@ export function prepareBrowserWebview(
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
 }
 
-export function getResidentBrowserWebviewPartition(webview: HTMLElement): string | null {
-  return trimNonEmpty(webview.getAttribute("partition"));
-}
-
 export function ensureResidentBrowserWebview(input: {
   browserId: string;
   workspaceId: string;
   url: string;
-  partition?: string;
   profileHost?: BrowserWebviewProfileHost;
 }): HTMLElement | null {
   const browserId = trimNonEmpty(input.browserId);
@@ -336,27 +329,18 @@ export function ensureResidentBrowserWebview(input: {
     return null;
   }
 
-  const browser = getBrowserBridge(input.profileHost);
-  const desiredPartition = input.partition ?? browser.profilePartition;
-
   const resident = residentWebviewsByBrowserId.get(browserId) ?? null;
   if (resident?.isConnected) {
-    if (getResidentBrowserWebviewPartition(resident) === desiredPartition) {
-      releaseResidentBrowserWebview(browserId, resident);
-      return resident;
-    }
-    removeResidentBrowserWebview(browserId);
+    releaseResidentBrowserWebview(browserId, resident);
+    return resident;
   }
 
   const existing = findBrowserWebview(browserId, ownerDocument);
   if (existing) {
-    if (getResidentBrowserWebviewPartition(existing) === desiredPartition) {
-      if (existing.parentElement?.id === RESIDENT_BROWSER_HOST_ID) {
-        releaseResidentBrowserWebview(browserId, existing);
-      }
-      return existing;
+    if (existing.parentElement?.id === RESIDENT_BROWSER_HOST_ID) {
+      releaseResidentBrowserWebview(browserId, existing);
     }
-    existing.remove();
+    return existing;
   }
 
   const webview = ownerDocument.createElement("webview") as BrowserWebviewElement;
@@ -364,8 +348,7 @@ export function ensureResidentBrowserWebview(input: {
     browserId,
     workspaceId: input.workspaceId,
     initialUrl: input.url,
-    partition: desiredPartition,
-    profileHost: browser,
+    profileHost: input.profileHost,
   });
   releaseResidentBrowserWebview(browserId, webview);
   return webview;

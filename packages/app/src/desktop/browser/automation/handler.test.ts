@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { createJSONStorage, type StateStorage } from "zustand/middleware";
-import { mountBrowserAutomationHandler, type BrowserAutomationHandlerOptions } from "./handler";
+import { mountBrowserAutomationHandler } from "./handler";
 import type { DesktopHostBridge } from "@/desktop/host";
 import { useBrowserStore } from "@/desktop/browser/store";
 import { findPaneById } from "@/stores/workspace-layout-actions";
@@ -107,14 +107,12 @@ class FakeResidentBrowser {
     browserId: string;
     workspaceId: string;
     url: string;
-    partition?: string;
   }> = [];
 
   public ensure = (input: {
     browserId: string;
     workspaceId: string;
     url: string;
-    partition?: string;
   }): HTMLElement | null => {
     this.ensuredWebviews.push(input);
     return null;
@@ -131,8 +129,6 @@ class BrowserAutomationHandlerHarness {
     input: {
       serverId?: string;
       host?: DesktopHostBridge | null;
-      readHostBrowserRouting?: BrowserAutomationHandlerOptions["readHostBrowserRouting"];
-      prepareHostBrowserPartition?: BrowserAutomationHandlerOptions["prepareHostBrowserPartition"];
       registrationWaitTimeoutMs?: number;
       registrationPollIntervalMs?: number;
     } = {},
@@ -142,12 +138,6 @@ class BrowserAutomationHandlerHarness {
       ...(input.serverId ? { serverId: input.serverId } : {}),
       getHost: () => (input.host === undefined ? { browser: this.browser } : input.host),
       ensureResidentBrowserWebview: this.resident.ensure,
-      ...(input.readHostBrowserRouting
-        ? { readHostBrowserRouting: input.readHostBrowserRouting }
-        : {}),
-      ...(input.prepareHostBrowserPartition
-        ? { prepareHostBrowserPartition: input.prepareHostBrowserPartition }
-        : {}),
       ...(input.registrationWaitTimeoutMs !== undefined
         ? { registrationWaitTimeoutMs: input.registrationWaitTimeoutMs }
         : {}),
@@ -175,7 +165,7 @@ function browserAutomationRequest(): BrowserAutomationExecuteRequest {
   };
 }
 
-function browserNewTabRequest(input?: { url?: string }): BrowserAutomationExecuteRequest {
+function browserNewTabRequest(): BrowserAutomationExecuteRequest {
   return {
     type: "browser.automation.execute.request",
     requestId: "req-new",
@@ -183,7 +173,7 @@ function browserNewTabRequest(input?: { url?: string }): BrowserAutomationExecut
     workspaceId: "wks_workspace_a",
     command: {
       command: "new_tab",
-      args: { url: input?.url ?? "https://example.com" },
+      args: { url: "https://example.com" },
     },
   };
 }
@@ -250,14 +240,11 @@ function currentBrowserTabs() {
   }));
 }
 
-function newTabResultFrom(
-  payload: BrowserAutomationResponsePayload,
-  expectedUrl = "https://example.com",
-) {
+function newTabResultFrom(payload: BrowserAutomationResponsePayload) {
   expect(payload).toMatchObject({
     requestId: "req-new",
     ok: true,
-    result: { command: "new_tab", workspaceId: "wks_workspace_a", url: expectedUrl },
+    result: { command: "new_tab", workspaceId: "wks_workspace_a", url: "https://example.com" },
   });
   if (!payload.ok || payload.result.command !== "new_tab") {
     throw new Error("Expected browser_new_tab success payload");
@@ -627,71 +614,5 @@ describe("mountBrowserAutomationHandler", () => {
 
     expect(browser.browser.executedRequests).toEqual([]);
     expect(browser.client.sentResponses).toEqual([]);
-  });
-
-  test("remote agent browser_new_tab prepares the host proxy partition and sets routingMode to host", async () => {
-    const browser = new BrowserAutomationHandlerHarness();
-    const preparedServers: string[] = [];
-    browser.mount({
-      serverId: "remote-1",
-      readHostBrowserRouting: () => ({
-        kind: "remote",
-        support: "supported",
-        target: { type: "directTcp", endpoint: "10.0.0.5:6767" },
-      }),
-      prepareHostBrowserPartition: async (serverId) => {
-        preparedServers.push(serverId);
-        return {
-          ok: true,
-          partition: "persist:paseo-browser-host-0123456789abcdef",
-          isRemoteHost: true,
-        };
-      },
-    });
-
-    browser.receive(browserNewTabRequest({ url: "http://localhost:5173" }));
-    await flushAsyncWork();
-
-    const result = newTabResultFrom(browser.client.payloadAt(0), "http://localhost:5173");
-    expect(preparedServers).toEqual(["remote-1"]);
-    expect(useBrowserStore.getState().browsersById[result.browserId]?.routingMode).toBe("host");
-    expect(browser.resident.ensuredWebviews).toEqual([
-      {
-        browserId: result.browserId,
-        workspaceId: "wks_workspace_a",
-        url: "http://localhost:5173",
-        partition: "persist:paseo-browser-host-0123456789abcdef",
-      },
-    ]);
-  });
-
-  test("remote agent browser_new_tab fails closed without creating a webview when host proxy cannot prepare", async () => {
-    const browser = new BrowserAutomationHandlerHarness();
-    browser.mount({
-      serverId: "remote-old",
-      readHostBrowserRouting: () => ({
-        kind: "remote",
-        support: "daemon_update_required",
-      }),
-      prepareHostBrowserPartition: async () => ({
-        ok: false,
-        reason: "daemon_update_required",
-        message: "Update this host daemon to browse through the host proxy.",
-      }),
-    });
-
-    browser.receive(browserNewTabRequest({ url: "http://localhost:5173" }));
-    await flushAsyncWork();
-
-    expect(browser.resident.ensuredWebviews).toEqual([]);
-    expect(browser.client.payloadAt(0)).toEqual({
-      requestId: "req-new",
-      ok: false,
-      error: {
-        code: "browser_unsupported",
-        message: "Update this host daemon to browse through the host proxy.",
-        retryable: false,
-      },
-    });
   });
 });

@@ -1,9 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { BrowserKeyboardPolicy } from "./features/browser-keyboard/index.js";
-import type {
-  BrowserProxyStatusSnapshot,
-  BrowserProxyTarget,
-} from "./features/browser-proxy/index.js";
 import type { DesktopWindowChromeMode } from "./window/chrome.js";
 
 // This preload runs in Electron's sandbox and is tsc-compiled (not bundled), so it MUST
@@ -137,28 +133,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     focus: (browserId: string) => ipcRenderer.invoke("paseo:browser:focus", browserId),
     openDevTools: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),
-    clearProfile: (legacyBrowserIds: string[], hostServerIds?: string[]) =>
-      ipcRenderer.invoke("paseo:browser:clear-profile", legacyBrowserIds, hostServerIds),
-    ensureHostProxy: (input: {
-      serverId: string;
-      target: BrowserProxyTarget;
-      forceReconnect?: boolean;
-    }) =>
-      ipcRenderer.invoke(
-        "paseo:browser-proxy:ensure-host",
-        input,
-      ) as Promise<BrowserProxyStatusSnapshot>,
-    updateHostProxyTarget: (input: { serverId: string; target: BrowserProxyTarget }) =>
-      ipcRenderer.invoke("paseo:browser-proxy:update-target", input),
-    getHostProxyStatus: (serverId: string) =>
-      ipcRenderer.invoke(
-        "paseo:browser-proxy:get-status",
-        serverId,
-      ) as Promise<BrowserProxyStatusSnapshot | null>,
-    releaseHostProxy: (serverId: string) =>
-      ipcRenderer.invoke("paseo:browser-proxy:release-host", serverId),
-    deliverProxyTicket: (input: { requestId: string; ticket?: string; error?: string }) =>
-      ipcRenderer.invoke("paseo:browser-proxy:deliver-ticket", input),
+    clearProfile: (legacyBrowserIds: string[]) =>
+      ipcRenderer.invoke("paseo:browser:clear-profile", legacyBrowserIds),
     executeAutomationCommand: (request: Record<string, unknown>) =>
       ipcRenderer.invoke("paseo:browser:execute-automation-command", request),
     captureElement: (

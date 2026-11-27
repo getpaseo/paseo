@@ -17,10 +17,6 @@
     "./addresses": {
       "types": "./dist/addresses.d.ts",
       "default": "./dist/addresses.js"
-    },
-    "./network-tunnel": {
-      "types": "./dist/network-tunnel/index.d.ts",
-      "default": "./dist/network-tunnel/index.js"
     }
   },
   "publishConfig": {

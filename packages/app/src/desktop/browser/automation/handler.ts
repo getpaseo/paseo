@@ -8,11 +8,6 @@ import {
   resizeResidentBrowserWebview,
 } from "@/desktop/browser/resident-webviews";
 import {
-  installBrowserProxyRendererBridge,
-  prepareHostBrowserPartition as prepareHostBrowserPartitionDefault,
-  readHostBrowserRouting as readHostBrowserRoutingDefault,
-} from "@/desktop/browser/proxy";
-import {
   createFixedBrowserViewport,
   createWorkspaceBrowser,
   getBrowserRecord,
@@ -47,8 +42,6 @@ export interface BrowserAutomationHandlerOptions {
   serverId?: string;
   getHost?: () => DesktopHostBridge | null;
   ensureResidentBrowserWebview?: typeof ensureResidentBrowserWebviewDefault;
-  readHostBrowserRouting?: typeof readHostBrowserRoutingDefault;
-  prepareHostBrowserPartition?: typeof prepareHostBrowserPartitionDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }
@@ -56,7 +49,6 @@ export interface BrowserAutomationHandlerOptions {
 export function mountBrowserAutomationHandler(
   options: BrowserAutomationHandlerOptions,
 ): () => void {
-  installBrowserProxyRendererBridge();
   const getHost = options.getHost ?? getDesktopHost;
   const unsubscribe = options.client.on("browser.automation.execute.request", (request) => {
     void handleBrowserAutomationRequest({
@@ -66,9 +58,6 @@ export function mountBrowserAutomationHandler(
       serverId: options.serverId,
       ensureResidentBrowserWebview:
         options.ensureResidentBrowserWebview ?? ensureResidentBrowserWebviewDefault,
-      readHostBrowserRouting: options.readHostBrowserRouting ?? readHostBrowserRoutingDefault,
-      prepareHostBrowserPartition:
-        options.prepareHostBrowserPartition ?? prepareHostBrowserPartitionDefault,
       ...(options.registrationWaitTimeoutMs !== undefined
         ? { registrationWaitTimeoutMs: options.registrationWaitTimeoutMs }
         : {}),
@@ -128,8 +117,6 @@ async function handleBrowserAutomationRequest(params: {
   request: BrowserAutomationExecuteRequest;
   serverId?: string;
   ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
-  readHostBrowserRouting: typeof readHostBrowserRoutingDefault;
-  prepareHostBrowserPartition: typeof prepareHostBrowserPartitionDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }): Promise<void> {
@@ -139,8 +126,6 @@ async function handleBrowserAutomationRequest(params: {
     request,
     serverId,
     ensureResidentBrowserWebview,
-    readHostBrowserRouting,
-    prepareHostBrowserPartition,
     registrationWaitTimeoutMs,
     registrationPollIntervalMs,
   } = params;
@@ -156,8 +141,6 @@ async function handleBrowserAutomationRequest(params: {
           serverId,
           browserHost,
           ensureResidentBrowserWebview,
-          readHostBrowserRouting,
-          prepareHostBrowserPartition,
           ...(registrationWaitTimeoutMs !== undefined ? { registrationWaitTimeoutMs } : {}),
           ...(registrationPollIntervalMs !== undefined ? { registrationPollIntervalMs } : {}),
         }),
@@ -352,8 +335,6 @@ async function openBrowserTabForRequest(params: {
   serverId?: string;
   browserHost: DesktopHostBridge["browser"] | undefined;
   ensureResidentBrowserWebview: typeof ensureResidentBrowserWebviewDefault;
-  readHostBrowserRouting: typeof readHostBrowserRoutingDefault;
-  prepareHostBrowserPartition: typeof prepareHostBrowserPartitionDefault;
   registrationWaitTimeoutMs?: number;
   registrationPollIntervalMs?: number;
 }): Promise<BrowserAutomationResponsePayload> {
@@ -362,8 +343,6 @@ async function openBrowserTabForRequest(params: {
     serverId,
     browserHost,
     ensureResidentBrowserWebview,
-    readHostBrowserRouting,
-    prepareHostBrowserPartition,
     registrationWaitTimeoutMs,
     registrationPollIntervalMs,
   } = params;
@@ -380,27 +359,8 @@ async function openBrowserTabForRequest(params: {
     });
   }
 
-  const hostRouting = readHostBrowserRouting(serverId);
-  let targetPartition: string | undefined;
-  let routingMode: "host" | "local" | undefined;
-  if (hostRouting.kind === "remote") {
-    const prepared = await prepareHostBrowserPartition(serverId);
-    if (!prepared.ok) {
-      return browserAutomationFailure({
-        requestId: request.requestId,
-        code: "browser_unsupported",
-        message: prepared.message,
-      });
-    }
-    targetPartition = prepared.partition;
-    routingMode = "host";
-  }
-
   const url = command.args.url ?? "https://example.com";
-  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({
-    initialUrl: url,
-    routingMode,
-  });
+  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   if (!workspaceKey) {
     return browserAutomationFailure({
@@ -416,12 +376,7 @@ async function openBrowserTabForRequest(params: {
   });
 
   if (browserHost?.executeAutomationCommand) {
-    ensureResidentBrowserWebview({
-      browserId,
-      workspaceId,
-      url: normalizedUrl,
-      ...(targetPartition ? { partition: targetPartition } : {}),
-    });
+    ensureResidentBrowserWebview({ browserId, workspaceId, url: normalizedUrl });
     const registered = await waitForBrowserRegistration({
       request,
       browserId,

@@ -1,9 +1,7 @@
 import { webContents as allWebContents, type WebContents } from "electron";
 import { PASEO_BROWSER_PROFILE_PARTITION } from "../browser-profile.js";
-import { isHostBrowserProxyPartition } from "../browser-proxy/partition.js";
 import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
-  buildBrowserPopupWebPreferences,
   decideBrowserWindowOpenRequest,
   isAllowedBrowserWebviewUrl,
   PendingBrowserWindowOpenRequests,
@@ -12,7 +10,6 @@ import { PaseoBrowserWebviewRegistry } from "./registry.js";
 
 export {
   BROWSER_NEW_TAB_REQUEST_EVENT,
-  buildBrowserPopupWebPreferences,
   decideBrowserWindowOpenRequest,
   PendingBrowserWindowOpenRequests,
 };
@@ -39,24 +36,12 @@ interface AttachedBrowserRegistration {
 interface RegisterAttachedBrowserInput extends AttachedBrowserRegistration {
   sender: BrowserWebContentsIdentity;
   profileSession: object;
-  isAllowedSession?: (session: object) => boolean;
   findWebContents(webContentsId: number): RegisteredBrowserWebContents | null;
 }
 
-export function isPaseoBrowserWebviewAttach(input: {
-  src?: string;
-  partition?: string;
-  isAllowedHostPartition?: (partition: string) => boolean;
-}): boolean {
-  if (!isAllowedBrowserWebviewUrl(input.src)) {
-    return false;
-  }
-  if (input.partition === PASEO_BROWSER_PROFILE_PARTITION) {
-    return true;
-  }
+export function isPaseoBrowserWebviewAttach(input: { src?: string; partition?: string }): boolean {
   return (
-    isHostBrowserProxyPartition(input.partition) &&
-    (input.isAllowedHostPartition?.(input.partition) ?? false)
+    isAllowedBrowserWebviewUrl(input.src) && input.partition === PASEO_BROWSER_PROFILE_PARTITION
   );
 }
 
@@ -79,10 +64,12 @@ export function preparePaseoBrowserWebContents(contents: RegisteredBrowserWebCon
 
 export function registerAttachedPaseoBrowser(input: RegisterAttachedBrowserInput): boolean {
   const guest = input.findWebContents(input.webContentsId);
-  const sessionAllowed =
-    guest !== null &&
-    (guest.session === input.profileSession || (input.isAllowedSession?.(guest.session) ?? false));
-  if (!guest || guest.isDestroyed() || guest.hostWebContents !== input.sender || !sessionAllowed) {
+  if (
+    !guest ||
+    guest.isDestroyed() ||
+    guest.hostWebContents !== input.sender ||
+    guest.session !== input.profileSession
+  ) {
     return false;
   }
 

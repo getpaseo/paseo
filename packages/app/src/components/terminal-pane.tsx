@@ -102,8 +102,6 @@ import {
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
-import { shouldRouteWorkspaceUrlToProxiedBrowser } from "@/desktop/browser/proxy";
-import { openExternalUrl } from "@/utils/open-external-url";
 
 interface TerminalPaneProps {
   serverId: string;
@@ -113,7 +111,6 @@ interface TerminalPaneProps {
   isPaneFocused: boolean;
   onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
-  onOpenBrowserUrl?: (url: string) => void;
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
@@ -268,7 +265,6 @@ export function TerminalPane({
   isPaneFocused,
   onOpenFileExplorer,
   onOpenWorkspaceFile,
-  onOpenBrowserUrl,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
   const retainedPanelActive = useRetainedPanelActive();
@@ -1166,17 +1162,6 @@ export function TerminalPane({
     terminalStreamKey,
   });
 
-  const handleOpenExternalUrl = useCallback(
-    async (url: string) => {
-      if (onOpenBrowserUrl && shouldRouteWorkspaceUrlToProxiedBrowser({ serverId, url })) {
-        onOpenBrowserUrl(url);
-        return;
-      }
-      await openExternalUrl(url);
-    },
-    [onOpenBrowserUrl, serverId],
-  );
-
   if (!client || !isConnected) {
     return (
       <View style={styles.centerState}>
@@ -1218,7 +1203,6 @@ export function TerminalPane({
             onSelectionChange={handleSelectionChange}
             onResolveLocalFileLink={handleResolveLocalFileLink}
             onOpenLocalFileLink={handleOpenLocalFileLink}
-            onOpenExternalUrl={handleOpenExternalUrl}
             onPendingModifiersConsumed={handlePendingModifiersConsumed}
             pendingModifiers={modifiers}
             focusRequestToken={focusRequestToken}

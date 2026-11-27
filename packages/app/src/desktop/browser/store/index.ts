@@ -9,31 +9,26 @@ import {
   type BrowserIndexState,
   type BrowserRecord,
   type BrowserRecordPatch,
-  type BrowserRoutingMode,
   type BrowserViewport,
   createBrowserRecord,
   normalizeBrowserIndexState,
   normalizeBrowserUrl,
   removeBrowserFromIndex,
-  resolveBrowserRoutingMode,
   sanitizeBrowsersForPersist,
   trimNonEmpty,
 } from "./state";
 
 export {
   createFixedBrowserViewport,
-  resolveBrowserRoutingMode,
   RESPONSIVE_BROWSER_VIEWPORT,
   type BrowserRecord,
-  type BrowserRoutingMode,
   type BrowserViewport,
 } from "./state";
 
 interface BrowserStoreState extends BrowserIndexState {
-  createBrowser: (input?: { initialUrl?: string; routingMode?: BrowserRoutingMode }) => string;
+  createBrowser: (input?: { initialUrl?: string }) => string;
   updateBrowser: (browserId: string, patch: BrowserRecordPatch) => void;
   setBrowserViewport: (browserId: string, viewport: BrowserViewport) => void;
-  setBrowserRoutingMode: (browserId: string, routingMode: BrowserRoutingMode) => void;
   removeBrowser: (browserId: string) => void;
 }
 
@@ -57,7 +52,6 @@ export const useBrowserStore = create<BrowserStoreState>()(
         const record = createBrowserRecord({
           browserId,
           initialUrl: input?.initialUrl,
-          routingMode: input?.routingMode,
           now: Date.now(),
         });
 
@@ -75,9 +69,6 @@ export const useBrowserStore = create<BrowserStoreState>()(
       },
       setBrowserViewport: (browserId, viewport) => {
         set((state) => applyBrowserPatch(state, browserId, { viewport }));
-      },
-      setBrowserRoutingMode: (browserId, routingMode) => {
-        set((state) => applyBrowserPatch(state, browserId, { routingMode }));
       },
       removeBrowser: (browserId) => {
         set((state) => removeBrowserFromIndex(state, browserId));
@@ -103,10 +94,7 @@ export function getBrowserRecord(browserId: string): BrowserRecord | null {
   return useBrowserStore.getState().browsersById[normalizedBrowserId] ?? null;
 }
 
-export function createWorkspaceBrowser(input?: {
-  initialUrl?: string;
-  routingMode?: BrowserRoutingMode;
-}): {
+export function createWorkspaceBrowser(input?: { initialUrl?: string }): {
   browserId: string;
   url: string;
 } {

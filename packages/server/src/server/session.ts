@@ -515,10 +515,6 @@ export interface SessionOptions {
   publishScriptStatusUpdate?: (message: ScriptStatusUpdateMessage) => void;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
-  createNetworkTunnelTicket?: (permissions: readonly DaemonPermission[]) => {
-    ticket: string;
-    expiresAtMs: number;
-  };
   pushNotifications: PushNotifications;
   paseoHome: string;
   worktreesRoot?: string;
@@ -808,7 +804,6 @@ export class Session {
       ),
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
-  private readonly createNetworkTunnelTicket: SessionOptions["createNetworkTunnelTicket"];
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
@@ -943,7 +938,6 @@ export class Session {
       publishScriptStatusUpdate,
       logger,
       downloadTokenStore,
-      createNetworkTunnelTicket,
       pushNotifications,
       paseoHome,
       worktreesRoot,
@@ -989,7 +983,6 @@ export class Session {
       getWebSocketRuntimeMetrics,
     } = options;
     this.browserToolsBroker = options.browserToolsBroker;
-    this.createNetworkTunnelTicket = createNetworkTunnelTicket;
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
 
@@ -3745,21 +3738,6 @@ export class Session {
           payload: { requestId: msg.requestId },
         });
         return;
-      case "network.tunnel.create_ticket.request": {
-        if (!this.createNetworkTunnelTicket) {
-          throw new Error("Network tunnel is not available on this session");
-        }
-        const issued = this.createNetworkTunnelTicket(this.getPermissions());
-        this.emit({
-          type: "network.tunnel.create_ticket.response",
-          payload: {
-            requestId: msg.requestId,
-            ticket: issued.ticket,
-            expiresAtMs: issued.expiresAtMs,
-          },
-        });
-        return;
-      }
     }
   }
 
