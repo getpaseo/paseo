@@ -17,6 +17,10 @@ const systemPromptCapability = z.object({
   antigravity: z.object({ systemPrompt: z.object({ append: z.literal(true) }) }),
 });
 
+// agy can send an internal diagnostic as text and still return end_turn.
+const executorDiagnostic =
+  /^\n⚠ ((?:agent executor error|failed to construct executor): [^\r\n]+)\n$/;
+
 // agy 1.5.13 advertises these built-in commands and its invocable skills in one ACP list.
 const builtInCommands = new Set([
   "goal",
@@ -181,6 +185,7 @@ export function createAntigravityProvider(): ProviderRegistration {
       perModelThinkingOptions: true,
       waitForInitialCommands: true,
       loadReplayQuietPeriodMs: 200,
+      promptDiagnostic: (chunk) => executorDiagnostic.exec(chunk)?.[1],
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
       deferTurnOnRunningTools: {
         keepsTurnOpen(toolCall) {

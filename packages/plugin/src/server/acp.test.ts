@@ -3759,6 +3759,111 @@ describe("deferTurnOnRunningTools", () => {
     }
   });
 
+  it("sends an accepted steer queued behind a steer with a turn-end error", async () => {
+    const firstSteer = Promise.withResolvers<() => void>();
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        const params = request.params as { prompt: Array<{ text?: string }> };
+        const text = params.prompt[0]?.text;
+        const notify = (update: unknown) =>
+          instance.notify("session/update", { sessionId: "connector-session", update });
+        if (text === "start") {
+          notify({
+            sessionUpdate: "tool_call",
+            toolCallId: "bg-steer",
+            title: "Long background job",
+            status: "in_progress",
+          });
+          instance.respond(request, {
+            stopReason: "end_turn",
+            usage: { inputTokens: 1, outputTokens: 1 },
+          });
+        } else if (text === "first steer") {
+          firstSteer.resolve(() => {
+            notify(textChunk("Executor failed"));
+            instance.respond(request, { stopReason: "end_turn" });
+          });
+        } else {
+          notify({
+            sessionUpdate: "tool_call_update",
+            toolCallId: "bg-steer",
+            status: "completed",
+          });
+          notify(textChunk("Second steer reached the agent"));
+          instance.respond(request, { stopReason: "end_turn" });
+        }
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "queued-steer",
+      label: "Queued Steer",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 10, quietLimitMs: 100 },
+        promptDiagnostic: (text) => (text === "Executor failed" ? text : undefined),
+      },
+    }).connect({ versions: [1], capabilities: ["prompt.message", "prompt.steer"] });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    const sendPrompt = (clientMessageId: string, delivery: "auto" | "steer", text: string) =>
+      connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId,
+          delivery,
+          input: { type: "message", content: [{ type: "text", text }] },
+        },
+      });
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await sendPrompt("queued-turn", "auto", "start");
+      await waitForEvent(events, (event) => event.type === "session.usage");
+      await sendPrompt("steer-1", "steer", "first steer");
+      const finishFirstSteer = await firstSteer.promise;
+      try {
+        await sendPrompt("steer-2", "steer", "second steer");
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "session.prompt_result" &&
+            event.clientMessageId === "steer-2" &&
+            event.result.type === "steer",
+        );
+      } finally {
+        finishFirstSteer();
+      }
+      const terminal = await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:queued-turn" &&
+          event.state !== "started",
+      );
+      expect(terminal).toMatchObject({ state: "completed" });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "session.notice",
+          notice: expect.objectContaining({ description: "Executor failed" }),
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: "Second steer reached the agent",
+          }),
+        }),
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("keeps the turn open if a new qualifying tool arrives as the settle timer expires", async () => {
     const { connector, instances } = connectorHarness({
       handleRequest(instance, request) {

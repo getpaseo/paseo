@@ -1017,3 +1017,88 @@ child.on("exit", (code) => process.exit(code ?? 1));
     await connection.close();
   }
 });
+
+it.each([
+  [
+    "native diagnostic",
+    ["working", "\n⚠ agent executor error: execution failed\n"],
+    "end_turn",
+    "failed",
+  ],
+  [
+    "constructor diagnostic",
+    ["\n⚠ failed to construct executor: missing model\n"],
+    "end_turn",
+    "failed",
+  ],
+  ["warning in model reply", ["⚠ agent executor error: example only"], "end_turn", "completed"],
+  ["plain model reply", ["agent executor error: example only"], "end_turn", "completed"],
+  [
+    "later reply",
+    ["\n⚠ agent executor error: execution failed\n", "Recovered."],
+    "end_turn",
+    "completed",
+  ],
+  ["cancellation", ["\n⚠ agent executor error: execution failed\n"], "cancelled", "canceled"],
+])(
+  "settles an Antigravity prompt with %s as expected",
+  async (_scenario, chunks, stopReason, expected) => {
+    const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => console.log(JSON.stringify({ jsonrpc: "2.0", ...message }));
+    const update = (sessionId, payload) =>
+      send({ method: "session/update", params: { sessionId, update: payload } });
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      if (method === "initialize") {
+        send({ id, result: { protocolVersion: 1 } });
+      } else if (method === "session/new") {
+        send({ id, result: { sessionId: "native", configOptions: [{ id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] }] } });
+        update("native", { sessionUpdate: "available_commands_update", availableCommands: [] });
+      } else if (method === "session/prompt") {
+        for (const text of ${JSON.stringify(chunks)}) {
+          update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+        }
+        send({ id, result: { stopReason: ${JSON.stringify(stopReason)} } });
+      } else if (method === "session/close") {
+        send({ id, result: {} });
+      }
+    });
+  `);
+    const connection = await createAntigravityProvider().connect({
+      launch,
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send({
+        type: "session.open",
+        requestId: "open",
+        sessionId: "diagnostic-test",
+        history: "skip",
+        config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+      });
+      await expect.poll(() => events.some((event) => event.type === "session.ready")).toBe(true);
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "diagnostic-test",
+        prompt: {
+          clientMessageId: "prompt",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "go" }] },
+        },
+      });
+      const terminal = () =>
+        events.find((event) => event.type === "session.turn" && event.state !== "started");
+      await expect.poll(terminal).toMatchObject({
+        type: "session.turn",
+        state: expected,
+        ...(expected === "failed" ? { error: { message: chunks.at(-1)?.trim().slice(2) } } : {}),
+      });
+    } finally {
+      await connection.close();
+    }
+  },
+);

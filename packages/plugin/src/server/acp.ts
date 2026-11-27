@@ -65,6 +65,8 @@ export interface AcpOptions {
    * as ready once this long passes without a history update.
    */
   loadReplayQuietPeriodMs?: number;
+  /** Returns the failure message for a provider diagnostic encoded as a raw assistant text chunk. */
+  promptDiagnostic?: (chunk: string) => string | undefined;
   /**
    * Keep a turn open after `end_turn` while qualifying tool calls are still running,
    * settling once those tools finish and the agent finishes its follow-up reply.
