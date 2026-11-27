@@ -424,6 +424,7 @@ function DragOverlayTabChip({
             tabId: tab.tabId,
             kind: tab.target.kind,
             target: tab.target,
+            title: tab.title,
           }
         : null,
     [tab],

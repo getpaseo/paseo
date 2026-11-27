@@ -722,6 +722,7 @@ export const en = {
         close: "Close",
         renameTerminal: "Rename terminal",
         renameAgent: "Rename agent",
+        renameTab: "Rename tab",
       },
       actions: {
         newTab: "New tab",

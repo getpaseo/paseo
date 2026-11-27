@@ -723,6 +723,7 @@ export const ar: TranslationResources = {
         close: "يغلق",
         renameTerminal: "إعادة تسمية المحطة",
         renameAgent: "إعادة تسمية الوكيل",
+        renameTab: "إعادة تسمية علامة التبويب",
       },
       actions: {
         newTab: "علامة تبويب جديدة",

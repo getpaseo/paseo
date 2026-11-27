@@ -723,6 +723,7 @@ export const zhCN: TranslationResources = {
         close: "关闭",
         renameTerminal: "重命名 Terminal",
         renameAgent: "重命名 Agent",
+        renameTab: "重命名标签页",
       },
       actions: {
         newTab: "新建标签页",

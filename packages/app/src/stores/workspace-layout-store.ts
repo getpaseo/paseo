@@ -48,6 +48,7 @@ import {
   reorderPaneTabsInLayout,
   setPaneHiddenInLayout,
   setTabStateInLayout,
+  setTabTitleInLayout,
   selectTabInPaneInLayout,
   splitPaneEmptyInLayout,
   splitWorkspaceRootRightInLayout,
@@ -196,6 +197,8 @@ interface WorkspaceLayoutStore {
     state?: JsonValue,
   ) => string | null;
   setTabState: (workspaceKey: string, tabId: string, state: JsonValue | undefined) => void;
+  /** Names a tab, or with null goes back to the panel's own label. */
+  setTabTitle: (workspaceKey: string, tabId: string, title: string | null) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   reorderTabs: (workspaceKey: string, tabIds: string[]) => void;
@@ -1685,6 +1688,32 @@ export function createWorkspaceLayoutStore(
             });
             if (!layout) return state;
             return withUpdatedWorkspaceLayout(state, normalizedWorkspaceKey, layout);
+          });
+        },
+        setTabTitle: (workspaceKey, tabId, title) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTabId = trimNonEmpty(tabId);
+          if (!normalizedWorkspaceKey || !normalizedTabId) return;
+          const nextTitle = trimNonEmpty(title);
+          set((state) => {
+            if (findSheet(state, normalizedWorkspaceKey, normalizedTabId)) {
+              return withSheetTab(state, normalizedWorkspaceKey, normalizedTabId, (sheet) => {
+                const { title: _previous, ...tab } = sheet.tab;
+                return { ...sheet, tab: nextTitle ? { ...tab, title: nextTitle } : tab };
+              });
+            }
+            const layout = setTabTitleInLayout({
+              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              tabId: normalizedTabId,
+              title: nextTitle,
+            });
+            if (!layout) return state;
+            return {
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: layout,
+              },
+            };
           });
         },
         convertDraftToAgent: (workspaceKey, tabId, agentId) => {

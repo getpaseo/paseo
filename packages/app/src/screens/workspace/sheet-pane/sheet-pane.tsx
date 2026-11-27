@@ -86,7 +86,7 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
   );
   const header = useMemo<SheetHeader>(
     () => ({
-      title: descriptor.label,
+      title: tab.title ?? descriptor.label,
       leading: <ThemedPanelIcon icon={descriptor.icon} size={16} />,
       back: onBack ? { onPress: onBack } : undefined,
       // The sheet is for looking; the full-screen glyph takes the tab out of the sheet and into
@@ -100,7 +100,15 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
         />
       ) : undefined,
     }),
-    [descriptor.icon, descriptor.label, handleOpenAsTab, onBack, sheet.policy.openAsTab, t],
+    [
+      descriptor.icon,
+      descriptor.label,
+      handleOpenAsTab,
+      onBack,
+      sheet.policy.openAsTab,
+      t,
+      tab.title,
+    ],
   );
 
   const tabDescriptor = useMemo<WorkspaceTabDescriptor>(
@@ -110,6 +118,7 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
       kind: tab.target.kind,
       target: tab.target,
       state: tab.state,
+      title: tab.title,
     }),
     [tab],
   );

@@ -730,6 +730,7 @@ export const ja: TranslationResources = {
         close: "閉じる",
         renameTerminal: "ターミナルの名前を変更",
         renameAgent: "エージェントの名前を変更",
+        renameTab: "タブの名前を変更",
       },
       actions: {
         newTab: "新しいタブ",

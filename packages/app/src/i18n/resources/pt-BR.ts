@@ -728,6 +728,7 @@ export const ptBR: TranslationResources = {
         close: "Fechar",
         renameTerminal: "Renomear terminal",
         renameAgent: "Renomear agente",
+        renameTab: "Renomear aba",
       },
       actions: {
         newTab: "Nova aba",

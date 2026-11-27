@@ -54,6 +54,11 @@ export interface WorkspaceTab {
   target: WorkspaceTabTarget;
   createdAt: number;
   state?: JsonValue;
+  /**
+   * A name the user gave this tab, shown instead of the panel's own label. Agents and terminals
+   * are renamed on the daemon instead, so this is only set on the other kinds.
+   */
+  title?: string;
 }
 
 export function buildWorkspaceTabPersistenceKey(input: {

@@ -403,6 +403,7 @@ function normalizeWorkspaceTab(value: unknown): WorkspaceTab | null {
     target,
     createdAt: typeof tab.createdAt === "number" ? tab.createdAt : Date.now(),
     ...(tab.state !== undefined ? { state: tab.state } : {}),
+    ...(typeof tab.title === "string" && tab.title.trim() ? { title: tab.title.trim() } : {}),
   };
 }
 
@@ -924,6 +925,8 @@ function replaceTabInTree(
             target: input.target,
             createdAt: tab.createdAt,
             ...(input.state !== undefined ? { state: input.state } : {}),
+            // A tab that keeps its id is the same tab, so it keeps the user's name for it.
+            ...(tab.title !== undefined && input.nextTabId === tab.tabId ? { title: tab.title } : {}),
           };
         }),
         focusedTabId:
@@ -1935,6 +1938,35 @@ export function setTabStateInLayout(input: {
       nextTabId: tab.tabId,
       target: tab.target,
       state: input.state,
+    }),
+    focusedPaneId: layout.focusedPaneId,
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
+}
+
+export function setTabTitleInLayout(input: {
+  layout: WorkspaceLayout;
+  tabId: string;
+  title: string | null;
+}): WorkspaceLayout | null {
+  const layout = asInternalLayout(input.layout);
+  const panePath = findPanePathContainingTab(layout.root, input.tabId);
+  if (!panePath) return null;
+  const title = input.title?.trim() || null;
+  return withNormalizedParentTabMap({
+    root: replaceNodeAtPath(layout.root, panePath, (node) => {
+      invariant(node.kind === "pane", "Expected pane while renaming tab");
+      return {
+        kind: "pane",
+        pane: {
+          ...node.pane,
+          tabs: node.pane.tabs.map((tab) => {
+            if (tab.tabId !== input.tabId) return tab;
+            const { title: _previous, ...rest } = tab;
+            return title ? { ...rest, title } : rest;
+          }),
+        },
+      };
     }),
     focusedPaneId: layout.focusedPaneId,
     parentTabIdByTabId: input.layout.parentTabIdByTabId,

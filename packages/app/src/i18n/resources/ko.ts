@@ -725,6 +725,7 @@ export const ko: TranslationResources = {
         close: "닫기",
         renameTerminal: "터미널 이름 변경",
         renameAgent: "에이전트 이름 변경",
+        renameTab: "탭 이름 변경",
       },
       actions: {
         newTab: "새 탭",
