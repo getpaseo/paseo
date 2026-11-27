@@ -2,6 +2,11 @@ const { randomUUID } = require("node:crypto");
 const { appendFileSync } = require("node:fs");
 const { createInterface } = require("node:readline");
 
+if (process.argv.slice(2).includes("--version")) {
+  process.stdout.write("1.5.18\n");
+  process.exit(0);
+}
+
 const eventsPath = process.argv[2];
 const record = (event) => appendFileSync(eventsPath, JSON.stringify(event) + "\n");
 const modes = {

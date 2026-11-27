@@ -1568,6 +1568,14 @@ return `undefined` until recognizable if the first text is insufficient to ident
 Each replacement may set an optional plugin-local `id`; otherwise Paseo uses its index within that
 source item's output.
 
+A tool-call item can carry provider-specific values in `item.metadata`, typed as
+`Record<string, unknown>`. Check that a key exists and has the type you expect before you use it.
+
+OMP sets `item.metadata.intent`, a short string that says why the agent made the call. It is absent
+when OMP records no intent. OMP 19 and later do not record it for Paseo agents unless you turn on
+OMP's `tools.intentTracing` setting or set `PI_INTENT_TRACING`. Paseo's built-in timeline does not
+display it.
+
 Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
 deterministic. Paseo memoizes results by source-item reference and derives replacement identity from

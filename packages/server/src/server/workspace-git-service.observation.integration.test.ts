@@ -1760,7 +1760,9 @@ test.each([false, true])(
       await service.getCheckout(repo);
       const initial = stopGitCommandMetrics();
       const lookups = initial.commands.filter((command) =>
-        command.args.includes("--format=%(refname)%00%(symref)%00%(upstream)"),
+        command.args.includes(
+          "--format=%(refname)%00%(symref)%00%(upstream)%00%(upstream:remotename)",
+        ),
       );
       expect(lookups).toHaveLength(1);
 

@@ -361,7 +361,12 @@ export async function listBranchSuggestions(
       const isBranch = ref.name.startsWith("refs/heads/") || ref.name.startsWith("refs/remotes/");
       return isBranch && !ref.name.endsWith("/HEAD") && ref.name.toLowerCase().includes(rawQuery);
     });
-    branches.sort((a, b) => b.committerDate - a.committerDate || a.name.localeCompare(b.name));
+    branches.sort(
+      (a, b) =>
+        Number(b.name === options.query?.trim()) - Number(a.name === options.query?.trim()) ||
+        b.committerDate - a.committerDate ||
+        a.name.localeCompare(b.name),
+    );
     return branches.slice(0, limit).map((ref) => {
       const hasLocal = ref.name.startsWith("refs/heads/");
       const remoteName = remotes.find((remote) => ref.name.startsWith(`refs/remotes/${remote}/`));
@@ -1811,23 +1816,28 @@ export interface ResolveRepositoryDefaultBranchRefInput {
   context?: CheckoutContext;
 }
 
+function parseDefaultBranchRefMetadata(stdout: string) {
+  const refs = new Map<string, string>();
+  const upstreams = new Map<string, { ref: string; remote: string }>();
+  const lines = stdout.split("\n");
+  const refLines = lines.filter(Boolean);
+  for (const line of refLines) {
+    const [ref, target = "", upstream = "", remote = ""] = line.split("\0");
+    refs.set(ref, target);
+    upstreams.set(ref, { ref: upstream, remote });
+  }
+  return { refs, upstreams };
+}
+
 export async function resolveRepositoryDefaultBranchRef({
   cwd,
   context,
 }: ResolveRepositoryDefaultBranchRefInput): Promise<string | null> {
   const { stdout } = await getRunGitCommand(context)(
-    ["for-each-ref", "--format=%(refname)%00%(symref)%00%(upstream)", "refs/heads", "refs/remotes"],
+    ["for-each-ref", "--format=%(refname)%00%(symref)%00%(upstream)%00%(upstream:remotename)"],
     { cwd, envOverlay: READ_ONLY_GIT_ENV },
   );
-  const refs = new Map<string, string>();
-  const upstreams = new Map<string, string>();
-  const lines = stdout.split("\n");
-  const refLines = lines.filter(Boolean);
-  for (const line of refLines) {
-    const [ref, target = "", upstream = ""] = line.split("\0");
-    refs.set(ref, target);
-    upstreams.set(ref, upstream);
-  }
+  const { refs, upstreams } = parseDefaultBranchRefMetadata(stdout);
   const originDefault = refs.get("refs/remotes/origin/HEAD");
   if (originDefault && refs.has(originDefault)) return originDefault;
   const remoteDefaults: string[] = [];
@@ -1848,7 +1858,7 @@ export async function resolveRepositoryDefaultBranchRef({
   const originRef = `refs/remotes/origin/${branch}`;
   if (refs.has(originRef)) return originRef;
   const upstream = upstreams.get(localDefault);
-  if (upstream?.startsWith("refs/remotes/") && refs.has(upstream)) return upstream;
+  if (upstream?.remote && upstream.remote !== "." && refs.has(upstream.ref)) return upstream.ref;
   return localDefault;
 }
 
@@ -2197,7 +2207,7 @@ async function inspectCheckoutContext(
 
   return {
     worktreeRoot: root,
-    currentBranch,
+    currentBranch: currentBranch ? await readStoredBranchName(cwd, currentBranch, context) : null,
     remoteUrl,
     absoluteGitDir,
     gitCommonDir,

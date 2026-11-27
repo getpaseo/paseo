@@ -170,17 +170,44 @@ describe("openAgentProfileForm", () => {
     const model = openWithCatalog({ mode: "create" });
     model.setName("  Cheap grunt  ");
     model.setProvider("codex", { label: "Codex" });
+    model.setSystemPrompt("   ");
     model.setNotes("   ");
 
     // Codex declares no thinking options, so that key is genuinely absent —
     // model and mode are seeded, never left for the host to decide.
+    // `options` and `systemPrompt` stay present when empty so the daemon can
+    // distinguish an intentional clear from an older app that predates them.
     expect(model.getState().submitValue).toEqual({
       name: "Cheap grunt",
       provider: "codex",
       model: "gpt-5.2-codex",
       modeId: "read-only",
       options: {},
+      systemPrompt: "",
     });
+  });
+
+  it("seeds, tracks dirty state, preserves across provider switches, and submits systemPrompt", () => {
+    const model = openWithCatalog({
+      mode: "edit",
+      profile: {
+        id: "p1",
+        name: "UI work",
+        provider: "claude",
+        model: "claude-opus-5",
+        systemPrompt: "Focus on layout.",
+      },
+    });
+    expect(model.getState().systemPrompt).toBe("Focus on layout.");
+    expect(model.getState().isDirty).toBe(false);
+
+    model.setSystemPrompt("  Focus on layout and tokens.  ");
+    expect(model.getState().isDirty).toBe(true);
+    expect(model.getState().submitValue?.systemPrompt).toBe("Focus on layout and tokens.");
+
+    model.setProvider("codex", { label: "Codex" });
+    expect(model.getState().systemPrompt).toBe("  Focus on layout and tokens.  ");
+    expect(model.getState().submitValue?.systemPrompt).toBe("Focus on layout and tokens.");
   });
 
   it("seeds edit mode from the stored profile before the catalog lands", () => {

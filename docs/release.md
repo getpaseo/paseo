@@ -4,29 +4,41 @@ All workspaces share one version and release together.
 
 ## Two steps
 
-A release has exactly two steps. The agent does the first, the user authorizes the second.
+A release has two steps. The agent runs Preparation before approval, and the user authorizes Ship.
 
-**Preparation** (reversible — agent does this on the release branch):
+### Preparation
 
-- resolve the [release base](#release-base-and-source) and get the [release inventory](#release-inventory) approved when one applies
-- classify the diff from the previous stable to the release source as patch or minor, then show the
-  target version and rationale to the user
-- draft `CHANGELOG.md` and `CHANGELOG.zh-CN.md`, show the draft to the user, and wait for review
-- run the pre-release sanity check (stable only) and surface findings to the user
-- commit the approved changelog and any requested ACP update, run format, lint, and typecheck, then
-  run `npm run release:prep:<mode>` to create the `chore(release): cut <version>` commit without a tag
-- push the `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` branch and confirm its `CI` and
-  `Desktop Packages` runs pass (never wait on `main` CI)
-- run the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
+Preparation is reversible and runs on the release branch before the user authorizes shipping.
 
-**Go-ahead** (user says "go ahead"):
+1. Resolve the [release base](#release-base-and-source) and get the [release inventory](#release-inventory) approved when one applies.
+2. Classify the diff from the previous stable release to the release source as patch or minor, then show the target version and rationale to the user.
+3. Draft `CHANGELOG.md` and `CHANGELOG.zh-CN.md`, show the draft to the user, and wait for approval.
+4. Run the [pre-release sanity check](#pre-release-sanity-check) for stable releases, and report any findings to the user.
+5. Commit the approved changelog and any requested ACP update, then run `npm run format`, `npm run lint`, and `npm run typecheck`.
+6. Run `npm run release:prep:<mode>` to create the `chore(release): cut <version>` commit without a tag.
+7. Push `release/vX.Y.Z` or `release/vX.Y.Z-beta.N` and wait for `CI` and `Desktop Packages` on that branch to pass (never wait on `main` CI).
+8. Run the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit.
 
-- run `npm run release:ship` (stable) or `npm run release:ship:beta` (beta), which publishes npm
-  with retry and registry visibility checks, advances the `beta` dist-tag on stable when newer, and
-  pushes the tag on the already-verified commit
-- create the release heartbeat immediately and babysit it to completion
-- open the [reconcile `main`](#reconcile-main) PR right away so its CI runs in parallel with release
-  builds, then delete the remote release branch once the PR merges
+### Ship
+
+Ship starts after the user says "go ahead". All tag-triggered GitHub Actions workflows and EAS workflows build from the checked-out tag commit with local workspace packages, so none of them install `@getpaseo/*` from the public npm registry.
+
+1. Run `npm run release:push` first to verify the clean release branch and push `vX.Y.Z` or `vX.Y.Z-beta.N`. Pushing the tag takes a few seconds and starts `Desktop Release`, `Android APK Release`, `Docker`, `Release Notes Sync`, and (for stable tags) `Deploy App` on GitHub Actions, plus `Release Mobile` (stable) or `Release iOS Beta` (beta) on EAS. (`Deploy Website` runs later on the `release: published` event when `Desktop Release` publishes the stable GitHub Release.)
+2. Run `npm run release:publish` (stable) or `npm run release:publish:beta` (beta) in parallel with the remote builds. `scripts/publish-release-packages.mjs` publishes the seven `@getpaseo/*` packages in dependency waves and polls npm visibility between packages to avoid `E409` or `E404` propagation races.
+3. Open the [reconcile `main`](#reconcile-main) PR from `reconcile/vX.Y.Z` or `reconcile/vX.Y.Z-beta.N` right after `npm run release:push` finishes, so its CI run overlaps with npm publication and the release builds.
+4. Create the release heartbeat immediately with `create_heartbeat` to track every ship step to completion.
+
+### Sync gates
+
+Wait until every gate below passes before deleting the remote release branch or reporting the release as shipped:
+
+- All seven `@getpaseo/*` npm packages are visible on `latest` (stable) or `beta` (beta), and on stable the `beta` dist-tag points to the shipped version unless an active newer beta exists.
+- All tag-triggered GitHub Actions workflows are green (`Desktop Release`, `Android APK Release`, `Docker`, `Release Notes Sync`, and `Deploy App` for stable), and `Deploy Website` ran after stable publication.
+- The GitHub Release is published and non-draft (marked prerelease for beta) with the synced changelog body, all macOS, Linux, and Windows assets, the Android APK asset, and all three channel manifests (`latest-mac.yml`, `latest-linux.yml`, `latest.yml` for stable; `beta-mac.yml`, `beta-linux.yml`, `beta.yml` for beta).
+- The matching EAS workflow is green (`Release Mobile` with all six build, distribution, screenshot, and review-submission jobs for stable; `Release iOS Beta` for beta).
+- The reconcile PR is merged into `main`.
+
+Once all sync gates pass, delete the remote release branch (`git push origin --delete release/vX.Y.Z` or `release/vX.Y.Z-beta.N`), delete the heartbeat, and report the release as shipped.
 
 Rules that apply to both steps:
 
@@ -110,18 +122,20 @@ An explicit user instruction can select another base.
    runs on every merge. Wait for both runs on the release branch commit to pass before shipping.
    Complete the [pre-release dependency checks](#pre-release-dependency-checks) on that commit.
    Pushing a `release/**` branch without a `v*` tag triggers no publish workflows.
-6. After go-ahead, run `npm run release:ship` (stable) or `npm run release:ship:beta` (beta). This
-   publishes to npm and pushes the `v*` tag on the already-verified commit. Because the release
-   branch is already pushed at `HEAD`, no second CI run starts and only the tag release workflows
-   run.
-7. Start [Reconcile `main`](#reconcile-main) immediately so its PR checks overlap with desktop and
-   EAS builds.
+6. After go-ahead, push the tag first with `npm run release:push` so remote builds start right away.
+   Because the release branch is already pushed at `HEAD`, no second branch CI run starts, and only
+   the tag release workflows run.
+7. Immediately in parallel after `npm run release:push` finishes: publish npm packages with
+   `npm run release:publish` (stable) or `npm run release:publish:beta` (beta), start
+   [Reconcile `main`](#reconcile-main) so its PR checks overlap with desktop and EAS builds, and
+   create the release heartbeat. (`npm run release:ship` and `npm run release:ship:beta` also run
+   `release:push` before `release:publish`, so tag builds never wait behind npm.)
 
 When promoting or branching from a tag created before `release:prep:*`, `release:ship`, and the
 `release/**` workflow triggers existed (for example `v0.17.0-beta.1`), either cherry-pick the
 release-tooling commit onto the release branch (leaving product code unchanged) or follow the
 older tag's scripts (`version:all:*`, manual `gh workflow run ci.yml --ref <branch>`,
-`release:publish`, and `release:push`) until the next tag carries the new tooling.
+`release:push`, and `release:publish`) until the next tag carries the new tooling.
 
 A stable hotfix can take the version a patch beta line would promote to, such as `0.13.3`
 shipping while `0.13.3-beta.2` soaks. Never republish or reuse a shipped version. Continue the line
@@ -130,7 +144,7 @@ computes that from a prerelease, so run `npm run release:check`, bump with
 `npm version 0.13.4-beta.1 --include-workspace-root --no-git-tag-version && git commit -m "chore(release): cut 0.13.4-beta.1"`,
 push the release branch for `CI` and `Desktop Packages`, and complete the
 [pre-release dependency checks](#pre-release-dependency-checks) before shipping with
-`npm run release:ship:beta`.
+`npm run release:push` and `npm run release:publish:beta` (or `npm run release:ship:beta`).
 Record the tested beta tag as its source so its soak still counts for the unchanged content.
 
 ## Release inventory
@@ -159,8 +173,7 @@ For a promotion, every item defaults to defer.
 
 ## Reconcile main
 
-Right after the tag push (in parallel with desktop and EAS builds), open a PR into `main` from a
-fresh branch off `origin/main` named `reconcile/vX.Y.Z` or `reconcile/vX.Y.Z-beta.N`:
+Right after `npm run release:push` pushes the tag (in parallel with npm publication and all desktop, APK, Docker, and EAS builds), open a PR into `main` from a fresh branch off `origin/main` named `reconcile/vX.Y.Z` or `reconcile/vX.Y.Z-beta.N`. Reconcile reads only the tagged git commit, so it does not wait for npm or any release build:
 
 ```bash
 git fetch origin --tags
@@ -180,10 +193,10 @@ hunks from the release base:
 - Leaves unshipped work on `main` untouched and makes no claims about unshipped work in the
   changelog entry.
 
-Commit, open the PR into `main`, and merge once its checks pass. After the reconcile PR merges and
-the release completes, delete the remote release branch (`git push origin --delete release/vX.Y.Z`
-or `release/vX.Y.Z-beta.N`). The tag is the record of shipped source; Paseo maintains no release
-track besides `main`.
+Commit, open the PR into `main`, and merge once its checks pass. Delete the remote release branch
+(`git push origin --delete release/vX.Y.Z` or `release/vX.Y.Z-beta.N`) only after the reconcile PR
+merges and every [sync gate](#sync-gates) passes. The tag is the record of shipped source, and
+Paseo maintains no release track besides `main`.
 
 ## ACP catalog updates
 
@@ -240,24 +253,30 @@ npm run release:prep:minor
 git push -u origin HEAD
 # Complete the pre-release dependency checks on this commit.
 
-# 3. After go-ahead and green release-branch checks: publish npm and push the tag.
-npm run release:ship
+# 3. After go-ahead and green release-branch checks: push the tag first to start builds.
+npm run release:push
+
+# 4. Run these in parallel immediately after step 3:
+npm run release:publish
+# Also open the reconcile/vX.Y.Z PR into main and create the release heartbeat.
+# (`npm run release:ship` runs `release:push` before `release:publish` if used standalone.)
 ```
 
-`release:ship` runs `scripts/publish-release-packages.mjs` and `scripts/push-current-release-tag.mjs`:
+`scripts/push-current-release-tag.mjs` refuses non-`release/*` branches, checks that `HEAD` matches `origin/release/*`, tags `HEAD` with `vX.Y.Z`, and pushes the tag. Because `HEAD` is already on the pushed release branch, no second branch CI run starts.
 
-- Publishes all seven `@getpaseo/*` packages in dependency order, skips versions already on npm,
-  retries transient 429/5xx/network errors, and waits until each version is visible on npm before
-  continuing.
-- Checks `npm view @getpaseo/cli dist-tags` and moves npm's `beta` dist-tag to the new stable
-  version across all seven packages whenever the stable version is newer than `beta` (leaving
-  `beta` untouched during a stable hotfix on an older line).
-- Refuses non-`release/*` branches, tags `HEAD` with `vX.Y.Z`, and pushes the tag. Because `HEAD`
-  is already on the release branch, no second CI run starts.
+`scripts/publish-release-packages.mjs` publishes the seven `@getpaseo/*` packages in dependency-wave order:
 
-The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, and `Release Notes Sync` on GitHub Actions. The workflows create the GitHub Release as a draft while builds and release-note sync run. EAS picks up the same tag via the EAS GitHub app and starts the iOS + Android store builds in parallel (see "Mobile builds (EAS)" below) — there is no mobile-release workflow under `.github/workflows`.
+1. Wave 1: `@getpaseo/highlight`, `@getpaseo/relay`, and `@getpaseo/protocol` (no `@getpaseo/*` dependencies).
+2. Wave 2: `@getpaseo/client` (depends on `@getpaseo/protocol` and `@getpaseo/relay`).
+3. Wave 3: `@getpaseo/plugin` (depends on `@getpaseo/client` and `@getpaseo/protocol`).
+4. Wave 4: `@getpaseo/server` (depends on `@getpaseo/client`, `@getpaseo/highlight`, `@getpaseo/plugin`, `@getpaseo/protocol`, and `@getpaseo/relay`).
+5. Wave 5: `@getpaseo/cli` (depends on `@getpaseo/client`, `@getpaseo/protocol`, and `@getpaseo/server`).
 
-Verify `npm view @getpaseo/cli dist-tags` shows `latest` at the shipped version, and `beta` at the shipped version or an active newer beta, before considering the stable release complete.
+After each `npm publish`, the script polls `npm view` (up to 12 checks, 5 seconds apart) until the published version is visible on npm before moving to the next package. Waiting for registry visibility prevents dependent publishes and manual retries from hitting `E409` conflicts or `E404` propagation lag. On stable releases, the script also checks `npm view @getpaseo/cli dist-tags` and moves npm's `beta` dist-tag to the new stable version across all seven packages whenever the stable version is newer than `beta` (leaving `beta` untouched during a stable hotfix on an older line).
+
+The tag push triggers `Desktop Release`, `Android APK Release`, `Docker`, `Release Notes Sync`, and `Deploy App` (`app.paseo.sh`, stable tags only) on GitHub Actions. `Desktop Release` and `Release Notes Sync` create the GitHub Release as a draft while builds and release-note sync run. `Deploy Website` triggers later on `release: published` when `Desktop Release` publishes the non-draft stable GitHub Release. EAS picks up the same tag through the EAS GitHub app and starts `Release Mobile` (iOS and Android store builds) in parallel, with no mobile-release workflow under `.github/workflows`. None of these workflows install `@getpaseo/*` from the public npm registry because all of them build from the checked-out tag commit and workspace packages.
+
+Confirm that `npm view @getpaseo/cli dist-tags` shows `latest` at the shipped version, and `beta` at the shipped version or an active newer beta, before considering the stable release complete.
 
 The Docker workflow builds images from the checked-out source tree on `main` as non-publishing checks (cancelling superseded `main` runs). Stable `vX.Y.Z` tag pushes publish `ghcr.io/getpaseo/paseo:X.Y.Z` and `ghcr.io/getpaseo/paseo:latest`; beta `vX.Y.Z-beta.N` tag pushes publish only `ghcr.io/getpaseo/paseo:X.Y.Z-beta.N` and never move `latest`.
 
@@ -276,8 +295,10 @@ npm run version:all:minor
 git push -u origin HEAD      # Trigger CI + Desktop Packages on release/vX.Y.Z
 # Wait for CI and Desktop Packages and complete the pre-release dependency checks.
 # After go-ahead:
+npm run release:push         # Create tag vX.Y.Z on HEAD and push (starts release builds)
+# In parallel right after release:push:
 npm run release:publish      # Publish to npm (idempotent, with propagation + beta dist-tag sync)
-npm run release:push         # Create tag vX.Y.Z on HEAD and push (triggers release workflows)
+# Open reconcile/vX.Y.Z PR into main and create the release heartbeat.
 ```
 
 ## Beta flow
@@ -294,15 +315,19 @@ npm run release:prep:beta:next   # Cut X.Y.Z-beta.2, beta.3, ...
 git push -u origin HEAD
 # Complete the pre-release dependency checks on this commit.
 
-# 3. After go-ahead:
-npm run release:ship:beta
+# 3. After go-ahead: push the tag first, then run npm publish, reconcile, and heartbeat in parallel:
+npm run release:push
+npm run release:publish:beta
+# (Or run `npm run release:ship:beta` in one shell while opening reconcile/vX.Y.Z-beta.N.)
 
 # Later, after soak, promote on release/vX.Y.Z:
 npm run release:prep:promote
 git push -u origin HEAD
 # Wait for CI + Desktop Packages and complete the pre-release dependency checks.
 # After go-ahead:
-npm run release:ship
+npm run release:push
+npm run release:publish
+# Open reconcile/vX.Y.Z PR into main and create the release heartbeat in parallel.
 ```
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
@@ -489,7 +514,7 @@ macOS 13 maps to Darwin 22. The two values use different version domains; do not
 iOS and Android store builds are not in `.github/workflows`. They are triggered by the EAS GitHub app the moment the `v*` tag is pushed:
 
 - **Android (Play Store)** — EAS builds with profile `production` and auto-submits to the Play Store via `eas submit` (EAS-managed credentials). A Fastlane lane then replaces the store screenshots.
-- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads once through a `testflight` job, distributes the build to the `Paseo Beta` external group with Beta App Review submission, and a Fastlane lane uploads the store screenshots and submits that same build for App Store review.
+- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads once through a `testflight` job, distributes the build to the `Paseo Beta` external group with Beta App Review submission, and a Fastlane lane uploads the store screenshots and submits that same build for App Store review. When an earlier iOS version is already in Apple's review or release queue (`WAITING_FOR_REVIEW`, `IN_REVIEW`, `PENDING_APPLE_RELEASE`, `PENDING_DEVELOPER_RELEASE`, `PROCESSING_FOR_DISTRIBUTION`, `WAITING_FOR_EXPORT_COMPLIANCE`, or `ACCEPTED`), `submit_review` leaves it untouched, logs `IOS_REVIEW_SKIPPED` with the in-review version and the waiting TestFlight build, and exits `0` so `Release Mobile` stays green.
 - **Android APK (GitHub Release asset)** — separate, via `.github/workflows/android-apk-release.yml`. This is the only Android-related workflow that lives in this repo.
 
 EAS uses the local app version source. `packages/app/app.config.js` derives the native version from the package version. Android `versionCode` is `major * 1_000_000 + minor * 1_000 + patch`. iOS reserves 1,000 build slots per app version: beta `N` uses slot `N`, and stable uses slot `999`. For example, `0.2.6-beta.2` appears in App Store Connect as version `0.2.6` build `2006002`; stable uses build `2006999`. Rebuilding the same tag produces the same native build number; if a store has already accepted a binary and you need a different binary, cut the next beta or patch instead of relying on EAS remote auto-increment.
@@ -535,11 +560,22 @@ npx eas build:view <build-id>
 # and submit_ios_for_review.
 npx eas workflow:view <workflow-run-id> --json
 
-# Read failed submit/review job logs.
+# Read submit/review job logs (also check for IOS_REVIEW_SKIPPED on green runs).
 npx eas workflow:logs <workflow-job-id> --all-steps --non-interactive
 
 # Stream logs for a build.
 npx eas build:view <build-id> --json | jq '.logFiles[]'
+
+# Check live App Store Connect review state + top 5 recent iOS TestFlight builds.
+npx eas workflow:run ios-review-status.yml
+
+# Submit a waiting TestFlight build once the review slot is free (default replace_in_review=false skips if still active).
+npx eas workflow:run resubmit-ios-review.yml
+# Or force-replace an in-flight review for an urgent iOS hotfix:
+npx eas workflow:run resubmit-ios-review.yml -F app_version=0.18.1 -F app_build_version=18001999 -F replace_in_review=true
+
+# Cancel an active in-flight iOS App Store review (pass expected_version to guard against version drift).
+npx eas workflow:run cancel-ios-review.yml -F expected_version=0.18.0
 ```
 
 A build's `gitCommitHash` must match the release tag commit. `status` walks through `NEW` → `IN_QUEUE` → `IN_PROGRESS` → `FINISHED` (or `ERRORED`/`CANCELED`). The EAS workflow run's `gitCommitHash` and `trigger` must also match the release tag.
@@ -555,15 +591,14 @@ For the `Release Mobile` EAS workflow, these jobs must pass:
 - `submit_android` — Android binary submitted to the Play Store
 - `upload_android_screenshots` — Google Play screenshots replaced from the repo
 
-Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
+Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight. Even when `submit_ios_for_review` passes, inspect its log with `npx eas workflow:logs <workflow-job-id> --all-steps --non-interactive` for `IOS_REVIEW_SKIPPED`. If App Store submission was skipped because an earlier version is already in flight, explicitly notify the maintainer with both the in-review version/state and the waiting TestFlight version/build so they can either let the current review finish and run `npx eas workflow:run resubmit-ios-review.yml` later, or replace it with `replace_in_review=true`.
 
 To confirm the submission landed, inspect the EAS workflow with `npx eas workflow:view <workflow-run-id> --json`. App Store Connect (review state for the matching version/build) and the Play Console track are the final ground truth.
 
 ## Release completion and heartbeat
 
-A release is **in progress** after npm publication and tag push. Report it as
-**shipped** only after every applicable build, publication, asset, manifest, and
-store submission passes the completion checklist.
+A release is in progress once the tag is pushed. Report it as shipped only after every applicable
+[sync gate](#sync-gates) and completion checklist item passes.
 
 Immediately after every beta, stable, or promotion tag push, create a heartbeat
 that resumes the release in the current conversation. Create it automatically
@@ -572,9 +607,10 @@ the completion checklist or finds a failure that needs new user authority.
 
 Each heartbeat checks the release tag commit, `CI` and `Desktop Packages` for the release branch,
 every tag-triggered GitHub Actions run (`Desktop Release`, `Android APK Release`, `Docker`,
-`Release Notes Sync`), npm dist-tags, the GitHub Release body and assets, desktop updater
-manifests, the published Docker image, the applicable EAS workflow, the reconcile PR, and remote
-release branch cleanup. Inspect the GitHub Release itself and confirm that the macOS, Linux,
+`Release Notes Sync`, and `Deploy App` for stable), `Deploy Website` after stable release
+publication, npm dist-tags, the GitHub Release body and assets, desktop updater manifests, the
+published Docker image, the applicable EAS workflow, the reconcile PR, and remote release branch
+cleanup. Inspect the GitHub Release itself and confirm that the macOS, Linux,
 Windows, and Android APK assets are present along with the channel manifests
 (`latest-mac.yml`, `latest-linux.yml`, and `latest.yml` for stable;
 `beta-mac.yml`, `beta-linux.yml`, and `beta.yml` for beta).
@@ -597,7 +633,7 @@ Pattern:
   "timezone": "UTC",
   "maxRuns": 120,
   "expiresIn": "24h",
-  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; CI and Desktop Packages on release/vX.Y.Z; every tag-triggered GitHub Actions run; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; the matching EAS workflow; and the reconcile PR into main. Completion requires every applicable checklist item. For stable, require build_ios, distribute_ios (Paseo Beta external distribution and Beta App Review submission), submit_ios_for_review, build_android, and submit_android to succeed. For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes and the reconcile PR is merged, delete origin/release/vX.Y.Z, delete THIS heartbeat, report shipped, and stop.",
+  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; CI and Desktop Packages on release/vX.Y.Z; every tag-triggered GitHub Actions run (Desktop Release, Android APK Release, Docker, Release Notes Sync, and Deploy App on stable) plus Deploy Website after release publish; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; the matching EAS workflow; and the reconcile PR into main. Completion requires every applicable checklist item. For stable, require build_ios, distribute_ios (Paseo Beta external distribution and Beta App Review submission), submit_ios_for_review, build_android, submit_android, and upload_android_screenshots to succeed, and inspect the submit_ios_for_review log for IOS_REVIEW_SKIPPED (if skipped, explicitly report both the in-review version and the waiting TestFlight build to the maintainer). For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes and the reconcile PR is merged, delete origin/release/vX.Y.Z, delete THIS heartbeat, report shipped, and stop.",
 }
 ```
 
@@ -621,6 +657,8 @@ The GitHub Release body is populated automatically by the `Release Notes Sync` w
 ## Fixing a failed release build
 
 **NEVER bump the version to fix a build problem.** New versions are reserved for meaningful product changes (features, fixes, improvements). Build/CI failures are fixed on the current version.
+
+If `npm run release:publish` or `npm run release:publish:beta` fails after `npm run release:push` pushed the tag, fix the npm authentication, OTP, or local build issue and rerun the publish command on the same commit. Do not move or force-push the `v*` tag, because `scripts/publish-release-packages.mjs` skips packages already visible on npm and resumes from the remaining packages.
 
 **Do not rely on `workflow_dispatch` for tagged code fixes.** The `workflow_dispatch` trigger runs the workflow file from the default branch but checks out the code at the tag ref (`ref: ${{ inputs.tag }}`). That means fixes committed to `main` won't change the tagged source tree being built. `workflow_dispatch` only helps when the fix lives in the workflow file itself.
 
@@ -706,9 +744,7 @@ intentionally unavailable to desktop updater clients.
 - The npm `version` lifecycle regenerates F-Droid changelog files from `CHANGELOG.md` for stable releases only (`npm run fdroid:changelogs`) and stages them, so the release commit and tag carry them. Betas are a no-op. A stable run **aborts the release** if `CHANGELOG.md` has no entry for the version being cut — commit the changelog entry first. See [docs/android.md](android.md) for why these files are generated per ABI.
 - `release:prepare` refreshes workspace `node_modules` links to prevent stale types.
 - `npm run dev:desktop` and `npm run build:desktop` target the Electron desktop package in `packages/desktop`.
-- `release:publish` and `release:publish:beta` run `scripts/publish-release-packages.mjs`: if a run
-  fails partway through, re-running skips versions already published on npm, retries transient
-  registry errors, and waits for each version to become visible on npm before continuing.
+- `release:publish` and `release:publish:beta` run `scripts/publish-release-packages.mjs`. They publish the seven `@getpaseo/*` packages in dependency waves, skip versions already visible on npm, retry transient registry errors, and poll `npm view` between packages so dependents do not hit `E409` or `E404` propagation lag. `release:ship` and `release:ship:beta` run `release:push` before `release:publish` or `release:publish:beta`.
 - The website uses GitHub's latest published release API for download links, so published beta prereleases do not replace the stable download target.
 
 ## Changelog format
@@ -969,8 +1005,8 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] The diff from the previous stable to the resolved release source is classified as patch or minor, with the target version and rationale approved
 - [ ] `npm run release:prep:beta:patch`, `release:prep:beta:minor`, or `release:prep:beta:next` created the version commit on `release/vX.Y.Z-beta.N` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
 - [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
-- [ ] After go-ahead, `npm run release:ship:beta` published npm and pushed the `vX.Y.Z-beta.N` tag without triggering a second CI run
-- [ ] npm shows the version under the `beta` dist-tag, not `latest`
+- [ ] After go-ahead, `npm run release:push` pushed the `vX.Y.Z-beta.N` tag without triggering a second CI run, while `npm run release:publish:beta`, the `reconcile/vX.Y.Z-beta.N` PR, and the release heartbeat started in parallel
+- [ ] All seven `@getpaseo/*` npm packages show the version under the `beta` dist-tag, not `latest`
 - [ ] The GitHub prerelease was published only after the three beta manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
 - [ ] The GitHub prerelease contains `beta-mac.yml`, `beta-linux.yml`, and `beta.yml`
@@ -978,7 +1014,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] GitHub `Docker` workflow is green and the versioned beta image is published without moving `latest`
 - [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
 - [ ] EAS `Release iOS Beta` completed its build, TestFlight distribution, external beta group, and Beta App Review path
-- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries and version into `main`, and `origin/release/vX.Y.Z-beta.N` was deleted
+- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries and version into `main` and merged before cleanup, and `origin/release/vX.Y.Z-beta.N` was deleted after all sync gates passed
 - [ ] The release heartbeat was created after the tag push and deleted only after every item above passed
 
 ### Stable release (or promotion)
@@ -988,13 +1024,13 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] The release base and changes match the [release base table](#release-base-and-source) and any approved [inventory](#release-inventory)
 - [ ] A promotion ships the tested beta's product content after its soak, unless the user explicitly overrode either default
 - [ ] Every PR in the release range has been opened, and its full description and every linked issue have been read before drafting the changelog
-- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes — not refactors). Promotion renames the series' `## X.Y.Z-beta.N` entry to `## X.Y.Z - YYYY-MM-DD` and re-checks it covers the full release. Commit the matching [`CHANGELOG.zh-CN.md` entry](#changelog-translations) with it
+- [ ] Update `CHANGELOG.md` with user-facing release notes (features, fixes, not refactors). Promotion renames the series' `## X.Y.Z-beta.N` entry to `## X.Y.Z - YYYY-MM-DD` and re-checks it covers the full release. Commit the matching [`CHANGELOG.zh-CN.md` entry](#changelog-translations) with it
 - [ ] Verify the changelog heading follows strict `## X.Y.Z - YYYY-MM-DD` format
 - [ ] Ensure local format, lint, and typecheck pass and the working tree is clean before running `release:prep:*`
 - [ ] `npm run release:prep:patch`, `release:prep:minor`, or `release:prep:promote` created the version commit on `release/vX.Y.Z` without a tag, and the pushed branch passed `CI` and `Desktop Packages` before shipping (never relying on `main` CI)
 - [ ] Complete the [pre-release dependency checks](#pre-release-dependency-checks) on the release commit
-- [ ] After go-ahead, `npm run release:ship` published npm, updated dist-tags, and pushed the `vX.Y.Z` tag without triggering a second CI run
-- [ ] `latest` resolves to the new stable, and `beta` resolves to it too unless an active newer beta holds `beta`
+- [ ] After go-ahead, `npm run release:push` pushed the `vX.Y.Z` tag without triggering a second CI run, while `npm run release:publish`, the `reconcile/vX.Y.Z` PR, and the release heartbeat started in parallel
+- [ ] All seven `@getpaseo/*` npm packages show `latest` at the new stable, and `beta` at the new stable too unless an active newer beta holds `beta`
 - [ ] The GitHub Release was published only after the three stable manifests were uploaded, and it has the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
 - [ ] The GitHub Release contains `latest-mac.yml`, `latest-linux.yml`, and `latest.yml`
@@ -1002,11 +1038,13 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] GitHub `Docker` workflow is green and both the versioned and `latest` images are published
 - [ ] GitHub `Release Notes Sync` is green and the release body matches the stable changelog entry
+- [ ] GitHub `Deploy App` workflow for the same tag is green, and `Deploy Website` succeeded after the release published
 - [ ] EAS `Release Mobile` workflow for the same tag is green
 - [ ] EAS iOS `build_ios` completes for the same tag
 - [ ] EAS iOS `distribute_ios` succeeds, uploading the binary once, distributing it to `Paseo Beta`, and submitting it for Beta App Review
-- [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review
+- [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review (or its log was checked for `IOS_REVIEW_SKIPPED` and the maintainer was notified with both the in-review version and the waiting TestFlight build)
 - [ ] EAS Android `build_android` completes for the same tag
 - [ ] EAS Android `submit_android` succeeds, putting the build on its Play Store track
-- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries, F-Droid changelogs, and version into `main`, and `origin/release/vX.Y.Z` was deleted
+- [ ] EAS Android `upload_android_screenshots` succeeds for the same tag
+- [ ] The [reconcile PR](#reconcile-main) brought the shipped changelog entries, F-Droid changelogs, and version into `main` and merged before cleanup, and `origin/release/vX.Y.Z` was deleted after all sync gates passed
 - [ ] The release heartbeat was created after the tag push and deleted only after every item above passed

@@ -1,0 +1,12 @@
+Improved
+- Reorganized Settings into Device and Host sections and consolidated sparse pages
+- Added arrow-key navigation for models, providers, and profiles in the model picker
+- Added an in-place Refresh control for Tailscale availability in host settings and setup
+
+Changed
+- Removed the Antigravity usage source that ran agy -p /usage in the background
+
+Fixed
+- Fixed Paseo Android crashing on Samsung devices when a chat shows a code block or quote
+
+Full notes: https://paseo.sh/changelog

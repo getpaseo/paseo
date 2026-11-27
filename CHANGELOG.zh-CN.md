@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.18.1 - 2026-11-27
+
+- **主机元数据指令**：设置一次主机级指令，即可统一控制自动生成的工作区标题、分支名、提交信息和 PR 的语言、语气与格式。([#11064](https://github.com/getpaseo/paseo/pull/11064))
+- **企业消费用量**：使用情况现已显示 Claude 额外消费用量以及 Codex 个人消费限额和重置时间。([#8976](https://github.com/getpaseo/paseo/pull/8976)，贡献者：[@mcowger](https://github.com/mcowger), [@JasprW](https://github.com/JasprW))
+
+### 修复
+
+- 修复 Android 在 Doze 休眠模式下 Agent 推送通知延迟数分钟送达的问题 ([#8501](https://github.com/getpaseo/paseo/pull/8501)，贡献者：[@truelecter](https://github.com/truelecter))
+- 修复在命令中心输入时结果顺序在单词输入中途跳动的问题 ([#11085](https://github.com/getpaseo/paseo/pull/11085))
+- 修复关闭网页浮层后 Composer 的斜杠与 `@` 自动补全失效，以及提交提示词时自动补全弹出的问题 ([#11041](https://github.com/getpaseo/paseo/pull/11041))
+- 修复在“新建工作区”中首次打开“起始 ref”浮层时高度跳动和行位偏移的问题 ([#11042](https://github.com/getpaseo/paseo/pull/11042))
+- 修复宽屏布局下 iOS 主屏幕网页应用的状态栏遮挡专注模式标签栏、覆盖侧边栏和 Mermaid 全屏查看器的问题 ([#9970](https://github.com/getpaseo/paseo/pull/9970)，贡献者：[@mywaffles](https://github.com/mywaffles))
+- 修复将工作区标记为已读时未清除已完成终端提醒的问题 ([#11040](https://github.com/getpaseo/paseo/pull/11040))
+- 修复 GitLab 合并请求的流水线运行在 fork 项目中时，检查状态和流水线详情返回 404 的问题 ([#11074](https://github.com/getpaseo/paseo/pull/11074))
+- 修复 Pi 运行其自行启动的轮次时发送的消息直接失败而不是排队的问题 ([#11077](https://github.com/getpaseo/paseo/pull/11077))
+- 修复 OpenCode v2 已丢弃工具审批请求后，审批卡片仍一直卡住的问题 ([#11061](https://github.com/getpaseo/paseo/pull/11061)，贡献者：[@rhettjay](https://github.com/rhettjay))
+- 修复共享服务器上运行其他会话时，空闲清理不会卸载闲置 OpenCode v2 对话的问题 ([#11039](https://github.com/getpaseo/paseo/pull/11039))
+- 修复空闲 ACP Agent 的进程意外退出后永久失败，而不是在下一条消息时重新打开会话的问题 ([#11047](https://github.com/getpaseo/paseo/pull/11047))
+- 修复使用全局 `kimi.ai` 账号登录时 Kimi 用量加载失败或显示登录已过期的问题 ([#8505](https://github.com/getpaseo/paseo/pull/8505)，贡献者：[@benthecarman](https://github.com/benthecarman))
+- 修复通过 `Z_AI_API_KEY` 或凭据文件登录 GLM Agent 时缺少 Z.ai 使用情况卡片的问题 ([#8376](https://github.com/getpaseo/paseo/pull/8376)，贡献者：[@Peanut-HZM](https://github.com/Peanut-HZM))
+
+### 插件
+
+- 为时间线插件在 `item.metadata.intent` 中新增 OMP 工具调用意图 ([#10727](https://github.com/getpaseo/paseo/pull/10727)，贡献者：[@mcowger](https://github.com/mcowger))
+
+## 0.18.0 - 2026-11-27
+
+- **远程工作区浏览器代理**：远程工作区中的桌面端浏览器标签页现在会通过该工作区的 daemon 转发流量，远程 `localhost` 服务可以直接在 Paseo 中打开。([#10944](https://github.com/getpaseo/paseo/pull/10944)，贡献者：[@airon-assustadus](https://github.com/airon-assustadus))
+- **按设备配置通知偏好**：每台设备都可以分别选择哪些 Agent、终端和插件事件发送通知，插件现在也可以发送通知并处理点击。([#10888](https://github.com/getpaseo/paseo/pull/10888))
+- **智能体配置文件系统提示词**：在智能体配置文件中保存可选的系统提示词，以便在通过该配置启动新 Agent 时应用。([#10996](https://github.com/getpaseo/paseo/pull/10996))
+- **更多语法高亮语言**：语法高亮现已支持 diff 和 patch 文件，以及 Ruby、Kotlin、TOML、SQL、Lua、Protobuf、PowerShell、Groovy、Gradle、Scala、CMake、Properties、INI、R、Perl 和 LaTeX。([#11026](https://github.com/getpaseo/paseo/pull/11026)，贡献者：[@hmalaspina](https://github.com/hmalaspina), [@kukicola](https://github.com/kukicola), [@MaximeConan](https://github.com/MaximeConan), [@singleton11](https://github.com/singleton11), [@chandlerok](https://github.com/chandlerok))
+
+### 变更
+
+- ACP Provider 现在会在 daemon 重启间将已发现的模型目录缓存到磁盘，不再在后台轮询，同时清理了多余的 Antigravity ACP 参数和元数据。需要 [Antigravity CLI 1.5.1 或更高版本](https://paseo.sh/zh-CN/docs/supported-providers/antigravity) ([#10992](https://github.com/getpaseo/paseo/pull/10992))
+
+### 修复
+
+- 修复已启用的客户端插件导入 `react-native` 时，Paseo iOS 在连接后不久崩溃的问题 ([#11011](https://github.com/getpaseo/paseo/pull/11011))
+- 修复流事件丢失或对话历史较大时，OpenCode v2 Agent 在点击停止后仍停留在运行中的问题 ([#10955](https://github.com/getpaseo/paseo/pull/10955))
+- 修复在 Pi Agent 运行其自行启动的轮次时发送引导消息会中止该轮次而不是引导它的问题 ([#10977](https://github.com/getpaseo/paseo/pull/10977)，贡献者：[@viiqswim](https://github.com/viiqswim))
+- 修复在 fork 克隆中根据 PR 创建工作区时，检出到 fork 中同编号 PR 的问题 ([#10987](https://github.com/getpaseo/paseo/pull/10987))
+- 修复向 Composer 拖放图片或文件后输入框未获得焦点的问题 ([#11022](https://github.com/getpaseo/paseo/pull/11022))
+
+## 0.17.6 - 2026-11-27
+
+### 改进
+
+- 将设置重组为设备和主机两个范围，并合并了内容较少的页面 ([#10933](https://github.com/getpaseo/paseo/pull/10933))
+- 为模型选择器中的模型、Provider 和配置文件新增方向键导航 ([#10929](https://github.com/getpaseo/paseo/pull/10929), [#10962](https://github.com/getpaseo/paseo/pull/10962))
+- 在主机设置和初始设置中新增就地刷新 Tailscale 可用性的按钮 ([#10903](https://github.com/getpaseo/paseo/pull/10903))
+
+### 变更
+
+- 移除了在后台运行 `agy -p /usage` 的 Antigravity 用量数据源 ([#10953](https://github.com/getpaseo/paseo/pull/10953)，贡献者：[@luoph](https://github.com/luoph))
+
+### 修复
+
+- 修复对话中出现代码块或引用时 Paseo Android 在三星设备上崩溃的问题 ([#10964](https://github.com/getpaseo/paseo/pull/10964))
+- 修复在 Android 上使用鼠标点击无法选择模型选择器行的问题 ([#10972](https://github.com/getpaseo/paseo/pull/10972))
+- 修复 macOS 桌面端因 Dock 进度条更新在启动时卡死的问题 ([#10939](https://github.com/getpaseo/paseo/pull/10939))
+- 修复 Linux AppImage 将其运行时环境变量泄漏到 Shell 和子进程的问题 ([#10920](https://github.com/getpaseo/paseo/pull/10920))
+- 修复 Linux 上后台 Git fetch 启动孤立 D-Bus 进程并在认证失败后循环重试的问题 ([#10921](https://github.com/getpaseo/paseo/pull/10921))
+- 修复恢复已归档工作区和 Agent 时的界面闪烁问题，并新增恢复中状态提示 ([#10928](https://github.com/getpaseo/paseo/pull/10928))
+- 修复 worktree 所有权超出已配置 worktrees 根目录的问题 ([#10878](https://github.com/getpaseo/paseo/pull/10878))
+- 修复另一个标签页淘汰目录缓存后，新打开的网页标签页丢失 project 的问题 ([#10942](https://github.com/getpaseo/paseo/pull/10942))
+- 修复 rewind epoch 变更时时间线丢失行的问题 ([#8794](https://github.com/getpaseo/paseo/pull/8794)，贡献者：[@LiebeLee](https://github.com/LiebeLee))
+
 ## 0.17.5 - 2026-11-26
 
 - **批量归档工作区**：在侧边栏按住 Cmd/Ctrl 点击工作区即可多选，一步归档。([#10798](https://github.com/getpaseo/paseo/pull/10798), [#10821](https://github.com/getpaseo/paseo/pull/10821))

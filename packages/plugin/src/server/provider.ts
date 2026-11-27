@@ -29,9 +29,29 @@ export const PROVIDER_CAPABILITIES = [
 
 export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
+export const ProviderCatalogRefreshModeSchema = z.enum(["background", "on_demand"]);
+
+export type ProviderCatalogRefreshMode = z.infer<typeof ProviderCatalogRefreshModeSchema>;
+
+export const ProviderClientInfoSchema = z
+  .object({
+    name: z.string().min(1),
+    title: z.string().min(1).optional(),
+    version: z.string().min(1),
+  })
+  .strip();
+
+export type ProviderClientInfo = z.infer<typeof ProviderClientInfoSchema>;
+
 export interface ProviderRegistration {
   /** Activate only while agents.providers contains this provider ID, independently of enabled. */
   requiresConfiguration?: boolean;
+  /**
+   * How Paseo refreshes this provider's model/mode catalog:
+   * - `"background"`: refreshes passively on open and on the background timer (default for direct providers).
+   * - `"on_demand"`: discovers once when uncached or when the binary changes, caches on disk across restarts, and skips the background timer (default for ACP providers).
+   */
+  catalogRefresh?: ProviderCatalogRefreshMode;
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
   /** Default executable and arguments; the daemon resolves overrides before status/connect. */
@@ -169,6 +189,7 @@ export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 
 export interface ProviderConnectRequest {
   launch?: ProviderLaunch;
+  clientInfo?: ProviderClientInfo;
   versions: readonly number[];
   capabilities: readonly string[];
 }

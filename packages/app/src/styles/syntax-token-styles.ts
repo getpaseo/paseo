@@ -26,6 +26,8 @@ export const syntaxTokenStyles = StyleSheet.create((theme) => ({
   meta: { color: theme.colors.syntax.meta },
   heading: { color: theme.colors.syntax.heading },
   link: { color: theme.colors.syntax.link },
+  diffAddition: { color: theme.colors.syntax.diffAddition },
+  diffDeletion: { color: theme.colors.syntax.diffDeletion },
 }));
 
 type SyntaxTokenStyleValue = (typeof syntaxTokenStyles)["base"];

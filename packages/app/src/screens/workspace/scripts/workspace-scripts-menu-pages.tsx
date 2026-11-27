@@ -261,8 +261,11 @@ function RunningScriptPage({
 
   const handleOpenService = useCallback(() => {
     if (!selected) return;
-    void openServiceUrl(selected.url, { openInApp: onOpenUrlInBrowserTab });
-  }, [selected, onOpenUrlInBrowserTab]);
+    void openServiceUrl(selected.url, {
+      openInApp: onOpenUrlInBrowserTab,
+      serverId: actions.serverId,
+    });
+  }, [actions.serverId, selected, onOpenUrlInBrowserTab]);
   const handleViewTerminal = useCallback(() => {
     if (liveTerminalId) onViewTerminal(liveTerminalId);
   }, [liveTerminalId, onViewTerminal]);

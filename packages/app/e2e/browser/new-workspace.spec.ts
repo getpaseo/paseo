@@ -869,6 +869,67 @@ test.describe("New workspace flow", () => {
       }
     });
 
+    test("uses a custom fetch namespace for the untouched default", async ({ page }) => {
+      const tempRepo = await createTempGitRepo("ref-custom-fetch-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["config", "remote.company.fetch", "+refs/heads/*:refs/vendor/company/*"],
+          { cwd: tempRepo.path },
+        );
+        execFileSync("git", ["fetch", "company"], { cwd: tempRepo.path });
+        execFileSync("git", ["branch", "--set-upstream-to=refs/vendor/company/main", "main"], {
+          cwd: tempRepo.path,
+        });
+        for (const ref of ["refs/remotes/company/HEAD", "refs/remotes/company/main"])
+          execFileSync("git", ["update-ref", "--no-deref", "-d", ref], { cwd: tempRepo.path });
+        const localHead = commitLocalOnly(tempRepo.path, "local-main-only");
+        const openedProject = await openWorktreeComposerForRepo(page, tempRepo.path);
+        const created = await createWorktreeAndRead(page, openedProject);
+        expect(created.branchInfo.hasAncestor(localHead)).toBe(false);
+        expect(await readWorktreeBaseMetadata(created.workspaceDirectory)).toMatchObject({
+          baseRef: "refs/vendor/company/main",
+        });
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
+    test("validates the automatic non-origin checkout against an existing holder", async ({
+      page,
+    }) => {
+      const tempRepo = await createTempGitRepo("ref-auto-holder-", { withRemote: true });
+      try {
+        execFileSync("git", ["remote", "rename", "origin", "company"], { cwd: tempRepo.path });
+        execFileSync(
+          "git",
+          ["symbolic-ref", "refs/remotes/company/HEAD", "refs/remotes/company/main"],
+          { cwd: tempRepo.path },
+        );
+        execFileSync("git", ["switch", "-c", "feature/source"], { cwd: tempRepo.path });
+        const holder = path.join(tempRepo.path, "holder");
+        execFileSync("git", ["worktree", "add", holder, "main"], { cwd: tempRepo.path });
+        await openWorktreeComposerForRepo(page, tempRepo.path);
+        await openStartingRefPicker(page);
+        await page.getByTestId("new-workspace-ref-picker-checkout").click();
+        await closeBranchPicker(page);
+        const before = await client.fetchWorkspaces();
+        await submitNewWorkspaceEmpty(page);
+        await expect(page.getByTestId("composer-error")).toContainText("main");
+        await expect(page.getByTestId("composer-error")).toContainText("holder");
+        expect((await client.fetchWorkspaces()).entries.length).toBe(before.entries.length);
+        expect(
+          execFileSync("git", ["branch", "--list", "main-*"], {
+            cwd: tempRepo.path,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("");
+      } finally {
+        await tempRepo.cleanup();
+      }
+    });
+
     for (const remote of ["company", "upstream"]) {
       test(`checks out topic from ${remote} when both non-origin remotes have it`, async ({
         page,

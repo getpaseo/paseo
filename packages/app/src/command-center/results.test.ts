@@ -366,6 +366,111 @@ describe("Command Center relevance ordering", () => {
     expect(sectionResultIds(sections)).toEqual(["z-first", "a-second"]);
   });
 
+  it("does not flip a higher-ranked prefix match when a shorter title completes on the last letter", () => {
+    const contributions = [
+      action({
+        id: "workspace:rename",
+        group: "workspace",
+        groupRank: -1,
+        rank: 21,
+        title: "Rename workspace",
+      }),
+      action({
+        id: "tab:rename-current",
+        group: "workspace",
+        groupRank: -1,
+        rank: 33,
+        title: "Rename",
+      }),
+    ];
+
+    for (const query of ["r", "re", "ren", "rena", "renam", "rename"]) {
+      expect(sectionResultIds(buildContributionSections(contributions, query)), query).toEqual([
+        "workspace:rename",
+        "tab:rename-current",
+      ]);
+    }
+  });
+
+  it("does not let a mid-phrase whole word leapfrog a start-of-title prefix mid-word", () => {
+    const contributions = [
+      action({
+        id: "workspace:pin",
+        group: "workspace",
+        groupRank: -1,
+        rank: 20,
+        title: "Pin to top",
+      }),
+      action({
+        id: "workspace:toggle-explorer-sidebar",
+        group: "workspace",
+        groupRank: -1,
+        rank: 25,
+        title: "Toggle Explorer sidebar",
+      }),
+    ];
+
+    for (const query of ["t", "to"]) {
+      expect(sectionResultIds(buildContributionSections(contributions, query)), query).toEqual([
+        "workspace:toggle-explorer-sidebar",
+        "workspace:pin",
+      ]);
+    }
+  });
+
+  it("keeps start-of-title priority even when the same token also appears as a whole word later", () => {
+    const contributions = [
+      action({
+        id: "later-only",
+        group: "workspace",
+        groupRank: -1,
+        rank: 1,
+        title: "Pin to top",
+      }),
+      action({
+        id: "starts-with-and-contains",
+        group: "workspace",
+        groupRank: -1,
+        rank: 2,
+        title: "Toggle to main",
+      }),
+    ];
+
+    for (const query of ["t", "to"]) {
+      expect(sectionResultIds(buildContributionSections(contributions, query)), query).toEqual([
+        "starts-with-and-contains",
+        "later-only",
+      ]);
+    }
+  });
+
+  it("does not flip word-start matches when one word finishes earlier than another", () => {
+    const contributions = [
+      action({
+        id: "workspace:toggle-explorer-sidebar",
+        group: "workspace",
+        groupRank: -1,
+        rank: 25,
+        title: "Toggle Explorer sidebar",
+      }),
+      action({
+        id: "tab:open:pull-request:side-pane",
+        group: "workspace",
+        groupRank: -1,
+        rank: 14,
+        title: "Open Pull request in side pane",
+      }),
+    ];
+
+    // Registry order puts the lower-index item first; neither should jump past the other on "side".
+    for (const query of ["si", "sid", "side"]) {
+      expect(sectionResultIds(buildContributionSections(contributions, query)), query).toEqual([
+        "workspace:toggle-explorer-sidebar",
+        "tab:open:pull-request:side-pane",
+      ]);
+    }
+  });
+
   it("keeps Workspaces below contributions even on a perfect match", () => {
     const projection = projectCommandCenterRows(
       [

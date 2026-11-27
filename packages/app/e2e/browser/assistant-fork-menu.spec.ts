@@ -257,6 +257,7 @@ test.describe("Assistant fork menu", () => {
   }) => {
     const session = await seedForkWorkspace({
       repoPrefix: "assistant-fork-submit-",
+      repo: { withRemote: true },
       title: "Assistant fork submit",
       initialPrompt: "emit 1 coalesced agent stream updates for assistant fork submit.",
       model: "ten-second-stream",
@@ -267,13 +268,15 @@ test.describe("Assistant fork menu", () => {
     await awaitAssistantMessage(page);
     await session.client.waitForFinish(session.agentId, 45_000);
 
-    execFileSync("git", ["checkout", "-b", "feature/fork-source"], { cwd: session.cwd });
+    execFileSync("git", ["checkout", "-b", "release"], { cwd: session.cwd });
+    execFileSync("git", ["push", "-u", "origin", "release"], { cwd: session.cwd });
+    execFileSync("git", ["tag", "release"], { cwd: session.cwd });
     const localHead = commitLocalOnly(session.cwd, "fork-source-only");
     await session.client.checkoutRefresh(session.cwd);
     await forkMostRecentAssistantTurnToNewWorkspace(page);
     await expectChatHistoryAttachment(page);
     await selectWorkspaceIsolation(page, "worktree");
-    await expectPickerSelected(page, "feature/fork-source");
+    await expectPickerSelected(page, "release");
 
     await submitNewWorkspaceEmpty(page);
 

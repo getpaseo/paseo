@@ -18,7 +18,9 @@ export type HighlightStyle =
   | "escape"
   | "meta"
   | "heading"
-  | "link";
+  | "link"
+  | "diffAddition"
+  | "diffDeletion";
 
 export interface HighlightToken {
   text: string;

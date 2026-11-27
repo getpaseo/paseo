@@ -1,4 +1,7 @@
-import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type {
+  DaemonClient,
+  CreatePaseoWorktreeInput,
+} from "@getpaseo/client/internal/daemon-client";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ComboboxOptionModel } from "@/components/ui/combobox-options";
 import { getForgePresentation } from "@/git/forge";
@@ -212,14 +215,23 @@ function refQualifier(refName: string): string | null {
 //
 export function defaultBasePickerItem(
   status: BaseRefCheckoutStatus,
-  options: { forkFromCurrentBranch: boolean } = { forkFromCurrentBranch: false },
+  options: { forkFromCurrentBranch: boolean; branchDetails?: readonly BranchPickerDetail[] } = {
+    forkFromCurrentBranch: false,
+  },
 ): PickerItem | null {
   if (options.forkFromCurrentBranch) {
     if (!status.currentBranch) return null;
     return baseBranchItem(`refs/heads/${status.currentBranch}`, "local");
   }
   if (status.defaultBranchRef !== undefined) {
-    return status.defaultBranchRef ? baseBranchItem(status.defaultBranchRef, "default") : null;
+    if (!status.defaultBranchRef) return null;
+    const item = baseBranchItem(status.defaultBranchRef, "default");
+    const detail = options.branchDetails?.find(
+      (entry) => (entry.refName ?? entry.name) === status.defaultBranchRef,
+    );
+    return detail?.branchName
+      ? { ...item, branchName: detail.branchName, remoteName: detail.remoteName }
+      : item;
   }
   // COMPAT(defaultBranchRef): added in v0.16.0, remove after 2027-05-13 once the
   // daemon floor sends defaultBranchRef. Older hosts retain their current-branch default.
@@ -234,7 +246,36 @@ export function defaultBasePickerItem(
   return baseBranchItem(refName, status.upstreamRef ? "upstream" : "local");
 }
 
-function baseBranchItem(refName: string, qualifier: string): PickerItem {
+/** Submission also resolves identity when the picker has never been opened. */
+export async function resolveCheckoutPickerItem({
+  item,
+  action,
+  client,
+  cwd,
+}: {
+  item: PickerItem | null;
+  action: RefAction;
+  client: Pick<DaemonClient, "getBranchSuggestions">;
+  cwd: string;
+}): Promise<PickerItem | null> {
+  if (!item || item.kind !== "branch" || action !== "checkout" || checkoutBranchName(item) !== null)
+    return item;
+  const suggestions = await client.getBranchSuggestions({
+    cwd,
+    refMode: "exact",
+    query: item.refName,
+    limit: 1,
+  });
+  const detail = suggestions.branchDetails?.find((entry) => entry.name === item.refName);
+  return detail?.branchName
+    ? { ...item, branchName: detail.branchName, remoteName: detail.remoteName }
+    : item;
+}
+
+function baseBranchItem(
+  refName: string,
+  qualifier: string,
+): Extract<PickerItem, { kind: "branch" }> {
   const name = branchNameFromRef(refName);
   return {
     kind: "branch",

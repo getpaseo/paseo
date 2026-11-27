@@ -18,6 +18,7 @@ const WorkspaceDraftTabSetupStorageSchema = z.preprocess(
     model: z.string().nullable(),
     thinkingOptionId: z.string().nullable(),
     providerOptions: z.record(z.string(), z.json()),
+    systemPrompt: z.string().nullable().optional(),
   }),
 );
 const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [

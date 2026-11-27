@@ -1,0 +1,8 @@
+- Host metadata instructions: Set host-wide instructions once to guide language, tone, and formatting for generated workspace titles, branch names, commit messages, and pull requests.
+- Enterprise spending usage: Usage now shows Claude extra-usage spending and Codex individual spending limits with reset times.
+
+Fixed
+- Fixed Android agent push notifications arriving minutes late during Doze
+- Fixed Command Center results reordering mid-word while typing
+
+Full notes: https://paseo.sh/changelog

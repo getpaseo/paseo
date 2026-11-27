@@ -29,6 +29,8 @@ import {
 } from "./providers/codex-app-server-agent.js";
 import { spawnProcess } from "../../utils/spawn.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
+import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { FakePi } from "./providers/pi/test-utils/fake-pi.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
@@ -1479,6 +1481,74 @@ test("a steer the provider names without echoing it can be rewound to", async ()
   }
 });
 
+test("keeps one assistant message whole when a steer lands between its chunks", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-split-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    // Zero window: every streamed chunk flushes on the coalescer's leading edge,
+    // so the timeline reaches its next state without waiting on a timer.
+    agentStreamCoalesceWindowMs: 0,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const conversation = () =>
+      manager
+        .fetchTimeline(agent.id, { limit: 0 })
+        .rows.filter(
+          (row) => row.item.type === "assistant_message" || row.item.type === "user_message",
+        )
+        .map((row) => row.item);
+
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+    });
+    await expect
+      .poll(conversation)
+      .toMatchObject([
+        { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+      ]);
+    await expect(
+      manager.steerAgentRun(agent.id, "keep going", { clientMessageId: "keep-going-client" }),
+    ).resolves.toEqual({ status: "accepted" });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: { type: "assistant_message", text: "ted changes.", messageId: "msg-1" },
+    });
+
+    await expect.poll(conversation).toMatchObject([
+      { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders a concurrent replacement after a pending accepted steer", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
@@ -1765,6 +1835,51 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
         clientMessageId: "autonomous-follow-up-client",
       }),
     );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("steers a run Pi started by itself instead of aborting it", async () => {
+  const runtime = new FakePi();
+  const manager = new AgentManager({
+    clients: {
+      pi: new PiRpcAgentClient({
+        runtime,
+        logger,
+        runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+      }),
+    },
+    logger,
+  });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-pi-autonomous-steer-"));
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "pi", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const fakeSession = runtime.latestSession();
+    // An extension message or a process exit notice starts a run without a Paseo prompt.
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    await vi.waitFor(() =>
+      expect(manager.getAgent(agent.id)?.activeTurnId).toEqual(expect.any(String)),
+    );
+
+    const result = await startAgentRun(manager, agent.id, "message from another agent", logger, {
+      activeTurnBehavior: "steer",
+      replaceRunning: true,
+    });
+
+    expect(result).toEqual({ disposition: "steered" });
+    expect(fakeSession.steerCalls).toEqual([
+      { message: "message from another agent", imageCount: 0 },
+    ]);
+    expect(fakeSession.controlRequests).toEqual([]);
+    expect(fakeSession.prompts).toEqual([]);
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

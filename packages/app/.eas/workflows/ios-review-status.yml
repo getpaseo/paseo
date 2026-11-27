@@ -1,0 +1,20 @@
+name: Check iOS App Store review status
+
+# Inspect live App Store Connect state for sh.paseo: the live App Store
+# version, any active or pending App Store versions, active review submissions,
+# and the five most recently uploaded iOS TestFlight builds.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check_ios_review_status:
+    name: Check iOS App Store review status
+    environment: production
+    runs_on: macos-medium
+    steps:
+      - uses: eas/checkout
+      - name: Install fastlane
+        run: bundle install
+      - name: Check review status
+        run: bundle exec fastlane ios review_status

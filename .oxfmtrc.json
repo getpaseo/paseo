@@ -15,6 +15,7 @@
     "*.lock",
     "**/*.gen.ts",
     "**/*.gen.tsx",
+    "**/*.icon/**",
     "packages/react-native-enriched-markdown/**"
   ]
 }

@@ -795,6 +795,7 @@ export class PluginService {
           command: provider.command,
           launchWrap: provider.launchWrap,
           requiresConfiguration: provider.requiresConfiguration,
+          catalogRefresh: provider.catalogRefresh,
           status: provider.hasStatus
             ? (request) => {
                 if (!this.runtime.getProviderStatus)

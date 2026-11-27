@@ -146,6 +146,14 @@ test("change gating allows superseded workflow runs to cancel", () => {
 test("published npm packages declare and ship the repository license", () => {
   const rootManifest = JSON.parse(readFileSync(new URL("package.json", repoRoot), "utf8"));
   assert.match(rootManifest.scripts["release:publish"], /scripts\/publish-release-packages\.mjs/);
+  assert.match(
+    rootManifest.scripts["release:ship"],
+    /^npm run release:push && npm run release:publish$/,
+  );
+  assert.match(
+    rootManifest.scripts["release:ship:beta"],
+    /^npm run release:push && npm run release:publish:beta$/,
+  );
   const workspaceArgs = PUBLISH_WORKSPACES.map((workspace) => `--workspace=${workspace}`);
   const packed = JSON.parse(
     execFileSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--json", ...workspaceArgs], {
@@ -432,7 +440,68 @@ test("stable iOS releases upload once and distribute to external testers before 
     review,
     /APP_BUILD_VERSION="\$\{\{ needs\.build_ios\.outputs\.app_build_version \}\}"/,
   );
+  assert.match(review, /REPLACE_IN_REVIEW="false"/);
   assert.match(review, /bundle exec fastlane ios submit_review/);
+});
+
+test("iOS App Store review queue EAS workflows and Fastlane lanes stay wired and tested", () => {
+  const resubmit = readFileSync(
+    new URL("packages/app/.eas/workflows/resubmit-ios-review.yml", repoRoot),
+    "utf8",
+  );
+  assert.match(
+    resubmit,
+    /replace_in_review:\s*\n\s+type: boolean\s*\n\s+required: false\s*\n\s+default: false/,
+  );
+  assert.match(resubmit, /export REPLACE_IN_REVIEW="\$\{\{ inputs\.replace_in_review \}\}"/);
+  assert.match(resubmit, /bundle exec fastlane ios submit_review/);
+
+  const status = readFileSync(
+    new URL("packages/app/.eas/workflows/ios-review-status.yml", repoRoot),
+    "utf8",
+  );
+  assert.match(status, /^  workflow_dispatch: \{\}$/m);
+  assert.match(status, /bundle exec fastlane ios review_status/);
+
+  const cancel = readFileSync(
+    new URL("packages/app/.eas/workflows/cancel-ios-review.yml", repoRoot),
+    "utf8",
+  );
+  assert.match(cancel, /expected_version:\s*\n\s+type: string\s*\n\s+required: false/);
+  assert.match(cancel, /export EXPECTED_VERSION="\$\{\{ inputs\.expected_version \}\}"/);
+  assert.match(cancel, /bundle exec fastlane ios cancel_review/);
+
+  // Validate all EAS workflow YAML files with Ruby's built-in Psych YAML parser,
+  // check Ruby syntax on Fastlane files, and run the Ruby unit test suite.
+  const yamlCheck = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-e",
+      'ARGV.each { |p| data = YAML.safe_load_file(p); raise "Invalid YAML: #{p}" unless data.is_a?(Hash) && data["jobs"].is_a?(Hash) }',
+      "packages/app/.eas/workflows/release-mobile.yml",
+      "packages/app/.eas/workflows/resubmit-ios-review.yml",
+      "packages/app/.eas/workflows/ios-review-status.yml",
+      "packages/app/.eas/workflows/cancel-ios-review.yml",
+    ],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.equal(yamlCheck.status, 0, yamlCheck.stderr || yamlCheck.stdout);
+
+  for (const rubyFile of [
+    "packages/app/fastlane/Fastfile",
+    "packages/app/fastlane/ios_review.rb",
+    "packages/app/fastlane/ios_review_test.rb",
+  ]) {
+    const syntax = spawnSync("ruby", ["-c", rubyFile], { cwd: repoRoot, encoding: "utf8" });
+    assert.equal(syntax.status, 0, syntax.stderr || syntax.stdout);
+  }
+
+  const unitTests = spawnSync("ruby", ["packages/app/fastlane/ios_review_test.rb"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  assert.equal(unitTests.status, 0, `${unitTests.stdout}\n${unitTests.stderr}`);
 });
 
 test("eight Playwright shards share two-worker coverage", () => {

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CheckoutWorktree } from "@getpaseo/protocol/messages";
-import { buildBranchPickerItems, type PickerItem } from "../new-workspace-picker-item";
+import {
+  buildBranchPickerItems,
+  defaultBasePickerItem,
+  resolveCheckoutPickerItem,
+  type PickerItem,
+} from "../new-workspace-picker-item";
 import {
   BranchInWorktreeError,
   createNewWorkspaceSetup,
@@ -308,6 +313,46 @@ describe("New workspace isolation and ref actions", () => {
         refName: "refs/remotes/team/company/topic",
         refMode: "exact",
       });
+    },
+  );
+
+  it.each([false, true])(
+    "validates an automatic non-origin checkout against its holder (loaded: %s)",
+    async (loaded) => {
+      const setup = createNewWorkspaceSetup(
+        { ...READY, worktrees: [worktree("/holder", "main")] },
+        recordingEffects().effects,
+      );
+      setup.chooseRefAction("branch", "checkout");
+      const detail = {
+        name: "refs/remotes/company/main",
+        branchName: "main",
+        remoteName: "company",
+        committerDate: 1,
+      };
+      const item = defaultBasePickerItem(
+        { currentBranch: "feature/source", defaultBranchRef: detail.name },
+        {
+          forkFromCurrentBranch: false,
+          branchDetails: loaded ? [detail] : [],
+        },
+      );
+      const resolved = await resolveCheckoutPickerItem({
+        item,
+        action: "checkout",
+        cwd: "/repo",
+        client: {
+          getBranchSuggestions: async () => ({
+            branches: [detail.name],
+            branchDetails: [detail],
+            error: null,
+            requestId: "identity",
+          }),
+        },
+      });
+      expect(() => setup.checkoutRequestFor(resolved)).toThrow(
+        new BranchInWorktreeError({ branchName: "main", worktree: worktree("/holder", "main") }),
+      );
     },
   );
 

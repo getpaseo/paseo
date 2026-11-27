@@ -2388,12 +2388,27 @@ it.each(["replacement", "socket-overflow"] as const)(
         expect(existsSync(drained), "terminal finished writing the overflow burst").toBe(true);
       }
       await waitForCondition(() => viewers.replayed(desktop), 10000);
+      const replayEnd = viewers.frames.findIndex(
+        (row) => row.frame.opcode === TerminalStreamOpcode.ReplayEnd,
+      );
       const replay = viewers.frames
+        .slice(0, replayEnd)
         .filter((row) => row.frame.opcode === TerminalStreamOpcode.ReplayData)
         .map((row) => Buffer.from(row.frame.payload).toString("utf8"))
         .join("");
       expect(replay).toContain("BEFORE-LOSS");
-      if (loss === "socket-overflow") expect(replay).toContain("AFTER-LOSS");
+      if (loss === "socket-overflow") {
+        // The PTY finishing its write does not mean the worker has parsed it.
+        // When the reconnect snapshot is cut first (ConPTY on Windows lags), the
+        // rest must reach the viewer as live output after the replay.
+        const afterReplay = () =>
+          viewers.frames
+            .slice(replayEnd + 1)
+            .filter((row) => row.frame.opcode === TerminalStreamOpcode.Output)
+            .map((row) => Buffer.from(row.frame.payload).toString("utf8"))
+            .join("");
+        await waitForCondition(() => (replay + afterReplay()).includes("AFTER-LOSS"), 10000);
+      }
       expect((await workerRecords(paseoHome)).map((worker) => worker.pid)).toEqual([record!.pid]);
       session.send({ type: "input", data: "RECOVERED\r" });
       await waitForCondition(() => viewers.text(desktop).includes("ECHO:RECOVERED"), 3000);
@@ -2403,7 +2418,7 @@ it.each(["replacement", "socket-overflow"] as const)(
       await viewers.delivery.close();
     }
   },
-  30000,
+  40000,
 );
 
 it.each([true, false])(

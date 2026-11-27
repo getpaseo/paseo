@@ -196,6 +196,18 @@ function makeStreamReducerEvent(
   };
 }
 
+function receiveSteer() {
+  return processAgentStreamEvents({
+    events: [
+      makeStreamReducerEvent(makeAssistantTimelineEvent("with the uncommit", "m1"), 2),
+      makeStreamReducerEvent(makeTimelineEvent("keep going", "user_message"), 3),
+    ],
+    currentTail: [],
+    currentHead: [],
+    currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+  });
+}
+
 function makeAssistantItem(
   text: string,
   id = `assistant-${text.length}`,
@@ -1777,6 +1789,52 @@ describe("processTimelineResponse", () => {
     ).toEqual([
       { id: "submitted-first", text: "first prompt", messageId: "submitted-first" },
       { id: "submitted-second", text: "second prompt", messageId: "submitted-second" },
+    ]);
+  });
+
+  it.each([
+    { source: "live prefix", text: "with the uncommit", seq: 2 },
+    { source: "earlier projected page", text: "with the uncommitted changes.", seq: 4 },
+  ])("reuses the assistant row from the $source across a steer", ({ text, seq }) => {
+    const live = receiveSteer();
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [
+        {
+          ...makeAssistantItem(text, "m1"),
+          messageId: "m1",
+          timelineCursor: { epoch: "epoch-1", seq },
+        },
+        ...live.tail.slice(1),
+      ],
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 4 },
+        endCursor: { seq: 4 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "with the uncommitted changes.", "assistant_message", 4),
+            sourceSeqRanges: [
+              { startSeq: 2, endSeq: 2 },
+              { startSeq: 4, endSeq: 4 },
+            ],
+            item: {
+              type: "assistant_message",
+              text: "with the uncommitted changes.",
+              messageId: "m1",
+            },
+          },
+        ],
+      },
+    });
+
+    expect([...result.tail, ...result.head]).toMatchObject([
+      { kind: "assistant_message", text: "with the uncommitted changes.", messageId: "m1" },
+      { kind: "user_message", text: "keep going" },
     ]);
   });
 
@@ -3977,6 +4035,22 @@ describe("processAgentStreamEvent", () => {
 });
 
 describe("processAgentStreamEvents", () => {
+  it("keeps a live reply in one row across a steer", () => {
+    const live = receiveSteer();
+    const result = processAgentStreamEvents({
+      events: [makeStreamReducerEvent(makeAssistantTimelineEvent("ted changes.", "m1"), 4)],
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+    });
+
+    expect(result.tail).toEqual([]);
+    expect(result.head).toMatchObject([
+      { kind: "assistant_message", text: "with the uncommitted changes.", messageId: "m1" },
+      { kind: "user_message", text: "keep going" },
+    ]);
+  });
+
   it("coalesces contiguous assistant stream events into one head update and final cursor", () => {
     const result = processAgentStreamEvents({
       events: [

@@ -1,0 +1,16 @@
+export {
+  decodeNetworkTunnelFrame,
+  encodeNetworkTunnelFrame,
+  NETWORK_TUNNEL_DEFAULT_INITIAL_CONNECTION_WINDOW_BYTES,
+  NETWORK_TUNNEL_DEFAULT_INITIAL_STREAM_WINDOW_BYTES,
+  NETWORK_TUNNEL_HEADER_BYTES,
+  NETWORK_TUNNEL_MAX_CONCURRENT_STREAMS,
+  NETWORK_TUNNEL_MAX_DATA_PAYLOAD_BYTES,
+  NETWORK_TUNNEL_PROTOCOL_VERSION,
+  NetworkTunnelCloseReason,
+  NetworkTunnelCodecError,
+  NetworkTunnelFrameType,
+  type DecodedNetworkTunnelFrame,
+  type NetworkTunnelCodecErrorCode,
+  type NetworkTunnelFrame,
+} from "./internal/codec.js";

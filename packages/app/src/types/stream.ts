@@ -959,6 +959,24 @@ function appendUserMessage(
   return upsertUserMessage(state, nextItem);
 }
 
+function findSteeredAssistantIndex(
+  items: StreamItem[],
+  messageId: string,
+  turnId: string | undefined,
+): number {
+  let index = items.length - 1;
+  while (items[index]?.kind === "user_message") {
+    index -= 1;
+  }
+  const candidate = items[index];
+  return index < items.length - 1 &&
+    candidate?.kind === "assistant_message" &&
+    candidate.messageId === messageId &&
+    candidate.turnId === turnId
+    ? index
+    : -1;
+}
+
 function appendAssistantMessage(
   state: StreamItem[],
   text: string,
@@ -967,43 +985,41 @@ function appendAssistantMessage(
   messageId?: string,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
+  turnId?: string,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
     return state;
   }
 
-  const last = state[state.length - 1];
-  const shouldAppendToLast =
-    last &&
-    last.kind === "assistant_message" &&
-    (messageId === undefined || last.messageId === messageId);
-  if (shouldAppendToLast) {
-    const updated: AssistantMessageItem = {
-      ...last,
-      text: `${last.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
-    return [...state.slice(0, -1), updated];
+  const lastIndex = state.length - 1;
+  const last = state[lastIndex];
+  let index = -1;
+  if (
+    last?.kind === "assistant_message" &&
+    (messageId === undefined || last.messageId === messageId)
+  ) {
+    index = lastIndex;
+  } else if (source === "live") {
+    if (messageId !== undefined) {
+      index = findSteeredAssistantIndex(state, messageId, turnId);
+    } else if (
+      last?.kind === "user_message" &&
+      state[lastIndex - 1]?.kind === "assistant_message"
+    ) {
+      index = lastIndex - 1;
+    }
   }
 
-  // A submitted user row can follow the streaming assistant during interrupt.
-  // In that case, look one row further back for the assistant to extend.
-  const secondLast = state[state.length - 2];
-  if (
-    source === "live" &&
-    last?.kind === "user_message" &&
-    secondLast?.kind === "assistant_message" &&
-    (messageId === undefined || secondLast.messageId === messageId)
-  ) {
+  const previous = state[index];
+  if (previous?.kind === "assistant_message") {
     const updated: AssistantMessageItem = {
-      ...secondLast,
-      text: `${secondLast.text}${chunk}`,
+      ...previous,
+      text: `${previous.text}${chunk}`,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
-    return [...state.slice(0, -2), updated, last];
+    return [...state.slice(0, index), updated, ...state.slice(index + 1)];
   }
 
   if (!hasContent) {
@@ -1573,6 +1589,7 @@ function reduceTimelineEvent(
         item.messageId,
         reservedItemIds,
         timelineCursor,
+        event.turnId,
       );
     case "reasoning":
       return appendThought(state, item.text, timestamp, timelineCursor, event.turnId);
@@ -1810,23 +1827,27 @@ function getActiveAssistantHeadIndex(head: StreamItem[]): number {
   return -1;
 }
 
-function getTailAssistantToResume(params: {
+function getTailAssistantResumeIndex(params: {
   incomingKind: StreamItem["kind"] | null;
   event: AgentStreamEventPayload;
   nextHead: StreamItem[];
-  tailAssistant: StreamItem | undefined;
-}): AssistantMessageItem | null {
-  if (params.incomingKind !== "assistant_message" || params.nextHead.length !== 0) {
-    return null;
+  tail: StreamItem[];
+  source: StreamUpdateSource;
+}): number {
+  const { incomingKind, event, nextHead, tail, source } = params;
+  if (incomingKind !== "assistant_message" || nextHead.length !== 0) return -1;
+
+  const messageId = getIncomingAssistantMessageId(event);
+  const last = tail.at(-1);
+  if (
+    last?.kind === "assistant_message" &&
+    (messageId === undefined || last.messageId === messageId)
+  ) {
+    return tail.length - 1;
   }
-  if (params.tailAssistant?.kind !== "assistant_message") {
-    return null;
-  }
-  const incomingMessageId = getIncomingAssistantMessageId(params.event);
-  if (incomingMessageId !== undefined && params.tailAssistant.messageId !== incomingMessageId) {
-    return null;
-  }
-  return params.tailAssistant;
+  return source === "live" && event.type === "timeline" && messageId !== undefined
+    ? findSteeredAssistantIndex(tail, messageId, event.turnId)
+    : -1;
 }
 
 /**
@@ -2055,15 +2076,17 @@ export function applyStreamEvent(params: {
     flushHead();
   }
 
-  const tailAssistant = getTailAssistantToResume({
+  const resumeIndex = getTailAssistantResumeIndex({
     incomingKind,
     event,
     nextHead,
-    tailAssistant: nextTail.at(-1),
+    tail: nextTail,
+    source,
   });
-  if (tailAssistant) {
-    nextTail = nextTail.slice(0, -1);
-    nextHead = [tailAssistant];
+  if (resumeIndex >= 0) {
+    // Move any steers with the reply so the reply stays above them as it streams.
+    nextHead = nextTail.slice(resumeIndex);
+    nextTail = nextTail.slice(0, resumeIndex);
     changedTail = true;
     changedHead = true;
   }
