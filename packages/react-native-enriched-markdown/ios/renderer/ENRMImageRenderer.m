@@ -24,7 +24,14 @@ static const unichar kZeroWidthSpace = 0x200B;
 
   NSUInteger startIndex = output.length;
 
-  NSAttributedString *imageString = [NSAttributedString attributedStringWithAttachment:attachment];
+  NSMutableAttributedString *imageString =
+      [[NSAttributedString attributedStringWithAttachment:attachment] mutableCopy];
+  // An inline image is centred on the cap height of the font at its index (see
+  // ENRMImageAttachment), so it carries the font of the text around it.
+  UIFont *currentFont = isInline ? [context getTextAttributes][NSFontAttributeName] : nil;
+  if (currentFont) {
+    [imageString addAttribute:NSFontAttributeName value:currentFont range:NSMakeRange(0, imageString.length)];
+  }
   [output appendAttributedString:imageString];
 
   // Extract alt text from children (![alt text](url) - "alt text" is in children)
