@@ -75,7 +75,7 @@ describe("cloudflared-tunnel built-in plugin", () => {
 
   it("opens a quick tunnel, parses trycloudflare.com URL as ephemeral, and terminates on abort", async () => {
     const markerFile = path.join(os.tmpdir(), `paseo-cf-term-${Date.now()}-${Math.random()}.txt`);
-    const { dir } = await createFakeCloudflared(`
+    const { binary } = await createFakeCloudflared(`
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args[0] === "--version") {
@@ -91,7 +91,7 @@ setInterval(() => {}, 10_000);
     tempDirs.push(markerFile);
 
     const provider = createCloudflaredTunnelProvider({
-      env: envWithPath(`${dir}${path.delimiter}${process.env.PATH ?? ""}`),
+      readSettings: async () => ({ binaryPath: binary }),
     });
 
     const status = await provider.status({

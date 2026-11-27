@@ -37,14 +37,16 @@ function formatHostForUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
-// On Windows a bare name that is not on PATH runs through cmd.exe, which exits 9009 for an
-// unknown command instead of failing the spawn with ENOENT.
-const WINDOWS_COMMAND_NOT_FOUND_EXIT_CODE = 9009;
-
+// Every launch passes `shell: false`: the CLI ships as an executable. With a shell, Windows runs a
+// missing bare name through cmd.exe, which prints a localized "not recognized" error instead of
+// failing the spawn with ENOENT. A `.cmd` given as a full path still runs through cmd.exe.
 function isNotFoundError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return false;
-  if (error.code === "ENOENT" || error.code === "ENOTDIR") return true;
-  return process.platform === "win32" && error.code === WINDOWS_COMMAND_NOT_FOUND_EXIT_CODE;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
 }
 
 function hasFunnelCapability(self: NonNullable<TailscaleStatusJson["Self"]>): boolean {
@@ -140,6 +142,7 @@ export function createTailscaleFunnelProvider(
     try {
       ({ stdout } = await execCommand(binary, ["status", "--json"], {
         env,
+        shell: false,
         signal,
         timeout: 5_000,
       }));
@@ -235,6 +238,7 @@ export function createTailscaleFunnelProvider(
     try {
       ({ stdout } = await execCommand(binary, ["funnel", "status", "--json"], {
         env,
+        shell: false,
         signal,
         timeout: 5_000,
       }));
@@ -302,6 +306,7 @@ export function createTailscaleFunnelProvider(
         port === 443 ? `https://${probe.dnsName}` : `https://${probe.dnsName}:${port}`;
       const child = spawnProcess(binary, ["funnel", `--https=${port}`, targetUrl], {
         env,
+        shell: false,
         stdio: "pipe",
       });
 
