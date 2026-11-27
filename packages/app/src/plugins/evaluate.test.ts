@@ -39,6 +39,23 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("registers one update indicator and removes it on cleanup", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "updates",
+      bundle(`plugin.addUpdateIndicator(function Indicator() { return null; });`),
+    );
+    expect(plugin.updateIndicators).toHaveLength(1);
+    await plugin.cleanup();
+    expect(plugin.updateIndicators).toHaveLength(0);
+    expect(() =>
+      evaluatePluginClientBundle(
+        "duplicate",
+        bundle(
+          `function Indicator() { return null; } plugin.addUpdateIndicator(Indicator); plugin.addUpdateIndicator(Indicator);`,
+        ),
+      ),
+    ).toThrow("Duplicate update indicator");
+  });
   it("releases button registrations when client setup throws", () => {
     let active = 0;
     function addButton() {

@@ -138,6 +138,12 @@ export interface PluginWorkspaceRowBadgeItemProps extends PluginHostProps {
   workspaceId: string;
 }
 
+/** Reports whether this plugin has an update to show in the installed plugin list. */
+export interface PluginUpdateIndicatorProps {
+  hostId: string;
+  onChange(available: boolean): void;
+}
+
 /**
  * Part of the line under a workspace's title in the sidebar, on every workspace of the plugin's host.
  * Render `WorkspaceRowBadge`, or nothing when there is nothing to say about this workspace.
@@ -238,6 +244,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   /** Play a base64-encoded audio file on this client; resolves when playback ends. */
   playAudio(source: { base64: string; mimeType: string }): Promise<void>;
   addSettingsScreen(contribution: PluginSettingsScreenContribution<PluginText>): PluginCleanup;
+  addUpdateIndicator(Component: ComponentType<PluginUpdateIndicatorProps>): PluginCleanup;
   addScreen(contribution: PluginScreenContribution<PluginText>): PluginCleanup;
   addSidebarView(contribution: PluginSidebarViewContribution<PluginText>): PluginCleanup;
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;

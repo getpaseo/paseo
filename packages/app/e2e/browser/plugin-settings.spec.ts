@@ -25,7 +25,21 @@ import {
   selectSettingsTab,
   openTabbedSettingsLink,
   expectNamedPluginRow,
+  expectUpdateIndicator,
+  expectUpdateIndicatorHidden,
 } from "../support/helpers/plugin-settings";
+
+test("the plugin list shows the registered update indicator only while it is enabled", async ({
+  page,
+  settingsPlugin,
+}) => {
+  await openPluginsPage(page);
+  await expectUpdateIndicator(page);
+  await settingsPlugin.disablePlugin("settings-tabs");
+  await expectUpdateIndicatorHidden(page);
+  await settingsPlugin.enablePlugin("settings-tabs");
+  await expectUpdateIndicator(page);
+});
 
 test("display preferences survive a reload", async ({ page }) => {
   await openDisplaySettings(page);

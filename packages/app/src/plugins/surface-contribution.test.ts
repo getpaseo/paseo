@@ -48,6 +48,7 @@ function installation(
     },
     cleanup: () => undefined,
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: surfaces.map((id) => ({ id, title: id, Component: () => null })),
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },

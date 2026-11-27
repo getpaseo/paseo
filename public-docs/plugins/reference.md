@@ -1718,6 +1718,14 @@ Themes need a host that supports them. A client released before `addTheme` canno
 
 ## Settings screens
 
+An active client plugin can report its own update status for its installed-plugin row with
+`client.addUpdateIndicator(Component)`. The component receives `hostId` and `onChange(available)`;
+call `onChange` from an effect when its status changes and return `null`. Paseo renders the update
+dot and its accessible label. The component runs under the plugin installation provider and is
+removed when the plugin is disabled or unloaded. This indicator is separate from the host's
+source update proposals. Older clients do not expose this registration method; plugins supporting
+those clients must check for the method before calling it.
+
 Register a component with `client.addSettingsScreen({ id, title, icon, Component })` in
 `index.client.tsx`. Your plugin's row in **Settings → Plugins** on that host then shows a settings
 button (cog) that opens your first screen. When you register several screens, the settings page shows

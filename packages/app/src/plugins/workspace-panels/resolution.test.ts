@@ -20,6 +20,7 @@ function installed(): InstalledPlugin {
     },
     cleanup: () => {},
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: [],
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },

@@ -122,6 +122,7 @@ export class PluginRegistry {
           cleanup: () => undefined,
           surfaces: [],
           settingsScreens: [],
+          updateIndicators: [],
           sidebarViews: [],
           sidebarItems: { header: [], footer: [] },
           legacySidebarItems: [],
