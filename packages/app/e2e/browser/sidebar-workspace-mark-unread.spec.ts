@@ -666,12 +666,18 @@ test("review actions affect only the chat chosen in the tab menu", async ({ page
   await page.keyboard.press("Escape");
   await chooseChatReviewAction(page, subject.workspaceId, subject.agentId, "mark-as-unread");
   await expect(groupedRow("attention")).toBeVisible();
-  await page
-    .getByTestId(`workspace-tab-agent_${subject.agentId}`)
-    .filter({ visible: true })
-    .click();
-  await expect(groupedRow("needs_follow_up")).toBeVisible();
   const reopenedPill = page.getByTestId("composer-mark-done");
+  await expect(reopenedPill).toHaveAccessibleName("Ready to review · Mark done");
+  const tabId = `agent_${subject.agentId}`;
+  const chatTab = page.getByTestId(`workspace-tab-${tabId}`).filter({ visible: true });
+  await chatTab.click({ button: "right" });
+  await expect(
+    page.getByTestId(`workspace-tab-context-${tabId}-mark-done`).filter({ visible: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(groupedRow("attention")).toBeVisible();
+  await chatTab.click();
+  await expect(groupedRow("needs_follow_up")).toBeVisible();
   await expect(reopenedPill).toHaveAccessibleName("Needs follow-up · Mark done");
   await reopenedPill.click();
   await expect(groupedRow("done")).toBeVisible();
