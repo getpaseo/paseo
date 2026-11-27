@@ -201,6 +201,22 @@ test("exposes and applies auto permission mode", async () => {
   }
 });
 
+test("marks only the bypass permission mode as unattended", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+
+  const session = await createSession();
+
+  try {
+    const modes = await session.getAvailableModes();
+    expect(modes.filter((mode) => mode.isUnattended === true).map((mode) => mode.id)).toEqual([
+      "bypassPermissions",
+    ]);
+  } finally {
+    await session.close();
+  }
+});
+
 test.each([
   { env: {}, expected: "auto" },
   { env: { CLAUDE_CODE_USE_BEDROCK: "1" }, expected: "default" },

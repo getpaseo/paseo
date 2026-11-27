@@ -1,0 +1,19 @@
+# NOTE: Maestro requires a config section for every flow file, even when used
+# via `runFlow`. Keep this aligned with the dev build application id.
+appId: sh.paseo.debug
+---
+# Opens Goals from the sidebar on whatever screen the running app shows.
+# On a phone the sidebar is closed, so open it first.
+- runFlow:
+    when:
+      notVisible:
+        id: "sidebar-goals"
+    commands:
+      - tapOn:
+          id: "menu-button"
+- tapOn:
+    id: "sidebar-goals"
+- extendedWaitUntil:
+    visible:
+      id: "goals-list"
+    timeout: 20000

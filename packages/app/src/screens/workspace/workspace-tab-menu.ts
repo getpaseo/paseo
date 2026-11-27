@@ -10,6 +10,7 @@ export interface WorkspaceTabMenuLabels {
   copyAgentId: string;
   copyTerminalId: string;
   copyFilePath: string;
+  startGoal: string;
   rename: string;
   closeAbove: string;
   closeBelow: string;
@@ -26,6 +27,7 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   copyAgentId: i18n.t("workspace.tabs.menu.copyAgentId"),
   copyTerminalId: i18n.t("workspace.tabs.menu.copyTerminalId"),
   copyFilePath: i18n.t("workspace.tabs.menu.copyFilePath"),
+  startGoal: i18n.t("workspace.tabs.menu.startGoal"),
   rename: i18n.t("workspace.tabs.menu.rename"),
   closeAbove: i18n.t("workspace.tabs.menu.closeAbove"),
   closeBelow: i18n.t("workspace.tabs.menu.closeBelow"),
@@ -49,6 +51,7 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
+        | "target"
         | "x";
       hint?: string;
       tooltip?: string;
@@ -78,6 +81,8 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  /** Absent while the host cannot run goals, which hides the item. */
+  onStartGoal?: (agentId: string) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
@@ -95,6 +100,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
   onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
+  onStartGoal?: (agentId: string) => void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
@@ -182,6 +188,7 @@ export function buildWorkspaceTabMenuEntries(
     onCopyTerminalId,
     onCopyFilePath,
     onReloadAgent,
+    onStartGoal,
     onRenameTab,
     onCloseTab,
     onCloseTabsBefore,
@@ -247,6 +254,20 @@ export function buildWorkspaceTabMenuEntries(
       },
     });
     entries.push({ kind: "file-panel-open-with", key: "file-panel-open-with" });
+  }
+
+  if (tab.target.kind === "agent" && onStartGoal) {
+    const { agentId } = tab.target;
+    entries.push({
+      kind: "item",
+      key: "start-goal",
+      label: labels.startGoal,
+      icon: "target",
+      testID: `${menuTestIDBase}-start-goal`,
+      onSelect: () => {
+        onStartGoal(agentId);
+      },
+    });
   }
 
   if (tab.target.kind === "agent" || tab.target.kind === "terminal") {
@@ -344,6 +365,7 @@ export function buildWorkspaceDesktopTabActions(
       onCopyTerminalId: input.onCopyTerminalId,
       onCopyFilePath: input.onCopyFilePath,
       onReloadAgent: input.onReloadAgent,
+      onStartGoal: input.onStartGoal,
       onRenameTab: input.onRenameTab,
       onCloseTab: input.onCloseTab,
       onCloseTabsBefore: input.onCloseTabsToLeft,

@@ -1,0 +1,15 @@
+appId: sh.paseo.debug
+---
+# Opens the detail of ${GOAL_ID} from the Goals list.
+- runFlow: goals-open.yaml
+- scrollUntilVisible:
+    element:
+      id: "goal-row-${GOAL_ID}"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "goal-row-${GOAL_ID}"
+- extendedWaitUntil:
+    visible:
+      id: "goal-detail-title"
+    timeout: 20000

@@ -1,0 +1,52 @@
+appId: sh.paseo.debug
+env:
+  GOAL_TITLE: "Renamed by Maestro"
+---
+# The kebab on the ${GOAL_ID} list row: always shown on touch, renames, and sets priority.
+# Read packages/app/maestro/README.md#goals.
+- runFlow: flows/goals-open.yaml
+- scrollUntilVisible:
+    element:
+      id: "goal-row-menu-${GOAL_ID}"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "goal-row-menu-${GOAL_ID}"
+- extendedWaitUntil:
+    visible:
+      id: "goal-row-menu-${GOAL_ID}-rename"
+    timeout: 10000
+- tapOn:
+    id: "goal-row-menu-${GOAL_ID}-rename"
+- extendedWaitUntil:
+    visible:
+      id: "goal-rename-input"
+    timeout: 10000
+- tapOn:
+    id: "goal-rename-input"
+- eraseText
+- inputText: ${GOAL_TITLE}
+- tapOn:
+    id: "goal-rename-save"
+- extendedWaitUntil:
+    notVisible:
+      id: "goal-rename-input"
+    timeout: 10000
+- assertVisible:
+    text: ${GOAL_TITLE}
+# The row behind the menu did not open.
+- assertNotVisible:
+    id: "goal-detail-title"
+
+- tapOn:
+    id: "goal-row-menu-${GOAL_ID}"
+- tapOn:
+    id: "goal-row-menu-${GOAL_ID}-priority-trigger"
+- tapOn:
+    id: "goal-row-menu-${GOAL_ID}-priority-high"
+- extendedWaitUntil:
+    notVisible:
+      id: "goal-row-menu-${GOAL_ID}-priority-high"
+    timeout: 10000
+- assertVisible:
+    id: "goal-row-${GOAL_ID}"

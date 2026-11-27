@@ -56,6 +56,7 @@ interface TestPaseoDaemonOptions {
   webUi?: PaseoDaemonConfig["webUi"];
   trustedProxies?: PaseoDaemonConfig["trustedProxies"];
   agentProfiles?: AgentProfile[];
+  teams?: PaseoDaemonConfig["teams"];
   autoArchiveAfterMerge?: boolean;
   resumeOnStartup?: boolean;
   resumePrompt?: string;
@@ -238,6 +239,7 @@ async function prepareTestDaemonConfig(
     dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
     downloadTokenTtlMs: options.downloadTokenTtlMs,
     agentProfiles: options.agentProfiles,
+    teams: options.teams,
     autoArchiveAfterMerge: options.autoArchiveAfterMerge,
     resumeOnStartup: options.resumeOnStartup,
     resumePrompt: options.resumePrompt,

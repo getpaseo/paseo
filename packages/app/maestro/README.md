@@ -94,3 +94,26 @@ PASEO_MAESTRO_DIRECT_ENDPOINT=127.0.0.1:6767
 PASEO_MAESTRO_DAEMON_WS_URL=ws://127.0.0.1:6767/ws
 PASEO_MAESTRO_PROJECT_PATH=/path/to/git/repo
 ```
+
+## Goals
+
+The `goals-*.yaml` flows cover the Goals screen on a phone. They do not launch
+the app: start the `sh.paseo.debug` dev client connected to a host with Goals,
+at least one git project, and a provider. `flows/goals-open.yaml` opens Goals
+from the sidebar.
+
+| Flow                       | Needs                                                | Covers                                                                                                                 |
+| -------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `goals-create.yaml`        |                                                      | Create a managed goal: Ask me is the default policy, type and drag Max parallel, comma decimal in the cost cap, submit |
+| `goals-edit-settings.yaml` | `GOAL_ID` of a live managed goal                     | Edit settings from the detail menu, type and drag, save                                                                |
+| `goals-row-menu.yaml`      | `GOAL_ID`                                            | Row kebab: rename and priority, without opening the row                                                                |
+| `goals-usage.yaml`         | `GOAL_ID` with turns, host with `goalUsageBreakdown` | Expand and collapse Usage by role                                                                                      |
+| `goals-android-back.yaml`  | `GOAL_ID`, Android                                   | Back closes the sheet, then returns to the list                                                                        |
+
+```bash
+maestro test packages/app/maestro/goals-create.yaml
+maestro test -e GOAL_ID=<goal-id> packages/app/maestro/goals-edit-settings.yaml
+```
+
+What a script cannot judge (keyboard placement, haptics, screen readers) is in
+[the Goals native checks](../../../docs/goals.md#native-checks).

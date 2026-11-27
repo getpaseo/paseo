@@ -7,8 +7,16 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 
 import { AgentManager } from "./agent-manager.js";
 import { validateProviderOptions } from "./provider-options.js";
-import { applyClaudeToolPolicy, ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
-import { applyCodexToolPolicy, CodexProviderOptionsSchema } from "./providers/codex/options.js";
+import {
+  allowPaseoTeamTools,
+  applyClaudeToolPolicy,
+  ClaudeProviderOptionsSchema,
+} from "./providers/claude/options.js";
+import {
+  applyCodexToolPolicy,
+  approvePaseoTeamTools,
+  CodexProviderOptionsSchema,
+} from "./providers/codex/options.js";
 import {
   buildOpenCodePermissionRules,
   OpenCodeProviderOptionsSchema,
@@ -183,6 +191,55 @@ describe("exact MCP preapproval mappings", () => {
       allowedTools: ["Read", "mcp__hub__finish_execution"],
       disallowedTools: ["Bash", "mcp__hub__reply"],
     });
+  });
+
+  test("Claude allows the Paseo team messaging tools and leaves every deny rule and other tool alone", () => {
+    expect(
+      allowPaseoTeamTools({ allowedTools: ["Read"], disallowedTools: ["Bash"] }, true),
+    ).toEqual({
+      allowedTools: ["Read", "mcp__paseo__send_team_message", "mcp__paseo__list_team_members"],
+      disallowedTools: ["Bash"],
+    });
+    const untouched = { allowedTools: ["Read"] };
+    expect(allowPaseoTeamTools(untouched, false)).toBe(untouched);
+    // Applied twice, the grants are not duplicated.
+    expect(allowPaseoTeamTools(allowPaseoTeamTools({}, true), true).allowedTools).toEqual([
+      "mcp__paseo__send_team_message",
+      "mcp__paseo__list_team_members",
+    ]);
+  });
+
+  test("Codex approves the Paseo team messaging tools without limiting the server's other tools", () => {
+    const config = {
+      mcp_servers: {
+        paseo: {
+          url: "http://127.0.0.1/mcp/agents",
+          tools: { create_agent: { approval_mode: "prompt" } },
+        },
+        other: { url: "http://127.0.0.1/other" },
+      },
+    };
+    const approved = approvePaseoTeamTools(config);
+    expect(approved).toEqual({
+      mcp_servers: {
+        paseo: {
+          url: "http://127.0.0.1/mcp/agents",
+          tools: {
+            create_agent: { approval_mode: "prompt" },
+            send_team_message: { approval_mode: "approve" },
+            list_team_members: { approval_mode: "approve" },
+          },
+        },
+        other: { url: "http://127.0.0.1/other" },
+      },
+    });
+    // No tool list is set, so the server keeps every tool.
+    expect(approved.mcp_servers).not.toHaveProperty("paseo.enabled_tools");
+    // The input is not changed, and a config without the Paseo server is returned as it is.
+    expect(config.mcp_servers.paseo.tools).not.toHaveProperty("send_team_message");
+    const withoutPaseo = { mcp_servers: { other: { url: "http://127.0.0.1/other" } } };
+    expect(approvePaseoTeamTools(withoutPaseo)).toBe(withoutPaseo);
+    expect(approvePaseoTeamTools({})).toEqual({});
   });
 
   test("OpenCode keeps authored ask or deny rules after internal grants", () => {

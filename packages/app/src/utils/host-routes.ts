@@ -428,6 +428,21 @@ export function buildSchedulesRoute() {
   return "/schedules" as const;
 }
 
+export function buildGoalsRoute(options: { serverId?: string; goalId?: string } = {}) {
+  const params = new URLSearchParams();
+  if (options.serverId) {
+    params.set("serverId", options.serverId);
+  }
+  if (options.goalId) {
+    params.set("goalId", options.goalId);
+  }
+  const query = params.toString();
+  if (!query) {
+    return "/goals" as const;
+  }
+  return `/goals?${query}` as const;
+}
+
 export function buildOpenProjectRoute() {
   return "/open-project" as const;
 }

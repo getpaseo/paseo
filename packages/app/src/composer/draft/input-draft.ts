@@ -28,6 +28,7 @@ import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
 import { isWeb } from "@/constants/platform";
+import { useAgentTeamSelection } from "@/agent-teams/use-agent-team-selection";
 
 const NO_METADATA: Record<string, JsonValue> = {};
 
@@ -58,6 +59,10 @@ type DraftComposerState = UseAgentFormStateResult & {
   providerOptions: Record<string, unknown> | undefined;
   /** What plugins set on the agent this draft creates. */
   metadata: Record<string, JsonValue>;
+  /** The team chosen for the new chat, or null for none. */
+  team: string | null;
+  /** Role name -> model overrides for the chosen team; undefined when none. */
+  teamModelOverrides: Record<string, string> | undefined;
   agentControls: DraftAgentControlsProps;
   commandDraft: DraftCommandTarget;
 };
@@ -332,6 +337,12 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [effectiveModelId, effectiveThinkingOptionId, draftOptions, providerSelection, workingDir],
   );
 
+  const teamSelection = useAgentTeamSelection(composerOptions ? formState.selectedServerId : null);
+  const teamControl = useMemo(
+    () => (teamSelection.teams.length > 0 ? teamSelection : null),
+    [teamSelection],
+  );
+
   const composerState = useMemo<DraftComposerState | null>(() => {
     if (!composerOptions) {
       return null;
@@ -355,6 +366,11 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       effectiveThinkingOptionId,
       providerOptions: draftOptions,
       metadata,
+      team: teamControl?.selectedTeam ?? null,
+      teamModelOverrides:
+        teamControl?.roleModelOverrides && Object.keys(teamControl.roleModelOverrides).length > 0
+          ? teamControl.roleModelOverrides
+          : undefined,
       agentControls: buildDraftAgentControls({
         formState: draftForm,
         effectiveModelId,
@@ -365,6 +381,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         context: composerOptions.context ?? "draft",
         metadata,
         onSetMetadata: setMetadata,
+        teamControl,
       }),
       commandDraft,
     };
@@ -383,6 +400,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     formState,
     metadata,
     setMetadata,
+    teamControl,
     workingDir,
   ]);
 

@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 import semver from "semver";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
@@ -285,13 +286,19 @@ function completedTools(items: AgentTimelineItem[], pattern: RegExp) {
   );
 }
 
-async function createAgent(harness: Harness, title: string, modeId = "full") {
+async function createAgent(
+  harness: Harness,
+  title: string,
+  modeId = "full",
+  labels?: Record<string, string>,
+) {
   return await harness.client.createAgent({
     cwd: harness.cwd,
     title,
     provider: "omp",
     model: MODEL,
     modeId,
+    ...(labels ? { labels } : {}),
   });
 }
 
@@ -408,7 +415,9 @@ describe("daemon E2E (real OMP)", () => {
       const mcp = new Client({ name: "idle-follow-up-test", version: "1.0.0" });
       try {
         const parent = await createAgent(harness, "follow-up-parent");
-        const child = await createAgent(harness, "follow-up-child");
+        const child = await createAgent(harness, "follow-up-child", "full", {
+          [PARENT_AGENT_ID_LABEL]: parent.id,
+        });
         await mcp.connect(
           new StreamableHTTPClientTransport(
             new URL(

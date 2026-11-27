@@ -27,6 +27,8 @@ describe("Paseo tool display", () => {
     ["create_agent", { title: "Reviewer", initialPrompt: "Review it" }, "Create agent", "Reviewer"],
     ["create_agent", { initialPrompt: "Review it" }, "Create agent", "Review it"],
     ["get_agent_status", { agentId: "agt_1" }, "Check agent", "agt_1"],
+    ["wait_for_agent", { agentId: "agt_1", timeoutSeconds: 60 }, "Wait for agent", "agt_1"],
+    ["send_team_message", { agentId: "agt_1", message: "Looks good" }, "Message teammate", "agt_1"],
     ["update_agent", { agentId: "agt_1", name: "Renamed" }, "Update agent", "Renamed"],
     ["create_workspace", { path: "/tmp/repo/feature-x" }, "Create workspace", "feature-x"],
     ["create_workspace", { title: "Docs", branchName: "docs" }, "Create workspace", "Docs"],

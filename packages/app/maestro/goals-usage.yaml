@@ -1,0 +1,20 @@
+appId: sh.paseo.debug
+---
+# Expands and collapses Usage by role on the ${GOAL_ID} detail.
+# GOAL_ID must have run at least one turn on a host with `goalUsageBreakdown`.
+- runFlow: flows/goals-open-detail.yaml
+- scrollUntilVisible:
+    element:
+      id: "goal-usage-roles-toggle"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    id: "goal-usage-roles-toggle"
+- extendedWaitUntil:
+    visible:
+      id: "goal-usage-role-.*"
+    timeout: 5000
+- tapOn:
+    id: "goal-usage-roles-toggle"
+- assertNotVisible:
+    id: "goal-usage-role-.*"

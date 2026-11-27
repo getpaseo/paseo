@@ -13,6 +13,7 @@ import { LRUCache } from "lru-cache";
 import stripAnsi from "strip-ansi";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { bypassApprovesAsk } from "./bypass-approval.js";
+import { PASEO_MCP_SERVER_NAME } from "../../runtime-mcp-config.js";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -83,6 +84,7 @@ import {
 } from "../diagnostic-utils.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
 import {
+  allowPaseoTeamTools,
   applyClaudeToolPolicy,
   ClaudeProviderOptionsSchema,
   type ClaudeProviderOptions,
@@ -152,6 +154,7 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type AgentUsageTotals,
   type AgentRuntimeInfo,
   type AgentClientInstallation,
   type FetchCatalogOptions,
@@ -166,6 +169,7 @@ import {
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { usageTotalsSince } from "../../usage-totals.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import {
   checkProviderLaunchAvailable,
@@ -434,6 +438,7 @@ const DEFAULT_MODES: AgentMode[] = [
     id: "bypassPermissions",
     label: "Bypass",
     description: "Skip all permission prompts (use with caution)",
+    isUnattended: true,
   },
 ];
 
@@ -2176,6 +2181,39 @@ function extractContextWindowSize(
     : undefined;
 }
 
+function readFiniteCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * The Claude process's running totals. `usage` covers only the main loop of this turn,
+ * while `modelUsage` and `total_cost_usd` add up every call the process made, subagents
+ * and compaction included. Cache writes count as fresh input.
+ */
+function readClaudeSessionTotals(message: SDKResultMessage): AgentUsageTotals | undefined {
+  const costUsd = readFiniteCount(message.total_cost_usd);
+  const models = Object.values(toObjectRecord(message.modelUsage) ?? {});
+  let inputTokens = 0;
+  let cachedInputTokens = 0;
+  let outputTokens = 0;
+  let counted = false;
+  for (const entry of models) {
+    const record = toObjectRecord(entry);
+    if (!record) continue;
+    counted = true;
+    inputTokens +=
+      (readFiniteCount(record.inputTokens) ?? 0) +
+      (readFiniteCount(record.cacheCreationInputTokens) ?? 0);
+    cachedInputTokens += readFiniteCount(record.cacheReadInputTokens) ?? 0;
+    outputTokens += readFiniteCount(record.outputTokens) ?? 0;
+  }
+  if (!counted && costUsd === undefined) return undefined;
+  return {
+    ...(counted ? { inputTokens, cachedInputTokens, outputTokens } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+  };
+}
+
 interface StreamRequestInputUsage {
   inputTokens: number;
   cacheCreationInputTokens: number;
@@ -2313,8 +2351,16 @@ class ClaudeContextUsageState {
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
 
+  // The process's running totals at its last result; a new process counts from zero.
+  private sessionTotalsBefore: AgentUsageTotals | undefined;
+
   constructor(initialContextWindowMaxTokens?: number) {
     this.contextWindowMaxTokens = initialContextWindowMaxTokens;
+  }
+
+  /** A new Claude process starts its running totals again. */
+  beginProcess(): void {
+    this.sessionTotalsBefore = undefined;
   }
 
   beginTurn(): void {
@@ -2385,6 +2431,11 @@ class ClaudeContextUsageState {
         outputTokens: message.usage.output_tokens,
         totalCostUsd: message.total_cost_usd,
       };
+      const sessionTotals = readClaudeSessionTotals(message);
+      if (sessionTotals) {
+        usage.turnTotals = usageTotalsSince(sessionTotals, this.sessionTotalsBefore);
+        this.sessionTotalsBefore = sessionTotals;
+      }
 
       const modelContextWindowMaxTokens = this.recordModelUsage(message.modelUsage, modelId);
       if (this.contextWindowMaxTokens !== undefined) {
@@ -3892,6 +3943,7 @@ class ClaudeAgentSession implements AgentSession {
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
     this.resultMeter.queryStarted();
+    this.contextUsage.beginProcess();
     this.query = claudeQuery(
       { prompt: input.iterable, options },
       {
@@ -4035,7 +4087,10 @@ class ClaudeAgentSession implements AgentSession {
       ultracode: _ultracode,
       ...sdkProviderOptions
     } = this.config.providerOptions;
-    const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy);
+    const providerOptions = allowPaseoTeamTools(
+      applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy),
+      this.config.mcpServers?.[PASEO_MCP_SERVER_NAME] !== undefined,
+    );
     const settingsOptions = await this.buildSettingsOptions(providerOptions);
     const sdkEnv = this.harnessEnvironment;
 

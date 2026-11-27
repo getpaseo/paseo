@@ -541,6 +541,7 @@ function resolveProfileLists(persisted: ReturnType<typeof loadPersistedConfig>) 
   return {
     terminalProfiles: persisted.daemon?.terminalProfiles,
     agentProfiles: persisted.daemon?.agentProfiles,
+    teams: persisted.daemon?.teams,
   };
 }
 
@@ -556,6 +557,7 @@ function resolveStaticLoadConfigSettings(
     usageEnabled: resolveUsageEnabled(persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
+    goals: persisted.daemon?.goals,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
     hostnames: mergeHostnames([
@@ -590,6 +592,8 @@ export type ResolvedDaemonSettings = Pick<
   | "appendSystemPrompt"
   | "terminalProfiles"
   | "agentProfiles"
+  | "teams"
+  | "goals"
   | "skillSelection"
   | "pluginsEnabled"
   | "plugins"

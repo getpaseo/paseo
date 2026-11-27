@@ -1,4 +1,5 @@
 import type { AgentMode, AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import { AGENT_TEAM_ROLE_LABEL } from "@getpaseo/protocol/agent-labels";
 import { useShallow } from "zustand/shallow";
 import { formatAgentModeLabel } from "@/agent-controls/labels";
 import { formatTokenCount } from "@/components/context-window-meter.utils";
@@ -16,18 +17,22 @@ export interface AgentFactsInput {
   currentModeId: string | null | undefined;
   contextWindowUsedTokens: number | null | undefined;
   contextWindowMaxTokens: number | null | undefined;
+  /** The `paseo.team-role` label a team chat set on this helper. */
+  teamRole?: string | null;
 }
 
 /**
- * What the composer's controls and context meter show about a Paseo agent, as one line: model,
- * thinking, mode, and context usage, each resolved exactly as its control resolves it. Null until
- * the agent has a model at all.
+ * What the composer's controls and context meter show about a Paseo agent, as one line: team
+ * role, model, thinking, mode, and context usage, each resolved exactly as its control resolves
+ * it. The role leads because it is what tells two helpers on the same model apart. Null until the
+ * agent has a role or a model.
  */
 export function buildAgentFactsLine(input: AgentFactsInput): string | null {
+  const role = input.teamRole?.trim() || null;
   const hasModel = Boolean(input.runtimeModelId?.trim() || input.configuredModelId?.trim());
-  if (!hasModel) return null;
+  if (!hasModel) return role;
   const selection = resolveAgentModelSelection(input);
-  const parts = [selection.displayModel];
+  const parts = role ? [role, selection.displayModel] : [selection.displayModel];
   if (selection.selectedThinkingId) parts.push(selection.displayThinking);
   const mode = resolveModeLabel(input.availableModes, input.currentModeId);
   if (mode) parts.push(mode);
@@ -53,6 +58,7 @@ export function useAgentFactsLine(serverId: string, agentId: string): string | n
             currentModeId: current.currentModeId,
             contextWindowUsedTokens: current.lastUsage?.contextWindowUsedTokens ?? null,
             contextWindowMaxTokens: current.lastUsage?.contextWindowMaxTokens ?? null,
+            teamRole: current.labels[AGENT_TEAM_ROLE_LABEL] ?? null,
           }
         : null;
     }),

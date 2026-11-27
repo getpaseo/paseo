@@ -21,6 +21,7 @@ import {
   DEFAULT_TERMINAL_PROFILES,
 } from "@getpaseo/protocol/terminal-profiles";
 import { AgentProfilesPage, type AgentProfilesBeforeLeaveGuard } from "@/agent-profiles";
+import { AgentTeamsSection } from "@/agent-teams/settings/agent-teams-section";
 import { AgentSkillsSection } from "@/agent-skills";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { PageLayout } from "@/components/page-layout";
@@ -65,6 +66,7 @@ import { BrowserToolsRow } from "./browser-tools-card";
 import { HostPaseoToolsRow } from "./paseo-tools-card";
 import { RestartRecoveryRow } from "./restart-recovery-card";
 import { IdleRuntimeCleanupRow } from "./idle-runtime-cleanup-card";
+import { GoalRunCapSection } from "./goal-run-cap-card";
 import { restartDaemonFromSettings, updateDaemonFromSettings } from "./daemon-lifecycle";
 
 const ThemedRestart = withUnistyles(RotateCw);
@@ -272,6 +274,8 @@ export function HostToolsPage({ serverId }: { serverId: string }) {
         </View>
       )}
       <AgentSkillsSection serverId={serverId} />
+      <AgentTeamsSection serverId={serverId} />
+      <GoalRunCapSection serverId={serverId} />
     </View>
   );
 }
