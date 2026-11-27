@@ -175,7 +175,16 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
       entry.restoreFocus &&
       canRestoreFocusTo(entry.restoreFocus)
     ) {
-      entry.restoreFocus.focus();
+      const target = entry.restoreFocus;
+      const topAfterRemove = overlays.getTop();
+      // React runs useLayoutEffect cleanups during its mutation commit phase while its
+      // event system is disabled, which drops synchronous focusin events (breaking onFocus
+      // and onSelect on restored text inputs). Defer focus restoration until the commit ends.
+      queueMicrotask(() => {
+        if (overlays.getTop() === topAfterRemove && canRestoreFocusTo(target)) {
+          target.focus();
+        }
+      });
     }
   };
 }
