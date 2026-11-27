@@ -83,11 +83,11 @@ export function useLongPressDragInteraction(input: {
       if (distance > DRAG_ARM_STATIONARY_SLOP_PX) {
         return;
       }
+      // Arm only. A press that never moves past the drag slop stays a tap, so a
+      // held mouse click on Android still selects the row.
       dragArmedRef.current = true;
       dragActivatedRef.current = true;
-      didLongPressRef.current = true;
       void Haptics.selectionAsync().catch(() => {});
-      drag();
     }, DRAG_ARM_DELAY_MS);
 
     if (!menuController) {
@@ -112,7 +112,7 @@ export function useLongPressDragInteraction(input: {
       void Haptics.selectionAsync().catch(() => {});
       openContextMenuAtStartPoint();
     }, CONTEXT_MENU_DELAY_MS);
-  }, [clearTimers, drag, menuController, openContextMenuAtStartPoint]);
+  }, [clearTimers, menuController, openContextMenuAtStartPoint]);
 
   const handleDragIntent = useCallback(
     (_details: { dx: number; dy: number; distance: number }) => {
@@ -123,8 +123,9 @@ export function useLongPressDragInteraction(input: {
       didLongPressRef.current = true;
       clearTimers();
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      drag();
     },
-    [clearTimers],
+    [clearTimers, drag],
   );
 
   const handleScrollIntent = useCallback(
