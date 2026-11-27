@@ -1,4 +1,8 @@
 import {
+  NETWORK_TUNNEL_MIN_DAEMON_VERSION,
+  supportsNetworkTunnel,
+} from "@getpaseo/protocol/network-tunnel";
+import {
   DiffStreamRouter,
   DiffSubscriptionError,
   type DiffCompare,
@@ -5976,17 +5980,19 @@ export class DaemonClient {
   /**
    * Requests a short-lived single-use ticket for opening a dedicated binary
    * network tunnel WebSocket against this daemon.
-   * Gated on `server_info.features.networkTunnel`.
+   * Requires a compatible daemon advertising `server_info.features.networkTunnel`.
    */
   async createNetworkTunnelTicket(requestId?: string): Promise<NetworkTunnelCreateTicketPayload> {
     if (!this.isConnected) {
       throw this.unavailableError();
     }
-    // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
-    if (this.getLastServerInfoMessage()?.features?.networkTunnel !== true) {
-      throw Object.assign(new Error("Update the daemon to use the network tunnel"), {
-        code: "unsupported_capability",
-      });
+    if (!supportsNetworkTunnel(this.getLastServerInfoMessage())) {
+      throw Object.assign(
+        new Error(
+          `The network tunnel requires daemon v${NETWORK_TUNNEL_MIN_DAEMON_VERSION} or newer with tunnel support`,
+        ),
+        { code: "unsupported_capability" },
+      );
     }
     return this.sendNamespacedCorrelatedSessionRequest<"network.tunnel.create_ticket.response">({
       requestId,

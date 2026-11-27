@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { DaemonClient, type DaemonTransport } from "./daemon-client.js";
 
-function createFakeTransport(features: Record<string, boolean | undefined>): {
+function createFakeTransport(
+  version: string | null,
+  features: Record<string, boolean | undefined>,
+): {
   transport: DaemonTransport;
   sent: unknown[];
 } {
@@ -54,7 +57,7 @@ function createFakeTransport(features: Record<string, boolean | undefined>): {
               payload: {
                 status: "server_info",
                 serverId: "srv_test",
-                version: "0.17.6",
+                version,
                 features,
               },
             },
@@ -95,45 +98,57 @@ function createFakeTransport(features: Record<string, boolean | undefined>): {
 }
 
 describe("DaemonClient.createNetworkTunnelTicket", () => {
-  test("fails closed with unsupported_capability when daemon does not advertise features.networkTunnel", async () => {
-    const { transport, sent } = createFakeTransport({});
-    const client = new DaemonClient({
-      url: "ws://127.0.0.1:6767/ws",
-      clientId: "test-client",
-      transportFactory: () => transport,
-    });
-    await client.connect();
+  test.each([
+    { version: "0.17.6", networkTunnel: true },
+    { version: "0.18.0-beta.1", networkTunnel: true },
+    { version: null, networkTunnel: true },
+    { version: "0.18.0", networkTunnel: undefined },
+    { version: "0.19.0", networkTunnel: false },
+  ])(
+    "rejects unsupported daemon $version with networkTunnel=$networkTunnel",
+    async ({ version, networkTunnel }) => {
+      const { transport, sent } = createFakeTransport(version, { networkTunnel });
+      const client = new DaemonClient({
+        url: "ws://127.0.0.1:6767/ws",
+        clientId: "test-client",
+        transportFactory: () => transport,
+      });
+      await client.connect();
 
-    await expect(client.createNetworkTunnelTicket()).rejects.toMatchObject({
-      code: "unsupported_capability",
-    });
-    expect(
-      sent.some(
-        (m) =>
-          (m as { message?: { type?: string } }).message?.type ===
-          "network.tunnel.create_ticket.request",
-      ),
-    ).toBe(false);
+      await expect(client.createNetworkTunnelTicket()).rejects.toMatchObject({
+        code: "unsupported_capability",
+      });
+      expect(
+        sent.some(
+          (m) =>
+            (m as { message?: { type?: string } }).message?.type ===
+            "network.tunnel.create_ticket.request",
+        ),
+      ).toBe(false);
 
-    await client.close();
-  });
+      await client.close();
+    },
+  );
 
-  test("requests and returns a network tunnel ticket when features.networkTunnel is advertised", async () => {
-    const { transport } = createFakeTransport({ networkTunnel: true });
-    const client = new DaemonClient({
-      url: "ws://127.0.0.1:6767/ws",
-      clientId: "test-client",
-      transportFactory: () => transport,
-    });
-    await client.connect();
+  test.each(["0.18.0", "0.18.1", "0.19.0-beta.1"])(
+    "requests a network tunnel ticket from capable daemon %s",
+    async (version) => {
+      const { transport } = createFakeTransport(version, { networkTunnel: true });
+      const client = new DaemonClient({
+        url: "ws://127.0.0.1:6767/ws",
+        clientId: "test-client",
+        transportFactory: () => transport,
+      });
+      await client.connect();
 
-    const result = await client.createNetworkTunnelTicket("req-ticket-1");
-    expect(result).toEqual({
-      requestId: "req-ticket-1",
-      ticket: "tkt_fake_secret",
-      expiresAtMs: 1_900_000_000_000,
-    });
+      const result = await client.createNetworkTunnelTicket("req-ticket-1");
+      expect(result).toEqual({
+        requestId: "req-ticket-1",
+        ticket: "tkt_fake_secret",
+        expiresAtMs: 1_900_000_000_000,
+      });
 
-    await client.close();
-  });
+      await client.close();
+    },
+  );
 });

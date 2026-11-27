@@ -1,3 +1,20 @@
+import satisfies from "semver/functions/satisfies.js";
+import type { ServerInfoStatusPayload } from "../messages.js";
+
+// COMPAT(networkTunnelVersion): added in v0.18.0, remove the version check once daemon floor >= v0.18.0.
+export const NETWORK_TUNNEL_MIN_DAEMON_VERSION = "0.18.0";
+
+export function supportsNetworkTunnel(
+  serverInfo: Pick<ServerInfoStatusPayload, "version" | "features"> | null,
+): boolean {
+  return (
+    serverInfo?.features?.networkTunnel === true &&
+    satisfies(serverInfo.version ?? "", `>=${NETWORK_TUNNEL_MIN_DAEMON_VERSION}`, {
+      includePrerelease: true,
+    })
+  );
+}
+
 export {
   decodeNetworkTunnelFrame,
   encodeNetworkTunnelFrame,

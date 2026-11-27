@@ -1,3 +1,4 @@
+import { supportsNetworkTunnel as hostSupportsNetworkTunnel } from "@getpaseo/protocol/network-tunnel";
 import { getIsElectron } from "@/constants/platform";
 import {
   getDesktopHost,
@@ -144,8 +145,7 @@ export function readHostBrowserRouting(serverId: string): HostBrowserRouting {
   const host = runtimeStore.getHosts().find((entry) => entry.serverId === serverId) ?? null;
   const snapshot = runtimeStore.getSnapshot(serverId);
   const serverInfo = useSessionStore.getState().sessions[serverId]?.serverInfo ?? null;
-  const supportsNetworkTunnel =
-    serverInfo !== null ? serverInfo.features?.networkTunnel === true : null;
+  const supportsNetworkTunnel = serverInfo !== null ? hostSupportsNetworkTunnel(serverInfo) : null;
 
   return classifyHostBrowserRouting({
     serverId,

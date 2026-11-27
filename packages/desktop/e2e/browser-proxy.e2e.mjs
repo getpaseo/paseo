@@ -354,16 +354,15 @@ function sendWebSocketAsync(ws, data) {
   });
 }
 
-function stripNetworkTunnelFeature(text) {
+function setLegacyDaemonVersion(text) {
   try {
     const parsed = JSON.parse(text);
     if (
       parsed?.type === "session" &&
       parsed?.message?.type === "status" &&
-      parsed?.message?.payload?.status === "server_info" &&
-      parsed?.message?.payload?.features
+      parsed?.message?.payload?.status === "server_info"
     ) {
-      delete parsed.message.payload.features.networkTunnel;
+      parsed.message.payload.version = "0.17.6";
       return JSON.stringify(parsed);
     }
   } catch {
@@ -431,7 +430,7 @@ async function bridgeLegacyDaemonConnection({
 
   upstreamWs.on("message", (data, isBinary) => {
     if (!isBinary) {
-      const text = stripNetworkTunnelFeature(data.toString("utf8"));
+      const text = setLegacyDaemonVersion(data.toString("utf8"));
       void channel.send(text).catch(ignoreSendError);
       return;
     }
@@ -451,8 +450,7 @@ async function bridgeLegacyDaemonConnection({
 
 /**
  * Connects to the local relay as `serverId` using Noise NK E2EE, forwarding to a
- * real local Paseo daemon while stripping `features.networkTunnel` from `server_info`
- * to simulate an older daemon that lacks network tunnel support.
+ * real local Paseo daemon while reporting v0.17.6 in `server_info` to exercise the version cutoff.
  */
 async function startLegacyDaemonRelayAdapter({ relayPort, serverId, upstreamDaemonPort }) {
   const keyPair = generateKeyPair();
@@ -1006,7 +1004,7 @@ async function main() {
       });
 
     // -------------------------------------------------------------------------
-    // 3. Old daemon without features.networkTunnel fails closed + Browse locally
+    // 3. Daemon below v0.18.0 fails closed + Browse locally
     // -------------------------------------------------------------------------
     const oldWsButton = page
       .getByRole("button", {

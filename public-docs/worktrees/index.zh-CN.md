@@ -241,6 +241,8 @@ http://<script>--<project>.localhost:<daemon-port>
 
 ### 从电脑访问远程服务 {#access-a-remote-service-from-your-computer}
 
+通过工作区隧道访问远程服务需要 v0.18.0 或更新版本的守护进程。
+
 - **在 Paseo 桌面端预览 HTTP。** 在工作区浏览器中选择远程主机并打开服务 URL。预览复用已认证的主机隧道，无需占用本地端口。
 - **使用外部浏览器或 TCP 工具。** 在远程工作区的脚本菜单中，为运行中的服务选择「转发到此电脑」，点击显示的地址即可复制。默认使用服务端口，端口冲突时自动分配空闲端口。停止转发、离开工作区、停止服务或隧道断开时，监听器会关闭。
 - **从终端转发。** 运行 `paseo script forward web --host dev.example:6767 --workspace <id>`，使用输出的工作区主机名或回环地址。指定 `--local-port 3000` 时，若端口被占用则报错。按 Ctrl+C 停止。CLI 支持直连 TCP 和 WebSocket（包括 TLS）。桌面端还可使用主机隧道支持的 SSH 和加密中继连接。
