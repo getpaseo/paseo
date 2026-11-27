@@ -210,13 +210,16 @@ function sortExplorerEntries(entries: ExplorerEntry[], sortOption: SortOption): 
   return sorted;
 }
 
-/** Load and expand the path to a directory selected outside the tree. */
+/**
+ * Load and expand the path to a directory selected outside the tree, the directory included.
+ * Resolves false when one of those listings cannot be loaded.
+ */
 export async function revealExplorerDirectory(input: {
   directoryPath: string;
   requestDirectoryListing: (path: string) => Promise<DirectoryListingResult>;
   expandPaths: (paths: string[]) => void;
   showHiddenFiles: () => void;
-}): Promise<void> {
+}): Promise<boolean> {
   if (isHiddenExplorerPath(input.directoryPath)) input.showHiddenFiles();
   const paths = ["."];
   if (input.directoryPath !== ".") {
@@ -227,9 +230,10 @@ export async function revealExplorerDirectory(input: {
   }
   for (const path of paths) {
     const directory = await input.requestDirectoryListing(path);
-    if (!directory || directory === DIRECTORY_LISTING_INVALIDATED) return;
+    if (!directory || directory === DIRECTORY_LISTING_INVALIDATED) return false;
   }
   input.expandPaths(paths);
+  return true;
 }
 
 /**

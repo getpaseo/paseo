@@ -92,7 +92,23 @@ test("finds files in collapsed folders and acts on them", async ({ page }) => {
   ).toContainText("report.csv");
 });
 
+/** The directory listings the app asks the host for, by path. */
+function recordDirectoryListings(page: Page): string[] {
+  const listed: string[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      if (typeof payload !== "string") return;
+      const { message } = JSON.parse(payload);
+      if (message?.type === "file_explorer_request" && message.mode === "list") {
+        listed.push(message.path);
+      }
+    });
+  });
+  return listed;
+}
+
 test("opens a matching folder in the tree", async ({ page }) => {
+  const listed = recordDirectoryListings(page);
   await gotoWorkspace(page, workspace.workspaceId);
   await openFileExplorer(page);
 
@@ -104,6 +120,8 @@ test("opens a matching folder in the tree", async ({ page }) => {
   await expect(
     page.locator('[data-testid^="file-explorer-row-"][aria-selected="true"]'),
   ).toContainText("nested");
+  // One walk down to the folder: its collapsed parent is listed once.
+  expect(listed.filter((directory) => directory === "data")).toEqual(["data"]);
 });
 
 test("renames and deletes a match without leaving the filter", async ({ page }) => {

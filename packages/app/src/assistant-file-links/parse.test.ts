@@ -169,6 +169,15 @@ describe("classifyAssistantFileLink", () => {
     });
   });
 
+  it("classifies a bare CSV filename as a workspace candidate", () => {
+    expect(
+      classifyAssistantFileLink("report.csv", { workspaceRoot: "/Users/test/project" }),
+    ).toMatchObject({
+      kind: "ambiguousFileCandidate",
+      target: { path: "/Users/test/project/report.csv" },
+    });
+  });
+
   it("does not classify normal bare domains as file candidates", () => {
     expect(
       classifyAssistantFileLink("google.com", {

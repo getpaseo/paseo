@@ -131,20 +131,6 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [workspaceStateKey],
   );
 
-  const revealDirectory = useCallback(
-    async (directoryPath: string) => {
-      if (!workspaceStateKey) return;
-      await revealExplorerDirectory({
-        directoryPath,
-        requestDirectoryListing,
-        showHiddenFiles,
-        expandPaths,
-      });
-      clearFileFilter(workspaceStateKey);
-    },
-    [expandPaths, requestDirectoryListing, showHiddenFiles, workspaceStateKey],
-  );
-
   const selectExplorerEntry = useCallback(
     (path: string | null) => {
       updateExplorerState((state) => ({
@@ -153,6 +139,32 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }));
     },
     [updateExplorerState],
+  );
+
+  /** Selects an entry the tree has expanded to, and asks the tree to scroll to it. */
+  const showEntry = useCallback(
+    (entryPath: string) => {
+      if (!workspaceStateKey) return;
+      selectExplorerEntry(entryPath);
+      useExplorerRevealStore.getState().request(workspaceStateKey, entryPath);
+    },
+    [selectExplorerEntry, workspaceStateKey],
+  );
+
+  /** Expands to a directory and into it. `select` also selects it and scrolls the tree to it. */
+  const revealDirectory = useCallback(
+    async (directoryPath: string, { select = false }: { select?: boolean } = {}) => {
+      if (!workspaceStateKey) return;
+      const listed = await revealExplorerDirectory({
+        directoryPath,
+        requestDirectoryListing,
+        showHiddenFiles,
+        expandPaths,
+      });
+      clearFileFilter(workspaceStateKey);
+      if (listed && select) showEntry(directoryPath);
+    },
+    [expandPaths, requestDirectoryListing, showEntry, showHiddenFiles, workspaceStateKey],
   );
 
   /** Expands to an entry, selects it, and asks the tree to scroll to it. */
@@ -168,12 +180,11 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       });
       if (found) {
         clearFileFilter(workspaceStateKey);
-        selectExplorerEntry(entryPath);
-        useExplorerRevealStore.getState().request(workspaceStateKey, entryPath);
+        showEntry(entryPath);
       }
       return found;
     },
-    [expandPaths, requestDirectoryListing, selectExplorerEntry, showHiddenFiles, workspaceStateKey],
+    [expandPaths, requestDirectoryListing, showEntry, showHiddenFiles, workspaceStateKey],
   );
 
   const requestFileDownloadToken = useCallback(

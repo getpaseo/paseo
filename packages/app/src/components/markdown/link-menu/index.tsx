@@ -1,4 +1,13 @@
-import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import type { GestureResponderEvent } from "react-native";
 import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
 import { isWeb } from "@/constants/platform";
@@ -25,22 +34,31 @@ export function LinkMenu({
   describeLink: (link: LinkMenuLink) => LinkMenuSubject | null;
   children: ReactNode;
 }) {
+  const [opened, setOpened] = useState<OpenedLink | null>(null);
+  // The surface holds its workspace's hooks, so it lives only as long as the menu is open.
+  const handleOpenChange = useStableEvent((open: boolean) => {
+    if (!open) setOpened(null);
+  });
   return (
-    <ContextMenu>
-      <LinkMenuHost describeLink={describeLink}>{children}</LinkMenuHost>
+    <ContextMenu onOpenChange={handleOpenChange}>
+      <LinkMenuHost describeLink={describeLink} setOpened={setOpened}>
+        {children}
+      </LinkMenuHost>
+      {opened ? <LinkMenuSurface link={opened} /> : null}
     </ContextMenu>
   );
 }
 
 function LinkMenuHost({
   describeLink,
+  setOpened,
   children,
 }: {
   describeLink: (link: LinkMenuLink) => LinkMenuSubject | null;
+  setOpened: Dispatch<SetStateAction<OpenedLink | null>>;
   children: ReactNode;
 }) {
   const menu = useContextMenu();
-  const [opened, setOpened] = useState<OpenedLink | null>(null);
 
   const open = useStableEvent((link: LinkMenuLink, point: Point) => {
     const subject = describeLink(link);
@@ -62,12 +80,7 @@ function LinkMenuHost({
     return true;
   });
 
-  return (
-    <LinkMenuContext.Provider value={open}>
-      {children}
-      {opened ? <LinkMenuSurface link={opened} /> : null}
-    </LinkMenuContext.Provider>
-  );
+  return <LinkMenuContext.Provider value={open}>{children}</LinkMenuContext.Provider>;
 }
 
 /**

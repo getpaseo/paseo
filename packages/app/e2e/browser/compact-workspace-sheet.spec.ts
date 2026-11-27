@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, test } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { installLocalDesktopHost } from "../support/helpers/local-desktop-host";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import {
   expectSubagentRowGone,
@@ -77,6 +78,36 @@ test("compact offers file actions from a link and from the file sheet", async ({
       path: test.info().outputPath("compact-reveal-in-files.png"),
       animations: "disabled",
     });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("a narrow desktop window keeps the desktop actions in the file sheet menu", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const workspace = await seedMockAgentWorkspace({
+    repoPrefix: "narrow-desktop-file-actions-",
+    title: "File actions",
+    initialPrompt: promptMentioning(FILE_LINK),
+  });
+  try {
+    await writeFile(path.join(workspace.cwd, "linked.ts"), "one\ntwo\nthree\n", "utf8");
+    await installLocalDesktopHost(page, workspace.cwd, { fileManager: "Dolphin" });
+    await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+    await page.getByText(FILE_LINK, { exact: true }).click();
+
+    await expect(sheet(page, "linked.ts")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("sheet-file-menu-trigger").click();
+    await expect(page.getByTestId("sheet-file-menu-content").getByRole("menuitem")).toHaveText([
+      "Reveal in Files",
+      "Reveal in Dolphin",
+      "Open in default app",
+      "Download",
+      "Copy path",
+      "Copy relative path",
+    ]);
   } finally {
     await workspace.cleanup();
   }

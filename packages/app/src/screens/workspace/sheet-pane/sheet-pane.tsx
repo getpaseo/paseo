@@ -169,13 +169,6 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
   );
 }
 
-const SHEET_FILE_ACTIONS: ReadonlySet<string> = new Set([
-  "reveal-in-files",
-  "download",
-  "copy-path",
-  "copy-relative-path",
-]);
-
 /** A file sheet's `…` menu. */
 function SheetFileMenu({ path, onClose }: { path: string; onClose: () => void }) {
   const { t } = useTranslation();
@@ -188,9 +181,6 @@ function SheetFileMenu({ path, onClose }: { path: string; onClose: () => void })
     // The sheet covers the Explorer.
     onRevealInFiles: onClose,
   });
-  const actions = fileActions
-    .actionsFor(path, "file")
-    .filter((action) => SHEET_FILE_ACTIONS.has(action.id));
   return (
     <DropdownMenu compactMode="sheet">
       <SheetHeaderMenuButton
@@ -200,7 +190,7 @@ function SheetFileMenu({ path, onClose }: { path: string; onClose: () => void })
       />
       <DropdownMenuContent align="end" width={220} testID="sheet-file-menu">
         <WorkspaceFileActionItems
-          actions={actions}
+          actions={fileActions.actionsFor(path, "file")}
           revealTargetName={fileActions.revealTargetName}
           testIDBase="sheet-file-menu"
         />

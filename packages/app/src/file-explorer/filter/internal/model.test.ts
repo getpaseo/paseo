@@ -70,6 +70,20 @@ describe("resolveFileFilterView", () => {
     ).toEqual({ status: "empty" });
   });
 
+  it("reports a failed refresh or re-query instead of the matches it still has", () => {
+    const failed = { status: "error", message: "Host disconnected" };
+
+    expect(resolve({ error: "Host disconnected" })).toEqual(failed);
+    expect(resolve({ query: "repo", error: "Host disconnected" })).toEqual(failed);
+    expect(resolve({ response: { query: "re", entries: [] }, error: "Host disconnected" })).toEqual(
+      failed,
+    );
+    // A retry in flight keeps them up until it answers.
+    expect(resolve({ error: "Host disconnected", isFetching: true })).toMatchObject({
+      status: "results",
+    });
+  });
+
   it("reports why the search failed", () => {
     expect(resolve({ response: undefined, error: "Host disconnected" })).toEqual({
       status: "error",

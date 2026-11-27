@@ -503,7 +503,6 @@ export function FileExplorerPane({
 
   const {
     revealDirectory,
-    revealEntry,
     requestDirectoryListing,
     invalidateDirectoryListings,
     createEntry,
@@ -667,10 +666,9 @@ export function FileExplorerPane({
         return;
       }
       // A folder has no tab to open: show it, expanded, in the tree.
-      await revealDirectory(entry.path);
-      await revealEntry(entry.path);
+      await revealDirectory(entry.path, { select: true });
     },
-    [handleOpenFile, handleSelectEntry, revealDirectory, revealEntry],
+    [handleOpenFile, handleSelectEntry, revealDirectory],
   );
 
   const handleRevealEntry = useCallback(

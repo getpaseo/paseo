@@ -21,7 +21,7 @@ export type FileFilterView =
   | { status: "error"; message: string }
   | { status: "results"; matches: FileFilterMatch[] };
 
-/** What the filtered list shows. Earlier matches stay up until the current query answers. */
+/** What the filtered list shows. Earlier matches stay up until the search answers or fails. */
 export function resolveFileFilterView({
   query,
   response,
@@ -35,11 +35,11 @@ export function resolveFileFilterView({
   isFetching: boolean;
   showHiddenFiles: boolean;
 }): FileFilterView {
+  if (error !== null && !isFetching) return { status: "error", message: error };
   const matches = (response?.entries ?? [])
     .filter((entry) => showHiddenFiles || !isHiddenExplorerPath(entry.path))
     .map((entry) => Object.assign(describeWorkspaceFilePath(entry.path), { kind: entry.kind }));
   if (matches.length > 0) return { status: "results", matches };
   if (response?.query === query) return { status: "empty" };
-  if (error !== null && !isFetching) return { status: "error", message: error };
   return { status: "loading" };
 }
