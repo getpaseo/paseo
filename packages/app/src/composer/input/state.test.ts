@@ -4,6 +4,7 @@ import {
   computeCanStartDictation,
   type MessageInputEnterContext,
   resolveActiveSendBehavior,
+  resolveComposerFramePhase,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
   resolveGlyphRailOffset,
@@ -612,5 +613,25 @@ describe("fullscreen glyph rail", () => {
     const inkInset =
       (geometry.controlSize - geometry.glyphIconSize) / 2 + (geometry.glyphIconSize * 2) / 24;
     expect(offset + inkInset).toBeCloseTo(0);
+  });
+});
+
+describe("composer frame phase", () => {
+  const rest = { hovered: false, focused: false, readOnly: false, disabled: false };
+
+  it("shows the focus border while the editor has focus, hovered or not", () => {
+    expect(resolveComposerFramePhase({ ...rest, focused: true })).toBe("active");
+    expect(resolveComposerFramePhase({ ...rest, focused: true, hovered: true })).toBe("active");
+  });
+
+  it("shows the hover border only while the pointer is over an unfocused frame", () => {
+    expect(resolveComposerFramePhase({ ...rest, hovered: true })).toBe("hover");
+    expect(resolveComposerFramePhase(rest)).toBe("rest");
+  });
+
+  it("keeps a read-only or disabled frame at rest", () => {
+    const engaged = { ...rest, hovered: true, focused: true };
+    expect(resolveComposerFramePhase({ ...engaged, readOnly: true })).toBe("rest");
+    expect(resolveComposerFramePhase({ ...engaged, disabled: true })).toBe("rest");
   });
 });

@@ -110,6 +110,7 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   resolveAlternateSendAction,
+  resolveComposerFramePhase,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
   resolveMessageInputEnterAction,
@@ -1368,6 +1369,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const dictationToggleKeys = useShortcutKeys("dictation-toggle");
     const focusInputKeys = useShortcutKeys("focus-message-input");
     const [isInputFocused, setIsInputFocused] = useState(false);
+    // Only the frame's pointer events set it, so hover stays a web thing; see docs/hover.md.
+    const [isInputHovered, setIsInputHovered] = useState(false);
     useKeyboardFocusSurface("message-input", isInputFocused && isPaneFocused);
     // Web text is DOM-owned between deferred draft publications. The action button only needs
     // this boundary, so publish empty/non-empty transitions without rerendering for every key.
@@ -2038,15 +2041,32 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       void handleStopRealtimeVoice();
     }, [handleStopRealtimeVoice]);
 
+    const handleInputWrapperPointerEnter = useCallback(() => setIsInputHovered(true), []);
+    const handleInputWrapperPointerLeave = useCallback(() => setIsInputHovered(false), []);
+    const framePhase = resolveComposerFramePhase({
+      hovered: isInputHovered,
+      focused: isInputFocused,
+      readOnly,
+      disabled,
+    });
     const inputWrapperCombinedStyle = useMemo(
       () => [
         styles.inputWrapper,
         Platform.OS !== "ios" && isCompact && !isFullscreen && styles.inputWrapperCompact,
         readOnly && styles.inputWrapperReadOnly,
+        framePhase === "hover" && styles.inputWrapperHovered,
+        framePhase === "active" && styles.inputWrapperFocused,
         inputWrapperStyle,
         { opacity: surfacePresentation.input.opacity },
       ],
-      [inputWrapperStyle, isCompact, isFullscreen, readOnly, surfacePresentation.input.opacity],
+      [
+        framePhase,
+        inputWrapperStyle,
+        isCompact,
+        isFullscreen,
+        readOnly,
+        surfacePresentation.input.opacity,
+      ],
     );
     // `withUnistyles` maps this component's `style` into a `.hash > *` child
     // rule, which ties on specificity with react-native-web's own
@@ -2394,6 +2414,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           onExit={exitFullscreen}
           inputWrapperRef={inputWrapperRef}
           inputWrapperStyle={inputWrapperCombinedStyle}
+          onInputWrapperPointerEnter={handleInputWrapperPointerEnter}
+          onInputWrapperPointerLeave={handleInputWrapperPointerLeave}
           inputPointerEvents={surfacePresentation.input.pointerEvents}
           attachmentSlot={attachmentSlot}
           showFullscreenButton={shouldShowFullscreenControl(
@@ -2447,6 +2469,15 @@ const styles = StyleSheet.create((theme: Theme) => ({
   // into it" without swapping the border colour, which reads as an error state.
   inputWrapperReadOnly: {
     borderStyle: "dotted",
+  },
+  // The rest border is already the `borderAccent` that `controlHover` gives other inputs, so
+  // hover steps up one surface; focus takes the accent, like their focus ring. Colour only:
+  // the border width stays put, so the frame never shifts under the pointer.
+  inputWrapperHovered: {
+    borderColor: theme.colors.surface4,
+  },
+  inputWrapperFocused: {
+    borderColor: theme.colors.accent,
   },
   // The band the fullscreen glyph sits in is the input's own padding, so a tap
   // anywhere in it (under the glyph, or where the glyph would be) is a tap on the

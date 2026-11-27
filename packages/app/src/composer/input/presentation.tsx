@@ -37,6 +37,8 @@ export function ComposerInputPresentation({
   onExit,
   inputWrapperRef,
   inputWrapperStyle,
+  onInputWrapperPointerEnter,
+  onInputWrapperPointerLeave,
   inputPointerEvents,
   attachmentSlot,
   showFullscreenButton,
@@ -53,6 +55,9 @@ export function ComposerInputPresentation({
   onExit: () => void;
   inputWrapperRef: Ref<View>;
   inputWrapperStyle: ViewProps["style"];
+  /** Hover tracking for the frame's border; the frame is a plain View, per docs/hover.md. */
+  onInputWrapperPointerEnter: () => void;
+  onInputWrapperPointerLeave: () => void;
   inputPointerEvents: ViewProps["pointerEvents"];
   attachmentSlot: ReactNode;
   showFullscreenButton: boolean;
@@ -107,6 +112,8 @@ export function ComposerInputPresentation({
           ref={inputWrapperRef}
           style={fullscreen ? styles.fullscreenInputWrapper : inputWrapperStyle}
           pointerEvents={inputPointerEvents}
+          onPointerEnter={onInputWrapperPointerEnter}
+          onPointerLeave={onInputWrapperPointerLeave}
         >
           {fullscreen ? null : attachmentSlot}
           <View style={fullscreen ? styles.fullscreenTextSurface : styles.inlineTextSurface}>
