@@ -3,6 +3,8 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginRegistry } from "./registry";
 import { pluginSettingsKey, pluginSettingsPrefix } from "./settings/query";
 
+type PluginCatalog = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>;
+
 interface CatalogSyncInput {
   serverId: string;
   client: DaemonClient;
@@ -15,6 +17,11 @@ interface CatalogSyncInput {
     "installCatalog" | "getSnapshot" | "removeHost" | "setCatalogStatus"
   >;
   onCatalogChanged?: () => void;
+  // Runs once before the first catalog request. Timeline paint restores a cached
+  // catalog here so the chat does not wait on the network.
+  prepare?: () => Promise<void>;
+  onCatalogInstalled?: (catalog: PluginCatalog) => void;
+  onCatalogFailed?: () => void;
 }
 
 export function syncPluginCatalog({
@@ -25,6 +32,9 @@ export function syncPluginCatalog({
   supported,
   registry,
   onCatalogChanged,
+  prepare,
+  onCatalogInstalled,
+  onCatalogFailed,
 }: CatalogSyncInput): () => void {
   if (supported === null) {
     // Plugin support is unknown until `server_info` arrives; keep status "loading" so cold-launch
@@ -41,27 +51,40 @@ export function syncPluginCatalog({
   registry.setCatalogStatus(serverId, "loading");
   const installationOptions = { client, audio };
   let cancelled = false;
+  let prepared = false;
+  let fullRefreshPending = false;
   let refreshQueue = Promise.resolve();
   function refresh(replacePluginId?: string) {
-    refreshQueue = refreshQueue.then(() => {
-      if (cancelled) return undefined;
-      registry.setCatalogStatus(serverId, "loading");
-      return client
-        .getPluginCatalog()
-        .then((catalog) => {
-          if (!cancelled) {
-            registry.installCatalog(serverId, catalog, { ...installationOptions, replacePluginId });
-            registry.setCatalogStatus(serverId, "ready");
-          }
-          return undefined;
-        })
-        .catch((error) => {
+    // The subscription snapshot and the eager first fetch are the same catalog read.
+    // Coalesce them so a sync snapshot does not download the bundle twice.
+    if (replacePluginId === undefined && fullRefreshPending) return refreshQueue;
+    const fullRefresh = replacePluginId === undefined;
+    if (fullRefresh) fullRefreshPending = true;
+    refreshQueue = refreshQueue.then(async () => {
+      try {
+        if (!prepared) {
+          prepared = true;
+          await prepare?.();
+        }
+        if (cancelled) return undefined;
+        registry.setCatalogStatus(serverId, "loading");
+        try {
+          const catalog = await client.getPluginCatalog();
+          if (cancelled) return undefined;
+          registry.installCatalog(serverId, catalog, { ...installationOptions, replacePluginId });
+          registry.setCatalogStatus(serverId, "ready");
+          onCatalogInstalled?.(catalog);
+        } catch (error) {
           if (!cancelled) {
             registry.setCatalogStatus(serverId, "error");
             console.warn(`[Plugins] Failed to load catalog for ${serverId}`, error);
+            onCatalogFailed?.();
           }
-          return undefined;
-        });
+        }
+        return undefined;
+      } finally {
+        if (fullRefresh) fullRefreshPending = false;
+      }
     });
     return refreshQueue;
   }
@@ -102,6 +125,9 @@ export function syncPluginCatalog({
       }
     },
   });
+  // The subscription snapshot used to be the only fetch, so the bundle waited out
+  // an extra round trip before the chat could leave its native rows.
+  void refresh();
   return () => {
     cancelled = true;
     void observation

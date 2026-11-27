@@ -307,6 +307,8 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
   let holdingTimelineAgentId: string | null = null;
   const heldTimelineResponses: Array<() => void> = [];
   const heldTimelineResponseWaiters = new Set<() => void>();
+  let holdingPluginCatalogResponses = false;
+  const heldPluginCatalogResponses: Array<() => void> = [];
   let heldClientRequestType: string | null = null;
   let heldClientRequest: { server: WebSocketRoute; message: string | Buffer } | null = null;
   let resolveHeldClientRequest: (() => void) | null = null;
@@ -446,6 +448,31 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
     return true;
   };
 
+  const holdDelayedResponse = (
+    browser: WebSocketRoute,
+    message: string | Buffer,
+    parsed: ClientRequest | null,
+  ): boolean => {
+    if (
+      parsed?.type === "fetch_agent_timeline_response" &&
+      holdingTimelineAgentId &&
+      parsed.payload &&
+      typeof parsed.payload === "object" &&
+      "agentId" in parsed.payload &&
+      parsed.payload.agentId === holdingTimelineAgentId
+    ) {
+      heldTimelineResponses.push(() => browser.send(message));
+      for (const resolve of heldTimelineResponseWaiters) resolve();
+      heldTimelineResponseWaiters.clear();
+      return true;
+    }
+    if (parsed?.type === "plugin.catalog.get.response" && holdingPluginCatalogResponses) {
+      heldPluginCatalogResponses.push(() => browser.send(message));
+      return true;
+    }
+    return false;
+  };
+
   const routePattern =
     options.port === undefined
       ? daemonWsRoutePattern()
@@ -529,16 +556,7 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
       outboundMessage = forceTimelineReset(outboundMessage, shouldForceTimelineReset);
       if (shouldForceTimelineReset) forceTimelineEpochReset = false;
       recordServerMessage(serverMessage);
-      if (isTimelineResponse && holdingTimelineAgentId) {
-        const payload = (serverMessage as { payload?: { agentId?: unknown } } | null)?.payload;
-        if (payload?.agentId === holdingTimelineAgentId) {
-          const forward = outboundMessage;
-          heldTimelineResponses.push(() => ws.send(forward));
-          for (const resolve of heldTimelineResponseWaiters) resolve();
-          heldTimelineResponseWaiters.clear();
-          return;
-        }
-      }
+      if (holdDelayedResponse(ws, outboundMessage, serverMessage)) return;
       if (holdServerMessage({ browser: ws, message: outboundMessage, parsed: serverMessage }))
         return;
       if (holdReadyFileUpdate(ws, outboundMessage, fileMessage)) return;
@@ -629,6 +647,16 @@ export async function installDaemonWebSocketGate(page: Page, options: { port?: n
     releaseHeldTimelineResponses(): void {
       holdingTimelineAgentId = null;
       for (const forward of heldTimelineResponses.splice(0)) forward();
+    },
+    holdPluginCatalogResponses(held = true): void {
+      holdingPluginCatalogResponses = held;
+    },
+    hasHeldPluginCatalogResponse(): boolean {
+      return heldPluginCatalogResponses.length > 0;
+    },
+    releaseHeldPluginCatalogResponses(): void {
+      holdingPluginCatalogResponses = false;
+      for (const forward of heldPluginCatalogResponses.splice(0)) forward();
     },
     restoreFresh(): void {
       reconnectWithFreshClient = true;

@@ -566,3 +566,27 @@ it("keeps catalog loading before server_info arrives so cold-launch plugin taps 
   expect(h.registry.getCatalogStatus("host")).toBe("ready");
   expect(openedRoutes).toEqual(["/h/host/plugin/ci-alerts/surface/alert?param.buildId=77"]);
 });
+
+it("coalesces the eager catalog fetch with a synchronous subscription snapshot and reports lifecycle callbacks", async () => {
+  const h = harness();
+  const events: string[] = [];
+  h.sync({
+    prepare: async () => {
+      events.push("prepare");
+    },
+    onCatalogInstalled: (installed) => {
+      events.push(`installed:${installed.length}`);
+    },
+    onCatalogFailed: () => {
+      events.push("failed");
+    },
+  });
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.client.fetches).toBe(1);
+  expect(events).toEqual(["prepare", "installed:1"]);
+
+  h.client.snapshot();
+  await expect.poll(() => h.client.fetches).toBe(2);
+  expect(events).toEqual(["prepare", "installed:1", "installed:1"]);
+});
