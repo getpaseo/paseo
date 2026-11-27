@@ -261,46 +261,69 @@ export function continuesAssistantMessage(
   );
 }
 
+/**
+ * The index of the row in `rows` that `entry` continues, or null when `entry` starts a new
+ * row. A chunk continues the assistant message right before it. A chunk that carries a
+ * provider message id also continues its message across user rows recorded mid-stream, as
+ * a steer is. Any other row in between, such as a tool call, keeps the provider's order.
+ */
+function assistantContinuationIndex(
+  rows: readonly WorkingEntry[],
+  entry: WorkingEntry,
+): number | null {
+  if (entry.item.type !== "assistant_message") return null;
+  let index = rows.length - 1;
+  let coveredThrough = rows[index]?.seqEnd ?? Number.NEGATIVE_INFINITY;
+  while (index >= 0 && rows[index].item.type === "user_message") {
+    index -= 1;
+    coveredThrough = Math.max(coveredThrough, rows[index]?.seqEnd ?? coveredThrough);
+  }
+  const previous = rows[index];
+  if (!previous || !continuesAssistantMessage(previous, entry)) return null;
+  const skipsUserRows = index < rows.length - 1;
+  if (skipsUserRows && entry.item.messageId === undefined) return null;
+  return coveredThrough + 1 === entry.seqStart ? index : null;
+}
+
+function mergeAssistantEntries(previous: WorkingEntry, entry: WorkingEntry): WorkingEntry {
+  const previousAssistant = previous.item as Extract<
+    AgentTimelineItem,
+    { type: "assistant_message" }
+  >;
+  const entryAssistant = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
+
+  const collapsedKinds = new Set<TimelineProjectionKind>([
+    ...previous.collapsed,
+    ...entry.collapsed,
+    "assistant_merge",
+  ]);
+
+  return {
+    ...previous,
+    item: {
+      type: "assistant_message",
+      text: `${previousAssistant.text}${entryAssistant.text}`,
+      ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
+    },
+    timestamp: entry.timestamp,
+    seqEnd: Math.max(previous.seqEnd, entry.seqEnd),
+    sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
+    collapsed: Array.from(collapsedKinds),
+    // The turn's stats ride on its last row, which is the later chunk of a merged message.
+    ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
+  };
+}
+
 function mergeAssistantChunks(entries: readonly WorkingEntry[]): WorkingEntry[] {
   const output: WorkingEntry[] = [];
 
   for (const entry of entries) {
-    const previous = output[output.length - 1];
-    const shouldMerge =
-      previous &&
-      previous.seqEnd + 1 === entry.seqStart &&
-      continuesAssistantMessage(previous, entry);
-
-    if (!shouldMerge || !previous) {
+    const index = assistantContinuationIndex(output, entry);
+    if (index === null) {
       output.push(entry);
       continue;
     }
-    const previousAssistant = previous.item as Extract<
-      AgentTimelineItem,
-      { type: "assistant_message" }
-    >;
-    const entryAssistant = entry.item as Extract<AgentTimelineItem, { type: "assistant_message" }>;
-
-    const collapsedKinds = new Set<TimelineProjectionKind>([
-      ...previous.collapsed,
-      ...entry.collapsed,
-      "assistant_merge",
-    ]);
-
-    output[output.length - 1] = {
-      ...previous,
-      item: {
-        type: "assistant_message",
-        text: `${previousAssistant.text}${entryAssistant.text}`,
-        ...(previousAssistant.messageId ? { messageId: previousAssistant.messageId } : {}),
-      },
-      timestamp: entry.timestamp,
-      seqEnd: entry.seqEnd,
-      sourceSeqRanges: mergeSeqRanges(previous.sourceSeqRanges, entry.sourceSeqRanges),
-      collapsed: Array.from(collapsedKinds),
-      // The turn's stats ride on its last row, which is the later chunk of a merged message.
-      ...(entry.turnMetrics ? { turnMetrics: entry.turnMetrics } : {}),
-    };
+    output[index] = mergeAssistantEntries(output[index], entry);
   }
 
   return output;
@@ -358,10 +381,15 @@ export class TimelineProjection {
       this.extendSpan(index);
       return index;
     }
+    const continued = assistantContinuationIndex(this.rows, entry);
+    if (continued !== null) {
+      const mergedText = mergeAssistantEntries(this.rows[continued], entry);
+      this.rows[continued] = { ...mergedText, seq: mergedText.seqEnd };
+      this.extendSpan(continued);
+      return continued;
+    }
     const previous = this.rows.at(-1);
-    const adjacent = previous
-      ? mergeReasoningChunks(mergeAssistantChunks([previous, entry]))
-      : [entry];
+    const adjacent = previous ? mergeReasoningChunks([previous, entry]) : [entry];
     if (previous && adjacent.length === 1) {
       const mergedText = adjacent[0];
       this.rows[this.rows.length - 1] = { ...mergedText, seq: mergedText.seqEnd };

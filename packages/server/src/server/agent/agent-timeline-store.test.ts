@@ -7,6 +7,62 @@ import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 describe("InMemoryAgentTimelineStore", () => {
+  it("keeps a streaming assistant message whole when a steering prompt is recorded mid-stream", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent-1");
+    store.append("agent-1", {
+      type: "assistant_message",
+      text: "with the uncommit",
+      messageId: "msg-1",
+    });
+    store.append("agent-1", { type: "user_message", text: "keep going" });
+    store.append("agent-1", {
+      type: "assistant_message",
+      text: "ted changes.",
+      messageId: "msg-1",
+    });
+
+    expect(store.getItems("agent-1")).toEqual([
+      { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+  });
+
+  it("keeps text written after a tool call below it when both share a message id", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent-1");
+    store.append("agent-1", { type: "assistant_message", text: "Let me check.", messageId: "m1" });
+    store.append("agent-1", {
+      type: "tool_call",
+      callId: "c1",
+      name: "shell",
+      status: "completed",
+      detail: { type: "unknown", input: null, output: null },
+      error: null,
+    });
+    store.append("agent-1", { type: "assistant_message", text: "Found it.", messageId: "m1" });
+
+    expect(store.getItems("agent-1").map((item) => item.type)).toEqual([
+      "assistant_message",
+      "tool_call",
+      "assistant_message",
+    ]);
+  });
+
+  it("keeps chunks without a message id apart when a user message is recorded between them", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent-1");
+    store.append("agent-1", { type: "assistant_message", text: "First." });
+    store.append("agent-1", { type: "user_message", text: "keep going" });
+    store.append("agent-1", { type: "assistant_message", text: "Second." });
+
+    expect(store.getItems("agent-1")).toEqual([
+      { type: "assistant_message", text: "First." },
+      { type: "user_message", text: "keep going" },
+      { type: "assistant_message", text: "Second." },
+    ]);
+  });
+
   it("resets stale forward cursors to complete available turns", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("agent", { epoch: "current" });
@@ -358,6 +414,34 @@ describe("turn metrics", () => {
 
     expect(rows).toHaveLength(2);
     expect(rows[1]).toMatchObject({ item: { text: "Done" }, turnMetrics: metrics });
+  });
+
+  it("keeps the stats on a steered message whose chunks carry a message id", () => {
+    const store = new InMemoryAgentTimelineStore();
+    const at = "2026-11-22T00:00:00.000Z";
+    store.initialize("a", {
+      rows: [
+        { seq: 1, timestamp: at, item: { type: "user_message", text: "go" } },
+        { seq: 2, timestamp: at, item: { type: "assistant_message", text: "Do", messageId: "m1" } },
+        { seq: 3, timestamp: at, item: { type: "assistant_message", text: "n", messageId: "m1" } },
+        { seq: 4, timestamp: at, item: { type: "user_message", text: "keep going" } },
+        {
+          seq: 5,
+          timestamp: at,
+          item: { type: "assistant_message", text: "e", messageId: "m1" },
+          turnMetrics: metrics,
+        },
+      ],
+    });
+
+    const rows = store.fetch("a").rows;
+
+    expect(rows.map((row) => row.item)).toEqual([
+      { type: "user_message", text: "go" },
+      { type: "assistant_message", text: "Done", messageId: "m1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+    expect(rows[1]).toMatchObject({ turnMetrics: metrics });
   });
 
   it("keeps the stats on a tool card whose updates the projection merges", () => {
