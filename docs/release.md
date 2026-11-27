@@ -514,7 +514,7 @@ macOS 13 maps to Darwin 22. The two values use different version domains; do not
 iOS and Android store builds are not in `.github/workflows`. They are triggered by the EAS GitHub app the moment the `v*` tag is pushed:
 
 - **Android (Play Store)** — EAS builds with profile `production` and auto-submits to the Play Store via `eas submit` (EAS-managed credentials). A Fastlane lane then replaces the store screenshots.
-- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads once through a `testflight` job, distributes the build to the `Paseo Beta` external group with Beta App Review submission, and a Fastlane lane uploads the store screenshots and submits that same build for App Store review.
+- **iOS (TestFlight + App Store)** — EAS builds with profile `production`, uploads once through a `testflight` job, distributes the build to the `Paseo Beta` external group with Beta App Review submission, and a Fastlane lane uploads the store screenshots and submits that same build for App Store review. When an earlier iOS version is already in Apple's review or release queue (`WAITING_FOR_REVIEW`, `IN_REVIEW`, `PENDING_APPLE_RELEASE`, `PENDING_DEVELOPER_RELEASE`, `PROCESSING_FOR_DISTRIBUTION`, `WAITING_FOR_EXPORT_COMPLIANCE`, or `ACCEPTED`), `submit_review` leaves it untouched, logs `IOS_REVIEW_SKIPPED` with the in-review version and the waiting TestFlight build, and exits `0` so `Release Mobile` stays green.
 - **Android APK (GitHub Release asset)** — separate, via `.github/workflows/android-apk-release.yml`. This is the only Android-related workflow that lives in this repo.
 
 EAS uses the local app version source. `packages/app/app.config.js` derives the native version from the package version. Android `versionCode` is `major * 1_000_000 + minor * 1_000 + patch`. iOS reserves 1,000 build slots per app version: beta `N` uses slot `N`, and stable uses slot `999`. For example, `0.2.6-beta.2` appears in App Store Connect as version `0.2.6` build `2006002`; stable uses build `2006999`. Rebuilding the same tag produces the same native build number; if a store has already accepted a binary and you need a different binary, cut the next beta or patch instead of relying on EAS remote auto-increment.
@@ -560,11 +560,22 @@ npx eas build:view <build-id>
 # and submit_ios_for_review.
 npx eas workflow:view <workflow-run-id> --json
 
-# Read failed submit/review job logs.
+# Read submit/review job logs (also check for IOS_REVIEW_SKIPPED on green runs).
 npx eas workflow:logs <workflow-job-id> --all-steps --non-interactive
 
 # Stream logs for a build.
 npx eas build:view <build-id> --json | jq '.logFiles[]'
+
+# Check live App Store Connect review state + top 5 recent iOS TestFlight builds.
+npx eas workflow:run ios-review-status.yml
+
+# Submit a waiting TestFlight build once the review slot is free (default replace_in_review=false skips if still active).
+npx eas workflow:run resubmit-ios-review.yml
+# Or force-replace an in-flight review for an urgent iOS hotfix:
+npx eas workflow:run resubmit-ios-review.yml -F app_version=0.18.1 -F app_build_version=18001999 -F replace_in_review=true
+
+# Cancel an active in-flight iOS App Store review (pass expected_version to guard against version drift).
+npx eas workflow:run cancel-ios-review.yml -F expected_version=0.18.0
 ```
 
 A build's `gitCommitHash` must match the release tag commit. `status` walks through `NEW` → `IN_QUEUE` → `IN_PROGRESS` → `FINISHED` (or `ERRORED`/`CANCELED`). The EAS workflow run's `gitCommitHash` and `trigger` must also match the release tag.
@@ -580,7 +591,7 @@ For the `Release Mobile` EAS workflow, these jobs must pass:
 - `submit_android` — Android binary submitted to the Play Store
 - `upload_android_screenshots` — Google Play screenshots replaced from the repo
 
-Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight.
+Do not treat `build_ios: SUCCESS` or `distribute_ios: SUCCESS` as a completed iOS release. `submit_ios_for_review: FAILURE` means the iOS release is blocked even if the build is visible in TestFlight. Even when `submit_ios_for_review` passes, inspect its log with `npx eas workflow:logs <workflow-job-id> --all-steps --non-interactive` for `IOS_REVIEW_SKIPPED`. If App Store submission was skipped because an earlier version is already in flight, explicitly notify the maintainer with both the in-review version/state and the waiting TestFlight version/build so they can either let the current review finish and run `npx eas workflow:run resubmit-ios-review.yml` later, or replace it with `replace_in_review=true`.
 
 To confirm the submission landed, inspect the EAS workflow with `npx eas workflow:view <workflow-run-id> --json`. App Store Connect (review state for the matching version/build) and the Play Console track are the final ground truth.
 
@@ -622,7 +633,7 @@ Pattern:
   "timezone": "UTC",
   "maxRuns": 120,
   "expiresIn": "24h",
-  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; CI and Desktop Packages on release/vX.Y.Z; every tag-triggered GitHub Actions run (Desktop Release, Android APK Release, Docker, Release Notes Sync, and Deploy App on stable) plus Deploy Website after release publish; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; the matching EAS workflow; and the reconcile PR into main. Completion requires every applicable checklist item. For stable, require build_ios, distribute_ios (Paseo Beta external distribution and Beta App Review submission), submit_ios_for_review, build_android, submit_android, and upload_android_screenshots to succeed. For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes and the reconcile PR is merged, delete origin/release/vX.Y.Z, delete THIS heartbeat, report shipped, and stop.",
+  "prompt": "Resume the vX.Y.Z release babysit for commit <sha>. Check npm tags; CI and Desktop Packages on release/vX.Y.Z; every tag-triggered GitHub Actions run (Desktop Release, Android APK Release, Docker, Release Notes Sync, and Deploy App on stable) plus Deploy Website after release publish; the published GitHub Release body, expected desktop/APK assets, and channel manifests; the Docker image; the matching EAS workflow; and the reconcile PR into main. Completion requires every applicable checklist item. For stable, require build_ios, distribute_ios (Paseo Beta external distribution and Beta App Review submission), submit_ios_for_review, build_android, submit_android, and upload_android_screenshots to succeed, and inspect the submit_ios_for_review log for IOS_REVIEW_SKIPPED (if skipped, explicitly report both the in-review version and the waiting TestFlight build to the maintainer). For beta, require the beta TestFlight distribution and Beta App Review path. If work is pending, wait for the next heartbeat. If a failure can be retried safely for the same version, follow the failed-release procedure; otherwise report the blocker. When every applicable completion-checklist item passes and the reconcile PR is merged, delete origin/release/vX.Y.Z, delete THIS heartbeat, report shipped, and stop.",
 }
 ```
 
@@ -1031,7 +1042,7 @@ Every entry covers `previous stable release → release source`: first beta, lat
 - [ ] EAS `Release Mobile` workflow for the same tag is green
 - [ ] EAS iOS `build_ios` completes for the same tag
 - [ ] EAS iOS `distribute_ios` succeeds, uploading the binary once, distributing it to `Paseo Beta`, and submitting it for Beta App Review
-- [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review
+- [ ] EAS iOS `submit_ios_for_review` succeeds, putting the build into App Store review (or its log was checked for `IOS_REVIEW_SKIPPED` and the maintainer was notified with both the in-review version and the waiting TestFlight build)
 - [ ] EAS Android `build_android` completes for the same tag
 - [ ] EAS Android `submit_android` succeeds, putting the build on its Play Store track
 - [ ] EAS Android `upload_android_screenshots` succeeds for the same tag
