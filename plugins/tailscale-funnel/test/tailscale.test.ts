@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { TunnelEvent } from "@getpaseo/plugin/server";
@@ -12,66 +12,80 @@ afterEach(async () => {
 });
 
 interface FakeTailscaleState {
-  statusJson: Record<string, unknown>;
   funnelPorts: Record<string, string>;
   history: string[][];
 }
 
+// Each running `tailscale funnel` owns one file in portsDir, and every call appends one history line.
+// Separate files keep concurrent fake processes from overwriting each other's state.
 async function createFakeTailscale(initial: {
   statusJson: Record<string, unknown>;
   funnelPorts?: Record<string, string>;
-}): Promise<{ binary: string; stateFile: string; readState: () => Promise<FakeTailscaleState> }> {
+  funnelStatusFails?: boolean;
+}): Promise<{ binary: string; readState: () => Promise<FakeTailscaleState> }> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-fake-tailscale-"));
   tempDirs.push(dir);
-  const stateFile = path.join(dir, "state.json");
-  const initialState: FakeTailscaleState = {
-    statusJson: initial.statusJson,
-    funnelPorts: initial.funnelPorts ?? {},
-    history: [],
-  };
-  await writeFile(stateFile, JSON.stringify(initialState, null, 2), "utf8");
+  const configFile = path.join(dir, "config.json");
+  const historyFile = path.join(dir, "history.jsonl");
+  const portsDir = path.join(dir, "ports");
+  await mkdir(portsDir);
+  await writeFile(
+    configFile,
+    JSON.stringify({
+      statusJson: initial.statusJson,
+      funnelStatusFails: initial.funnelStatusFails ?? false,
+    }),
+    "utf8",
+  );
+  await writeFile(historyFile, "", "utf8");
+  for (const [port, target] of Object.entries(initial.funnelPorts ?? {})) {
+    await writeFile(path.join(portsDir, port), target, "utf8");
+  }
 
   const binary = path.join(dir, "tailscale");
   await writeFile(
     binary,
     `#!${process.execPath}
 const fs = require("node:fs");
-const stateFile = ${JSON.stringify(stateFile)};
+const path = require("node:path");
+const config = JSON.parse(fs.readFileSync(${JSON.stringify(configFile)}, "utf8"));
+const portsDir = ${JSON.stringify(portsDir)};
 const args = process.argv.slice(2);
-const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-state.history.push(args);
+fs.appendFileSync(${JSON.stringify(historyFile)}, JSON.stringify(args) + "\\n");
 
 if (args[0] === "status" && args[1] === "--json") {
-  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-  console.log(JSON.stringify(state.statusJson));
+  console.log(JSON.stringify(config.statusJson));
   process.exit(0);
 }
 
 if (args[0] === "funnel" && args[1] === "status" && args[2] === "--json") {
-  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  if (config.funnelStatusFails) {
+    console.error("funnel status failed");
+    process.exit(1);
+  }
   const tcp = {};
-  for (const port of Object.keys(state.funnelPorts)) {
+  for (const port of fs.readdirSync(portsDir)) {
     tcp[port] = { HTTPS: true };
   }
   console.log(JSON.stringify({ TCP: tcp }));
   process.exit(0);
 }
 
-if (args[0] === "funnel" && args[1] === "--bg") {
-  const httpsArg = args.find((a) => a.startsWith("--https="));
-  const port = httpsArg ? httpsArg.slice("--https=".length) : "443";
-  const target = args[args.length - 1];
-  state.funnelPorts[port] = target;
-  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-  process.exit(0);
-}
-
-if (args[0] === "funnel" && args[args.length - 1] === "off") {
-  const httpsArg = args.find((a) => a.startsWith("--https="));
-  const port = httpsArg ? httpsArg.slice("--https=".length) : "443";
-  delete state.funnelPorts[port];
-  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-  process.exit(0);
+// Foreground funnel: tailscaled keeps the configuration only while this process runs.
+if (args[0] === "funnel" && args[1].startsWith("--https=")) {
+  const portFile = path.join(portsDir, args[1].slice("--https=".length));
+  fs.writeFileSync(portFile, args[2]);
+  const removeConfig = () => {
+    fs.rmSync(portFile, { force: true });
+    process.exit(0);
+  };
+  process.on("SIGTERM", removeConfig);
+  process.on("SIGINT", removeConfig);
+  console.log("Available on the internet:");
+  console.log("https://devbox.tailnet.ts.net/");
+  console.log("Press Ctrl+C to exit.");
+  setInterval(() => {}, 10_000);
+  return;
 }
 
 console.error("Unexpected tailscale args:", args.join(" "));
@@ -83,8 +97,17 @@ process.exit(1);
 
   return {
     binary,
-    stateFile,
-    readState: async () => JSON.parse(await readFile(stateFile, "utf8")) as FakeTailscaleState,
+    readState: async () => {
+      const funnelPorts: Record<string, string> = {};
+      for (const port of await readdir(portsDir)) {
+        funnelPorts[port] = await readFile(path.join(portsDir, port), "utf8");
+      }
+      const history = (await readFile(historyFile, "utf8"))
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as string[]);
+      return { funnelPorts, history };
+    },
   };
 }
 
@@ -152,7 +175,7 @@ describe("tailscale-funnel built-in plugin", () => {
     });
   });
 
-  it("allocates ports 443, 8443, 10000, rejects a 4th exposure, and turns off ports on abort", async () => {
+  it("allocates ports 443, 8443, 10000, rejects a 4th exposure, and stops the foreground funnel on abort", async () => {
     const fake = await createFakeTailscale({
       statusJson: {
         BackendState: "Running",
@@ -220,7 +243,7 @@ describe("tailscale-funnel built-in plugin", () => {
       ),
     ).rejects.toThrow(/All 3 Tailscale Funnel HTTPS ports \(443, 8443, 10000\) are already in use/);
 
-    // Abort the second exposure (port 8443) -> runs `tailscale funnel --https=8443 off` and frees port 8443.
+    // Abort the second exposure (port 8443) -> stops its foreground funnel and frees port 8443.
     second.controller.abort();
     await second.done;
     expect(second.events.at(-1)).toEqual({ type: "closed", reason: "aborted" });
@@ -244,8 +267,34 @@ describe("tailscale-funnel built-in plugin", () => {
 
     const finalState = await fake.readState();
     expect(finalState.funnelPorts).toEqual({});
-    expect(finalState.history).toContainEqual(["funnel", "--https=443", "off"]);
-    expect(finalState.history).toContainEqual(["funnel", "--https=8443", "off"]);
-    expect(finalState.history).toContainEqual(["funnel", "--https=10000", "off"]);
+    expect(finalState.history).toContainEqual(["funnel", "--https=443", "http://127.0.0.1:3001"]);
+    expect(finalState.history.flat()).not.toContain("--bg");
+  });
+
+  it("refuses to open when the current Funnel configuration cannot be read", async () => {
+    const fake = await createFakeTailscale({
+      statusJson: {
+        BackendState: "Running",
+        Self: {
+          DNSName: "devbox.tailnet.ts.net.",
+          Capabilities: ["https://tailscale.com/cap/funnel-v1"],
+        },
+      },
+      funnelStatusFails: true,
+    });
+    const provider = createTailscaleFunnelProvider({ binary: fake.binary });
+
+    await expect(
+      provider.open(
+        { id: "e1", host: "127.0.0.1", port: 3001 },
+        { paseo: unusedPaseo, signal: new AbortController().signal, report() {} },
+      ),
+    ).rejects.toThrow(/Could not read the current Tailscale Funnel configuration/);
+
+    const state = await fake.readState();
+    expect(state.funnelPorts).toEqual({});
+    expect(
+      state.history.some((args) => args[0] === "funnel" && args[1]?.startsWith("--https=")),
+    ).toBe(false);
   });
 });

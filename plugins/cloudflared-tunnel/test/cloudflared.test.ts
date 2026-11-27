@@ -243,6 +243,31 @@ setInterval(() => {}, 10_000);
     await running;
   });
 
+  it("fails the open when quick tunnel provisioning fails instead of reporting the API endpoint", async () => {
+    const { binary } = await createFakeCloudflared(`
+console.error('ERR Couldn\\'t start tunnel error="failed to request quick Tunnel: Post \\\\"https://api.trycloudflare.com/tunnel\\\\": dial tcp: lookup api.trycloudflare.com: no such host"');
+process.exit(1);
+`);
+    const provider = createCloudflaredTunnelProvider({
+      readSettings: async () => ({ binaryPath: binary }),
+    });
+    const events: TunnelEvent[] = [];
+
+    await expect(
+      provider.open(
+        { id: "tun_offline", host: "127.0.0.1", port: 4321 },
+        {
+          paseo: unusedPaseo,
+          signal: new AbortController().signal,
+          report(event) {
+            events.push(event);
+          },
+        },
+      ),
+    ).rejects.toThrow(/exited before tunnel became ready/);
+    expect(events).toEqual([{ type: "connecting" }]);
+  });
+
   it("reports configuration error when tunnelToken is set without publicBaseUrl", async () => {
     const provider = createCloudflaredTunnelProvider({
       readSettings: async () => ({ tunnelToken: "only-token" }),

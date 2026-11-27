@@ -11,7 +11,8 @@ const CLOUDFLARED_INSTALL_URL =
   "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/";
 const CLOUDFLARED_DOCS_URL =
   "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/";
-const QUICK_TUNNEL_URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
+// api.trycloudflare.com is the provisioning endpoint. It appears in errors, never as a tunnel URL.
+const QUICK_TUNNEL_URL_PATTERN = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/i;
 const NAMED_TUNNEL_READY_PATTERN = /registered tunnel connection|connection\s+\S+\s+registered/i;
 const FORCE_KILL_DELAY_MS = 2_000;
 

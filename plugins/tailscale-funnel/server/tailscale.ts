@@ -1,5 +1,7 @@
 import {
   execCommand,
+  spawnProcess,
+  terminateProcess,
   type TunnelProviderRegistration,
   type TunnelProviderStatus,
 } from "@getpaseo/plugin/server";
@@ -8,6 +10,8 @@ export const TAILSCALE_FUNNEL_PORTS = [443, 8443, 10000] as const;
 
 const TAILSCALE_INSTALL_URL = "https://tailscale.com/download";
 const TAILSCALE_FUNNEL_DOCS_URL = "https://tailscale.com/kb/1223/funnel";
+const FUNNEL_READY_PATTERN = /available on the internet/i;
+const FORCE_KILL_DELAY_MS = 2_000;
 
 export interface TailscaleFunnelProviderOptions {
   binary?: string;
@@ -101,13 +105,6 @@ export function extractOccupiedFunnelPorts(raw: unknown): Set<number> {
     }
   }
   return occupied;
-}
-
-function waitForAbort(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    signal.addEventListener("abort", () => resolve(), { once: true });
-  });
 }
 
 export function createTailscaleFunnelProvider(
@@ -230,34 +227,31 @@ export function createTailscaleFunnelProvider(
     };
   }
 
+  // A port is only free when Tailscale says so. Treating a failed status call as "nothing in use"
+  // would replace, and later remove, the user's own Serve or Funnel handler on that port.
   async function inspectOccupiedPorts(signal?: AbortSignal): Promise<Set<number>> {
+    let stdout: string;
     try {
-      const { stdout } = await execCommand(binary, ["funnel", "status", "--json"], {
+      ({ stdout } = await execCommand(binary, ["funnel", "status", "--json"], {
         env,
         signal,
         timeout: 5_000,
-      });
-      const trimmed = stdout.trim();
-      if (!trimmed) return new Set();
-      return extractOccupiedFunnelPorts(JSON.parse(trimmed));
-    } catch {
-      return new Set();
+      }));
+    } catch (error) {
+      throw new Error(
+        `Could not read the current Tailscale Funnel configuration: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
-  }
-
-  async function disableFunnelPort(port: number): Promise<void> {
-    await withAllocationLock(async () => {
-      try {
-        await execCommand(binary, ["funnel", `--https=${port}`, "off"], {
-          env,
-          timeout: 10_000,
-        });
-      } catch {
-        // Best-effort cleanup so teardown completes even if Tailscale stopped.
-      } finally {
-        allocatedPorts.delete(port);
-      }
-    });
+    const trimmed = stdout.trim();
+    if (!trimmed) return new Set();
+    try {
+      return extractOccupiedFunnelPorts(JSON.parse(trimmed));
+    } catch (error) {
+      throw new Error("Could not parse output from `tailscale funnel status --json`.", {
+        cause: error,
+      });
+    }
   }
 
   return {
@@ -271,6 +265,9 @@ export function createTailscaleFunnelProvider(
       return probe.status;
     },
 
+    // Foreground `tailscale funnel` keeps the Funnel only while the CLI runs. tailscaled drops the
+    // configuration when the CLI exits for any reason, so a crash or a reboot cannot leave the
+    // target public. `--bg` would persist it in tailscaled with no owner.
     async open(target, { report, signal }): Promise<void> {
       report({ type: "connecting" });
 
@@ -280,10 +277,8 @@ export function createTailscaleFunnelProvider(
       }
 
       const targetUrl = `http://${formatHostForUrl(target.host)}:${target.port}`;
-      let assignedPort: number | null = null;
-
-      await withAllocationLock(async () => {
-        if (signal.aborted) return;
+      const port = await withAllocationLock(async () => {
+        if (signal.aborted) return null;
         const occupied = await inspectOccupiedPorts(signal);
         const freePort = TAILSCALE_FUNNEL_PORTS.find(
           (candidate) => !occupied.has(candidate) && !allocatedPorts.has(candidate),
@@ -294,50 +289,90 @@ export function createTailscaleFunnelProvider(
           );
         }
         allocatedPorts.add(freePort);
-        try {
-          await execCommand(binary, ["funnel", "--bg", `--https=${freePort}`, targetUrl], {
-            env,
-            signal,
-            timeout: 15_000,
-          });
-          assignedPort = freePort;
-        } catch (error) {
-          allocatedPorts.delete(freePort);
-          throw new Error(
-            `Failed to start Tailscale Funnel on HTTPS port ${freePort}: ${error instanceof Error ? error.message : String(error)}`,
-            { cause: error },
-          );
-        }
+        return freePort;
       });
 
-      if (assignedPort === null) {
+      if (port === null) {
         report({ type: "closed", reason: "aborted" });
         return;
       }
 
-      const activePort = assignedPort;
+      const publicUrl =
+        port === 443 ? `https://${probe.dnsName}` : `https://${probe.dnsName}:${port}`;
+      const child = spawnProcess(binary, ["funnel", `--https=${port}`, targetUrl], {
+        env,
+        stdio: "pipe",
+      });
+
+      let readyReported = false;
+      let exited = false;
+      let lastOutputLine = "";
+      let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const stopChild = () => {
+        if (exited) return;
+        void terminateProcess(child, "SIGTERM").catch(() => undefined);
+        forceKillTimer ??= setTimeout(() => {
+          if (!exited) void terminateProcess(child, "SIGKILL").catch(() => undefined);
+        }, FORCE_KILL_DELAY_MS);
+      };
+
+      const consumeOutput = (chunk: Buffer | string) => {
+        for (const rawLine of String(chunk).split(/\r?\n/)) {
+          const line = rawLine.trim();
+          if (!line) continue;
+          lastOutputLine = line;
+          if (readyReported || signal.aborted || !FUNNEL_READY_PATTERN.test(line)) continue;
+          readyReported = true;
+          report({ type: "ready", url: publicUrl, stability: "stable" });
+        }
+      };
+
+      child.stdout.on("data", consumeOutput);
+      child.stderr.on("data", consumeOutput);
+      signal.addEventListener("abort", stopChild, { once: true });
+      if (signal.aborted) stopChild();
+
       try {
+        const result = await new Promise<{ code: number | null; spawnError?: Error }>((resolve) => {
+          child.once("error", (error) => {
+            exited = true;
+            resolve({ code: null, spawnError: error });
+          });
+          child.once("close", (code) => {
+            exited = true;
+            resolve({ code });
+          });
+        });
+
         if (signal.aborted) {
-          await disableFunnelPort(activePort);
           report({ type: "closed", reason: "aborted" });
           return;
         }
 
-        const publicUrl =
-          activePort === 443
-            ? `https://${probe.dnsName}`
-            : `https://${probe.dnsName}:${activePort}`;
-        report({
-          type: "ready",
-          url: publicUrl,
-          stability: "stable",
-        });
-
-        await waitForAbort(signal);
-        await disableFunnelPort(activePort);
-        report({ type: "closed", reason: "aborted" });
+        const detail = lastOutputLine ? `: ${lastOutputLine}` : "";
+        if (result.spawnError) {
+          throw new Error(
+            `Failed to start Tailscale Funnel on HTTPS port ${port}: ${result.spawnError.message}`,
+            { cause: result.spawnError },
+          );
+        }
+        if (!readyReported) {
+          throw new Error(
+            `Failed to start Tailscale Funnel on HTTPS port ${port} (code ${result.code ?? "null"})${detail}`,
+          );
+        }
+        if (result.code === 0) {
+          report({ type: "closed" });
+          return;
+        }
+        const message = `tailscale funnel exited with code ${result.code ?? "null"}${detail}`;
+        report({ type: "error", message, recoverable: false });
+        throw new Error(message);
       } finally {
-        allocatedPorts.delete(activePort);
+        signal.removeEventListener("abort", stopChild);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
+        allocatedPorts.delete(port);
       }
     },
   };
