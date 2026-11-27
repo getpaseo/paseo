@@ -129,6 +129,7 @@ import {
   type ResolvedDaemonSettings,
   type CliConfigOverrides,
 } from "./config.js";
+import type { PaseoMetadataGenerationInstructions } from "@getpaseo/protocol/paseo-config-schema";
 import { resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
@@ -432,7 +433,7 @@ export interface PaseoDaemonConfig {
   resumeOnStartup?: boolean;
   resumePrompt?: string;
   providerCatalogRefreshTimeoutMs?: number;
-  metadataGeneration?: {
+  metadataGeneration?: PaseoMetadataGenerationInstructions & {
     providers?: Array<{
       provider: string;
       model?: string;
@@ -545,6 +546,9 @@ function isListenOverridden(config: PaseoDaemonConfig): boolean {
 
 function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
+  // Host-wide metadata wording defaults ride along with the provider list; the
+  // store persists both, so selecting a model in Settings keeps them.
+  const { providers: metadataProviders, ...metadataInstructions } = config.metadataGeneration ?? {};
 
   const initialConfig: MutableDaemonConfig = {
     relay: createInitialRelayConfig(config),
@@ -564,7 +568,8 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
     browserTools: { enabled: config.browserToolsEnabled ?? false },
     providers,
     metadataGeneration: {
-      providers: config.metadataGeneration?.providers ?? [],
+      providers: metadataProviders ?? [],
+      ...metadataInstructions,
     },
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
