@@ -37,6 +37,8 @@ export interface ModalContentProps {
   contentContainerStyle?: StyleProp<ViewStyle>;
   /** Default true. Set false for a bounded body with your own ScrollView or FlatList. */
   scrollable?: boolean;
+  /** Default "fill" for caller-owned scroll areas. "content" sizes a desktop dialog to its contents. */
+  desktopSizing?: "fill" | "content";
 }
 
 export interface ModalComponent extends FunctionComponent<ModalProps> {

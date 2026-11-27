@@ -1076,10 +1076,11 @@ import { Markdown } from "@getpaseo/plugin/client/ui";
 | `style`                 | `StyleProp<ViewStyle>` | —                  | 为整个主体视口（包括空白区域）设置样式。用于背景。                       |
 | `contentContainerStyle` | `StyleProp<ViewStyle>` | 内边距 24，间距 16 | 覆盖内容布局。要让行贴边显示，请设置 `padding: 0, gap: 0`。              |
 | `scrollable`            | `boolean`              | `true`             | 由宿主滚动主体。如果主体高度受限并使用你自己的滚动容器，请设为 `false`。 |
+| `desktopSizing`         | `"fill" \| "content"`  | `"fill"`           | 当 `scrollable={false}` 时，选择按内容调整居中对话框高度。               |
 
 普通的 `Modal.Content` 已经带有内边距并且可以滚动。除非你想要再缩进一层，否则不要再添加一个带内边距的包装。主体样式不会影响宿主的标题栏、拖动手柄和关闭控件。在紧凑的原生布局中，宿主会在底部预留安全区域空间；把内容的内边距设为零只会去掉装饰性的缩进，而不会去掉这部分空间。键盘的避让是单独处理的。
 
-使用 `scrollable={false}` 时，主体会填满底部面板的可用高度，居中对话框则使用可用高度的 85%。请在你的列表上使用 `flex: 1, minHeight: 0`。默认可滚动的对话框在宽布局中保持与内容一样的大小。呈现方式取决于窗口尺寸，包括较窄的桌面窗口和较宽的平板。
+使用 `scrollable={false}` 时，主体会填满底部面板的可用高度，居中对话框则使用可用高度的 85%。请在你的列表上使用 `flex: 1, minHeight: 0`。默认可滚动的对话框在宽布局中保持与内容一样的大小。设置 `desktopSizing="content"` 可让调用方自备的滚动容器收缩到内容高度，并在对话框最大高度内缩放；桌面端包装请改用 `flexShrink: 1, minHeight: 0` 而不是 `flex: 1`。紧凑布局的底部面板保持正常高度。呈现方式取决于窗口尺寸，包括较窄的桌面窗口和较宽的平板。
 
 关闭按钮、背景遮罩、平台的返回操作、Web 上的 Escape 键以及紧凑布局下底部面板的手势都会关闭弹窗。关闭时会调用 `onOpenChange(false)`；插件必须更新 `open` 才能关闭它。
 
