@@ -142,6 +142,8 @@ export const PLUGIN_REACT_NATIVE_EXPORTS = [
   "I18nManager",
   "Image",
   "ImageBackground",
+  // Deprecated in RN core, retained for existing plugins until host replacements exist.
+  "InteractionManager",
   "Keyboard",
   "KeyboardAvoidingView",
   "LayoutAnimation",
@@ -152,6 +154,8 @@ export const PLUGIN_REACT_NATIVE_EXPORTS = [
   "Platform",
   "Pressable",
   "RefreshControl",
+  // Deprecated in RN core, retained for existing plugins (no react-native-safe-area-context in plugin runtime).
+  "SafeAreaView",
   "ScrollView",
   "SectionList",
   "Share",

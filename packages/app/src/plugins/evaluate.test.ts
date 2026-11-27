@@ -1002,21 +1002,30 @@ describe("evaluatePluginClientBundle", () => {
     }
   });
 
-  it("keeps every allowlisted export backed by a non-deprecated react-native core getter", () => {
+  it("keeps every allowlisted export backed by a safe react-native core getter", () => {
     const require = createRequire(import.meta.url);
     const rnIndexPath = require.resolve("react-native/index.js");
     const rnIndexSource = readFileSync(rnIndexPath, "utf8");
     const getterBodies = new Map<string, string>();
-    const getterPattern = /get\s+([A-Za-z0-9_$]+)\s*\(\)\s*\{([\s\S]*?)\n  \},/g;
+    const getterPattern = /get\s+([A-Za-z0-9_$]+)\s*\(\)\s*\{([\s\S]*?)\n\s*\},/g;
     for (const match of rnIndexSource.matchAll(getterPattern)) {
       getterBodies.set(match[1]!, match[2]!);
     }
+    expect(getterBodies.size).toBeGreaterThan(0);
+
+    // Explicitly retained deprecated core exports still used by published plugins.
+    const allowedDeprecated = new Set<string>(["InteractionManager", "SafeAreaView"]);
+    expect(PLUGIN_REACT_NATIVE_EXPORTS).not.toContain("PushNotificationIOS");
 
     for (const name of PLUGIN_REACT_NATIVE_EXPORTS) {
       const body = getterBodies.get(name);
       expect(body, `missing getter for ${name} in react-native/index.js`).toBeDefined();
-      expect(body, `deprecated getter ${name} in react-native/index.js`).not.toContain("warnOnce(");
       expect(body, `throwing getter ${name} in react-native/index.js`).not.toContain("invariant(");
+      if (!allowedDeprecated.has(name)) {
+        expect(body, `deprecated getter ${name} in react-native/index.js`).not.toContain(
+          "warnOnce(",
+        );
+      }
     }
   });
 });
