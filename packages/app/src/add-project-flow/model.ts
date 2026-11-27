@@ -6,6 +6,7 @@ export interface AddProjectHost {
   canBrowse: boolean;
   canCloneGithubRepositories: boolean;
   canSearchGithubRepositories: boolean;
+  canChooseCloneFolderName?: boolean;
   canCreateDirectory: boolean;
 }
 
@@ -53,6 +54,7 @@ export interface AddProjectFlowState {
   existing: ListDraft;
   clone: CloneDraft;
   newFolder: NewFolderDraft;
+  cloneFolderNames: Record<string, string>;
   submission: AddProjectSubmission;
 }
 
@@ -79,6 +81,7 @@ export function openAddProjectFlow(input: OpenAddProjectFlowInput): AddProjectFl
     existing: { query: "", selectedId: null },
     clone: { query: "", selectedId: null, location: null },
     newFolder: { name: "", location: null },
+    cloneFolderNames: {},
     submission: IDLE,
   };
 }
@@ -247,4 +250,34 @@ export function resolveAddProjectKey(
   if (input.key === "ArrowUp") return { kind: "move", direction: "previous" };
   if (input.key === "Enter") return { kind: "submit" };
   return null;
+}
+
+function cloneFolderKey(state: AddProjectFlowState, repository: GithubRepositoryChoice): string {
+  return `${state.hostId}\0${repository.id}`;
+}
+
+export function getCloneFolderName(
+  state: AddProjectFlowState,
+  repository: GithubRepositoryChoice,
+): string {
+  return (
+    state.cloneFolderNames[cloneFolderKey(state, repository)] ??
+    repository.nameWithOwner
+      .split("/")
+      .at(-1)
+      ?.replace(/\.git$/u, "") ??
+    ""
+  );
+}
+
+export function setCloneFolderName(
+  state: AddProjectFlowState,
+  repository: GithubRepositoryChoice,
+  name: string,
+): AddProjectFlowState {
+  return {
+    ...state,
+    cloneFolderNames: { ...state.cloneFolderNames, [cloneFolderKey(state, repository)]: name },
+    submission: IDLE,
+  };
 }

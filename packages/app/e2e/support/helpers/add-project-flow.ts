@@ -52,7 +52,8 @@ export async function chooseAddProjectHost(page: Page, serverId: string): Promis
 export async function chooseAddProjectLocation(page: Page, location: string): Promise<void> {
   await page.getByTestId("add-project-flow-location").click();
   await page.getByPlaceholder("Search folders or enter a path").last().fill(location);
-  await page.getByText("Use this folder", { exact: true }).click();
+  await page.getByPlaceholder("Search folders or enter a path").last().press("Enter");
+  await expect(page.getByPlaceholder("Search folders or enter a path")).toBeHidden();
   await expect(page.getByTestId("add-project-flow-location")).toContainText(
     path.basename(location),
   );

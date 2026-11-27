@@ -1,13 +1,15 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { GitHubIcon } from "@/components/icons/github-icon";
-import { FormTextInput } from "@/components/ui/form-field";
+import { Field, FormTextInput } from "@/components/ui/form-field";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { ICON_SIZE } from "@/styles/theme";
 import type { AddProjectActions } from "./use-add-project-actions";
 import type { AddProjectFlowState, AddProjectHost, GithubRepositoryChoice } from "./model";
+import { getCloneFolderName } from "./model";
+import { validateNewFolderName } from "./options";
 import { LocationField } from "./location-field";
 import {
   buildManualGithubRepositoryChoices,
@@ -54,6 +56,10 @@ function cloneEmptyText(host: AddProjectHost, query: string): string {
 export interface CloneTabView extends AddProjectTabView {
   location: string;
   destination: string;
+  repository: GithubRepositoryChoice | null;
+  folderName: string;
+  nameError: string | null;
+  canChooseFolderName: boolean;
 }
 
 const CLONE_UNAVAILABLE = "Update the host to clone projects";
@@ -97,9 +103,15 @@ export function useCloneTab(input: {
   const activeIndex = awaitingRows ? -1 : resolveActiveIndex(rows, state.clone.selectedId);
   const repository = choices[activeIndex] ?? null;
   const location = state.clone.location ?? defaultLocation;
-  const destination = repository
-    ? joinDirectoryPath(location, checkoutName(repository.nameWithOwner))
-    : location;
+  const canChooseFolderName = host?.canChooseCloneFolderName === true;
+  let folderName = "";
+  if (repository)
+    folderName = canChooseFolderName
+      ? getCloneFolderName(state, repository)
+      : checkoutName(repository.nameWithOwner);
+  const nameError = repository ? validateNewFolderName(folderName) : null;
+  const destination =
+    repository && !nameError ? joinDirectoryPath(location, folderName.trim()) : location;
 
   return useMemo<CloneTabView>(() => {
     const unavailable = host && canClone ? null : CLONE_UNAVAILABLE;
@@ -115,15 +127,30 @@ export function useCloneTab(input: {
       unavailable,
       location,
       destination,
+      repository,
+      folderName,
+      nameError,
+      canChooseFolderName,
       primary: {
         label: "Clone project",
-        submit: repository ? () => actions.clone(repository, location) : null,
+        submit:
+          repository && !nameError
+            ? () =>
+                actions.clone(
+                  repository,
+                  location,
+                  canChooseFolderName ? folderName.trim() : undefined,
+                )
+            : null,
       },
     };
   }, [
     actions,
     activeIndex,
     canClone,
+    canChooseFolderName,
+    folderName,
+    nameError,
     destination,
     host,
     location,
@@ -145,6 +172,7 @@ export function CloneTab({
   onQueryChange,
   onSelectRow,
   onLocationChange,
+  onFolderNameChange,
 }: {
   view: CloneTabView;
   query: string;
@@ -156,8 +184,15 @@ export function CloneTab({
   onQueryChange: (query: string) => void;
   onSelectRow: (index: number) => void;
   onLocationChange: (location: string) => void;
+  onFolderNameChange: (repository: GithubRepositoryChoice, name: string) => void;
 }) {
   const editable = !disabled && !view.unavailable;
+  const changeFolderName = useCallback(
+    (name: string) => {
+      if (view.repository) onFolderNameChange(view.repository, name);
+    },
+    [onFolderNameChange, view.repository],
+  );
   return (
     <View style={styles.body}>
       <FormTextInput
@@ -182,6 +217,26 @@ export function CloneTab({
         disabled={disabled}
         testID={RESULTS_TEST_ID}
       />
+      {view.repository ? (
+        <Field
+          label="Folder name"
+          error={view.nameError}
+          hint={view.canChooseFolderName ? undefined : "Update the host to choose a folder name"}
+        >
+          <FormTextInput
+            key={`${hostId}:${view.repository.id}`}
+            initialValue={view.folderName}
+            onChangeText={changeFolderName}
+            onSubmitEditing={isWeb ? undefined : (view.primary.submit ?? undefined)}
+            accessibilityLabel="Folder name"
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="go"
+            editable={editable && view.canChooseFolderName}
+            invalid={Boolean(view.nameError)}
+          />
+        </Field>
+      ) : null}
       <LocationField
         hostId={hostId}
         location={view.location}

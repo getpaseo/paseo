@@ -24,7 +24,7 @@ function rejectSubmission(state: AddProjectFlowState, message: string): AddProje
 export interface AddProjectActions {
   openFolder: (path: string) => void;
   browse: () => void;
-  clone: (repository: GithubRepositoryChoice, location: string) => void;
+  clone: (repository: GithubRepositoryChoice, location: string, folderName?: string) => void;
   /** Expects a name that passed `validateNewFolderName`; the New folder tab only offers those. */
   createFolder: (name: string, location: string) => void;
 }
@@ -128,16 +128,17 @@ export function useAddProjectActions(input: {
   }, [hostId, openFolder, setState]);
 
   const clone = useCallback(
-    (repository: GithubRepositoryChoice, location: string) => {
+    (repository: GithubRepositoryChoice, location: string, folderName?: string) => {
       if (!hostId) return;
       void run(
         hostId,
         async () => {
-          const result = await cloneGithubProject(
-            repository.cloneUrl,
-            location,
-            repository.cloneProtocol,
-          );
+          const result = await cloneGithubProject({
+            repo: repository.cloneUrl,
+            targetDirectory: location,
+            cloneProtocol: repository.cloneProtocol,
+            folderName,
+          });
           if (!result.ok) return { ok: false, error: result.error ?? "Unable to clone project" };
           rememberLocation(hostId, location);
           return { ok: true, project: result.project };

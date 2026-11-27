@@ -35,7 +35,8 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
 
   const shorthand = repo.match(/^([^\s/]+)\/([^\s/]+)$/u);
   if (!shorthand) return [];
-  const nameWithOwner = `${shorthand[1]}/${shorthand[2]}`;
+  const name = shorthand[2].replace(/\.git$/u, "");
+  const nameWithOwner = `${shorthand[1]}/${name}`;
   return (["https", "ssh"] as const).map((cloneProtocol) => ({
     id: `${MANUAL_CHOICE_PREFIX}${cloneProtocol}:${nameWithOwner}`,
     nameWithOwner,

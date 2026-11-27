@@ -15,6 +15,7 @@ export function useAddProjectHosts(): AddProjectHost[] {
   // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
   const stableProjectIdentityByHost = useHostFeatureMap(hostIds, "stableProjectIdentity");
   // COMPAT(projectGithubClone): added in v0.1.108, remove gate after 2027-01-15.
+  const cloneFolderNameByHost = useHostFeatureMap(hostIds, "projectGithubCloneFolderName");
   const githubCloneByHost = useHostFeatureMap(hostIds, "projectGithubClone");
   // COMPAT(workspaceGithubRepositorySearch): added in v0.1.108, remove gate after 2027-01-15.
   const githubSearchByHost = useHostFeatureMap(hostIds, "workspaceGithubRepositorySearch");
@@ -34,11 +35,13 @@ export function useAddProjectHosts(): AddProjectHost[] {
         canAddProject,
         canBrowse: canAddProject && getIsElectronRuntime() && localServerId === host.serverId,
         canCloneGithubRepositories: githubCloneByHost.get(host.serverId) === true,
+        canChooseCloneFolderName: cloneFolderNameByHost.get(host.serverId) === true,
         canSearchGithubRepositories: githubSearchByHost.get(host.serverId) === true,
         canCreateDirectory: createDirectoryByHost.get(host.serverId) === true,
       };
     });
   }, [
+    cloneFolderNameByHost,
     connectionStatuses,
     createDirectoryByHost,
     githubCloneByHost,

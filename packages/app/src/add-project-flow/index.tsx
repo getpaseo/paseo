@@ -39,7 +39,9 @@ import {
   setAddProjectLocation,
   setAddProjectQuery,
   setNewFolderName,
+  setCloneFolderName,
   type AddProjectTab,
+  type GithubRepositoryChoice,
 } from "./model";
 import { NewFolderTab, useNewFolderTab } from "./new-folder-tab";
 import { defaultProjectLocation } from "./options";
@@ -175,6 +177,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [],
   );
 
+  const changeCloneName = useCallback((repository: GithubRepositoryChoice, name: string) => {
+    setState((current) => setCloneFolderName(current, repository, name));
+  }, []);
+
   // The key handler reads the latest view without re-registering the overlay on every keystroke.
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -288,6 +294,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         onQueryChange={changeQuery}
         onSelectRow={selectRow}
         onLocationChange={changeLocation}
+        onFolderNameChange={changeCloneName}
       />
     );
   } else {

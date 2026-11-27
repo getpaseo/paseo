@@ -12,6 +12,8 @@ import {
   setAddProjectLocation,
   setAddProjectQuery,
   setNewFolderName,
+  getCloneFolderName,
+  setCloneFolderName,
   startAddProjectSubmission,
   type AddProjectHost,
 } from "./model";
@@ -242,4 +244,22 @@ describe("Add Project options", () => {
     expect(validateNewFolderName("C:repo")).toBe("Use a name without a drive letter");
     expect(validateNewFolderName(" acme-api ")).toBeNull();
   });
+});
+
+it("preserves custom clone names per host and repository across tabs and locations", () => {
+  const repo = buildManualGithubRepositoryChoices("acme/api.git")[0]!;
+  const otherRepo = buildManualGithubRepositoryChoices("acme/other")[0]!;
+  let state = openAddProjectFlow({ hosts: [HOST, REMOTE] });
+  expect(getCloneFolderName(state, repo)).toBe("api");
+  state = setCloneFolderName(state, repo, "custom.git");
+  state = selectAddProjectTab(state, "clone");
+  state = setAddProjectLocation(state, "/other");
+  state = selectAddProjectTab(state, "existing");
+  state = selectAddProjectTab(state, "clone");
+  expect(getCloneFolderName(state, repo)).toBe("custom.git");
+  expect(getCloneFolderName(state, otherRepo)).toBe("other");
+  state = selectAddProjectHost(state, REMOTE.serverId);
+  expect(getCloneFolderName(state, repo)).toBe("api");
+  state = selectAddProjectHost(state, HOST.serverId);
+  expect(getCloneFolderName(state, repo)).toBe("custom.git");
 });
