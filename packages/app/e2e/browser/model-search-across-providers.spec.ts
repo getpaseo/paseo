@@ -5,6 +5,7 @@ import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import {
   clickModelRowWhileProviderOpens,
   closeModelPicker,
+  expectModelListScrollKeepsSearchFocused,
   expectModelSearchEmptyState,
   expectModelPickerHeight,
   expectModelPickerWidth,
@@ -228,6 +229,7 @@ test.describe("Cross-provider model search", () => {
         await page.keyboard.press("Enter");
         const deepRow = viewport.getByTestId(`model-row-${STUDIO.id}-studio-deep`);
         await expect(deepRow).toBeVisible();
+        await expectModelListScrollKeepsSearchFocused(page);
 
         for (let step = 0; step < 5; step += 1) {
           if ((await deepRow.getAttribute("data-active")) === "true") break;

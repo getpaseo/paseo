@@ -795,6 +795,17 @@ export async function clickModelRowWhileProviderOpens(
   }
 }
 
+/** Scrolling a provider's model list with the wheel leaves typing and Enter in the search field. */
+export async function expectModelListScrollKeepsSearchFocused(page: Page): Promise<void> {
+  const search = pickerViewport(page).getByTestId("model-search-input");
+  const list = pickerViewport(page).getByTestId("compact-model-list");
+  await expect(search).toBeFocused();
+  await list.hover();
+  await page.mouse.wheel(0, 200);
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(search).toBeFocused();
+}
+
 // ─── Cross-provider model search ───────────────────────────────────────────
 
 export async function searchAllModels(page: Page, query: string): Promise<void> {
