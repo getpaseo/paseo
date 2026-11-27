@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs
 import os from "node:os";
 import path from "node:path";
 import type { TunnelEvent } from "@getpaseo/plugin/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTailscaleFunnelProvider } from "../server/tailscale.js";
 
 const tempDirs: string[] = [];
@@ -16,8 +16,34 @@ interface FakeTailscaleState {
   history: string[][];
 }
 
-// Each running `tailscale funnel` owns one file in portsDir, and every call appends one history line.
-// Separate files keep concurrent fake processes from overwriting each other's state.
+/** Writes a fake CLI that runs `script` with Node. Windows ignores shebangs, so it gets a `.cmd` launcher. */
+async function writeFakeCli(dir: string, name: string, script: string): Promise<string> {
+  if (process.platform === "win32") {
+    const scriptPath = path.join(dir, `${name}.cjs`);
+    await writeFile(scriptPath, script, "utf8");
+    const launcher = path.join(dir, `${name}.cmd`);
+    await writeFile(launcher, `@"${process.execPath}" "${scriptPath}" %*\r\n`, "utf8");
+    return launcher;
+  }
+  const launcher = path.join(dir, name);
+  await writeFile(launcher, `#!${process.execPath}\n${script}\n`, "utf8");
+  await chmod(launcher, 0o755);
+  return launcher;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Each `tailscale funnel` process owns one file in portsDir that records its pid. Like tailscaled
+// with a foreground Funnel, a port counts as in use only while that process lives. Every call
+// appends one history line. Separate files keep concurrent fake processes from overwriting each
+// other's state.
 async function createFakeTailscale(initial: {
   statusJson: Record<string, unknown>;
   funnelPorts?: Record<string, string>;
@@ -38,15 +64,19 @@ async function createFakeTailscale(initial: {
     "utf8",
   );
   await writeFile(historyFile, "", "utf8");
+  // Ports configured outside Paseo stay in use for the whole test, so they belong to this process.
   for (const [port, target] of Object.entries(initial.funnelPorts ?? {})) {
-    await writeFile(path.join(portsDir, port), target, "utf8");
+    await writeFile(
+      path.join(portsDir, port),
+      JSON.stringify({ pid: process.pid, target }),
+      "utf8",
+    );
   }
 
-  const binary = path.join(dir, "tailscale");
-  await writeFile(
-    binary,
-    `#!${process.execPath}
-const fs = require("node:fs");
+  const binary = await writeFakeCli(
+    dir,
+    "tailscale",
+    `const fs = require("node:fs");
 const path = require("node:path");
 const config = JSON.parse(fs.readFileSync(${JSON.stringify(configFile)}, "utf8"));
 const portsDir = ${JSON.stringify(portsDir)};
@@ -63,9 +93,18 @@ if (args[0] === "funnel" && args[1] === "status" && args[2] === "--json") {
     console.error("funnel status failed");
     process.exit(1);
   }
+  const isAlive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const tcp = {};
   for (const port of fs.readdirSync(portsDir)) {
-    tcp[port] = { HTTPS: true };
+    const { pid } = JSON.parse(fs.readFileSync(path.join(portsDir, port), "utf8"));
+    if (isAlive(pid)) tcp[port] = { HTTPS: true };
   }
   console.log(JSON.stringify({ TCP: tcp }));
   process.exit(0);
@@ -74,7 +113,7 @@ if (args[0] === "funnel" && args[1] === "status" && args[2] === "--json") {
 // Foreground funnel: tailscaled keeps the configuration only while this process runs.
 if (args[0] === "funnel" && args[1].startsWith("--https=")) {
   const portFile = path.join(portsDir, args[1].slice("--https=".length));
-  fs.writeFileSync(portFile, args[2]);
+  fs.writeFileSync(portFile, JSON.stringify({ pid: process.pid, target: args[2] }));
   const removeConfig = () => {
     fs.rmSync(portFile, { force: true });
     process.exit(0);
@@ -91,16 +130,18 @@ if (args[0] === "funnel" && args[1].startsWith("--https=")) {
 console.error("Unexpected tailscale args:", args.join(" "));
 process.exit(1);
 `,
-    "utf8",
   );
-  await chmod(binary, 0o755);
 
   return {
     binary,
     readState: async () => {
       const funnelPorts: Record<string, string> = {};
       for (const port of await readdir(portsDir)) {
-        funnelPorts[port] = await readFile(path.join(portsDir, port), "utf8");
+        const entry = JSON.parse(await readFile(path.join(portsDir, port), "utf8")) as {
+          pid: number;
+          target: string;
+        };
+        if (isProcessAlive(entry.pid)) funnelPorts[port] = entry.target;
       }
       const history = (await readFile(historyFile, "utf8"))
         .split("\n")
@@ -248,11 +289,13 @@ describe("tailscale-funnel built-in plugin", () => {
     await second.done;
     expect(second.events.at(-1)).toEqual({ type: "closed", reason: "aborted" });
 
-    const stateAfterClose = await fake.readState();
-    expect(stateAfterClose.funnelPorts).toEqual({
-      "443": "http://127.0.0.1:3001",
-      "10000": "http://127.0.0.1:3003",
-    });
+    // Windows force-kills the launcher tree, so the funnel process can outlive `done` briefly.
+    await vi.waitFor(async () =>
+      expect((await fake.readState()).funnelPorts).toEqual({
+        "443": "http://127.0.0.1:3001",
+        "10000": "http://127.0.0.1:3003",
+      }),
+    );
 
     // A new exposure reuses the freed port 8443 and brackets IPv6 hosts.
     const fourth = await openExposure("e4", 3004, "::1");
@@ -265,8 +308,8 @@ describe("tailscale-funnel built-in plugin", () => {
     fourth.controller.abort();
     await Promise.all([first.done, third.done, fourth.done]);
 
+    await vi.waitFor(async () => expect((await fake.readState()).funnelPorts).toEqual({}));
     const finalState = await fake.readState();
-    expect(finalState.funnelPorts).toEqual({});
     expect(finalState.history).toContainEqual(["funnel", "--https=443", "http://127.0.0.1:3001"]);
     expect(finalState.history.flat()).not.toContain("--bg");
   });

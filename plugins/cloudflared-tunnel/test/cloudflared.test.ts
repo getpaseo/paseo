@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { TunnelEvent } from "@getpaseo/plugin/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCloudflaredTunnelProvider } from "../server/cloudflared.js";
 
 const tempDirs: string[] = [];
@@ -11,12 +11,34 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+/** Writes a fake CLI that runs `script` with Node. Windows ignores shebangs, so it gets a `.cmd` launcher. */
+async function writeFakeCli(dir: string, name: string, script: string): Promise<string> {
+  if (process.platform === "win32") {
+    const scriptPath = path.join(dir, `${name}.cjs`);
+    await writeFile(scriptPath, script, "utf8");
+    const launcher = path.join(dir, `${name}.cmd`);
+    await writeFile(launcher, `@"${process.execPath}" "${scriptPath}" %*\r\n`, "utf8");
+    return launcher;
+  }
+  const launcher = path.join(dir, name);
+  await writeFile(launcher, `#!${process.execPath}\n${script}\n`, "utf8");
+  await chmod(launcher, 0o755);
+  return launcher;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function createFakeCloudflared(scriptBody: string): Promise<{ dir: string; binary: string }> {
   const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-fake-cloudflared-"));
   tempDirs.push(dir);
-  const binary = path.join(dir, "cloudflared");
-  await writeFile(binary, `#!${process.execPath}\n${scriptBody}\n`, "utf8");
-  await chmod(binary, 0o755);
+  const binary = await writeFakeCli(dir, "cloudflared", scriptBody);
   return { dir, binary };
 }
 
@@ -50,14 +72,10 @@ if (args[0] === "--version") {
   console.log("cloudflared version 2026.5.0 (built 2026-05-01)");
   process.exit(0);
 }
-fs.writeFileSync(${JSON.stringify(markerFile)}, "started:" + args.join(" "));
+fs.writeFileSync(${JSON.stringify(markerFile)}, JSON.stringify({ pid: process.pid, args }));
 console.error("INF +------------------------------------------------------------+");
 console.error("INF |  https://quick-demo-123.trycloudflare.com                  |");
 console.error("INF +------------------------------------------------------------+");
-process.on("SIGTERM", () => {
-  fs.writeFileSync(${JSON.stringify(markerFile)}, "terminated");
-  process.exit(0);
-});
 setInterval(() => {}, 10_000);
 `);
     tempDirs.push(markerFile);
@@ -95,14 +113,16 @@ setInterval(() => {}, 10_000);
     );
 
     await readyPromise;
-    expect(await readFile(markerFile, "utf8")).toBe(
-      "started:tunnel --no-autoupdate --url http://127.0.0.1:4321",
-    );
+    const started = JSON.parse(await readFile(markerFile, "utf8")) as {
+      pid: number;
+      args: string[];
+    };
+    expect(started.args).toEqual(["tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:4321"]);
 
     controller.abort();
     await running;
 
-    expect(await readFile(markerFile, "utf8")).toBe("terminated");
+    await vi.waitFor(() => expect(isProcessAlive(started.pid)).toBe(false));
     expect(events).toEqual([
       { type: "connecting" },
       {

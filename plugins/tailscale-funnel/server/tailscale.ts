@@ -37,13 +37,14 @@ function formatHostForUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
+// On Windows a bare name that is not on PATH runs through cmd.exe, which exits 9009 for an
+// unknown command instead of failing the spawn with ENOENT.
+const WINDOWS_COMMAND_NOT_FOUND_EXIT_CODE = 9009;
+
 function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error.code === "ENOENT" || error.code === "ENOTDIR")
-  );
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  if (error.code === "ENOENT" || error.code === "ENOTDIR") return true;
+  return process.platform === "win32" && error.code === WINDOWS_COMMAND_NOT_FOUND_EXIT_CODE;
 }
 
 function hasFunnelCapability(self: NonNullable<TailscaleStatusJson["Self"]>): boolean {
