@@ -123,33 +123,63 @@ export type PluginClientRuntime = Pick<
 // The 0.12 entry exposed the reveal hook as well as UI components.
 const pluginReactNativeCompatRuntime = { ...pluginUiRuntime, useRevealedText };
 
-// Deprecated or removed react-native core getters that throw on access.
-// PushNotificationIOS crashes iOS fatally via guardedLoadModule -> RCTExceptionsManager.reportFatal
-// because RCTPushNotificationManager is not linked in Expo builds, bypassing JS try/catch.
-const UNSUPPORTED_REACT_NATIVE_EXPORTS = new Set([
-  "PushNotificationIOS",
-  "AsyncStorage",
-  "ImagePickerIOS",
-  "ProgressViewIOS",
-  "DatePickerIOS",
-  "Slider",
-]);
+// Explicit allowlist of cross-platform react-native UI and layout exports exposed to plugins.
+// Exposing the raw react-native namespace leaks unlinked native getters (such as PushNotificationIOS)
+// that crash iOS fatally via Metro's guardedLoadModule -> RCTExceptionsManager.reportFatal,
+// bypassing PluginRegistry's try/catch.
+export const PLUGIN_REACT_NATIVE_EXPORTS = [
+  "AccessibilityInfo",
+  "ActivityIndicator",
+  "Alert",
+  "Animated",
+  "AppState",
+  "Appearance",
+  "BackHandler",
+  "Button",
+  "Dimensions",
+  "Easing",
+  "FlatList",
+  "I18nManager",
+  "Image",
+  "ImageBackground",
+  "Keyboard",
+  "KeyboardAvoidingView",
+  "LayoutAnimation",
+  "Linking",
+  "Modal",
+  "PanResponder",
+  "PixelRatio",
+  "Platform",
+  "Pressable",
+  "RefreshControl",
+  "ScrollView",
+  "SectionList",
+  "Share",
+  "StatusBar",
+  "StyleSheet",
+  "Switch",
+  "Text",
+  "TextInput",
+  "Touchable",
+  "TouchableHighlight",
+  "TouchableNativeFeedback",
+  "TouchableOpacity",
+  "TouchableWithoutFeedback",
+  "Vibration",
+  "View",
+  "VirtualizedList",
+  "findNodeHandle",
+  "processColor",
+  "useColorScheme",
+  "useWindowDimensions",
+] as const;
 
 export function createPluginReactNativeRuntime(
   source: Record<string, unknown>,
 ): Record<string, unknown> {
-  const keys = Object.keys(source);
-  const target =
-    keys.length === 1 &&
-    keys[0] === "default" &&
-    typeof source.default === "object" &&
-    source.default !== null
-      ? (source.default as Record<string, unknown>)
-      : source;
   const runtime: Record<string, unknown> = {};
-  for (const key of Object.keys(target)) {
-    if (key === "default" || UNSUPPORTED_REACT_NATIVE_EXPORTS.has(key)) continue;
-    const descriptor = Object.getOwnPropertyDescriptor(target, key);
+  for (const key of PLUGIN_REACT_NATIVE_EXPORTS) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
     if (!descriptor) continue;
     Object.defineProperty(runtime, key, descriptor);
   }
