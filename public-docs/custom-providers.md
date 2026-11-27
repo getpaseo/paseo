@@ -206,6 +206,10 @@ Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be a
 }
 ```
 
+## Provider brand icons
+
+Set `iconSvg` to an inline SVG document to send a brand mark to desktop, iOS, and Android clients. SVG must be self-contained and no larger than 64 KiB; scripts, styles, `foreignObject`, event handlers, JavaScript URLs, and external references are rejected. Provider IDs `seed` and `doubao` include the Doubao brand mark, and `deepseek` includes the DeepSeek brand mark without this field.
+
 ## Full reference
 
-For the complete field reference (`extends`, `label`, `command`, `env`, `options`, `models`, `additionalModels`, `disallowedTools`, `paseoTools`, `enabled`, `order`), model and thinking-option schemas, and deeper examples for each plan, see [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md) on GitHub. See [Limit Paseo tools by provider](/docs/mcp#limit-paseo-tools-by-provider) for `paseoTools` configuration.
+For the complete field reference (`extends`, `label`, `iconSvg`, `command`, `env`, `options`, `models`, `additionalModels`, `disallowedTools`, `paseoTools`, `enabled`, `order`), model and thinking-option schemas, and deeper examples for each plan, see [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md) on GitHub. See [Limit Paseo tools by provider](/docs/mcp#limit-paseo-tools-by-provider) for `paseoTools` configuration.

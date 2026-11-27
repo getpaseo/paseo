@@ -14,6 +14,7 @@ import { OpenCodeIcon } from "@/components/icons/opencode-icon";
 import { OmpIcon } from "@/components/icons/omp-icon";
 import { PiIcon } from "@/components/icons/pi-icon";
 import { ACP_PROVIDER_ICON_SVGS } from "@/assets/acp-provider-icons";
+import { CUSTOM_PROVIDER_ICON_SVGS } from "@/assets/custom-provider-icons";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
 import { resolveProviderIconName } from "@/components/provider-icon-name";
 
@@ -26,21 +27,60 @@ export interface ProviderIconProps {
 
 export type ProviderIconComponent = ComponentType<ProviderIconProps>;
 
+const PROVIDER_BRAND_COLORS: Record<string, string> = {
+  agy: "#3186FF",
+  antigravity: "#3186FF",
+  "claude-acp": "#D97757",
+  claude: "#D97757",
+  "codex-acp": "#10A37F",
+  codex: "#10A37F",
+  copilot: "#58A6FF",
+  gemini: "#8E75C2",
+  "github-copilot-cli": "#58A6FF",
+  grok: "#4F46E5",
+  kimi: "#7C3AED",
+  kiro: "#9046FF",
+  minimax: "#E2167E",
+  "minimax-code": "#E2167E",
+  omp: "#818CF8",
+  opencode: "#38BDF8",
+  pi: "#818CF8",
+  "pi-acp": "#818CF8",
+  traecli: "#2563EB",
+};
+
+function createBrandedProviderIcon(
+  provider: string,
+  Icon: ProviderIconComponent,
+): ProviderIconComponent {
+  const BrandedProviderIcon: ProviderIconComponent = (props) =>
+    createElement(Icon, {
+      ...props,
+      color: PROVIDER_BRAND_COLORS[provider] ?? props.color,
+    });
+  BrandedProviderIcon.displayName = `BrandedProviderIcon(${provider})`;
+  return BrandedProviderIcon;
+}
+
 const BUILTIN_PROVIDER_ICONS: Record<string, ProviderIconComponent> = {
-  antigravity: AntigravityIcon as unknown as ProviderIconComponent,
-  claude: ClaudeIcon as unknown as ProviderIconComponent,
-  codex: CodexIcon as unknown as ProviderIconComponent,
-  copilot: CopilotIcon as unknown as ProviderIconComponent,
-  kiro: KiroIcon as unknown as ProviderIconComponent,
-  minimax: MiniMaxIcon as unknown as ProviderIconComponent,
-  omp: OmpIcon as unknown as ProviderIconComponent,
-  opencode: OpenCodeIcon as unknown as ProviderIconComponent,
-  pi: PiIcon as unknown as ProviderIconComponent,
+  antigravity: createBrandedProviderIcon("antigravity", AntigravityIcon),
+  claude: createBrandedProviderIcon("claude", ClaudeIcon),
+  codex: createBrandedProviderIcon("codex", CodexIcon),
+  copilot: createBrandedProviderIcon("copilot", CopilotIcon),
+  kiro: createBrandedProviderIcon("kiro", KiroIcon),
+  minimax: createBrandedProviderIcon("minimax", MiniMaxIcon),
+  omp: createBrandedProviderIcon("omp", OmpIcon),
+  opencode: createBrandedProviderIcon("opencode", OpenCodeIcon),
+  pi: createBrandedProviderIcon("pi", PiIcon),
 };
 
 const CATALOG_ICON_SVGS = new Map<string, string>(
   ACP_PROVIDER_CATALOG.flatMap((entry) => (entry.iconSvg ? [[entry.id, entry.iconSvg]] : [])),
 );
+
+for (const [provider, iconSvg] of Object.entries(CUSTOM_PROVIDER_ICON_SVGS)) {
+  CATALOG_ICON_SVGS.set(provider, iconSvg);
+}
 
 for (const name of TERMINAL_PROFILE_ICON_NAMES) {
   const iconSvg = (ACP_PROVIDER_ICON_SVGS as Record<string, string | undefined>)[name];
@@ -59,7 +99,7 @@ export function SvgIcon({ svg, size, color }: ProviderIconProps & { svg: string 
 
 function createSvgIcon(provider: string, iconSvg: string): ProviderIconComponent {
   const SvgProviderIcon: ProviderIconComponent = ({ size, color }) =>
-    SvgIcon({ svg: iconSvg, size, color });
+    SvgIcon({ svg: iconSvg, size, color: PROVIDER_BRAND_COLORS[provider] ?? color });
   SvgProviderIcon.displayName = `SvgProviderIcon(${provider})`;
   return SvgProviderIcon;
 }

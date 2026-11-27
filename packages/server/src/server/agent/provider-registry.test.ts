@@ -992,6 +992,35 @@ test("custom provider without label throws", () => {
   ).toThrowError("Custom provider 'zai' requires a label");
 });
 
+test("derived provider carries configured SVG icon metadata", () => {
+  const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      seed: {
+        extends: "claude",
+        label: "Seed",
+        iconSvg,
+      },
+    },
+  });
+
+  expect(registry.seed.iconSvg).toBe(iconSvg);
+});
+
+test("rejects unsafe SVG in a custom provider icon", () => {
+  expect(() =>
+    buildProviderRegistry(logger, {
+      providerOverrides: {
+        seed: {
+          extends: "claude",
+          label: "Seed",
+          iconSvg: "<svg><script /></svg>",
+        },
+      },
+    }),
+  ).toThrowError('Custom provider "seed" has invalid iconSvg: script elements are not allowed');
+});
+
 test("enabled: false keeps provider metadata in registry", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {

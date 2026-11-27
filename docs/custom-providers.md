@@ -73,6 +73,7 @@ per-agent examples and provider-specific keys.
 - [Custom binary for a provider](#custom-binary-for-a-provider)
 - [Disabling a provider](#disabling-a-provider)
 - [ACP providers](#acp-providers)
+- [Provider brand icons](#provider-brand-icons)
 - [Provider override reference](#provider-override-reference)
 
 ---
@@ -708,6 +709,28 @@ When an `additionalModels` entry has the same `id` as a discovered model, it upd
 
 ---
 
+## Provider brand icons
+
+Set `iconSvg` to an inline SVG document when a provider needs its own brand mark on desktop, iOS, or Android. The daemon includes it in provider snapshot metadata without changing the provider's launch, model, or permission configuration.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-provider": {
+        "extends": "claude",
+        "label": "My Provider",
+        "iconSvg": "<svg viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path fill=\"#4D6BFE\" d=\"M4 4h16v16H4z\" /></svg>"
+      }
+    }
+  }
+}
+```
+
+SVG must be self-contained and no larger than 64 KiB. Scripts, styles, `foreignObject`, event handlers, JavaScript URLs, and external references are rejected when the registry is built. Provider IDs `seed` and `doubao` include the Doubao brand mark, and `deepseek` includes the DeepSeek brand mark without requiring `iconSvg`.
+
+---
+
 ## Provider override reference
 
 Every entry under `agents.providers` accepts these fields:
@@ -717,6 +740,7 @@ Every entry under `agents.providers` accepts these fields:
 | `extends`          | `string`                  | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                   |
 | `label`            | `string`                  | Yes (custom only) | Display name in the UI                                             |
 | `description`      | `string`                  | No                | Short description shown in the UI                                  |
+| `iconSvg`          | `string`                  | No                | Inline SVG sent to desktop, iOS, and Android clients               |
 | `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
 | `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
 | `options`          | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |

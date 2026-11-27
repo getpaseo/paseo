@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_PROVIDER_ICON_NAMES,
+  CUSTOM_PROVIDER_ICON_NAMES,
   KNOWN_PROVIDER_ICON_NAMES,
   TERMINAL_PROFILE_ICON_NAMES,
 } from "@getpaseo/protocol/provider-icon-names";
@@ -22,6 +23,12 @@ describe("resolveProviderIconName", () => {
     expect(resolveProviderIconName("gjc")).toEqual({ kind: "catalog", id: "gjc" });
     expect(resolveProviderIconName("hermes")).toEqual({ kind: "catalog", id: "hermes" });
     expect(resolveProviderIconName("traecli")).toEqual({ kind: "catalog", id: "traecli" });
+  });
+
+  it("returns the catalog identifier for custom providers with bundled brand artwork", () => {
+    expect(resolveProviderIconName("seed")).toEqual({ kind: "catalog", id: "seed" });
+    expect(resolveProviderIconName("doubao")).toEqual({ kind: "catalog", id: "doubao" });
+    expect(resolveProviderIconName("deepseek")).toEqual({ kind: "catalog", id: "deepseek" });
   });
 
   it("falls back to the bot icon for unknown custom providers", () => {
@@ -48,11 +55,12 @@ describe("known provider icon names", () => {
   it("only lists ACP icon ids that have a catalog entry with an icon", () => {
     const builtin = new Set(BUILTIN_PROVIDER_ICON_NAMES);
     const terminalOnly = new Set(TERMINAL_PROFILE_ICON_NAMES);
+    const custom = new Set(CUSTOM_PROVIDER_ICON_NAMES);
     const catalogIdsWithIcons = new Set(
       ACP_PROVIDER_CATALOG.filter((entry) => entry.iconSvg).map((entry) => entry.id),
     );
     for (const name of KNOWN_PROVIDER_ICON_NAMES) {
-      if (!builtin.has(name) && !terminalOnly.has(name)) {
+      if (!builtin.has(name) && !terminalOnly.has(name) && !custom.has(name)) {
         expect(catalogIdsWithIcons).toContain(name);
       }
     }

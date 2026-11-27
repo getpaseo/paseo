@@ -341,6 +341,24 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("carries a configured custom provider icon in snapshot metadata", () => {
+    const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        seed: { extends: "claude", label: "Seed", iconSvg },
+      },
+    });
+
+    try {
+      expect(manager.getSnapshot("/tmp/project").records.map(({ entry }) => entry)).toContainEqual(
+        expect.objectContaining({ provider: "seed", iconSvg }),
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("validates catalog choices while leaving provider options opaque", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),

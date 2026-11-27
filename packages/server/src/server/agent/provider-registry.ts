@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { findSvgIconProblem } from "@getpaseo/plugin";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import type {
@@ -137,6 +138,7 @@ type ProviderClientFactory = (
 
 interface ResolvedProvider {
   definition: AgentProviderDefinition;
+  iconSvg?: string;
   runtimeSettings?: ProviderRuntimeSettings;
   profileModels: ProviderProfileModel[];
   additionalModels: ProviderProfileModel[];
@@ -685,6 +687,7 @@ function createRegistryEntry(
   const { createBaseClient: _createBaseClient, contract: _contract, ...configuration } = resolved;
   return {
     ...resolved.definition,
+    iconSvg: resolved.iconSvg,
     configuration,
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
@@ -773,6 +776,7 @@ function createResolvedProviderClient(
 
 interface RegisteredProvider {
   definition: AgentProviderDefinition;
+  iconSvg?: string;
   createClient: ProviderClientFactory;
   contract: ProviderContract;
   runtimeSettings?: ProviderRuntimeSettings;
@@ -784,6 +788,7 @@ function resolveRegisteredProvider(input: RegisteredProvider): ResolvedProvider 
   const runtimeSettings = mergeRuntimeSettings(input.runtimeSettings, toRuntimeSettings(override));
   return {
     definition: applyOverrideToDefinition(definition, override),
+    iconSvg: override?.iconSvg ?? input.iconSvg,
     runtimeSettings,
     profileModels: override?.models ?? [],
     additionalModels: override?.additionalModels ?? [],
@@ -869,6 +874,7 @@ function addDerivedProviders(
           },
           override,
         ),
+        iconSvg: override.iconSvg,
         runtimeSettings: toRuntimeSettings(override),
         profileModels: override.models ?? [],
         additionalModels: override.additionalModels ?? [],
@@ -924,6 +930,7 @@ function addDerivedProviders(
 
     resolvedProviders.set(providerId, {
       definition: createDerivedDefinition(providerId, baseDefinition, override),
+      iconSvg: override.iconSvg,
       runtimeSettings: mergedRuntimeSettings,
       profileModels: override.models ?? [],
       additionalModels: override.additionalModels ?? [],
@@ -946,12 +953,23 @@ function addDerivedProviders(
   }
 }
 
+function validateProviderOverrideIcons(providerOverrides: Record<string, ProviderOverride>): void {
+  for (const [providerId, override] of Object.entries(providerOverrides)) {
+    if (!override.iconSvg) continue;
+    const problem = findSvgIconProblem(override.iconSvg);
+    if (problem) {
+      throw new Error(`Custom provider "${providerId}" has invalid iconSvg: ${problem}`);
+    }
+  }
+}
+
 export function buildProviderRegistry(
   logger: Logger,
   options?: BuildProviderRegistryOptions,
 ): Record<AgentProvider, ProviderDefinition> {
   const runtimeSettings = options?.runtimeSettings;
   const providerOverrides = options?.providerOverrides ?? {};
+  validateProviderOverrideIcons(providerOverrides);
   const resolvedProviders = buildResolvedBuiltinProviders(
     providerOverrides,
     runtimeSettings,
@@ -978,6 +996,7 @@ export function buildProviderRegistry(
       provider,
       resolveRegisteredProvider({
         definition,
+        iconSvg: definition.iconSvg,
         override,
         runtimeSettings: runtimeSettings?.[provider],
         createClient: definition.createClient,
