@@ -9,19 +9,23 @@ async function chooseLanguage(page: Page, language: string) {
   await page.getByRole("menuitemradio", { name: language }).click();
 }
 
-async function withPageScriptsHeld(page: Page, run: (release: () => void) => Promise<void>) {
-  let releaseScripts!: () => void;
-  const scriptsReleased = new Promise<void>((resolve) => {
-    releaseScripts = resolve;
+async function withRequestsHeld(
+  page: Page,
+  pattern: string,
+  run: (release: () => void) => Promise<void>,
+) {
+  let releaseRequests!: () => void;
+  const requestsReleased = new Promise<void>((resolve) => {
+    releaseRequests = resolve;
   });
-  await page.route("**/*.js", async (route) => {
-    await scriptsReleased;
+  await page.route(pattern, async (route) => {
+    await requestsReleased;
     await route.continue();
   });
   try {
-    await run(releaseScripts);
+    await run(releaseRequests);
   } finally {
-    releaseScripts();
+    releaseRequests();
     await page.unrouteAll({ behavior: "wait" });
   }
 }
@@ -198,13 +202,17 @@ test("switches language from the keyboard", async ({ page }) => {
   await expect(languageButton(page)).toBeFocused();
 
   await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitemradio", { name: "English" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(page.getByRole("menuitemradio", { name: /简体中文/ })).toBeFocused();
-  await page.keyboard.press("Enter");
 
-  await expect(page).toHaveURL(/\/zh-CN$/);
-  await expect(languageButton(page)).toHaveText("ZH");
-  await expect(languageButton(page)).toBeFocused();
+  // A slow plugin count must not delay the new language or lose keyboard focus.
+  await withRequestsHeld(page, "**/_serverFn/**", async () => {
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/zh-CN$/);
+    await expect(languageButton(page)).toHaveText("ZH");
+    await expect(languageButton(page)).toBeFocused();
+  });
 });
 
 test.describe("on a phone", () => {
@@ -260,7 +268,7 @@ test("shows the changelog in Chinese", async ({ page }) => {
 });
 
 test("waits for scripts before enabling the language menu", async ({ page }) => {
-  await withPageScriptsHeld(page, async (releaseScripts) => {
+  await withRequestsHeld(page, "**/*.js", async (releaseScripts) => {
     await page.goto("/docs/cli#running-agents", { waitUntil: "commit" });
     await expect(languageButton(page)).toBeVisible();
     await expect(languageButton(page)).toBeDisabled();

@@ -42,7 +42,10 @@ object CodeBlockNode {
     language: String?,
     fenceChar: String,
   ): String {
-    val fence = fenceChar.repeat(3)
+    // A fence must be longer than any run of its character in the code, or an inner
+    // fence (a Markdown example) closes the block early.
+    val longestRun = Regex("${Regex.escape(fenceChar)}+").findAll(code).maxOfOrNull { it.value.length } ?: 0
+    val fence = fenceChar.repeat(maxOf(3, longestRun + 1))
     return "$fence${language.orEmpty()}\n$code\n$fence"
   }
 

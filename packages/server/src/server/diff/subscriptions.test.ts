@@ -534,6 +534,61 @@ test("submodule commits invalidate cached worktree gitlink bodies", async () => 
   }
 });
 
+// Windows paths cannot contain `:`.
+const uninitializedSubmodulePaths = process.platform === "win32" ? ["sub"] : ["sub", "0:sub"];
+
+test.each(uninitializedSubmodulePaths)(
+  "staged commits invalidate cached bodies for an uninitialized submodule at %s",
+  async (submodule) => {
+    const cwd = await mkdtemp(join(tmpdir(), "diff-uninitialized-gitlink-cache-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const streams = new DiffSubscriptions({
+      async requestWorkingTreeWatch(root) {
+        return { repoRoot: root, unsubscribe: async () => {} };
+      },
+    });
+    const frames: DiffFrame[] = [];
+    const commit = (message: string) => {
+      git("-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", message);
+      return git("rev-parse", "HEAD");
+    };
+    try {
+      git("init", "-b", "main");
+      git("config", "user.name", "Test");
+      git("config", "user.email", "test@example.com");
+      const [a, b, c] = [commit("A"), commit("B"), commit("C")];
+      git("update-index", "--add", "--cacheinfo", `160000,${a},${submodule}`);
+      git("-c", "commit.gpgsign=false", "commit", "-m", "record A");
+      await mkdir(join(cwd, submodule));
+      git("update-index", "--cacheinfo", `160000,${b},${submodule}`);
+      const subscription = await streams.subscribe(
+        { cwd, base: { kind: "rev", rev: "HEAD" }, head: { kind: "worktree" } },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      await subscription.start();
+      expect(frames.at(-1)).toMatchObject({ opcode: DiffOpcode.End, error: null });
+      frames.length = 0;
+      git("update-index", "--cacheinfo", `160000,${c},${submodule}`);
+      await streams.invalidateForCwd(cwd);
+      await expect
+        .poll(() => frames.some((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+        .toBe(true);
+      const bodies = frames.flatMap((frame) =>
+        frame.opcode === DiffOpcode.Bodies ? frame.files : [],
+      );
+      expect(bodies.flatMap((file) => file.hunks.flatMap((hunk) => hunk.lines))).toContainEqual(
+        expect.objectContaining({ type: "add", content: `Subproject commit ${c}` }),
+      );
+      await subscription.release();
+    } finally {
+      await streams.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
 test("stat-only changes reuse cached bodies and send no body frames", async () => {
   const { utimes } = await import("node:fs/promises");
   const cwd = await mkdtemp(join(tmpdir(), "diff-stat-only-"));

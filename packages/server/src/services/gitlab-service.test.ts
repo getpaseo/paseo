@@ -1654,4 +1654,49 @@ describe("createGitLabService", () => {
       GlabCommandError,
     );
   });
+
+  it("forwards the resolved glab executablePath to the command runner", async () => {
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGitLabService({
+      resolveGlabPath: async () => "/opt/gitlab-cli/bin/glab",
+      resolveRemoteUrl: async () => "git@gitlab.example.com:example-group/example-project.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        return ok("[]");
+      },
+    });
+
+    await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "release", kinds: ["github-pr"] });
+    expect(seenExecutablePaths).toEqual(["/opt/gitlab-cli/bin/glab", "/opt/gitlab-cli/bin/glab"]);
+  });
+
+  it("re-resolves glab and retries when the previously cached executable disappears", async () => {
+    let availablePath = "/first/bin/glab";
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGitLabService({
+      resolveGlabPath: async () => availablePath,
+      resolveRemoteUrl: async () => "git@gitlab.example.com:example-group/example-project.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        if (options.executablePath !== availablePath) {
+          const error = new Error("spawn ENOENT") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return ok("[]");
+      },
+    });
+
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "first", kinds: ["github-pr"] });
+    availablePath = "/second/bin/glab";
+    const secondResult = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "second",
+      kinds: ["github-pr"],
+    });
+
+    expect(secondResult.featuresEnabled).toBe(true);
+    expect(seenExecutablePaths).toEqual(["/first/bin/glab", "/first/bin/glab", "/second/bin/glab"]);
+  });
 });

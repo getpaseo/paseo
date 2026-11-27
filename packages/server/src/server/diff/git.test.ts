@@ -778,3 +778,40 @@ test.each([
     }
   },
 );
+
+test("an uninitialized submodule below a bare repository layout does not fail the comparison", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-uninitialized-submodule-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const { mkdir } = await import("node:fs/promises");
+  try {
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    await writeFile(join(cwd, "README.md"), "base\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+    const base = git("rev-parse", "HEAD");
+    git("update-index", "--add", "--cacheinfo", `160000,${base},vendor/sub`);
+    git("-c", "commit.gpgsign=false", "commit", "-m", "record submodule");
+    // `vendor/` holds files shaped like a bare repository; git discovery from the
+    // uninitialized `vendor/sub` would stop there before reaching the superproject.
+    git("init", "--bare", "-q", "vendor");
+    await mkdir(join(cwd, "vendor", "sub"));
+    const comparison = await listComparison({
+      cwd,
+      base: { kind: "rev", rev: base },
+      head: { kind: "worktree" },
+      highlight: false,
+    });
+    try {
+      expect(comparison.files.map((file) => [file.entry.path, file.entry.change])).toContainEqual([
+        "vendor/sub",
+        "added",
+      ]);
+    } finally {
+      await comparison.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

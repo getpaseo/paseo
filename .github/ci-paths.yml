@@ -56,6 +56,7 @@ sdk:
   - "packages/plugin/**"
   - "plugin-examples/**"
   - "public-docs/plugins/**"
+  - "skills/paseo-plugin/**"
   - "packages/client/**"
   - "packages/highlight/**"
   - "packages/protocol/**"

@@ -105,7 +105,7 @@ paseo reload
 
 Paseo 会应用可以在运行时安全生效的设置，并列出需要重启的路径。JSON 无效或 schema 错误时，不会应用任何内容；修复报告的错误后再次运行该命令。如果某个改动的设置由启动时的环境变量或参数决定，reload 会单独报告它。
 
-只有当 reload 要求时才运行 `paseo daemon restart`。在应用中，打开 **设置 → 你的主机 → 概览** 并使用 **重启 Daemon**。正在运行的 Agent 会继续运行，客户端会自动重连。
+只有当 reload 要求时才运行 `paseo daemon restart`。在应用中，打开 **设置 → 主机 → 守护进程** 并使用 **重启 Daemon**。正在运行的 Agent 会继续运行，客户端会自动重连。
 
 ## 仍然无法解决？ {#still-stuck}
 

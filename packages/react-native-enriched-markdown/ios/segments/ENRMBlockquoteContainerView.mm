@@ -80,11 +80,12 @@ static CGFloat ENRMAdmonitionHeaderToBodyGap(StyleConfig *config)
   return round(config.blockquoteFontSize * 0.4);
 }
 
-// Vertical space reserved above the body for the header (0 for a plain quote).
-static CGFloat ENRMAdmonitionHeaderReservedHeight(StyleConfig *config, BOOL isAdmonition)
+// Vertical space reserved above the body: the copy control's header band for a
+// plain quote, the title band for an admonition.
+static CGFloat ENRMBlockquoteHeaderReservedHeight(StyleConfig *config, BOOL isAdmonition)
 {
   if (!isAdmonition) {
-    return 0;
+    return [ENRMCodeBlockContainerView headerCopyBandHeightForConfig:config];
   }
   return ENRMAdmonitionHeaderContentHeight(config) + ENRMAdmonitionHeaderToBodyGap(config);
 }
@@ -93,7 +94,7 @@ static UIEdgeInsets ENRMBlockquoteContentInsetsForNode(StyleConfig *config, BOOL
 {
   CGFloat padding = config.blockquotePadding;
   CGFloat left = ceil(config.blockquoteBorderWidth + config.blockquoteGapWidth + padding);
-  CGFloat top = ceil(padding + ENRMAdmonitionHeaderReservedHeight(config, isAdmonition));
+  CGFloat top = ceil(padding + ENRMBlockquoteHeaderReservedHeight(config, isAdmonition));
   CGFloat vertical = ceil(padding);
   CGFloat right = ceil(padding);
   return UIEdgeInsetsMake(top, left, vertical, right);
@@ -112,6 +113,10 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
 @property (nonatomic, copy, nullable) NSString *admonitionType;
 @property (nonatomic, copy) NSString *cachedMarkdown;
 @property (nonatomic, copy) NSString *cachedPlainText;
+// The quote's body without its own `> ` prefix, for the copy button.
+@property (nonatomic, copy) NSString *cachedBodyMarkdown;
+// Shown in the header band of a plain quote; hidden for an admonition.
+@property (nonatomic, strong) ENRMHeaderCopyButton *headerCopyButton;
 @end
 
 #if !TARGET_OS_OSX
@@ -139,6 +144,11 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
     UIContextMenuInteraction *contextMenu = [[UIContextMenuInteraction alloc] initWithDelegate:self];
     [self addInteraction:contextMenu];
 #endif
+    _cachedBodyMarkdown = @"";
+    _headerCopyButton = [ENRMCodeBlockContainerView headerCopyButtonForConfig:config
+                                                                       target:self
+                                                                       action:@selector(copyBodyToPasteboard)];
+    [self addSubview:_headerCopyButton];
     self.segmentViewRegistry = [self buildChildRegistry];
   }
   return self;
@@ -148,16 +158,48 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
 {
   self.admonitionType = ENRMAdmonitionTypeForNode(node);
   self.contentInsets = ENRMBlockquoteContentInsetsForNode(self.config, self.admonitionType != nil);
+  self.cachedBodyMarkdown = markdownFromBlockquoteBody(node);
+  self.headerCopyButton.hidden = self.admonitionType != nil;
+  self.headerCopyButton.enabled = self.cachedBodyMarkdown.length > 0;
+  // The host sets dynamicProps after init, so read the label on each content update.
+  self.headerCopyButton.accessibilityLabel = self.dynamicProps.menuCopyLabel;
   self.cachedMarkdown = markdownFromBlockquoteNode(node);
   self.cachedPlainText = plainTextFromASTNode(node);
   NSArray<ENRMRenderedSegment *> *rendered =
       ENRMRenderBlockquoteChildren(node, self.config, self.allowFontScaling, self.lineBreakStrategy);
   [self applySegments:rendered reset:NO];
 #if !TARGET_OS_OSX
+  // Segment views are added after the control; keep it above them for touches.
+  [self bringSubviewToFront:self.headerCopyButton];
   [self setNeedsDisplay];
 #else
   self.needsDisplay = YES;
 #endif
+}
+
+#if !TARGET_OS_OSX
+- (void)layoutSubviews
+{
+  [super layoutSubviews];
+  [ENRMCodeBlockContainerView layoutHeaderCopyButton:self.headerCopyButton
+                                               width:self.bounds.size.width
+                                              config:self.config];
+}
+#else
+- (void)layout
+{
+  [super layout];
+  [ENRMCodeBlockContainerView layoutHeaderCopyButton:self.headerCopyButton
+                                               width:self.bounds.size.width
+                                              config:self.config];
+}
+#endif
+
+- (void)copyBodyToPasteboard
+{
+  if (self.cachedBodyMarkdown.length > 0) {
+    copyStringToPasteboard(self.cachedBodyMarkdown);
+  }
 }
 
 - (void)setAccessibilityLabels:(ENRMAccessibilityLabels *)accessibilityLabels

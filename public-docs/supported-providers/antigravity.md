@@ -14,11 +14,11 @@ Paseo runs Antigravity through the official Agent Client Protocol (`agy acp`) on
 
 Antigravity is built into Paseo and enabled by default. You do not need a plugin or extra configuration.
 
-1. Install the [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli) (`agy`) version 1.5.0 or later on your daemon host.
+1. Install the [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli) (`agy`) version 1.5.1 or later on your daemon host.
 2. Run `agy` in a terminal and sign in.
 3. In Paseo, choose **Antigravity** when you start an agent.
 
-If `agy` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary) and keep `acp` and `--disable-telemetry` in the arguments.
+If `agy` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary) and keep `acp` in the arguments.
 
 ## Permissions
 
@@ -31,7 +31,9 @@ Paseo connects to `agy acp` and shows the permission modes that the CLI provides
 | Accept edits | Antigravity approves workspace edits automatically and still asks about commands that require approval.                 |
 | Plan         | Antigravity plans before it acts.                                                                                       |
 
-Scheduled runs can use **Full access** without a person to approve each tool call. Finish or stop the current turn before you switch to or from **Full access**.
+Finish or stop the current turn before you switch to or from **Full access**.
+
+Use personal Google sign-in (`oauth-personal`) for interactive sessions. For unattended or scheduled runs, configure API-key authentication (`GEMINI_API_KEY` or `agent-platform`) instead of consumer OAuth.
 
 ## Sessions and tools
 
@@ -47,7 +49,7 @@ In Paseo, open **Settings → Providers → Antigravity** and select **Diagnosti
 
 ### New models are missing
 
-Paseo reads the model list from `agy` when the daemon starts and when you select **Refresh**. If your account gets new models after that, open **Settings → Providers → Antigravity** and select **Refresh**.
+Paseo discovers Antigravity models and thinking levels once on first startup (or after you update the `agy` CLI) and caches the catalog on disk across daemon restarts without background polling. When your account gains new models, open **Settings → Providers → Antigravity** and select **Refresh**.
 
 ### Paseo shows different models than `agy models`
 

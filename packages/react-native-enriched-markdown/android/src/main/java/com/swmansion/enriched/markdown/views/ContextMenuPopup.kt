@@ -185,8 +185,8 @@ object ContextMenuPopup {
 
       private val copyGlyph = CopyGlyph()
 
-      // COPY mirrors SF Symbol doc.on.doc, DOCUMENT mirrors doc.text; the copy
-      // glyph is shared with the header button in CodeBlockContainerView.
+      // COPY draws Lucide's Copy icon, DOCUMENT mirrors SF Symbol doc.text; the
+      // copy glyph is shared with HeaderCopyButton.
       override fun draw(canvas: Canvas) {
         val u = bounds.width() / 24f
         if (icon == Icon.COPY) {

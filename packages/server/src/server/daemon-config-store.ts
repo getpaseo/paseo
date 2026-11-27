@@ -1,3 +1,4 @@
+import type { createDaemonListeners } from "./listeners.js";
 import {
   loadPersistedConfig,
   savePersistedConfigAsync,
@@ -69,6 +70,7 @@ export interface DaemonConfigReloadResult {
 export interface DaemonConfigReloadSource {
   resolve(persisted: PersistedConfig): {
     mutable: MutableDaemonConfig;
+    listen?: string;
     overrideControlledPaths: readonly string[];
   };
 }
@@ -176,6 +178,25 @@ function omitProvidersFromOverrides(
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
 }
 
+// COMPAT(agentProfileSystemPrompt): added in v0.17.6, remove after 2027-06-01.
+// Apps predating `systemPrompt` omit the key when saving an edited profile; preserve
+// the stored prompt unless the write explicitly sends `systemPrompt` (empty clears it).
+function foldProfileSystemPrompt(
+  profile: AgentProfile,
+  stored: AgentProfile | undefined,
+  source: "stored" | "client write",
+): AgentProfile {
+  if (profile.systemPrompt === undefined) {
+    if (source === "client write" && stored?.systemPrompt) {
+      return { ...profile, systemPrompt: stored.systemPrompt };
+    }
+    return profile;
+  }
+  const trimmed = profile.systemPrompt.trim();
+  const { systemPrompt: _ignored, ...rest } = profile;
+  return trimmed.length > 0 ? { ...rest, systemPrompt: trimmed } : rest;
+}
+
 /**
  * Profiles are held and persisted with `options` only, in the current keys: a profile is old
  * data entering, so it is converted for the adapter its provider runs on, which `config.json`'s
@@ -196,11 +217,12 @@ function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(input:
     });
   const identity = (_provider: string, options: Record<string, unknown> | undefined) => options;
   const foldWith = (profile: AgentProfile, convertWith: typeof convert) => {
+    const stored = held.find((candidate) => candidate.id === profile.id);
     const folded = foldProfileFeatureValues<
       Pick<AgentProfile, "provider" | "options" | "featureValues">
     >({
       profile,
-      stored: held.find((candidate) => candidate.id === profile.id),
+      stored,
       source,
       convert: convertWith,
     });
@@ -208,7 +230,11 @@ function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(input:
       { ...folded, thinkingOptionId: profile.thinkingOptionId, providerOptions: folded.options },
       resolveAdapter({ provider: profile.provider, extendsOf: (id) => providers?.[id]?.extends }),
     );
-    return { ...converted, options: providerOptions };
+    return foldProfileSystemPrompt(
+      { ...(converted as AgentProfile), options: providerOptions },
+      stored,
+      source,
+    );
   };
   return {
     ...config,
@@ -423,6 +449,7 @@ export class DaemonConfigStore {
   private readonly reloadSource: DaemonConfigReloadSource | undefined;
   private readonly startupPersisted: PersistedConfig;
   private readonly speechOwner: SpeechSettingsOwner | undefined;
+  private listeners?: ReturnType<typeof createDaemonListeners>;
   private lastKnownPersisted: PersistedConfig;
 
   constructor(
@@ -567,6 +594,41 @@ export class DaemonConfigStore {
     );
   }
 
+  public attachListeners(listeners: ReturnType<typeof createDaemonListeners>) {
+    this.listeners = listeners;
+  }
+
+  public setTailscaleEnabled(
+    enabled: boolean,
+    localEndpoint: string | undefined,
+    confirmed: boolean,
+  ) {
+    return this.enqueue(async () => {
+      const listeners = this.listeners;
+      if (!listeners) throw new Error("Tailscale is unavailable");
+      const persisted = await loadPersistedConfigAsync(this.paseoHome, this.logger);
+      const change = listeners.prepareTailscaleChange(
+        persisted.daemon?.listen,
+        enabled,
+        localEndpoint,
+        confirmed,
+      );
+      if (change.confirmationRequired) {
+        return { confirmationRequired: true, ...listeners.status(localEndpoint) };
+      }
+      await savePersistedConfigAsync(
+        this.paseoHome,
+        {
+          ...persisted,
+          daemon: { ...persisted.daemon, listen: change.listen },
+        },
+        this.logger,
+      );
+      await change.apply();
+      return { confirmationRequired: false, ...listeners.status(localEndpoint) };
+    });
+  }
+
   public reload(): Promise<DaemonConfigReloadResult> {
     return this.enqueue(() => this.reloadPersisted());
   }
@@ -609,8 +671,11 @@ export class DaemonConfigStore {
         )
       );
     });
+    const listenChange = await this.listeners?.apply(resolved.listen ?? persisted.daemon?.listen);
+    if (listenChange?.applied) appliedPaths.push("daemon.listen");
     const restartRequiredPaths = compactOwnedPaths(
       diffPaths(this.startupPersisted, persisted).filter((path) => {
+        if (path === "daemon.listen" && listenChange) return false;
         if (path === "$schema" || path === "version") return false;
         if (RELOADABLE_PATHS.some((owner) => pathBelongsTo(path, owner))) return false;
         if (this.speechOwner && SPEECH_PERSISTED_PATHS.some((owner) => pathBelongsTo(path, owner)))
@@ -619,6 +684,11 @@ export class DaemonConfigStore {
       }),
       [],
     );
+
+    if (listenChange?.restartRequired) {
+      restartRequiredPaths.push("daemon.listen");
+      restartRequiredPaths.sort();
+    }
 
     const removedProviders = Object.keys(this.current.providers).filter(
       (provider) => !(provider in desired.providers),

@@ -146,6 +146,22 @@ quietly relying on:
 
 The fix for transforms is Gotcha 3. The fix for context is Gotcha 7.
 
+### The portal patch
+
+`patches/@gorhom+portal+1.0.14.patch` moves portal state out of the provider's
+context value and into a store each `PortalHost` subscribes to. Upstream keeps
+every host's portals in one context value at the app root, so each portal mount,
+update and unmount changed that value and React searched every mounted fiber
+for consumers. That cost grows with the retained panels: a hover card took
+about 3 ms of it in a fresh window and 16 ms after a few hours. With the store,
+a portal change renders only its own host.
+
+Do not put per-overlay state in a context that wraps the app for the same
+reason. Give the consumers a store to subscribe to.
+
+The patch also keys each portal in its host (upstream PR #62). Without the key,
+closing one overlay remounted every later overlay in the same host.
+
 ## Gotcha 3 — Keyboard layout and portal anchors
 
 `composer/dock` owns the stationary viewport, bottom-anchored surface, composer
@@ -449,7 +465,7 @@ in a tab. An overlay opened from that content and calling `useSafeAreaInsets()` 
 gets that 0 and draws over the navigation bar.
 
 - A Gorhom sheet reads the inset inside its children, which render in the app's sheet host. See
-  `CompactSheetBody`, `MenuSheetScrollView` and `ComboboxSheetFrame`.
+  `SheetVisibleFrame` (used by `CompactSheetBody` and `ComboboxSheetFrame`) and `MenuSheetScrollView`.
 - An RN `Modal` passes the call site's context straight through, so wrap its content in
   `WindowSafeArea` from `@/window-layout` and read the inset below that. It provides the insets of
   the whole window, published by `WindowLayoutProvider`. Do not put a `SafeAreaProvider` inside the

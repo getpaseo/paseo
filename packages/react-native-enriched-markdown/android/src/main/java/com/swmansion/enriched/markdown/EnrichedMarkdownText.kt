@@ -47,7 +47,6 @@ import com.swmansion.enriched.markdown.utils.text.view.createSelectionActionMode
 import com.swmansion.enriched.markdown.utils.text.view.emitImagePressEvent
 import com.swmansion.enriched.markdown.utils.text.view.emitLinkLongPressEvent
 import com.swmansion.enriched.markdown.utils.text.view.emitLinkPressEvent
-import com.swmansion.enriched.markdown.utils.text.view.reallowParentInterceptIfLinkReleased
 import com.swmansion.enriched.markdown.utils.text.view.setupAsMarkdownTextView
 import java.util.concurrent.Executors
 import kotlin.math.ceil
@@ -620,10 +619,7 @@ class EnrichedMarkdownText
         return true
       }
       val result = super.onTouchEvent(event)
-      when (event.action) {
-        MotionEvent.ACTION_DOWN -> cancelJSTouchForLinkTap(event)
-        else -> reallowParentInterceptIfLinkReleased()
-      }
+      if (event.action == MotionEvent.ACTION_DOWN) cancelJSTouchForLinkTap(event)
       return result
     }
 

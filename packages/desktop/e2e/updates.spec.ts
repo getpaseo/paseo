@@ -39,7 +39,7 @@ test.describe("Desktop updates", () => {
     await page.reload();
     await openSettings(page);
     await openSettingsHost(page, desktopManagedOutdatedDaemon.serverId);
-    await openHostSection(page, desktopManagedOutdatedDaemon.serverId, "host");
+    await openHostSection(page, desktopManagedOutdatedDaemon.serverId, "daemon");
 
     const updateCard = page.getByTestId("host-page-update-card");
     await expect(updateCard).toBeVisible();
@@ -90,6 +90,74 @@ test.describe("Desktop updates", () => {
     await clickCheckForUpdates(page);
     await expectPendingUpdateCheckResult(page, "1.2.3");
     await expectReadyUpdateCheckResult(page, "1.2.3");
+  });
+
+  test("off mode skips automatic update checks until Check is clicked", async ({ page }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateMode: "off",
+      updateAvailable: true,
+      latestVersion: "1.2.3",
+    });
+    await gotoAppShell(page);
+    await openDesktopAboutSettings(page);
+
+    await expect(
+      page.getByText("Never check automatically. Only check when you click Check"),
+    ).toBeVisible();
+    await expect(page.getByTestId("update-callout")).toHaveCount(0);
+    const automaticChecks = await page.evaluate(() => window.__capturedUpdateChecks ?? []);
+    expect(automaticChecks).toEqual([]);
+
+    await clickCheckForUpdates(page);
+    await expect(page.getByText(/Update available: v1\.2\.3/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Download v1.2.3" })).toBeEnabled();
+  });
+
+  test("notify mode shows Download and live download progress", async ({ page }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateMode: "notify",
+      updateAvailable: true,
+      latestVersion: "1.2.3",
+      downloadProgressSteps: [42, 78],
+      slowInstall: true,
+    });
+    await gotoAppShell(page);
+
+    const callout = page.getByTestId("update-callout");
+    await expect(callout).toBeVisible({ timeout: 15_000 });
+    await expect(callout).toContainText("v1.2.3 is available to download.");
+    await page.getByRole("button", { name: "Download", exact: true }).click();
+    await expect(callout).toContainText("Downloading v1.2.3... 42%");
+    await expect(callout.getByRole("progressbar")).toBeVisible();
+  });
+
+  test("starting download in About updates the sidebar callout and disables its action", async ({
+    page,
+  }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateMode: "notify",
+      updateAvailable: true,
+      latestVersion: "1.2.3",
+      downloadProgressSteps: [55],
+      slowInstall: true,
+      confirmShouldAccept: true,
+    });
+    await gotoAppShell(page);
+    await expect(page.getByTestId("update-callout")).toBeVisible({ timeout: 15_000 });
+
+    await openDesktopAboutSettings(page);
+    await page.getByRole("button", { name: "Download v1.2.3" }).click();
+    await expect(
+      page.getByTestId("settings-detail-scroll-body").getByText("Downloading v1.2.3... 55%"),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Back" }).click();
+    const callout = page.getByTestId("update-callout");
+    await expect(callout).toContainText("Downloading v1.2.3... 55%");
+    await expect(callout.getByRole("button", { name: "Downloading..." })).toBeDisabled();
   });
 });
 

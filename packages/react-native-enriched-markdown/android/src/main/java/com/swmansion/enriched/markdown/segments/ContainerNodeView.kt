@@ -161,4 +161,13 @@ open class ContainerNodeView(
     }
     return totalHeight
   }
+
+  protected fun syncChildCopyLabels() {
+    segmentViews.forEach { view ->
+      when (view) {
+        is CodeBlockContainerView -> view.syncCopyLabel()
+        is BlockquoteContainerView -> view.syncCopyLabel()
+      }
+    }
+  }
 }

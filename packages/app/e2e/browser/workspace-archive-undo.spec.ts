@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
+  archiveLocalWorkspaceFromDaemon,
   archiveWorkspaceFromDaemon,
   connectNewWorkspaceDaemonClient,
   createWorktreeViaDaemon,
@@ -9,7 +10,12 @@ import {
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
 import { expectWorkspaceAbsentFromSidebar } from "../support/helpers/sidebar";
-import { createMockIdleAgent, openWorkspaceWithAgents } from "../support/helpers/archive-tab";
+import {
+  createMockIdleAgent,
+  fetchAgentArchivedAt,
+  openSessions,
+  openWorkspaceWithAgents,
+} from "../support/helpers/archive-tab";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { getWorkspaceTabTestIds } from "../support/helpers/workspace-tabs";
@@ -37,6 +43,61 @@ import {
   waitForSidebarHydration,
   waitForWorkspaceInSidebar,
 } from "../support/helpers/workspace-ui";
+
+async function clearIndexedDbDatabases(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const dbs = (await indexedDB.databases?.()) ?? [];
+    for (const db of dbs) {
+      if (!db.name) continue;
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase(db.name!);
+        const done = () => resolve();
+        req.addEventListener("success", done, { once: true });
+        req.addEventListener("error", done, { once: true });
+        req.addEventListener("blocked", done, { once: true });
+      });
+    }
+  });
+}
+
+async function delayRefreshAgentRequests(page: Page, delayMs: number): Promise<void> {
+  await page.routeWebSocket(/\/ws/, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      if (typeof message === "string" && isRefreshAgentRequestMessage(message)) {
+        setTimeout(() => {
+          server.send(message);
+        }, delayMs);
+        return;
+      }
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      ws.send(message);
+    });
+  });
+}
+
+function isRefreshAgentRequestMessage(message: string): boolean {
+  try {
+    const parsed = JSON.parse(message) as { type?: string; message?: { type?: string } };
+    return (
+      parsed.type === "refresh_agent_request" || parsed.message?.type === "refresh_agent_request"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function isSidebarFooterHitTestable(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const footer = document.querySelector('[data-testid="sidebar-footer"]');
+    if (!(footer instanceof HTMLElement)) return false;
+    const rect = footer.getBoundingClientRect();
+    const topEl = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return Boolean(topEl && footer.contains(topEl));
+  });
+}
 
 test.describe("Workspace archive undo", () => {
   let client: Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
@@ -296,6 +357,12 @@ test.describe("Workspace archive undo", () => {
         await createMockIdleAgent(seedClient, { ...target, title: "first" }),
         await createMockIdleAgent(seedClient, { ...target, title: "second" }),
       ] as const;
+      const preArchivedAgent = await createMockIdleAgent(seedClient, {
+        ...target,
+        title: "pre-archived",
+      });
+      await seedClient.archiveAgent(preArchivedAgent.id);
+      await expect.poll(() => fetchAgentArchivedAt(seedClient, preArchivedAgent.id)).not.toBeNull();
       await openWorkspaceWithAgents(page, [agents[0], agents[1]]);
       const tabsBefore = await getWorkspaceTabTestIds(page);
 
@@ -308,9 +375,66 @@ test.describe("Workspace archive undo", () => {
       for (const agent of agents) {
         await expect(page.getByTestId(`workspace-tab-agent_${agent.id}`).first()).toBeVisible();
       }
+      await expect(
+        page.getByTestId("agent-unarchiving-callout").filter({ visible: true }),
+      ).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Unarchive", exact: true })).toHaveCount(0);
+
+      // Opening an agent that was already archived before the workspace archive still shows
+      // the manual Unarchive callout rather than claiming it is unarchiving with the workspace.
+      await openSessions(page);
+      await page.getByTestId(`agent-row-${getServerId()}-${preArchivedAgent.id}`).click();
+      await expect(page.getByTestId("agent-archived-callout")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Unarchive", exact: true })).toBeVisible();
+      await expect(
+        page.getByTestId("agent-unarchiving-callout").filter({ visible: true }),
+      ).toHaveCount(0);
+
+      await page.getByTestId(`workspace-tab-agent_${agents[0].id}`).first().click();
+      await expect(
+        page.getByTestId("agent-unarchiving-callout").filter({ visible: true }),
+      ).toHaveCount(1);
+
+      await page.evaluate(() => {
+        const win = window as unknown as Record<string, unknown>;
+        let sawAgentLoading = false;
+        let running = true;
+        const isVisible = (el: Element | null) => {
+          if (!el || !(el instanceof HTMLElement)) return false;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return false;
+          const style = getComputedStyle(el);
+          return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+        };
+        const tick = () => {
+          if (!running) return;
+          if (
+            Array.from(document.querySelectorAll('[data-testid="agent-loading"]')).some(isVisible)
+          ) {
+            sawAgentLoading = true;
+          }
+          requestAnimationFrame(tick);
+        };
+        win.__stopMidUndoLoadingCheck = () => {
+          running = false;
+          return sawAgentLoading;
+        };
+        requestAnimationFrame(tick);
+      });
+
       teardown.release();
       await expectHostWorkspaceSettledActive(client, worktree.workspaceId);
-      await expect.poll(() => getWorkspaceTabTestIds(page)).toEqual(tabsBefore);
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable({
+        timeout: 30_000,
+      });
+      const sawMidUndoLoading = await page.evaluate(() => {
+        const win = window as unknown as { __stopMidUndoLoadingCheck?: () => boolean };
+        return win.__stopMidUndoLoadingCheck?.();
+      });
+      expect(sawMidUndoLoading).toBe(false);
+      await expect
+        .poll(() => getWorkspaceTabTestIds(page))
+        .toEqual([...tabsBefore, `workspace-tab-agent_${preArchivedAgent.id}`]);
     } finally {
       teardown.release();
       await seedClient.close().catch(() => undefined);
@@ -356,5 +480,319 @@ test.describe("Workspace archive undo", () => {
 
     await expect(undoButton(page)).toHaveCount(0);
     await expect(workspaceRow(page, worktree.workspaceId)).toBeVisible();
+  });
+
+  test("unarchiving a workspace with archived agents skips archived-callout and loading flashes", async ({
+    page,
+  }) => {
+    const seedClient = await connectSeedClient();
+    const project = await openProjectViaDaemon(client, tempRepo.path);
+    try {
+      const agent1 = await createMockIdleAgent(seedClient, {
+        cwd: project.workspaceDirectory,
+        workspaceId: project.workspaceId,
+        title: "Atomic restore agent 1",
+      });
+      const agent2 = await createMockIdleAgent(seedClient, {
+        cwd: project.workspaceDirectory,
+        workspaceId: project.workspaceId,
+        title: "Atomic restore agent 2",
+      });
+      // Seed 25 turns so the archived conversation spans multiple timeline pages (hasOlder=true).
+      for (let i = 0; i < 25; i += 1) {
+        await seedClient.sendAgentMessage(
+          agent1.id,
+          `atomic-restore-turn-${i}: emit 1 coalesced agent stream updates`,
+        );
+        await seedClient.waitForFinish(agent1.id, 15_000);
+      }
+
+      await archiveLocalWorkspaceFromDaemon(client, project.workspaceId);
+      await expect.poll(() => fetchAgentArchivedAt(seedClient, agent1.id)).not.toBeNull();
+      await expect.poll(() => fetchAgentArchivedAt(seedClient, agent2.id)).not.toBeNull();
+
+      await gotoAppShell(page);
+      // Clear persisted replica IndexedDB so this tests a true cold restore.
+      await clearIndexedDbDatabases(page);
+      await page.reload();
+      await waitForSidebarHydration(page);
+      await openSessions(page);
+      await page.getByTestId(`agent-row-${getServerId()}-${agent1.id}`).click();
+      await expect(page.getByTestId("workspace-recovery-action")).toHaveText("Unarchive", {
+        timeout: 30_000,
+      });
+
+      // Verify the compact left sidebar overlays the recovery gate rather than painting behind it.
+      const desktopViewport = page.viewportSize() ?? { width: 1280, height: 720 };
+      await page.setViewportSize({ width: 390, height: 720 });
+      await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
+      const sidebarFooter = page.getByTestId("sidebar-footer").first();
+      await expect(sidebarFooter).toBeVisible();
+      await expect.poll(() => isSidebarFooterHitTestable(page)).toBe(true);
+      await page.setViewportSize(desktopViewport);
+      await expect(page.getByTestId("workspace-recovery-action")).toBeVisible();
+
+      await page.evaluate(() => {
+        const win = window as unknown as Record<string, unknown>;
+        const recoveryButton = document.querySelector('[data-testid="workspace-recovery-action"]');
+        const seen = {
+          archivedCallout: false,
+          agentLoading: false,
+          agentInitialFill: false,
+          updatingToast: false,
+          recoveryButtonRemounted: false,
+          firstRevealedTabsCount: -1,
+          firstRevealedRowCount: -1,
+          firstRevealedStreamOpacity: -1,
+          firstRevealedDistanceFromBottom: -1,
+        };
+        let running = true;
+        const isVisible = (el: Element | null) => {
+          if (!el || !(el instanceof HTMLElement)) return false;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return false;
+          const style = getComputedStyle(el);
+          return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+        };
+        const tick = () => {
+          if (!running) return;
+          const currentRecoveryButton = document.querySelector(
+            '[data-testid="workspace-recovery-action"]',
+          );
+          if (currentRecoveryButton && recoveryButton && currentRecoveryButton !== recoveryButton) {
+            seen.recoveryButtonRemounted = true;
+          }
+          if (
+            Array.from(document.querySelectorAll('[data-testid="agent-archived-callout"]')).some(
+              isVisible,
+            )
+          ) {
+            seen.archivedCallout = true;
+          }
+          if (
+            Array.from(document.querySelectorAll('[data-testid="agent-loading"]')).some(isVisible)
+          ) {
+            seen.agentLoading = true;
+          }
+          if (
+            Array.from(document.querySelectorAll('[data-testid="agent-initial-fill"]')).some(
+              isVisible,
+            )
+          ) {
+            seen.agentInitialFill = true;
+          }
+          if (
+            Array.from(document.querySelectorAll('[data-testid="agent-updating-toast"]')).some(
+              isVisible,
+            )
+          ) {
+            seen.updatingToast = true;
+          }
+          const composerVisible = Array.from(
+            document.querySelectorAll(
+              'textarea[aria-label="Message agent..."], [role="textbox"][aria-label="Message agent..."]',
+            ),
+          ).some(isVisible);
+          if (seen.firstRevealedTabsCount === -1 && composerVisible) {
+            seen.firstRevealedTabsCount = Array.from(
+              document.querySelectorAll('[data-testid^="workspace-tab-"]'),
+            ).filter(isVisible).length;
+            const stream =
+              Array.from(document.querySelectorAll('[data-testid="agent-chat-scroll"]')).find(
+                isVisible,
+              ) ?? null;
+            if (stream instanceof HTMLElement) {
+              seen.firstRevealedRowCount = stream.querySelectorAll("[data-history-row-id]").length;
+              seen.firstRevealedStreamOpacity = Number.parseFloat(
+                getComputedStyle(stream).opacity || "1",
+              );
+              seen.firstRevealedDistanceFromBottom = Math.max(
+                0,
+                Math.round(stream.scrollHeight - stream.scrollTop - stream.clientHeight),
+              );
+            }
+          }
+          requestAnimationFrame(tick);
+        };
+        win.__stopUnarchiveFlashCheck = () => {
+          running = false;
+          return seen;
+        };
+        requestAnimationFrame(tick);
+      });
+
+      await page.getByTestId("workspace-recovery-action").click();
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable({
+        timeout: 30_000,
+      });
+      await expect(
+        page.getByText("atomic-restore-turn-24", { exact: false }).first(),
+      ).toBeVisible();
+      const seen = await page.evaluate(() => {
+        const win = window as unknown as {
+          __stopUnarchiveFlashCheck?: () => {
+            archivedCallout: boolean;
+            agentLoading: boolean;
+            agentInitialFill: boolean;
+            updatingToast: boolean;
+            recoveryButtonRemounted: boolean;
+            firstRevealedTabsCount: number;
+            firstRevealedRowCount: number;
+            firstRevealedStreamOpacity: number;
+            firstRevealedDistanceFromBottom: number;
+          };
+        };
+        return win.__stopUnarchiveFlashCheck?.();
+      });
+      expect(seen).toBeDefined();
+      expect({
+        archivedCallout: seen?.archivedCallout,
+        agentLoading: seen?.agentLoading,
+        agentInitialFill: seen?.agentInitialFill,
+        updatingToast: seen?.updatingToast,
+        recoveryButtonRemounted: seen?.recoveryButtonRemounted,
+        firstRevealedTabsCount: seen?.firstRevealedTabsCount,
+        firstRevealedStreamOpacity: seen?.firstRevealedStreamOpacity,
+      }).toEqual({
+        archivedCallout: false,
+        agentLoading: false,
+        agentInitialFill: false,
+        updatingToast: false,
+        recoveryButtonRemounted: false,
+        firstRevealedTabsCount: 2,
+        firstRevealedStreamOpacity: 1,
+      });
+      expect(seen!.firstRevealedRowCount).toBeGreaterThan(0);
+      expect(seen!.firstRevealedDistanceFromBottom).toBeLessThanOrEqual(16);
+    } finally {
+      await client.removeProject(project.projectKey).catch(() => undefined);
+      await seedClient.close().catch(() => undefined);
+    }
+  });
+
+  test("unarchiving a single archived agent keeps the chat mounted without a loading flash", async ({
+    page,
+  }) => {
+    const seedClient = await connectSeedClient();
+    const project = await openProjectViaDaemon(client, tempRepo.path);
+    try {
+      const agent1 = await createMockIdleAgent(seedClient, {
+        cwd: project.workspaceDirectory,
+        workspaceId: project.workspaceId,
+        title: "Single unarchive agent",
+      });
+      await createMockIdleAgent(seedClient, {
+        cwd: project.workspaceDirectory,
+        workspaceId: project.workspaceId,
+        title: "Sibling active agent",
+      });
+      for (let i = 0; i < 6; i += 1) {
+        await seedClient.sendAgentMessage(
+          agent1.id,
+          `single-unarchive-turn-${i}: emit 1 coalesced agent stream updates`,
+        );
+        await seedClient.waitForFinish(agent1.id, 15_000);
+      }
+      await seedClient.archiveAgent(agent1.id);
+      await expect.poll(() => fetchAgentArchivedAt(seedClient, agent1.id)).not.toBeNull();
+
+      // Delay `refresh_agent_request` briefly so the UI renders its busy state on the Unarchive button.
+      await delayRefreshAgentRequests(page, 250);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openSessions(page);
+      await page.getByTestId(`agent-row-${getServerId()}-${agent1.id}`).click();
+      const unarchiveBtn = page.getByRole("button", { name: "Unarchive", exact: true });
+      await expect(unarchiveBtn).toBeVisible({ timeout: 30_000 });
+      await expect(
+        page.getByText("single-unarchive-turn-5", { exact: false }).first(),
+      ).toBeVisible();
+
+      const idleCalloutBox = await page.getByTestId("agent-archived-callout").boundingBox();
+      if (!idleCalloutBox) throw new Error("Archived callout is not laid out");
+
+      await page.evaluate(() => {
+        const win = window as unknown as Record<string, unknown>;
+        const state = {
+          sawAgentLoading: false,
+          sawUnarchivingCallout: false,
+          unarchivingCalloutHeights: [] as number[],
+          minRowCount: Number.POSITIVE_INFINITY,
+          minStreamOpacity: Number.POSITIVE_INFINITY,
+        };
+        let running = true;
+        const isVisible = (el: Element | null) => {
+          if (!el || !(el instanceof HTMLElement)) return false;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return false;
+          const style = getComputedStyle(el);
+          return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+        };
+        const tick = () => {
+          if (!running) return;
+          if (
+            Array.from(document.querySelectorAll('[data-testid="agent-loading"]')).some(isVisible)
+          ) {
+            state.sawAgentLoading = true;
+          }
+          const stream =
+            Array.from(document.querySelectorAll('[data-testid="agent-chat-scroll"]')).find(
+              isVisible,
+            ) ?? null;
+          if (stream instanceof HTMLElement) {
+            const rowCount = stream.querySelectorAll("[data-history-row-id]").length;
+            const opacity = Number.parseFloat(getComputedStyle(stream).opacity || "1");
+            state.minRowCount = Math.min(state.minRowCount, rowCount);
+            state.minStreamOpacity = Math.min(state.minStreamOpacity, opacity);
+          } else {
+            state.minRowCount = 0;
+            state.minStreamOpacity = 0;
+          }
+          const unarchivingCallout = Array.from(
+            document.querySelectorAll('[data-testid="agent-unarchiving-callout"]'),
+          ).find(isVisible);
+          if (unarchivingCallout instanceof HTMLElement) {
+            state.sawUnarchivingCallout = true;
+            state.unarchivingCalloutHeights.push(
+              Math.round(unarchivingCallout.getBoundingClientRect().height),
+            );
+          }
+          requestAnimationFrame(tick);
+        };
+        win.__stopSingleUnarchiveCheck = () => {
+          running = false;
+          return state;
+        };
+        requestAnimationFrame(tick);
+      });
+
+      await unarchiveBtn.click();
+      await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeEditable({
+        timeout: 30_000,
+      });
+      const result = await page.evaluate(() => {
+        const win = window as unknown as {
+          __stopSingleUnarchiveCheck?: () => {
+            sawAgentLoading: boolean;
+            sawUnarchivingCallout: boolean;
+            unarchivingCalloutHeights: number[];
+            minRowCount: number;
+            minStreamOpacity: number;
+          };
+        };
+        return win.__stopSingleUnarchiveCheck?.();
+      });
+      expect(result?.sawAgentLoading).toBe(false);
+      expect(result?.sawUnarchivingCallout).toBe(true);
+      expect(result?.minRowCount).toBeGreaterThan(0);
+      expect(result?.minStreamOpacity).toBe(1);
+      for (const height of result?.unarchivingCalloutHeights ?? []) {
+        expect(Math.abs(height - Math.round(idleCalloutBox.height))).toBeLessThanOrEqual(1);
+      }
+    } finally {
+      await client.removeProject(project.projectKey).catch(() => undefined);
+      await seedClient.close().catch(() => undefined);
+    }
   });
 });

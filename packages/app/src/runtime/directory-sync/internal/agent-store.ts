@@ -6,6 +6,7 @@ import { buildAgentDirectoryState, type AgentDirectoryDelta } from "@/utils/agen
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { clearArchiveAgentPending } from "@/hooks/use-archive-agent";
+import { clearUnarchiveAgentPending } from "@/stores/unarchive-agent-store";
 import { queryClient } from "@/data/query-client";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
@@ -77,7 +78,8 @@ export class AgentStoreProjection {
 
   accept(agent: Agent): Agent {
     let accepted = agent;
-    useSessionStore.getState().setAgents(this.serverId, (current) => {
+    const store = useSessionStore.getState();
+    store.setAgents(this.serverId, (current) => {
       const previous = current.get(agent.id);
       const winner = acceptAgentDirectoryUpdate(previous, mergeSnapshotTurn(previous, agent));
       accepted = previous ? keepUnchangedFields(previous, winner) : winner;
@@ -86,6 +88,10 @@ export class AgentStoreProjection {
       next.set(agent.id, accepted);
       return next;
     });
+    if (!accepted.archivedAt) {
+      clearUnarchiveAgentPending({ serverId: this.serverId, agentId: accepted.id });
+      store.setAgentDetails(this.serverId, withoutAgent(accepted.id));
+    }
     return accepted;
   }
 
@@ -141,6 +147,8 @@ export class AgentStoreProjection {
       agents.set(agentId, existing ? keepUnchangedFields(existing, merged) : merged);
       if (fetchedAgent.archivedAt) {
         clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
+      } else {
+        clearUnarchiveAgentPending({ serverId: this.serverId, agentId });
       }
     }
     store.setAgents(this.serverId, agents);
@@ -176,7 +184,15 @@ export class AgentStoreProjection {
     const removeKey = withoutAgent(agentId);
     clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
     store.setAgents(this.serverId, removeKey);
-    store.setAgentDetails(this.serverId, removeKey);
+    // Leaving the active directory (for example an archived agent loaded for history) must not
+    // wipe an archived detail snapshot that an open pane is currently displaying.
+    store.setAgentDetails(this.serverId, (current) => {
+      const existing = current.get(agentId);
+      if (!existing || existing.archivedAt != null) return current;
+      const next = new Map(current);
+      next.delete(agentId);
+      return next;
+    });
     store.setQueuedMessages(this.serverId, removeKey);
     store.setInitializingAgents(this.serverId, removeKey);
     store.setPendingPermissions(this.serverId, (current) => {
@@ -198,18 +214,13 @@ export class AgentStoreProjection {
 
   remove(agentId: string): void {
     this.removeFromDirectory(agentId);
+    useSessionStore.getState().setAgentDetails(this.serverId, withoutAgent(agentId));
     useDraftStore.getState().clearDraftInput({
       draftKey: buildDraftStoreKey({ serverId: this.serverId, agentId }),
     });
-    // Only entity deletion destroys the transcript. A filtered active-list
-    // response can arrive after a fresh history response for an archived agent.
-    const store = useSessionStore.getState();
-    const removeKey = withoutAgent(agentId);
-    store.setAgentTimelineCursor(this.serverId, removeKey);
-    store.setAgentTimelineUnsettledTurn(this.serverId, agentId, null);
-    store.setAgentAuthoritativeHistoryApplied(this.serverId, agentId, false);
-    store.setAgentStreamTail(this.serverId, removeKey);
-    store.clearAgentStreamHead(this.serverId, agentId);
+    // Leaving the active list does not release the transcript: an archived chat open in
+    // History stays readable. The viewed timeline owner releases it once nobody shows it.
+    useSessionStore.getState().releaseAgentTimeline(this.serverId, agentId);
   }
 
   archive(agentId: string, archivedAt: string): Agent | null {

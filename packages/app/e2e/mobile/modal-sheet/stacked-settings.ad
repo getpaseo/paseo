@@ -38,9 +38,6 @@ fill "id=\"direct-password-input\"" "${PASSWORD}"
 wait stable
 press "id=\"direct-host-submit\""
 wait stable
-open "${APP_ID}" "paseo://settings"
-wait "label=\"Connections\"" 10000
-press "label=\"Connections\""
-wait stable
-wait "id=\"host-page-connections-card\"" 30000
+open "${APP_ID}" "paseo://settings/hosts"
+wait "id=\"client-hosts-card\"" 15000
 screenshot "${OUT}/16-settings-connected.png"

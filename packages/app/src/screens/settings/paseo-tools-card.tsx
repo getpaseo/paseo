@@ -1,12 +1,12 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { SettingsCard, SettingsRow } from "@/components/settings";
+import { SettingsRow } from "@/components/settings";
 import { Switch } from "@/components/ui/switch";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
-/** The host's "give agents Paseo tools" switch, bound to the host's config. */
-export function PaseoToolsCard({ serverId }: { serverId: string }) {
+/** The host's "give agents Paseo tools" row, bound to the host's config, for composing inside a SettingsCard. */
+export function HostPaseoToolsRow({ serverId }: { serverId: string }) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
 
@@ -20,12 +20,10 @@ export function PaseoToolsCard({ serverId }: { serverId: string }) {
   if (!isConnected) return null;
 
   return (
-    <SettingsCard testID="host-page-inject-mcp-card">
-      <PaseoToolsRow
-        value={config?.mcp.injectIntoAgents !== false}
-        onValueChange={handleValueChange}
-      />
-    </SettingsCard>
+    <PaseoToolsRow
+      value={config?.mcp.injectIntoAgents !== false}
+      onValueChange={handleValueChange}
+    />
   );
 }
 

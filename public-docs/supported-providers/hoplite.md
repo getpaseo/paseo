@@ -16,7 +16,7 @@ Add Hoplite from Settings in Paseo before you start an agent.
 
 1. Install the [Hoplite CLI](https://hoplite.sh/docs/cli) on your daemon host.
 2. Run `hoplite login` in a terminal.
-3. In Paseo, open **Settings → Hosts → your host → Providers**, select **+ Provider**, find **Hoplite**, and select **Add**.
+3. In Paseo, open **Settings → Host → Providers**, select **+ Provider**, find **Hoplite**, and select **Add**.
 
 See [Hoplite's ACP guide](https://hoplite.sh/docs/cli/acp) for authentication and project setup. If `hoplite` is outside your daemon PATH, use a [command override](/docs/custom-providers#custom-binary) and keep `acp` in the arguments.
 

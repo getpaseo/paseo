@@ -1,4 +1,12 @@
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -74,6 +82,19 @@ describe("findExecutable", () => {
 
       await expect(findExecutable("foo")).resolves.toBe(executable);
     });
+
+    test("ignores relative PATH entries when resolving a bare command name", async () => {
+      const dir = makeTempDir();
+      const previousCwd = process.cwd();
+      writeExecutable(path.join(dir, "rel-only-cmd"), "#!/bin/sh\necho 0.1\n");
+      process.chdir(dir);
+      try {
+        process.env.PATH = [".", originalEnv.PATH].filter(Boolean).join(path.delimiter);
+        await expect(findExecutable("rel-only-cmd")).resolves.toBeNull();
+      } finally {
+        process.chdir(previousCwd);
+      }
+    });
   });
 
   describe.runIf(isPlatform("win32"))("Windows", () => {
@@ -142,6 +163,21 @@ describe("findExecutable", () => {
         process.env.LOCALAPPDATA = originalLocalAppData;
       }
     });
+
+    test("ignores commands in the current working directory when not explicitly on PATH", async () => {
+      const repoDir = makeTempDir();
+      const emptyPathDir = makeTempDir();
+      const previousCwd = process.cwd();
+      process.env.PATHEXT = [".EXE", ".CMD"].join(path.delimiter);
+      writeExecutable(path.join(repoDir, "cwd-only-cmd.cmd"), "@echo off\r\necho 0.1\r\n");
+      process.chdir(repoDir);
+      try {
+        process.env.PATH = emptyPathDir;
+        await expect(findExecutable("cwd-only-cmd")).resolves.toBeNull();
+      } finally {
+        process.chdir(previousCwd);
+      }
+    });
   });
 
   test("returns an invokable absolute path", async () => {
@@ -174,6 +210,49 @@ describe("findExecutable", () => {
       }),
     ).resolves.toBeNull();
     expect(probeExecutable).not.toHaveBeenCalled();
+  });
+
+  test("probe: false resolves executables without spawning them and preserves Windows WinGet fallback", async () => {
+    const dir = makeTempDir();
+    const marker = path.join(dir, "spawned.txt");
+    const cmdName = "paseo-no-probe-test";
+    const binPath =
+      process.platform === "win32" ? path.join(dir, `${cmdName}.cmd`) : path.join(dir, cmdName);
+    if (process.platform === "win32") {
+      writeFileSync(binPath, `@echo off\r\necho spawned > "${marker}"\r\n`, "utf8");
+    } else {
+      writeFileSync(binPath, `#!/bin/sh\necho spawned > ${JSON.stringify(marker)}\n`, "utf8");
+      chmodSync(binPath, 0o755);
+    }
+
+    const resolved = await findExecutable(cmdName, { env: { PATH: dir }, probe: false });
+    if (process.platform === "win32") {
+      expect(resolved?.toLowerCase()).toBe(binPath.toLowerCase());
+    } else {
+      expect(resolved).toBe(binPath);
+    }
+    expect(existsSync(marker)).toBe(false);
+
+    // Verify Windows WinGet package fallback works when probe: false.
+    const wingetRoot = makeTempDir();
+    const emptyPathDir = makeTempDir();
+    const packageDir = path.join(wingetRoot, "Microsoft", "WinGet", "Packages", "Google.Agy");
+    mkdirSync(packageDir, { recursive: true });
+    const wingetExe = path.join(packageDir, "agy.exe");
+    writeFileSync(wingetExe, "stub", "utf8");
+
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", writable: true });
+    try {
+      await expect(
+        findExecutable("agy", {
+          env: { PATH: emptyPathDir, LOCALAPPDATA: wingetRoot },
+          probe: false,
+        }),
+      ).resolves.toBe(wingetExe);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    }
   });
 });
 

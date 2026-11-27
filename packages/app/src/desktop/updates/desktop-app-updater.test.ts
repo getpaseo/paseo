@@ -128,6 +128,43 @@ describe("desktop app updater — check", () => {
     });
   });
 
+  it("reports 'available' when an update is available to download without auto-downloading", async () => {
+    const { updater, port } = createUpdater({ now: () => 42 });
+    port.nextCheckResult(
+      buildFakeCheckResult({
+        hasUpdate: true,
+        readyToInstall: false,
+        downloading: false,
+        latestVersion: "1.2.3",
+      }),
+    );
+
+    await updater.checkForUpdates({ releaseChannel: "stable" });
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      availableUpdate: { latestVersion: "1.2.3", readyToInstall: false, downloading: false },
+      lastCheckedAt: 42,
+    });
+  });
+
+  it("tracks download progress updates and clears them once install completes", async () => {
+    const { updater, port } = createUpdater();
+    port.nextInstallResult(buildFakeInstallResult({ installed: true }));
+
+    updater.setDownloadProgress({
+      version: "1.2.3",
+      percent: 42.4,
+      transferred: 42,
+      total: 100,
+      bytesPerSecond: 10,
+    });
+    expect(updater.getSnapshot().downloadProgress?.percent).toBe(42.4);
+
+    await updater.installUpdate({ releaseChannel: "stable" });
+    expect(updater.getSnapshot().downloadProgress).toBeNull();
+  });
+
   it("reports 'up-to-date' when the check resolves with no update", async () => {
     const { updater, port } = createUpdater();
     port.nextCheckResult(buildFakeCheckResult({ hasUpdate: false, readyToInstall: false }));
@@ -340,6 +377,55 @@ describe("desktop app updater — install", () => {
     expect(updater.getSnapshot().status).toBe("up-to-date");
   });
 
+  it("moves to 'error' instead of 'up-to-date' when the install returns an errorMessage", async () => {
+    const { updater, port } = createUpdater();
+    port.nextInstallResult(
+      buildFakeInstallResult({
+        installed: false,
+        message: "Update failed: ECONNRESET",
+        errorMessage: "ECONNRESET",
+      }),
+    );
+
+    await updater.installUpdate({ releaseChannel: "stable" });
+
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "error",
+      errorMessage: "ECONNRESET",
+      downloadProgress: null,
+      isInstalling: false,
+    });
+  });
+
+  it("ignores duplicate install requests and silent checks while an install is in progress", async () => {
+    const { updater, port } = createUpdater();
+    let resolveInstall!: (result: ReturnType<typeof buildFakeInstallResult>) => void;
+    port.installDesktopAppUpdate = async (input) => {
+      port.recordedInstalls.push(input);
+      return new Promise((resolve) => {
+        resolveInstall = resolve;
+      });
+    };
+
+    const firstInstall = updater.installUpdate({ releaseChannel: "stable" });
+    const secondInstall = await updater.installUpdate({ releaseChannel: "stable" });
+    const silentCheck = await updater.checkForUpdates({
+      releaseChannel: "stable",
+      intent: "automatic",
+      silent: true,
+    });
+
+    expect(secondInstall).toBeNull();
+    expect(silentCheck).toBeNull();
+    expect(port.recordedInstalls).toHaveLength(1);
+    expect(port.recordedChecks).toHaveLength(0);
+    expect(updater.getSnapshot().status).toBe("installing");
+
+    resolveInstall(buildFakeInstallResult({ installed: true }));
+    await firstInstall;
+    expect(updater.getSnapshot().status).toBe("installed");
+  });
+
   it("reports the install error and moves to 'error' when the install throws", async () => {
     const { updater, port, reportedInstallErrors } = createUpdater();
     const error = new Error("install failed");
@@ -460,6 +546,47 @@ describe("formatStatusText", () => {
         formatLastCheckedAt,
       }),
     ).toBe("Restart now");
+  });
+
+  it("formats download-available and live download progress status text", () => {
+    expect(
+      formatStatusText({
+        status: "available",
+        availableUpdate: buildFakeCheckResult({
+          hasUpdate: true,
+          readyToInstall: false,
+          downloading: false,
+          latestVersion: "1.2.3",
+        }),
+        installMessage: null,
+        lastCheckedAt: 42,
+        formatVersion,
+        formatLastCheckedAt,
+      }),
+    ).toBe("Update available: v1.2.3. Last checked at time-42.");
+
+    expect(
+      formatStatusText({
+        status: "installing",
+        availableUpdate: buildFakeCheckResult({
+          hasUpdate: true,
+          readyToInstall: false,
+          downloading: false,
+          latestVersion: "1.2.3",
+        }),
+        downloadProgress: {
+          version: "1.2.3",
+          percent: 64.6,
+          transferred: 65,
+          total: 100,
+          bytesPerSecond: 10,
+        },
+        installMessage: null,
+        lastCheckedAt: null,
+        formatVersion,
+        formatLastCheckedAt,
+      }),
+    ).toBe("Downloading v1.2.3... 65%");
   });
 
   it("uses the active app language for local status wrappers", async () => {

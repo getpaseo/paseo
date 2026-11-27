@@ -40,7 +40,17 @@ NSString *ENRMCodeBlockFenceChar(MarkdownASTNode *node)
 
 NSString *ENRMCodeBlockFencedMarkdown(NSString *code, NSString *language, NSString *fenceChar)
 {
-  NSString *fence = [@"" stringByPaddingToLength:3 withString:fenceChar startingAtIndex:0];
+  // A fence must be longer than any run of its character in the code, or an inner
+  // fence (a Markdown example) closes the block early.
+  unichar fenceUnit = [fenceChar characterAtIndex:0];
+  NSUInteger longestRun = 0;
+  NSUInteger run = 0;
+  for (NSUInteger index = 0; index < code.length; index++) {
+    run = [code characterAtIndex:index] == fenceUnit ? run + 1 : 0;
+    longestRun = MAX(longestRun, run);
+  }
+  NSUInteger fenceLength = MAX((NSUInteger)3, longestRun + 1);
+  NSString *fence = [@"" stringByPaddingToLength:fenceLength withString:fenceChar startingAtIndex:0];
   return [NSString stringWithFormat:@"%@%@\n%@\n%@", fence, language ?: @"", code, fence];
 }
 

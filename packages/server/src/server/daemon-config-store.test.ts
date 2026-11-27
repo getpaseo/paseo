@@ -207,6 +207,68 @@ describe("DaemonConfigStore", () => {
     expect(store.get().agentProfiles).toHaveLength(1);
   });
 
+  test("preserves stored profile systemPrompt when omitted by an older client and clears on empty string", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "profile_ui",
+          name: "UI work",
+          provider: "claude",
+          model: "claude-opus-5",
+          systemPrompt: "  Focus on layout and design tokens.  ",
+        },
+      ],
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles?.[0]?.systemPrompt).toBe(
+      "Focus on layout and design tokens.",
+    );
+
+    // An older client edits the profile without sending `systemPrompt`.
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "profile_ui",
+          name: "UI work updated",
+          provider: "claude",
+          model: "claude-opus-5",
+        },
+      ],
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles?.[0]).toMatchObject({
+      name: "UI work updated",
+      systemPrompt: "Focus on layout and design tokens.",
+    });
+
+    // A newer client explicitly clears `systemPrompt` by sending an empty string.
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "profile_ui",
+          name: "UI work updated",
+          provider: "claude",
+          model: "claude-opus-5",
+          systemPrompt: "",
+        },
+      ],
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles?.[0]).not.toHaveProperty(
+      "systemPrompt",
+    );
+  });
+
   test("a profile written with featureValues is stored as options, and the config API answers with both", async () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

@@ -4,6 +4,7 @@ import {
   defaultHostAppearance,
   normalizeStoredHostAppearance,
   resolveHostBadgeDisplay,
+  resolveHostIcon,
   selectHostBadges,
 } from "@/hosts/appearance";
 
@@ -16,7 +17,7 @@ function host(
 }
 
 describe("normalizeStoredHostAppearance", () => {
-  it("defaults when the stored registry predates the field or holds junk", () => {
+  it("defaults without writing an icon field so untouched records stay downgrade-safe", () => {
     const expected = { color: "none", badgeDisplay: null };
     expect(normalizeStoredHostAppearance(undefined)).toEqual(expected);
     expect(normalizeStoredHostAppearance(null)).toEqual(expected);
@@ -24,13 +25,79 @@ describe("normalizeStoredHostAppearance", () => {
     expect(normalizeStoredHostAppearance({})).toEqual(expected);
     expect(normalizeStoredHostAppearance({ color: "chartreuse" })).toEqual(expected);
     expect(normalizeStoredHostAppearance({ badgeDisplay: "loud" })).toEqual(expected);
+    expect("icon" in defaultHostAppearance()).toBe(false);
   });
 
-  it("round-trips a value the user actually chose", () => {
-    expect(normalizeStoredHostAppearance({ color: "teal", badgeDisplay: "icon" })).toEqual({
+  it("preserves an unknown stored icon on disk while falling back at render time", () => {
+    const normalized = normalizeStoredHostAppearance({
+      color: "teal",
+      icon: "spaceship",
+      badgeDisplay: "icon",
+    });
+    expect(normalized).toEqual({
+      color: "teal",
+      icon: "spaceship",
+      badgeDisplay: "icon",
+    });
+    expect(resolveHostIcon({ appearance: normalized })).toBe("server");
+    expect(resolveHostIcon({ appearance: normalized, detectedMachineKind: "laptop" })).toBe(
+      "laptop",
+    );
+  });
+
+  it("keeps icon absent on stored entries that predate host icons", () => {
+    const normalized = normalizeStoredHostAppearance({ color: "teal", badgeDisplay: "icon" });
+    expect(normalized).toEqual({
       color: "teal",
       badgeDisplay: "icon",
     });
+    expect("icon" in normalized).toBe(false);
+  });
+
+  it("round-trips a value the user actually chose", () => {
+    expect(
+      normalizeStoredHostAppearance({ color: "teal", icon: "laptop", badgeDisplay: "icon" }),
+    ).toEqual({
+      color: "teal",
+      icon: "laptop",
+      badgeDisplay: "icon",
+    });
+  });
+});
+
+describe("resolveHostIcon", () => {
+  it("prefers an explicit user icon over daemon auto-detection", () => {
+    expect(
+      resolveHostIcon({
+        appearance: { color: "none", icon: "workstation", badgeDisplay: null },
+        detectedMachineKind: "laptop",
+      }),
+    ).toBe("workstation");
+  });
+
+  it("uses the daemon-detected machine kind while the user icon is auto (null)", () => {
+    expect(
+      resolveHostIcon({
+        appearance: defaultHostAppearance(),
+        detectedMachineKind: "laptop",
+      }),
+    ).toBe("laptop");
+    expect(
+      resolveHostIcon({
+        appearance: defaultHostAppearance(),
+        detectedMachineKind: "container",
+      }),
+    ).toBe("container");
+  });
+
+  it("falls back to server when the detected machine kind is absent or unknown", () => {
+    expect(resolveHostIcon({ appearance: defaultHostAppearance() })).toBe("server");
+    expect(
+      resolveHostIcon({ appearance: defaultHostAppearance(), detectedMachineKind: null }),
+    ).toBe("server");
+    expect(
+      resolveHostIcon({ appearance: defaultHostAppearance(), detectedMachineKind: "future-kind" }),
+    ).toBe("server");
   });
 });
 
@@ -50,13 +117,13 @@ describe("resolveHostBadgeDisplay", () => {
   it("prefers an explicit choice over either default", () => {
     expect(
       resolveHostBadgeDisplay({
-        appearance: { color: "none", badgeDisplay: "icon" },
+        appearance: { color: "none", icon: "server", badgeDisplay: "icon" },
         isLocalHost: true,
       }),
     ).toBe("icon");
     expect(
       resolveHostBadgeDisplay({
-        appearance: { color: "none", badgeDisplay: "hidden" },
+        appearance: { color: "none", icon: "server", badgeDisplay: "hidden" },
         isLocalHost: false,
       }),
     ).toBe("hidden");
@@ -72,7 +139,7 @@ describe("resolveHostBadgeDisplay", () => {
     ).toBeNull();
     expect(
       resolveHostBadgeDisplay({
-        appearance: { color: "none", badgeDisplay: "icon" },
+        appearance: { color: "none", icon: "server", badgeDisplay: "icon" },
         isLocalHost: false,
         localHostResolutionPending: true,
       }),
@@ -93,7 +160,7 @@ describe("selectHostBadges", () => {
   it("omits a host the user hid and keeps its sibling", () => {
     const badges = selectHostBadges({
       hosts: [
-        host("alpha", "Alpha", { color: "none", badgeDisplay: "hidden" }),
+        host("alpha", "Alpha", { color: "none", icon: "server", badgeDisplay: "hidden" }),
         host("beta", "Beta"),
       ],
       localServerId: null,
@@ -104,13 +171,14 @@ describe("selectHostBadges", () => {
       serverId: "beta",
       label: "Beta",
       color: "none",
+      icon: "server",
       showLabel: true,
     });
   });
 
   it("keeps an icon-only host in the map without its label", () => {
     const badges = selectHostBadges({
-      hosts: [host("alpha", "Alpha", { color: "teal", badgeDisplay: "icon" })],
+      hosts: [host("alpha", "Alpha", { color: "teal", icon: "mini", badgeDisplay: "icon" })],
       localServerId: null,
       enabled: true,
     });
@@ -118,6 +186,7 @@ describe("selectHostBadges", () => {
       serverId: "alpha",
       label: "Alpha",
       color: "teal",
+      icon: "mini",
       showLabel: false,
     });
   });
@@ -149,5 +218,22 @@ describe("selectHostBadges", () => {
       enabled: true,
     });
     expect(badges.size).toBe(0);
+  });
+
+  it("applies daemon-detected machine kind for auto icons while respecting explicit overrides", () => {
+    const badges = selectHostBadges({
+      hosts: [
+        host("alpha", "Alpha"),
+        host("beta", "Beta", { color: "sky", icon: "workstation", badgeDisplay: "name" }),
+      ],
+      localServerId: null,
+      detectedMachineKindByServerId: new Map([
+        ["alpha", "laptop"],
+        ["beta", "cloud"],
+      ]),
+      enabled: true,
+    });
+    expect(badges.get("alpha")?.icon).toBe("laptop");
+    expect(badges.get("beta")?.icon).toBe("workstation");
   });
 });

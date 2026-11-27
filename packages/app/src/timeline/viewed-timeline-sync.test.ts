@@ -208,6 +208,7 @@ class TimelineWorld {
     },
     onCatchUpOwed: () => undefined,
     onCatchUpSettled: () => undefined,
+    isArchived: () => false,
     prepare: async (agentId) => {
       this.cacheRequests.push(agentId);
       this.cacheRequestWaiters.shift()?.(agentId);

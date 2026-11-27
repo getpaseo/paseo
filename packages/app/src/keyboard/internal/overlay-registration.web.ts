@@ -3,12 +3,29 @@ import { overlays, type OverlayEntry, type KeyboardInputEvent } from "./overlays
 import type { OverlayRegistration } from "./overlay-contract";
 type WebOverlayKeyHandler = (event: KeyboardInputEvent) => boolean;
 
+/** A DOM element, or a component handle that knows how to focus itself (such as a text input). */
+interface FocusTarget {
+  focus(): void;
+}
+
+function isFocusTarget(value: unknown): value is FocusTarget {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as Partial<FocusTarget>).focus === "function"
+  );
+}
+
+function canRestoreFocusTo(target: FocusTarget): boolean {
+  return !(target instanceof HTMLElement) || document.contains(target);
+}
+
 interface WebOverlayEntry {
   getLayer: () => number;
   getKeys: () => readonly string[];
   getScope: () => HTMLElement | null;
   getKeyHandler: () => WebOverlayKeyHandler;
-  restoreFocus: HTMLElement | null;
+  restoreFocus: FocusTarget | null;
   manageFocus: boolean;
 }
 
@@ -156,7 +173,7 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
       entry.manageFocus &&
       options?.restoreFocus !== false &&
       entry.restoreFocus &&
-      document.contains(entry.restoreFocus)
+      canRestoreFocusTo(entry.restoreFocus)
     ) {
       entry.restoreFocus.focus();
     }
@@ -181,7 +198,7 @@ export function useOverlayRegistration({
   keysRef.current = keys;
   const layerRef = useRef(layer);
   const keyHandlerRef = useRef(onKeyDown);
-  const capturedRestoreFocusRef = useRef<HTMLElement | null>(null);
+  const capturedRestoreFocusRef = useRef<FocusTarget | null>(null);
   const removeEntryRef = useRef<((options?: RemoveWebOverlayOptions) => void) | null>(null);
   const detachedRemoveEntryRef = useRef<((options?: RemoveWebOverlayOptions) => void) | null>(null);
   const registeredRef = useRef(false);
@@ -193,7 +210,7 @@ export function useOverlayRegistration({
   keyHandlerRef.current = onKeyDown;
   if (active && !wasActiveRef.current && typeof document !== "undefined") {
     const requestedRestoreTarget = preferredRestoreFocusRef?.current;
-    if (requestedRestoreTarget instanceof HTMLElement) {
+    if (isFocusTarget(requestedRestoreTarget)) {
       capturedRestoreFocusRef.current = requestedRestoreTarget;
     } else {
       capturedRestoreFocusRef.current =

@@ -84,7 +84,7 @@ function formatToolSummary(summary: string | undefined): string | null {
 function inputFromUnknownDetail(
   detail: Extract<AgentTimelineItem, { type: "tool_call" }>["detail"],
 ): unknown {
-  return detail.type === "unknown" ? detail.input : null;
+  return detail.type === "unknown" ? detail.input : undefined;
 }
 
 function projectForCuration(items: readonly AgentTimelineItem[]): AgentTimelineItem[] {

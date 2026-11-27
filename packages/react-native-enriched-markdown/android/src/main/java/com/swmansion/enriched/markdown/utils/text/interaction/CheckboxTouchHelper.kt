@@ -17,10 +17,18 @@ class CheckboxTouchHelper(
    * gesture is consumed, so the tap falls through to the text view unchanged.
    */
   var isEnabled: Boolean = true
+    set(value) {
+      field = value
+      if (!value) {
+        pendingHit = null
+        releaseParentIntercept()
+      }
+    }
 
   private var touchDownX = 0f
   private var touchDownY = 0f
   private var pendingHit: TaskListHitTestResult? = null
+  private var disallowsParentIntercept = false
   private val touchSlop: Int by lazy { ViewConfiguration.get(textView.context).scaledTouchSlop }
 
   /** Returns `true` if the event was consumed by a checkbox gesture. */
@@ -32,18 +40,22 @@ class CheckboxTouchHelper(
         touchDownX = event.x
         touchDownY = event.y
         pendingHit = hit
+        disallowsParentIntercept = true
+        textView.parent?.requestDisallowInterceptTouchEvent(true)
         return true
       }
 
       MotionEvent.ACTION_MOVE -> {
         if (pendingHit != null && isExceedingSlop(event)) {
           pendingHit = null
+          releaseParentIntercept()
         }
       }
 
       MotionEvent.ACTION_UP -> {
         val hit = pendingHit ?: return false
         pendingHit = null
+        releaseParentIntercept()
         if (!isExceedingSlop(event)) {
           onCheckboxTap?.invoke(hit.taskIndex, hit.checked, hit.itemText)
         }
@@ -52,9 +64,16 @@ class CheckboxTouchHelper(
 
       MotionEvent.ACTION_CANCEL -> {
         pendingHit = null
+        releaseParentIntercept()
       }
     }
     return pendingHit != null
+  }
+
+  private fun releaseParentIntercept() {
+    if (!disallowsParentIntercept) return
+    disallowsParentIntercept = false
+    textView.parent?.requestDisallowInterceptTouchEvent(false)
   }
 
   private fun isExceedingSlop(event: MotionEvent): Boolean = abs(event.x - touchDownX) > touchSlop || abs(event.y - touchDownY) > touchSlop

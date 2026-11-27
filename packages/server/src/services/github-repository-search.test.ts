@@ -66,11 +66,11 @@ describe("GitHub repository search", () => {
           "--limit",
           "8",
         ],
-        options: { cwd: "/tmp" },
+        options: { cwd: "/tmp", executablePath: "/usr/bin/gh" },
       },
       {
         args: ["config", "get", "git_protocol", "--host", "github.com"],
-        options: { cwd: "/tmp" },
+        options: { cwd: "/tmp", executablePath: "/usr/bin/gh" },
       },
     ]);
   });
@@ -123,11 +123,11 @@ describe("GitHub repository search", () => {
           "--order",
           "desc",
         ],
-        options: { cwd: "/tmp" },
+        options: { cwd: "/tmp", executablePath: "/usr/bin/gh" },
       },
       {
         args: ["config", "get", "git_protocol", "--host", "github.com"],
-        options: { cwd: "/tmp" },
+        options: { cwd: "/tmp", executablePath: "/usr/bin/gh" },
       },
     ]);
   });

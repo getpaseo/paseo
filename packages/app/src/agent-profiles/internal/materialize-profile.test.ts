@@ -24,6 +24,7 @@ describe("materializeAgentProfile", () => {
           modeId: "plan",
           thinkingOptionId: "think-hard",
           options: { web_search: true },
+          systemPrompt: "  Focus on UI tokens.  ",
         }),
       ),
     ).toEqual({
@@ -32,16 +33,20 @@ describe("materializeAgentProfile", () => {
       modeId: "plan",
       thinkingOptionId: "think-hard",
       options: { web_search: true },
+      systemPrompt: "Focus on UI tokens.",
     });
   });
 
   it("treats omitted and blank fields the same", () => {
-    expect(materializeAgentProfile(profile({ model: "   ", modeId: "" }))).toEqual({
+    expect(
+      materializeAgentProfile(profile({ model: "   ", modeId: "", systemPrompt: "   " })),
+    ).toEqual({
       provider: "claude",
       modelId: "",
       modeId: "",
       thinkingOptionId: "",
       options: {},
+      systemPrompt: "",
     });
   });
 
@@ -85,10 +90,14 @@ describe("toAgentConfigApply", () => {
     ).not.toHaveProperty("options");
   });
 
-  it("never carries a provider, which a running agent cannot change", () => {
-    expect(
-      toAgentConfigApply(materializeAgentProfile(profile({ model: "claude-opus-5" }))),
-    ).not.toHaveProperty("provider");
+  it("never carries provider or systemPrompt, which a running agent cannot change", () => {
+    const applied = toAgentConfigApply(
+      materializeAgentProfile(
+        profile({ model: "claude-opus-5", systemPrompt: "Focus on UI tokens." }),
+      ),
+    );
+    expect(applied).not.toHaveProperty("provider");
+    expect(applied).not.toHaveProperty("systemPrompt");
   });
 });
 

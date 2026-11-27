@@ -864,7 +864,8 @@ test("Claude session started by a control request without a turn can stop its ru
   }
 });
 
-test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+/** A Claude session whose SDK stream the test feeds one message at a time. */
+async function createPumpedClaudeSession() {
   let wake: (() => void) | undefined;
   const channel = { closed: false };
   const queue: Array<{ message: SDKMessage; consumed(): void }> = [];
@@ -937,12 +938,33 @@ test("Claude session runtime safety observes pumped background work and autonomo
     usage: { input_tokens: 1, output_tokens: 1 },
     total_cost_usd: 0,
   };
-  try {
-    await session.startTurn("start background work");
+  // A session-only cron lives in this process, and Claude reports it only to the Stop hook.
+  const stop = (session_crons: SessionCronSummary[]) => {
+    const stopInput: StopHookInput = {
+      hook_event_name: "Stop",
+      session_id: "runtime-safety",
+      transcript_path: "",
+      cwd: process.cwd(),
+      stop_hook_active: false,
+      session_crons,
+    };
+    return stopHook!(stopInput, undefined, { signal: new AbortController().signal });
+  };
+  /** Starts a foreground turn and returns once Claude has opened it. */
+  async function startTurn(prompt: string) {
+    await session.startTurn(prompt);
     await connection;
     const input = await nativeInput.next();
     await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
     await push(init);
+  }
+  return { session, push, stop, startTurn, init, result };
+}
+
+test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+  const { session, push, stop, startTurn, init, result } = await createPumpedClaudeSession();
+  try {
+    await startTurn("start background work");
     await push(result);
     expect(await session.canStopRuntime!()).toBe(true);
     await push({
@@ -966,22 +988,49 @@ test("Claude session runtime safety observes pumped background work and autonomo
     expect(await session.canStopRuntime!()).toBe(false);
     await push(result);
     expect(await session.canStopRuntime!()).toBe(true);
-    // A session-only cron lives in this process, and Claude reports it only to the Stop hook.
-    const stop = (session_crons: SessionCronSummary[]) => {
-      const stopInput: StopHookInput = {
-        hook_event_name: "Stop",
-        session_id: "runtime-safety",
-        transcript_path: "",
-        cwd: process.cwd(),
-        stop_hook_active: false,
-        session_crons,
-      };
-      return stopHook!(stopInput, undefined, { signal: new AbortController().signal });
-    };
     await stop([{ id: "99eb0b69", schedule: "0 */6 * * *", recurring: true, prompt: "say hi" }]);
     expect(await session.canStopRuntime!()).toBe(false);
     await stop([]);
     expect(await session.canStopRuntime!()).toBe(true);
+  } finally {
+    await session.close();
+  }
+});
+
+test("Claude session reports a pending wakeup until the turn its background work starts", async () => {
+  const { session, push, stop, startTurn, init, result } = await createPumpedClaudeSession();
+  try {
+    await startTurn("run the build in the background");
+    await push({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "build", task_type: "local_bash", description: "npm run build" }],
+    });
+    await push(result);
+    expect(session.hasPendingWakeup!()).toBe(true);
+    // Claude's order at wake-up: the notification, the empty roster, then the new turn.
+    await push({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "build",
+      status: "completed",
+      output: "built",
+      summary: "built",
+    });
+    await push({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+    expect(session.hasPendingWakeup!()).toBe(true);
+    await push(init);
+    expect(session.hasPendingWakeup!()).toBe(false);
+    await push(result);
+    expect(session.hasPendingWakeup!()).toBe(false);
+
+    // A one-shot wakeup starts a turn by itself; a recurring cron never settles.
+    const wakeup = { id: "wake", schedule: "30 14 26 11 *", recurring: false, prompt: "check" };
+    const cron = { id: "cron", schedule: "0 */6 * * *", recurring: true, prompt: "say hi" };
+    await stop([wakeup, cron]);
+    expect(session.hasPendingWakeup!()).toBe(true);
+    await stop([cron]);
+    expect(session.hasPendingWakeup!()).toBe(false);
   } finally {
     await session.close();
   }

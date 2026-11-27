@@ -136,6 +136,8 @@ export interface ProviderSnapshotEntry {
   /** The page that helps users set up and troubleshoot this provider. */
   docsUrl?: string;
   defaultModeId?: string | null;
+  /** The provider can run a session behind an `agent.open.before` wrap. Absent means it cannot. */
+  launchWrap?: boolean;
 }
 
 export interface AgentFeatureToggle {

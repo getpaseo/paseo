@@ -956,7 +956,10 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      await pushCurrentBranch(cwd);
+      await pushCurrentBranch(cwd, undefined, {
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+      });
       await this.gitMutation.notifyGitMutation(cwd, "push", { invalidateForge: true });
       this.host.emit({
         type: "checkout_push_response",

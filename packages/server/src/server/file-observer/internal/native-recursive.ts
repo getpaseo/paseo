@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { BackendDiagnostics, ObservationBackend, ObservationHost } from "./contracts.js";
 import type { ObserverPaths } from "./paths.js";
 import { isMissingPathError, toError } from "./paths.js";
+import { createScanSliceBudget, type ScanSliceBudget } from "./scan-slice.js";
 
 const MAX_TRACKED_ENTRIES = 250_000;
 // fs.stat runs on the libuv threadpool, which is four threads and shared by the
@@ -236,7 +237,7 @@ class NativeRecursiveBackend implements ObservationBackend {
     const startedAt = performance.now();
     try {
       if (fullAudit) {
-        const next = await this.scanTree(this.host.root);
+        const next = await this.scanTree(this.host.root, generation);
         if (!this.canCommit(generation)) return;
         if (emitDiff) {
           this.queueDiff(next.files, this.files);
@@ -267,14 +268,16 @@ class NativeRecursiveBackend implements ObservationBackend {
     }
   }
 
-  private async scanTree(root: string): Promise<Inventory> {
+  private async scanTree(root: string, generation: number): Promise<Inventory> {
     const files = new Set<string>();
     const directories = new Set<string>();
     const entries = new Map<string, DirectoryEntry>();
     const pending = [root];
-    while (pending.length > 0 && this.host.isActive()) {
+    const slice = createScanSliceBudget();
+    while (pending.length > 0 && this.canCommit(generation)) {
       const directory = pending.pop();
       if (!directory) continue;
+      if (this.host.isIgnored(directory)) continue;
       let children: Dirent[];
       try {
         children = await readdir(directory, { withFileTypes: true });
@@ -285,24 +288,56 @@ class NativeRecursiveBackend implements ObservationBackend {
         if (!isMissingPathError(error) || directory === this.host.root) throw error;
         continue;
       }
-      directories.add(directory);
-      this.assertWithinLimit(files.size + directories.size);
-      const entry: DirectoryEntry = { directories: new Set(), files: new Set() };
-      for (const child of children) {
-        const path = join(directory, child.name);
-        if (this.host.isIgnored(path)) continue;
-        if (child.isDirectory()) {
-          entry.directories.add(path);
-          pending.push(path);
-        } else {
-          entry.files.add(path);
-          files.add(path);
-          this.assertWithinLimit(files.size + directories.size);
-        }
+      if (!this.canCommit(generation)) return { directories, entries, files };
+      if (this.host.isIgnored(directory)) continue;
+      const inventory: Inventory = { directories, entries, files };
+      const keepScanning = await this.scanDirectoryChildren(
+        directory,
+        children,
+        generation,
+        inventory,
+        pending,
+        slice,
+      );
+      if (!keepScanning) return inventory;
+      if (slice.isExpired()) {
+        await slice.yield();
       }
-      entries.set(directory, entry);
     }
     return { directories, entries, files };
+  }
+
+  private async scanDirectoryChildren(
+    directory: string,
+    children: Dirent[],
+    generation: number,
+    inventory: Inventory,
+    pending: string[],
+    slice: ScanSliceBudget,
+  ): Promise<boolean> {
+    const baseCount = inventory.files.size + inventory.directories.size + 1;
+    this.assertWithinLimit(baseCount);
+    const entry: DirectoryEntry = { directories: new Set(), files: new Set() };
+    for (const child of children) {
+      if (slice.shouldYield()) {
+        await slice.yield();
+        if (!this.canCommit(generation)) return false;
+        if (this.host.isIgnored(directory)) return true;
+      }
+      const path = join(directory, child.name);
+      if (this.host.isIgnoredRoot(path)) continue;
+      if (child.isDirectory()) {
+        entry.directories.add(path);
+      } else {
+        entry.files.add(path);
+        this.assertWithinLimit(baseCount + entry.files.size);
+      }
+    }
+    inventory.directories.add(directory);
+    for (const file of entry.files) inventory.files.add(file);
+    for (const childDir of entry.directories) pending.push(childDir);
+    inventory.entries.set(directory, entry);
+    return true;
   }
 
   private async reconcileScopes(
@@ -344,9 +379,13 @@ class NativeRecursiveBackend implements ObservationBackend {
       await this.reconcileUnknownSubtree(directory, generation);
       return;
     }
-    const next = await this.readDirectory(directory);
+    const next = await this.readDirectory(directory, generation);
     if (!this.canCommit(generation)) return;
     if (!next) {
+      if (this.host.isIgnored(directory)) {
+        this.removeSubtree(directory, false);
+        return;
+      }
       this.removeSubtree(directory, true);
       return;
     }
@@ -372,7 +411,7 @@ class NativeRecursiveBackend implements ObservationBackend {
     }
     for (const path of next.directories) {
       if (previous.directories.has(path)) continue;
-      const inventory = await this.scanTree(path);
+      const inventory = await this.scanTree(path, generation);
       if (!this.canCommit(generation)) return;
       if (!inventory.directories.has(path)) {
         next.directories.delete(path);
@@ -386,7 +425,7 @@ class NativeRecursiveBackend implements ObservationBackend {
   }
 
   private async reconcileUnknownSubtree(directory: string, generation: number): Promise<void> {
-    const inventory = await this.scanTree(directory);
+    const inventory = await this.scanTree(directory, generation);
     if (!this.canCommit(generation)) return;
     if (!inventory.directories.has(directory)) {
       this.removeSubtree(directory, true);
@@ -396,7 +435,10 @@ class NativeRecursiveBackend implements ObservationBackend {
     this.mergeInventory(inventory, true);
   }
 
-  private async readDirectory(directory: string): Promise<DirectoryEntry | null> {
+  private async readDirectory(
+    directory: string,
+    generation: number,
+  ): Promise<DirectoryEntry | null> {
     this.host.metrics.nativeShallowScanCount += 1;
     let children: Dirent[];
     try {
@@ -405,10 +447,16 @@ class NativeRecursiveBackend implements ObservationBackend {
       if (!isMissingPathError(error) || directory === this.host.root) throw error;
       return null;
     }
+    if (!this.canCommit(generation) || this.host.isIgnored(directory)) return null;
     const entry: DirectoryEntry = { directories: new Set(), files: new Set() };
+    const slice = createScanSliceBudget();
     for (const child of children) {
+      if (slice.shouldYield()) {
+        await slice.yield();
+        if (!this.canCommit(generation) || this.host.isIgnored(directory)) return null;
+      }
       const path = join(directory, child.name);
-      if (this.host.isIgnored(path)) continue;
+      if (this.host.isIgnoredRoot(path)) continue;
       if (child.isDirectory()) entry.directories.add(path);
       else entry.files.add(path);
     }
@@ -417,7 +465,7 @@ class NativeRecursiveBackend implements ObservationBackend {
 
   private async reconcileSubtree(directory: string, generation: number): Promise<void> {
     if (!this.directories.has(directory) || this.host.isIgnored(directory)) return;
-    const inventory = await this.scanTree(directory);
+    const inventory = await this.scanTree(directory, generation);
     if (!this.canCommit(generation)) return;
     const previousFiles = new Set<string>();
     for (const tracked of this.walkSubtree(directory)) {

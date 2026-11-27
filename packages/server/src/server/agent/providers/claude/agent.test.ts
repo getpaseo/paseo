@@ -1094,6 +1094,153 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test.each([
+    { claudeCodeVersion: "2.1.326", expected: "initialize" },
+    { claudeCodeVersion: "2.2.0", expected: "initialize" },
+    { claudeCodeVersion: "2.1.325", expected: "argv" },
+    { claudeCodeVersion: undefined, expected: "argv" },
+  ])(
+    "delivers MCP servers by $expected for Claude Code $claudeCodeVersion",
+    async ({ claudeCodeVersion, expected }) => {
+      const { queryFactory } = createQueryMock();
+      const client = new ClaudeAgentClient({
+        logger,
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+        resolveVersion: async () => {
+          if (claudeCodeVersion === undefined) {
+            throw new Error("Unable to parse Claude Code version from --version output");
+          }
+          return claudeCodeVersion;
+        },
+      });
+      const session = await client.createSession({
+        provider: "claude",
+        cwd: process.cwd(),
+        mcpServers: {
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer secret-token" },
+          },
+        },
+      });
+
+      await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+
+      expect(queryFactory.mock.calls[0]?.[0].options.mcpServersDelivery).toBe(expected);
+      await session.close();
+    },
+  );
+
+  test("probes the configured Claude command in the workspace with the session environment", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "claude-mcp-workspace-"));
+    const versionProbe = `
+      const workspace = process.cwd().endsWith(${JSON.stringify(path.basename(cwd))});
+      const selected = workspace && process.env.TEST_CLAUDE_WORKSPACE_VERSION;
+      console.log((selected || "2.1.326") + " (Claude Code)");
+    `;
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      runtimeSettings: {
+        command: { mode: "replace", argv: [process.execPath, "-e", versionProbe, "--"] },
+      },
+    });
+    try {
+      const session = await client.createSession(
+        {
+          provider: "claude",
+          cwd,
+          mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+        },
+        { env: { TEST_CLAUDE_WORKSPACE_VERSION: "2.1.325" } },
+      );
+      try {
+        await session.setModel?.("claude-sonnet-4-6");
+        expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual(["argv"]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("uses stdin on new launches and relaunches after Claude Code upgrades", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    let version = "2.1.325";
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => version,
+    });
+    const config = {
+      provider: "claude",
+      cwd: process.cwd(),
+      mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+    } as const;
+    const existing = await client.createSession(config);
+    try {
+      await existing.setModel?.("claude-sonnet-4-6");
+      expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual(["argv"]);
+
+      version = "2.1.326";
+      const fresh = await client.createSession(config);
+      try {
+        await fresh.setModel?.("claude-sonnet-4-6");
+        await existing.setThinkingOption?.("high");
+        await existing.setModel?.("claude-sonnet-4-6");
+
+        expect(launches.map(({ options }) => options.mcpServersDelivery)).toEqual([
+          "argv",
+          "initialize",
+          "initialize",
+        ]);
+      } finally {
+        await fresh.close();
+      }
+    } finally {
+      await existing.close();
+    }
+  });
+
+  test("warns about argv delivery only on launches with MCP servers", async () => {
+    const messages: string[] = [];
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger: pino({}, { write: (message: string) => messages.push(JSON.parse(message).msg) }),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => "2.1.325",
+    });
+    const warnings = () => messages.filter((message) => message.includes("MCP server headers"));
+    const config = { provider: "claude", cwd: process.cwd() } as const;
+    const launch = async (sessionConfig: Parameters<typeof client.createSession>[0]) => {
+      const session = await client.createSession(sessionConfig);
+      try {
+        await session.setModel?.("claude-sonnet-4-6");
+      } finally {
+        await session.close();
+      }
+    };
+    await launch(config);
+    await launch({ ...config, mcpServers: {} });
+    expect(warnings()).toEqual([]);
+
+    const withMcp = {
+      ...config,
+      mcpServers: { paseo: { type: "http", url: "http://127.0.0.1/mcp/agents" } },
+    } as const;
+    await launch(withMcp);
+    await launch(withMcp);
+    expect(warnings()).toEqual([
+      "Claude Code is too old or reports no version; MCP server headers go on its command line",
+    ]);
+  });
+
   test("passes extra Claude Code CLI arguments to the SDK", async () => {
     const { queryFactory, launches } = createQueryMock();
     const client = new ClaudeAgentClient({
