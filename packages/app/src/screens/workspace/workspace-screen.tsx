@@ -11,6 +11,7 @@ import {
   type InlinePathTarget,
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useWorkspaceFileActions } from "@/workspace/file-actions";
 import { useWindowLayout, resolveWorkspaceActionPlacement } from "@/window-layout";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
@@ -2163,18 +2164,11 @@ function WorkspaceScreenContent({
     [toast, t],
   );
 
-  const handleCopyFilePath = useCallback(
-    async (path: string) => {
-      if (!path) return;
-      try {
-        await Clipboard.setStringAsync(path);
-        toast.copied(t("workspace.tabs.toasts.filePathCopiedLabel"));
-      } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
-      }
-    },
-    [toast, t],
-  );
+  const fileActions = useWorkspaceFileActions({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    workspaceRoot: workspaceDirectory ?? "",
+  });
 
   const handleCopyResumeCommand = useCallback(
     async (agentId: string) => {
@@ -2540,9 +2534,6 @@ function WorkspaceScreenContent({
             void handleCopyTerminalId(descriptor.target.terminalId);
           }
           return true;
-        case "workspace.tab.copy-file-path":
-          if (descriptor?.target.kind === "file") void handleCopyFilePath(descriptor.target.path);
-          return true;
         default:
           return false;
       }
@@ -2550,12 +2541,24 @@ function WorkspaceScreenContent({
     [
       activeTab,
       handleCopyAgentId,
-      handleCopyFilePath,
       handleCopyResumeCommand,
       handleCopyTerminalId,
       handleReloadAgent,
       handleRenameTab,
     ],
+  );
+
+  const handleWorkspaceCurrentTabFileAction = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      const target = activeTab?.descriptor.target;
+      if (target?.kind !== "file") return true;
+      if (action.id === "workspace.tab.copy-file-path") void fileActions.copyPath(target.path);
+      if (action.id === "workspace.tab.reveal-in-files") {
+        void fileActions.revealInFiles(target.path);
+      }
+      return true;
+    },
+    [activeTab, fileActions],
   );
 
   const handleWorkspaceCurrentTabCloseAction = useCallback(
@@ -2850,12 +2853,24 @@ function WorkspaceScreenContent({
       "workspace.tab.reload-current",
       "workspace.tab.copy-resume-command",
       "workspace.tab.copy-id",
-      "workspace.tab.copy-file-path",
     ] as const,
     enabled: workspaceActionsEnabled,
     priority: 100,
     isActive: () => true,
     handle: handleWorkspaceCurrentTabMetadataAction,
+  });
+
+  useKeyboardActionHandler({
+    handlerId: buildWorkspaceKeyboardHandlerId({
+      name: "workspace-current-tab-file-actions",
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+    }),
+    actions: ["workspace.tab.copy-file-path", "workspace.tab.reveal-in-files"] as const,
+    enabled: workspaceActionsEnabled,
+    priority: 100,
+    isActive: () => true,
+    handle: handleWorkspaceCurrentTabFileAction,
   });
 
   useKeyboardActionHandler({
@@ -3401,7 +3416,6 @@ function WorkspaceScreenContent({
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
           onCopyTerminalId={handleCopyTerminalId}
-          onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}
           onCloseTab={handleCloseTabById}
@@ -3421,7 +3435,6 @@ function WorkspaceScreenContent({
       handleCopyResumeCommand,
       handleCopyAgentId,
       handleCopyTerminalId,
-      handleCopyFilePath,
       handleReloadAgent,
       handleRenameTab,
       handleCloseTabById,
@@ -3537,7 +3550,6 @@ function WorkspaceScreenContent({
         onCopyResumeCommand={handleCopyResumeCommand}
         onCopyAgentId={handleCopyAgentId}
         onCopyTerminalId={handleCopyTerminalId}
-        onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
@@ -3573,7 +3585,6 @@ function WorkspaceScreenContent({
     handleCopyResumeCommand,
     handleCopyAgentId,
     handleCopyTerminalId,
-    handleCopyFilePath,
     handleReloadAgent,
     handleRenameTab,
     handleCloseTabsToLeftInPane,
@@ -3659,7 +3670,6 @@ function WorkspaceScreenContent({
                 onCopyResumeCommand={handleCopyResumeCommand}
                 onCopyAgentId={handleCopyAgentId}
                 onCopyTerminalId={handleCopyTerminalId}
-                onCopyFilePath={handleCopyFilePath}
                 onReloadAgent={handleReloadAgent}
                 onRenameTab={handleRenameTab}
                 onCloseTabsToLeft={handleCloseTabsToLeft}
@@ -3701,7 +3711,6 @@ function WorkspaceScreenContent({
         onCopyResumeCommand={handleCopyResumeCommand}
         onCopyAgentId={handleCopyAgentId}
         onCopyTerminalId={handleCopyTerminalId}
-        onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
@@ -3743,7 +3752,6 @@ function WorkspaceScreenContent({
     handleCopyResumeCommand,
     handleCopyAgentId,
     handleCopyTerminalId,
-    handleCopyFilePath,
     handleReloadAgent,
     handleRenameTab,
     handleCloseTabsToLeftInPane,
@@ -3863,6 +3871,7 @@ function WorkspaceScreenContent({
         workspace={workspaceDescriptor}
         client={client}
         serverId={normalizedServerId}
+        workspaceId={normalizedWorkspaceId}
         workspaceRoot={workspaceDirectory ?? undefined}
         onOpenWorkspaceFile={openMarkdownPath}
         onOpenBrowserUrl={handleOpenUrlInBrowserTab}

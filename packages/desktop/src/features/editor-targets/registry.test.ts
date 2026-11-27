@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
+import { listAvailableEditorTargets, openEditorTarget, openInDefaultApp } from "./registry.js";
 import type {
   EditorTargetDirectoryEntry,
   EditorTargetIcon,
@@ -544,5 +544,25 @@ describe("editor target registry", () => {
 
     expect(macTargets.map((target) => target.id)).toEqual(["finder"]);
     expect(windowsTargets.map((target) => target.id)).toEqual(["explorer"]);
+  });
+
+  it("hands a home-relative file to the operating system's default app", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.addPath("/home/me/Downloads/report.csv");
+
+    await openInDefaultApp("~/Downloads/report.csv", runtime);
+
+    expect(runtime.openedPaths).toEqual(["/home/me/Downloads/report.csv"]);
+    expect(runtime.revealedPaths).toEqual([]);
+  });
+
+  it("refuses to open a relative or missing path in the default app", async () => {
+    const runtime = new FakeEditorTargets();
+
+    await expect(openInDefaultApp("report.csv", runtime)).rejects.toThrow("absolute local path");
+    await expect(openInDefaultApp("/repo/missing.csv", runtime)).rejects.toThrow(
+      "Path does not exist: /repo/missing.csv",
+    );
+    expect(runtime.openedPaths).toEqual([]);
   });
 });

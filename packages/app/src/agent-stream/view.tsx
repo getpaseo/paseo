@@ -744,6 +744,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           <AssistantFileLinkResolverProvider
             client={client}
             serverId={resolvedServerId}
+            workspaceId={context.workspaceId}
             workspaceRoot={workspaceRoot}
             onOpenWorkspaceFile={handleInlinePathPress}
             toast={toast}
@@ -766,7 +767,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        context.workspaceId,
+        handleInlinePathPress,
+        resolvedServerId,
+        toast,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(

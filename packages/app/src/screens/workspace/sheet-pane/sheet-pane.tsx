@@ -10,21 +10,25 @@ import {
 import { View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Maximize2 } from "lucide-react-native";
+import { Ellipsis, Maximize2 } from "lucide-react-native";
 import {
   SheetBottomInset,
   SheetDragArea,
   SheetHeaderIconButton,
+  SheetHeaderMenuButton,
   SheetHeaderView,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
+import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
 import type { PanelIconProps } from "@/panels/panel-registry";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { WorkspacePaneContent } from "@/screens/workspace/workspace-pane-content";
 import { useWorkspaceLayoutStore, type SheetTab } from "@/stores/workspace-layout-store";
+import { useWorkspaceFileActions, WorkspaceFileActionItems } from "@/workspace/file-actions";
 import { workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { useSheetPaneHost } from "./host";
@@ -84,6 +88,7 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
     () => openTabInFront(workspaceKey, sheet),
     [openTabInFront, sheet, workspaceKey],
   );
+  const filePath = tab.target.kind === "file" ? tab.target.path : null;
   const header = useMemo<SheetHeader>(
     () => ({
       title: descriptor.label,
@@ -91,16 +96,30 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
       back: onBack ? { onPress: onBack } : undefined,
       // The sheet is for looking; the full-screen glyph takes the tab out of the sheet and into
       // the switcher, where it gets its composer back.
-      actions: sheet.policy.openAsTab ? (
-        <SheetHeaderIconButton
-          icon={Maximize2}
-          label={t("workspace.sheet.openAsTab")}
-          onPress={handleOpenAsTab}
-          testID="sheet-tab-open-as-tab"
-        />
-      ) : undefined,
+      actions: (
+        <>
+          {filePath === null ? null : <SheetFileMenu path={filePath} onClose={onClose} />}
+          {sheet.policy.openAsTab ? (
+            <SheetHeaderIconButton
+              icon={Maximize2}
+              label={t("workspace.sheet.openAsTab")}
+              onPress={handleOpenAsTab}
+              testID="sheet-tab-open-as-tab"
+            />
+          ) : null}
+        </>
+      ),
     }),
-    [descriptor.icon, descriptor.label, handleOpenAsTab, onBack, sheet.policy.openAsTab, t],
+    [
+      descriptor.icon,
+      descriptor.label,
+      filePath,
+      handleOpenAsTab,
+      onBack,
+      onClose,
+      sheet.policy.openAsTab,
+      t,
+    ],
   );
 
   const tabDescriptor = useMemo<WorkspaceTabDescriptor>(
@@ -147,6 +166,46 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
         </SheetBottomInset>
       </View>
     </SheetPaneExitContext.Provider>
+  );
+}
+
+const SHEET_FILE_ACTIONS: ReadonlySet<string> = new Set([
+  "reveal-in-files",
+  "download",
+  "copy-path",
+  "copy-relative-path",
+]);
+
+/** A file sheet's `…` menu. */
+function SheetFileMenu({ path, onClose }: { path: string; onClose: () => void }) {
+  const { t } = useTranslation();
+  const { serverId, workspaceId } = useSheetPaneHost();
+  const workspaceRoot = useWorkspaceDirectory(serverId, workspaceId) ?? "";
+  const fileActions = useWorkspaceFileActions({
+    serverId,
+    workspaceId,
+    workspaceRoot,
+    // The sheet covers the Explorer.
+    onRevealInFiles: onClose,
+  });
+  const actions = fileActions
+    .actionsFor(path, "file")
+    .filter((action) => SHEET_FILE_ACTIONS.has(action.id));
+  return (
+    <DropdownMenu compactMode="sheet">
+      <SheetHeaderMenuButton
+        icon={Ellipsis}
+        label={t("workspace.fileActions.moreActions")}
+        testID="sheet-file-menu-trigger"
+      />
+      <DropdownMenuContent align="end" width={220} testID="sheet-file-menu">
+        <WorkspaceFileActionItems
+          actions={actions}
+          revealTargetName={fileActions.revealTargetName}
+          testIDBase="sheet-file-menu"
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

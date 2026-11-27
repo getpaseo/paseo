@@ -55,6 +55,7 @@ function source(gitActions: GitActions): {
         copyAgentId: "Copy agent id",
         copyTerminalId: "Copy terminal id",
         copyFilePath: "Copy file path",
+        revealInFiles: "Reveal in Files",
         closeTabsLeft: "Close tabs left",
         closeTabsRight: "Close tabs right",
         closeOtherTabs: "Close other tabs",
@@ -136,6 +137,21 @@ describe("workspace command center contributions", () => {
     archive?.run();
     expect(fixture.archivedWorkspaces).toBe(1);
     expect(fixture.dispatched).toEqual([]);
+  });
+
+  it("reveals the active file tab in Files", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    fixture.value.activeTabKind = "file";
+    fixture.value.activeTabIndex = 0;
+    fixture.value.activeTabCount = 1;
+
+    buildWorkspaceCommandCenterContributions(fixture.value)
+      .find((item) => item.id === "tab:reveal-in-files")
+      ?.run();
+
+    expect(fixture.dispatched).toEqual([
+      { id: "workspace.tab.reveal-in-files", scope: "workspace" },
+    ]);
   });
 
   it("omits archive while the workspace cannot be archived", () => {

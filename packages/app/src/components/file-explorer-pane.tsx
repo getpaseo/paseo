@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   FlatList,
+  type LayoutChangeEvent,
   ListRenderItemInfo,
   Pressable,
   Text,
@@ -26,7 +27,6 @@ import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import * as Clipboard from "expo-clipboard";
 import { ChevronDown, Eye, EyeOff, FilePlus, FolderPlus, RotateCw } from "lucide-react-native";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import {
@@ -58,12 +58,9 @@ import type {
 import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
-import { useFileDownload } from "@/hooks/use-file-download";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
-import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import {
   DIRECTORY_LISTING_INVALIDATED,
   type DirectoryListingResult,
@@ -81,9 +78,10 @@ import {
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useToast } from "@/contexts/toast-context";
-import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useOpenDirectoryInEditor } from "@/workspace/open-in-editor/directory";
+import { useWorkspaceFileActions } from "@/workspace/file-actions";
+import { useScrollToRevealedEntry } from "@/file-explorer/use-scroll-to-revealed-entry";
 
 const SORT_OPTIONS: { value: SortOption }[] = [
   { value: "name" },
@@ -150,6 +148,11 @@ type ExplorerListRow =
 type ExplorerPendingEdit =
   | { type: "create"; parentPath: string; kind: "file" | "directory" }
   | { type: "rename"; entry: ExplorerEntry };
+
+function listRowPath(row: ExplorerListRow): string | null {
+  if (row.type === "entry") return row.row.entry.path;
+  return row.type === "rename" ? row.entry.path : null;
+}
 
 function listRowKeyExtractor(row: ExplorerListRow) {
   if (row.type === "entry") {
@@ -452,11 +455,11 @@ export function FileExplorerPane({
     workspaceRoot: normalizedWorkspaceRoot,
   });
   const toast = useToast();
-  const isLocalDaemon = useIsLocalDaemon(serverId);
-  const { targets: desktopOpenTargets } = useDesktopOpenTargets({
-    isLocalExecution: isLocalDaemon,
+  const fileActions = useWorkspaceFileActions({
+    serverId,
+    workspaceId,
+    workspaceRoot: normalizedWorkspaceRoot,
   });
-  const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
   const projectId = useWorkspaceFields(
     serverId,
     workspaceId ?? null,
@@ -476,11 +479,6 @@ export function FileExplorerPane({
     (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryDuplicate === true,
   );
   const [pendingEdit, setPendingEdit] = useState<ExplorerPendingEdit | null>(null);
-  const downloadFile = useFileDownload({
-    serverId,
-    workspaceId,
-    workspaceRoot: normalizedWorkspaceRoot,
-  });
   const sortOption = usePanelStore((state) => state.explorerSortOption);
   const showHiddenFiles = usePanelStore((state) => state.explorerShowHiddenFiles);
   const setSortOption = usePanelStore((state) => state.setExplorerSortOption);
@@ -597,43 +595,9 @@ export function FileExplorerPane({
     [setExpandedPathsForWorkspace, workspaceStateKey],
   );
 
-  const handleCopyPath = useCallback(
-    async (path: string) => {
-      await Clipboard.setStringAsync(
-        buildAbsoluteExplorerPath({
-          workspaceRoot: normalizedWorkspaceRoot,
-          entryPath: path,
-        }),
-      );
-    },
-    [normalizedWorkspaceRoot],
-  );
-
-  const handleCopyRelativePath = useCallback(async (path: string) => {
-    await Clipboard.setStringAsync(path);
-  }, []);
-
   const handleRevealEntry = useCallback(
-    async (entry: ExplorerEntry) => {
-      if (!fileManagerTarget) {
-        return;
-      }
-      try {
-        await openDesktopTarget({
-          editorId: fileManagerTarget.id,
-          workspacePath: normalizedWorkspaceRoot,
-          filePath: buildAbsoluteExplorerPath({
-            workspaceRoot: normalizedWorkspaceRoot,
-            entryPath: entry.path,
-          }),
-        });
-      } catch (cause) {
-        toast.error(
-          cause instanceof Error ? cause.message : t("workspace.fileExplorer.errors.revealFailed"),
-        );
-      }
-    },
-    [fileManagerTarget, normalizedWorkspaceRoot, t, toast],
+    (entry: ExplorerEntry) => void fileActions.revealInFileManager(entry.path),
+    [fileActions],
   );
 
   const handleOpenDirectoryInEditor = useCallback(
@@ -646,9 +610,9 @@ export function FileExplorerPane({
       if (entry.kind !== "file") {
         return;
       }
-      downloadFile({ fileName: entry.name, path: entry.path });
+      fileActions.download(entry.path);
     },
-    [downloadFile],
+    [fileActions],
   );
 
   const handleNewEntry = useCallback(
@@ -950,6 +914,13 @@ export function FileExplorerPane({
     return rows;
   }, [pendingEdit, treeRows]);
 
+  const revealScroll = useScrollToRevealedEntry({
+    stateKey: workspaceStateKey,
+    listRef: treeListRef,
+    rowPaths: useMemo(() => listRows.map(listRowPath), [listRows]),
+    onLayout: scrollbar.onLayout,
+  });
+
   const showInitialLoading = resolveShowInitialLoading({
     directories,
     isExplorerLoading,
@@ -992,12 +963,12 @@ export function FileExplorerPane({
           isDirectoryLoading={isDirectoryLoading}
           onEntryPress={handleEntryPress}
           onSelectEntry={handleSelectEntry}
-          onCopyPath={handleCopyPath}
-          onCopyRelativePath={handleCopyRelativePath}
+          onCopyPath={fileActions.copyPath}
+          onCopyRelativePath={fileActions.copyRelativePath}
           onOpenInEditor={openDirectoryInEditor ? handleOpenDirectoryInEditor : undefined}
           editorTargetName={openDirectoryInEditor?.targetName}
-          onRevealEntry={fileManagerTarget ? handleRevealEntry : undefined}
-          revealTargetName={fileManagerTarget?.label}
+          onRevealEntry={fileActions.revealTargetName ? handleRevealEntry : undefined}
+          revealTargetName={fileActions.revealTargetName ?? undefined}
           onDownloadEntry={handleDownloadEntry}
           onAddToChat={onAddToChat}
           onOpenFileToSide={onOpenFileToSide}
@@ -1011,11 +982,10 @@ export function FileExplorerPane({
     },
     [
       expandedPaths,
+      fileActions,
       fsEntryDuplicateEnabled,
       fsEntryOpsEnabled,
       handleCollapseDirectory,
-      handleCopyPath,
-      handleCopyRelativePath,
       handleOpenDirectoryInEditor,
       handleDeleteEntry,
       handleDownloadEntry,
@@ -1029,7 +999,6 @@ export function FileExplorerPane({
       handleRevealEntry,
       handleSelectEntry,
       isDirectoryLoading,
-      fileManagerTarget,
       openDirectoryInEditor,
       selectedEntryPath,
       onAddToChat,
@@ -1083,6 +1052,8 @@ export function FileExplorerPane({
         isRefreshFetching={isRefreshFetching}
         treeListRef={treeListRef}
         scrollbar={scrollbar}
+        onListLayout={revealScroll.onLayout}
+        onScrollToIndexFailed={revealScroll.onScrollToIndexFailed}
         renderTreeRow={renderTreeRow}
         handleSortCycle={handleSortCycle}
         handleToggleHiddenFiles={handleToggleHiddenFiles}
@@ -1157,6 +1128,8 @@ interface FileExplorerPaneContentProps {
   isRefreshFetching: boolean;
   treeListRef: RefObject<FlatList<ExplorerListRow> | null>;
   scrollbar: OverlayFlatListScrollbar;
+  onListLayout: (event: LayoutChangeEvent) => void;
+  onScrollToIndexFailed: (info: { index: number; averageItemLength: number }) => void;
   renderTreeRow: (info: ListRenderItemInfo<ExplorerListRow>) => ReactElement;
   handleSortCycle: () => void;
   handleToggleHiddenFiles: () => void;
@@ -1180,6 +1153,8 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
     isRefreshFetching,
     treeListRef,
     scrollbar,
+    onListLayout,
+    onScrollToIndexFailed,
     renderTreeRow,
     handleSortCycle,
     handleToggleHiddenFiles,
@@ -1343,7 +1318,8 @@ function FileExplorerPaneContent(props: FileExplorerPaneContentProps) {
               keyExtractor={listRowKeyExtractor}
               testID="file-explorer-tree-scroll"
               contentContainerStyle={styles.entriesContent}
-              onLayout={scrollbar.onLayout}
+              onLayout={onListLayout}
+              onScrollToIndexFailed={onScrollToIndexFailed}
               onScroll={scrollbar.onScroll}
               onContentSizeChange={scrollbar.onContentSizeChange}
               scrollEventThrottle={16}

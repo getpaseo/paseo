@@ -29,6 +29,59 @@ import {
 
 const FILE_LINK = "linked.ts:3";
 
+test("compact offers file actions from a link and from the file sheet", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const workspace = await seedMockAgentWorkspace({
+    repoPrefix: "compact-file-actions-",
+    title: "File actions",
+    initialPrompt: promptMentioning(FILE_LINK),
+  });
+  try {
+    await writeFile(path.join(workspace.cwd, "linked.ts"), "one\ntwo\nthree\n", "utf8");
+    await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+    const fileLink = page.getByText(FILE_LINK, { exact: true });
+    await expect(fileLink).toBeVisible({ timeout: 15_000 });
+
+    // Native opens the same sheet from a long press.
+    await fileLink.click({ button: "right" });
+    const linkMenu = page.getByTestId("markdown-link-menu-content");
+    await expect(linkMenu.getByRole("menuitem")).toHaveText([
+      "Open file",
+      "Reveal in Files",
+      "Download",
+      "Copy path",
+      "Copy relative path",
+    ]);
+    await linkMenu.getByRole("menuitem", { name: "Open file" }).click();
+
+    await expect(sheet(page, "linked.ts")).toBeVisible();
+    await page.getByTestId("sheet-file-menu-trigger").click();
+    const sheetMenu = page.getByTestId("sheet-file-menu-content");
+    await expect(sheetMenu.getByRole("menuitem")).toHaveText([
+      "Reveal in Files",
+      "Download",
+      "Copy path",
+      "Copy relative path",
+    ]);
+    await expect(sheetMenu.getByRole("menuitem").last()).toBeInViewport({ ratio: 1 });
+    await page.screenshot({
+      path: test.info().outputPath("compact-file-sheet-menu.png"),
+      animations: "disabled",
+    });
+    await sheetMenu.getByRole("menuitem", { name: "Reveal in Files" }).click();
+    await expectNoSheetOpen(page);
+    await expect(
+      page.locator('[data-testid^="file-explorer-row-"][aria-selected="true"]'),
+    ).toContainText("linked.ts");
+    await page.screenshot({
+      path: test.info().outputPath("compact-reveal-in-files.png"),
+      animations: "disabled",
+    });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 test("compact opens files and subagents in a sheet, leaving the tabs for agents", async ({
   page,
 }) => {

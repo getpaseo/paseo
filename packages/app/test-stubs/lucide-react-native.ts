@@ -10,6 +10,7 @@ const StubIcon: LucideIcon = () => null;
 
 export const Activity = StubIcon;
 export const AlertTriangle = StubIcon;
+export const AppWindow = StubIcon;
 export const Archive = StubIcon;
 export const ArrowDown = StubIcon;
 export const ArrowDownUp = StubIcon;

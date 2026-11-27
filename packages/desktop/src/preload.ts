@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       line?: number;
       column?: number;
     }) => ipcRenderer.invoke("paseo:editor:openTarget", input),
+    openDefaultApp: (input: { path: string }) =>
+      ipcRenderer.invoke("paseo:editor:openDefaultApp", input),
   },
   webUtils: {
     getPathForFile: (file: File) => webUtils.getPathForFile(file),

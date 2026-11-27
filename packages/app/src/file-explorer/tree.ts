@@ -2,6 +2,7 @@ import type { ExplorerDirectory, ExplorerEntry } from "@/stores/session-store";
 import type { SortOption } from "@/stores/panel-store/state";
 import { DIRECTORY_LISTING_INVALIDATED, type DirectoryListingResult } from "./directory-listings";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "./visibility";
+import { parentExplorerPath } from "@/utils/explorer-paths";
 
 export const MAX_AUTO_EXPANDED_DIRECTORY_DEPTH = 5;
 
@@ -229,6 +230,39 @@ export async function revealExplorerDirectory(input: {
     if (!directory || directory === DIRECTORY_LISTING_INVALIDATED) return;
   }
   input.expandPaths(paths);
+}
+
+/**
+ * Load and expand the ancestors of an entry selected outside the tree. Resolves false when the
+ * entry is not in its parent's listing.
+ */
+export async function revealExplorerEntry({
+  entryPath,
+  requestDirectoryListing,
+  expandPaths,
+  showHiddenFiles,
+}: {
+  entryPath: string;
+  requestDirectoryListing: (path: string) => Promise<DirectoryListingResult>;
+  expandPaths: (paths: string[]) => void;
+  showHiddenFiles: () => void;
+}): Promise<boolean> {
+  if (isHiddenExplorerPath(entryPath)) showHiddenFiles();
+  const parentPath = parentExplorerPath(entryPath);
+  let found = false;
+  await revealExplorerDirectory({
+    directoryPath: parentPath,
+    expandPaths,
+    showHiddenFiles,
+    requestDirectoryListing: async (path) => {
+      const directory = await requestDirectoryListing(path);
+      if (path === parentPath && directory && directory !== DIRECTORY_LISTING_INVALIDATED) {
+        found = directory.entries.some((entry) => entry.path === entryPath);
+      }
+      return directory;
+    },
+  });
+  return found;
 }
 
 /**

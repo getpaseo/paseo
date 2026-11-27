@@ -7,6 +7,7 @@ import invariant from "tiny-invariant";
 import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
 import { TerminalPane } from "@/components/terminal-pane";
+import { openUrlInWorkspaceBrowser } from "@/desktop/browser/open-url-in-workspace";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
@@ -14,10 +15,7 @@ import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { showExplorerSidebar } from "@/workspace-tabs/explorer-sidebar";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { getIsElectron } from "@/constants/platform";
-import { createWorkspaceBrowser } from "@/desktop/browser/store";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -98,21 +96,7 @@ function TerminalPanel() {
     });
   }, [isCompact, serverId, workspaceId, workspaceDirectory]);
   const handleOpenBrowserUrl = useCallback(
-    (url: string) => {
-      if (!getIsElectron()) {
-        return;
-      }
-      const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-      if (!workspaceKey) {
-        return;
-      }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-      useWorkspaceLayoutStore.getState().openTab({
-        workspaceKey,
-        target: { kind: "browser", browserId },
-        intent: "reveal",
-      });
-    },
+    (url: string) => openUrlInWorkspaceBrowser({ serverId, workspaceId, url }),
     [serverId, workspaceId],
   );
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
