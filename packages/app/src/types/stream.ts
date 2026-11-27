@@ -756,7 +756,6 @@ export interface AgentToolCallData {
   provider: AgentProvider;
   callId: string;
   name: string;
-  intent?: string;
   status: AgentToolCallStatus;
   error: unknown;
   detail: ToolCallDetail;
@@ -1227,9 +1226,6 @@ export function mergeAgentToolCallItem(
       data: {
         ...existing.payload.data,
         ...data,
-        ...((data.intent ?? existing.payload.data.intent) !== undefined
-          ? { intent: data.intent ?? existing.payload.data.intent }
-          : {}),
         status: mergedStatus,
         error: mergedError,
         detail: mergedDetail,
@@ -1263,7 +1259,6 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
       merged.payload.data.provider === existing.payload.data.provider &&
       merged.payload.data.callId === existing.payload.data.callId &&
       merged.payload.data.name === existing.payload.data.name &&
-      merged.payload.data.intent === existing.payload.data.intent &&
       merged.payload.data.status === existing.payload.data.status &&
       merged.payload.data.error === existing.payload.data.error &&
       merged.payload.data.detail === existing.payload.data.detail &&
@@ -1498,7 +1493,6 @@ function reduceTimelineToolCall(
       provider: event.provider,
       callId: item.callId,
       name: item.name,
-      ...(item.intent !== undefined ? { intent: item.intent } : {}),
       status: item.status,
       error: item.error,
       detail: item.detail,

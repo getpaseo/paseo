@@ -1006,9 +1006,9 @@ describe("OMP agent client and session", () => {
       result: { output: "hello" },
     });
     expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
-      { status: "running", intent: "Inspect output" },
-      { status: "running", intent: "Inspect output" },
-      { status: "completed", intent: "Inspect output" },
+      { status: "running", metadata: { intent: "Inspect output" } },
+      { status: "running", metadata: { intent: "Inspect output" } },
+      { status: "completed", metadata: { intent: "Inspect output" } },
     ]);
   });
 
@@ -1023,7 +1023,40 @@ describe("OMP agent client and session", () => {
         args: { command: "echo hello", i: "ordinary input" },
       }),
     );
-    expect(omp.timeline().find((item) => item.type === "tool_call")).not.toHaveProperty("intent");
+    expect(omp.timeline().find((item) => item.type === "tool_call")).not.toHaveProperty("metadata");
+  });
+
+  test.each([
+    { outcome: "failed", isError: true },
+    { outcome: "canceled", isError: false },
+  ])("keeps tool intent on a $outcome live tool call", async ({ outcome, isError }) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.startTurn("run it");
+    omp.emit({ type: "agent_start" });
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      args: { command: "sleep 10" },
+      intent: "Wait for output",
+    });
+    if (isError) {
+      omp.emit({
+        type: "tool_execution_end",
+        toolCallId: "intent-call",
+        toolName: "bash",
+        result: { output: "boom" },
+        isError,
+      });
+    } else {
+      await omp.interrupt();
+    }
+
+    expect(omp.timeline().findLast((item) => item.type === "tool_call")).toMatchObject({
+      status: outcome,
+      metadata: { intent: "Wait for output" },
+    });
   });
 
   test("shows a concise error for a failed tool while keeping shell output", async () => {

@@ -359,7 +359,6 @@ function canonicalToolTimeline(params: {
   callId: string;
   turnId?: string;
   name: string;
-  intent?: string;
   status: CanonicalToolStatus;
   input?: unknown;
   output?: unknown;
@@ -377,7 +376,6 @@ function canonicalToolTimeline(params: {
     type: "tool_call" as const,
     callId: params.callId,
     name: params.name,
-    ...(params.intent !== undefined ? { intent: params.intent } : {}),
     status: params.status,
     detail,
     metadata: params.metadata,
@@ -633,25 +631,35 @@ describe("stream reducer tool call idempotency", () => {
 });
 
 describe("stream reducer canonical tool calls", () => {
-  it("preserves intent across lifecycle updates and accepts later changes", () => {
+  it("keeps metadata.intent across lifecycle updates that omit it", () => {
     const base = { provider: "codex" as const, callId: "call-intent", name: "shell" };
-    let state = reduceStreamUpdate(
-      [],
-      canonicalToolTimeline({ ...base, status: "running", intent: "Inspect" }),
-      new Date(0),
-    );
-    state = reduceStreamUpdate(
-      state,
-      canonicalToolTimeline({ ...base, status: "running" }),
-      new Date(1),
-    );
-    expect(findToolByCallId(state, base.callId)?.payload.data.intent).toBe("Inspect");
-    state = reduceStreamUpdate(
-      state,
-      canonicalToolTimeline({ ...base, status: "running", intent: "Review" }),
-      new Date(2),
-    );
-    expect(findToolByCallId(state, base.callId)?.payload.data.intent).toBe("Review");
+    const state = hydrateStreamState([
+      {
+        event: canonicalToolTimeline({
+          ...base,
+          status: "running",
+          metadata: { intent: "Inspect" },
+        }),
+        timestamp: new Date(0),
+      },
+      {
+        event: canonicalToolTimeline({ ...base, status: "running" }),
+        timestamp: new Date(1),
+      },
+      {
+        event: canonicalToolTimeline({
+          ...base,
+          status: "completed",
+          metadata: { exitReason: "done" },
+        }),
+        timestamp: new Date(2),
+      },
+    ]);
+
+    expect(findToolByCallId(state, base.callId)?.payload.data.metadata).toEqual({
+      intent: "Inspect",
+      exitReason: "done",
+    });
   });
 
   it("keeps repeated call ids in different turns as distinct timeline rows", () => {

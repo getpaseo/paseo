@@ -1,5 +1,9 @@
 import { mapCustomMessageToToolCall } from "../custom-message.js";
-import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import type {
+  AgentStreamEvent,
+  ToolCallDetail,
+  ToolCallTimelineItem,
+} from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
 import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
@@ -14,6 +18,7 @@ import {
   resolveToolCallName,
   toolFailureMessage,
   isOmpToolFailure,
+  withOmpToolIntent,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -186,14 +191,7 @@ export class OmpHistoryMapper {
         continue;
       }
       if (content.type === "toolCall") {
-        const legacyIntent =
-          typeof content.arguments === "object" && content.arguments !== null
-            ? Reflect.get(content.arguments, "i")
-            : undefined;
-        const storedIntent = typeof content.intent === "string" ? content.intent : undefined;
-        const intent =
-          storedIntent ?? (typeof legacyIntent === "string" ? legacyIntent : undefined);
-        const tracked = parseToolArgs(content.name, content.arguments, intent);
+        const tracked = parseToolArgs(content.name, content.arguments, content.intent);
         this.pendingToolCalls.set(content.id, tracked);
         const detail = this.mapToolDetail(content.id, tracked, null);
         if (!detail) {
@@ -202,15 +200,17 @@ export class OmpHistoryMapper {
         events.push({
           type: "timeline",
           provider: this.provider,
-          item: {
-            type: "tool_call",
-            callId: this.resolveToolCallId(content.id, tracked),
-            name: this.toolName(tracked, null),
-            ...(tracked.intent !== undefined ? { intent: tracked.intent } : {}),
-            status: "running",
-            detail,
-            error: null,
-          },
+          item: withOmpToolIntent(
+            {
+              type: "tool_call",
+              callId: this.resolveToolCallId(content.id, tracked),
+              name: this.toolName(tracked, null),
+              status: "running",
+              detail,
+              error: null,
+            },
+            tracked,
+          ),
         });
       }
     }
@@ -231,14 +231,16 @@ export class OmpHistoryMapper {
     return {
       type: "timeline",
       provider: this.provider,
-      item: toToolResultTimelineItem({
-        callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: this.toolName(tracked, result),
-        ...(tracked.intent !== undefined ? { intent: tracked.intent } : {}),
-        isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
-        detail,
-        errorText: toolFailureMessage(result),
-      }),
+      item: withOmpToolIntent(
+        toToolResultTimelineItem({
+          callId: this.resolveToolCallId(message.toolCallId, tracked),
+          name: this.toolName(tracked, result),
+          isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
+          detail,
+          errorText: toolFailureMessage(result),
+        }),
+        tracked,
+      ),
     };
   }
 
@@ -306,17 +308,15 @@ export async function* streamOmpCoreHistory(
 function toToolResultTimelineItem(input: {
   callId: string;
   name: string;
-  intent?: string;
   isError: boolean;
   detail: ToolCallDetail;
   errorText: string;
-}): AgentTimelineItem {
+}): ToolCallTimelineItem {
   if (input.isError) {
     return {
       type: "tool_call",
       callId: input.callId,
       name: input.name,
-      ...(input.intent !== undefined ? { intent: input.intent } : {}),
       status: "failed",
       detail: input.detail,
       error: input.errorText,
@@ -326,7 +326,6 @@ function toToolResultTimelineItem(input: {
     type: "tool_call",
     callId: input.callId,
     name: input.name,
-    ...(input.intent !== undefined ? { intent: input.intent } : {}),
     status: "completed",
     detail: input.detail,
     error: null,

@@ -15,17 +15,6 @@ function canonicalBase() {
 }
 
 describe("shared messages tool_call schema", () => {
-  it("preserves optional tool intent and accepts older payloads without it", () => {
-    const base = { ...canonicalBase(), status: "running", error: null };
-    expect(
-      AgentTimelineItemPayloadSchema.parse({ ...base, intent: "Inspect files" }),
-    ).toMatchObject({
-      intent: "Inspect files",
-    });
-    expect(AgentTimelineItemPayloadSchema.parse(base)).not.toHaveProperty("intent");
-    expect(AgentTimelineItemPayloadSchema.safeParse({ ...base, intent: 42 }).success).toBe(false);
-  });
-
   it("parses each status-discriminated tool_call variant at runtime", () => {
     const running = AgentTimelineItemPayloadSchema.parse({
       ...canonicalBase(),

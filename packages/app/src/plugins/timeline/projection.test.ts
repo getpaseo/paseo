@@ -53,7 +53,7 @@ describe("plugin timeline projection", () => {
     },
   );
 
-  it("passes tool intent to timeline transformers", () => {
+  it("passes tool-call metadata to timeline transformers", () => {
     const source: StreamItem = {
       kind: "tool_call",
       id: "tool-intent",
@@ -61,21 +61,25 @@ describe("plugin timeline projection", () => {
       payload: {
         source: "agent",
         data: {
-          provider: "codex",
+          provider: "omp",
           callId: "call-1",
-          name: "shell",
-          intent: "Inspect files",
+          name: "bash",
           status: "running",
           error: null,
           detail: { type: "unknown", input: null, output: null },
+          metadata: { intent: "Inspect files" },
         },
       },
     };
+    const seen: unknown[] = [];
     const transform: TimelineItemTransform = ({ item }) => {
-      expect(item.type === "tool_call" && item.intent).toBe("Inspect files");
+      if (item.type === "tool_call") seen.push(item.metadata?.intent);
       return undefined;
     };
+
     projectPluginTimelineItems([source], transform);
+
+    expect(seen).toEqual(["Inspect files"]);
   });
 
   it("does not expose mutable tool detail from stream state", () => {

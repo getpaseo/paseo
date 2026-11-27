@@ -62,7 +62,7 @@ describe("OMP history mapper", () => {
     );
   });
 
-  test("preserves intent on historical tool starts and results", async () => {
+  test("replays stored intent on historical tool starts and results", async () => {
     const events = await collectHistory([
       {
         role: "assistant",
@@ -71,17 +71,16 @@ describe("OMP history mapper", () => {
             type: "toolCall",
             id: "intent-1",
             name: "read",
-            arguments: { path: "file" },
+            arguments: { path: "file", i: "Inspect file." },
             intent: "Inspect file",
           },
           {
             type: "toolCall",
             id: "intent-2",
             name: "bash",
-            arguments: { command: "false", i: "Legacy intent" },
+            arguments: { command: "false" },
             intent: "Check failure",
           },
-          { type: "toolCall", id: "intent-3", name: "read", arguments: { path: "file", i: 42 } },
         ],
       },
       {
@@ -97,40 +96,34 @@ describe("OMP history mapper", () => {
         content: [{ type: "text", text: "failed" }],
         isError: true,
       },
-      {
-        role: "toolResult",
-        toolCallId: "intent-3",
-        toolName: "read",
-        content: [{ type: "text", text: "contents" }],
-      },
     ]);
     expect(events.map((event) => event.item)).toMatchObject([
-      { callId: "intent-1", status: "running", intent: "Inspect file" },
-      { callId: "intent-2", status: "running", intent: "Check failure" },
-      { callId: "intent-3", status: "running" },
-      { callId: "intent-1", status: "completed", intent: "Inspect file" },
-      { callId: "intent-2", status: "failed", intent: "Check failure" },
-      { callId: "intent-3", status: "completed" },
+      { callId: "intent-1", status: "running", metadata: { intent: "Inspect file" } },
+      { callId: "intent-2", status: "running", metadata: { intent: "Check failure" } },
+      { callId: "intent-1", status: "completed", metadata: { intent: "Inspect file" } },
+      { callId: "intent-2", status: "failed", metadata: { intent: "Check failure" } },
     ]);
-    expect(events[2]?.item).not.toHaveProperty("intent");
-    expect(events[5]?.item).not.toHaveProperty("intent");
   });
 
-  test("replays legacy intent embedded in tool arguments", async () => {
+  test("does not replay a tool argument named i as intent", async () => {
     const events = await collectHistory([
       {
         role: "assistant",
         content: [
-          {
-            type: "toolCall",
-            id: "legacy",
-            name: "read",
-            arguments: { path: "file", i: "Inspect file" },
-          },
+          { type: "toolCall", id: "own-i", name: "search", arguments: { i: "ordinary input" } },
         ],
       },
+      {
+        role: "toolResult",
+        toolCallId: "own-i",
+        toolName: "search",
+        content: [{ type: "text", text: "found" }],
+      },
     ]);
-    expect(events[0]?.item).toMatchObject({ type: "tool_call", intent: "Inspect file" });
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      expect(event.item).not.toHaveProperty("metadata");
+    }
   });
 
   test("replays a web search details error as failed when OMP sets isError false", async () => {
@@ -233,7 +226,7 @@ describe("OMP history mapper", () => {
     });
   });
 
-  test("rejects non-string persisted tool intents during journal replay", async () => {
+  test("ignores non-string persisted tool intents during journal replay", async () => {
     const dir = await mkdtemp(join(tmpdir(), "omp-intent-history-"));
     try {
       const sessionFile = join(dir, "session.jsonl");
@@ -269,13 +262,6 @@ describe("OMP history mapper", () => {
                   arguments: { path: "file" },
                   intent: { text: "invalid" },
                 },
-                {
-                  type: "toolCall",
-                  id: "legacy",
-                  name: "read",
-                  arguments: { path: "file", i: "Legacy intent" },
-                  intent: 42,
-                },
               ],
             },
           },
@@ -286,11 +272,10 @@ describe("OMP history mapper", () => {
       const items: AgentStreamEvent["item"][] = [];
       for await (const event of streamOmpHistory({ sessionFile, provider: "omp" }))
         items.push(event.item);
-      expect(items).toHaveLength(4);
-      expect(items[0]).toMatchObject({ callId: "valid", intent: "Read file" });
-      expect(items[1]).not.toHaveProperty("intent");
-      expect(items[2]).not.toHaveProperty("intent");
-      expect(items[3]).toMatchObject({ callId: "legacy", intent: "Legacy intent" });
+      expect(items).toHaveLength(3);
+      expect(items[0]).toMatchObject({ callId: "valid", metadata: { intent: "Read file" } });
+      expect(items[1]).not.toHaveProperty("metadata");
+      expect(items[2]).not.toHaveProperty("metadata");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

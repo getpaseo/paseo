@@ -95,6 +95,7 @@ import type {
 } from "./rpc-types.js";
 import {
   parseToolArgs,
+  withOmpToolIntent,
   parseToolResult,
   toolFailureMessage,
   isOmpToolFailure,
@@ -2215,7 +2216,6 @@ export class OmpAgentSession implements AgentSession {
       name: bridgedTool
         ? `${bridgedTool.server} / ${bridgedTool.tool}`
         : resolveToolCallName(toolCall, result),
-      ...(toolCall.intent !== undefined ? { intent: toolCall.intent } : {}),
       detail,
     };
     const item =
@@ -2224,7 +2224,7 @@ export class OmpAgentSession implements AgentSession {
       type: "timeline",
       provider: this.provider,
       turnId,
-      item,
+      item: withOmpToolIntent(item, toolCall),
     });
     return true;
   }
