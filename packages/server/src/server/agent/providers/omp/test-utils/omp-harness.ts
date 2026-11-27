@@ -283,6 +283,23 @@ export class OmpHarness {
     return { completion: run };
   }
 
+  async startPromptWithNonTerminalEnd(
+    input: string,
+    output: string,
+  ): Promise<{ completion: Promise<unknown> }> {
+    const session = this.requireSession();
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const completion = session.run(input);
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.acceptPrompt(input, "user-1");
+    runtime.streamAssistantText(output);
+    runtime.state = { ...runtime.state, isStreaming: true, isCompacting: false };
+    runtime.finishTurn(undefined, { isTerminal: false });
+    return { completion };
+  }
+
   waitForProviderStateChecks(count: number): Promise<void> {
     return this.omp.latestSession().waitForStateRequests(count);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, onTestFinished, test } from "vitest";
-import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { setImmediate as waitForImmediate, setTimeout as delay } from "node:timers/promises";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -540,10 +540,79 @@ describe("OMP agent client and session", () => {
       args: { command: "sleep 30" },
     });
     expect(omp.runningToolCallIds()).toEqual(["tool-at-deadline"]);
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await delay(60);
     scheduler.retry();
     await expect(completion).rejects.toThrow(/provider idle/i);
     expect(omp.runningToolCallIds()).toEqual([]);
+    // The provider still owned the turn when the gate expired. Abort it so the
+    // next prompt is not rejected with "Agent is already processing".
+    expect(omp.wasAborted()).toBe(true);
+  });
+
+  test("does not start the idle wait for a non-terminal agent_end", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 50 });
+    await omp.start();
+    const { completion } = await omp.startPromptWithNonTerminalEnd("first", "first done");
+    const stateChecks = omp.runtime().getStateRequestCount;
+
+    await delay(70);
+    expect(omp.runtime().getStateRequestCount).toBe(stateChecks);
+    expect(omp.completedTurnCount()).toBe(0);
+
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.streamAssistantText("continued");
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn();
+
+    await expect(completion).resolves.toMatchObject({
+      finalText: expect.stringContaining("continued"),
+    });
+  });
+
+  test("extends the idle deadline while the provider keeps producing events", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 80 });
+    await omp.start();
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+
+    await delay(50);
+    omp.runtime().emit({ type: "turn_start" });
+    await delay(50);
+    scheduler.retry();
+    await waitForImmediate();
+
+    expect(omp.completedTurnCount()).toBe(0);
+
+    omp.reportProviderState({ isStreaming: false, isCompacting: false });
+    scheduler.retry();
+    await expect(completion).resolves.toMatchObject({ finalText: "first done" });
+  });
+
+  test("keeps the turn active while an OMP question waits for the user", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 50 });
+    await omp.start();
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+
+    omp.requestToolApproval({ id: "approval-1", tool: "bash", detail: "echo hi" });
+    scheduler.retry();
+    await delay(70);
+
+    expect(omp.completedTurnCount()).toBe(0);
+
+    omp.reportProviderState({ isStreaming: false, isCompacting: false });
+    await omp.respondToPermission("approval-1", { behavior: "allow" });
+    await expect(completion).resolves.toMatchObject({ finalText: "first done" });
   });
 
   test("steers a running turn and correlates a template-expanded echo exactly once", async () => {
