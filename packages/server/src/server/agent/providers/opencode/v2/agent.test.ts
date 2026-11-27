@@ -22,6 +22,13 @@ function terminalEvents(events: AgentStreamEvent[]) {
   );
 }
 
+function toolCallEvents(events: AgentStreamEvent[], callId: string) {
+  return events.filter(
+    (event) =>
+      event.type === "timeline" && event.item.type === "tool_call" && event.item.callId === callId,
+  );
+}
+
 describe("OpenCode v2 session lifecycle", () => {
   test("reopening replaces and removes plugin instructions", async () => {
     const harness = new V2Harness();
@@ -1463,9 +1470,158 @@ describe("OpenCode v2 session lifecycle", () => {
     }
   });
 
-  test("settles interrupt promptly without waiting for a slow history reconcileSnapshot", async () => {
+  test("updates a running tool call under the canceled turn before turn_canceled on Stop and replacement send", async () => {
     const harness = new V2Harness();
     harness.autoComplete = false;
+    const runningTool = {
+      type: "tool" as const,
+      id: "call-bash-1",
+      name: "bash",
+      state: {
+        status: "running" as const,
+        input: { command: "sleep 60" },
+        metadata: {},
+      },
+      time: { created: 10, ran: 10 },
+    };
+    const assistantMessage: SessionMessageInfo = {
+      id: "a-tool-1",
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "test", id: "model" },
+      time: { created: 10 },
+      content: [runningTool],
+    };
+    harness.interrupt = async () => {
+      assistantMessage.time.completed = 20;
+      assistantMessage.content = [
+        {
+          type: "tool",
+          id: "call-bash-1",
+          name: "bash",
+          state: {
+            status: "error",
+            input: { command: "sleep 60" },
+            error: "Interrupted",
+            metadata: {},
+          },
+          time: { created: 10, ran: 10, completed: 20 },
+        },
+      ];
+      harness.finishExecution("interrupted");
+      return { interrupted: true };
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      const { turnId: firstTurnId } = await session.startTurn("run a long command");
+      await expect.poll(() => harness.prompts).toEqual(["run a long command"]);
+      harness.history.push(assistantMessage);
+      harness.push({
+        id: "tool-running",
+        created: 11,
+        type: "session.tool.updated",
+        data: { sessionID: harness.info.id, assistantMessageID: assistantMessage.id },
+      } as never);
+      await expect.poll(() => toolCallEvents(events, "call-bash-1")).toHaveLength(1);
+
+      await session.interrupt();
+
+      // The final tool_call update must carry T1 and arrive before turn_canceled.
+      const relevant = events.filter(
+        (event) =>
+          event.type === "turn_canceled" ||
+          (event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.callId === "call-bash-1"),
+      );
+      expect(relevant).toEqual([
+        expect.objectContaining({
+          type: "timeline",
+          turnId: firstTurnId,
+          item: expect.objectContaining({
+            type: "tool_call",
+            callId: "call-bash-1",
+            status: "running",
+          }),
+        }),
+        expect.objectContaining({
+          type: "timeline",
+          turnId: firstTurnId,
+          item: expect.objectContaining({
+            type: "tool_call",
+            callId: "call-bash-1",
+            status: "failed",
+          }),
+        }),
+        expect.objectContaining({ type: "turn_canceled", turnId: firstTurnId }),
+      ]);
+
+      // An immediate replacement turn must never receive late items from the canceled turn.
+      harness.autoComplete = true;
+      const { turnId: secondTurnId } = await session.startTurn("next work");
+      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      const lateToolEvents = events.filter(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "call-bash-1" &&
+          event.turnId !== firstTurnId,
+      );
+      expect(lateToolEvents).toEqual([]);
+      expect(terminalEvents(events)[1]).toMatchObject({
+        type: "turn_completed",
+        turnId: secondTurnId,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("settles interrupt promptly when reconcileSnapshot is slow and still tags late tool updates with the canceled turn id", async () => {
+    vi.useFakeTimers();
+    const harness = new V2Harness();
+    harness.autoComplete = false;
+    const assistantMessage: SessionMessageInfo = {
+      id: "a-slow-tool",
+      type: "assistant",
+      agent: "build",
+      model: { providerID: "test", id: "model" },
+      time: { created: 10 },
+      content: [
+        {
+          type: "tool",
+          id: "call-slow-1",
+          name: "bash",
+          state: { status: "running", input: { command: "sleep 60" }, metadata: {} },
+          time: { created: 10, ran: 10 },
+        },
+      ],
+    };
+    harness.interrupt = async () => {
+      assistantMessage.time.completed = 20;
+      assistantMessage.content = [
+        {
+          type: "tool",
+          id: "call-slow-1",
+          name: "bash",
+          state: {
+            status: "error",
+            input: { command: "sleep 60" },
+            error: "Interrupted",
+            metadata: {},
+          },
+          time: { created: 10, ran: 10, completed: 20 },
+        },
+      ];
+      harness.finishExecution("interrupted");
+      return { interrupted: true };
+    };
     const client = new OpenCodeV2AgentClient({
       logger: createTestLogger(),
       runtime: harness.runtime,
@@ -1483,25 +1639,77 @@ describe("OpenCode v2 session lifecycle", () => {
     });
     const originalList = harness.api.message.list;
     try {
-      await session.startTurn("large session work");
-      await expect.poll(() => harness.prompts).toEqual(["large session work"]);
-      // Block message.list to simulate a slow full-history reconcileSnapshot (>2 s).
+      const { turnId: firstTurnId } = await session.startTurn("large session work");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness.prompts).toEqual(["large session work"]);
+      harness.history.push(assistantMessage);
+      harness.push({
+        id: "slow-tool-running",
+        created: 11,
+        type: "session.tool.updated",
+        data: { sessionID: harness.info.id, assistantMessageID: assistantMessage.id },
+      } as never);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.callId === "call-slow-1" &&
+            event.turnId === firstTurnId,
+        ),
+      ).toBe(true);
+
+      // Block message.list to simulate a slow reconcileSnapshot (>250ms budget).
       harness.api.message.list = async (input, options) => {
         await listGate;
         return originalList(input, options);
       };
-      await session.interrupt();
+      let stopped = false;
+      const stop = (async () => {
+        await session.interrupt();
+        stopped = true;
+      })();
+      await vi.advanceTimersByTimeAsync(260);
+      await stop;
+      expect(stopped).toBe(true);
       expect(listReleased).toBe(false);
-      expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
-      // Immediate replacement startTurn must succeed without colliding with the stopped turn.
+      expect(terminalEvents(events)).toEqual([
+        expect.objectContaining({ type: "turn_canceled", turnId: firstTurnId }),
+      ]);
+
+      // Start replacement work while the slow snapshot is still blocked, then unblock the snapshot.
       harness.api.message.list = originalList;
       harness.autoComplete = true;
-      await session.startTurn("replacement work");
-      await expect.poll(() => harness.prompts).toEqual(["large session work", "replacement work"]);
-      await expect.poll(() => terminalEvents(events)).toHaveLength(2);
+      const { turnId: secondTurnId } = await session.startTurn("replacement work");
+      releaseList();
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Even though T2 had already started, the late final tool update still belongs to T1.
+      const toolUpdates = events.filter(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "call-slow-1",
+      );
+      expect(toolUpdates).toEqual([
+        expect.objectContaining({
+          turnId: firstTurnId,
+          item: expect.objectContaining({ status: "running" }),
+        }),
+        expect.objectContaining({
+          turnId: firstTurnId,
+          item: expect.objectContaining({ status: "failed" }),
+        }),
+      ]);
+      expect(terminalEvents(events)).toEqual([
+        expect.objectContaining({ type: "turn_canceled", turnId: firstTurnId }),
+        expect.objectContaining({ type: "turn_completed", turnId: secondTurnId }),
+      ]);
     } finally {
       releaseList();
       await session.close();
+      vi.useRealTimers();
     }
   });
 
@@ -1580,13 +1788,13 @@ describe("OpenCode v2 session lifecycle", () => {
       await expect.poll(() => harness.activeReads).toBeGreaterThan(passiveReads);
       expect(terminalEvents(events)).toEqual([]);
 
-      // Explicit Stop settles immediately in a single active + get pass without polling.
+      // Explicit Stop settles immediately in one active read + outcome check + final snapshot (no polling).
       const activeBeforeStop = harness.activeReads;
       const getsBeforeStop = getCalls;
       await session.interrupt();
       expect(interruptCalls).toBe(1);
       expect(harness.activeReads - activeBeforeStop).toBe(1);
-      expect(getCalls - getsBeforeStop).toBe(1);
+      expect(getCalls - getsBeforeStop).toBe(2);
       expect(terminalEvents(events)).toEqual([expect.objectContaining({ type: "turn_canceled" })]);
 
       // Follow-up send must succeed without colliding with the stopped turn.

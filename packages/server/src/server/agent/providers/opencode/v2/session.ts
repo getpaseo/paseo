@@ -322,11 +322,37 @@ export class OpenCodeV2Session implements AgentSession {
       this.listeners.delete(callback);
     };
   }
+  private readonly toolCallTurnIds = new Map<string, string>();
+  private readonly messageTurnIds = new Map<string, string>();
   private emit(event: AgentStreamEvent) {
     for (const listener of this.listeners) listener(event);
   }
+  private resolveTimelineTurnId(event: AgentStreamEvent): string | undefined {
+    if (event.type === "timeline") {
+      if (event.item.type === "tool_call") {
+        const existing = this.toolCallTurnIds.get(event.item.callId);
+        if (existing) return existing;
+        if (this.turns.id) {
+          this.toolCallTurnIds.set(event.item.callId, this.turns.id);
+          return this.turns.id;
+        }
+        return undefined;
+      }
+      if (event.item.type === "assistant_message" && event.item.messageId) {
+        const existing = this.messageTurnIds.get(event.item.messageId);
+        if (existing) return existing;
+        if (this.turns.id) {
+          this.messageTurnIds.set(event.item.messageId, this.turns.id);
+          return this.turns.id;
+        }
+        return undefined;
+      }
+    }
+    return this.turns.id;
+  }
   private emitTimeline(event: AgentStreamEvent) {
-    this.emit({ ...event, ...(this.turns.id ? { turnId: this.turns.id } : {}) });
+    const turnId = this.resolveTimelineTurnId(event);
+    this.emit({ ...event, ...(turnId ? { turnId } : {}) });
   }
   async *streamHistory() {
     await this.reconnectIfExited();
@@ -776,6 +802,8 @@ export class OpenCodeV2Session implements AgentSession {
       await this.mcp?.close();
       await this.connection.release();
     }
+    this.toolCallTurnIds.clear();
+    this.messageTurnIds.clear();
     this.listeners.clear();
   }
 }

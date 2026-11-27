@@ -25,6 +25,7 @@ import type { V2Api } from "./api.js";
 
 const INTERRUPT_SETTLE_POLL_MS = 25;
 const INTERRUPT_SETTLE_MAX_POLLS = 80;
+const INTERRUPT_RECONCILE_TIMEOUT_MS = 250;
 const FALLBACK_EXECUTION_ERROR = "OpenCode execution failed";
 
 type ExecutionEvent = Extract<
@@ -383,12 +384,23 @@ export class SessionTurns {
     if (info.outcome === "interrupted") return { outcome: "interrupted" };
     return { outcome: "succeeded" };
   }
-  private settleImmediate(
+  private async settleImmediate(
     turn: Turn,
     resolution: Exclude<TurnResolution, { outcome: "succeeded" }>,
   ) {
-    // Interrupted and failed turns do not require history or metrics to settle; release the turn
-    // immediately so Stop stays fast even on large sessions, and catch up timeline state async.
+    // Try a bounded tail snapshot before releasing the turn so final tool states (such as a
+    // running tool marked error on Stop) arrive under this turn's id before turn_canceled or
+    // turn_failed. If the read is slow or fails, settle anyway so Stop stays fast.
+    let reconcileFailed = false;
+    const catchUp = this.options.reconcile().then(
+      () => undefined,
+      (error: unknown) => {
+        reconcileFailed = true;
+        this.options.reportReconciliationError(error);
+      },
+    );
+    await waitForTurnOrPoll(catchUp, INTERRUPT_RECONCILE_TIMEOUT_MS, this.options.signal);
+    if (this.turn !== turn) return;
     this.release(turn);
     if (resolution.outcome === "interrupted") {
       this.options.emit({
@@ -405,7 +417,7 @@ export class SessionTurns {
         error: resolution.error,
       });
     }
-    this.options.scheduleReconcile();
+    if (reconcileFailed) this.options.scheduleReconcile();
   }
   private async reconcileTurn() {
     const revision = this.revision;
@@ -435,7 +447,7 @@ export class SessionTurns {
     if (!resolution) return;
 
     if (resolution.outcome !== "succeeded") {
-      this.settleImmediate(turn, resolution);
+      await this.settleImmediate(turn, resolution);
       return;
     }
 
