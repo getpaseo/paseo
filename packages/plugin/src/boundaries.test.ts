@@ -72,22 +72,33 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
   return violations;
 }
 
+const typeCheckConfigPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
+const typeCheckOptions = ts.parseJsonConfigFileContent(
+  ts.readConfigFile(typeCheckConfigPath, ts.sys.readFile).config,
+  ts.sys,
+  path.dirname(typeCheckConfigPath),
+).options;
+const typeCheckFile = path.resolve(
+  sourceDirectory,
+  "../../../plugin-examples/skill-example/client/example.tsx",
+);
+// Every snippet compiles against the same SDK, library, and dependency declarations. Parsing them
+// once keeps each check to the snippet itself; a fresh parse per check can pass the test timeout
+// on a slow runner.
+const sharedSourceFiles = new Map<string, ts.SourceFile | undefined>();
+
 function typeErrors(code: string): string[] {
-  const configPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
-  const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(configPath));
-  const file = path.resolve(
-    sourceDirectory,
-    "../../../plugin-examples/skill-example/client/example.tsx",
-  );
-  const host = ts.createCompilerHost(options);
+  const host = ts.createCompilerHost(typeCheckOptions);
   const getSourceFile = host.getSourceFile;
-  host.getSourceFile = (name, language, ...rest) =>
-    path.resolve(name) === file
-      ? ts.createSourceFile(name, code, language)
-      : getSourceFile.call(host, name, language, ...rest);
-  host.fileExists = (name) => path.resolve(name) === file || ts.sys.fileExists(name);
-  const program = ts.createProgram([file], options, host);
+  host.getSourceFile = (name, language, ...rest) => {
+    if (path.resolve(name) === typeCheckFile) return ts.createSourceFile(name, code, language);
+    if (!sharedSourceFiles.has(name)) {
+      sharedSourceFiles.set(name, getSourceFile.call(host, name, language, ...rest));
+    }
+    return sharedSourceFiles.get(name);
+  };
+  host.fileExists = (name) => path.resolve(name) === typeCheckFile || ts.sys.fileExists(name);
+  const program = ts.createProgram([typeCheckFile], typeCheckOptions, host);
   return ts
     .getPreEmitDiagnostics(program)
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
