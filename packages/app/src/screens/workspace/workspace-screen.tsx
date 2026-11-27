@@ -3243,10 +3243,66 @@ function WorkspaceScreenContent({
     expanded: isExplorerSidebarShowing,
     onToggle: handleToggleExplorerSidebar,
   });
+
+  const showScreenHeader = useMemo(
+    () => shouldShowWorkspaceScreenHeader({ isFocusModeEnabled, isMobile }),
+    [isFocusModeEnabled, isMobile],
+  );
+  const createTerminalDisabled = useMemo(
+    () => createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
+    [createTerminalMutation.isPending, pendingTerminalCreateInput],
+  );
+  const tabSwitcher = useMemo(
+    () => (
+      <MobileWorkspaceTabSwitcher
+        tabs={tabs}
+        activeTabKey={activeTabKey}
+        normalizedServerId={normalizedServerId}
+        normalizedWorkspaceId={normalizedWorkspaceId}
+        onSelectSwitcherTab={handleSelectSwitcherTab}
+        onReorderTabs={handleReorderTabsInFocusedPane}
+        createTerminalDisabled={createTerminalDisabled}
+        onCreateDraftTab={handleCreateDraftTab}
+        onCreateTerminal={handleCreateTerminal}
+        onCopyResumeCommand={handleCopyResumeCommand}
+        onCopyAgentId={handleCopyAgentId}
+        onCopyTerminalId={handleCopyTerminalId}
+        onCopyFilePath={handleCopyFilePath}
+        onReloadAgent={handleReloadAgent}
+        onRenameTab={handleRenameTab}
+        onCloseTab={handleCloseTabById}
+        onCloseTabsAbove={handleCloseTabsToLeft}
+        onCloseTabsBelow={handleCloseTabsToRight}
+        onCloseOtherTabs={handleCloseOtherTabs}
+      />
+    ),
+    [
+      tabs,
+      activeTabKey,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      handleSelectSwitcherTab,
+      handleReorderTabsInFocusedPane,
+      createTerminalDisabled,
+      handleCreateDraftTab,
+      handleCreateTerminal,
+      handleCopyResumeCommand,
+      handleCopyAgentId,
+      handleCopyTerminalId,
+      handleCopyFilePath,
+      handleReloadAgent,
+      handleRenameTab,
+      handleCloseTabById,
+      handleCloseTabsToLeft,
+      handleCloseTabsToRight,
+      handleCloseOtherTabs,
+    ],
+  );
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
+        {isNative && !isMobile ? tabSwitcher : null}
         {workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
           <WorkspaceScriptsButton
             actions={scriptActions}
@@ -3275,6 +3331,8 @@ function WorkspaceScreenContent({
       </View>
     ),
     [
+      isMobile,
+      tabSwitcher,
       workspaceDescriptor,
       normalizedServerId,
       normalizedWorkspaceId,
@@ -3289,14 +3347,6 @@ function WorkspaceScreenContent({
     ],
   );
 
-  const showScreenHeader = useMemo(
-    () => shouldShowWorkspaceScreenHeader({ isFocusModeEnabled, isMobile }),
-    [isFocusModeEnabled, isMobile],
-  );
-  const createTerminalDisabled = useMemo(
-    () => createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
-    [createTerminalMutation.isPending, pendingTerminalCreateInput],
-  );
   const showCreateBrowserTab = getIsElectron();
   const newTabLauncher = useMemo<NewTabLauncher>(
     () => ({
@@ -3395,6 +3445,7 @@ function WorkspaceScreenContent({
           normalizedServerId={normalizedServerId}
           normalizedWorkspaceId={normalizedWorkspaceId}
           onSelectSwitcherTab={handleSelectSwitcherTab}
+          onReorderTabs={handleReorderTabsInFocusedPane}
           createTerminalDisabled={createTerminalDisabled}
           onCreateDraftTab={handleCreateDraftTab}
           onCreateTerminal={handleCreateTerminal}
@@ -3415,6 +3466,7 @@ function WorkspaceScreenContent({
       normalizedServerId,
       normalizedWorkspaceId,
       handleSelectSwitcherTab,
+      handleReorderTabsInFocusedPane,
       createTerminalDisabled,
       handleCreateDraftTab,
       handleCreateTerminal,
@@ -3431,13 +3483,13 @@ function WorkspaceScreenContent({
   // keep their tab rails.
   const renderCompactWorkspaceHeader = useCallback(
     (paneTabs: WorkspaceCompactHeaderTabs | null, actionsOnly = false) => {
-      const tabSwitcher = paneTabs ? renderWorkspaceTabSwitcher(paneTabs) : null;
+      const paneTabSwitcher = paneTabs ? renderWorkspaceTabSwitcher(paneTabs) : null;
       return (
         <CompactWorkspaceHeader
           headerVariant={actionsOnly ? "full" : "compact"}
           isRouteFocused={isRouteFocused}
           isCompact={isMobile}
-          tabSwitcher={tabSwitcher}
+          tabSwitcher={paneTabSwitcher}
           inDesktopTitlebar={explorerControls.inDesktopTitlebar}
           explorerAction={explorerControls.compactAction}
           isLoading={isWorkspaceHeaderLoading}
