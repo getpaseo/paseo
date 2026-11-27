@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { highlightDiffLines } from "./diff-highlight";
+import { highlightDiffLines, mergeDiffTokensAndSegments } from "./diff-highlight";
 import { buildLineDiff, parseUnifiedDiff, type DiffLine } from "./tool-call-parsers";
 
 function joinTokens(line: DiffLine): string {
@@ -59,5 +59,29 @@ describe("highlightDiffLines", () => {
   it("returns lines unchanged when there is no file path", () => {
     const diff = buildLineDiff("a", "b");
     expect(highlightDiffLines(diff, undefined)).toBe(diff);
+  });
+
+  it("preserves word-level segments alongside syntax tokens and merges them cleanly", () => {
+    const diff = buildLineDiff('routeA: "PBH (M_i=352)"', 'routeA: "PBH (M_i=353)"');
+    const highlighted = highlightDiffLines(diff, "/repo/src/theoryContentEn.ts");
+    const remove = highlighted.find((line) => line.type === "remove") as DiffLine;
+    const add = highlighted.find((line) => line.type === "add") as DiffLine;
+
+    expect(remove.tokens).toBeDefined();
+    expect(remove.segments).toBeDefined();
+    expect(add.tokens).toBeDefined();
+    expect(add.segments).toBeDefined();
+
+    const removeRuns = mergeDiffTokensAndSegments(remove.tokens ?? [], remove.segments);
+    const addRuns = mergeDiffTokensAndSegments(add.tokens ?? [], add.segments);
+
+    expect(removeRuns.map((run) => run.text).join("")).toBe('routeA: "PBH (M_i=352)"');
+    expect(addRuns.map((run) => run.text).join("")).toBe('routeA: "PBH (M_i=353)"');
+
+    // Only the changed number inside the string token is marked changed, while keeping string style.
+    const changedRemove = removeRuns.filter((run) => run.changed);
+    const changedAdd = addRuns.filter((run) => run.changed);
+    expect(changedRemove).toEqual([{ text: "352", style: "string", changed: true }]);
+    expect(changedAdd).toEqual([{ text: "353", style: "string", changed: true }]);
   });
 });

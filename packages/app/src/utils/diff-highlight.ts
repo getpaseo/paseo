@@ -1,6 +1,90 @@
 import { isLanguageSupported, type HighlightToken } from "@getpaseo/highlight";
 import { tokenizeToLines } from "@/utils/highlight-cache";
-import type { DiffLine } from "@/utils/tool-call-parsers";
+import type { DiffLine, DiffSegment } from "@/utils/tool-call-parsers";
+
+export interface StyledDiffRun {
+  text: string;
+  style: string | null;
+  changed: boolean;
+}
+
+// Overlay word-level change segments onto syntax-highlight tokens so supported
+// languages keep both foreground syntax colors and inline change backgrounds.
+export function mergeDiffTokensAndSegments(
+  tokens: readonly HighlightToken[],
+  segments: readonly DiffSegment[] | undefined,
+): StyledDiffRun[] {
+  if (!segments || segments.length === 0) {
+    return tokens.map((token) => ({
+      text: token.text,
+      style: token.style ?? null,
+      changed: false,
+    }));
+  }
+
+  const runs: StyledDiffRun[] = [];
+  let tokenIndex = 0;
+  let tokenOffset = 0;
+  let segmentIndex = 0;
+  let segmentOffset = 0;
+
+  while (tokenIndex < tokens.length && segmentIndex < segments.length) {
+    const token = tokens[tokenIndex];
+    const segment = segments[segmentIndex];
+    const tokenRemaining = token.text.length - tokenOffset;
+    const segmentRemaining = segment.text.length - segmentOffset;
+
+    if (tokenRemaining === 0) {
+      tokenIndex += 1;
+      tokenOffset = 0;
+      continue;
+    }
+    if (segmentRemaining === 0) {
+      segmentIndex += 1;
+      segmentOffset = 0;
+      continue;
+    }
+
+    const take = Math.min(tokenRemaining, segmentRemaining);
+    const text = token.text.slice(tokenOffset, tokenOffset + take);
+    const style = token.style ?? null;
+    const changed = segment.changed;
+    const previous = runs.at(-1);
+    if (previous && previous.style === style && previous.changed === changed) {
+      previous.text += text;
+    } else {
+      runs.push({ text, style, changed });
+    }
+
+    tokenOffset += take;
+    segmentOffset += take;
+    if (tokenOffset >= token.text.length) {
+      tokenIndex += 1;
+      tokenOffset = 0;
+    }
+    if (segmentOffset >= segment.text.length) {
+      segmentIndex += 1;
+      segmentOffset = 0;
+    }
+  }
+
+  while (tokenIndex < tokens.length) {
+    const token = tokens[tokenIndex];
+    const text = token.text.slice(tokenOffset);
+    tokenIndex += 1;
+    tokenOffset = 0;
+    if (!text) continue;
+    const style = token.style ?? null;
+    const previous = runs.at(-1);
+    if (previous && previous.style === style && !previous.changed) {
+      previous.text += text;
+    } else {
+      runs.push({ text, style, changed: false });
+    }
+  }
+
+  return runs;
+}
 
 // The leading diff marker glyph for a line. The code on the line is the content
 // with this prefix removed; we render the glyph separately so token colors
@@ -41,9 +125,8 @@ export function highlightDiffLines(
   diffLines: DiffLine[],
   filePath: string | null | undefined,
 ): DiffLine[] {
-  // Gate on real grammar support: an unsupported language would tokenize to a
-  // single style-less token per line, which would shadow the word-level change
-  // segments the diff already computes. Better to keep those.
+  // Gate on real grammar support so unsupported languages skip tokenization and
+  // keep plain-text segment rendering instead of producing style-less tokens.
   if (!filePath || diffLines.length === 0 || !isLanguageSupported(filePath)) {
     return diffLines;
   }
