@@ -1,6 +1,6 @@
 # Brand assets
 
-Canonical marks, lockups, and wordmark font for **Paseo** and **Paseo Hub**. These are the source assets that will replace the existing icons across the app, desktop client, website, docs, and Hub in follow-up work.
+Canonical marks, lockups, and wordmark font for **Paseo** and **Paseo Hub**. These are the source assets for the icons across the app, desktop client, website, docs, and Hub.
 
 ## Brand architecture
 
@@ -37,6 +37,10 @@ All lockups (`lockups/*.svg`) share a `144`-unit height (`140`-unit flower ink h
 ```text
 assets/brand/
   build.mjs                     Regenerates all marks and lockups
+  build-app-icons.mjs           Regenerates the desktop and mobile app icons
+  app-icons/
+    paseo-lit.png
+    paseo-dev-lit.png
   fonts/
     PlusJakartaSans-SemiBold.ttf
     OFL.txt
@@ -61,3 +65,25 @@ assets/brand/
 ```sh
 node assets/brand/build.mjs
 ```
+
+## App icons
+
+`build-app-icons.mjs` renders every desktop and mobile app icon from `marks/paseo-white.svg`: the white butterfly on a black tile, and a blueprint tile for desktop development builds. Regenerate them after changing the butterfly:
+
+```sh
+node assets/brand/build-app-icons.mjs
+```
+
+The icons that ship are flat. Each platform masks and lights its own icons, so lit artwork ends up lit twice. `app-icons/` keeps a lit version of the two desktop icons, a baked approximation of macOS Liquid Glass. Nothing uses them.
+
+The packaged Mac app takes its icon from `packages/desktop/assets/icon.icon`, an Icon Composer document the script also writes. macOS draws Liquid Glass on it and derives the dark, tinted, and clear variants. electron-builder compiles the document with `actool`, so packaging the Mac app needs Xcode 26 or later. The Nix build has no Xcode and uses `icon.icns`.
+
+To see what macOS draws from the document without packaging the app, export it with Icon Composer's command line tool on a Mac:
+
+```sh
+"/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool" \
+  packages/desktop/assets/icon.icon --export-image --output-file icon.png \
+  --platform macOS --rendition Default --width 1024 --height 1024 --scale 1
+```
+
+`--rendition` also takes `Dark`, `TintedLight`, `TintedDark`, `ClearLight`, and `ClearDark`.
