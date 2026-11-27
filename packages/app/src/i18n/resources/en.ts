@@ -1988,6 +1988,10 @@ export const en = {
         title: "Remote SSH",
         description: "Connect through the desktop SSH client.",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "Connect through the desktop Eternal Terminal client.",
+      },
       scanQr: {
         title: "Scan QR code",
         description: "Encrypted relay connection.",
@@ -2037,6 +2041,17 @@ export const en = {
           "TLS error. Direct connections use SSL only when a TLS terminator is in front of the daemon.",
         unableToConnect: "Unable to connect. Check the host/port and that the daemon is reachable.",
         details: "Details: {{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Eternal Terminal host",
+        password: "Paseo password",
+      },
+      errors: {
+        targetRequired: "Eternal Terminal host is required",
+        invalidTarget: "Enter a valid et:// host",
+        failedToConnect: "Unable to connect over Eternal Terminal. {{detail}}",
       },
     },
     remoteSsh: {
@@ -3148,6 +3163,7 @@ export const en = {
         relay: "Relay",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "Direct",
         routed: "Via",
       },

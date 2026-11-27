@@ -1975,6 +1975,10 @@ export const ja: TranslationResources = {
         title: "直接接続",
         description: "ローカルネットワークまたはVPN。",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "デスクトップ版の Eternal Terminal クライアントで接続します。",
+      },
       remoteSsh: {
         title: "リモート SSH",
         description: "デスクトップの SSH クライアント経由で接続します。",
@@ -2028,6 +2032,17 @@ export const ja: TranslationResources = {
         tlsError: "TLSエラー。直接接続は、デーモンの前にTLS終端がある場合のみSSLを使用します。",
         unableToConnect: "接続できません。ホスト/ポートとデーモンが到達可能かを確認してください。",
         details: "詳細: {{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Eternal Terminal ホスト",
+        password: "Paseo パスワード",
+      },
+      errors: {
+        targetRequired: "Eternal Terminal ホストを入力してください",
+        invalidTarget: "有効な et:// ホストを入力してください",
+        failedToConnect: "Eternal Terminal で接続できませんでした。{{detail}}",
       },
     },
     remoteSsh: {
@@ -3045,6 +3060,7 @@ export const ja: TranslationResources = {
         relay: "リレー",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "ダイレクト",
         routed: "経由",
       },

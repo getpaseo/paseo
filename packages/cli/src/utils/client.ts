@@ -62,6 +62,8 @@ function describeConnectionRemedy(code: string, target: DaemonTarget): string {
     return "The daemon rejected the password. Check PASEO_PASSWORD and retry.";
   if (target.kind === "instance")
     return `Start with: paseo daemon start --home ${JSON.stringify(target.home)}`;
+  if (target.host.trim().startsWith("et://"))
+    return "Check that et and etserver support stdio forwarding, the ET port is reachable, SSH authentication works without a prompt, and the remote Paseo daemon is running.";
   return "Check the selected endpoint and credentials. SSH transport does not install or start the daemon.";
 }
 

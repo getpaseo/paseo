@@ -1,7 +1,14 @@
 import type { ActiveConnection } from "@/runtime/host-runtime";
 import type { HostConnection } from "@/types/host-connection";
 
-export type HostConnectionKind = "local" | "relay" | "tailscale" | "ssh" | "direct" | "routed";
+export type HostConnectionKind =
+  | "local"
+  | "relay"
+  | "tailscale"
+  | "ssh"
+  | "et"
+  | "direct"
+  | "routed";
 
 export interface HostConnectionDisplay {
   kind: HostConnectionKind;
@@ -79,6 +86,8 @@ export function describeActiveConnection(
       return { kind: "relay", endpoint: formatConnectionEndpoint(connection.endpoint) };
     case "remoteSsh":
       return { kind: "ssh", endpoint: connection.endpoint };
+    case "remoteEt":
+      return { kind: "et", endpoint: connection.endpoint };
     case "routed":
       return { kind: "routed", endpoint: connection.endpoint };
     case "directTcp": {
@@ -105,6 +114,8 @@ export function describeHostConnection(
       return { kind: "relay", endpoint: formatConnectionEndpoint(connection.relayEndpoint) };
     case "remoteSsh":
       return { kind: "ssh", endpoint: connection.host };
+    case "remoteEt":
+      return { kind: "et", endpoint: connection.host };
     case "routed":
       return { kind: "routed", endpoint: connection.originServerId };
     case "directTcp": {

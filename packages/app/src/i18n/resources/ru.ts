@@ -1991,6 +1991,10 @@ export const ru: TranslationResources = {
         title: "Прямое подключение",
         description: "Локальная сеть или VPN.",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "Подключитесь через настольный клиент Eternal Terminal.",
+      },
       remoteSsh: {
         title: "Удалённый SSH",
         description: "Подключение через SSH-клиент настольного приложения.",
@@ -2045,6 +2049,17 @@ export const ru: TranslationResources = {
         unableToConnect:
           "Не удалось подключиться. Проверьте адрес хоста и порт, а также доступность демона.",
         details: "Подробности: {{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Хост Eternal Terminal",
+        password: "Пароль Paseo",
+      },
+      errors: {
+        targetRequired: "Укажите хост Eternal Terminal",
+        invalidTarget: "Введите действительный хост et://",
+        failedToConnect: "Не удалось подключиться через Eternal Terminal. {{detail}}",
       },
     },
     remoteSsh: {
@@ -3070,6 +3085,7 @@ export const ru: TranslationResources = {
         relay: "Ретранслятор",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "Прямой",
         routed: "Через",
       },

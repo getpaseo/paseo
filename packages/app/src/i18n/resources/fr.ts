@@ -2005,6 +2005,10 @@ export const fr: TranslationResources = {
         title: "Connexion directe",
         description: "Réseau local ou VPN.",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "Connectez-vous avec le client de bureau Eternal Terminal.",
+      },
       remoteSsh: {
         title: "SSH distant",
         description: "Connexion via le client SSH de bureau.",
@@ -2059,6 +2063,17 @@ export const fr: TranslationResources = {
         unableToConnect:
           "Impossible de se connecter. Vérifiez l’hôte, le port et que le daemon est joignable.",
         details: "Détails : {{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Hôte Eternal Terminal",
+        password: "Mot de passe Paseo",
+      },
+      errors: {
+        targetRequired: "Un hôte Eternal Terminal est requis",
+        invalidTarget: "Saisissez un hôte et:// valide",
+        failedToConnect: "Impossible de se connecter via Eternal Terminal. {{detail}}",
       },
     },
     remoteSsh: {
@@ -3085,6 +3100,7 @@ export const fr: TranslationResources = {
         relay: "Relais",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "Direct",
         routed: "Via",
       },

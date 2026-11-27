@@ -1966,6 +1966,10 @@ export const ko: TranslationResources = {
         title: "직접 연결",
         description: "로컬 네트워크 또는 VPN.",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "데스크톱 Eternal Terminal 클라이언트로 연결합니다.",
+      },
       remoteSsh: {
         title: "원격 SSH",
         description: "데스크톱 SSH 클라이언트를 통해 연결합니다.",
@@ -2018,6 +2022,17 @@ export const ko: TranslationResources = {
         tlsError: "TLS 오류. 직접 연결은 데몬 앞에 TLS 종단 장치가 있을 때만 SSL을 사용합니다.",
         unableToConnect: "연결할 수 없습니다. 호스트/포트와 데몬에 접근 가능한지 확인하세요.",
         details: "세부 정보: {{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Eternal Terminal 호스트",
+        password: "Paseo 비밀번호",
+      },
+      errors: {
+        targetRequired: "Eternal Terminal 호스트가 필요합니다",
+        invalidTarget: "올바른 et:// 호스트를 입력하세요",
+        failedToConnect: "Eternal Terminal로 연결할 수 없습니다. {{detail}}",
       },
     },
     remoteSsh: {
@@ -3030,6 +3045,7 @@ export const ko: TranslationResources = {
         relay: "릴레이",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "직접 연결",
         routed: "경유",
       },

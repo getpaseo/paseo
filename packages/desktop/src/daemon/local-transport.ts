@@ -1,3 +1,5 @@
+import { createEtTunnel, describeEtTunnelFailure } from "@getpaseo/client/node";
+import { validateEtHost, type EtTransportTarget } from "@getpaseo/protocol/et-transport";
 import { validatePort, validateSshHost } from "@getpaseo/protocol/ssh-transport";
 import { BrowserWindow } from "electron";
 import { WebSocket, type RawData } from "ws";
@@ -7,6 +9,8 @@ import {
   createSshProxy,
   resolveSshFailureDetail,
 } from "./ssh-proxy.js";
+
+export { buildSshSpawnEnv, resolveSshFailureDetail };
 
 export interface LocalTransportTarget {
   transportType: "socket" | "pipe";
@@ -20,7 +24,9 @@ export interface SshTransportTarget {
   daemonPort?: number;
 }
 
-export type TransportTarget = LocalTransportTarget | SshTransportTarget;
+type EtDesktopTransportTarget = EtTransportTarget & { transportType: "et" };
+
+export type TransportTarget = LocalTransportTarget | SshTransportTarget | EtDesktopTransportTarget;
 
 export interface TransportEventPayload {
   sessionId: string;
@@ -39,6 +45,7 @@ interface Session {
   state: "opening" | "open" | "closed";
   closeTarget: (() => void) | null;
   cancelSetupDeadline: () => void;
+  setup: AbortController;
 }
 
 interface OpenTransportSessionInput {
@@ -64,7 +71,7 @@ export interface TransportWebSocket {
 }
 
 export interface LocalTransportManagerDependencies {
-  resolveEndpoint(target: TransportTarget): Promise<TransportEndpoint>;
+  resolveEndpoint(target: TransportTarget, signal: AbortSignal): Promise<TransportEndpoint>;
   createWebSocket(url: string): TransportWebSocket;
   scheduleTimeout(callback: () => void, delayMs: number): () => void;
   emitEvent(payload: TransportEventPayload): void;
@@ -105,6 +112,9 @@ function describeTransportTarget(target: TransportTarget): string {
   if (target.transportType === "ssh") {
     return `Remote SSH host ${target.host}`;
   }
+  if (target.transportType === "et") {
+    return `Eternal Terminal host ${target.host.slice(target.host.lastIndexOf("@") + 1)}`;
+  }
   return target.transportType === "pipe" ? "local daemon pipe" : "local daemon socket";
 }
 
@@ -126,6 +136,17 @@ export function parseTransportTarget(value: unknown): TransportTarget {
   }
 
   if (value.transportType === "ssh") return parseSshTransportTarget(value);
+  if (value.transportType === "et") {
+    return {
+      transportType: "et",
+      host: validateEtHost(typeof value.host === "string" ? value.host : ""),
+      etPort: validatePortValue(value.etPort, "ET port"),
+      daemonPort: validatePortValue(value.daemonPort, "Daemon port"),
+      ...(value.sshPort === undefined
+        ? {}
+        : { sshPort: validatePortValue(value.sshPort, "SSH port") }),
+    };
+  }
   throw new Error("Unsupported desktop transport type.");
 }
 
@@ -172,11 +193,20 @@ export function buildSshArgs(target: SshTransportTarget): string[] {
   return buildSshProxyArgs(target);
 }
 
-export { buildSshSpawnEnv, resolveSshFailureDetail };
-
-async function resolveTransportEndpoint(target: TransportTarget): Promise<TransportEndpoint> {
+async function resolveTransportEndpoint(
+  target: TransportTarget,
+  signal: AbortSignal,
+): Promise<TransportEndpoint> {
   if (target.transportType === "ssh") {
-    return createSshProxy(target);
+    return createSshProxy(target, signal);
+  }
+  if (target.transportType === "et") {
+    const tunnel = await createEtTunnel(target, { env: buildSshSpawnEnv(), signal });
+    return {
+      url: `ws://${tunnel.endpoint}${WS_ENDPOINT_PATH}`,
+      close: tunnel.close,
+      failureDetail: tunnel.failureDetail,
+    };
   }
   return {
     url: buildLocalWebSocketUrl(target),
@@ -224,6 +254,7 @@ export function createLocalTransportManager(
     }
 
     session.state = "closed";
+    session.setup.abort();
     try {
       session.cancelSetupDeadline();
     } catch {
@@ -268,7 +299,7 @@ export function createLocalTransportManager(
   async function connectSession(session: Session): Promise<void> {
     let endpoint: TransportEndpoint;
     try {
-      endpoint = await deps.resolveEndpoint(session.target);
+      endpoint = await deps.resolveEndpoint(session.target, session.setup.signal);
     } catch (error) {
       failOpeningSession(
         session,
@@ -366,7 +397,8 @@ export function createLocalTransportManager(
         return;
       }
       const failureDetail = endpoint.failureDetail();
-      const detail = failureDetail ? `${error.message}: ${failureDetail}` : error.message;
+      let detail = failureDetail ? `${error.message}: ${failureDetail}` : error.message;
+      if (session.target.transportType === "et") detail = describeEtTunnelFailure(failureDetail);
       if (session.state === "opening") {
         failOpeningSession(
           session,
@@ -392,6 +424,7 @@ export function createLocalTransportManager(
       state: "opening",
       closeTarget: null,
       cancelSetupDeadline: () => undefined,
+      setup: new AbortController(),
     };
     sessions.set(sessionId, session);
     session.cancelSetupDeadline = deps.scheduleTimeout(() => {

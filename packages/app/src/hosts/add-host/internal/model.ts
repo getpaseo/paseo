@@ -1,6 +1,18 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
+import { parseEtTransportUri } from "@getpaseo/protocol/et-transport";
+import { parseSshTransportUri } from "@getpaseo/protocol/ssh-transport";
 
-export type AddHostMethod = "direct" | "ssh" | "link" | "scan";
+export type RemoteHostMethod = "ssh" | "et";
+export type AddHostMethod = "direct" | RemoteHostMethod | "link" | "scan";
+
+export function parseRemoteHostInput(method: RemoteHostMethod, address: string, password: string) {
+  const target = address.trim();
+  const credential = password === "" ? undefined : password;
+  if (method === "et") {
+    return { method, target: { ...parseEtTransportUri(target), password: credential } };
+  }
+  return { method, target: { ...parseSshTransportUri(target), password: credential } };
+}
 export interface AddHostOptions {
   method?: AddHostMethod;
   onAdded?: (serverId: string) => void;

@@ -5,7 +5,9 @@ import { homedir } from "node:os";
 import type { Agent } from "node:http";
 import { WebSocket } from "ws";
 import { parseHostTarget, type HostTarget } from "@getpaseo/protocol/host-target";
-import { createSshTunnel, type SshTunnel } from "./ssh-tunnel.js";
+import { createSshTunnel } from "./ssh-tunnel.js";
+import { EtTunnelSetupError, createEtTunnel, describeEtTunnelFailure } from "./et-tunnel.js";
+import type { ProcessTunnel } from "./process-tunnel.js";
 import { createWebSocketTransportFactory } from "../daemon-client-websocket-transport.js";
 import { createRelayE2eeTransportFactory } from "../daemon-client-relay-e2ee-transport.js";
 import type { SecurityMode } from "@getpaseo/relay/e2ee";
@@ -19,12 +21,13 @@ import { DaemonClient, type DaemonClientConfig } from "../daemon-client.js";
 export { parseHostTarget };
 export type { SshTunnel } from "./ssh-tunnel.js";
 export { createSshTunnel, resolveSshFailureDetail } from "./ssh-tunnel.js";
+export { createEtTunnel, describeEtTunnelFailure } from "./et-tunnel.js";
 
 export interface HostTransportOptions {
   webSocketAgent?: (url: string) => Agent | undefined;
 }
 
-/** A factory owns one attempt, including a fresh SSH process and its teardown. */
+/** A factory owns one attempt, including the tunnel process and its teardown. */
 export function createHostTransportFactory(
   connection: string,
   budget = new HostTransportBudget(),
@@ -46,10 +49,12 @@ export function createHostTransportFactory(
     let teardown = () => {};
     let disposeSocket = () => {};
     let assertOutboundCapacity = (bytes: number) => budget.assertCapacity(bytes);
-    let sshTunnel: SshTunnel | null = null;
+    let processTunnel: ProcessTunnel | null = null;
+    const setup = new AbortController();
     const close = (code?: number, reason?: string) => {
       if (closed) return;
       closed = true;
+      setup.abort();
       try {
         transport?.close(code, reason);
       } finally {
@@ -63,9 +68,12 @@ export function createHostTransportFactory(
     };
     void (async () => {
       let socketTarget: Extract<HostTarget, { kind: "socket" }>;
-      if (target.kind === "ssh") {
-        const tunnel = await createSshTunnel(target.ssh);
-        sshTunnel = tunnel;
+      if (target.kind !== "socket") {
+        const tunnel =
+          target.kind === "ssh"
+            ? await createSshTunnel(target.ssh, { signal: setup.signal })
+            : await createEtTunnel(target.et, { signal: setup.signal });
+        processTunnel = tunnel;
         teardown = () => tunnel.close();
         socketTarget = parseHostTarget(tunnel.endpoint) as Extract<HostTarget, { kind: "socket" }>;
       } else socketTarget = target;
@@ -75,12 +83,13 @@ export function createHostTransportFactory(
       }
       const socketPath = socketTarget.socketPath?.replace(/^~(?=\/)/, homedir());
       let factory = createWebSocketTransportFactory((url, socketOptions) => {
+        const agent = socketPath ? undefined : options.webSocketAgent;
         const socket = new WebSocket(
           socketPath && url.startsWith("ws+unix:") ? `ws+unix://${socketPath}:/ws` : url,
           socketOptions?.protocols,
           {
             headers: socketOptions?.headers,
-            agent: socketPath ? undefined : options.webSocketAgent?.(url),
+            agent: target.kind === "et" ? false : agent?.(url),
             ...(socketPath ? { socketPath } : {}),
             maxPayload: 100 * 1024 * 1024,
           },
@@ -149,26 +158,33 @@ export function createHostTransportFactory(
       });
       transport.onError((error) => {
         if (closed) return;
-        const detail = sshTunnel?.failureDetail() ?? "";
-        const failure =
+        const detail = processTunnel?.failureDetail() ?? "";
+        let failure = error;
+        if (
           /permission denied|authentication failed|host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(
             detail,
           )
-            ? Object.assign(
-                new Error(
-                  "SSH authentication or host verification failed. Check the SSH configuration on this daemon.",
-                ),
-                { code: "authentication_failed" },
-              )
-            : error;
+        ) {
+          failure = Object.assign(
+            new Error(
+              "SSH authentication or host verification failed. Check the SSH configuration on this daemon.",
+            ),
+            { code: "authentication_failed" },
+          );
+        } else if (target.kind === "et") {
+          failure = new Error(describeEtTunnelFailure(detail || null));
+        }
         for (const handler of errors) handler(failure);
         close();
       });
       transport.onMessage((data, binary) => {
         if (!closed) for (const handler of messages) handler(data, binary);
       });
-    })().catch(() => {
-      for (const handler of errors) handler(new Error("Host transport failed"));
+    })().catch((error: unknown) => {
+      if (closed) return;
+      const failure =
+        error instanceof EtTunnelSetupError ? error : new Error("Host transport failed");
+      for (const handler of errors) handler(failure);
       close();
     });
     return {

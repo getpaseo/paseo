@@ -1935,6 +1935,10 @@ export const zhCN: TranslationResources = {
         title: "直接连接",
         description: "本地网络或 VPN。",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "通过桌面 Eternal Terminal 客户端连接。",
+      },
       remoteSsh: {
         title: "远程 SSH",
         description: "通过桌面 SSH 客户端连接。",
@@ -1987,6 +1991,17 @@ export const zhCN: TranslationResources = {
         tlsError: "TLS 错误。只有 daemon 前方有 TLS terminator 时，直接连接才使用 SSL。",
         unableToConnect: "无法连接。请检查 host/port，并确认 daemon 可达。",
         details: "详情：{{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Eternal Terminal 主机",
+        password: "Paseo 密码",
+      },
+      errors: {
+        targetRequired: "请输入 Eternal Terminal 主机",
+        invalidTarget: "请输入有效的 et:// 主机",
+        failedToConnect: "无法通过 Eternal Terminal 连接。{{detail}}",
       },
     },
     remoteSsh: {
@@ -2984,6 +2999,7 @@ export const zhCN: TranslationResources = {
         relay: "中继",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "直连",
         routed: "经由",
       },

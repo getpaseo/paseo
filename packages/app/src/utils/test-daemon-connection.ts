@@ -5,7 +5,11 @@ import {
   type DaemonAuthFailureReason,
 } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client";
-import type { HostConnection } from "@/types/host-connection";
+import {
+  isRemoteHostConnection,
+  type HostConnection,
+  type RemoteHostConnection,
+} from "@/types/host-connection";
 import { createAppWebSocketFactory } from "@/runtime/websocket-factory";
 import { createHostLogger } from "@/runtime/host-logger";
 import { getOrCreateClientId } from "./client-id";
@@ -18,6 +22,7 @@ import {
 import {
   buildDesktopDaemonTransportUrl,
   createDesktopDaemonTransportFactory,
+  desktopTargetForRemoteHost,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import type { DesktopDaemonTransportTarget } from "@/desktop/daemon/desktop-daemon";
 
@@ -47,26 +52,20 @@ const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonCl
   createClient: (config) => new DaemonClient(config),
 };
 
-function buildRemoteSshClientConfig(input: {
-  connection: Extract<HostConnection, { type: "remoteSsh" }>;
+function buildRemoteHostClientConfig(input: {
+  connection: RemoteHostConnection;
   base: Omit<DaemonClientConfig, "url">;
   desktopTransportFactory: DaemonClientConfig["transportFactory"] | null;
   buildDesktopTransportUrl: (target: DesktopDaemonTransportTarget) => string;
 }): DaemonClientConfig {
   if (!input.desktopTransportFactory) {
-    throw new Error("Remote SSH is only available in the desktop app.");
+    const transport = input.connection.type === "remoteEt" ? "Eternal Terminal" : "Remote SSH";
+    throw new Error(`${transport} is only available in the desktop app.`);
   }
   return {
     ...input.base,
     transportFactory: input.desktopTransportFactory,
-    url: input.buildDesktopTransportUrl({
-      transportType: "ssh",
-      host: input.connection.host,
-      ...(input.connection.sshPort !== undefined ? { sshPort: input.connection.sshPort } : {}),
-      ...(input.connection.daemonPort !== undefined
-        ? { daemonPort: input.connection.daemonPort }
-        : {}),
-    }),
+    url: input.buildDesktopTransportUrl(desktopTargetForRemoteHost(input.connection)),
   };
 }
 
@@ -182,8 +181,8 @@ export async function buildClientConfig(
     };
   }
 
-  if (connection.type === "remoteSsh") {
-    return buildRemoteSshClientConfig({
+  if (isRemoteHostConnection(connection)) {
+    return buildRemoteHostClientConfig({
       connection,
       base,
       desktopTransportFactory,
@@ -301,7 +300,7 @@ interface ProbeOptions {
 function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {
   if (options?.timeoutMs) return options.timeoutMs;
   if (connection.type === "relay") return 10_000;
-  if (connection.type === "remoteSsh") return 15_000;
+  if (isRemoteHostConnection(connection)) return 15_000;
   return 6_000;
 }
 

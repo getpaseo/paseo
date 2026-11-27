@@ -1954,6 +1954,10 @@ export const ar: TranslationResources = {
         title: "اتصال مباشر",
         description: "الشبكة المحلية أو VPN.",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "اتصل عبر عميل Eternal Terminal لسطح المكتب.",
+      },
       remoteSsh: {
         title: "SSH عن بُعد",
         description: "الاتصال عبر عميل SSH لسطح المكتب.",
@@ -2008,6 +2012,17 @@ export const ar: TranslationResources = {
         unableToConnect:
           "غير قادر على الاتصال. تحقق من المضيف /port ومن إمكانية الوصول إلى البرنامج الخفي.",
         details: "التفاصيل:{{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "مضيف Eternal Terminal",
+        password: "كلمة مرور Paseo",
+      },
+      errors: {
+        targetRequired: "مضيف Eternal Terminal مطلوب",
+        invalidTarget: "أدخل مضيف et:// صالحًا",
+        failedToConnect: "تعذر الاتصال عبر Eternal Terminal. {{detail}}",
       },
     },
     remoteSsh: {
@@ -3051,6 +3066,7 @@ export const ar: TranslationResources = {
         relay: "تتابع",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "مباشر",
         routed: "عبر",
       },

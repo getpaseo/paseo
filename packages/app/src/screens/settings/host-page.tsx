@@ -123,10 +123,13 @@ function formatActiveConnectionBadge(
       text: t("settings.host.badges.local"),
     };
   }
-  if (activeConnection.type === "remoteSsh") {
+  if (activeConnection.type === "remoteSsh" || activeConnection.type === "remoteEt") {
     return {
       icon: <Globe size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
-      text: t("settings.host.badges.remoteSsh"),
+      text:
+        activeConnection.type === "remoteEt"
+          ? t("settings.host.connectionKinds.et")
+          : t("settings.host.badges.remoteSsh"),
     };
   }
   return {

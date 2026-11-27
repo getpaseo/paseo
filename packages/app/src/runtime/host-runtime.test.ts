@@ -5688,6 +5688,30 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
+  it("saves an ET connection alongside SSH when the probe resolves to the same daemon", async () => {
+    const store = createPairingStore({
+      serverIdForHost: (host) =>
+        host.connections[0]?.type === "directTcp" ? "srv_local" : "srv_remote",
+    });
+    answerHostConfirmations(store, false);
+    await store.boot();
+
+    await store.probeAndUpsertRemoteSshConnection({ host: "deploy@example.com" });
+    await store.probeAndUpsertRemoteEtConnection({
+      host: "deploy@example.com",
+      etPort: 2023,
+      daemonPort: 7777,
+    });
+
+    const remoteHosts = store.getHosts().filter((host) => host.serverId === "srv_remote");
+    expect(remoteHosts).toHaveLength(1);
+    expect(remoteHosts[0]?.connections.map((connection) => connection.type).sort()).toEqual([
+      "remoteEt",
+      "remoteSsh",
+    ]);
+    store.syncHosts([]);
+  });
+
   it("rejects Remote SSH probes without the daemon password, the way the daemon does", async () => {
     const store = createPairingStore({
       password: "s3cret",

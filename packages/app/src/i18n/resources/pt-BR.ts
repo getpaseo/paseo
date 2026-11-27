@@ -1992,6 +1992,10 @@ export const ptBR: TranslationResources = {
         title: "Conexão direta",
         description: "Rede local ou VPN.",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "Conecte-se pelo cliente Eternal Terminal para computador.",
+      },
       remoteSsh: {
         title: "SSH remoto",
         description: "Conecte-se pelo cliente SSH do desktop.",
@@ -2046,6 +2050,17 @@ export const ptBR: TranslationResources = {
         unableToConnect:
           "Não foi possível conectar. Verifique o host/porta e se o daemon está acessível.",
         details: "Detalhes: {{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Host do Eternal Terminal",
+        password: "Senha do Paseo",
+      },
+      errors: {
+        targetRequired: "O host do Eternal Terminal é obrigatório",
+        invalidTarget: "Insira um host et:// válido",
+        failedToConnect: "Não foi possível conectar pelo Eternal Terminal. {{detail}}",
       },
     },
     remoteSsh: {
@@ -3064,6 +3079,7 @@ export const ptBR: TranslationResources = {
         relay: "Relay",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "Direto",
         routed: "Via",
       },

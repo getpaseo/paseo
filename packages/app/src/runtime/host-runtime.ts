@@ -4,6 +4,7 @@ import { createHostLogger } from "./host-logger";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
 import type { OwnedSubscription } from "@getpaseo/client";
 import type { HostDirectory } from "@getpaseo/protocol/hosts";
+import type { EtTransportTarget } from "@getpaseo/protocol/et-transport";
 import { useSyncExternalStore, useMemo } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import equal from "fast-deep-equal/es6";
@@ -16,8 +17,10 @@ import {
 } from "@getpaseo/client/internal/daemon-client";
 import {
   connectionFromListen,
+  createRemoteEtHostConnection,
   createRemoteSshHostConnection,
   forgetUnreadableHost,
+  isRemoteHostConnection,
   pinRelayProtectedSecurityInProfiles,
   readHostRegistry,
   upsertHostConnectionInProfiles,
@@ -59,6 +62,7 @@ import {
 import {
   buildDesktopDaemonTransportUrl,
   createDesktopDaemonTransportFactory,
+  desktopTargetForRemoteHost,
 } from "@/desktop/daemon/desktop-daemon-transport";
 import { readDesktopManagedLocalCredential } from "@/desktop/daemon/local-credential";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
@@ -132,7 +136,7 @@ export type ActiveConnection =
   | { type: "directTcp"; endpoint: string; display: string }
   | { type: "directSocket"; endpoint: string; display: "socket" }
   | { type: "directPipe"; endpoint: string; display: "pipe" }
-  | { type: "remoteSsh"; endpoint: string; display: string }
+  | { type: "remoteSsh" | "remoteEt"; endpoint: string; display: string }
   | { type: "relay"; endpoint: string; display: "relay" };
 
 export type HostRuntimeAgentDirectoryStatus =
@@ -279,9 +283,9 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
       display: "pipe",
     };
   }
-  if (connection.type === "remoteSsh") {
+  if (isRemoteHostConnection(connection)) {
     return {
-      type: "remoteSsh",
+      type: connection.type,
       endpoint: connection.host,
       display: connection.host,
     };
@@ -618,19 +622,15 @@ function createDefaultDeps(
           }),
         });
       }
-      if (connection.type === "remoteSsh") {
+      if (isRemoteHostConnection(connection)) {
         if (!desktopTransportFactory) {
-          throw new Error("Remote SSH is only available in the desktop app.");
+          const transport = connection.type === "remoteEt" ? "Eternal Terminal" : "Remote SSH";
+          throw new Error(`${transport} is only available in the desktop app.`);
         }
         return new DaemonClient({
           ...base,
           transportFactory: desktopTransportFactory,
-          url: buildDesktopDaemonTransportUrl({
-            transportType: "ssh",
-            host: connection.host,
-            ...(connection.sshPort !== undefined ? { sshPort: connection.sshPort } : {}),
-            ...(connection.daemonPort !== undefined ? { daemonPort: connection.daemonPort } : {}),
-          }),
+          url: buildDesktopDaemonTransportUrl(desktopTargetForRemoteHost(connection)),
         });
       }
       if (connection.type === "directTcp") {
@@ -2328,6 +2328,16 @@ export class HostRuntimeStore {
     });
   }
 
+  async probeAndUpsertRemoteEtConnection(
+    input: EtTransportTarget & { password?: string; label?: string },
+  ): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
+    return this.probeAndUpsertConnection({
+      label: input.label,
+      password: input.password || undefined,
+      connection: createRemoteEtHostConnection(input),
+    });
+  }
+
   // A pairing link (a URL, a QR code, or a pasted link) asks the user to
   // confirm when it adds a new host or changes a saved host's key, relay, or
   // TLS setting. The answer needs the saved hosts, so it waits for them to load.
@@ -3367,6 +3377,7 @@ export interface HostMutations {
     password?: string;
     label?: string;
   }) => Promise<{ profile: HostProfile; serverId: string; hostname: string | null }>;
+  probeAndUpsertRemoteEtConnection: HostRuntimeStore["probeAndUpsertRemoteEtConnection"];
   beginLinkPairing: () => LinkPairing;
   renameHost: (serverId: string, label: string) => Promise<void>;
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
@@ -3383,6 +3394,7 @@ export function useHostMutations(): HostMutations {
       upsertDirectConnection: (input) => store.upsertDirectConnection(input),
       probeAndUpsertDirectConnection: (input) => store.probeAndUpsertDirectConnection(input),
       probeAndUpsertRemoteSshConnection: (input) => store.probeAndUpsertRemoteSshConnection(input),
+      probeAndUpsertRemoteEtConnection: (input) => store.probeAndUpsertRemoteEtConnection(input),
       beginLinkPairing: () => store.beginLinkPairing(),
       renameHost: (serverId, label) => store.renameHost(serverId, label),
       setHostColor: (serverId, color) => store.setHostColor(serverId, color),

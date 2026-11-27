@@ -6,6 +6,7 @@ import {
   LOCAL_TRANSPORT_SETUP_TIMEOUT_MS,
   parseTransportTarget,
   resolveSshFailureDetail,
+  type LocalTransportManagerDependencies,
   type TransportEndpoint,
   type TransportEventPayload,
   type TransportWebSocket,
@@ -48,7 +49,7 @@ interface ScheduledTimeout {
 }
 
 function createManagerHarness(
-  resolveEndpoint: () => Promise<TransportEndpoint>,
+  resolveEndpoint: LocalTransportManagerDependencies["resolveEndpoint"],
   sockets: TransportWebSocket[],
 ) {
   const events: TransportEventPayload[] = [];
@@ -148,6 +149,40 @@ describe("Remote SSH desktop transport", () => {
   });
 });
 
+describe("Eternal Terminal desktop transport", () => {
+  it("accepts an ET target with independent SSH, ET and Paseo ports", () => {
+    expect(
+      parseTransportTarget({
+        transportType: "et",
+        host: "deploy@build-box",
+        etPort: 2023,
+        sshPort: 2222,
+        daemonPort: 7777,
+      }),
+    ).toEqual({
+      transportType: "et",
+      host: "deploy@build-box",
+      etPort: 2023,
+      sshPort: 2222,
+      daemonPort: 7777,
+    });
+  });
+
+  it("rejects unsafe ET targets at the IPC boundary", () => {
+    const target = { transportType: "et", host: "build-box", etPort: 2022, daemonPort: 6767 };
+
+    expect(() => parseTransportTarget({ ...target, host: "-oProxyCommand=bad" })).toThrow(
+      /host.*invalid/i,
+    );
+    expect(() => parseTransportTarget({ ...target, etPort: 65536 })).toThrow(
+      "ET port must be between 1 and 65535",
+    );
+    expect(() => parseTransportTarget({ ...target, daemonPort: "6767" })).toThrow(
+      "Daemon port must be between 1 and 65535",
+    );
+  });
+});
+
 describe("local transport session lifecycle", () => {
   it("releases an opening transport when its setup deadline expires", async () => {
     const firstEndpoint = createEndpoint();
@@ -213,13 +248,14 @@ describe("local transport session lifecycle", () => {
       resolveEndpoint = resolve;
     });
     const socket = createConnectingSocket();
-    const { createWebSocket, events, manager } = createManagerHarness(
+    const resolve = vi.fn<LocalTransportManagerDependencies["resolveEndpoint"]>(
       () => endpointPromise,
-      [socket],
     );
+    const { createWebSocket, events, manager } = createManagerHarness(resolve, [socket]);
 
     manager.open(SESSION_INPUT);
     manager.close(SESSION_INPUT.sessionId);
+    expect(resolve.mock.calls[0]?.[1].aborted).toBe(true);
     resolveEndpoint?.(endpoint);
     await Promise.resolve();
     await Promise.resolve();

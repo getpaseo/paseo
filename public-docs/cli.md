@@ -82,14 +82,28 @@ paseo --host localhost:6767 host enable hst_123
 paseo --host localhost:6767 host rm hst_123
 ```
 
-Add accepts TCP/host-and-port, `ws://`/`wss://`, local socket/pipe, SSH, and relay/pairing URLs.
-SSH connects to an already running daemon. Add `?password=...` to an SSH URI when that daemon requires a password (`&password=...` after `daemonPort`). Unreachable targets remain saved and retry automatically.
+Add accepts TCP/host-and-port, `ws://`/`wss://`, local socket/pipe, SSH, Eternal Terminal, and relay/pairing URLs.
+SSH and Eternal Terminal connect to an already running daemon. Add `?password=...` to the target URI when that daemon requires a password (`&password=...` when the URI already has a query). Unreachable targets remain saved and retry automatically.
 `ls` includes disabled and failed hosts. `inspect` includes safe connection details and recovery guidance.
 JSON output never includes connection credentials.
 
 `update --meta` replaces supplied keys; `--remove-meta` removes keys. Replacing a connection retains
 the pinned daemon identity. Add `--replace-identity` with `--connection` only after verifying a changed
 destination. `rm` removes the saved connection; agents and workspaces on that host keep running.
+
+### Eternal Terminal
+
+Use ET 7.1.1 or newer on both machines. The machine opening the connection must run macOS or Linux, have `et` on its `PATH`, and be able to authenticate over SSH without a prompt. The remote machine needs a reachable `etserver` and a running Paseo daemon listening on loopback.
+
+```sh
+# Open the ET connection from the machine running the CLI.
+paseo --host 'et://deploy@build-box' daemon status
+
+# Ask a daemon to open and manage the ET connection.
+paseo --host localhost:6767 host add 'et://deploy@build-box:2202?sshPort=2222&daemonPort=7777' --label build-box
+```
+
+The port after the hostname is the ET server port (default `2022`). `sshPort` overrides the SSH authentication port. `daemonPort` selects the remote Paseo port (default `6767`). If the connection fails, check ET on the machine that opens the tunnel, verify SSH authentication, then check the ET server and Paseo ports.
 
 ## Provider diagnostics
 

@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Eye, EyeOff, Terminal } from "lucide-react-native";
-import { parseSshTransportUri } from "@getpaseo/protocol/ssh-transport";
+import { parseRemoteHostInput, type RemoteHostMethod } from "./model";
 import type { HostProfile } from "@/types/host-connection";
 import { useHostMutations, useHosts } from "@/runtime/host-runtime";
 import { Button } from "@/components/ui/button";
@@ -77,8 +77,8 @@ const styles = StyleSheet.create((theme) => {
   };
 });
 
-export interface AddRemoteSshHostModalProps {
-  visible: boolean;
+interface AddRemoteHostModalProps {
+  method: RemoteHostMethod;
   onClose: () => void;
   onCancel?: () => void;
   onSaved?: (result: {
@@ -89,15 +89,16 @@ export interface AddRemoteSshHostModalProps {
   }) => void;
 }
 
-export function AddRemoteSshHostModal({
-  visible,
+export function AddRemoteHostModal({
+  method,
   onClose,
   onCancel,
   onSaved,
-}: AddRemoteSshHostModalProps) {
+}: AddRemoteHostModalProps) {
   const { t } = useTranslation();
   const hosts = useHosts();
-  const { probeAndUpsertRemoteSshConnection } = useHostMutations();
+  const { probeAndUpsertRemoteSshConnection, probeAndUpsertRemoteEtConnection } =
+    useHostMutations();
   const targetRef = useRef("");
   const passwordRef = useRef("");
   const inputRef = useRef<EditingTextInputHandle>(null);
@@ -105,7 +106,11 @@ export function AddRemoteSshHostModal({
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const header = useMemo<SheetHeader>(() => ({ title: t("pairing.remoteSsh.title") }), [t]);
+  const translation = method === "et" ? "pairing.remoteEt" : "pairing.remoteSsh";
+  const title =
+    method === "et" ? "pairing.connectionMethods.remoteEt.title" : "pairing.remoteSsh.title";
+  const testIdPrefix = `remote-${method}`;
+  const header = useMemo<SheetHeader>(() => ({ title: t(title) }), [t, title]);
 
   const clear = useCallback(() => {
     targetRef.current = "";
@@ -132,15 +137,15 @@ export function AddRemoteSshHostModal({
     if (isSaving) return;
     const rawTarget = targetRef.current.trim();
     if (!rawTarget) {
-      setErrorMessage(t("pairing.remoteSsh.errors.targetRequired"));
+      setErrorMessage(t(`${translation}.errors.targetRequired`));
       return;
     }
 
-    let target: ReturnType<typeof parseSshTransportUri>;
+    let input: ReturnType<typeof parseRemoteHostInput>;
     try {
-      target = parseSshTransportUri(rawTarget);
+      input = parseRemoteHostInput(method, rawTarget, passwordRef.current);
     } catch {
-      setErrorMessage(t("pairing.remoteSsh.errors.invalidTarget"));
+      setErrorMessage(t(`${translation}.errors.invalidTarget`));
       return;
     }
 
@@ -148,14 +153,14 @@ export function AddRemoteSshHostModal({
     try {
       setIsSaving(true);
       setErrorMessage("");
-      result = await probeAndUpsertRemoteSshConnection({
-        ...target,
-        password: passwordRef.current === "" ? undefined : passwordRef.current,
-      });
+      result =
+        input.method === "et"
+          ? await probeAndUpsertRemoteEtConnection(input.target)
+          : await probeAndUpsertRemoteSshConnection(input.target);
     } catch (error) {
       const message =
         error instanceof DaemonConnectionTestError
-          ? t("pairing.remoteSsh.errors.failedToConnect", { detail: error.message })
+          ? t(`${translation}.errors.failedToConnect`, { detail: error.message })
           : t("common.errors.unableToSave");
       setErrorMessage(message);
       return;
@@ -169,7 +174,18 @@ export function AddRemoteSshHostModal({
       isNewHost: !hosts.some((profile) => profile.serverId === result.serverId),
     });
     onClose();
-  }, [clear, hosts, isSaving, onClose, onSaved, probeAndUpsertRemoteSshConnection, t]);
+  }, [
+    clear,
+    hosts,
+    isSaving,
+    method,
+    onClose,
+    onSaved,
+    probeAndUpsertRemoteEtConnection,
+    probeAndUpsertRemoteSshConnection,
+    t,
+    translation,
+  ]);
   const handleTargetChange = useCallback((value: string) => {
     targetRef.current = value;
   }, []);
@@ -206,23 +222,23 @@ export function AddRemoteSshHostModal({
   return (
     <AdaptiveModalSheet
       header={header}
-      visible={visible}
+      visible
       onClose={handleClose}
-      testID="add-remote-ssh-host-modal"
+      testID={`add-${testIdPrefix}-host-modal`}
     >
       <Text style={styles.helper}>{t("pairing.remoteSsh.helper")}</Text>
       <Field
-        label={t("pairing.remoteSsh.fields.target")}
+        label={t(`${translation}.fields.target`)}
         error={errorMessage}
-        testID="remote-ssh-target"
+        testID={`${testIdPrefix}-target`}
       >
         <FormTextInput
           ref={inputRef}
-          testID="remote-ssh-target-input"
-          accessibilityLabel={t("pairing.remoteSsh.fields.target")}
+          testID={`${testIdPrefix}-target-input`}
+          accessibilityLabel={t(`${translation}.fields.target`)}
           initialValue=""
           onChangeText={handleTargetChange}
-          placeholder="ssh://user@host"
+          placeholder={`${method}://user@host`}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!isSaving}
@@ -230,13 +246,13 @@ export function AddRemoteSshHostModal({
           onSubmitEditing={handleSubmit}
         />
       </Field>
-      <Field label={t("pairing.remoteSsh.fields.password")} testID="remote-ssh-password">
+      <Field label={t(`${translation}.fields.password`)} testID={`${testIdPrefix}-password`}>
         <View style={styles.passwordRow}>
           <View style={styles.passwordInputWrap}>
             <FormTextInput
               ref={passwordInputRef}
-              testID="remote-ssh-password-input"
-              accessibilityLabel={t("pairing.remoteSsh.fields.password")}
+              testID={`${testIdPrefix}-password-input`}
+              accessibilityLabel={t(`${translation}.fields.password`)}
               initialValue=""
               onChangeText={handlePasswordChange}
               placeholder={t("pairing.remoteSsh.fields.optional")}
@@ -258,7 +274,7 @@ export function AddRemoteSshHostModal({
                 ? t("pairing.remoteSsh.passwordVisibility.hide")
                 : t("pairing.remoteSsh.passwordVisibility.show")
             }
-            testID="remote-ssh-password-visibility-toggle"
+            testID={`${testIdPrefix}-password-visibility-toggle`}
           >
             {isPasswordVisible ? <ThemedEyeOff size={18} /> : <ThemedEye size={18} />}
           </PressHighlight>
@@ -278,7 +294,7 @@ export function AddRemoteSshHostModal({
           onPress={handleSubmit}
           disabled={isSaving}
           leftIcon={ThemedTerminal}
-          testID="remote-ssh-submit"
+          testID={`${testIdPrefix}-submit`}
         >
           {isSaving
             ? t("pairing.remoteSsh.actions.connecting")

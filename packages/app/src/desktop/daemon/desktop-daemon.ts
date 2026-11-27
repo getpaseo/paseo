@@ -3,6 +3,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
+import type { EtTransportTarget } from "@getpaseo/protocol/et-transport";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 export type DesktopDaemonStopReason =
@@ -71,7 +72,15 @@ export interface RemoteSshTransportTarget {
   daemonPort?: number;
 }
 
-export type DesktopDaemonTransportTarget = LocalTransportTarget | RemoteSshTransportTarget;
+export interface RemoteEtTransportTarget extends EtTransportTarget {
+  [key: string]: unknown;
+  transportType: "et";
+}
+
+export type DesktopDaemonTransportTarget =
+  | LocalTransportTarget
+  | RemoteSshTransportTarget
+  | RemoteEtTransportTarget;
 
 export interface OpenLocalTransportSessionInput {
   [key: string]: unknown;

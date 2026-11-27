@@ -3,6 +3,8 @@ import type {
   DaemonTransportFactory,
 } from "@getpaseo/client/internal/daemon-client";
 import { validatePort, validateSshHost } from "@getpaseo/protocol/ssh-transport";
+import { validateEtHost } from "@getpaseo/protocol/et-transport";
+import type { RemoteHostConnection } from "@/types/host-connection";
 import type { DesktopDaemonTransportTarget } from "./desktop-daemon";
 import {
   defaultLocalDaemonTransportRpc,
@@ -32,8 +34,11 @@ function decodeBase64ToBytes(base64: string): Uint8Array {
 
 export function buildDesktopDaemonTransportUrl(target: DesktopDaemonTransportTarget): string {
   const url = new URL(`${DESKTOP_TRANSPORT_SCHEME}//${target.transportType}`);
-  if (target.transportType === "ssh") {
+  if (target.transportType === "ssh" || target.transportType === "et") {
     url.searchParams.set("host", target.host);
+    if (target.transportType === "et") {
+      url.searchParams.set("etPort", String(target.etPort));
+    }
     if (target.sshPort !== undefined) {
       url.searchParams.set("port", String(target.sshPort));
     }
@@ -46,6 +51,22 @@ export function buildDesktopDaemonTransportUrl(target: DesktopDaemonTransportTar
   return url.toString();
 }
 
+export function desktopTargetForRemoteHost(
+  connection: RemoteHostConnection,
+): DesktopDaemonTransportTarget {
+  const { host, sshPort, daemonPort } = connection;
+  if (connection.type === "remoteEt") {
+    return {
+      transportType: "et",
+      host,
+      etPort: connection.etPort,
+      sshPort,
+      daemonPort: connection.daemonPort,
+    };
+  }
+  return { transportType: "ssh", host, sshPort, daemonPort };
+}
+
 function parseDesktopDaemonTransportUrl(url: string): DesktopDaemonTransportTarget {
   const parsed = new URL(url);
   if (parsed.protocol !== DESKTOP_TRANSPORT_SCHEME) {
@@ -53,6 +74,7 @@ function parseDesktopDaemonTransportUrl(url: string): DesktopDaemonTransportTarg
   }
   const transportType = parsed.hostname;
   if (transportType === "ssh") return parseSshDesktopTransportUrl(parsed, url);
+  if (transportType === "et") return parseEtDesktopTransportUrl(parsed);
   const transportPath = parsed.searchParams.get("path")?.trim() ?? "";
   if ((transportType !== "socket" && transportType !== "pipe") || !transportPath) {
     throw new Error(`Invalid desktop transport target: ${url}`);
@@ -61,6 +83,24 @@ function parseDesktopDaemonTransportUrl(url: string): DesktopDaemonTransportTarg
     transportType,
     transportPath,
   };
+}
+
+function parseEtDesktopTransportUrl(parsed: URL): DesktopDaemonTransportTarget {
+  try {
+    const host = validateEtHost(parsed.searchParams.get("host") ?? "");
+    const etPort = validatePort(parsed.searchParams.get("etPort") ?? "", "ET port");
+    const daemonPort = validatePort(parsed.searchParams.get("daemonPort") ?? "", "Daemon port");
+    const sshPort = parseOptionalUrlPort(parsed, "port", "SSH port");
+    return {
+      transportType: "et",
+      host,
+      etPort,
+      daemonPort,
+      ...(sshPort === undefined ? {} : { sshPort }),
+    };
+  } catch (error) {
+    throw new Error("Invalid Eternal Terminal transport target", { cause: error });
+  }
 }
 
 function parseSshDesktopTransportUrl(parsed: URL, rawUrl: string): DesktopDaemonTransportTarget {

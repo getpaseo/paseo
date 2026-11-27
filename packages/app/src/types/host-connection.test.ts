@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import {
+  createRemoteEtHostConnection,
   createRemoteSshHostConnection,
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
@@ -288,6 +289,30 @@ describe("createRemoteSshHostConnection", () => {
     expect(() => createRemoteSshHostConnection({ host: "build-box", daemonPort: 0 })).toThrow(
       "Daemon port must be between 1 and 65535",
     );
+  });
+});
+
+describe("createRemoteEtHostConnection", () => {
+  it("keeps ET distinct from SSH and distinguishes explicit SSH ports", () => {
+    const target = { host: "deploy@build-box", etPort: 2022, daemonPort: 6767 };
+    const connection = createRemoteEtHostConnection(target);
+    expect(connection).toEqual({
+      id: "et:deploy%40build-box:2022::6767",
+      type: "remoteEt",
+      ...target,
+    });
+    expect(createRemoteEtHostConnection({ ...target, sshPort: 22 }).id).not.toBe(connection.id);
+    expect(createRemoteSshHostConnection(target).id).not.toBe(connection.id);
+  });
+
+  it("normalizes ET connections when reading saved hosts", () => {
+    const target = { host: "deploy@build-box", etPort: 2220, sshPort: 22, daemonPort: 7777 };
+    const saved = normalizeStoredHostProfile({
+      ...makeHost("srv_et"),
+      connections: [{ ...target, type: "remoteEt", id: "old-id" }],
+    });
+
+    expect(saved?.connections).toEqual([createRemoteEtHostConnection(target)]);
   });
 });
 

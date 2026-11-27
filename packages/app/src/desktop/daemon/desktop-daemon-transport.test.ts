@@ -108,4 +108,22 @@ describe("desktop-daemon-transport", () => {
 
     expect(() => transportFactory!({ url })).toThrow("Invalid SSH transport target");
   });
+
+  it("passes each Eternal Terminal port to the desktop transport bridge", async () => {
+    const rpc = createFakeLocalDaemonTransportRpc();
+    const transportFactory = createDesktopDaemonTransportFactory(rpc);
+    const target = {
+      transportType: "et" as const,
+      host: "deploy@example.com",
+      etPort: 2023,
+      sshPort: 2222,
+      daemonPort: 7777,
+    };
+
+    transportFactory!({ url: buildDesktopDaemonTransportUrl(target) });
+    rpc.resolveListen(vi.fn());
+    await Promise.resolve();
+
+    expect(rpc.openCalls.map((call) => call.target)).toEqual([target]);
+  });
 });

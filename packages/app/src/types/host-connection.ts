@@ -1,4 +1,5 @@
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
+import { validateEtHost, type EtTransportTarget } from "@getpaseo/protocol/et-transport";
 import {
   normalizeHostPort,
   normalizeLoopbackToLocalhost,
@@ -43,6 +44,19 @@ export interface RemoteSshHostConnection {
   daemonPort?: number;
 }
 
+export interface RemoteEtHostConnection extends EtTransportTarget {
+  id: string;
+  type: "remoteEt";
+}
+
+export type RemoteHostConnection = RemoteSshHostConnection | RemoteEtHostConnection;
+
+export function isRemoteHostConnection(
+  connection: HostConnection,
+): connection is RemoteHostConnection {
+  return connection.type === "remoteSsh" || connection.type === "remoteEt";
+}
+
 export interface RelayHostConnection {
   id: string;
   type: "relay";
@@ -68,7 +82,7 @@ export type HostConnection =
   | DirectTcpHostConnection
   | DirectSocketHostConnection
   | DirectPipeHostConnection
-  | RemoteSshHostConnection
+  | RemoteHostConnection
   | RelayHostConnection;
 
 export type HostLifecycle = Record<string, never>;
@@ -152,8 +166,8 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   if (left.type === "directPipe" && right.type === "directPipe") {
     return left.path === right.path;
   }
-  if (left.type === "remoteSsh" && right.type === "remoteSsh") {
-    return remoteSshConnectionEquals(left, right);
+  if (isRemoteHostConnection(left) && isRemoteHostConnection(right)) {
+    return remoteHostTargetEquals(left, right);
   }
   if (left.type === "relay" && right.type === "relay") {
     return (
@@ -166,11 +180,11 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   return false;
 }
 
-function remoteSshConnectionEquals(
-  left: RemoteSshHostConnection,
-  right: RemoteSshHostConnection,
-): boolean {
+function remoteHostTargetEquals(left: RemoteHostConnection, right: RemoteHostConnection): boolean {
+  const leftEtPort = left.type === "remoteEt" ? left.etPort : undefined;
+  const rightEtPort = right.type === "remoteEt" ? right.etPort : undefined;
   return (
+    leftEtPort === rightEtPort &&
     left.host === right.host &&
     left.sshPort === right.sshPort &&
     left.daemonPort === right.daemonPort
@@ -481,6 +495,21 @@ export function createRemoteSshHostConnection(input: {
   };
 }
 
+export function createRemoteEtHostConnection(input: EtTransportTarget): RemoteEtHostConnection {
+  const host = validateEtHost(input.host);
+  const etPort = validatePort(input.etPort, "ET port");
+  const sshPort = input.sshPort === undefined ? undefined : validatePort(input.sshPort, "SSH port");
+  const daemonPort = validatePort(input.daemonPort, "Daemon port");
+  return {
+    id: ["et", encodeURIComponent(host), etPort, sshPort ?? "", daemonPort].join(":"),
+    type: "remoteEt",
+    host,
+    etPort,
+    ...(sshPort === undefined ? {} : { sshPort }),
+    daemonPort,
+  };
+}
+
 const StoredHostConnectionSchema = z.discriminatedUnion("type", [
   z.strictObject({ id: z.string(), type: z.literal("routed"), originServerId: z.string().min(1) }),
   z.strictObject({
@@ -506,6 +535,14 @@ const StoredHostConnectionSchema = z.discriminatedUnion("type", [
     host: z.string(),
     sshPort: z.number().optional(),
     daemonPort: z.number().optional(),
+  }),
+  z.strictObject({
+    id: z.string().optional(),
+    type: z.literal("remoteEt"),
+    host: z.string(),
+    etPort: z.number(),
+    sshPort: z.number().optional(),
+    daemonPort: z.number(),
   }),
   z.strictObject({
     id: z.string().optional(),
@@ -561,6 +598,13 @@ function normalizeStoredConnection(connection: StoredHostConnection): HostConnec
         ...(connection.sshPort !== undefined ? { sshPort: connection.sshPort } : {}),
         ...(connection.daemonPort !== undefined ? { daemonPort: connection.daemonPort } : {}),
       });
+    } catch {
+      return null;
+    }
+  }
+  if (connection.type === "remoteEt") {
+    try {
+      return createRemoteEtHostConnection(connection);
     } catch {
       return null;
     }

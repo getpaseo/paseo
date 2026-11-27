@@ -106,6 +106,21 @@ describe("describeActiveConnection", () => {
     expect(formatConnectionEndpoint("127.0.0.1:6767")).toBe("127.0.0.1:6767");
   });
 
+  it("identifies Eternal Terminal both before and after connection", () => {
+    expect(
+      describeHostConnection({
+        id: "et:build-box:2022::6767",
+        type: "remoteEt",
+        host: "build-box",
+        etPort: 2022,
+        daemonPort: 6767,
+      }),
+    ).toEqual({ kind: "et", endpoint: "build-box" });
+    expect(
+      describeActiveConnection({ type: "remoteEt", endpoint: "build-box", display: "build-box" }),
+    ).toEqual({ kind: "et", endpoint: "build-box" });
+  });
+
   it("describes configured host connections before an active connection is online", () => {
     expect(
       describeHostConnection({

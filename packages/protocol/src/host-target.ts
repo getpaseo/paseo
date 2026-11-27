@@ -7,10 +7,12 @@ import {
   parseRelayConnectionUri,
   shouldUseTlsForDefaultHostedRelay,
 } from "./daemon-endpoints.js";
+import { parseEtTransportUri, type EtTransportTarget } from "./et-transport.js";
 import { parseSshTransportUri, type SshTransportTarget } from "./ssh-transport.js";
 
 export type HostTarget =
   | { kind: "ssh"; ssh: SshTransportTarget; password?: string; description: string }
+  | { kind: "et"; et: EtTransportTarget; password?: string; description: string }
   | {
       kind: "socket";
       url: string;
@@ -27,7 +29,7 @@ export function parseHostTarget(input: string): HostTarget {
   } catch {
     throw Object.assign(
       new Error(
-        "Invalid host connection. Use host:port, ws(s)://, tcp://, unix://, pipe://, ssh:// or a pairing URL.",
+        "Invalid host connection. Use host:port, ws(s)://, tcp://, unix://, pipe://, ssh://, et:// or a pairing URL.",
       ),
       { code: "invalid_connection" },
     );
@@ -37,6 +39,9 @@ function parse(input: string): HostTarget {
   if (!input) throw new Error("empty");
   if (input.startsWith("ssh://")) {
     return sshTarget(input);
+  }
+  if (input.startsWith("et://")) {
+    return etTarget(input);
   }
 
   if (input.startsWith("relay://") || input.includes("#connect=")) {
@@ -112,17 +117,34 @@ function websocketTarget(input: string): HostTarget {
   return { kind: "socket", url: url.toString(), password, description: url.origin };
 }
 
-function sshTarget(input: string): HostTarget {
-  const uri = new URL(input);
+function takeDaemonPassword(uri: URL): string | undefined {
   if (uri.searchParams.getAll("password").length > 1) throw new Error("Duplicate daemon password");
   const password = uri.searchParams.get("password") || undefined;
   uri.searchParams.delete("password");
+  return password;
+}
+
+function sshTarget(input: string): HostTarget {
+  const uri = new URL(input);
+  const password = takeDaemonPassword(uri);
   const ssh = parseSshTransportUri(uri.toString());
   return {
     kind: "ssh",
     ssh,
     ...(password ? { password } : {}),
     description: `ssh://${uri.hostname}${ssh.sshPort ? `:${ssh.sshPort}` : ""} (daemon port ${ssh.daemonPort})`,
+  };
+}
+
+function etTarget(input: string): HostTarget {
+  const et = parseEtTransportUri(input, { allowDaemonPassword: true });
+  const uri = new URL(input);
+  const password = takeDaemonPassword(uri);
+  return {
+    kind: "et",
+    et,
+    ...(password ? { password } : {}),
+    description: `et://${uri.hostname}:${et.etPort} (daemon port ${et.daemonPort})`,
   };
 }
 

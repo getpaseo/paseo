@@ -42,6 +42,11 @@ export function describeDaemonTarget(target: DaemonTarget): string {
   try {
     const input = target.host.trim();
     const parsed = parseHostTarget(input);
+    if (parsed.kind === "et") {
+      const url = new URL(input);
+      url.searchParams.delete("password");
+      return url.toString();
+    }
     // Discovery descriptions are display text; command hints must preserve the address syntax.
     if (parsed.kind === "ssh" || (!parsed.offer && !parsed.socketPath && input.includes("://"))) {
       const url = new URL(input);

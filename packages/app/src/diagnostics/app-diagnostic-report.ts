@@ -98,6 +98,8 @@ export function describeConnectionKind(type: HostConnection["type"] | string): s
       return "local socket";
     case "directPipe":
       return "local pipe";
+    case "remoteEt":
+      return "Eternal Terminal";
     case "relay":
       return "relay";
     case "routed":

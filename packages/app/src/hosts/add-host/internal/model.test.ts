@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAddHostFlow } from "./model";
+import { createAddHostFlow, parseRemoteHostInput } from "./model";
 
 describe("add host flow", () => {
   it("closes before notifying the consumer and ignores duplicate completion", () => {
@@ -45,5 +45,30 @@ describe("add host flow", () => {
     session.choose(null);
     expect(flow.store.getState().session).toBe(session);
     expect(session.step.getState()).toEqual({ method: null });
+  });
+});
+
+describe("remote host form input", () => {
+  it("reads ET ports from the target and its Paseo password from the password field", () => {
+    expect(
+      parseRemoteHostInput(
+        "et",
+        " et://deploy@build-box:2023?sshPort=2222&daemonPort=7777 ",
+        " s3cret ",
+      ),
+    ).toEqual({
+      method: "et",
+      target: {
+        host: "deploy@build-box",
+        etPort: 2023,
+        sshPort: 2222,
+        daemonPort: 7777,
+        password: " s3cret ",
+      },
+    });
+  });
+
+  it("keeps the ET password field separate from the address", () => {
+    expect(() => parseRemoteHostInput("et", "et://build-box?password=secret", "")).toThrow();
   });
 });

@@ -21,11 +21,11 @@ import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isFdroidBuild } from "@/constants/build-profile";
-import { isWeb, isNative } from "@/constants/platform";
+import { getSupportsDesktopEt, isWeb, isNative } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
 
 interface WelcomeAction {
-  key: "scan-qr" | "direct-connection" | "remote-ssh" | "paste-pairing-link";
+  key: "scan-qr" | "direct-connection" | "remote-ssh" | "remote-et" | "paste-pairing-link";
   label: string;
   testID: string;
   primary: boolean;
@@ -188,6 +188,7 @@ export function WelcomeScreen() {
 
   const handleOpenDirect = useAddHost({ method: "direct", onAdded: finishOnboarding });
   const handleOpenRemoteSsh = useAddHost({ method: "ssh", onAdded: finishOnboarding });
+  const handleOpenRemoteEt = useAddHost({ method: "et", onAdded: finishOnboarding });
   const handleOpenPasteLink = useAddHost({ method: "link", onAdded: finishOnboarding });
   const handleScanQr = useAddHost({ method: "scan", onAdded: finishOnboarding });
 
@@ -246,6 +247,16 @@ export function WelcomeScreen() {
       primary: false,
       icon: Terminal,
       onPress: handleOpenRemoteSsh,
+    });
+  }
+  if (getSupportsDesktopEt()) {
+    actions.splice(2, 0, {
+      key: "remote-et",
+      label: t("pairing.connectionMethods.remoteEt.title"),
+      testID: "welcome-remote-et",
+      primary: false,
+      icon: Terminal,
+      onPress: handleOpenRemoteEt,
     });
   }
 

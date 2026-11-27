@@ -6,8 +6,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { QrCode, Link2, ClipboardPaste, Terminal } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { isFdroidBuild } from "@/constants/build-profile";
-import { isNative } from "@/constants/platform";
-import { isElectronRuntime } from "@/desktop/host";
+import { getIsElectron, getSupportsDesktopEt, isNative } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 
 const ThemedQrCode = withUnistyles(QrCode);
@@ -47,6 +46,7 @@ export interface AddHostMethodModalProps {
   onClose: () => void;
   onDirectConnection: () => void;
   onRemoteSsh: () => void;
+  onRemoteEt: () => void;
   onScanQr: () => void;
   onPasteLink: () => void;
 }
@@ -56,6 +56,7 @@ export function AddHostMethodModal({
   onClose,
   onDirectConnection,
   onRemoteSsh,
+  onRemoteEt,
   onScanQr,
   onPasteLink,
 }: AddHostMethodModalProps) {
@@ -69,10 +70,6 @@ export function AddHostMethodModal({
   const handleScan = useCallback(() => {
     onScanQr();
   }, [onScanQr]);
-
-  const handleRemoteSsh = useCallback(() => {
-    onRemoteSsh();
-  }, [onRemoteSsh]);
 
   const handlePaste = useCallback(() => {
     onPasteLink();
@@ -101,23 +98,8 @@ export function AddHostMethodModal({
         </View>
       </PressHighlight>
 
-      {isElectronRuntime() ? (
-        <PressHighlight
-          style={styles.option}
-          onPress={handleRemoteSsh}
-          accessibilityRole="button"
-          accessibilityLabel={t("pairing.connectionMethods.remoteSsh.title")}
-          testID="add-host-method-remote-ssh"
-        >
-          <ThemedTerminal size={18} uniProps={foregroundIconMapping} />
-          <View style={styles.optionBody}>
-            <Text style={styles.optionText}>{t("pairing.connectionMethods.remoteSsh.title")}</Text>
-            <Text style={styles.optionSubtext}>
-              {t("pairing.connectionMethods.remoteSsh.description")}
-            </Text>
-          </View>
-        </PressHighlight>
-      ) : null}
+      {getIsElectron() ? <RemoteHostMethodRow method="ssh" onPress={onRemoteSsh} /> : null}
+      {getSupportsDesktopEt() ? <RemoteHostMethodRow method="et" onPress={onRemoteEt} /> : null}
 
       {isNative && !isFdroidBuild ? (
         <PressHighlight
@@ -152,5 +134,27 @@ export function AddHostMethodModal({
         </View>
       </PressHighlight>
     </AdaptiveModalSheet>
+  );
+}
+
+function RemoteHostMethodRow({ method, onPress }: { method: "ssh" | "et"; onPress: () => void }) {
+  const { t } = useTranslation();
+  const translation =
+    method === "et" ? "pairing.connectionMethods.remoteEt" : "pairing.connectionMethods.remoteSsh";
+  const title = t(`${translation}.title`);
+  return (
+    <PressHighlight
+      style={styles.option}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      testID={`add-host-method-remote-${method}`}
+    >
+      <ThemedTerminal size={18} uniProps={foregroundIconMapping} />
+      <View style={styles.optionBody}>
+        <Text style={styles.optionText}>{title}</Text>
+        <Text style={styles.optionSubtext}>{t(`${translation}.description`)}</Text>
+      </View>
+    </PressHighlight>
   );
 }

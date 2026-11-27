@@ -1,5 +1,5 @@
 import { Platform } from "react-native";
-import { isElectronRuntime, isElectronRuntimeMac } from "@/desktop/host";
+import { getDesktopHost, isElectronRuntime, isElectronRuntimeMac } from "@/desktop/host";
 
 // ---------------------------------------------------------------------------
 // Runtime environment constants
@@ -52,4 +52,11 @@ export function getIsElectronMac(): boolean {
   const result = isElectronRuntimeMac();
   if (result) _isElectronMacCached = true;
   return result;
+}
+
+/** Direct ET tunnels use stdio forwarding on macOS and Linux. */
+export function getSupportsDesktopEt(): boolean {
+  if (!getIsElectron()) return false;
+  const platform = getDesktopHost()?.platform;
+  return platform === "darwin" || platform === "linux";
 }

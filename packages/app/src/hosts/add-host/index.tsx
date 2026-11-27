@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { AddHostMethodModal } from "./internal/add-host-method-modal";
 import { AddHostModal } from "./internal/add-host-modal";
-import { AddRemoteSshHostModal } from "./internal/add-remote-ssh-host-modal";
+import { AddRemoteHostModal } from "./internal/add-remote-host-modal";
 import { PairLinkModal } from "./internal/pair-link-modal";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { PairScanContent } from "./internal/scan";
@@ -36,6 +36,7 @@ function AddHostSessionView({ session }: { session: AddHostSession }) {
   const back = useCallback(() => session.choose(null), [session]);
   const direct = useCallback(() => session.choose("direct"), [session]);
   const ssh = useCallback(() => session.choose("ssh"), [session]);
+  const et = useCallback(() => session.choose("et"), [session]);
   const link = useCallback(() => session.choose("link"), [session]);
   const scan = useCallback(() => session.choose("scan"), [session]);
   const scanned = useCallback((serverId: string) => session.complete({ serverId }), [session]);
@@ -50,6 +51,7 @@ function AddHostSessionView({ session }: { session: AddHostSession }) {
         onClose={session.close}
         onDirectConnection={direct}
         onRemoteSsh={ssh}
+        onRemoteEt={et}
         onPasteLink={link}
         onScanQr={scan}
       />
@@ -59,12 +61,15 @@ function AddHostSessionView({ session }: { session: AddHostSession }) {
         onCancel={back}
         onSaved={session.complete}
       />
-      <AddRemoteSshHostModal
-        visible={method === "ssh"}
-        onClose={session.close}
-        onCancel={back}
-        onSaved={session.complete}
-      />
+      {method === "ssh" || method === "et" ? (
+        <AddRemoteHostModal
+          key={method}
+          method={method}
+          onClose={session.close}
+          onCancel={back}
+          onSaved={session.complete}
+        />
+      ) : null}
       <PairLinkModal
         visible={method === "link"}
         onClose={session.close}

@@ -2008,6 +2008,10 @@ export const es: TranslationResources = {
         title: "Conexión directa",
         description: "Red local o VPN.",
       },
+      remoteEt: {
+        title: "Eternal Terminal",
+        description: "Conéctate mediante el cliente de escritorio de Eternal Terminal.",
+      },
       remoteSsh: {
         title: "SSH remoto",
         description: "Conéctate mediante el cliente SSH de escritorio.",
@@ -2062,6 +2066,17 @@ export const es: TranslationResources = {
         unableToConnect:
           "No se puede conectar. Verifique el host/porty que se pueda acceder al demonio.",
         details: "Detalles:{{detail}}",
+      },
+    },
+    remoteEt: {
+      fields: {
+        target: "Host de Eternal Terminal",
+        password: "Contraseña de Paseo",
+      },
+      errors: {
+        targetRequired: "El host de Eternal Terminal es obligatorio",
+        invalidTarget: "Introduce un host et:// válido",
+        failedToConnect: "No se pudo conectar mediante Eternal Terminal. {{detail}}",
       },
     },
     remoteSsh: {
@@ -3083,6 +3098,7 @@ export const es: TranslationResources = {
         relay: "Relé",
         tailscale: "Tailscale",
         ssh: "SSH",
+        et: "Eternal Terminal",
         direct: "Directo",
         routed: "Vía",
       },

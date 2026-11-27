@@ -50,6 +50,7 @@ function ConnectionKindGlyph({ kind }: { kind: HostConnectionKind }): ReactEleme
     case "tailscale":
       return <ThemedTailscale size={CONNECTION_GLYPH_SIZE} uniProps={extraMutedMapping} />;
     case "ssh":
+    case "et":
       return (
         <ThemedTerminal
           size={CONNECTION_GLYPH_SIZE}

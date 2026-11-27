@@ -128,3 +128,14 @@ test("validated URI command hints preserve their transport address without crede
     }),
   ).not.toContain("example-secret");
 });
+
+test("ET command hints keep all three ports and omit the daemon password", () => {
+  const host = "et://deploy@build-box:2202?sshPort=2222&daemonPort=7777&password=example-secret";
+  const target = selectDaemonTarget({ host }, {});
+  expect(describeDaemonTarget(target)).toBe(
+    "et://deploy@build-box:2202?sshPort=2222&daemonPort=7777",
+  );
+  const diagnostic = buildDaemonConnectionCommandError({ target, error: new Error("Timeout") });
+  expect(diagnostic.details).toContain("etserver");
+  expect(JSON.stringify(diagnostic)).not.toContain("example-secret");
+});

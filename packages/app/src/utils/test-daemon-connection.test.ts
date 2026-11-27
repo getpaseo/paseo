@@ -3,6 +3,7 @@ import type { DaemonClientConfig } from "@getpaseo/client/internal/daemon-client
 import { DaemonAuthenticationError } from "@getpaseo/client/internal/daemon-client";
 import type { DaemonConnectionDependencies, DaemonProbeClient } from "./test-daemon-connection";
 import { createHostLogger } from "@/runtime/host-logger";
+import { buildDesktopDaemonTransportUrl } from "@/desktop/daemon/desktop-daemon-transport";
 
 class FakeDaemonClient implements DaemonProbeClient {
   readonly lastError: string | null;
@@ -57,12 +58,7 @@ class FakeDaemonProbe {
     },
     resolveAppVersion: () => null,
     createDesktopTransportFactory: () => null,
-    buildDesktopTransportUrl: (target) => {
-      if (target.transportType === "ssh") {
-        return `paseo+desktop://ssh?host=${encodeURIComponent(target.host)}`;
-      }
-      return `paseo+desktop://${target.transportType}?path=${encodeURIComponent(target.transportPath)}`;
-    },
+    buildDesktopTransportUrl: buildDesktopDaemonTransportUrl,
     createClient: (config) => {
       const client = new FakeDaemonClient(this, config);
       this.createdClients.push(client);
@@ -226,7 +222,7 @@ describe("test-daemon-connection connectToDaemon", () => {
     const transportFactory = vi.fn();
     const result = await connectToDaemon(
       {
-        id: "ssh:deploy%40example.com:2222:%2Fkeys%2Fpaseo",
+        id: "ssh:deploy%40example.com:2222:7777",
         type: "remoteSsh",
         host: "deploy@example.com",
         sshPort: 2222,
@@ -241,7 +237,30 @@ describe("test-daemon-connection connectToDaemon", () => {
     await result.client.close();
 
     expect(probe.createdConfigs()[0]).toMatchObject({
-      url: "paseo+desktop://ssh?host=deploy%40example.com",
+      url: "paseo+desktop://ssh?host=deploy%40example.com&port=2222&daemonPort=7777",
+      transportFactory,
+    });
+  });
+
+  it("probes ET using the desktop transport and keeps all three ports", async () => {
+    const { connectToDaemon } = await import("./test-daemon-connection");
+    const transportFactory = vi.fn();
+    const result = await connectToDaemon(
+      {
+        id: "et:deploy%40example.com:2023:2222:7777",
+        type: "remoteEt",
+        host: "deploy@example.com",
+        etPort: 2023,
+        sshPort: 2222,
+        daemonPort: 7777,
+      },
+      undefined,
+      { ...probe.deps, createDesktopTransportFactory: () => transportFactory },
+    );
+    await result.client.close();
+
+    expect(probe.createdConfigs()[0]).toMatchObject({
+      url: "paseo+desktop://et?host=deploy%40example.com&etPort=2023&port=2222&daemonPort=7777",
       transportFactory,
     });
   });

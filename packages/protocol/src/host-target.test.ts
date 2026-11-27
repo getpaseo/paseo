@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { buildEtTunnelArgs, parseEtTransportUri } from "./et-transport.js";
 import { parseHostTarget } from "./host-target.js";
 
 test.each([
@@ -23,6 +24,105 @@ test("SSH daemon credentials are separate from SSH authentication and excluded f
     description: "ssh://build-box:2222 (daemon port 7777)",
   });
 });
+test("ET separates its three ports and daemon credentials", () => {
+  expect(
+    parseHostTarget(
+      "et://deploy@build-box:2023?sshPort=2222&daemonPort=7777&password=%20secret%20",
+    ),
+  ).toEqual({
+    kind: "et",
+    et: { host: "deploy@build-box", etPort: 2023, sshPort: 2222, daemonPort: 7777 },
+    password: " secret ",
+    description: "et://build-box:2023 (daemon port 7777)",
+  });
+});
+test("ET accepts aliases and canonicalizes IPv6 targets with default ports", () => {
+  expect(parseHostTarget("et://Build_box")).toEqual({
+    kind: "et",
+    et: { host: "Build_box", etPort: 2022, daemonPort: 6767 },
+    description: "et://Build_box:2022 (daemon port 6767)",
+  });
+  expect(parseHostTarget("et://[2001:0db8::1]/")).toEqual({
+    kind: "et",
+    et: { host: "2001:db8::1", etPort: 2022, daemonPort: 6767 },
+    description: "et://[2001:db8::1]:2022 (daemon port 6767)",
+  });
+});
+test.each([
+  "et://",
+  "et://-host",
+  "et://user@-host",
+  "et://-user@host",
+  "et://user%40other@host",
+  "et://user%24value@host",
+  "et://user:SECRET@host",
+  "et://user:@host",
+  "et://host:",
+  "et://host:0",
+  "et://host:65536",
+  "et://host?sshPort=65536",
+  "et://host?sshPort=22&sshPort=22",
+  "et://host?daemonPort=0",
+  "et://host?daemonPort=0x1a6f",
+  "et://host?daemonPort=6767&daemonPort=6767",
+  "et://host?password=SECRET&password=SECRET",
+  "et://host?unknown=SECRET",
+  "et://host#",
+  "et://host#SECRET",
+  "et://ho\tst",
+  "et://host/path",
+  "et://host/path/../",
+])("rejects malformed ET target %j", (connection) => {
+  expect(() => parseHostTarget(connection)).toThrow(/^Invalid host connection\./);
+});
+test("ET launches a single stdio forward with separate SSH bootstrap settings", () => {
+  expect(
+    buildEtTunnelArgs(
+      parseEtTransportUri("et://deploy@[2001:db8::1]:2023?sshPort=2222&daemonPort=7777"),
+    ),
+  ).toEqual([
+    "--no-persist",
+    "--disconnect-timeout",
+    "1",
+    "--port",
+    "2023",
+    "-N",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ClearAllForwardings=yes",
+    "-o",
+    "ForwardAgent=no",
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
+    "-o",
+    "ControlPersist=no",
+    "--ssh-option",
+    "ConnectTimeout=10",
+    "--ssh-option",
+    "ClearAllForwardings=yes",
+    "--ssh-option",
+    "ForwardAgent=no",
+    "--ssh-option",
+    "ControlPath=none",
+    "--ssh-option",
+    "RemoteCommand=none",
+    "-p",
+    "2222",
+    "-W",
+    "127.0.0.1:7777",
+    "deploy@2001:db8::1",
+  ]);
+  expect(buildEtTunnelArgs(parseEtTransportUri("et://alias"))).not.toContain("-p");
+});
+test.each(["-option", "u@-option", "u@host:22", "u@one@host", "u`id`@host"])(
+  "ET rejects an unsafe subprocess destination %j",
+  (host) => {
+    expect(() => buildEtTunnelArgs({ host, etPort: 2022, daemonPort: 6767 })).toThrow();
+  },
+);
 test.each([
   "",
   "ssh://-bad",
