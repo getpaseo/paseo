@@ -664,6 +664,24 @@ export const ru: TranslationResources = {
         unsupportedProtocol:
           "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Просмотр через {{hostName}}. Нажмите, чтобы перейти в локальный режим.",
+        tooltipLocal: "Локальный просмотр. Нажмите, чтобы просматривать через {{hostName}}.",
+        switchToLocal: "Переключить маршрутизацию браузера с {{hostName}} на локальную",
+        switchToHost: "Переключить маршрутизацию браузера с локальной на {{hostName}}",
+      },
+      proxy: {
+        connecting: "Подключение к {{hostName}}...",
+        reconnecting: "Повторное подключение к {{hostName}}...",
+        updateTitle: "Обновите {{hostName}}, чтобы просматривать через этот хост",
+        updateDescription: "Этот хост пока не поддерживает проксирование браузера.",
+        routedTitle: "Прокси браузера недоступен для маршрутизируемых хостов",
+        routedDescription: "Подключитесь к хосту напрямую или просматривайте локально.",
+        offlineTitle: "{{hostName}} не в сети",
+        offlineDescription: "Дождитесь повторного подключения хоста или просматривайте локально.",
+        errorTitle: "Не удалось подключить прокси браузера",
+        browseLocally: "Просматривать локально",
+      },
     },
     terminal: {
       hostDisconnected: "Хост не подключён",
