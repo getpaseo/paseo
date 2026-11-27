@@ -151,6 +151,31 @@ index 8d78aea..b84d19e 100644
    private fun extractGestureHandlers(
      viewGroup: ViewGroup,
      coords: FloatArray,
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/LongPressGestureHandler.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/LongPressGestureHandler.kt
+index 32bd755..a40c7b1 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/LongPressGestureHandler.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/core/LongPressGestureHandler.kt
+@@ -99,7 +99,8 @@ class LongPressGestureHandler(context: Context) : GestureHandler() {
+       currentPointers == numberOfPointersRequired &&
+       (
+         sourceEvent.actionMasked == MotionEvent.ACTION_DOWN ||
+-          sourceEvent.actionMasked == MotionEvent.ACTION_POINTER_DOWN
++          sourceEvent.actionMasked == MotionEvent.ACTION_POINTER_DOWN ||
++          sourceEvent.actionMasked == MotionEvent.ACTION_BUTTON_PRESS
+         )
+     ) {
+       handler = Handler(Looper.getMainLooper())
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/Extensions.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/Extensions.kt
+index 51180b2..4509ff6 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/Extensions.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/Extensions.kt
+@@ -19,3 +19,6 @@ fun Context.isScreenReaderOn() =
+ fun MotionEvent.isHoverAction(): Boolean = action == MotionEvent.ACTION_HOVER_MOVE ||
+   action == MotionEvent.ACTION_HOVER_ENTER ||
+   action == MotionEvent.ACTION_HOVER_EXIT
++
++fun MotionEvent.isButtonAction(): Boolean = actionMasked == MotionEvent.ACTION_BUTTON_PRESS ||
++  actionMasked == MotionEvent.ACTION_BUTTON_RELEASE
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 index 629c155..dc0790d 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
@@ -178,6 +203,19 @@ index 629c155..dc0790d 100644
      return shouldIntercept
    }
  
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt
+index 2801b8a..a978d3b 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootView.kt
+@@ -41,7 +41,7 @@ class RNGestureHandlerRootView(context: Context?) : ReactViewGroup(context) {
+   }
+ 
+   override fun dispatchGenericMotionEvent(ev: MotionEvent) =
+-    if (rootViewEnabled && ev.isHoverAction() && rootHelper!!.dispatchTouchEvent(ev)) {
++    if (rootViewEnabled && (ev.isHoverAction() || ev.isButtonAction()) && rootHelper!!.dispatchTouchEvent(ev)) {
+       true
+     } else {
+       super.dispatchGenericMotionEvent(ev)
 diff --git a/node_modules/react-native-gesture-handler/lib/commonjs/web/handlers/GestureHandler.js b/node_modules/react-native-gesture-handler/lib/commonjs/web/handlers/GestureHandler.js
 index 96c5227..cbf1a88 100644
 --- a/node_modules/react-native-gesture-handler/lib/commonjs/web/handlers/GestureHandler.js
