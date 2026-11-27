@@ -132,7 +132,7 @@ export function createWorkspaceProvisioningService(deps: {
    */
   async function observeWorkspaceCheckout(cwd: string): Promise<ProjectCheckoutLitePayload | null> {
     if (!(await deps.isDirectory(cwd))) return null;
-    const checkout = await workspaceGitService.getCheckout(cwd);
+    const checkout = await workspaceGitService.getCheckout(cwd, { placementOnly: true });
     if (!checkout.isGit && !(await deps.isDirectory(cwd))) return null;
     return checkout;
   }
@@ -216,7 +216,8 @@ export function createWorkspaceProvisioningService(deps: {
     knownCheckout?: ProjectCheckoutLitePayload,
   ): Promise<PersistedProjectRecord> {
     const rootPath = resolve(cwd);
-    const checkout = knownCheckout ?? (await workspaceGitService.getCheckout(rootPath));
+    const checkout =
+      knownCheckout ?? (await workspaceGitService.getCheckout(rootPath, { placementOnly: true }));
     const timestamp = new Date().toISOString();
     return projectRegistry.getOrCreateActiveByRoot({
       rootPath,
@@ -569,7 +570,7 @@ export function createWorkspaceProvisioningService(deps: {
       const projectCheckout =
         checkout && areEquivalentPaths(project.rootPath, workspace.cwd)
           ? checkout
-          : await workspaceGitService.getCheckout(project.rootPath);
+          : await workspaceGitService.getCheckout(project.rootPath, { placementOnly: true });
       const kind = projectCheckout.isGit ? "git" : "non_git";
       const projectKey = deriveProjectKey({
         rootPath: project.rootPath,
@@ -597,7 +598,9 @@ export function createWorkspaceProvisioningService(deps: {
     const checkout = await observeWorkspaceCheckout(workspace.cwd);
     const project = await projectRegistry.get(workspace.projectId);
     if (project && !project.archivedAt) {
-      await refreshProjectKind(project, workspace.cwd, checkout ?? undefined);
+      await refreshProjectKind(project, workspace.cwd, checkout ?? undefined, {
+        placementOnly: true,
+      });
     }
     const update = reconcileWorkspacePlacement({
       workspace,

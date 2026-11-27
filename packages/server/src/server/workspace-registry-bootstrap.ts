@@ -118,7 +118,9 @@ export async function bootstrapWorkspaceRegistries(options: {
   const placements = await Promise.all(
     activeRecords.map(async (record) => {
       const normalizedCwd = path.resolve(record.cwd);
-      const checkout = await options.workspaceGitService.getCheckout(normalizedCwd);
+      const checkout = await options.workspaceGitService.getCheckout(normalizedCwd, {
+        placementOnly: true,
+      });
       const membership = classifyDirectoryForProjectMembership({
         cwd: normalizedCwd,
         checkout,

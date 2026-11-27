@@ -345,13 +345,13 @@ test("local workspace starts an agent when Git cannot read the HEAD tree", async
       "initial",
     );
     await client.connect();
-    const added = await client.addProject(directory);
-    expect(added.error).toBeNull();
-    const projectId = added.project!.projectId;
 
     // Lose only the loose tree object, not the commit, checkout metadata, or working file.
     const tree = git("rev-parse", "HEAD^{tree}");
     await rm(join(directory, ".git", "objects", tree.slice(0, 2), tree.slice(2)));
+    const added = await client.addProject(directory);
+    expect(added.error).toBeNull();
+    const projectId = added.project!.projectId;
 
     for (const path of [join(directory, "missing"), tracked]) {
       const invalid = await client.createWorkspace({
@@ -383,6 +383,15 @@ test("local workspace starts an agent when Git cannot read the HEAD tree", async
     );
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(await readFile(tracked, "utf8")).toBe("working file\n");
+    const reopened = await client.openProject(cwd);
+    expect(reopened).toMatchObject({
+      error: null,
+      workspace: {
+        id: result.workspace!.id,
+        projectId,
+        workspaceKind: "local_checkout",
+      },
+    });
 
     const gitFailure = "bad tree object HEAD";
     expect(await client.getCheckoutStatus(cwd)).toMatchObject({

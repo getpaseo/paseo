@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { getCheckoutStatus } from "../../../utils/checkout-git.js";
+import { getCheckoutPlacement, getCheckoutStatus } from "../../../utils/checkout-git.js";
 import {
   setPaseoWorktreeBaseRef,
   writePaseoWorktreeMetadata,
@@ -133,6 +133,65 @@ beforeEach(async () => {
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test.each([null, ARCHIVED_AT])(
+  "reopens a local workspace with archivedAt=%s when its HEAD tree is missing",
+  async (archivedAt) => {
+    const root = path.join(tmpDir, "damaged-repo");
+    const cwd = path.join(root, "subproject");
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(path.join(cwd, "tracked.txt"), "preserved\n");
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: "pipe" }).trim();
+    git("init", "-b", "main");
+    git("add", ".");
+    git(
+      "-c",
+      "user.name=Paseo Test",
+      "-c",
+      "user.email=test@getpaseo.local",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "initial",
+    );
+    const service = createWorkspaceProvisioningService({
+      unarchiveWorkspaceAgents: async () => {},
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService: createNoopWorkspaceGitService({
+        getCheckout: async (directory, options) =>
+          checkoutLiteFromGitSnapshot(
+            directory,
+            await (options?.placementOnly
+              ? getCheckoutPlacement(directory, { logger })
+              : getCheckoutStatus(directory, { logger })),
+          ),
+      }),
+      isDirectory,
+      logger,
+    });
+    const project = await service.findOrCreateProjectForDirectory(root);
+    const workspace = await service.createWorkspaceForDirectory(cwd, null, project.projectId);
+    await workspaceRegistry.upsert({ ...workspace, archivedAt });
+    const tree = git("rev-parse", "HEAD^{tree}");
+    rmSync(path.join(root, ".git", "objects", tree.slice(0, 2), tree.slice(2)));
+
+    expect(await service.findOrCreateWorkspaceForDirectory(cwd)).toMatchObject({
+      workspaceId: workspace.workspaceId,
+      projectId: project.projectId,
+      cwd,
+      kind: "local_checkout",
+      archivedAt: null,
+    });
+    expect(await projectRegistry.get(project.projectId)).toMatchObject({
+      kind: "git",
+      rootPath: root,
+    });
+    await expect(getCheckoutStatus(cwd, { logger })).rejects.toThrow("bad tree object HEAD");
+  },
+);
 
 test("a workspace created during a base change records the new base", async () => {
   const cwd = path.join(tmpDir, "worktree");

@@ -349,9 +349,10 @@ the app keeps its existing disk-ready navigation and observes the remaining crea
 Callbacks do not advance the workflow. Resource reservations in acknowledgement are
 identities, not ready workspace records.
 
-Local directory creation reads checkout identity for placement and ownership without waiting on
-Git status. A damaged checkout can still host an agent; the Git error belongs in the checkout
-status response and Changes view. New worktree creation still requires usable Git operations.
+Local directory creation, registration, reopening, and legacy registry bootstrap read checkout
+identity for placement and ownership without waiting on Git status. A damaged checkout can
+still host an agent; the Git error belongs in the checkout status response and Changes view.
+New worktree creation still requires usable Git operations.
 
 The creation journal (`server/creation/`) owns identity and execution for both legacy and
 modern creation RPCs. Requesting progress never selects a different journal. Existing
