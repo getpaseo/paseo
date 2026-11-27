@@ -5026,6 +5026,147 @@ test("a prompt after provider replacement reopens the stale session", async () =
   }
 });
 
+/** Plugin sessions that report a changed launch from `markStale()` until the session reopens. */
+function stalePluginSessions() {
+  let stale = false;
+  const sessions: PluginSessionsRuntime = {
+    openSession: async (request) => {
+      stale = false;
+      return { ...request, tools: [], mcpServerOwners: {} };
+    },
+    sessionLaunched: () => {},
+    sessionLaunchFailed: () => {},
+    refreshSession: async () => ({ stale }),
+    sessionTools: () => [],
+    closeSession: () => {},
+    callTool: async () => ({ isError: true, text: "No plugin tools" }),
+  };
+  return {
+    sessions,
+    markStale: () => {
+      stale = true;
+    },
+  };
+}
+
+async function createPluginChangeHarness() {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-plugin-change-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const sessions: CloseRecordingTestAgentSession[] = [];
+  class RecordingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new CloseRecordingTestAgentSession(config);
+      sessions.push(session);
+      return session;
+    }
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return this.createSession({ provider: "codex", cwd: workdir, ...config });
+    }
+  }
+  const plugins = stalePluginSessions();
+  const manager = new AgentManager({
+    clients: { codex: new RecordingClient() },
+    registry: storage,
+    logger,
+    pluginSessions: plugins.sessions,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  return {
+    manager,
+    agentId: agent.id,
+    markStale: plugins.markStale,
+    firstSession: () => sessions[0],
+    closedSessions: () => sessions.map((session) => session.closed),
+    prompt: async (text: string) => {
+      await startAgentRun(manager, agent.id, text, logger);
+      await manager.waitForAgentEvent(agent.id);
+    },
+  };
+}
+
+const backgroundWorkEvents: Record<string, { started: AgentStreamEvent; ended: AgentStreamEvent }> =
+  {
+    "provider subagent": {
+      started: {
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child-1", title: "Child", status: "running" },
+      },
+      ended: {
+        type: "provider_subagent",
+        provider: "codex",
+        event: { type: "upsert", id: "child-1", title: "Child", status: "completed" },
+      },
+    },
+    "background shell": {
+      started: {
+        type: "background_work",
+        provider: "codex",
+        items: [{ id: "bash-1", kind: "shell", description: "npm test" }],
+      },
+      ended: { type: "background_work", provider: "codex", items: [] },
+    },
+  };
+
+test.each(Object.keys(backgroundWorkEvents))(
+  "a plugin change that alters the launch reopens an agent with a running %s at the first prompt after it ends",
+  async (kind) => {
+    const { started, ended } = backgroundWorkEvents[kind];
+    const h = await createPluginChangeHarness();
+    const session = h.firstSession();
+    const workIsActive = () =>
+      h.manager.listAgentBackgroundWork(h.agentId).length > 0 ||
+      h.manager.listProviderSubagents(h.agentId).some((subagent) => subagent.status === "running");
+
+    session.pushEvent(started);
+    await vi.waitFor(() => expect(workIsActive()).toBe(true));
+    h.markStale();
+    await h.prompt("while the work runs");
+
+    expect(h.closedSessions()).toEqual([false]);
+    expect(workIsActive()).toBe(true);
+
+    session.pushEvent(ended);
+    await vi.waitFor(() => expect(workIsActive()).toBe(false));
+    await h.prompt("after the work ended");
+
+    expect(h.closedSessions()).toEqual([true, false]);
+    await h.prompt("after the reopen");
+    expect(h.closedSessions()).toEqual([true, false]);
+  },
+);
+
+test("a plugin change that alters the launch reopens an agent whose only background work is a heartbeat", async () => {
+  const h = await createPluginChangeHarness();
+  h.manager.setDaemonBackgroundWork({
+    agentId: h.agentId,
+    namespace: "heartbeat",
+    id: "schedule-1",
+    kind: "heartbeat",
+    countsAsRunning: false,
+    description: "Check build",
+    startedAt: "2026-10-06T10:00:00.000Z",
+    stop: async () => undefined,
+  });
+  expect(h.manager.listAgentBackgroundWork(h.agentId)).toHaveLength(1);
+
+  h.markStale();
+  await h.prompt("after the plugin change");
+
+  expect(h.closedSessions()).toEqual([true, false]);
+});
+
 test("a replacement prompt recovers when the retired session fails to start", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-replacement-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
