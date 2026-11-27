@@ -70,6 +70,12 @@ export interface TerminalManager {
    * them). Callers that answer terminal requests report it instead of an empty list.
    */
   getUnavailableError?(): Error | null;
+  /**
+   * Resolves true once a lost worker connection is usable again, false when the worker is gone
+   * for good. Only managers that talk to a separate worker process implement it: a request that
+   * failed because that socket closed can be repeated after it resolves true.
+   */
+  waitForTerminalWorker?(): Promise<boolean>;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
     /** Where the terminal comes from, for plugins' `terminal.create.before` hooks. */

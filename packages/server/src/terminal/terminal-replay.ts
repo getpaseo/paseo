@@ -53,20 +53,36 @@ export async function replayTerminal(
 interface TerminalReplayPorts {
   getSession(id: string): LocalTerminalSession | undefined;
   flushOutput(id: string): void;
+  /** Records why this worker dropped its controller socket; see terminal-worker-process.ts. */
+  log?: (event: string, fields?: Record<string, unknown>) => void;
 }
+
+// A controller that has not drained this much is treated as gone: every viewer reconnects to
+// the surviving worker instead of this worker buffering output for a stalled socket.
+const CONTROLLER_BACKPRESSURE_BYTES = 4 * 1024 * 1024;
 
 /** Worker-owned ANSI capture and paced delivery; live observations never wait for a replay. */
 export function createTerminalReplayController(ports: TerminalReplayPorts) {
   let controller: FramedSocket | null = null;
 
   function sendToController(message: TerminalWorkerToParentMessage): void {
+    if (!controller) return;
+    const writableLength = controller.socket.writableLength;
     // A stalled physical controller is different from a stalled viewer: all its
     // observations must reconnect to the surviving worker after this socket closes.
-    if (controller && controller.socket.writableLength > 4 * 1024 * 1024) {
+    if (writableLength > CONTROLLER_BACKPRESSURE_BYTES) {
+      ports.log?.("controller-backpressure-close", {
+        writableLength,
+        limitBytes: CONTROLLER_BACKPRESSURE_BYTES,
+        messageType: message.type,
+        ...(message.type === "terminalMessage"
+          ? { terminalId: message.terminalId, terminalMessageType: message.message.type }
+          : {}),
+      });
       controller.socket.destroy();
       return;
     }
-    controller?.send(message);
+    controller.send(message);
   }
 
   async function deliverReplay(

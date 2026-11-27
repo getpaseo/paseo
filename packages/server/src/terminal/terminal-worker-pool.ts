@@ -270,6 +270,17 @@ export function createTerminalWorkerPool(
       return counts.reduce((sum, count) => sum + count, 0);
     },
 
+    // Every member reconnects on its own socket; a caller that saw one close waits for all of
+    // them, since it cannot tell which worker answered its request.
+    async waitForTerminalWorker() {
+      const results = await Promise.all(
+        members().map(
+          (member) => member.manager.waitForTerminalWorker?.() ?? Promise.resolve(true),
+        ),
+      );
+      return results.some((recovered) => recovered);
+    },
+
     subscribeTerminalsChanged(listener) {
       terminalsChangedListeners.add(listener);
       return () => terminalsChangedListeners.delete(listener);
