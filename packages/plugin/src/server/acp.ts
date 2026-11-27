@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type {
   ProviderCatalog,
+  ProviderCatalogOptions,
+  ProviderCatalogRefreshMode,
   ProviderCommand,
   ProviderConfigState,
   ProviderMode,
@@ -17,6 +20,7 @@ interface RunAcpProviderBaseOptions {
   label: string;
   description?: string;
   icon?: string;
+  catalogRefresh?: ProviderCatalogRefreshMode;
   acpOptions?: AcpOptions;
   transformers?: readonly AcpTransformer[];
 }
@@ -47,8 +51,13 @@ export type AcpConnector = () => AcpStream | Promise<AcpStream>;
 export interface AcpOptions {
   protocol?: "auto" | "v1";
   startupTimeoutMs?: number;
-  /** Global discovery initializes ACP but returns an empty catalog without opening a session. */
+  /** Global discovery returns an empty catalog without spawning a process or opening a session. */
   workspaceOnlyCatalog?: boolean;
+  /**
+   * For an agent that lists thinking options only for the selected model: discovery selects each
+   * model in turn and records the thinking options the agent lists for it, or none.
+   */
+  perModelThinkingOptions?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
   /**
@@ -112,9 +121,14 @@ export interface AcpToolCallSnapshot {
   title: string;
   kind?: string;
   status: "pending" | "in_progress" | "completed" | "failed";
+  /** The call's ACP `rawInput`. */
   input: JsonValue;
+  /** The call's ACP `rawOutput`. */
   output: JsonValue;
+  /** The call's ACP `content` blocks. An update that sends `content` replaces them. */
+  content?: JsonValue;
   locations: readonly string[];
+  /** The row Paseo shows. Without it, Paseo builds the standard row for the call's ACP `kind`. */
   detail?: ProviderToolCallDetail;
 }
 
@@ -145,10 +159,23 @@ export interface AcpTransformer {
     notification: { method: string; params: JsonValue },
     context: AcpContext,
   ): AcpVendorUpdate | readonly AcpVendorUpdate[] | null;
+  /** Rewrites each update of a tool call, merged with the call's earlier updates. */
   toolCall?(
     toolCall: AcpToolCallSnapshot,
-    context: AcpContext & { mcpServerNames?: readonly string[] },
+    context: AcpContext & {
+      mcpServerNames?: readonly string[];
+      /** The call as Paseo last presented it, after every transformer. Absent on its first update. */
+      previous?: AcpToolCallSnapshot;
+    },
   ): AcpToolCallSnapshot;
+}
+
+function buildDefaultAcpCatalogCacheKey(options: ProviderCatalogOptions): string {
+  if (!options.launch) return "acp:connector";
+  const env = Object.entries(options.launch.env).sort(([a], [b]) => a.localeCompare(b));
+  return createHash("sha256")
+    .update(JSON.stringify(["acp:global/1", options.launch.command, options.launch.args, env]))
+    .digest("hex");
 }
 
 export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistration {
@@ -160,12 +187,23 @@ export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistra
   if (options.command && (options.command.length === 0 || options.command[0].trim().length === 0)) {
     throw new Error("ACP provider command must contain an executable");
   }
+  const workspaceOnlyCatalog = options.acpOptions?.workspaceOnlyCatalog === true;
   return {
     id: options.id,
     label: options.label,
     description: options.description,
     icon: options.icon,
     command: options.command,
+    catalogRefresh: options.catalogRefresh ?? "on_demand",
+    ...(workspaceOnlyCatalog
+      ? {}
+      : {
+          async getCatalogCacheKey(catalogOptions) {
+            return buildDefaultAcpCatalogCacheKey(catalogOptions);
+          },
+        }),
+    // Each command-based session spawns its own process, so it can run behind that session's wrap.
+    ...(hasCommand ? { launchWrap: true } : {}),
     connect(request) {
       return createAcpProviderConnection(options, request);
     },

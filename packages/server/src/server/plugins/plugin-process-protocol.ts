@@ -1,9 +1,10 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
-import type { PluginHookAgent } from "@getpaseo/plugin/server";
+import type { PluginHookAgent, PluginNotificationSendResult } from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
-  ProviderConnectRequest,
   ProviderCatalogOptions,
+  ProviderCatalogRefreshMode,
+  ProviderConnectRequest,
   ProviderEvent,
   ProviderInput,
   ProviderInstallationLaunch,
@@ -11,6 +12,8 @@ import type {
   ProviderUpdateReport,
 } from "@getpaseo/plugin/server/provider";
 import {
+  ProviderCatalogRefreshModeSchema,
+  ProviderClientInfoSchema,
   ProviderUpdateReportSchema,
   ProviderEventSchema,
   ProviderInputSchema,
@@ -20,14 +23,17 @@ import { z } from "zod";
 
 export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
+  catalogRefresh?: ProviderCatalogRefreshMode;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
   installation?: PluginProviderInstallationMetadata;
   command?: readonly [string, ...string[]];
+  launchWrap?: boolean;
   id: string;
   label: string;
   description?: string;
   iconPath?: string;
+  docsUrl?: string;
 }
 
 export interface PluginProviderInstallationMetadata {
@@ -42,6 +48,7 @@ export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
   provider?: string;
+  providers?: string[];
   icon?: string;
 }
 
@@ -117,6 +124,8 @@ export type PluginProcessRequest =
       input: ProviderInput;
     }
   | { type: "provider.close"; connectionId: string }
+  | { type: "notification.result"; requestId: string; result: PluginNotificationSendResult }
+  | { type: "notification.error"; requestId: string; error: string }
   | { type: "shutdown" }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
@@ -159,6 +168,7 @@ export type PluginProcessMessage =
     }
   | { type: "provider.event"; connectionId: string; event: ProviderEvent }
   | { type: "provider.closed"; connectionId: string; error?: string }
+  | { type: "notification.send"; requestId: string; input: unknown }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
 
@@ -176,7 +186,9 @@ const providerMetadataSchema = z
     label: z.string().min(1),
     description: z.string().optional(),
     iconPath: z.string().optional(),
+    docsUrl: z.string().optional(),
     requiresConfiguration: z.boolean().optional(),
+    catalogRefresh: ProviderCatalogRefreshModeSchema.optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
     installation: z
@@ -190,6 +202,7 @@ const providerMetadataSchema = z
       .strict()
       .optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
+    launchWrap: z.boolean().optional(),
   })
   .strict();
 const usageSourceMetadataSchema = z
@@ -197,6 +210,7 @@ const usageSourceMetadataSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     provider: z.string().min(1).optional(),
+    providers: z.array(z.string().min(1)).optional(),
     icon: z.string().optional(),
   })
   .strict();
@@ -207,6 +221,7 @@ const ProviderInstallationLaunchSchema = ProviderLaunchSchema.extend({
 const providerConnectRequestSchema = z
   .object({
     launch: ProviderLaunchSchema.optional(),
+    clientInfo: ProviderClientInfoSchema.optional(),
     versions: z.array(z.number().int().positive()),
     capabilities: z.array(z.string()),
   })
@@ -373,6 +388,29 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("provider.close"), connectionId: z.string().min(1) }).strict(),
+    z
+      .object({
+        type: z.literal("notification.result"),
+        requestId: z.string().min(1),
+        result: z.discriminatedUnion("status", [
+          z
+            .object({
+              status: z.literal("sent"),
+              notificationId: z.string().min(1),
+            })
+            .strict(),
+          z.object({ status: z.literal("deduplicated") }).strict(),
+          z.object({ status: z.literal("rate_limited") }).strict(),
+        ]),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("notification.error"),
+        requestId: z.string().min(1),
+        error: z.string(),
+      })
+      .strict(),
     z.object({ type: z.literal("shutdown") }).strict(),
     z.object({ type: z.literal("paseo_frame"), ...frameFields }).strict(),
     z.object({ type: z.literal("paseo_close") }).strict(),
@@ -471,6 +509,13 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         type: z.literal("provider.closed"),
         connectionId: z.string().min(1),
         error: z.string().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("notification.send"),
+        requestId: z.string().min(1),
+        input: z.unknown(),
       })
       .strict(),
     z.object({ type: z.literal("paseo_frame"), ...frameFields }).strict(),

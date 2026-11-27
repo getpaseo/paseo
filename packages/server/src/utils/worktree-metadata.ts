@@ -14,6 +14,13 @@ const ChangeRequestLookupTargetSchema = z.object({
   localBranchName: z.string().min(1).optional(),
 });
 
+const UntrustedWorktreeSourceSchema = z.object({
+  kind: z.literal("change_request"),
+  forge: z.string().min(1),
+  number: z.number().int().positive(),
+  headRepository: z.string().min(1),
+});
+
 // baseRefName is the display name; baseRef is the checkout's current exact base
 // ("refs/remotes/upstream/main"). baseRef is optional because worktrees written before it
 // existed only have the name — there are no migrations, so readers fall back.
@@ -23,6 +30,7 @@ const PaseoWorktreeMetadataV1Schema = z.object({
   baseRef: z.string().min(1).optional(),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
   worktreeManagerPluginId: z.string().min(1).optional(),
+  untrustedSource: UntrustedWorktreeSourceSchema.optional(),
 });
 
 const PaseoWorktreeMetadataV2Schema = z.object({
@@ -31,6 +39,7 @@ const PaseoWorktreeMetadataV2Schema = z.object({
   baseRef: z.string().min(1).optional(),
   changeRequestLookupTarget: ChangeRequestLookupTargetSchema.optional(),
   worktreeManagerPluginId: z.string().min(1).optional(),
+  untrustedSource: UntrustedWorktreeSourceSchema.optional(),
   firstAgentBranchAutoName: z
     .discriminatedUnion("status", [
       z.object({
@@ -58,6 +67,7 @@ const PaseoWorktreeMetadataSchema = z.union([
 
 export type PaseoWorktreeMetadata = z.infer<typeof PaseoWorktreeMetadataSchema>;
 export type PaseoWorktreeChangeRequestHint = z.infer<typeof ChangeRequestLookupTargetSchema>;
+export type PaseoWorktreeUntrustedSource = z.infer<typeof UntrustedWorktreeSourceSchema>;
 
 export function createPaseoWorktreeChangeRequestHint(
   input: PaseoWorktreeChangeRequestHint,
@@ -167,6 +177,22 @@ async function getGitDirForWorktreeRoot(worktreeRoot: string): Promise<string> {
   return gitPath;
 }
 
+/** Locate the admin directory used for shared refs and configuration. */
+export async function getGitCommonDirForWorktreeRoot(worktreeRoot: string): Promise<string | null> {
+  let gitDir: string;
+  try {
+    gitDir = await getGitDirForWorktreeRoot(worktreeRoot);
+  } catch {
+    return null;
+  }
+  try {
+    const commonDir = (await readBoundedFile(join(gitDir, "commondir"))).trim();
+    return commonDir ? resolve(gitDir, commonDir) : gitDir;
+  } catch {
+    return gitDir;
+  }
+}
+
 export async function getPaseoWorktreeMetadataPath(worktreeRoot: string): Promise<string> {
   const gitDir = await getGitDirForWorktreeRoot(worktreeRoot);
   return join(gitDir, "paseo", "worktree.json");
@@ -230,6 +256,7 @@ export async function writePaseoWorktreeMetadata(
     baseRef?: string;
     changeRequestLookupTarget?: PaseoWorktreeChangeRequestHint;
     worktreeManagerPluginId?: string;
+    untrustedSource?: PaseoWorktreeUntrustedSource;
   },
 ): Promise<void> {
   return mutateMetadata(worktreeRoot, async (root) => {
@@ -250,8 +277,38 @@ export async function writePaseoWorktreeMetadata(
       ...(options.worktreeManagerPluginId
         ? { worktreeManagerPluginId: options.worktreeManagerPluginId }
         : {}),
+      ...(options.untrustedSource ? { untrustedSource: options.untrustedSource } : {}),
     };
     await writePaseoWorktreeMetadataFile(root, metadata);
+  });
+}
+
+export async function setPaseoWorktreeUntrustedSource(
+  worktreeRoot: string,
+  untrustedSource: PaseoWorktreeUntrustedSource | null,
+): Promise<boolean> {
+  return mutateMetadata(worktreeRoot, async (root) => {
+    let current: PaseoWorktreeMetadata | null;
+    try {
+      current = await readMetadataFile(root);
+    } catch (error) {
+      const cause = (error as { cause?: NodeJS.ErrnoException }).cause;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || cause?.code === "ENOENT") {
+        return false;
+      }
+      throw error;
+    }
+    if (!current) {
+      return false;
+    }
+    const hadUntrustedSource = Boolean(current.untrustedSource);
+    if (!untrustedSource && !hadUntrustedSource) {
+      return false;
+    }
+    const { untrustedSource: _previous, ...rest } = current;
+    const next: PaseoWorktreeMetadata = untrustedSource ? { ...rest, untrustedSource } : rest;
+    await writePaseoWorktreeMetadataFile(root, next);
+    return untrustedSource ? true : hadUntrustedSource;
   });
 }
 

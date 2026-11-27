@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, onTestFinished, test } from "vitest";
+import { afterAll, expect, onTestFinished, test } from "vitest";
 
 import { DaemonClient } from "./test-utils/index.js";
 import { WebSocket } from "ws";
@@ -22,22 +22,50 @@ import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
 // the created worktree's observable branch is the only honest evidence the
 // request fields reached git.
 
-function createGitRepoWithBranch(): { repoDir: string; tempRoot: string } {
-  const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-create-worktree-source-"));
-  const repoDir = path.join(tempRoot, "repo");
-  execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
-  execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: repoDir, stdio: "pipe" });
-  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
-    cwd: repoDir,
+let templateRepoRoot: string | null = null;
+let templateRepoDir: string | null = null;
+
+function getTemplateGitRepoWithBranch(): string {
+  if (templateRepoDir) return templateRepoDir;
+  templateRepoRoot = mkdtempSync(path.join(tmpdir(), "workspace-create-worktree-source-template-"));
+  templateRepoDir = path.join(templateRepoRoot, "repo");
+  execFileSync("git", ["init", "-b", "main", templateRepoDir], { stdio: "pipe" });
+  execFileSync("git", ["config", "core.autocrlf", "false"], {
+    cwd: templateRepoDir,
     stdio: "pipe",
   });
-  execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+    cwd: templateRepoDir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Paseo Test"], {
+    cwd: templateRepoDir,
+    stdio: "pipe",
+  });
   execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial"], {
-    cwd: repoDir,
+    cwd: templateRepoDir,
     stdio: "pipe",
   });
   // An existing branch the checkout action must target by refName.
-  execFileSync("git", ["branch", "feature/existing-branch"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["branch", "feature/existing-branch"], {
+    cwd: templateRepoDir,
+    stdio: "pipe",
+  });
+  return templateRepoDir;
+}
+
+afterAll(() => {
+  if (templateRepoRoot) {
+    rmSync(templateRepoRoot, { recursive: true, force: true });
+    templateRepoRoot = null;
+    templateRepoDir = null;
+  }
+});
+
+function createGitRepoWithBranch(): { repoDir: string; tempRoot: string } {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-create-worktree-source-"));
+  const repoDir = path.join(tempRoot, "repo");
+  cpSync(getTemplateGitRepoWithBranch(), repoDir, { recursive: true });
   return { repoDir, tempRoot };
 }
 

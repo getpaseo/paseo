@@ -86,7 +86,7 @@ mounts—never at module evaluation time.
 
 ## Dynamic Pixel Styles On Web
 
-Avoid feeding changing pixel values such as `{ top, left }`, `{ maxHeight }`, or `{ minWidth }` into the `style` prop of Unistyles-managed React Native components on web. The web runtime hashes each distinct style object by value and appends a CSS rule to `#unistyles-web`; those rules are not reclaimed during the page lifetime, so pointer-driven positioning can turn into steady stylesheet growth.
+Avoid feeding changing pixel values such as `{ top, left }`, `{ maxHeight }`, or `{ minWidth }` into the `style` prop of Unistyles-managed React Native components on web. The web runtime hashes each distinct style object by value and inserts a CSS rule into `#unistyles-web` for it, then deletes the rule when the last element using it unmounts. Pointer-driven positioning turns into a rule insert and delete per move.
 
 Use the inline style escape hatch below for high-churn values. Do not split a component into plain/web/native variants just to keep one measured value out of the CSS registry. Raw DOM wrappers are reserved for real DOM infrastructure, such as terminal hosts, virtualized web rows, or third-party drag wrappers.
 
@@ -224,6 +224,7 @@ Quick confirmation in DevTools console:
 ```js
 [...document.styleSheets]
   .flatMap((s) => [...(s.cssRules || [])])
+  .flatMap((r) => (r.cssRules ? [...r.cssRules] : [r]))
   .map((r) => r.cssText)
   .filter((t) => t.includes("unistyles") && t.includes("> *"));
 ```
@@ -365,6 +366,14 @@ CSS variables then follow the OS theme while `withUnistyles` props retain the ol
 colors. Keep this patch until upstream reads the scheme through separate lists.
 The desktop browser E2E checks both transition directions in an isolated Electron
 process, because Playwright's focus emulation prevents real hidden-page behavior.
+
+The stylesheet patch backports upstream PR #1354 (3.8.0). Unistyles 3.2.4 rewrote
+the whole text of `#unistyles-web` whenever a class was added or removed, and
+the browser then restyled the entire document: about 5 ms each time, several
+times for one hover card. The backport changes one CSSOM rule per class instead.
+The tag therefore has no text; read its rules through `sheet.cssRules`. Classes
+without a media query sit inside an `@media all` group. Assert on the stylesheet
+in E2E with `packages/app/e2e/support/helpers/shared-stylesheet.ts`.
 
 Register every dependency patch in `scripts/postinstall-patches.mjs`. A file in
 `patches/` is inert unless that script knows which installed package activates

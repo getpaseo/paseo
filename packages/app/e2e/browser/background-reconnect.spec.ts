@@ -47,7 +47,7 @@ async function openHostOverview(page: Page, daemon: IsolatedHostDaemon): Promise
       endpoint: `127.0.0.1:${daemon.port}`,
     },
   ]);
-  await page.goto(`/settings/hosts/${daemon.serverId}/host`);
+  await page.goto(`/settings/hosts/${daemon.serverId}/daemon`);
   await expect(page.getByText("Online", { exact: true })).toBeVisible();
 }
 

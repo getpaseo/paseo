@@ -72,8 +72,9 @@ hashes, never prompts, environment values, or credentials.
 
 Before messaging an archived workspace, call `workspace.recovery.inspect.request`, then
 `workspace.recovery.restore.request` and await success. The native message handler unarchives the
-agent and loads its persisted provider session. `activeTurnBehavior: "steer"` uses the provider's
-native steering behavior, including Paseo's existing behavior when that provider cannot steer.
+agent and loads its persisted provider session. A Hub message is a direct send (no `sourceAgentId`), so
+`activeTurnBehavior: "steer"` uses the provider's native steering and interrupts the running turn
+when that provider cannot steer. The daemon rejects `queue` on a direct send.
 Execution completion and arrival-specific output authority remain Hub responsibilities.
 
 The older `hub.execution.*` RPCs remain accepted for existing clients. Their execution ownership

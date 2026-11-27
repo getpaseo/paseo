@@ -159,7 +159,37 @@ describe("parseScheduleCreateInput thinking", () => {
   });
 });
 
+describe("parseScheduleCreateInput archive on finish", () => {
+  test.each([false, true])("stores %s on the new-agent target", (archiveOnFinish) => {
+    const input = parseScheduleCreateInput({ ...baseOptions, cwd: "/project", archiveOnFinish });
+
+    expect(input.target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", cwd: "/project", archiveOnFinish },
+    });
+  });
+
+  test("rejects the flag on an agent target", () => {
+    expect(() =>
+      parseScheduleCreateInput({
+        daemonTarget: baseOptions.daemonTarget,
+        prompt: "do the thing",
+        every: "5m",
+        target: "00000000-0000-4000-8000-000000000001",
+        archiveOnFinish: false,
+      }),
+    ).toThrow(expect.objectContaining({ code: "INVALID_TARGET" }));
+  });
+});
+
 describe("parseScheduleUpdateInput", () => {
+  test.each([false, true])("patches archiveOnFinish to %s", (archiveOnFinish) => {
+    expect(parseScheduleUpdateInput({ id: "abc", archiveOnFinish })).toEqual({
+      id: "abc",
+      newAgentConfig: { archiveOnFinish },
+    });
+  });
+
   test("rejects calls with no fields to update", () => {
     expect(() => parseScheduleUpdateInput({ id: "abc" })).toThrow(
       expect.objectContaining({ code: "NO_UPDATES" }),

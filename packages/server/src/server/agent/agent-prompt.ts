@@ -30,6 +30,9 @@ export type AgentRunController = Pick<
 
 export class AgentTurnBusyError extends Error {}
 
+/** The turn a steer targeted ended or changed before the provider took the steer. */
+export class AgentTurnChangedError extends Error {}
+
 export interface StartAgentRunOptions {
   idleOnly?: boolean;
   admit?: () => boolean;

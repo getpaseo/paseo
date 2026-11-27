@@ -18,18 +18,14 @@ export function agentRouteOptions(slug: AgentPageSlug) {
         locale,
       });
     },
-    loader: async () => ({ pluginCount: await getPluginCount() }),
+    loader: () => ({ pluginCount: getPluginCount().catch(() => null) }),
     component: function AgentLandingPage() {
       const { t } = useTranslation();
-      const data = useLoaderData({ strict: false }) as { pluginCount?: number | null } | undefined;
+      const { pluginCount } = useLoaderData({ strict: false }) as {
+        pluginCount: Promise<number | null>;
+      };
       const page = getAgentPage(slug, t);
-      return (
-        <LandingPage
-          title={page.title}
-          subtitle={page.subtitle}
-          pluginCount={data?.pluginCount ?? null}
-        />
-      );
+      return <LandingPage title={page.title} subtitle={page.subtitle} pluginCount={pluginCount} />;
     },
   };
 }

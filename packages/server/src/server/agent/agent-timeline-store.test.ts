@@ -245,6 +245,167 @@ describe("projected sequence ownership", () => {
   });
 });
 
+describe("turn metrics", () => {
+  const metrics = [
+    { label: "Model", value: "gpt-5.5" },
+    { label: "Cache", value: "82%", tone: "ok" as const },
+  ];
+  const tool = {
+    type: "tool_call" as const,
+    callId: "t",
+    name: "shell",
+    error: null,
+    detail: { type: "plain_text" as const, label: "work" },
+  };
+  function turnMetricsByRow(store: InMemoryAgentTimelineStore, agentId: string) {
+    return store.fetch(agentId).rows.map((row) => row.turnMetrics ?? null);
+  }
+
+  it("puts a turn's metrics on its last assistant message, where its footer shows", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    store.append("a", { type: "user_message", text: "go" }, { turnId: "turn-1" });
+    store.append("a", { type: "assistant_message", text: "First" }, { turnId: "turn-1" });
+    store.append("a", { ...tool, status: "completed" }, { turnId: "turn-1" });
+    store.append("a", { type: "assistant_message", text: "Done" }, { turnId: "turn-1" });
+    store.append("a", { type: "reasoning", text: "wrap up" }, { turnId: "turn-1" });
+
+    const stamped = store.stampTurnMetrics("a", metrics, { turnId: "turn-1" });
+
+    expect(stamped).toMatchObject({ seq: 4, item: { text: "Done" }, turnMetrics: metrics });
+    expect(turnMetricsByRow(store, "a")).toEqual([null, null, null, metrics, null]);
+  });
+
+  it("falls back to the turn's last row when it is a tool call and no message was written", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    store.append("a", { type: "user_message", text: "go" });
+    store.append("a", { type: "reasoning", text: "thinking" });
+    store.append("a", { ...tool, status: "completed" });
+
+    store.stampTurnMetrics("a", metrics);
+
+    expect(turnMetricsByRow(store, "a")).toEqual([null, null, metrics]);
+  });
+
+  it("leaves the previous turn alone when the completed turn has no footer row", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    store.append("a", { type: "user_message", text: "one" });
+    store.append("a", { type: "assistant_message", text: "Answer one" });
+    store.append("a", { type: "user_message", text: "two" });
+    store.append("a", { type: "reasoning", text: "thinking" });
+
+    expect(store.stampTurnMetrics("a", metrics)).toBeNull();
+    expect(turnMetricsByRow(store, "a")).toEqual([null, null, null, null]);
+  });
+
+  it("finds the completed turn by id when a newer turn already has rows", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    store.append("a", { type: "user_message", text: "one" }, { turnId: "turn-1" });
+    store.append("a", { type: "assistant_message", text: "Answer one" }, { turnId: "turn-1" });
+    store.append("a", { type: "user_message", text: "two" }, { turnId: "turn-2" });
+    store.append("a", { type: "assistant_message", text: "Answer two" }, { turnId: "turn-2" });
+
+    store.stampTurnMetrics("a", metrics, { turnId: "turn-1" });
+
+    expect(turnMetricsByRow(store, "a")).toEqual([null, metrics, null, null]);
+  });
+
+  it("stamps nothing for a turn that wrote no rows instead of the turn before it", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    store.append("a", { type: "user_message", text: "one" }, { turnId: "turn-1" });
+    store.append("a", { type: "assistant_message", text: "Answer one" }, { turnId: "turn-1" });
+
+    expect(store.stampTurnMetrics("a", metrics, { turnId: "turn-2" })).toBeNull();
+    expect(turnMetricsByRow(store, "a")).toEqual([null, null]);
+  });
+
+  it("keeps the metrics when a late update lands on the stamped row", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("a");
+    store.append("a", { type: "user_message", text: "go" }, { turnId: "turn-1" });
+    store.append("a", { ...tool, status: "running" }, { turnId: "turn-1" });
+    store.stampTurnMetrics("a", metrics, { turnId: "turn-1" });
+
+    store.append("a", { ...tool, status: "completed" }, { turnId: "turn-1" });
+
+    expect(store.fetch("a").rows[1]).toMatchObject({
+      item: { status: "completed" },
+      turnMetrics: metrics,
+    });
+  });
+
+  it("keeps the stats on a message whose chunks the projection merges", () => {
+    const store = new InMemoryAgentTimelineStore();
+    const at = "2026-11-22T00:00:00.000Z";
+    store.initialize("a", {
+      rows: [
+        { seq: 1, timestamp: at, item: { type: "user_message", text: "go" } },
+        { seq: 2, timestamp: at, item: { type: "assistant_message", text: "Do" } },
+        {
+          seq: 3,
+          timestamp: at,
+          item: { type: "assistant_message", text: "ne" },
+          turnMetrics: metrics,
+        },
+      ],
+    });
+
+    const rows = store.fetch("a").rows;
+
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ item: { text: "Done" }, turnMetrics: metrics });
+  });
+
+  it("keeps the stats on a tool card whose updates the projection merges", () => {
+    const store = new InMemoryAgentTimelineStore();
+    const at = "2026-11-22T00:00:00.000Z";
+    store.initialize("a", {
+      rows: [
+        { seq: 1, timestamp: at, item: { type: "user_message", text: "go" } },
+        { seq: 2, timestamp: at, item: { ...tool, status: "running" } },
+        { seq: 3, timestamp: at, item: { ...tool, status: "completed" }, turnMetrics: metrics },
+      ],
+    });
+
+    const rows = store.fetch("a").rows;
+
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ item: { status: "completed" }, turnMetrics: metrics });
+  });
+
+  it("restores stamped rows when a timeline is seeded from stored rows", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("live");
+    store.append("live", { type: "user_message", text: "go" });
+    store.append("live", { type: "assistant_message", text: "Done" });
+    store.stampTurnMetrics("live", metrics);
+
+    store.initialize("projected", { rows: store.getRows("live") });
+    store.initialize("canonical", {
+      rows: [
+        {
+          seq: 1,
+          timestamp: "2026-11-22T00:00:00.000Z",
+          item: { type: "user_message", text: "go" },
+        },
+        {
+          seq: 2,
+          timestamp: "2026-11-22T00:00:01.000Z",
+          item: { type: "assistant_message", text: "Done" },
+          turnMetrics: metrics,
+        },
+      ],
+    });
+
+    expect(turnMetricsByRow(store, "projected")).toEqual([null, metrics]);
+    expect(turnMetricsByRow(store, "canonical")).toEqual([null, metrics]);
+  });
+});
+
 it("includes transitive tool updates in a contiguous projected tail", () => {
   const store = new InMemoryAgentTimelineStore();
   store.initialize("a");

@@ -153,3 +153,25 @@ On iPad, replacing the field a second time appends text. For this Settings journ
 native clipboard Paste menu, then continue the assertions manually. Dismiss the password keyboard
 with Done to submit when the Connect button is below the keyboard. The welcome pairing regression
 runs end to end without these adjustments.
+
+## Sheet footer keyboard safe-area clearance
+
+`footer-keyboard.android.sh` records the **Add project** sheet on an Android device or emulator
+across repeated keyboard open/dismiss transitions, then runs `assert-sheet-footer-keyboard.mjs`
+over every recorded frame. Configure three-button navigation, `show_ime_with_hard_keyboard=1`, and
+a visible soft keyboard (such as Gboard) on the test device before running so the script does not
+mutate device settings. The assertion checks both settled positions against the navigation bar
+height and fails if any frame drops the **Open project** button into the navigation bar or
+overshoots above its open-keyboard position.
+
+```sh
+ANDROID_SERIAL=emulator-5554 \
+  packages/app/e2e/mobile/modal-sheet/footer-keyboard.android.sh
+```
+
+You can also validate an existing screen recording directly (optionally passing pixel tolerance and
+navigation bar height in pixels):
+
+```sh
+node packages/app/e2e/mobile/modal-sheet/assert-sheet-footer-keyboard.mjs /path/to/recording.mp4 4 96
+```

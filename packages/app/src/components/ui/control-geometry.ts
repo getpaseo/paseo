@@ -223,8 +223,11 @@ export interface SwitchGeometry {
   thumbSize: number;
   /** How far the thumb slides between off and on. */
   thumbTravel: number;
-  /** The control height the switch reserves, so its row lines up with one holding a button. */
-  reservedHeight: number;
+  /**
+   * The height of the area that takes the press: the control height of the switch's size. The
+   * switch itself is only as tall as its track, so it never makes a row taller.
+   */
+  hitHeight: number;
 }
 
 function switchSize(trackWidth: number, trackHeight: number, thumbSize: number) {
@@ -236,13 +239,22 @@ const SWITCH_POINTER = switchSize(34, 20, 16);
 const SWITCH_TOUCH = switchSize(44, 26, 22);
 
 /**
+ * The height of a default switch. Exported so a row can be as tall as one holding a switch whether
+ * or not it holds one. A breakpoint value, so it only works inside a Unistyles stylesheet.
+ */
+export const SWITCH_HEIGHT = bySizing({
+  touch: SWITCH_TOUCH.trackHeight,
+  pointer: SWITCH_POINTER.trackHeight,
+});
+
+/**
  * A switch follows the same two sizes as every other control. Its thumb travel feeds an
  * animation, so the size is resolved to plain numbers here instead of a stylesheet breakpoint.
  */
 export function switchGeometryForLayout(size: ControlSize, isCompact: boolean): SwitchGeometry {
   const touchSized = controlSizingForLayout(isCompact) === "touch";
   const track = size === "md" && touchSized ? SWITCH_TOUCH : SWITCH_POINTER;
-  return { ...track, reservedHeight: controlHeightForLayout(size, isCompact) };
+  return { ...track, hitHeight: controlHeightForLayout(size, isCompact) };
 }
 
 function fieldLineHeight(fontSize: number): number {

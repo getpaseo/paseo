@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Alert } from "@/components/ui/alert";
@@ -27,14 +27,31 @@ export function UsageSection({
   onRefresh: () => void;
   testID?: string;
 }) {
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const openOptions = useCallback(() => setOptionsOpen(true), []);
   const trailing = useMemo(
-    () => <UsageControls serverId={serverId} view={view} onRefresh={onRefresh} />,
-    [onRefresh, view, serverId],
+    () => (
+      <UsageControls
+        serverId={serverId}
+        view={view}
+        display={display}
+        onRefresh={onRefresh}
+        optionsOpen={optionsOpen}
+        onOptionsOpenChange={setOptionsOpen}
+      />
+    ),
+    [display, onRefresh, optionsOpen, serverId, view],
   );
 
   return (
     <SettingsSection title={title} testID={testID} trailing={trailing}>
-      <UsageBody serverId={serverId} view={view} display={display} onRefresh={onRefresh} />
+      <UsageBody
+        serverId={serverId}
+        view={view}
+        display={display}
+        onRefresh={onRefresh}
+        onOpenSources={openOptions}
+      />
     </SettingsSection>
   );
 }
@@ -45,14 +62,23 @@ export function UsageBody({
   view,
   display,
   onRefresh,
+  onOpenSources,
 }: {
   serverId: string;
   view: UsageView;
   display: UsageDisplay;
   onRefresh: () => void;
+  onOpenSources?: () => void;
 }) {
   const { t } = useTranslation();
   const setting = useUsageSetting(serverId);
+  const visibleReports = useMemo(
+    () =>
+      view.kind === "ready"
+        ? display.arrange(view.reports).filter((entry) => display.isCardOn(entry))
+        : [],
+    [display, view],
+  );
   if (view.kind === "off")
     return (
       <View>
@@ -84,16 +110,30 @@ export function UsageBody({
     );
   }
 
+  let content: React.ReactNode;
+  if (view.reports.length === 0) {
+    content = <UsageMessage text={t("providerUsage.empty")} />;
+  } else if (visibleReports.length === 0) {
+    content = (
+      <View style={[settingsStyles.card, styles.emptyCard]} testID="usage-all-hidden">
+        <Text style={styles.emptyText}>{t("providerUsage.allSourcesHidden")}</Text>
+        {onOpenSources ? (
+          <Button variant="outline" onPress={onOpenSources} testID="usage-choose-sources">
+            {t("providerUsage.chooseSources")}
+          </Button>
+        ) : null}
+      </View>
+    );
+  } else {
+    content = <UsageList serverId={serverId} reports={visibleReports} display={display} />;
+  }
+
   return (
     <View style={styles.reports}>
       {view.refreshFailed ? (
         <Alert size="sm" variant="error" title={t("providerUsage.refreshFailed")} />
       ) : null}
-      {view.reports.length === 0 ? (
-        <UsageMessage text={t("providerUsage.empty")} />
-      ) : (
-        <UsageList serverId={serverId} reports={view.reports} display={display} />
-      )}
+      {content}
     </View>
   );
 }
@@ -110,6 +150,7 @@ const styles = StyleSheet.create((theme) => ({
   reports: { gap: theme.spacing[3] },
   emptyCard: {
     padding: theme.spacing[4],
+    gap: theme.spacing[3],
     alignItems: "center",
   },
   emptyText: {

@@ -42,7 +42,7 @@ Plugins can choose a location anywhere on disk with [`worktree.create.before`](/
 3. Review the diff against the base branch
 4. Merge or archive the workspace; after the last workspace using it is archived, Paseo runs teardown and removes the worktree
 
-Scheduled runs archive their workspaces when they finish by default. Turn off **Archive on finish** in the schedule's app form to [keep run workspaces](/docs/schedules#keep-run-workspaces) and their worktrees until you archive them.
+Scheduled runs archive their workspaces when they finish by default. Turn off **Archive on finish** to [keep run workspaces](/docs/schedules#keep-run-workspaces) and their worktrees until you archive them.
 
 ## Create a worktree-backed workspace
 

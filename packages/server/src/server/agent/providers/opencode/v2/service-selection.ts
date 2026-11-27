@@ -7,12 +7,33 @@ export type OpenCodeServiceSelection =
   | { kind: "owned" }
   | { kind: "explicit" | "discovered"; server: ExternalOpenCodeServer };
 
+// Provider env keys that choose and reach a server rather than configure its process.
+const CONNECTION_ENV = new Set([
+  "PASEO_OPENCODE_SERVER_URL",
+  "PASEO_OPENCODE_SERVER_PASSWORD",
+  "PASEO_OPENCODE_BRIDGE_URL",
+  "PASEO_OPENCODE_BRIDGE_PORT",
+]);
+// A discovered service is found through these, and its configuration directory is checked.
+const DISCOVERY_ENV = new Set(["XDG_CONFIG_HOME", "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR"]);
+
+/** Provider env keys that only apply to an OpenCode process Paseo starts itself. */
+export function processEnvironmentOverrides(
+  env: Record<string, string | undefined> | undefined,
+  kind: "explicit" | "discovered" = "explicit",
+): string[] {
+  return Object.keys(env ?? {}).filter(
+    (key) => !CONNECTION_ENV.has(key) && !(kind === "discovered" && DISCOVERY_ENV.has(key)),
+  );
+}
+
 export async function selectOpenCodeService(input: {
   explicit?: ExternalOpenCodeServer;
   file?: string;
   env?: Record<string, string | undefined>;
 }): Promise<OpenCodeServiceSelection> {
   if (input.explicit) return { kind: "explicit", server: input.explicit };
+  if (processEnvironmentOverrides(input.env, "discovered").length) return { kind: "owned" };
   const state =
     input.env?.XDG_STATE_HOME ??
     process.env.XDG_STATE_HOME ??

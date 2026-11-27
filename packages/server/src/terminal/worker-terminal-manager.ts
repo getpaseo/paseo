@@ -997,6 +997,11 @@ export interface StartWorkerTerminalManagerOptions {
   logger: Logger;
   getTerminalActivityUrl?: () => string | null;
   requestTimeoutMs?: number;
+  /**
+   * When false, skip launching a fresh terminal worker until the first terminal
+   * is created (existing workers are still adopted). Production leaves this true.
+   */
+  eagerLaunch?: boolean;
 }
 
 // The current worker plus one draining a previous protocol. Every live worker counts,
@@ -1269,7 +1274,7 @@ export async function startWorkerTerminalManager(
   };
 
   await prune();
-  if (!current) {
+  if (!current && options.eagerLaunch !== false) {
     try {
       current = await startCurrent();
     } catch (error) {

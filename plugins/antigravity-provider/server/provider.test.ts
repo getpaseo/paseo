@@ -18,24 +18,115 @@ async function launchAgent(source: string) {
   await writeFile(executable, source);
   return {
     directory,
+    executable,
     launch: {
       command: process.execPath,
-      args: [executable, "acp", "--disable-telemetry"],
+      args: [executable, "acp"],
       env: { CAPTURE: path.join(directory, "requests.ndjson") },
     },
   };
 }
 
-it("reports a CLI without the acp subcommand as unavailable", async () => {
+it("uses clean agy acp command without --disable-telemetry and on_demand catalog refresh", () => {
+  const provider = createAntigravityProvider();
+  expect(provider.command).toEqual(["agy", "acp"]);
+  expect(provider.catalogRefresh).toBe("on_demand");
+});
+
+it("rejects agy versions older than 1.5.1 without spawning agy acp", async () => {
   const { launch } = await launchAgent(`
-    process.stderr.write("Unknown command: acp");
-    process.exitCode = 1;
+    const { appendFileSync } = require("node:fs");
+    appendFileSync(process.env.CAPTURE, JSON.stringify(process.argv.slice(2)) + "\\n");
+    if (process.argv.includes("acp")) process.exit(1);
+    if (process.argv.includes("--version")) console.log("1.5.0");
   `);
   const provider = createAntigravityProvider();
-  expect(provider.command?.slice(0, 2)).toEqual(["agy", "acp"]);
+  expect(await provider.status!({ launch })).toEqual({
+    available: false,
+    diagnostic: [
+      "Antigravity CLI 1.5.0 is older than 1.5.1. Update Antigravity CLI to 1.5.1 or later (earlier versions restrict model access for ACP clients).",
+      "SSH session: no",
+      "Sign-in: can differ from agy over SSH",
+    ].join("\n"),
+  });
+  const invocations = (await readFile(launch.env.CAPTURE, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as string[]);
+  expect(invocations).toHaveLength(1);
+  expect(invocations[0]).toContain("--version");
+  expect(invocations[0]).not.toContain("acp");
+});
+
+it("memoizes agy --version by binary stat across repeated status() checks", async () => {
+  const { executable, launch } = await launchAgent(`
+    const { appendFileSync } = require("node:fs");
+    appendFileSync(process.env.CAPTURE, JSON.stringify(process.argv.slice(2)) + "\\n");
+    if (process.argv.includes("--version")) console.log("1.5.18");
+  `);
+  const provider = createAntigravityProvider();
+  expect(await provider.status!({ launch })).toMatchObject({ available: true });
+  expect(await provider.status!({ launch })).toMatchObject({ available: true });
+  const beforeModify = (await readFile(launch.env.CAPTURE, "utf8")).trim().split("\n");
+  expect(beforeModify).toHaveLength(1);
+
+  // Modifying the binary invalidates the stat-keyed memoization.
+  await writeFile(
+    executable,
+    `
+    const { appendFileSync } = require("node:fs");
+    appendFileSync(process.env.CAPTURE, JSON.stringify(process.argv.slice(2)) + "\\n");
+    if (process.argv.includes("--version")) console.log("1.5.0");
+  `,
+  );
   expect(await provider.status!({ launch })).toMatchObject({
     available: false,
-    diagnostic: expect.stringContaining("1.5.0"),
+    diagnostic: expect.stringContaining("1.5.0 is older than 1.5.1"),
+  });
+  const afterModify = (await readFile(launch.env.CAPTURE, "utf8")).trim().split("\n");
+  expect(afterModify).toHaveLength(2);
+});
+
+const versionedCliAgent = `
+  if (process.argv.includes("--version")) {
+    console.log("1.5.18");
+    process.exit(0);
+  }
+  process.exit(1);
+`;
+
+describe("diagnostic", () => {
+  it("says agy runs outside an SSH session when the daemon has no SSH variables", async () => {
+    const { launch } = await launchAgent(versionedCliAgent);
+    expect(await createAntigravityProvider().status!({ launch })).toEqual({
+      available: true,
+      diagnostic: "SSH session: no\nSign-in: can differ from agy over SSH",
+    });
+  });
+
+  it.each(["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"])(
+    "says agy runs in an SSH session when the daemon has %s",
+    async (variable) => {
+      const { launch } = await launchAgent(versionedCliAgent);
+      const env = { ...launch.env, [variable]: "set" };
+      expect(await createAntigravityProvider().status!({ launch: { ...launch, env } })).toEqual({
+        available: true,
+        diagnostic: `SSH session: yes (${variable})\nSign-in: can differ from agy outside SSH`,
+      });
+    },
+  );
+
+  it("says whether agy runs in an SSH session when --version fails", async () => {
+    const { launch } = await launchAgent(`process.exit(1);`);
+    const env = { ...launch.env, SSH_CONNECTION: "set" };
+    expect(await createAntigravityProvider().status!({ launch: { ...launch, env } })).toEqual({
+      available: false,
+      diagnostic: [
+        "Antigravity CLI did not report its version. Install Antigravity 1.5.1 or later.",
+        "SSH session: yes (SSH_CONNECTION)",
+        "Sign-in: can differ from agy outside SSH",
+      ].join("\n"),
+    });
   });
 });
 
@@ -49,7 +140,9 @@ it("publishes Antigravity skills separately from built-in commands", async () =>
         send({ id, result: { protocolVersion: 1 } });
       }
       if (method === "session/new") {
-        send({ id, result: { sessionId: "native" } });
+        send({ id, result: { sessionId: "native", modes: {
+          currentModeId: "default", availableModes: [{ id: "default", name: "Default" }],
+        } } });
         send({ method: "session/update", params: { sessionId: "native", update: {
           sessionUpdate: "available_commands_update",
           availableCommands: ["goal", "compact", "schedule", "browser", "plan", "grill-me",
@@ -110,6 +203,10 @@ it.each([true, false])(
   "loads a saved stream-JSON session with ACP system prompt support %s",
   async (supportsSystemPrompt) => {
     const { directory, launch } = await launchAgent(`
+      if (process.argv.includes("--version")) {
+        console.log("1.5.18");
+        process.exit(0);
+      }
       const { appendFileSync } = require("node:fs");
       const { createInterface } = require("node:readline");
       const configOptions = [
@@ -152,9 +249,10 @@ it.each([true, false])(
       });
     `);
     const provider = createAntigravityProvider();
-    expect(await provider.status!({ launch })).toEqual({ available: true });
+    expect(await provider.status!({ launch })).toMatchObject({ available: true });
     const connection = await provider.connect({
       launch,
+      clientInfo: { name: "paseo", title: "Paseo", version: "0.17.5" },
       versions: [1],
       capabilities: ["session.configure", "session.persistence"],
     });
@@ -239,11 +337,17 @@ it.each([true, false])(
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
+      const initialize = requests.find((request) => request.method === "initialize");
+      expect(initialize.params.clientInfo).toEqual({
+        name: "paseo",
+        title: "Paseo",
+        version: "0.17.5",
+      });
       const load = requests.find((request) => request.method === "session/load");
       expect(load.params.sessionId).toBe("saved-conversation");
-      expect(load.params._meta.antigravity).toEqual(
+      expect(load.params._meta).toEqual(
         supportsSystemPrompt
-          ? { systemPrompt: { append: "A test system instruction" } }
+          ? { antigravity: { systemPrompt: { append: "A test system instruction" } } }
           : undefined,
       );
     } finally {
@@ -471,6 +575,113 @@ it.each(["live", "replay"] as const)(
   },
 );
 
+// agy 1.5.14 lists `thought_level` only for the selected model and omits it for Orchestrator.
+it("offers each model its own thinking options and opens Orchestrator with its default", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const levels = (...values) => values.map((value) => ({ value, name: value }));
+    const thinking = {
+      "gemini-4-neon": { currentValue: "high", options: levels("low", "medium", "high", "xhigh") },
+      "gemini-4-carbon": { currentValue: "high", options: levels("low", "medium", "high") },
+      "claude-opus-5-5": { currentValue: "medium", options: levels("low", "medium", "high") },
+    };
+    let model = "gemini-4-neon";
+    const configOptions = () => [
+      { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: [
+        { value: "gemini-4-neon", name: "Gemini 4 Neon" },
+        { value: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+        { value: "gemini-pro-orchestrator-neon", name: "Orchestrator (Neon)" },
+        { value: "claude-opus-5-5", name: "Claude Opus 5.5" },
+      ] },
+      ...(thinking[model] ? [{ id: "thought_level", name: "Thinking", category: "thought_level", type: "select", ...thinking[model] }] : []),
+      { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+        options: [{ value: "default", name: "Default" }, { value: "plan", name: "Plan" }] },
+    ];
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      if (method === "initialize") send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+      if (method === "session/new") {
+        model = "gemini-4-neon";
+        send({ id, result: { sessionId: "native", configOptions: configOptions() } });
+      }
+      if (method === "session/set_config_option") {
+        if (params.configId === "thought_level" && !thinking[model]) {
+          send({ id, error: { code: -32602, message: "unknown config option" } });
+          return;
+        }
+        if (params.configId === "model") model = params.value;
+        else if (params.configId === "thought_level") thinking[model].currentValue = params.value;
+        send({ id, result: { configOptions: configOptions() } });
+      }
+      if (method === "session/close") send({ id, result: {} });
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["session.configure"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({ type: "catalog", requestId: "catalog", cwd: directory });
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "catalog" || event.type === "request.failed"),
+      )
+      .toMatchObject({ type: "catalog" });
+    const catalog = events.find((event) => event.type === "catalog");
+    if (catalog?.type !== "catalog") throw new Error("Expected a catalog");
+    expect(catalog.catalog.defaultMode).toBe("full-access");
+    const thinkingByModel = Object.fromEntries(
+      catalog.catalog.models.map((model) => [
+        model.id,
+        {
+          options: model.thinkingOptions?.map((option) => option.id),
+          default: model.defaultThinkingOptionId,
+        },
+      ]),
+    );
+    expect(thinkingByModel).toEqual({
+      "gemini-4-neon": { options: ["low", "medium", "high", "xhigh"], default: "high" },
+      "gemini-4-carbon": { options: ["low", "medium", "high"], default: "high" },
+      "gemini-pro-orchestrator-neon": { options: [], default: undefined },
+      "claude-opus-5-5": { options: ["low", "medium", "high"], default: "medium" },
+    });
+
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "orchestrator",
+      history: "skip",
+      config: {
+        cwd: directory,
+        model: "gemini-pro-orchestrator-neon",
+        mode: "full-access",
+        thinkingOption: thinkingByModel["gemini-pro-orchestrator-neon"]!.default,
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: true,
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              (event.type === "session.ready" && event.sessionId === "orchestrator") ||
+              (event.type === "request.failed" && event.requestId === "open"),
+          ),
+        { timeout: 3_000 },
+      )
+      .toMatchObject({ type: "session.ready" });
+  } finally {
+    await connection.close();
+  }
+});
+
 describe("installation", () => {
   const signal = new AbortController().signal;
 
@@ -498,6 +709,88 @@ describe("installation", () => {
       createAntigravityProvider().installation!.inspect!({ launch, signal }),
     ).resolves.toEqual({ status: "not_installed" });
   });
+});
+
+it("completes the turn when a recurring schedule stays in progress after end_turn", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      const update = (update) => send({ method: "session/update", params: { sessionId: "agy-session", update } });
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1 } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "agy-session", modes: {
+            currentModeId: "default", availableModes: [{ id: "default", name: "Default" }],
+          } } });
+          update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+          break;
+        case "session/prompt": {
+          const args = { CronExpression: "*/15 * * * *", Prompt: "ping" };
+          update({ sessionUpdate: "usage_update", used: 12725, size: 1048576 });
+          update({
+            sessionUpdate: "tool_call", toolCallId: "cron", name: "schedule",
+            args, status: "in_progress", kind: "other", title: "Run schedule", rawInput: args,
+          });
+          update({ sessionUpdate: "usage_update", used: 12915, size: 1048576 });
+          send({ id, result: { stopReason: "end_turn" } });
+          break;
+        }
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "test",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+    });
+    await expect
+      .poll(() => events)
+      .toContainEqual(expect.objectContaining({ type: "session.ready", sessionId: "test" }));
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "schedule-turn",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Schedule a recurring ping" }] },
+      },
+    });
+    await expect
+      .poll(() => events)
+      .toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({ type: "tool_call", id: "cron", status: "running" }),
+        }),
+      );
+    await expect
+      .poll(() => events)
+      .toContainEqual({
+        type: "session.turn",
+        sessionId: "test",
+        turnId: "acp:schedule-turn",
+        state: "completed",
+      });
+  } finally {
+    await connection.close();
+  }
 });
 
 it("keeps a turn open for backgrounded run_command calls but not IsDaemon commands", async () => {
@@ -648,6 +941,78 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
         item: expect.objectContaining({ type: "assistant_message", text: "Build finished." }),
       }),
     );
+  } finally {
+    await connection.close();
+  }
+});
+
+it("runs a wrapped session as [...wrap, agy, acp] with the session env", async () => {
+  const { directory, launch: fixture } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method } = JSON.parse(line);
+      if (method === "initialize") send({ id, result: { protocolVersion: 1 } });
+      if (method === "session/new") {
+        send({ id, result: { sessionId: "native", configOptions: [{ id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }] }] } });
+        send({ method: "session/update", params: { sessionId: "native", update: { sessionUpdate: "available_commands_update", availableCommands: [] } } });
+      }
+    });
+  `);
+  // Records what it was started with, then runs the rest: the provider's own launch.
+  const launcher = path.join(directory, "launcher.cjs");
+  const record = path.join(directory, "launch.json");
+  await writeFile(
+    launcher,
+    `const { writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const [log, command, ...args] = process.argv.slice(2);
+writeFileSync(log, JSON.stringify({ argv: process.argv.slice(2), hook: process.env.HOOK_ENV ?? null }));
+const child = spawn(command, args, { stdio: "inherit" });
+process.on("SIGTERM", () => child.kill("SIGTERM"));
+child.on("exit", (code) => process.exit(code ?? 1));
+`,
+  );
+  const provider = createAntigravityProvider();
+  expect(provider.launchWrap).toBe(true);
+  // The daemon resolves the registration's executable and passes its arguments as declared;
+  // Node running the fake agent stands in for the resolved `agy`.
+  const [executable, ...declaredArgs] = provider.command!;
+  expect(executable).toBe("agy");
+  const agentScript = fixture.args[0]!;
+  const launch = { ...fixture, args: [agentScript, ...declaredArgs] };
+  const connection = await provider.connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message", "session.launch_wrap"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "new",
+      sessionId: "test",
+      history: "skip",
+      config: {
+        cwd: directory,
+        env: { HOOK_ENV: "final" },
+        mcpServers: {},
+        settings: {},
+        persist: false,
+        wrap: [process.execPath, launcher, record],
+      },
+    });
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "session.ready" || event.type === "request.failed"),
+      )
+      .toMatchObject({ type: "session.ready" });
+    const launched = JSON.parse(await readFile(record, "utf8"));
+    expect(launched).toEqual({
+      argv: [record, process.execPath, agentScript, "acp"],
+      hook: "final",
+    });
   } finally {
     await connection.close();
   }

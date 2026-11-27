@@ -4,15 +4,11 @@ import type {
   AgentProvider,
 } from "../../agent-sdk-types.js";
 import { splitMultiSelectAnswer } from "../question-card-answer.js";
-import type { OmpAgentMessage, OmpRuntimeEvent } from "./rpc-types.js";
+import { OmpFormQuestion } from "./form-question.js";
+import type { OmpAgentMessage, OmpExtensionUiResponse, OmpRuntimeEvent } from "./rpc-types.js";
 
 type UiRequest = Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>;
-interface UiResponse {
-  value?: string;
-  confirmed?: boolean;
-  cancelled?: boolean;
-}
-type SendResponse = (id: string, response: UiResponse) => void;
+type SendResponse = (id: string, response: OmpExtensionUiResponse) => void;
 
 const OTHER = "Other (type your own)";
 const ANSWER_HEADER = "Response";
@@ -123,7 +119,7 @@ function mapGenericQuestion(
 function genericResponse(
   request: AgentPermissionRequest,
   response: AgentPermissionResponse,
-): UiResponse {
+): OmpExtensionUiResponse {
   if (response.behavior === "deny") return { cancelled: true };
   const answers = record(response.updatedInput?.answers);
   const answer = Object.values(answers ?? {}).find(
@@ -184,6 +180,7 @@ function selectedAnswer(
 export class OmpQuestionUi {
   private questions: AskQuestion[] = [];
   private pending: PendingAnswer | null = null;
+  private readonly forms = new Map<string, OmpFormQuestion>();
 
   observeMessage(message: OmpAgentMessage): void {
     if (message.role !== "assistant") return;
@@ -211,8 +208,29 @@ export class OmpQuestionUi {
     provider: AgentProvider,
     send: SendResponse,
   ): AgentPermissionRequest | null {
+    if (event.method === "form") return this.mapForm(event, provider, send);
     if (this.consume(event, send)) return null;
     return this.mapAsk(event, provider) ?? mapGenericQuestion(event, provider);
+  }
+
+  /** OMP 19.1+ asks with one HTML form; an empty one is cancelled so the tool does not wait. */
+  private mapForm(
+    event: UiRequest,
+    provider: AgentProvider,
+    send: SendResponse,
+  ): AgentPermissionRequest | null {
+    if (!event.html?.trim()) {
+      send(event.id, { cancelled: true });
+      return null;
+    }
+    const form = OmpFormQuestion.fromHtml({ id: event.id, html: event.html, provider });
+    this.forms.set(event.id, form);
+    return form.request;
+  }
+
+  /** OMP settled the request itself; drop it without replying. */
+  forget(requestId: string): void {
+    this.forms.delete(requestId);
   }
 
   private mapAsk(event: UiRequest, provider: AgentProvider): AgentPermissionRequest | null {
@@ -263,6 +281,12 @@ export class OmpQuestionUi {
     response: AgentPermissionResponse,
     send: SendResponse,
   ): void {
+    const form = this.forms.get(request.id);
+    if (form) {
+      this.forms.delete(request.id);
+      send(request.id, form.response(response));
+      return;
+    }
     if (request.metadata?.ompAsk !== true) {
       send(request.id, genericResponse(request, response));
       return;

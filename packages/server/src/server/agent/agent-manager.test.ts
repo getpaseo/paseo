@@ -1,3 +1,4 @@
+import type { AttachedAgentTool, PluginSessionsRuntime } from "../plugins/agent-tools.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -6,7 +7,7 @@ import {
 } from "./agent-messages/index.js";
 import { expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -22,8 +23,14 @@ import {
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
 import { AgentTurnStartCanceledError } from "./agent-sdk-types.js";
 import { ForegroundPromptStart } from "./agent-run-state.js";
-import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
+import {
+  CodexAppServerAgentClient,
+  CodexAppServerAgentSession,
+} from "./providers/codex-app-server-agent.js";
+import { spawnProcess } from "../../utils/spawn.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
+import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { FakePi } from "./providers/pi/test-utils/fake-pi.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
@@ -47,6 +54,7 @@ import type {
   AgentDraftControls,
   AgentOptionControl,
   AgentLaunchContext,
+  AgentMetric,
   AgentPromptInput,
   AgentProvider,
   AgentPersistenceHandle,
@@ -678,6 +686,24 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
+/** Plugin sessions whose only plugin appends the given instructions to every open. */
+function instructionPluginSessions(instructions: () => string[]): PluginSessionsRuntime {
+  return {
+    openSession: async (request) => ({
+      ...request,
+      appendSystemPrompt: instructions(),
+      tools: [],
+      mcpServerOwners: {},
+    }),
+    sessionLaunched: () => {},
+    sessionLaunchFailed: () => {},
+    refreshSession: async () => ({ stale: false }),
+    sessionTools: () => [],
+    closeSession: () => {},
+    callTool: async () => ({ isError: true, text: "No plugin tools" }),
+  };
+}
+
 test("OpenCode persistence excludes launch-only instructions from storage and clients", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-plugin-persistence-"));
   const harness = new V2Harness();
@@ -689,13 +715,7 @@ test("OpenCode persistence excludes launch-only instructions from storage and cl
     registry: storage,
     logger,
     appendSystemPrompt: "Daemon instruction",
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before"
-          ? { ...request, appendSystemPrompt: ["Plugin instruction"] }
-          : request,
-    },
+    pluginSessions: instructionPluginSessions(() => ["Plugin instruction"]),
   });
   const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
     workspaceId: undefined,
@@ -1224,6 +1244,37 @@ test("starts its own turn when the previous turn fails to start under a steer se
   }
 });
 
+test("answers whether an agent's session can steer a running turn", async () => {
+  const steering = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const plain = new TestAgentSession({ provider: "claude", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-can-steer-"));
+  const clientFor = (session: AgentSession) =>
+    new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+  const manager = new AgentManager({
+    clients: { codex: clientFor(steering), claude: clientFor(plain) },
+    logger,
+  });
+  try {
+    const steerable = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const unsteerable = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(manager.canSteer(steerable.id)).toBe(true);
+    expect(manager.canSteer(unsteerable.id)).toBe(false);
+    expect(manager.canSteer("00000000-0000-4000-8000-000000000000")).toBe(false);
+    await manager.closeAgent(steerable.id);
+    await manager.closeAgent(unsteerable.id);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders an accepted steer before output emitted while acknowledgement is pending", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
@@ -1722,6 +1773,51 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
   }
 });
 
+test("steers a run Pi started by itself instead of aborting it", async () => {
+  const runtime = new FakePi();
+  const manager = new AgentManager({
+    clients: {
+      pi: new PiRpcAgentClient({
+        runtime,
+        logger,
+        runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+      }),
+    },
+    logger,
+  });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-pi-autonomous-steer-"));
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "pi", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const fakeSession = runtime.latestSession();
+    // An extension message or a process exit notice starts a run without a Paseo prompt.
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    await vi.waitFor(() =>
+      expect(manager.getAgent(agent.id)?.activeTurnId).toEqual(expect.any(String)),
+    );
+
+    const result = await startAgentRun(manager, agent.id, "message from another agent", logger, {
+      activeTurnBehavior: "steer",
+      replaceRunning: true,
+    });
+
+    expect(result).toEqual({ disposition: "steered" });
+    expect(fakeSession.steerCalls).toEqual([
+      { message: "message from another agent", imageCount: 0 },
+    ]);
+    expect(fakeSession.controlRequests).toEqual([]);
+    expect(fakeSession.prompts).toEqual([]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("isolated rewind falls back from steering to the normal replacement path", async () => {
   const session = new SteeringTestSession({ provider: "claude", cwd: process.cwd() });
   session.steerResult = "unavailable";
@@ -2105,6 +2201,10 @@ class StreamingAssistantClient implements AgentClient {
 interface FakeCodexEmitterArgs {
   turnItems?: AgentTimelineItem[];
   historyItems?: AgentTimelineItem[];
+  /** Metrics the provider attaches to the turn it completes. */
+  turnMetrics?: AgentMetric[];
+  /** A raw replay, for history that is more than timeline items. */
+  history?: AgentStreamEvent[];
 }
 
 function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
@@ -2119,12 +2219,18 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
         for (const item of turnItems) {
           this.pushEvent({ type: "timeline", provider: this.provider, item, turnId });
         }
-        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "turn_completed",
+          provider: this.provider,
+          turnId,
+          ...(args.turnMetrics ? { metrics: args.turnMetrics } : {}),
+        });
       }, 0);
       return { turnId };
     }
 
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield* args.history ?? [];
       for (const item of historyItems) {
         yield { type: "timeline", provider: this.provider, item };
       }
@@ -2140,8 +2246,8 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
     async createSession(config: AgentSessionConfig) {
       return new FakeCodexSession(config);
     },
-    async resumeSession() {
-      throw new Error("unused");
+    async resumeSession(_handle, config) {
+      return new FakeCodexSession({ provider: "codex", cwd: config?.cwd ?? process.cwd() });
     },
   };
 }
@@ -10799,6 +10905,131 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
   expect(client.unarchivedHandles).toHaveLength(1);
 });
 
+test("clearAgentAttention is a no-op for live archived agents loaded for history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-attention-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Archived attention target",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.archiveAgent(agent.id);
+  const archivedRecord = await storage.get(agent.id);
+  if (!archivedRecord) throw new Error("expected archived agent record");
+  await storage.upsert({
+    ...archivedRecord,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: archivedRecord.updatedAt,
+  });
+  await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+
+  const emitted: Array<{ id: string; lifecycle: string }> = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state") {
+        emitted.push({
+          id: event.agent.id,
+          lifecycle: event.agent.lifecycle,
+        });
+      }
+    },
+    { replayState: false },
+  );
+  try {
+    await manager.clearAgentAttention(agent.id);
+  } finally {
+    unsubscribe();
+  }
+
+  expect(emitted).toEqual([]);
+  expect((await storage.get(agent.id))?.requiresAttention).toBe(true);
+});
+
+test("unarchiveSnapshot suppresses intermediate archived close state unless native unarchive fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-close-emit-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Archived history runtime target",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.archiveAgent(agent.id);
+  await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+
+  const emittedOnSuccess: Array<{ lifecycle: string }> = [];
+  let emittedDuringNativeUnarchive = -1;
+  client.readArchivedAtDuringUnarchive = async () => {
+    emittedDuringNativeUnarchive = emittedOnSuccess.length;
+    return (await storage.get(agent.id))?.archivedAt;
+  };
+  const unsubSuccess = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agent.id) {
+        emittedOnSuccess.push({ lifecycle: event.agent.lifecycle });
+      }
+    },
+    { replayState: false },
+  );
+  try {
+    await manager.unarchiveSnapshot(agent.id);
+  } finally {
+    unsubSuccess();
+  }
+
+  expect(emittedDuringNativeUnarchive).toBe(0);
+  expect(emittedOnSuccess).toEqual([{ lifecycle: "closed" }]);
+  expect((await storage.get(agent.id))?.archivedAt).toBeNull();
+
+  // Re-archive and load history again, then verify failure re-emits the closed archived state.
+  await manager.archiveSnapshot(agent.id, new Date().toISOString());
+  const archivedAgain = await storage.get(agent.id);
+  await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+  client.unarchiveFailure = new Error("native unarchive failed");
+
+  const emittedOnFailure: Array<{ lifecycle: string }> = [];
+  const unsubFailure = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === agent.id) {
+        emittedOnFailure.push({ lifecycle: event.agent.lifecycle });
+      }
+    },
+    { replayState: false },
+  );
+  try {
+    await expect(manager.unarchiveSnapshot(agent.id)).rejects.toThrow("native unarchive failed");
+  } finally {
+    unsubFailure();
+  }
+
+  expect(emittedOnFailure).toEqual([{ lifecycle: "closed" }]);
+  expect((await storage.get(agent.id))?.archivedAt).toBe(archivedAgain?.archivedAt);
+});
+
 test("archiveAgent cascade archives in-memory children with the full archive contract", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-contract-"));
   const storagePath = join(workdir, "agents");
@@ -13665,6 +13896,257 @@ test("system-injected prompts appear as trigger tools during history replay", as
   expect(userMessages[0].text).toBe("real user message");
 });
 
+function completedTurns(events: AgentManagerEvent[]) {
+  return events.flatMap((event) =>
+    event.type === "agent_stream" && event.event.type === "turn_completed" ? [event.event] : [],
+  );
+}
+
+test("a completed turn's metrics go out with the turn and stay on its footer row", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-metrics-"));
+  const store = new RecordingTimelineStore();
+  const metrics: AgentMetric[] = [
+    { label: "Model", value: "GPT-5.4" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ];
+  const manager = new AgentManager({
+    clients: {
+      codex: fakeCodexEmitting({
+        turnItems: [
+          { type: "assistant_message", text: "Working" },
+          {
+            type: "tool_call",
+            callId: "call-1",
+            name: "shell",
+            status: "completed",
+            error: null,
+            detail: { type: "unknown", input: null, output: null },
+          },
+          { type: "assistant_message", text: "Done" },
+        ],
+        turnMetrics: metrics,
+      }),
+    },
+    durableTimelineStore: store,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+  await manager.runAgent(agent.id, { text: "go" });
+  await manager.flush();
+
+  expect(completedTurns(events)).toEqual([
+    { type: "turn_completed", provider: "codex", turnId: "turn-fake-codex", metrics },
+  ]);
+  const stamped = { item: { type: "assistant_message", text: "Done" }, turnMetrics: metrics };
+  expect(manager.fetchTimeline(agent.id).rows.filter((row) => row.turnMetrics)).toEqual([
+    expect.objectContaining(stamped),
+  ]);
+  expect((await manager.getTimelineRows(agent.id)).filter((row) => row.turnMetrics)).toEqual([
+    expect.objectContaining(stamped),
+  ]);
+  await manager.closeAgent(agent.id);
+});
+
+test.each<{
+  name: string;
+  model?: string;
+  turnMetrics?: AgentMetric[];
+  expected: AgentMetric[] | undefined;
+}>([
+  {
+    name: "leads with the agent's model when the provider names none",
+    model: "gpt-5.4",
+    turnMetrics: [{ label: "Elapsed", value: "1.2s" }],
+    expected: [
+      { label: "Model", value: "gpt-5.4" },
+      { label: "Elapsed", value: "1.2s" },
+    ],
+  },
+  {
+    name: "shows the agent's model for a provider that reports no metrics",
+    model: "gpt-5.4",
+    expected: [{ label: "Model", value: "gpt-5.4" }],
+  },
+  {
+    name: "keeps the provider's own model row",
+    model: "gpt-5.4",
+    turnMetrics: [{ label: "MODEL", value: "GPT-5.4 (fast)" }],
+    expected: [{ label: "MODEL", value: "GPT-5.4 (fast)" }],
+  },
+  {
+    name: "sends no metrics when neither the provider nor the agent names a model",
+    expected: undefined,
+  },
+])("a live turn $name", async ({ model, turnMetrics, expected }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-model-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: fakeCodexEmitting({
+        turnItems: [{ type: "assistant_message", text: "Done" }],
+        turnMetrics,
+      }),
+    },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir, model }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+  await manager.runAgent(agent.id, { text: "go" });
+
+  expect(completedTurns(events).map((event) => event.metrics)).toEqual([expected]);
+  expect(manager.fetchTimeline(agent.id).rows.at(-1)?.turnMetrics).toEqual(expected);
+  await manager.closeAgent(agent.id);
+});
+
+test.each(["first load", "forced refresh"])(
+  "turn metrics in provider history return to their footer rows on %s",
+  async (path) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-metrics-"));
+    const first: AgentMetric[] = [{ label: "Model", value: "GPT-5.4" }];
+    const second: AgentMetric[] = [{ label: "Elapsed", value: "4.0s" }];
+    const tool: AgentTimelineItem = {
+      type: "tool_call",
+      callId: "call-1",
+      name: "shell",
+      status: "completed",
+      error: null,
+      detail: { type: "unknown", input: null, output: null },
+    };
+    const history: AgentStreamEvent[] = [
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "one" } },
+      { type: "timeline", provider: "codex", item: { type: "assistant_message", text: "A1" } },
+      { type: "turn_completed", provider: "codex", turnId: "old-1", metrics: first },
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "two" } },
+      { type: "timeline", provider: "codex", item: tool },
+      { type: "turn_completed", provider: "codex", turnId: "old-2", metrics: second },
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "three" } },
+      { type: "timeline", provider: "codex", item: { type: "assistant_message", text: "A3" } },
+      { type: "turn_completed", provider: "codex", turnId: "old-3" },
+    ];
+    const manager = new AgentManager({
+      clients: { codex: fakeCodexEmitting({ history }) },
+      logger,
+    });
+    // The agent's model is known, but a replayed turn may have run on another one.
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "gpt-5.4" },
+      undefined,
+      { workspaceId: undefined },
+    );
+
+    if (path === "forced refresh") {
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    } else {
+      await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agent.id);
+    }
+
+    expect(manager.fetchTimeline(agent.id).rows.map((row) => row.turnMetrics ?? null)).toEqual([
+      null,
+      first,
+      null,
+      second,
+      null,
+      null,
+    ]);
+    await manager.closeAgent(agent.id);
+  },
+);
+
+test.each(["first load", "forced refresh"])(
+  "session metrics in provider history show the provider's latest totals on %s",
+  async (path) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-session-metrics-"));
+    const latest: AgentMetric[] = [{ label: "Cost", value: "$0.42" }];
+    const history: AgentStreamEvent[] = [
+      {
+        type: "session_metrics_updated",
+        provider: "codex",
+        metrics: [{ label: "Cost", value: "$0.10" }],
+      },
+      { type: "timeline", provider: "codex", item: { type: "user_message", text: "one" } },
+      { type: "session_metrics_updated", provider: "codex", metrics: latest },
+    ];
+    const manager = new AgentManager({
+      clients: { codex: fakeCodexEmitting({ history }) },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+
+    if (path === "forced refresh") {
+      await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    } else {
+      await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agent.id);
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_state",
+        agent: expect.objectContaining({ sessionMetrics: latest }),
+      }),
+    );
+    expect(manager.getAgent(agent.id)?.sessionMetrics).toEqual(latest);
+    await manager.closeAgent(agent.id);
+  },
+);
+
+test("session metrics reach the agent snapshot, stay off the stream, and survive a restart", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-metrics-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+  const metrics: AgentMetric[] = [
+    { label: "Cost", value: "$1.23" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ];
+
+  client.sessions[0].pushEvent({ type: "session_metrics_updated", provider: "codex", metrics });
+  await manager.flush();
+
+  expect(toAgentPayload(manager.getAgent(agent.id)!).sessionMetrics).toEqual(metrics);
+  expect(events.filter((event) => event.type === "agent_stream")).toEqual([]);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      type: "agent_state",
+      agent: expect.objectContaining({ sessionMetrics: metrics }),
+    }),
+  );
+
+  await manager.reloadAgentSession(agent.id);
+  expect(manager.getAgent(agent.id)?.sessionMetrics).toEqual(metrics);
+
+  await manager.closeAgent(agent.id);
+  await manager.flush();
+  const restarted = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const record = await storage.get(agent.id);
+  expect(record?.sessionMetrics).toEqual(metrics);
+  const resumed = await restarted.resumeAgentFromPersistence(
+    record!.persistence!,
+    { cwd: workdir },
+    agent.id,
+  );
+  expect(toAgentPayload(resumed).sessionMetrics).toEqual(metrics);
+  await restarted.closeAgent(agent.id);
+});
+
 test("commandMayHaveChangedExternalState matches remote-state commands", () => {
   // GitHub PR operations (remote, no local file changes)
   expect(commandMayHaveChangedExternalState("gh pr merge 123")).toBe(true);
@@ -15851,11 +16333,7 @@ test("plugin instructions are recomputed for each launch without changing saved 
     registry: storage,
     logger,
     appendSystemPrompt: "Daemon",
-    pluginLifecycle: {
-      emit: () => {},
-      before: async (name, request) =>
-        name === "agent.open.before" ? { ...request, appendSystemPrompt: additions } : request,
-    },
+    pluginSessions: instructionPluginSessions(() => additions),
   });
   const snapshot = await manager.createAgent(
     { provider: "codex", cwd: workdir, systemPrompt: "Saved" },
@@ -15914,3 +16392,284 @@ function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): P
   void dispatch.started.catch(() => undefined);
   return dispatch.started;
 }
+
+test("importProviderSession keeps the stats the provider reported with its history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-import-metrics-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const turnMetrics = [{ label: "Elapsed", value: "1.2s" }];
+  const sessionMetrics = [{ label: "Cost", value: "$0.011" }];
+
+  class ImportClient extends TestAgentClient {
+    async importSession(input: ImportProviderSessionInput) {
+      return {
+        session,
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: input.providerHandleId,
+          nativeHandle: input.providerHandleId,
+          metadata: { provider: "codex", cwd: workdir },
+        },
+        timeline: [
+          { item: { type: "user_message" as const, text: "Hi" } },
+          { item: { type: "assistant_message" as const, text: "Done" }, turnMetrics },
+          { item: { type: "user_message" as const, text: "Again" } },
+          { item: { type: "assistant_message" as const, text: "Done again" } },
+        ],
+        sessionMetrics,
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ImportClient() },
+    registry: storage,
+    logger,
+  });
+  const imported = await manager.importProviderSession({
+    provider: "codex",
+    providerHandleId: "thread-selected",
+    cwd: workdir,
+    workspaceId: "ws-imported",
+  });
+
+  expect(imported.sessionMetrics).toEqual(sessionMetrics);
+  expect(
+    manager.fetchTimeline(imported.id).rows.map((row) => [row.item.type, row.turnMetrics ?? null]),
+  ).toEqual([
+    ["user_message", null],
+    ["assistant_message", turnMetrics],
+    ["user_message", null],
+    ["assistant_message", null],
+  ]);
+});
+
+class LaunchWrapRecordingClient extends TestAgentClient {
+  readonly sessions: CloseRecordingTestAgentSession[] = [];
+  readonly launchContexts: Array<AgentLaunchContext | undefined> = [];
+  calls = { create: 0, resume: 0, import: 0 };
+
+  constructor(supportsLaunchWrap: boolean) {
+    super("codex");
+    if (supportsLaunchWrap) this.supportsLaunchWrap = true;
+  }
+
+  supportsLaunchWrap?: boolean;
+
+  override async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.calls.create += 1;
+    this.launchContexts.push(launchContext);
+    const session = new CloseRecordingTestAgentSession(config);
+    this.sessions.push(session);
+    return session;
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession> {
+    this.calls.resume += 1;
+    this.launchContexts.push(launchContext);
+    return await super.resumeSession(handle, config, launchContext);
+  }
+
+  async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
+    this.calls.import += 1;
+    return {
+      session: new TestAgentSession(context.config),
+      config: context.storedConfig,
+      persistence: { provider: this.provider, sessionId: input.providerHandleId },
+      timeline: [],
+    };
+  }
+}
+
+type TestLaunchWrap = [string, ...string[]];
+
+/**
+ * A session-open plugin that selects `wrap()` and attaches one tool while it does. Like the real runtime, an open's
+ * tools take over only once its launch does, and a failed launch leaves the running session's tools.
+ */
+function launchWrapPluginSessions(wrap: () => TestLaunchWrap | undefined) {
+  const pending = new Map<string, AttachedAgentTool[]>();
+  const running = new Map<string, AttachedAgentTool[]>();
+  const failedLaunches: string[] = [];
+  const sessions: PluginSessionsRuntime = {
+    openSession: async (request) => {
+      const selected = wrap();
+      const tools: AttachedAgentTool[] = selected
+        ? [
+            {
+              name: "sandbox_status",
+              description: "Report the sandbox",
+              inputSchema: {},
+              pluginId: "sandbox",
+              pluginInstanceId: "sandbox-1",
+            },
+          ]
+        : [];
+      if (request.purpose === "interactive") pending.set(request.agentId, tools);
+      return { ...request, ...(selected ? { wrap: selected } : {}), tools, mcpServerOwners: {} };
+    },
+    sessionLaunched: (agentId) => {
+      const tools = pending.get(agentId);
+      pending.delete(agentId);
+      if (tools) running.set(agentId, tools);
+    },
+    sessionLaunchFailed: (agentId) => {
+      pending.delete(agentId);
+      failedLaunches.push(agentId);
+    },
+    refreshSession: async () => ({ stale: false }),
+    sessionTools: (agentId) => running.get(agentId) ?? [],
+    closeSession: (agentId) => {
+      pending.delete(agentId);
+      running.delete(agentId);
+    },
+    callTool: async () => ({ isError: true, text: "No plugin tools" }),
+  };
+  return { sessions, failedLaunches };
+}
+
+function createLaunchWrapManager(client: LaunchWrapRecordingClient) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-launch-wrap-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const hook: { wrap: TestLaunchWrap | undefined } = { wrap: undefined };
+  const { sessions, failedLaunches } = launchWrapPluginSessions(() => hook.wrap);
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    pluginSessions: sessions,
+  });
+  return { manager, storage, workdir, failedLaunches, hook };
+}
+
+test("a wrapped open rejects on every path for a provider that does not apply wraps", async () => {
+  const client = new LaunchWrapRecordingClient(false);
+  const { manager, storage, workdir, failedLaunches, hook } = createLaunchWrapManager(client);
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const existing = client.sessions[0]!;
+  hook.wrap = ["/opt/sandbox/bin/run", "--profile", "a b"];
+  const calls = { ...client.calls };
+  const unsupported = { code: "launch_wrap_unsupported", provider: "codex" };
+
+  await expect(
+    manager.createAgent({ provider: "codex", cwd: workdir }, undefined, { workspaceId: undefined }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(
+    manager.resumeAgentFromPersistence({ provider: "codex", sessionId: "saved" }, { cwd: workdir }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(
+    manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "native",
+      cwd: workdir,
+      workspaceId: "import",
+    }),
+  ).rejects.toMatchObject(unsupported);
+  await expect(manager.reloadAgentSession(created.id)).rejects.toMatchObject(unsupported);
+
+  expect(client.calls).toEqual(calls);
+  expect(existing.closed).toBe(false);
+  expect(manager.getAgent(created.id)?.session).toBe(existing);
+  // Each refused open is discarded, so the running session keeps the tools it launched with.
+  expect(failedLaunches).toHaveLength(4);
+  expect(failedLaunches.at(-1)).toBe(created.id);
+  expect(manager.getPluginTools(created.id)).toEqual([]);
+  await manager.flush();
+  expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
+  await manager.closeAgent(created.id);
+});
+
+test("a supporting provider receives the wrap at launch and the record never stores it", async () => {
+  const client = new LaunchWrapRecordingClient(true);
+  const { manager, storage, workdir, hook } = createLaunchWrapManager(client);
+  hook.wrap = ["/opt/sandbox/bin/run", "--profile", "a b"];
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  expect(client.launchContexts[0]?.wrap).toEqual(["/opt/sandbox/bin/run", "--profile", "a b"]);
+  await manager.flush();
+  expect(JSON.stringify(await storage.get(created.id))).not.toContain("/opt/sandbox");
+  await manager.closeAgent(created.id);
+});
+
+// Records its argv, then answers as the Codex app server, so the provider command is only an
+// argument: a Windows script name there must reach the wrapper as is.
+const RECORDING_CODEX_APP_SERVER = `
+const { appendFileSync } = require("node:fs");
+const [log, ...rest] = process.argv.slice(2);
+appendFileSync(log, JSON.stringify(rest) + "\\n");
+const results = {
+  "collaborationMode/list": { data: [] },
+  "config/read": { config: {} },
+  getUserSavedConfig: { config: {} },
+  "model/list": { data: [{ id: "gpt-5.4", isDefault: true, defaultReasoningEffort: "medium" }] },
+  "skills/list": { data: [] },
+  "thread/start": { thread: { id: "thread-1" } },
+  "thread/resume": { thread: { id: "thread-1" } },
+  "thread/loaded/list": { data: [] },
+  "thread/backgroundTerminals/list": { data: [], nextCursor: null },
+};
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk.toString();
+  for (let index = buffer.indexOf("\\n"); index !== -1; index = buffer.indexOf("\\n")) {
+    const line = buffer.slice(0, index).trim();
+    buffer = buffer.slice(index + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    if (message.id === undefined || !message.method) continue;
+    process.stdout.write(JSON.stringify({ id: message.id, result: results[message.method] ?? {} }) + "\\n");
+  }
+});
+`;
+
+test("a wrapped refresh passes a Windows script provider command to the wrapper through the real spawn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-launch-wrap-refresh-"));
+  onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+  const launcher = join(workdir, "recording-app-server.cjs");
+  const launches = join(workdir, "launches.jsonl");
+  writeFileSync(launcher, RECORDING_CODEX_APP_SERVER);
+  // The version probes run `node --version`; sessions spawn through the production spawnProcess.
+  const codex = new CodexAppServerAgentClient(
+    logger,
+    { command: { mode: "replace", argv: [process.execPath] } },
+    {
+      appServerProcess: {
+        resolvePrefix: async () => ({ command: "C:\\codex\\codex.cmd", args: [] }),
+        spawn: ({ command, args, options }) => spawnProcess(command, args, options),
+      },
+    },
+  );
+  const client: AgentClient = Object.assign(codex, { supportsLaunchWrap: true });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    pluginSessions: launchWrapPluginSessions(() => [process.execPath, launcher, launches]).sessions,
+  });
+  const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  await manager.reloadAgentSession(created.id);
+
+  const argv = readFileSync(launches, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as string[]);
+  expect(argv).toHaveLength(2);
+  for (const launched of argv)
+    expect(launched.slice(0, 2)).toEqual(["C:\\codex\\codex.cmd", "app-server"]);
+  expect(manager.getAgent(created.id)?.lifecycle).not.toBe("error");
+  await manager.closeAgent(created.id);
+});

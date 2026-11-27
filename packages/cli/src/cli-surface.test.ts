@@ -12,9 +12,11 @@ describe("canonical CLI surface", () => {
     expect(send.opts().behavior).toBe("interrupt");
     await send.parseAsync(["target", "message", "--behavior", "steer"], { from: "user" });
     expect(send.opts().behavior).toBe("steer");
+    await send.parseAsync(["target", "message", "--behavior", "queue"], { from: "user" });
+    expect(send.opts().behavior).toBe("queue");
     send.exitOverride().configureOutput({ writeErr: () => {} });
     await expect(
-      send.parseAsync(["target", "message", "--behavior", "queue"], { from: "user" }),
+      send.parseAsync(["target", "message", "--behavior", "wait"], { from: "user" }),
     ).rejects.toThrow();
   });
 
@@ -94,6 +96,16 @@ describe("canonical CLI surface", () => {
     expect(run?.helpInformation()).toContain("--thinking <id>");
     expect(update?.helpInformation()).toContain("--thinking <id>");
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
+  });
+
+  it("offers archive on finish when creating and updating schedules", () => {
+    const schedule = createCli().commands.find((command) => command.name() === "schedule");
+
+    for (const name of ["create", "update"]) {
+      const help = schedule?.commands.find((command) => command.name() === name)?.helpInformation();
+      expect(help).toContain("--archive-on-finish");
+      expect(help).toContain("--no-archive-on-finish");
+    }
   });
 
   it("offers opening an existing agent in the desktop app", () => {

@@ -1,7 +1,7 @@
 import { Plus, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
@@ -26,6 +26,7 @@ import {
   type ProviderDiscoveredModelsCache,
 } from "./discovered-models";
 import type { ProviderEntry } from "./provider-config";
+import { ProviderRefreshButton, useCheckedLabel, type ProviderRefresh } from "./provider-refresh";
 
 const ThemedTrash = withUnistyles(Trash2);
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
@@ -51,15 +52,19 @@ function rankModels<T>(items: T[], query: string, fields: (item: T) => string[])
 export function ProviderModels({
   serverId,
   entry,
-  discovered,
+  refresh,
 }: {
   serverId: string;
   entry: ProviderEntry;
-  /** List the models the provider reports, with search. Only a running provider reports them. */
-  discovered: boolean;
+  /**
+   * Lists the models the provider reports, with search and the way to ask for them again. Null for
+   * a provider that is not running, which reports none.
+   */
+  refresh: ProviderRefresh | null;
 }) {
   const { t } = useTranslation();
   const provider = entry.provider;
+  const discovered = refresh !== null;
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [query, setQuery] = useState("");
   const [addSheetOpen, setAddSheetOpen] = useState(false);
@@ -130,10 +135,8 @@ export function ProviderModels({
 
   const discoveredTrailing = useMemo(
     () =>
-      discoveredModels.length > 0 ? (
-        <Text style={settingsStyles.sectionHeaderTitle}>{discoveredModels.length}</Text>
-      ) : null,
-    [discoveredModels.length],
+      refresh ? <DiscoveredTrailing count={discoveredModels.length} refresh={refresh} /> : null,
+    [discoveredModels.length, refresh],
   );
 
   let discoveredBody: React.ReactNode;
@@ -173,23 +176,29 @@ export function ProviderModels({
   return (
     <View testID="provider-models">
       {discovered ? (
-        <>
-          <View style={styles.searchRail}>
+        <SettingsSection title={t("settings.providers.models.title")} trailing={discoveredTrailing}>
+          <View style={styles.searchRow}>
             <SearchField
               value={query}
               onChangeText={setQuery}
               placeholder={t("settings.providers.models.searchPlaceholder")}
               clearAccessibilityLabel={t("sessions.actions.clearSearch")}
+              fullWidth
               testID="provider-settings-search"
             />
           </View>
-          <SettingsSection
-            title={t("settings.providers.models.discovered")}
-            trailing={discoveredTrailing}
-          >
-            <View style={settingsStyles.card}>{discoveredBody}</View>
-          </SettingsSection>
-        </>
+          <View style={settingsStyles.card}>
+            {/* A provider can report hundreds of models; the rest of the page stays in reach. */}
+            <ScrollView
+              style={styles.discoveredList}
+              // Android scrolls a ScrollView nested in the page or the sheet only with this flag.
+              nestedScrollEnabled
+              testID="provider-discovered-models"
+            >
+              {discoveredBody}
+            </ScrollView>
+          </View>
+        </SettingsSection>
       ) : null}
       <SettingsSection title={t("settings.providers.models.custom")} trailing={customTrailing}>
         <View style={settingsStyles.card}>{customBody}</View>
@@ -201,6 +210,22 @@ export function ProviderModels({
         visible={addSheetOpen}
         onClose={handleCloseAddSheet}
       />
+    </View>
+  );
+}
+
+/** How many models the provider reports, when it last reported them, and the way to ask again. */
+function DiscoveredTrailing({ count, refresh }: { count: number; refresh: ProviderRefresh }) {
+  const checked = useCheckedLabel(refresh);
+  const facts = [count > 0 ? String(count) : null, checked].filter(Boolean).join(" · ");
+  return (
+    <View style={styles.headerTrailing}>
+      {facts ? (
+        <Text style={[settingsStyles.sectionHeaderTitle, styles.headerFacts]} numberOfLines={1}>
+          {facts}
+        </Text>
+      ) : null}
+      <ProviderRefreshButton refresh={refresh} form="icon" />
     </View>
   );
 }
@@ -367,14 +392,22 @@ function AddCustomModelSheet({
 const ADD_SNAP_POINTS = ["40%"];
 
 const styles = StyleSheet.create((theme) => ({
-  searchRail: {
+  // The search field sizes itself along a row.
+  searchRow: {
     flexDirection: "row",
-    marginBottom: theme.spacing[3],
+  },
+  // Nine rows and part of a tenth, so a longer list visibly continues.
+  discoveredList: {
+    maxHeight: 320,
   },
   headerTrailing: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  // The facts give way before the button does.
+  headerFacts: {
+    flexShrink: 1,
   },
   modelRow: {
     flexDirection: "row",

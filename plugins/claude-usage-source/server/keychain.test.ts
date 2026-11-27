@@ -142,6 +142,7 @@ describe("Claude credential routes", () => {
         {
           key: "fixture-account.fixture-org",
           harness: "Claude",
+          provider: "claude",
           input: {
             route: { store: "claude", path: join(dir, ".credentials.json") },
             accountKey: "fixture-account.fixture-org",

@@ -217,16 +217,22 @@ test("observes files moved into the tree with their directory", async () => {
   await mkdir(movedFrom);
   const movedFile = join(movedFrom, "already-written.txt");
   await writeFile(movedFile, "ready");
+  const canary = createWatcherLivenessCanary(root);
   const events: FileChange[] = [];
   const subscription = await subscribeToFileChanges(root, (error, batch) => {
     expect(error).toBeNull();
-    events.push(...batch);
+    events.push(...canary.filterEvents(batch));
   });
+
+  // macOS starts delivering native events asynchronously after subscription.
+  await canary.verify();
+  events.length = 0;
 
   const movedTo = join(root, "prepared");
   await rename(movedFrom, movedTo);
+  // Native recursive backends discover moved directory contents on their quiet audit.
   await expect
-    .poll(() => events.map((event) => event.path))
+    .poll(() => events.map((event) => event.path), { timeout: 10_000 })
     .toContain(join(movedTo, "already-written.txt"));
   await subscription.unsubscribe();
 });

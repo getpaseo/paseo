@@ -2,6 +2,7 @@ import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
   AgentBackgroundWorkSummarySchema,
+  AgentMetricSchema,
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
   ForgeWebSchema,
@@ -129,6 +130,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("assistant_message"),
     messageId: z.string().optional(),
+    turnMetrics: z.array(AgentMetricSchema).optional(),
     text: z.string(),
     // Reject old caches containing display fragments; refetch the complete source text.
   }),
@@ -163,6 +165,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("tool_call"),
     provider: AgentProviderSchema,
+    turnMetrics: z.array(AgentMetricSchema).optional(),
     item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
   }),
   z.strictObject({
@@ -399,9 +402,9 @@ const DirectoryCheckpointSchema = z.strictObject({
 
 // A checkpoint is trusted only when this version wrote it. Earlier writers could store one for a
 // directory the cache no longer held: unversioned ones after an overlapping refresh, version 1
-// after an eviction. Rejecting them revalidates directory contents once without evicting cached
-// rows or timelines.
-const DIRECTORY_CHECKPOINT_VERSION = 2;
+// after an eviction, version 2 after another tab evicted the host. Rejecting them revalidates
+// directory contents once without evicting cached rows or timelines.
+const DIRECTORY_CHECKPOINT_VERSION = 3;
 
 const StoredDirectoryCheckpointSchema = z.strictObject({
   version: z.literal(DIRECTORY_CHECKPOINT_VERSION),
@@ -482,6 +485,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         text: item.text,
       };
     case "thought":
@@ -516,6 +520,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         provider: item.payload.data.provider,
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         item: serializeAgentToolCall(item.payload.data),
       };
     case "plugin":
@@ -575,6 +580,7 @@ function deserializeBuiltinTimelineItem(
         ...base,
         kind: item.kind,
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         text: item.text,
       };
     case "thought":
@@ -611,6 +617,7 @@ function deserializeBuiltinTimelineItem(
       return {
         ...base,
         kind: item.kind,
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         payload: {
           source: "agent",
           data: {
@@ -1173,11 +1180,12 @@ export class ReplicaCache {
 
   // A repair is queued behind writes that can evict its host. If one did, the host has no
   // directory left for the repaired checkpoint to describe, so only the deletes still apply.
+  // A shared store also rejects the repair when another connection rewrote the directory.
   private applyRepair(serverId: string, changes: ReplicaRowChanges): Promise<void> {
     return this.queueOperation(async () => {
       const applied = this.invalidatedHosts.has(serverId) ? { ...changes, upserts: [] } : changes;
-      await this.rowStore.apply(applied);
-      this.applyStoredChanges(applied);
+      const accepted = await this.rowStore.apply(applied, { directoryBaselines: new Set() });
+      this.applyStoredChanges(accepted ?? applied);
     });
   }
 
@@ -1316,12 +1324,21 @@ export class ReplicaCache {
           await this.ensureStoredIndex();
           const changes = this.materializePendingChanges(pending);
           const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
-          if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
-            await this.rowStore.apply(boundedChanges);
-            this.applyStoredChanges(boundedChanges);
+          const baselines = new Set(
+            [...pending.baselines].filter((serverId) => !evicted.has(serverId)),
+          );
+          if (
+            baselines.size > 0 ||
+            boundedChanges.upserts.length > 0 ||
+            boundedChanges.deletes.length > 0
+          ) {
+            const accepted = await this.rowStore.apply(boundedChanges, {
+              directoryBaselines: baselines,
+            });
+            this.applyStoredChanges(accepted ?? boundedChanges);
           }
-          for (const serverId of pending.baselines) {
-            if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
+          for (const serverId of baselines) {
+            this.invalidatedHosts.delete(serverId);
           }
         } catch {
           this.restorePendingChanges(pending);

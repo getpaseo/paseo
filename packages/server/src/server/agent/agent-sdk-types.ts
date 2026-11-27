@@ -1,4 +1,5 @@
 import type {
+  AgentMetric,
   AgentOptionControl,
   AgentOptionSelectControl,
   AgentOptionToggleControl,
@@ -9,8 +10,9 @@ import type {
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { AgentAttachment, ProviderInstallationInspection } from "@getpaseo/protocol/messages";
 import type {
+  ProviderCatalogRefreshMode,
   ProviderInspection,
   ProviderUpdateCheck,
   ProviderUpdateReport,
@@ -19,6 +21,7 @@ import type {
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
+  AgentMetric,
   AgentOptionControl,
   AgentOptionSelectControl,
   AgentOptionToggleControl,
@@ -142,7 +145,10 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   iconSvg?: string;
+  /** The page that helps users set up and troubleshoot this provider. */
+  docsUrl?: string;
   defaultModeId?: string | null;
+  launchWrap?: boolean;
 }
 
 export interface AgentCreateConfigParent {
@@ -421,8 +427,17 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnId?: string;
+      /** Shown on the completed turn's footer. */
+      metrics?: AgentMetric[];
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
+  /** Full replacement of the metrics shown for the session. An empty list clears them. */
+  | { type: "session_metrics_updated"; provider: AgentProvider; metrics: AgentMetric[] }
   | {
       type: "mode_changed";
       provider: AgentProvider;
@@ -573,6 +588,8 @@ export interface AgentSlashCommand {
 }
 
 export interface ListImportableSessionsOptions {
+  /** Aborts provider work when the caller stops waiting for a listing. */
+  signal?: AbortSignal;
   providerOptions?: ProviderOptions;
   limit?: number;
   /** Optional case-insensitive descriptor search text. */
@@ -612,6 +629,8 @@ export interface ImportProviderSessionContext {
 export interface ImportedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
+  /** Set on the last entry of a turn the provider reported stats for. */
+  turnMetrics?: AgentMetric[];
 }
 
 export interface ImportedProviderSession {
@@ -619,6 +638,7 @@ export interface ImportedProviderSession {
   config: AgentSessionConfig;
   persistence: AgentPersistenceHandle;
   timeline: ImportedTimelineEntry[];
+  sessionMetrics?: AgentMetric[];
   providerSubagentEvents?: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }
 
@@ -659,6 +679,8 @@ export interface AgentLaunchContext {
   mcpServerOwners?: Record<string, string>;
   agentId?: string;
   env?: Record<string, string>;
+  /** Spawn the harness as `[...wrap, command, ...args]`. Selected by a plugin hook; never persisted. */
+  wrap?: readonly [string, ...string[]];
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.
@@ -753,6 +775,11 @@ export interface AgentSession {
    * An optional additional veto: missing methods use daemon baseline eligibility;
    * implemented checks that reject or return false keep the runtime resident. */
   canStopRuntime?(): Promise<boolean>;
+  /**
+   * True while work this session started will start another turn by itself, such as a
+   * background task that reports back when it ends. Recurring triggers do not count.
+   */
+  hasPendingWakeup?(): boolean;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
@@ -812,6 +839,8 @@ export interface ProviderCatalog {
   models: AgentModelDefinition[];
   modes: AgentMode[];
   defaultModeId?: string | null;
+  /** Part of discovery failed, so the catalogue omits models the provider could not confirm. */
+  incomplete?: boolean;
 }
 
 export interface ResolveAgentDefaultModeInput {
@@ -849,12 +878,32 @@ export interface AgentClientUpdateContext extends AgentClientInstallationContext
   report(event: ProviderUpdateReport): void;
 }
 
+/** What the daemon gives a provider's diagnostic report. */
+export interface AgentClientDiagnosticContext {
+  /**
+   * The installation as the provider's Installation row shows it, under the same deadline and
+   * cache. Undefined when the provider does not report its installation.
+   */
+  inspectInstallation(): Promise<ProviderInstallationInspection | undefined>;
+}
+
+export type AgentClientAvailability =
+  | { status: "available" }
+  | { status: "unavailable" }
+  | { status: "error"; message: string };
+
 export interface AgentClient {
   resolveUsageLaunch?(): Promise<
     import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined
   >;
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  /** How ProviderSnapshotManager schedules and caches catalog discovery for this client. */
+  readonly catalogRefresh?: ProviderCatalogRefreshMode;
+  /** Sessions honor `AgentLaunchContext.wrap`. The provider registry sets it from the provider contract. */
+  supportsLaunchWrap?: boolean;
+  /** Throw unless the live provider runtime can apply a wrap. Plugin providers connect to learn it. */
+  requireLaunchWrap?(): Promise<void>;
   /**
    * Create the agent with `config.providerOptions` (defaults already merged in). Emit nothing
    * about options while creating. If the agent ended up different from the options, say so in the
@@ -876,6 +925,11 @@ export interface AgentClient {
    * Include the execution environment and effective configuration; omit to use target identity.
    * force must not affect identity. Resolve before every cache lookup. */
   getCatalogCacheKey?(options: FetchCatalogOptions): Promise<string | undefined>;
+  /**
+   * Optional fingerprint (`mtimeMs:size`) of the resolved provider binary, used to invalidate
+   * on-disk cached catalogs for `"on_demand"` providers when the CLI changes on disk.
+   */
+  getCatalogBinaryFingerprint?(options: FetchCatalogOptions): Promise<string | undefined>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers
@@ -914,7 +968,15 @@ export interface AgentClient {
    * Returns true if available, false otherwise.
    */
   isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
-  getDiagnostic?(): Promise<{ diagnostic: string }>;
+  /**
+   * Detailed availability check distinguishing a missing binary (`"unavailable"`) from an
+   * installed binary that fails readiness checks (`"error"` with an actionable message).
+   */
+  checkAvailability?(
+    signal?: AbortSignal,
+    options?: FetchCatalogOptions,
+  ): Promise<AgentClientAvailability>;
+  getDiagnostic?(context: AgentClientDiagnosticContext): Promise<{ diagnostic: string }>;
   /**
    * Installation links and the installed version. The same contract as plugin providers'
    * `ProviderRegistration.installation`; built-ins resolve their own launch inside `inspect`.

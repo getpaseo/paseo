@@ -146,3 +146,41 @@ export async function confirmRiskyWorktreeArchive(
     destructive: true,
   });
 }
+
+export async function confirmRiskyBulkWorktreeArchive(
+  input: {
+    totalCount: number;
+    riskyWorkspaces: readonly WorktreeArchiveConfirmationInput[];
+  },
+  labels: WorktreeArchiveWarningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
+): Promise<boolean> {
+  const lines: string[] = [];
+  let singleRisky: WorktreeArchiveConfirmationInput | null = null;
+  for (const workspace of input.riskyWorkspaces) {
+    const reasons = buildWorktreeArchiveRiskReasons(workspace, labels);
+    if (reasons.length === 0) continue;
+    singleRisky = workspace;
+    lines.push(
+      i18n.t("workspace.git.actions.archiveWarning.bulkWorkspaceReason", {
+        workspaceName: workspace.workspaceName,
+        reason: reasons.join(", "),
+      }),
+    );
+  }
+  if (lines.length === 0) {
+    return true;
+  }
+  if (input.totalCount === 1 && singleRisky) {
+    return await confirmRiskyWorktreeArchive(singleRisky, labels);
+  }
+
+  return await confirmDialog({
+    title: i18n.t("workspace.git.actions.archiveWarning.bulkTitle", {
+      count: input.totalCount,
+    }),
+    message: lines.join("\n"),
+    confirmLabel: labels.confirm,
+    cancelLabel: labels.cancel,
+    destructive: true,
+  });
+}

@@ -16,7 +16,7 @@ export const Route = createFileRoute("/{-$locale}/")({
       locale,
     });
   },
-  loader: async () => ({ pluginCount: await getPluginCount() }),
+  loader: () => ({ pluginCount: getPluginCount().catch(() => null) }),
   component: Home,
 });
 

@@ -198,25 +198,30 @@ function isLegacyProviderEntry(value: unknown): boolean {
   return typeof (command as Record<string, unknown>).mode === "string";
 }
 
+// Catalog providers that moved from `extends: "acp"` to a bundled plugin with the same ID.
+const BUNDLED_FORMER_ACP_PROVIDERS = [
+  // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once legacy configs have migrated.
+  "goose",
+  // COMPAT(hermesProvider): added in v0.17.4, remove after 2027-05-23 once legacy configs have migrated.
+  "hermes",
+] as const;
+
 function normalizeAgentProviders(value: unknown): unknown {
   if (!isConfigRecord(value)) return value;
 
-  let rawProviders = value;
-  const goose = configRecord(value.goose);
-  // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once legacy configs have migrated.
-  if (goose?.extends === "acp") {
-    const { extends: _base, description: _description, command, ...overrides } = goose;
+  const rawProviders: Record<string, unknown> = { ...value };
+  for (const providerId of BUNDLED_FORMER_ACP_PROVIDERS) {
+    const entry = configRecord(rawProviders[providerId]);
+    if (entry?.extends !== "acp") continue;
+    const { extends: _base, description: _description, command, ...overrides } = entry;
     const usesDefaultCommand =
       Array.isArray(command) &&
       command.length === 2 &&
-      command[0] === "goose" &&
+      command[0] === providerId &&
       command[1] === "acp";
-    rawProviders = {
-      ...value,
-      goose: {
-        ...overrides,
-        ...(command !== undefined && !usesDefaultCommand ? { command } : {}),
-      },
+    rawProviders[providerId] = {
+      ...overrides,
+      ...(command !== undefined && !usesDefaultCommand ? { command } : {}),
     };
   }
 

@@ -1,3 +1,5 @@
+import { stripAppImageRuntimeEnv } from "./paseo-env.js";
+
 // Daemon configuration inputs. General provider credentials and executable/runtime
 // controls remain available to managed launches and their agent processes.
 export const DAEMON_SETTING_ENV_KEYS = [
@@ -78,6 +80,7 @@ export function daemonLaunchEnvironment(input: {
   home: string;
   mode: "managed" | "deployment";
   desktopManaged?: boolean;
+  platform?: NodeJS.Platform;
 }): NodeJS.ProcessEnv {
   const env = { ...input.env };
   if (input.mode === "managed") {
@@ -85,6 +88,7 @@ export function daemonLaunchEnvironment(input: {
   }
   delete env.PASEO_HOST;
   delete env.PASEO_DESKTOP_MANAGED;
+  stripAppImageRuntimeEnv(env, { platform: input.platform });
   env.PASEO_HOME = input.home;
   if (input.desktopManaged) env.PASEO_DESKTOP_MANAGED = "1";
   return env;

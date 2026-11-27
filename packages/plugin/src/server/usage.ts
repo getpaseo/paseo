@@ -65,6 +65,8 @@ export interface UsageAccount {
   label?: string;
   /** Harness owning this login, e.g. Codex, OpenCode, Pi or OMP. */
   harness?: string;
+  /** Provider ID associated with this login, used as a hint for default visibility. */
+  provider?: string;
   /** Store locator, opaque to the daemon. */
   input: JsonValue;
 }
@@ -87,6 +89,8 @@ export interface UsageSourceRegistration {
   icon?: string;
   /** Provider whose resolved launch is needed for discovery. */
   provider?: string;
+  /** Provider IDs associated with this source, used as a hint for default visibility. */
+  providers?: readonly string[];
   input: ZodType;
   /** Accounts for this scope only. The same key in any scope identifies the same account. */
   discover(scope: UsageScope): Promise<UsageAccount[]>;

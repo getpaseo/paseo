@@ -406,10 +406,10 @@ describe("forwardLiveAgent", () => {
     expect(JSON.stringify(update.agent)).not.toContain("execution-secret");
   });
 
-  test("emits a remove when the agent's workspace resolves to no project", async () => {
+  test("emits a remove when an included agent's workspace resolves to no project", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
-    h.service.flushBootstrapped("sub");
+    h.service.flushBootstrapped("sub", { snapshotAgentIds: ["a"] });
     h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }), null);
 
     await h.service.forwardLiveAgent(h.managed("a"));
@@ -417,10 +417,10 @@ describe("forwardLiveAgent", () => {
     expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
   });
 
-  test("emits a remove when the agent does not match the filter", async () => {
+  test("emits a remove when an included agent no longer matches the filter", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: { statuses: ["closed"] } });
-    h.service.flushBootstrapped("sub");
+    h.service.flushBootstrapped("sub", { snapshotAgentIds: ["a"] });
     h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1", status: "running" }));
 
     await h.service.forwardLiveAgent(h.managed("a"));
@@ -479,10 +479,10 @@ describe("emitStoredRecord", () => {
     ]);
   });
 
-  test("emits a remove when no project resolves", async () => {
+  test("emits a remove when an included record's project no longer resolves", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
-    h.service.flushBootstrapped("sub");
+    h.service.flushBootstrapped("sub", { snapshotAgentIds: ["a"] });
     h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }), null);
 
     await h.service.emitStoredRecord(h.stored("a"));
@@ -490,10 +490,10 @@ describe("emitStoredRecord", () => {
     expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
   });
 
-  test("emits a remove when the record no longer matches the filter", async () => {
+  test("emits a remove when an included record no longer matches the filter", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: { includeArchived: false } });
-    h.service.flushBootstrapped("sub");
+    h.service.flushBootstrapped("sub", { snapshotAgentIds: ["a"] });
     h.register(
       makeAgentPayload({ id: "a", workspaceId: "ws-1", archivedAt: "2026-03-02T00:00:00.000Z" }),
     );
@@ -682,10 +682,10 @@ describe("subscription lifecycle", () => {
     expect(h.agentUpdates()).toEqual([]);
   });
 
-  test("removeAgent emits a remove for a live subscription", async () => {
+  test("removeAgent emits a remove for an included agent on a live subscription", async () => {
     const h = buildHarness();
     h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
-    h.service.flushBootstrapped("sub");
+    h.service.flushBootstrapped("sub", { snapshotAgentIds: ["a"] });
 
     await h.service.removeAgent("a");
 
@@ -701,4 +701,97 @@ test("an idle session skips agent hydration while preserving workspace updates",
   expect(h.loggedErrors).toEqual([]);
   expect(h.agentUpdates()).toEqual([]);
   expect(h.workspaceUpdates).toEqual([agent.workspaceId]);
+});
+
+test("skips non-matching agents that are not in the subscription without advancing DirectorySync", async () => {
+  const h = buildHarness();
+  h.service.beginSubscription({
+    subscriptionId: "sub",
+    filter: { includeArchived: false },
+    syncEnabled: true,
+  });
+  h.service.flushBootstrapped("sub", { snapshotAgentIds: [] });
+
+  const archived = makeAgentPayload({
+    id: "archived-a",
+    workspaceId: "ws-1",
+    archivedAt: "2026-03-02T00:00:00.000Z",
+  });
+  h.register(archived);
+
+  // Never included: emits zero removals and does not advance DirectorySync sequence numbers.
+  await h.service.emitStoredRecord(h.stored("archived-a"));
+  await h.service.forwardLiveAgent(h.managed("archived-a"));
+  expect(h.agentUpdates()).toEqual([]);
+
+  // First real inclusion gets sequence 1 (proving the skipped archived events did not advance seq).
+  const active = makeAgentPayload({ id: "archived-a", workspaceId: "ws-1", archivedAt: null });
+  h.register(active);
+  await h.service.emitStoredRecord(h.stored("archived-a"));
+
+  // Archiving an included agent emits exactly one remove (sequence 2) and ignores repeats.
+  h.register(archived);
+  await h.service.emitStoredRecord(h.stored("archived-a"));
+  await h.service.emitStoredRecord(h.stored("archived-a"));
+  await h.service.forwardLiveAgent(h.managed("archived-a"));
+
+  const updates = h.agentUpdates();
+  expect(updates).toEqual([
+    expect.objectContaining({
+      kind: "upsert",
+      agent: expect.objectContaining({ id: "archived-a", archivedAt: null }),
+      seq: 1,
+    }),
+    expect.objectContaining({
+      kind: "remove",
+      agentId: "archived-a",
+      seq: 2,
+    }),
+  ]);
+});
+
+test("flushPendingUpdates waits for in-flight live agent updates to finish", async () => {
+  const h = buildHarness();
+  h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+  h.service.flushBootstrapped("sub");
+
+  const gate = deferred<AgentSnapshotPayload>();
+  const active = makeAgentPayload({ id: "a", workspaceId: "ws-1" });
+  h.register(active);
+  h.queuePayloadBuilds(gate.promise);
+
+  const forwardPromise = h.service.forwardLiveAgent(h.managed("a"));
+  let flushed = false;
+  const flushPromise = (async () => {
+    await h.service.flushPendingUpdates();
+    flushed = true;
+  })();
+
+  await Promise.resolve();
+  expect(flushed).toBe(false);
+
+  gate.resolve(active);
+  await flushPromise;
+  await forwardPromise;
+
+  expect(flushed).toBe(true);
+  expect(h.agentUpdates()).toEqual([
+    { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
+  ]);
+});
+
+test("non-sync paginated subscriptions (snapshotAgentIds: null) still emit removals for page-2+ agents", async () => {
+  const h = buildHarness();
+  h.service.beginSubscription({ subscriptionId: "sub", filter: { archived: false } });
+  h.service.flushBootstrapped("sub", { snapshotAgentIds: null });
+
+  const pageTwoArchived = makeAgentPayload({
+    id: "page-2-agent",
+    archivedAt: "2026-04-20T00:05:00.000Z",
+  });
+  h.register(pageTwoArchived);
+
+  await h.service.forwardLiveAgent(h.managed("page-2-agent"));
+
+  expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "page-2-agent" }]);
 });

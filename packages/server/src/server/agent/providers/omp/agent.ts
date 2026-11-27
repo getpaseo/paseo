@@ -112,6 +112,9 @@ import { OmpSubagentIndex } from "./subagent-index.js";
 import { OmpQuestionUi } from "./question-ui.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
+import { ompReplyStep, ompSessionMetrics } from "./metrics.js";
+import { type MeasuredStep, measuredTurnMetrics, TurnMeter } from "../turn-metrics.js";
+import { createSessionMetricsReporter } from "../metrics.js";
 import {
   buildOmpRpcUiPermissionResponse,
   mapOmpRpcUiPermissionRequest,
@@ -430,6 +433,7 @@ function buildResumeStartInput(input: {
     cwd: input.resumeConfig.cwd,
     protocolMode: "rpc-ui",
     env: input.launchContext?.env,
+    wrap: input.launchContext?.wrap,
     session: input.sessionFile,
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
@@ -704,6 +708,11 @@ export class OmpAgentSession implements AgentSession {
   private readonly providerIdleDeadlineMs: number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
+  private readonly turnMeter = new TurnMeter();
+  private lastReply: MeasuredStep | null = null;
+  private readonly reportSessionMetrics = createSessionMetricsReporter((metrics) =>
+    this.emit({ type: "session_metrics_updated", provider: this.provider, metrics }),
+  );
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
@@ -740,13 +749,14 @@ export class OmpAgentSession implements AgentSession {
     this.usagePoller = new OmpUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
-      onUsage: (usage, turnId) => {
+      onUsage: (usage, turnId, stats) => {
         this.emit({
           type: "usage_updated",
           provider: this.provider,
           usage,
           ...(turnId === undefined ? {} : { turnId }),
         });
+        this.reportSessionMetrics(ompSessionMetrics(stats, this.lastReply));
       },
       onPollError: (error) => {
         this.logger.debug({ err: error }, "OMP context usage poll failed");
@@ -878,6 +888,7 @@ export class OmpAgentSession implements AgentSession {
     const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
+    this.turnMeter.begin(Date.now());
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
@@ -1010,12 +1021,24 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    yield* streamOmpHistory({
+    const replay = yield* streamOmpHistory({
       sessionFile: this.state.sessionFile,
       runtimeSession: this.runtimeSession,
       provider: this.provider,
       bridgedTools: this.hostTools?.bridge?.toolIdentities(),
     });
+    this.lastReply ??= replay.lastReply;
+    const stats = await this.runtimeSession.getSessionStats().catch((error: unknown) => {
+      this.logger.debug({ err: error }, "OMP session stats unavailable for history");
+      return null;
+    });
+    if (stats) {
+      yield {
+        type: "session_metrics_updated",
+        provider: this.provider,
+        metrics: ompSessionMetrics(stats, this.lastReply),
+      };
+    }
     for (const item of mapOmpTodoState(this.state)) {
       yield {
         type: "timeline",
@@ -1250,6 +1273,7 @@ export class OmpAgentSession implements AgentSession {
     this.outOfBandTurnStartAnnounced = false;
     this.activeTurnHasUserMessage = false;
     this.pendingClientMessages.length = 0;
+    this.turnMeter.reset();
     this.clearNoTurnBuffers();
   }
 
@@ -1580,6 +1604,10 @@ export class OmpAgentSession implements AgentSession {
   private handleExtensionUiRequest(
     event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
+    if (event.method === "cancel") {
+      if (event.targetId) this.closeExtensionUiRequest(event.targetId);
+      return;
+    }
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
       this.emit({
@@ -1622,6 +1650,19 @@ export class OmpAgentSession implements AgentSession {
       type: "permission_requested",
       provider: this.provider,
       request,
+      turnId: this.currentTurnIdForEvent(),
+    });
+  }
+
+  /** OMP aborted or timed out a dialog: close its card without a reply OMP would reject. */
+  private closeExtensionUiRequest(requestId: string): void {
+    if (!this.pendingExtensionUiRequests.delete(requestId)) return;
+    this.questionUi.forget(requestId);
+    this.emit({
+      type: "permission_resolved",
+      provider: this.provider,
+      requestId,
+      resolution: { behavior: "deny", message: "OMP closed the question." },
       turnId: this.currentTurnIdForEvent(),
     });
   }
@@ -1904,6 +1945,7 @@ export class OmpAgentSession implements AgentSession {
         this.handleMessageUpdate(event, turnId);
         return;
       case "tool_execution_start": {
+        this.turnMeter.toolStarted(event.toolCallId, Date.now());
         const toolCall = parseToolArgs(event.toolName, event.args);
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.questionUi.start(event.toolName, event.args);
@@ -1921,6 +1963,7 @@ export class OmpAgentSession implements AgentSession {
         return;
       }
       case "tool_execution_end": {
+        this.turnMeter.toolEnded(event.toolCallId, Date.now());
         this.handleToolExecutionEnd(event, turnId);
         return;
       }
@@ -2043,6 +2086,13 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
+  private observeReply(message: OmpAgentMessage): void {
+    const step = ompReplyStep(message);
+    if (!step) return;
+    this.turnMeter.step(step, Date.now());
+    this.lastReply = step;
+  }
+
   private handleMessageEnd(
     event: Extract<OmpAgentSessionEvent, { type: "message_end" }>,
     turnId: string | undefined,
@@ -2050,6 +2100,7 @@ export class OmpAgentSession implements AgentSession {
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = null;
       this.questionUi.observeMessage(event.message);
+      this.observeReply(event.message);
       if (turnId) {
         this.activeTurnTerminalAssistantMessage = event.message;
       }
@@ -2216,11 +2267,13 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     const finalUsage = this.usagePoller.completeTurn(turnId);
+    const metrics = measuredTurnMetrics(this.turnMeter.finish(Date.now()));
     this.resetActiveTurn({ terminalizeWork: false });
     this.emit({
       type: "turn_completed",
       provider: this.provider,
       turnId,
+      metrics,
     });
     void this.refreshAfterTurn(finalUsage);
   }
@@ -2321,15 +2374,18 @@ export class OmpAgentClient implements AgentClient {
     runtimeSession: OmpRuntimeSession,
     catalog: PaseoToolCatalog | undefined,
     config: AgentSessionConfig,
-    launchEnv?: NodeJS.ProcessEnv,
+    launch: Pick<OmpStartSessionInput, "env" | "wrap">,
   ): Promise<OmpHostToolRouter | undefined> {
     if (!catalog && !config.mcpServers) {
       return;
     }
-    const bridge = await OmpMcpBridge.connect(config.mcpServers, config.cwd, this.logger, {
-      ...process.env,
-      ...this.runtimeSettings?.env,
-      ...launchEnv,
+    // Paseo starts stdio MCP servers for OMP, so they run behind the agent's wrap as OMP does.
+    const bridge = await OmpMcpBridge.connect({
+      servers: config.mcpServers,
+      cwd: config.cwd,
+      logger: this.logger,
+      env: { ...process.env, ...this.runtimeSettings?.env, ...launch.env },
+      wrap: launch.wrap,
     });
     const router = new OmpHostToolRouter({ runtimeSession, catalog, bridge, logger: this.logger });
     try {
@@ -2372,6 +2428,7 @@ export class OmpAgentClient implements AgentClient {
         ...(config.pluginAppendSystemPrompt ?? []),
       ),
       env: launchContext?.env,
+      wrap: launchContext?.wrap,
     };
     const runtimeSession = await this.resolveRuntime(config.providerOptions).startSession(
       startInput,
@@ -2382,7 +2439,7 @@ export class OmpAgentClient implements AgentClient {
         runtimeSession,
         launchContext?.paseoTools,
         config,
-        startInput.env,
+        startInput,
       );
       const initialState = await this.restoreFastMode(
         runtimeSession,
@@ -2452,7 +2509,7 @@ export class OmpAgentClient implements AgentClient {
         runtimeSession,
         launchContext?.paseoTools,
         resumeConfig.config,
-        startInput.env,
+        startInput,
       );
       const resumedState = await this.applyResumeModel(runtimeSession, resumeConfig.model);
       const config = {
@@ -2531,7 +2588,7 @@ export class OmpAgentClient implements AgentClient {
           next,
           launchContext?.paseoTools,
           config,
-          startInput.env,
+          startInput,
         );
         const state = await next.getState();
         await this.restoreFastMode(next, config, state);

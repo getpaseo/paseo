@@ -1,7 +1,11 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenCodeEventSourceInput } from "../event-consumer.js";
-import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "../server-manager.js";
+import type {
+  OpenCodeDedicatedLaunch,
+  OpenCodeServerAcquisition,
+  OpenCodeServerManagerLike,
+} from "../server-manager.js";
 
 interface OpenCodeResponse {
   data?: unknown;
@@ -13,6 +17,7 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
   readonly acquisitions: Array<{
     kind: "current" | "new" | "dedicated" | "existing";
     env?: Record<string, string>;
+    wrap?: OpenCodeDedicatedLaunch["wrap"];
     url?: string;
     releaseCount: number;
   }> = [];
@@ -51,8 +56,8 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
     return this.recordAcquisition({ kind: "new" });
   }
 
-  async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
-    return this.recordAcquisition({ kind: "dedicated", env });
+  async acquireDedicated(launch: OpenCodeDedicatedLaunch): Promise<OpenCodeServerAcquisition> {
+    return this.recordAcquisition({ kind: "dedicated", env: launch.env, wrap: launch.wrap });
   }
 
   acquireExisting(url: string): OpenCodeServerAcquisition | null {
@@ -62,12 +67,14 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
   private recordAcquisition(input: {
     kind: "current" | "new" | "dedicated" | "existing";
     env?: Record<string, string>;
+    wrap?: OpenCodeDedicatedLaunch["wrap"];
     url?: string;
   }): OpenCodeServerAcquisition {
     const acquisition = {
       kind: input.kind,
       releaseCount: 0,
       ...(input.env ? { env: input.env } : {}),
+      ...(input.wrap ? { wrap: input.wrap } : {}),
       ...(input.url ? { url: input.url } : {}),
     };
     this.acquisitions.push(acquisition);

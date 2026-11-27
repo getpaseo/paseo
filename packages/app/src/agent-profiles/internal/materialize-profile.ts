@@ -13,6 +13,8 @@ export interface MaterializedAgentProfile {
   modeId: string;
   thinkingOptionId: string;
   options: Record<string, unknown>;
+  /** Creation-only; empty when unset. Ignored when applying to a running agent. */
+  systemPrompt: string;
 }
 
 function trimmed(value: string | undefined): string {
@@ -26,6 +28,7 @@ export function materializeAgentProfile(profile: AgentProfile): MaterializedAgen
     modeId: trimmed(profile.modeId),
     thinkingOptionId: trimmed(profile.thinkingOptionId),
     options: profile.options ?? {},
+    systemPrompt: trimmed(profile.systemPrompt),
   };
 }
 
@@ -44,8 +47,8 @@ export function reconcileMaterializedProfileMode(
 
 /**
  * The payload for a running agent. Omitted fields are left alone by the daemon,
- * so a profile that names no mode does not reset the agent's mode. Provider is
- * absent because a running agent cannot change the process it is.
+ * so a profile that names no mode does not reset the agent's mode. Provider and
+ * systemPrompt are absent because a running agent cannot change either.
  */
 export function toAgentConfigApply(profile: MaterializedAgentProfile): AgentConfigApply {
   return {

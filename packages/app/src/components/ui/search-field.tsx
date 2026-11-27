@@ -25,6 +25,8 @@ export interface SearchFieldProps {
   /** Falls back to `placeholder`, which already names the field. */
   accessibilityLabel?: string;
   clearAccessibilityLabel: string;
+  /** Fill the container, for a search that heads one list. Defaults to the filter rail's width. */
+  fullWidth?: boolean;
   testID?: string;
   clearTestID?: string;
 }
@@ -42,6 +44,7 @@ export function SearchField({
   placeholder,
   accessibilityLabel,
   clearAccessibilityLabel,
+  fullWidth = false,
   testID,
   clearTestID,
 }: SearchFieldProps): ReactElement {
@@ -55,7 +58,9 @@ export function SearchField({
   }, [onChangeText]);
 
   return (
-    <View style={[styles.field, isFocused && styles.fieldFocused]}>
+    <View
+      style={[styles.field, fullWidth && styles.fieldFullWidth, isFocused && styles.fieldFocused]}
+    >
       <ThemedSearch size={14} uniProps={mutedColorMapping} />
       <ThemedTextInput
         testID={testID}
@@ -102,6 +107,9 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
+  },
+  fieldFullWidth: {
+    maxWidth: "100%",
   },
   fieldFocused: {
     borderColor: theme.colors.borderAccent,

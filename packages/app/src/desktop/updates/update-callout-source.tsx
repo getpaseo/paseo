@@ -1,7 +1,8 @@
 import { Gift } from "lucide-react-native";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
+import { View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   type SidebarCalloutAction,
   SidebarCalloutDescriptionText,
@@ -19,9 +20,24 @@ import { openChangelog } from "@/changelog";
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 function renderBody(body: UpdateCalloutBody, t: ReturnType<typeof useTranslation>["t"]): ReactNode {
+  if (body.kind === "downloading") {
+    return (
+      <UpdateDownloadingDescription
+        versionLabel={body.versionLabel ?? undefined}
+        percent={body.percent}
+        t={t}
+      />
+    );
+  }
   if (body.kind === "installing") return t("desktop.updates.callout.installingDescription");
   if (body.kind === "error") return body.message;
-  return <UpdateAvailableDescription versionLabel={body.versionLabel ?? undefined} t={t} />;
+  return (
+    <UpdateAvailableDescription
+      versionLabel={body.versionLabel ?? undefined}
+      readyToInstall={body.readyToInstall !== false}
+      t={t}
+    />
+  );
 }
 
 function materializeActions(
@@ -42,8 +58,11 @@ export function UpdateCalloutSource() {
   const { theme } = useUnistyles();
   const {
     isDesktopApp,
+    updateMode,
+    isLoadingSettings,
     status,
     availableUpdate,
+    downloadProgress,
     errorMessage,
     checkForUpdates,
     installUpdate,
@@ -58,7 +77,7 @@ export function UpdateCalloutSource() {
     void checkForUpdates();
   });
   useEffect(() => {
-    if (!isDesktopApp) return;
+    if (!isDesktopApp || isLoadingSettings || updateMode === "off") return;
 
     void checkForUpdates({ intent: "automatic", silent: true });
 
@@ -71,7 +90,7 @@ export function UpdateCalloutSource() {
         clearInterval(intervalRef.current);
       }
     };
-  }, [isDesktopApp, checkForUpdates]);
+  }, [isDesktopApp, isLoadingSettings, updateMode, checkForUpdates]);
 
   useEffect(() => {
     const descriptor = resolveUpdateCalloutDescriptor({
@@ -79,6 +98,7 @@ export function UpdateCalloutSource() {
       status,
       isInstalling,
       availableUpdate,
+      downloadProgress,
       errorMessage,
     });
     if (!descriptor) return;
@@ -103,6 +123,7 @@ export function UpdateCalloutSource() {
   }, [
     availableUpdate,
     callouts,
+    downloadProgress,
     errorMessage,
     install,
     isDesktopApp,
@@ -117,23 +138,94 @@ export function UpdateCalloutSource() {
   return null;
 }
 
+function formatAvailableSummary(
+  t: ReturnType<typeof useTranslation>["t"],
+  versionLabel: string | undefined,
+  readyToInstall: boolean,
+): string {
+  if (readyToInstall) {
+    return versionLabel
+      ? t("desktop.updates.callout.versionReady", { version: versionLabel })
+      : t("desktop.updates.callout.newVersionReady");
+  }
+  return versionLabel
+    ? t("desktop.updates.callout.versionAvailable", { version: versionLabel })
+    : t("desktop.updates.callout.newVersionAvailable");
+}
+
 function UpdateAvailableDescription({
   versionLabel,
+  readyToInstall,
   t,
 }: {
   versionLabel?: string;
+  readyToInstall: boolean;
   t: ReturnType<typeof useTranslation>["t"];
 }) {
+  const summary = formatAvailableSummary(t, versionLabel, readyToInstall);
+
   return (
     <>
-      <SidebarCalloutDescriptionText>
-        {versionLabel
-          ? t("desktop.updates.callout.versionReady", { version: versionLabel })
-          : t("desktop.updates.callout.newVersionReady")}
-      </SidebarCalloutDescriptionText>
+      <SidebarCalloutDescriptionText>{summary}</SidebarCalloutDescriptionText>
       <SidebarCalloutDescriptionText>
         {t("desktop.updates.callout.restartWarning")}
       </SidebarCalloutDescriptionText>
     </>
   );
 }
+
+function UpdateDownloadingDescription({
+  versionLabel,
+  percent,
+  t,
+}: {
+  versionLabel?: string;
+  percent: number;
+  t: ReturnType<typeof useTranslation>["t"];
+}) {
+  const clampedPercent = Math.max(0, Math.min(100, percent));
+  const accessibilityValue = useMemo(
+    () => ({ min: 0, max: 100, now: clampedPercent }),
+    [clampedPercent],
+  );
+  const progressFillStyle = useMemo(
+    () => [styles.progressFill, { width: `${clampedPercent}%` as const }],
+    [clampedPercent],
+  );
+  return (
+    <View style={styles.progressContainer}>
+      <SidebarCalloutDescriptionText>
+        {versionLabel
+          ? t("desktop.updates.callout.downloadingVersionDescription", {
+              version: versionLabel,
+              percent: clampedPercent,
+            })
+          : t("desktop.updates.callout.downloadingDescription", { percent: clampedPercent })}
+      </SidebarCalloutDescriptionText>
+      <View
+        style={styles.progressTrack}
+        accessibilityRole="progressbar"
+        accessibilityValue={accessibilityValue}
+      >
+        <View style={progressFillStyle} />
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  progressContainer: {
+    gap: theme.spacing[2],
+  },
+  progressTrack: {
+    height: 4,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface3,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
+  },
+}));

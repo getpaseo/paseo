@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -165,6 +166,63 @@ describe("PiCliRuntime", () => {
         argv: ["pi", "--mode", "rpc"],
       }),
     ]);
+  });
+
+  test("starts Pi behind the session's launch wrap and talks to it through the wrap", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "pi-launch-wrap-"));
+    try {
+      const fakePi = path.join(root, "fake-pi.mjs");
+      await writeFile(
+        fakePi,
+        [
+          'import { createInterface } from "node:readline";',
+          'createInterface({ input: process.stdin }).on("line", (line) => {',
+          "  const command = JSON.parse(line);",
+          '  const data = { sessionId: "wrapped", argv: process.argv.slice(2) };',
+          '  process.stdout.write(JSON.stringify({ type: "response", id: command.id, command: command.type, success: true, data }) + "\\n");',
+          "});",
+          "",
+        ].join("\n"),
+      );
+      const launcher = path.join(root, "launcher.mjs");
+      await writeFile(
+        launcher,
+        [
+          'import { spawn } from "node:child_process";',
+          'import { writeFileSync } from "node:fs";',
+          "const [command, ...args] = process.argv.slice(2);",
+          'writeFileSync(new URL("./wrapped.json", import.meta.url), JSON.stringify([command, ...args]));',
+          'const child = spawn(command, args, { stdio: "inherit" });',
+          'child.on("exit", (code) => process.exit(code ?? 1));',
+          "",
+        ].join("\n"),
+      );
+      const runtime = new PiCliRuntime({
+        logger: pino({ level: "silent" }),
+        command: [process.execPath, fakePi],
+      });
+
+      const session = await runtime.startSession({
+        cwd: root,
+        wrap: [process.execPath, launcher],
+      });
+      try {
+        await expect(session.getState()).resolves.toMatchObject({
+          sessionId: "wrapped",
+          argv: ["--mode", "rpc"],
+        });
+        expect(JSON.parse(await readFile(path.join(root, "wrapped.json"), "utf8"))).toEqual([
+          process.execPath,
+          fakePi,
+          "--mode",
+          "rpc",
+        ]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("passes an MCP config path to Pi", async () => {
