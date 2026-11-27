@@ -311,6 +311,11 @@ export type {
   AgentTimelineWindow,
 } from "./agent-timeline-store-types.js";
 
+export type UsageObservedListener = (
+  agentId: string,
+  observation: Extract<AgentStreamEvent, { type: "usage_observed" }>,
+) => void;
+
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
   | { type: "agent_removed"; agentId: string; workspaceId?: string; internal: boolean }
@@ -942,6 +947,7 @@ export class AgentManager {
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly stopListeners = new Set<(agentId: string) => void>();
+  private readonly usageListeners = new Set<UsageObservedListener>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
@@ -1282,6 +1288,12 @@ export class AgentManager {
   onStop(listener: (agentId: string) => void): () => void {
     this.stopListeners.add(listener);
     return () => this.stopListeners.delete(listener);
+  }
+
+  /** Account usage an agent's provider observed while working (see `usage_observed`). */
+  onUsageObserved(listener: UsageObservedListener): () => void {
+    this.usageListeners.add(listener);
+    return () => this.usageListeners.delete(listener);
   }
 
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
@@ -5149,6 +5161,10 @@ export class AgentManager {
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
+      return;
+    }
+    if (event.type === "usage_observed") {
+      for (const listener of this.usageListeners) listener(agent.id, event);
       return;
     }
     if (event.type === "background_work") {

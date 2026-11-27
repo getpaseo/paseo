@@ -1046,6 +1046,9 @@ export async function createPaseoDaemon(
   };
   const unsubscribePluginProviders =
     pluginRuntime.subscribeProviderRegistrations(syncPluginProviders);
+  const unsubscribeObservedUsage = agentManager.onUsageObserved((agentId, observation) =>
+    pluginRuntime.observeUsage(agentId, observation),
+  );
 
   const detachAgentStoragePersistence = attachAgentStoragePersistence(
     logger,
@@ -2032,6 +2035,7 @@ export async function createPaseoDaemon(
       localCredential = null;
       await deleteLocalCredential(config.paseoHome);
       unsubscribePluginProviders();
+      unsubscribeObservedUsage();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       await agentProviderRuntime.shutdown().catch(() => undefined);
@@ -2054,6 +2058,7 @@ export async function createPaseoDaemon(
     // that is still open. Plugins themselves are stopped once every session
     // they serve has been closed, further down.
     unsubscribePluginProviders();
+    unsubscribeObservedUsage();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();

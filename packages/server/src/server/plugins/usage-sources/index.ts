@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { AgentUsageSession } from "../../agent/agent-sdk-types.js";
-import type { UsageScope } from "@getpaseo/plugin/server/usage";
+import type { AgentObservedUsageWindow, AgentUsageSession } from "../../agent/agent-sdk-types.js";
+import { toneFromUsedPct, type UsageScope } from "@getpaseo/plugin/server/usage";
 import { z } from "zod";
 import type { Logger } from "pino";
 import {
@@ -43,6 +43,20 @@ export interface AgentUsageLookup {
   isProviderActive?(provider: string, options?: { forceRefresh?: boolean }): Promise<boolean>;
 }
 
+/** Usage an agent's provider saw while working, in a usage source's window ids. */
+export interface UsageObservation {
+  sourceId: string;
+  /** Empty when usage moved by an unknown amount: the account's report is refetched instead. */
+  windows: AgentObservedUsageWindow[];
+}
+
+// A failed fetch is retried sooner than a successful one is refreshed, doubling up to the TTL.
+// A source that was told to wait (Claude's 429 Retry-After) answers from its own wait until then,
+// so these retries never reach the vendor early.
+const ERROR_RETRY_MS = 30_000;
+// Refetches an observation asks for, at most this often per report.
+const OBSERVED_REFETCH_INTERVAL_MS = 60_000;
+
 export interface ListUsageReportsOptions {
   forceRefresh?: boolean;
   reportIds?: string[];
@@ -50,7 +64,11 @@ export interface ListUsageReportsOptions {
   onReport?: (report: UsageReportEntry) => void;
 }
 
-/** Groups discovered logins by account and caches their usage for five minutes. */
+/**
+ * Groups discovered logins by account and caches their usage for five minutes (failures for
+ * less). Usage an agent observes while working is merged into the cached report of its account
+ * and announced to subscribers.
+ */
 export class UsageSourceRegistry {
   private readonly sources = new Map<string, UsageSource>();
   private readonly known = new Map<string, KnownReport>();
@@ -59,6 +77,15 @@ export class UsageSourceRegistry {
   private readonly cache = new Map<string, { at: number; entry: UsageReportEntry }>();
   private readonly successful = new Map<string, NonNullable<UsageReportEntry["lastSuccessful"]>>();
   private readonly pending = new Map<string, Promise<UsageReportEntry>>();
+  private readonly failures = new Map<string, number>();
+  private readonly listeners = new Set<(entry: UsageReportEntry) => void>();
+  // Agents whose account was resolved only to place an observation. Kept apart from `byAgent`,
+  // which also decides the host list, so working does not add an agent's account to it.
+  private readonly observedAgents = new Map<
+    string,
+    { sessionKey: string; reports: Promise<Map<string, KnownReport>> }
+  >();
+  private readonly observedRefetchAt = new Map<string, number>();
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -84,6 +111,100 @@ export class UsageSourceRegistry {
     for (const key of this.successful.keys())
       if (key.startsWith(`${id}:`)) this.successful.delete(key);
     for (const key of this.pending.keys()) if (key.startsWith(`${id}:`)) this.pending.delete(key);
+    for (const key of this.failures.keys()) if (key.startsWith(`${id}:`)) this.failures.delete(key);
+    for (const key of this.observedRefetchAt.keys())
+      if (key.startsWith(`${id}:`)) this.observedRefetchAt.delete(key);
+  }
+
+  /** Called with each report the registry updates on its own, outside any list request. */
+  subscribe(listener: (entry: UsageReportEntry) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Merges usage an agent observed into the cached reports of the account it runs under, and
+   * announces each one changed. Windows the observation does not name (per-model weekly limits)
+   * keep their fetched values, and the cache keeps its fetch time, so the next refresh still
+   * fetches them. With no windows, or no successful report to merge into, the report is
+   * refetched instead, at most once a minute. With no app listening, only reports a client already
+   * listed take the observation: nothing is discovered or fetched, so a busy host doesn't spend the
+   * vendor's rate limit in the background.
+   */
+  async observeUsage(agentId: string, observation: UsageObservation): Promise<void> {
+    const listening = this.listeners.size > 0;
+    const reports = listening
+      ? await this.observedReports(agentId)
+      : (this.byAgent.get(agentId) ?? new Map<string, KnownReport>());
+    for (const [id, report] of reports) {
+      if (
+        report.source.id !== observation.sourceId ||
+        this.sources.get(report.source.id) !== report.source
+      )
+        continue;
+      if (observation.windows.length > 0 && this.mergeObservation(id, observation.windows))
+        continue;
+      if (listening) this.refetchObserved(id, this.known.get(id) ?? report);
+    }
+  }
+
+  private async observedReports(agentId: string): Promise<Map<string, KnownReport>> {
+    const listed = this.byAgent.get(agentId);
+    if (listed) return listed;
+    const session = this.agents.usageSession(agentId);
+    if (!session) {
+      this.observedAgents.delete(agentId);
+      return new Map();
+    }
+    const observed = this.observedAgents.get(agentId);
+    if (observed?.sessionKey === session.sessionKey) return observed.reports;
+    const reports = this.discover({
+      kind: "session",
+      provider: session.provider,
+      model: session.model,
+      env: session.env,
+      launch: session.launch,
+    });
+    this.observedAgents.set(agentId, { sessionKey: session.sessionKey, reports });
+    return reports;
+  }
+
+  /** Whether any cached report of the account took the observed windows. */
+  private mergeObservation(id: string, windows: AgentObservedUsageWindow[]): boolean {
+    let merged = false;
+    for (const [cacheKey, cached] of this.cache) {
+      const { entry } = cached;
+      if (entry.id !== id || entry.report.status !== "available") continue;
+      const report = mergeWindows(entry.report, windows);
+      if (!report) continue;
+      const at = new Date(this.now()).toISOString();
+      const next: UsageReportEntry = { ...entry, fetchedAt: at, successfulAt: at, report };
+      this.cache.set(cacheKey, { at: cached.at, entry: next });
+      this.successful.set(cacheKey, { fetchedAt: at, report });
+      this.announce(next);
+      merged = true;
+    }
+    return merged;
+  }
+
+  private refetchObserved(id: string, known: KnownReport): void {
+    const last = this.observedRefetchAt.get(id);
+    const now = this.now();
+    if (last !== undefined && now - last < OBSERVED_REFETCH_INTERVAL_MS) return;
+    this.observedRefetchAt.set(id, now);
+    void this.fetchId(id, known, true)
+      .then((entry) => this.announce(entry))
+      .catch((error) => this.logger.warn({ err: error }, "Observed usage refetch failed"));
+  }
+
+  private announce(entry: UsageReportEntry): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(entry);
+      } catch (error) {
+        this.logger.warn({ err: error }, "Usage report listener failed");
+      }
+    }
   }
 
   async listReports(options: ListUsageReportsOptions = {}): Promise<UsageReportEntry[]> {
@@ -174,6 +295,9 @@ export class UsageSourceRegistry {
     for (const id of this.byAgent.keys()) {
       if (!this.agents.hasAgent(id)) this.byAgent.delete(id);
     }
+    for (const id of this.observedAgents.keys()) {
+      if (!this.agents.hasAgent(id)) this.observedAgents.delete(id);
+    }
     this.mergeKnown();
   }
 
@@ -225,6 +349,7 @@ export class UsageSourceRegistry {
     const active = this.activeCacheKeys();
     for (const key of this.successful.keys()) if (!active.has(key)) this.successful.delete(key);
     for (const key of this.cache.keys()) if (!active.has(key)) this.cache.delete(key);
+    for (const key of this.failures.keys()) if (!active.has(key)) this.failures.delete(key);
   }
 
   private activeCacheKeys(): Set<string> {
@@ -315,7 +440,7 @@ export class UsageSourceRegistry {
     // Account identity groups cards; the ordered login set identifies a fetch result.
     const cacheKey = cacheIdentity(id, known);
     const cached = this.cache.get(cacheKey);
-    if (!forceRefresh && cached && this.now() - cached.at < this.ttlMs)
+    if (!forceRefresh && cached && this.now() - cached.at < this.freshFor(cacheKey, cached.entry))
       return Promise.resolve(cached.entry);
     const pending = this.pending.get(cacheKey);
     if (pending) return pending;
@@ -347,6 +472,9 @@ export class UsageSourceRegistry {
             report: entry.report,
           });
         }
+        if (entry.report.status === "error")
+          this.failures.set(cacheKey, (this.failures.get(cacheKey) ?? 0) + 1);
+        else this.failures.delete(cacheKey);
         this.writeCache(cacheKey, entry);
       }
       return entry;
@@ -356,6 +484,13 @@ export class UsageSourceRegistry {
       if (this.pending.get(cacheKey) === request) this.pending.delete(cacheKey);
     });
     return request;
+  }
+
+  /** How long a cached entry answers: the TTL, or a backoff from 30s after consecutive errors. */
+  private freshFor(cacheKey: string, entry: UsageReportEntry): number {
+    if (entry.report.status !== "error") return this.ttlMs;
+    const failures = Math.max(1, this.failures.get(cacheKey) ?? 1);
+    return Math.min(this.ttlMs, ERROR_RETRY_MS * 2 ** (failures - 1));
   }
 
   private writeCache(id: string, entry: UsageReportEntry): void {
@@ -431,6 +566,31 @@ function legacyError(report: UsageReport, now: number): string | null {
   if (report.status === "error") return report.error;
   if (report.status === "unavailable") return legacyProblem(report.problem, now);
   return null;
+}
+
+/** The report with the observed windows' values, or null when it has none of those windows. */
+function mergeWindows(
+  report: Extract<UsageReport, { status: "available" }>,
+  observed: AgentObservedUsageWindow[],
+): Extract<UsageReport, { status: "available" }> | null {
+  let matched = false;
+  const windows = report.windows.map((window) => {
+    const update = observed.find((candidate) => candidate.id === window.id);
+    if (!update) return window;
+    matched = true;
+    const { runsOutAt: _runsOutAt, shortfallPct: _shortfallPct, ...rest } = window;
+    return {
+      ...rest,
+      usedPct: update.usedPct,
+      remainingPct: Math.max(0, 100 - update.usedPct),
+      resetsAt: update.resetsAt ?? window.resetsAt ?? null,
+      tone: toneFromUsedPct(update.usedPct),
+    };
+  });
+  if (!matched) return null;
+  // The observation is newer than the fetch the report came from.
+  const { observedAt: _observedAt, ...rest } = report;
+  return { ...rest, windows };
 }
 
 // Inputs are opaque JSON locators. Canonical equality deduplicates discovery across scopes.

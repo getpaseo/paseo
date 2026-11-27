@@ -503,7 +503,26 @@ export type AgentStreamEvent =
       type: "background_work";
       provider: AgentProvider;
       items: import("./background-work/index.js").AgentBackgroundWorkInput[] | null;
+    }
+  | {
+      /**
+       * Account usage the provider saw while working. The daemon merges it into the cached report
+       * of the account the agent runs under; it never reaches the timeline.
+       */
+      type: "usage_observed";
+      provider: AgentProvider;
+      /** The usage source whose report the windows belong to. */
+      sourceId: string;
+      /** Empty when the provider saw usage move but not by how much: the report is refetched. */
+      windows: AgentObservedUsageWindow[];
     };
+
+export interface AgentObservedUsageWindow {
+  /** The usage source's window id. */
+  id: string;
+  usedPct: number;
+  resetsAt: string | null;
+}
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
   return "turnId" in event ? event.turnId : undefined;

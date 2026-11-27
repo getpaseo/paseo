@@ -588,6 +588,9 @@ export interface SessionOptions {
     removePlugin(pluginId: string): Promise<void>;
     subscribe(listener: (pluginId: string) => void): () => void;
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
+    subscribeUsageReports?(
+      listener: (report: import("@getpaseo/protocol/messages").UsageReportEntry) => void,
+    ): () => void;
     catalog(): Array<{ id: string; clientBundle: string; clientBundleHash?: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
     subscribePluginRpc(
@@ -862,6 +865,7 @@ export class Session {
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
+  private unsubscribeUsageReports: (() => void) | null = null;
   private unsubscribeWorkspaceMutations: (() => void) | null = null;
   private unsubscribeBeforeWorkspacePublish: (() => void) | null = null;
   private registryMutationQueue: Promise<void> = Promise.resolve();
@@ -1245,6 +1249,7 @@ export class Session {
           this.unsubscribeProjectMutations,
           this.unsubscribeWorkspaceMutations,
           this.unsubscribePluginChanges,
+          this.unsubscribeUsageReports,
           this.unsubscribeTerminalWorkspaceContributionEvents,
           this.providerCatalogSession.isObserving,
           this.hubExecutionController?.isObserving,
@@ -2009,6 +2014,15 @@ export class Session {
     else {
       this.unsubscribePluginChanges?.();
       this.unsubscribePluginChanges = null;
+    }
+    if (this.wantsEvent("status.usage_report_changed"))
+      this.unsubscribeUsageReports ??=
+        this.pluginRuntime?.subscribeUsageReports?.((report) => {
+          this.emit({ type: "status", payload: { status: "usage_report_changed", report } });
+        }) ?? null;
+    else {
+      this.unsubscribeUsageReports?.();
+      this.unsubscribeUsageReports = null;
     }
   }
 
@@ -9771,6 +9785,8 @@ export class Session {
     this.unsubscribeProjectMutations = null;
     this.unsubscribePluginChanges?.();
     this.unsubscribePluginChanges = null;
+    this.unsubscribeUsageReports?.();
+    this.unsubscribeUsageReports = null;
     this.unsubscribeWorkspaceMutations?.();
     this.unsubscribeWorkspaceMutations = null;
     this.unsubscribeBeforeWorkspacePublish?.();
@@ -9854,6 +9870,8 @@ function statusEventCategory(
       return "status.plugin_catalog_changed";
     case "plugin_settings_changed":
       return "status.plugin_settings_changed";
+    case "usage_report_changed":
+      return "status.usage_report_changed";
     default:
       return null;
   }
@@ -9902,6 +9920,8 @@ function legacyWantsEvent(
     // Old apps parse outbound messages strictly and do not know this type.
     case "agent.background_work.update":
     case "plugin.notification":
+    // Older apps poll usage instead; this event only reaches sources that ask for it.
+    case "status.usage_report_changed":
       return false;
     default:
       return true;
