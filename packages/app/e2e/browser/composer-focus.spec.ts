@@ -233,6 +233,57 @@ test("opening an agent focuses the composer when a mouse drives the UI", async (
   }
 });
 
+/** The composer frame's border colour once its border-color transition has finished. */
+async function readSettledFrameBorder(page: Page): Promise<string> {
+  return composerLocator(page).evaluate(async (input) => {
+    let frame = input.parentElement;
+    while (frame && parseFloat(getComputedStyle(frame).borderTopWidth) < 1) {
+      frame = frame.parentElement;
+    }
+    if (!frame) throw new Error("Composer frame has no border");
+    while (frame.getAnimations().length > 0) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    return getComputedStyle(frame).borderTopColor;
+  });
+}
+
+test("the composer frame shows hover and focus", async ({ page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "composer-frame-focus-",
+    title: "Composer frame focus",
+  });
+
+  try {
+    await openAgentRoute(page, agent);
+    const composer = composerLocator(page);
+    await expectComposerVisible(page);
+    await page.mouse.move(0, 0);
+    await blurComposerInput(page);
+    const rest = await readSettledFrameBorder(page);
+
+    await composer.hover();
+    const hover = await readSettledFrameBorder(page);
+    expect(hover).not.toBe(rest);
+
+    await composer.click();
+    await page.mouse.move(0, 0);
+    await expectComposerFocused(page);
+    const focus = await readSettledFrameBorder(page);
+    expect(focus).not.toBe(rest);
+    expect(focus).not.toBe(hover);
+
+    await composer.hover();
+    expect(await readSettledFrameBorder(page)).toBe(focus);
+
+    await page.mouse.move(0, 0);
+    await blurComposerInput(page);
+    expect(await readSettledFrameBorder(page)).toBe(rest);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 async function waitForAnimationFrames(page: Page, count: number): Promise<void> {
   await page.evaluate(async (frames) => {
     for (let frame = 0; frame < frames; frame += 1) {
