@@ -132,7 +132,13 @@ export interface PiRpcSlashCommand {
 }
 
 export type PiRpcCommand =
-  | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
+  | {
+      id?: string;
+      type: "prompt";
+      message: string;
+      images?: PiImageContent[];
+      streamingBehavior?: "steer" | "followUp";
+    }
   | { id?: string; type: "steer"; message: string; images?: PiImageContent[] }
   | { id?: string; type: "clear_queue" }
   | { id?: string; type: "compact"; customInstructions?: string }
