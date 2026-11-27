@@ -1,0 +1,18 @@
+{
+  "production_source_restored": true,
+  "test_sha256": {
+    "packages/app/e2e/browser/viewed-agent-timelines.spec.ts": "1857d0ca187648d8377557cd82428a64546530795cf884c7474e921a1118c003",
+    "packages/app/e2e/support/helpers/timeline-delivery.ts": "23d0adb9f92daac6d0841d584abb7aa272a2981861d7d211c8213e98a9af90da"
+  },
+  "red": {
+    "result": "expected failure",
+    "assertion": "Reconnecting alert expected 0, received 1",
+    "timeout_ms": 3000
+  },
+  "green": {
+    "passed": 2,
+    "online_replacement_duration": "1.6m",
+    "ordinary_reconnect_duration": "35.9s",
+    "total_duration": "2.3m"
+  }
+}

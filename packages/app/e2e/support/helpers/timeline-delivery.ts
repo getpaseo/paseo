@@ -9,6 +9,7 @@ interface SessionMessage {
 
 interface TimelineSubscriptionWaitOptions {
   timeout?: number;
+  match?: "exact" | "includes";
 }
 
 function readSessionMessage(message: WebSocketMessage): SessionMessage | null {
@@ -56,7 +57,7 @@ export function observeTimelineSubscriptions(page: Page) {
         .poll(() => acknowledgedAgentIds?.slice().sort() ?? null, {
           timeout: options.timeout ?? 15_000,
         })
-        .toEqual(expected);
+        .toEqual(options.match === "includes" ? expect.arrayContaining(expected) : expected);
     },
   };
 }
