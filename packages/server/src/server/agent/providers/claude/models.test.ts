@@ -607,6 +607,254 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     });
   });
 
+  it("appends modelPicker.options with labels and deduplicates against model and env keys", async () => {
+    const customModelThinkingOptions = [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High", isDefault: true },
+      { id: "max", label: "Max" },
+    ];
+    const configDir = await createClaudeConfigDir({
+      model: "gemini-4-neon",
+      env: {
+        ANTHROPIC_MODEL: "gemini-4-carbon",
+        ANTHROPIC_SMALL_FAST_MODEL: "glm-5",
+      },
+      modelPicker: {
+        options: [
+          {
+            model: "gemini-4-neon",
+            label: "Gemini 4 Neon",
+            description: "Primary gateway model",
+          },
+          {
+            model: "gemini-4-carbon",
+            label: "Gemini 4 Carbon",
+          },
+          {
+            model: "gemini-4-hydrogen",
+          },
+          {
+            model: "gemini-4-carbon",
+            label: "Duplicate Should Be Ignored",
+          },
+        ],
+      },
+    });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    const client = createCatalogClient();
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models).toEqual([
+      ...getClaudeModels(),
+      {
+        provider: "claude",
+        id: "gemini-4-neon",
+        label: "Gemini 4 Neon",
+        description: "Primary gateway model",
+        thinkingOptions: customModelThinkingOptions,
+      },
+      {
+        provider: "claude",
+        id: "gemini-4-carbon",
+        label: "Gemini 4 Carbon",
+        description: "From Claude settings.json modelPicker.options",
+        thinkingOptions: customModelThinkingOptions,
+      },
+      {
+        provider: "claude",
+        id: "gemini-4-hydrogen",
+        label: "gemini-4-hydrogen",
+        description: "From Claude settings.json modelPicker.options",
+        thinkingOptions: customModelThinkingOptions,
+      },
+      {
+        provider: "claude",
+        id: "glm-5",
+        label: "glm-5",
+        description: "From Claude settings.json env.ANTHROPIC_SMALL_FAST_MODEL",
+        thinkingOptions: customModelThinkingOptions,
+      },
+    ]);
+  });
+
+  it("inherits capabilities from behavesAs on custom modelPicker.options entries", async () => {
+    const opus55 = findClaudeModel("claude-opus-5-5");
+    const configDir = await createClaudeConfigDir({
+      modelPicker: {
+        options: [
+          {
+            model: "gateway/custom-opus",
+            label: "Gateway Opus",
+            description: "Routed via corporate gateway",
+            behavesAs: "claude-opus-5-5",
+          },
+        ],
+      },
+    });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    const client = createCatalogClient();
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models.find((model) => model.id === "gateway/custom-opus")).toEqual({
+      provider: "claude",
+      id: "gateway/custom-opus",
+      label: "Gateway Opus",
+      description: "Routed via corporate gateway",
+      contextWindowMaxTokens: opus55?.contextWindowMaxTokens,
+      thinkingOptions: opus55?.thinkingOptions,
+      defaultThinkingOptionId: opus55?.defaultThinkingOptionId,
+    });
+  });
+
+  it("honors modelPicker.replaceBuiltInOptions and selects the configured default model", async () => {
+    const sonnet55 = findClaudeModel("claude-sonnet-5-5");
+    const configDir = await createClaudeConfigDir({
+      model: "gateway/model-b",
+      env: {
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gateway/background-haiku",
+      },
+      modelPicker: {
+        replaceBuiltInOptions: true,
+        options: [
+          { model: "gateway/model-a", label: "Model A" },
+          { model: "gateway/model-b", label: "Model B", description: "Default gateway model" },
+          { model: "claude-sonnet-5-5", label: "Proxy Sonnet 5.5" },
+        ],
+      },
+    });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    const client = createCatalogClient();
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models.map((model) => model.id)).toEqual([
+      "gateway/model-a",
+      "gateway/model-b",
+      "claude-sonnet-5-5",
+    ]);
+    expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      "gateway/model-b",
+    ]);
+    expect(models[2]).toEqual({
+      ...sonnet55,
+      label: "Proxy Sonnet 5.5",
+    });
+  });
+
+  it("defaults to the first option when replaceBuiltInOptions is true and model does not match", async () => {
+    const configDir = await createClaudeConfigDir({
+      modelPicker: {
+        replaceBuiltInOptions: true,
+        options: [
+          { model: "gateway/first", label: "First" },
+          { model: "gateway/second", label: "Second" },
+        ],
+      },
+    });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    const client = createCatalogClient();
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models.map((model) => ({ id: model.id, isDefault: model.isDefault }))).toEqual([
+      { id: "gateway/first", isDefault: true },
+      { id: "gateway/second", isDefault: undefined },
+    ]);
+  });
+
+  it("updates built-in label and description when customized in modelPicker.options", async () => {
+    const opus55 = findClaudeModel("claude-opus-5-5");
+    const configDir = await createClaudeConfigDir({
+      modelPicker: {
+        options: [
+          {
+            model: "claude-opus-5-5",
+            label: "Corporate Opus",
+            description: "Billed via gateway",
+          },
+        ],
+      },
+    });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+    const client = createCatalogClient();
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models.filter((model) => model.id === "claude-opus-5-5")).toEqual([
+      {
+        ...opus55,
+        label: "Corporate Opus",
+        description: "Billed via gateway",
+      },
+    ]);
+  });
+
+  it("ignores malformed modelPicker entries and preserves built-ins when replaced options are empty", async () => {
+    const invalidPickerDir = await createClaudeConfigDir({
+      model: "glm-5.1",
+      modelPicker: {
+        replaceBuiltInOptions: "yes",
+        options: [null, 42, { model: "  " }, { model: "gemini-4-argon", label: 123 }],
+      },
+    });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", invalidPickerDir);
+    const client = createCatalogClient();
+
+    const { models: partialModels } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(partialModels.map((model) => model.id)).toEqual([
+      ...getClaudeModels().map((model) => model.id),
+      "gemini-4-argon",
+      "glm-5.1",
+    ]);
+    expect(partialModels.find((model) => model.id === "gemini-4-argon")?.label).toBe(
+      "gemini-4-argon",
+    );
+
+    const emptyReplaceDir = await createClaudeConfigDir({
+      modelPicker: {
+        replaceBuiltInOptions: true,
+        options: [{ model: "" }],
+      },
+    });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", emptyReplaceDir);
+
+    const { models: fallbackModels } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(fallbackModels).toEqual(getClaudeModels());
+  });
+
   it("omits models that require a newer Claude Code version", async () => {
     const client = createCatalogClient("2.1.218");
 

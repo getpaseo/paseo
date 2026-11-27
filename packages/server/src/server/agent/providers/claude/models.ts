@@ -57,6 +57,20 @@ export function getClaudeContextWindowMaxTokens(
   return findClaudeModel(modelId)?.contextWindowMaxTokens;
 }
 
+interface ClaudeModelPickerOption {
+  id: string;
+  label?: string;
+  description?: string;
+  behavesAs?: string;
+}
+
+interface ClaudeSettingsModels {
+  defaultModelId?: string;
+  pickerOptions: ClaudeModelPickerOption[];
+  replaceBuiltInOptions: boolean;
+  configuredModels: AgentModelDefinition[];
+}
+
 export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir: string,
@@ -64,14 +78,40 @@ export async function getClaudeModelsWithSettings(
   discoveredModelIds: ReadonlySet<string> = new Set(),
 ): Promise<AgentModelDefinition[]> {
   const hardcodedModels = getClaudeManifestModels(claudeCodeVersion, discoveredModelIds);
-  const settingsModels = await readClaudeSettingsModels(logger, configDir);
-  if (settingsModels.length === 0) {
+  const settings = await readClaudeSettingsModels(logger, configDir);
+  if (settings.pickerOptions.length === 0 && settings.configuredModels.length === 0) {
     return hardcodedModels;
   }
 
-  const models = [...hardcodedModels];
+  const allManifestModels = getClaudeModels(claudeCodeVersion);
+  const replaceBuiltIn = settings.replaceBuiltInOptions && settings.pickerOptions.length > 0;
+  const models = replaceBuiltIn ? [] : [...hardcodedModels];
 
-  for (const model of settingsModels) {
+  for (const option of settings.pickerOptions) {
+    const existingIndex = models.findIndex((candidate) => candidate.id === option.id);
+    if (existingIndex !== -1) {
+      const existing = models[existingIndex];
+      const hasCustomMetadata = option.label !== undefined || option.description !== undefined;
+      if (existing.isSelectable === false || hasCustomMetadata) {
+        models[existingIndex] = {
+          ...existing,
+          ...(option.label !== undefined ? { label: option.label } : {}),
+          ...(option.description !== undefined ? { description: option.description } : {}),
+          ...(existing.isSelectable === false ? { isSelectable: true } : {}),
+        };
+      }
+      continue;
+    }
+
+    models.push(buildPickerOptionModel(option, allManifestModels));
+  }
+
+  if (replaceBuiltIn) {
+    markDefaultModel(models, settings.defaultModelId);
+    return models;
+  }
+
+  for (const model of settings.configuredModels) {
     const existingIndex = models.findIndex((candidate) => candidate.id === model.id);
     if (existingIndex !== -1) {
       const existing = models[existingIndex];
@@ -80,19 +120,86 @@ export async function getClaudeModelsWithSettings(
       }
       continue;
     }
-    const manifestModel = getClaudeModels(claudeCodeVersion).find(
-      (candidate) => candidate.id === model.id,
-    );
+    const manifestModel = allManifestModels.find((candidate) => candidate.id === model.id);
     models.push(resolveConfiguredClaudeModel({ ...manifestModel, ...model }));
   }
 
   return models;
 }
 
+function buildPickerOptionModel(
+  option: ClaudeModelPickerOption,
+  allManifestModels: readonly AgentModelDefinition[],
+): AgentModelDefinition {
+  const exactManifestModel = allManifestModels.find((candidate) => candidate.id === option.id);
+  if (exactManifestModel) {
+    const manifestBase: AgentModelDefinition = { ...exactManifestModel };
+    delete manifestBase.isDefault;
+    delete manifestBase.isSelectable;
+    return resolveConfiguredClaudeModel({
+      ...manifestBase,
+      provider: "claude",
+      id: option.id,
+      label: option.label ?? exactManifestModel.label,
+      description: option.description ?? exactManifestModel.description,
+    });
+  }
+
+  const templateModel = findManifestTemplateModel(option.behavesAs, allManifestModels);
+  return resolveConfiguredClaudeModel({
+    provider: "claude",
+    id: option.id,
+    label: option.label ?? option.id,
+    description: option.description ?? "From Claude settings.json modelPicker.options",
+    ...(templateModel?.contextWindowMaxTokens !== undefined
+      ? { contextWindowMaxTokens: templateModel.contextWindowMaxTokens }
+      : {}),
+    ...(templateModel?.thinkingOptions !== undefined
+      ? { thinkingOptions: templateModel.thinkingOptions }
+      : {}),
+    ...(templateModel?.defaultThinkingOptionId !== undefined
+      ? { defaultThinkingOptionId: templateModel.defaultThinkingOptionId }
+      : {}),
+  });
+}
+
+function findManifestTemplateModel(
+  modelId: string | undefined,
+  allManifestModels: readonly AgentModelDefinition[],
+): AgentModelDefinition | undefined {
+  if (!modelId) {
+    return undefined;
+  }
+  const exact = allManifestModels.find((candidate) => candidate.id === modelId);
+  if (exact) {
+    return exact;
+  }
+  const normalized = normalizeClaudeManifestModelId(modelId);
+  if (!normalized) {
+    return undefined;
+  }
+  return allManifestModels.find((candidate) => candidate.id === normalized);
+}
+
+function markDefaultModel(models: AgentModelDefinition[], defaultModelId?: string): void {
+  if (models.length === 0 || models.some((model) => model.isDefault)) {
+    return;
+  }
+  const defaultIndex =
+    defaultModelId !== undefined ? models.findIndex((model) => model.id === defaultModelId) : -1;
+  const targetIndex = defaultIndex !== -1 ? defaultIndex : 0;
+  models[targetIndex] = { ...models[targetIndex], isDefault: true };
+}
+
 async function readClaudeSettingsModels(
   logger: Logger,
   configDir: string,
-): Promise<AgentModelDefinition[]> {
+): Promise<ClaudeSettingsModels> {
+  const empty: ClaudeSettingsModels = {
+    pickerOptions: [],
+    replaceBuiltInOptions: false,
+    configuredModels: [],
+  };
   const settingsPath = path.join(configDir, "settings.json");
 
   let parsed: unknown;
@@ -101,31 +208,85 @@ async function readClaudeSettingsModels(
     parsed = JSON.parse(rawSettings);
   } catch (error) {
     logger.debug({ err: error, settingsPath }, "Failed to read Claude settings models");
-    return [];
+    return empty;
   }
 
   if (!isRecord(parsed)) {
     logger.debug({ settingsPath }, "Claude settings.json is not an object");
-    return [];
+    return empty;
   }
 
-  const models: AgentModelDefinition[] = [];
-  addSettingsModel(models, parsed.model, "model");
+  const defaultModelId = readTrimmedString(parsed.model);
+  const { pickerOptions, replaceBuiltInOptions } = readModelPicker(
+    logger,
+    settingsPath,
+    parsed.modelPicker,
+  );
+
+  const configuredModels: AgentModelDefinition[] = [];
+  addSettingsModel(configuredModels, parsed.model, "model");
 
   const env = parsed.env;
-  if (env === undefined) {
-    return models;
-  }
-  if (!isRecord(env)) {
-    logger.debug({ settingsPath }, "Claude settings.json env is not an object");
-    return models;
-  }
-
-  for (const envKey of CLAUDE_SETTINGS_MODEL_ENV_KEYS) {
-    addSettingsModel(models, env[envKey], `env.${envKey}`);
+  if (env !== undefined) {
+    if (!isRecord(env)) {
+      logger.debug({ settingsPath }, "Claude settings.json env is not an object");
+    } else {
+      for (const envKey of CLAUDE_SETTINGS_MODEL_ENV_KEYS) {
+        addSettingsModel(configuredModels, env[envKey], `env.${envKey}`);
+      }
+    }
   }
 
-  return models;
+  return {
+    defaultModelId,
+    pickerOptions,
+    replaceBuiltInOptions,
+    configuredModels,
+  };
+}
+
+function readModelPicker(
+  logger: Logger,
+  settingsPath: string,
+  value: unknown,
+): Pick<ClaudeSettingsModels, "pickerOptions" | "replaceBuiltInOptions"> {
+  if (value === undefined) {
+    return { pickerOptions: [], replaceBuiltInOptions: false };
+  }
+  if (!isRecord(value) || !Array.isArray(value.options)) {
+    logger.debug({ settingsPath }, "Claude settings.json modelPicker is invalid");
+    return { pickerOptions: [], replaceBuiltInOptions: false };
+  }
+
+  const pickerOptions: ClaudeModelPickerOption[] = [];
+  for (const entry of value.options) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const id = readTrimmedString(entry.model);
+    if (!id || pickerOptions.some((option) => option.id === id)) {
+      continue;
+    }
+    pickerOptions.push({
+      id,
+      label: readTrimmedString(entry.label),
+      description: readTrimmedString(entry.description),
+      behavesAs: readTrimmedString(entry.behavesAs),
+    });
+  }
+
+  return {
+    pickerOptions,
+    replaceBuiltInOptions: value.replaceBuiltInOptions === true,
+  };
+}
+
+function readTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function addSettingsModel(
@@ -133,12 +294,8 @@ function addSettingsModel(
   value: unknown,
   settingsKey: string,
 ): void {
-  if (typeof value !== "string") {
-    return;
-  }
-
-  const id = value.trim();
-  if (id.length === 0 || models.some((model) => model.id === id)) {
+  const id = readTrimmedString(value);
+  if (!id || models.some((model) => model.id === id)) {
     return;
   }
 
