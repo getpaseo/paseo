@@ -355,6 +355,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     viewedTimelineSyncRef.current = sync;
     setViewedTimelineSync(serverId, sync);
     sync.setActive(getIsAppVisible(appStateRef.current));
+    // An online client replacement leaves isConnected unchanged, so seed each new owner.
+    sync.setConnected(client.getConnectionState().status === "connected");
     const stopObservingOpenChats = observeOpenWorkspaceAgentIds(serverId, (agentIds) =>
       sync.replaceOpenTabAgentIds(agentIds),
     );

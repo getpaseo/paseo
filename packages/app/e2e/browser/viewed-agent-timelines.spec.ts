@@ -3,6 +3,7 @@ import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { test } from "../support/fixtures";
 import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { selectWorkspaceInSidebar } from "../support/helpers/sidebar";
@@ -254,7 +255,138 @@ async function expectCurrentChatWithoutCatchUp(page: Page, message: string) {
   await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
 }
 
+async function delayActiveDaemonPongs(page: Page, port: string) {
+  let deliveredPongs = 0;
+  const delayedPongs = new Set<ReturnType<typeof setTimeout>>();
+  await page.routeWebSocket(
+    (url) => url.hostname === "localhost" && url.port === port,
+    (socket) => {
+      const server = socket.connectToServer();
+      server.onMessage((message) => {
+        if (typeof message === "string" && JSON.parse(message).type === "pong") {
+          const timer = setTimeout(() => {
+            delayedPongs.delete(timer);
+            socket.send(message);
+            deliveredPongs += 1;
+          }, 250);
+          delayedPongs.add(timer);
+        } else {
+          socket.send(message);
+        }
+      });
+    },
+  );
+  return {
+    delivered: () => deliveredPongs,
+    dispose: () => {
+      for (const timer of delayedPongs) clearTimeout(timer);
+    },
+  };
+}
+
+async function readActiveLivenessRtt(page: Page): Promise<number> {
+  return page.evaluate((serverId) => {
+    const runtime = Reflect.get(globalThis, "__paseoHostRuntimeStore") as {
+      getClient(id: string): { getLastLivenessRttMs(): number | null } | null;
+    };
+    return runtime.getClient(serverId)?.getLastLivenessRttMs() ?? 0;
+  }, getServerId());
+}
+
+async function readHostConnection(page: Page) {
+  return page.evaluate((serverId) => {
+    const runtime = Reflect.get(globalThis, "__paseoHostRuntimeStore") as {
+      getSnapshot(id: string): {
+        clientGeneration: number;
+        connectionStatus: string;
+        activeConnectionId: string;
+      };
+    };
+    const snapshot = runtime.getSnapshot(serverId);
+    return {
+      generation: snapshot.clientGeneration,
+      status: snapshot.connectionStatus,
+      connection: snapshot.activeConnectionId,
+    };
+  }, getServerId());
+}
+
 test.describe("Viewed agent timelines", () => {
+  test("an online connection replacement keeps every open chat synchronized", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(510_000);
+    const port = getE2EDaemonPort();
+    const delayedEndpoint = `localhost:${port}`;
+    const fasterEndpoint = `127.0.0.1:${port}`;
+    const delayedPongs = await delayActiveDaemonPongs(page, port);
+    const subscriptions = observeTimelineSubscriptions(page);
+    const scenario = await seedViewedTimelineScenario();
+    try {
+      await commitMessage(scenario, scenario.firstAgentId, "BEFORE_CONNECTION_REPLACEMENT");
+      await openAgent(page, scenario, scenario.firstAgentId);
+      await selectAgent(page, "Second viewed chat");
+      await selectAgent(page, "First viewed chat");
+      await subscriptions.waitForSubscribedAgents([scenario.firstAgentId, scenario.secondAgentId]);
+      await expectReconnectingToastGone(page);
+      // The adaptive selector needs an RTT from the active socket, not only its startup probe.
+      await expect.poll(delayedPongs.delivered, { timeout: 30_000 }).toBeGreaterThan(1);
+      await expect
+        .poll(() => readActiveLivenessRtt(page), { timeout: 30_000 })
+        .toBeGreaterThanOrEqual(200);
+
+      // Add another real route to the same daemon. Delaying only the active route's real
+      // pong frames gives the ordinary adaptive selector three consistently faster probes.
+      // No host state is forced offline and no client or timeline owner is replaced by the test.
+      const beforeGeneration = await page.evaluate(
+        async ({ serverId, endpoint, activeEndpoint }) => {
+          const runtime = Reflect.get(globalThis, "__paseoHostRuntimeStore") as {
+            getSnapshot(id: string): {
+              clientGeneration: number;
+              connectionStatus: string;
+              activeConnectionId: string;
+            };
+            upsertDirectConnection(input: { serverId: string; endpoint: string }): Promise<unknown>;
+          };
+          const before = runtime.getSnapshot(serverId);
+          if (
+            before.connectionStatus !== "online" ||
+            before.activeConnectionId !== `direct:${activeEndpoint}`
+          ) {
+            throw new Error("Expected the initial real connection to be online");
+          }
+          await runtime.upsertDirectConnection({ serverId, endpoint });
+          return before.clientGeneration;
+        },
+        { serverId: getServerId(), endpoint: fasterEndpoint, activeEndpoint: delayedEndpoint },
+      );
+      subscriptions.reset();
+      await expect
+        .poll(() => readHostConnection(page), { timeout: 420_000, intervals: [1_000] })
+        .toEqual({
+          generation: beforeGeneration + 1,
+          status: "online",
+          connection: `direct:${fasterEndpoint}`,
+        });
+      await page.screenshot({
+        path: testInfo.outputPath("after-online-connection-replacement.png"),
+      });
+      await expectReconnectingToastGone(page);
+      await subscriptions.waitForSubscribedAgents([scenario.firstAgentId]);
+      await commitMessage(scenario, scenario.firstAgentId, "FIRST_CHAT_AFTER_REPLACEMENT");
+      await expect(page.getByText("FIRST_CHAT_AFTER_REPLACEMENT", { exact: true })).toBeVisible();
+      await selectAgent(page, "Second viewed chat");
+      await expectReconnectingToastGone(page);
+      await subscriptions.waitForSubscribedAgents([scenario.firstAgentId, scenario.secondAgentId]);
+      await commitMessage(scenario, scenario.secondAgentId, "SECOND_CHAT_AFTER_REPLACEMENT");
+      await expect(page.getByText("SECOND_CHAT_AFTER_REPLACEMENT", { exact: true })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("both-chats-synchronized.png") });
+    } finally {
+      delayedPongs.dispose();
+      await scenario.cleanup();
+    }
+  });
+
   test("a reloaded layout subscribes only the chat it restores into", async ({ page }) => {
     test.setTimeout(120_000);
     const subscriptions = observeTimelineSubscriptions(page);
