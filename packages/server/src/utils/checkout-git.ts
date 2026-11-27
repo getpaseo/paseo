@@ -2123,6 +2123,7 @@ async function inspectCheckoutContext(
   };
 }
 
+
 function buildPullRequestLookupTargetFromBranchConfig(
   input: PullRequestLookupTargetBranchConfig,
 ): PullRequestStatusLookupTarget {

@@ -17,7 +17,10 @@ import {
   type ProjectRegistry,
   type WorkspaceRegistry,
 } from "../../workspace-registry.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type {
+  WorkspaceGitCheckoutReadOptions,
+  WorkspaceGitService,
+} from "../../workspace-git-service.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
@@ -208,9 +211,12 @@ export function createWorkspaceProvisioningService(deps: {
     }
   }
 
-  async function findOrCreateProjectForDirectory(cwd: string): Promise<PersistedProjectRecord> {
+  async function findOrCreateProjectForDirectory(
+    cwd: string,
+    knownCheckout?: ProjectCheckoutLitePayload,
+  ): Promise<PersistedProjectRecord> {
     const rootPath = resolve(cwd);
-    const checkout = await workspaceGitService.getCheckout(rootPath);
+    const checkout = knownCheckout ?? (await workspaceGitService.getCheckout(rootPath));
     const timestamp = new Date().toISOString();
     return projectRegistry.getOrCreateActiveByRoot({
       rootPath,
@@ -264,11 +270,17 @@ export function createWorkspaceProvisioningService(deps: {
     },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
-    const checkout = await workspaceGitService.getCheckout(normalizedCwd);
+    const readOptions = { placementOnly: true };
+    const checkout = await workspaceGitService.getCheckout(normalizedCwd, readOptions);
     const project = projectId
-      ? await refreshProjectKind(await requireActiveProject(projectId), normalizedCwd, checkout)
+      ? await refreshProjectKind(
+          await requireActiveProject(projectId),
+          normalizedCwd,
+          checkout,
+          readOptions,
+        )
       : // COMPAT(workspaceCreateMissingProjectId): added in v0.1.107, remove after 2027-01-15.
-        await findOrCreateProjectForDirectory(normalizedCwd);
+        await findOrCreateProjectForDirectory(normalizedCwd, checkout);
     const create = async () => {
       const baseMetadata =
         checkout.isGit && checkout.isPaseoOwnedWorktree
@@ -601,11 +613,12 @@ export function createWorkspaceProvisioningService(deps: {
     project: PersistedProjectRecord,
     workspaceCwd?: string,
     workspaceCheckout?: Awaited<ReturnType<WorkspaceGitService["getCheckout"]>>,
+    readOptions?: WorkspaceGitCheckoutReadOptions,
   ): Promise<PersistedProjectRecord> {
     const projectCheckout =
       workspaceCwd && workspaceCheckout && areEquivalentPaths(project.rootPath, workspaceCwd)
         ? workspaceCheckout
-        : await workspaceGitService.getCheckout(project.rootPath);
+        : await workspaceGitService.getCheckout(project.rootPath, readOptions);
     const kind: PersistedProjectRecord["kind"] = projectCheckout.isGit ? "git" : "non_git";
     const projectKey = deriveProjectKey({
       rootPath: project.rootPath,

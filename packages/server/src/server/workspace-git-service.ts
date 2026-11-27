@@ -8,7 +8,7 @@ import type pino from "pino";
 import type { ForgeWeb, ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { CheckoutReadSession } from "../utils/checkout-read-session.js";
-import type { CheckoutContext, UpstreamState } from "../utils/checkout-git.js";
+import type { UpstreamState } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
   type BranchSuggestion,
@@ -384,6 +384,8 @@ export interface WorkspaceGitCheckoutReadOptions {
   readSession?: CheckoutReadSession;
   /** Git lane for the fresh checkout read; defaults to the caller's ambient lane. */
   priority?: GitProcessPriority;
+  /** Use only for local placement, where status must not gate access to the directory. */
+  placementOnly?: boolean;
 }
 
 // A caller waiting on a merged refresh keeps it out of the background lane.

@@ -4,7 +4,7 @@ import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { WebSocket } from "ws";
 import { SessionInboundMessageSchema, WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
@@ -306,6 +306,99 @@ test("legacy keyed creation preserves checkout error codes", async () => {
     await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }, 60000);
+
+test("local workspace starts an agent when Git cannot read the HEAD tree", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "creation-bad-git-tree-")));
+  const cwd = join(directory, "subproject");
+  const tracked = join(cwd, "tracked.txt");
+  const launch = vi.fn();
+  const startTurn = vi.fn();
+  const daemon = await createCreationDaemon({
+    agentClients: createTestAgentClients({
+      beforeCreateSession: async (config) => {
+        if (!config.internal) launch(config);
+      },
+      onStartTurn: (_prompt, config) => {
+        if (!config.internal) startTurn();
+      },
+    }),
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.11.1" });
+  try {
+    await mkdir(cwd);
+    await writeFile(tracked, "working file\n");
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: directory, encoding: "utf8", stdio: "pipe" }).trim();
+    git("init", "-b", "main");
+    git("add", "subproject/tracked.txt");
+    git(
+      "-c",
+      "user.name=Paseo Test",
+      "-c",
+      "user.email=test@getpaseo.local",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "gc.auto=0",
+      "commit",
+      "-m",
+      "initial",
+    );
+    await client.connect();
+    const added = await client.addProject(directory);
+    expect(added.error).toBeNull();
+    const projectId = added.project!.projectId;
+
+    // Lose only the loose tree object, not the commit, checkout metadata, or working file.
+    const tree = git("rev-parse", "HEAD^{tree}");
+    await rm(join(directory, ".git", "objects", tree.slice(0, 2), tree.slice(2)));
+
+    for (const path of [join(directory, "missing"), tracked]) {
+      const invalid = await client.createWorkspace({
+        source: { kind: "directory", path, projectId },
+      });
+      expect(invalid).toMatchObject({ workspace: null, errorCode: "directory_not_found" });
+    }
+
+    const result = await client.createWorkspace({
+      source: { kind: "directory", path: cwd, projectId },
+      agent: {
+        config: { cwd, provider: "codex", model: "gpt-5.4-mini", modeId: "auto" },
+        initialPrompt: "Inspect the working files",
+      },
+    });
+    expect(result).toMatchObject({
+      error: null,
+      workspace: {
+        projectId,
+        workspaceDirectory: cwd,
+        workspaceKind: "local_checkout",
+        project: { checkout: { isGit: true, currentBranch: "main", worktreeRoot: directory } },
+      },
+      agent: { cwd },
+      creation: { phase: "completed" },
+    });
+    expect(launch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cwd, provider: "codex", model: "gpt-5.4-mini", modeId: "auto" }),
+    );
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(await readFile(tracked, "utf8")).toBe("working file\n");
+
+    const gitFailure = "bad tree object HEAD";
+    expect(await client.getCheckoutStatus(cwd)).toMatchObject({
+      isDirty: null,
+      error: { message: expect.stringContaining(gitFailure) },
+    });
+    const worktree = await client.createWorkspace({
+      source: { kind: "worktree", cwd, projectId, action: "branch-off", branchName: "new-branch" },
+    });
+    expect(worktree).toMatchObject({ workspace: null, error: expect.stringContaining(gitFailure) });
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+}, 60_000);
 
 test.each(["agent", "workspace"] as const)(
   "%s creation succeeds when the provider rejects its initial prompt",

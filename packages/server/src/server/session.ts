@@ -6707,7 +6707,9 @@ export class Session {
         paseoWorktreesBaseRoot: this.worktreesRoot,
       });
     } else {
-      const checkout = await this.workspaceGitService.getCheckout(normalizedCwd);
+      const checkout = await this.workspaceGitService.getCheckout(normalizedCwd, {
+        placementOnly: true,
+      });
       if (checkout.isGit && checkout.worktreeRoot) {
         checkoutPath = resolve(checkout.worktreeRoot);
       }

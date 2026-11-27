@@ -25,6 +25,7 @@ import {
   CHECKOUT_DIFF_MAX_STRUCTURED_BYTES,
   createPullRequest,
   getCachedCheckoutShortstat,
+  getCheckoutIdentity,
   getCheckoutSnapshotFacts,
   getCurrentBranch,
   getCheckoutDiff,
@@ -472,6 +473,18 @@ describe("checkout git utilities", () => {
 
     const branch = await getCurrentBranch(emptyRepo);
     expect(branch).toBeNull();
+  });
+
+  it("does not classify an unborn repo under the managed root as an owned worktree", async () => {
+    const cwd = join(paseoHome, "worktrees", "project", "unborn");
+    mkdirSync(cwd, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd });
+
+    await expect(getCheckoutIdentity(cwd, { paseoHome })).resolves.toMatchObject({
+      isGit: true,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    });
   });
 
   it("returns untracked files in an uncommitted diff before the first commit", async () => {
