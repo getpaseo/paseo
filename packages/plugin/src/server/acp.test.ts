@@ -7585,4 +7585,71 @@ describe("respectful ACP probing defaults and hygiene", () => {
       await connection.close();
     }
   });
+
+  it("cancels pending form elicitations when a turn is interrupted", async () => {
+    let elicitationResult: Promise<unknown> | null = null;
+    let promptRequest: AcpRequestMessage | null = null;
+    const harness = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method === "session/prompt") {
+          promptRequest = request;
+          elicitationResult = instance.request("elicitation/create", {
+            sessionId: "connector-session",
+            mode: "form",
+            message: "Choose one",
+            requestedSchema: {
+              type: "object",
+              properties: {
+                choice: { type: "string", title: "Pick", enum: ["A", "B"] },
+              },
+            },
+          });
+          return true;
+        }
+        return false;
+      },
+      handleMessage(instance, message) {
+        if ("method" in message && message.method === "session/cancel" && promptRequest) {
+          instance.respond(promptRequest, { stopReason: "cancelled" });
+          promptRequest = null;
+          return true;
+        }
+        return false;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "elicitation-cancel",
+      label: "Elicitation Cancel",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "permission"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "cancel-elicit",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Ask me" }] },
+        },
+      });
+      await waitForEvent(events, (event) => event.type === "session.permission");
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "interrupt-1",
+        sessionId: "session-1",
+      });
+      await expect(elicitationResult).resolves.toEqual({ action: "cancel" });
+      await waitForEvent(events, (event) => event.type === "session.permission_resolved");
+    } finally {
+      await connection.close();
+    }
+  });
 });
