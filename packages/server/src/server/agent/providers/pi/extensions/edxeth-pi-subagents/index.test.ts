@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { edxethPiSubagents } from "./index.js";
 import { streamPiHistory } from "../../history-mapper.js";
 import { ProviderSubagentStore } from "../../../../provider-subagents/store.js";
+import { AgentTimeline } from "../../../../timeline/index.js";
 
 const args = {
   agent: "scout",
@@ -274,13 +275,13 @@ describe("edxeth/pi-subagents adapter", () => {
         from: `/tmp/paseo-edxeth-fixture/${mode}/child-session.jsonl`,
         to: fileURLToPath(new URL(`./fixtures/${mode}-child-session.jsonl`, import.meta.url)),
       });
-      const store = new ProviderSubagentStore();
+      const store = new ProviderSubagentStore(new AgentTimeline());
       for await (const event of streamPiHistory("pi", fixture.messages)) {
-        if (event.type === "provider_subagent") store.apply("parent", "pi", event.event);
+        if (event.type === "provider_subagent") await store.apply("parent", "pi", event.event);
       }
-      const children = store.list("parent");
+      const children = await store.list("parent");
       expect(children).toEqual([expect.objectContaining({ status: "completed", title: "marker" })]);
-      const transcript = store.fetchTimeline("parent", children[0]!.id);
+      const transcript = await store.fetchTimeline("parent", children[0]!.id);
       expect(transcript.rows).toContainEqual(
         expect.objectContaining({
           item: expect.objectContaining({

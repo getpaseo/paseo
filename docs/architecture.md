@@ -94,6 +94,7 @@ workspace for a directory clears it. The store lives in memory and resets on dae
 | `server/directory-sync/`        | Daemon-global latest-state sequences for projects, workspaces, and agents      |
 | `server/workspace-labels/`      | Host-local label catalog, assignment mutations, and explicit subscriptions     |
 | `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management        |
+| `server/agent/timeline/`        | Owned agent history, provider children, rewind retirements, behind a backend   |
 | `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                          |
 | `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation  |
 | `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK        |
@@ -402,7 +403,7 @@ initializing → idle ⇄ running
   client-side dedup; the default fetch page is 200 items.
 - Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to connected clients in real time; correctness is backed by authoritative timeline fetches and paged-to-completion catch-up.
-- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`. Timeline rows are runtime memory; provider history is the durable transcript authority and resumed agents rebuild from it. That storage path is derived from `cwd`, not from workspace id.
+- Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json`. That storage path is derived from `cwd`, not from workspace id. Timeline rows persist in the daemon database, `$PASEO_HOME/paseo.db`. They are the transcript authority after the first import of provider history. See [owned history](timeline-sync.md#owned-history).
 
 ## Right-sidebar boundary: directory-backed vs workspace-owned
 
@@ -478,6 +479,7 @@ Providers that can accept native tool definitions should set `supportsNativePase
 ```
 $PASEO_HOME/
 ├── agents/{cwd-with-dashes}/{agent-id}.json   # Agent record
+├── paseo.db                                    # Daemon database (SQLite): agent timelines
 ├── projects/projects.json                      # Project registry
 ├── projects/workspaces.json                    # Workspace registry
 ├── projects/icons/                             # Custom project icon images

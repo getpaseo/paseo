@@ -83,8 +83,18 @@ import {
 } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
+import {
+  applyFailedStartupSettings,
+  beginStagedProviderSwitch,
+  discardFailedStartupSettings,
+  endStagedProviderSwitch,
+  getFailedStartupSettings,
+  getStagedProviderSwitch,
+  settleCommittedProviderSwitch,
+} from "@/composer/provider-switch";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
@@ -255,6 +265,7 @@ const PROBE_INACTIVE_WHILE_ONLINE_MAX_MS = 30 * 60_000;
 const ACTIVE_RTT_WINDOW_MS = 60_000;
 const ADAPTIVE_SWITCH_THRESHOLD_MS = 40;
 const ADAPTIVE_SWITCH_MIN_IMPROVEMENT_RATIO = 0.35;
+const MAX_STALE_TIMELINE_PAGE_ATTEMPTS = 3;
 const ADAPTIVE_SWITCH_CONSECUTIVE_PROBES = 3;
 const CONFIGURED_OVERRIDE_BOOTSTRAP_RETRY_MS = 1_000;
 
@@ -1917,6 +1928,7 @@ export class HostRuntimeStore {
   private lastOnlineEpochByServer = new Map<string, number>();
   private connectionStatusStartedAtByServer = new Map<string, number>();
   private queuedAgentDrainInFlight = new Set<string>();
+  private queuedAgentDrainPending = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
   private nextCancellationRequestId = 0;
   private timelineReplicaByServer = new Map<string, TimelineReplica>();
@@ -2881,9 +2893,58 @@ export class HostRuntimeStore {
     }
   }
 
+  private resumeIdleQueueIfReady(serverId: string, agentId: string): void {
+    const latestSession = useSessionStore.getState().sessions[serverId];
+    const latestAgent = latestSession?.agents.get(agentId);
+    const remainingQueue = latestSession?.queuedMessages.get(agentId);
+    if (
+      latestAgent?.status === "idle" &&
+      remainingQueue &&
+      remainingQueue.length > 0 &&
+      latestSession?.initializingAgents.get(agentId) !== true
+    ) {
+      this.drainQueuedAgentMessage(serverId, agentId);
+    }
+  }
+
+  /**
+   * Explicitly retries or discards startup settings that failed after a provider switch,
+   * then resumes automatic draining if the chat is idle with queued messages.
+   */
+  async recoverFailedStartupSettings(
+    serverId: string,
+    agentId: string,
+    action: "retry" | "discard",
+  ): Promise<boolean> {
+    if (action === "discard") {
+      discardFailedStartupSettings(serverId, agentId);
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+      this.resumeIdleQueueIfReady(serverId, agentId);
+      return true;
+    }
+    const client = useSessionStore.getState().sessions[serverId]?.client;
+    if (!client) {
+      return false;
+    }
+    const result = await applyFailedStartupSettings({ serverId, agentId, client });
+    if (!result.applied) {
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, result.errorMessage);
+      return false;
+    }
+    useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+    this.resumeIdleQueueIfReady(serverId, agentId);
+    return true;
+  }
+
   drainQueuedAgentMessage(serverId: string, agentId: string): void {
+    if (getFailedStartupSettings(serverId, agentId)) {
+      return;
+    }
     const drainKey = `${serverId}:${agentId}`;
-    if (this.queuedAgentDrainInFlight.has(drainKey)) return;
+    if (this.queuedAgentDrainInFlight.has(drainKey)) {
+      this.queuedAgentDrainPending.add(drainKey);
+      return;
+    }
     const store = useSessionStore.getState();
     const session = store.sessions[serverId];
     const queue = session?.queuedMessages.get(agentId);
@@ -2892,7 +2953,11 @@ export class HostRuntimeStore {
       return;
     }
     this.queuedAgentDrainInFlight.add(drainKey);
+    this.queuedAgentDrainPending.delete(drainKey);
+    useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
     const next = queue[0];
+    let drainSent = false;
+    let drainBlockedBySettingsError: string | null = null;
     void sendQueuedComposerMessageNow({
       agentId,
       messageId: next.id,
@@ -2902,28 +2967,69 @@ export class HostRuntimeStore {
         write: (update) => useSessionStore.getState().setQueuedMessages(serverId, update),
       },
       submitMessage: async ({ text, attachments }) => {
-        const supportsForgeAttachments =
-          useSessionStore.getState().sessions[serverId]?.serverInfo?.features?.forgeSearch === true;
-        await dispatchComposerAgentMessage({
-          client,
-          agentId,
-          text,
-          attachments,
-          attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
-            supportsForgeAttachments,
-          }),
-          encodeImages,
-          submission: createMessageSubmissionWriter(serverId),
-          // The queue drains when the agent goes idle, but the agent can start a turn of its own
-          // in that same moment (a wake-up after background work). Steering folds the message
-          // into that turn instead of interrupting it; with no turn running, the daemon starts
-          // a normal one.
-          activeTurnBehavior: "steer",
-        });
+        const currentSession = useSessionStore.getState().sessions[serverId];
+        const supportsForgeAttachments = currentSession?.serverInfo?.features?.forgeSearch === true;
+        const supportsProviderSwitching =
+          currentSession?.serverInfo?.features?.providerSwitching === true;
+        const liveProvider = currentSession?.agents.get(agentId)?.provider;
+        const rawStagedSwitch = supportsProviderSwitching
+          ? getStagedProviderSwitch(serverId, agentId)
+          : null;
+        const stagedProviderSwitch =
+          rawStagedSwitch && rawStagedSwitch.provider !== liveProvider ? rawStagedSwitch : null;
+        if (stagedProviderSwitch) {
+          beginStagedProviderSwitch(serverId, agentId);
+        }
+        try {
+          await dispatchComposerAgentMessage({
+            client,
+            agentId,
+            text,
+            attachments,
+            attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
+              supportsForgeAttachments,
+            }),
+            encodeImages,
+            submission: createMessageSubmissionWriter(serverId),
+            stagedProviderSwitch,
+            onProviderSwitchCommitted: async (agent) => {
+              if (agent) {
+                this.tryAcceptAgentSnapshot(serverId, normalizeAgentSnapshot(agent, serverId));
+              }
+              if (stagedProviderSwitch) {
+                const settled = await settleCommittedProviderSwitch({
+                  serverId,
+                  agentId,
+                  sentDraft: stagedProviderSwitch,
+                  committedProvider: agent?.provider ?? null,
+                  client,
+                });
+                if (!settled.applied) {
+                  drainBlockedBySettingsError = settled.errorMessage;
+                }
+              }
+            },
+            // The queue drains when the agent goes idle, but the agent can start a turn of its own
+            // in that same moment (a wake-up after background work). Steering folds the message
+            // into that turn instead of interrupting it; with no turn running, the daemon starts
+            // a normal one.
+            activeTurnBehavior: "steer",
+          });
+        } finally {
+          if (stagedProviderSwitch) {
+            endStagedProviderSwitch(serverId, agentId);
+          }
+        }
       },
     })
       .then((result) => {
-        if (result.status === "failed") {
+        if (result.status === "submitted") {
+          drainSent = drainBlockedBySettingsError === null;
+          useSessionStore
+            .getState()
+            .setQueuedSendError(serverId, agentId, drainBlockedBySettingsError);
+        } else if (result.status === "failed") {
+          useSessionStore.getState().setQueuedSendError(serverId, agentId, result.errorMessage);
           console.error("[HostRuntime] failed to drain queued agent message", {
             serverId,
             agentId,
@@ -2934,6 +3040,9 @@ export class HostRuntimeStore {
       })
       .finally(() => {
         this.queuedAgentDrainInFlight.delete(drainKey);
+        const hadPendingDrain = this.queuedAgentDrainPending.delete(drainKey);
+        if (!drainSent || !hadPendingDrain) return;
+        this.resumeIdleQueueIfReady(serverId, agentId);
       });
   }
 
@@ -2957,6 +3066,10 @@ export class HostRuntimeStore {
 
   acceptAgentSnapshot(serverId: string, agent: Agent): Agent {
     return this.requireDirectory(serverId).acceptAgent(agent);
+  }
+
+  tryAcceptAgentSnapshot(serverId: string, agent: Agent): Agent | null {
+    return this.directorySyncByServer.get(serverId)?.acceptAgent(agent) ?? null;
   }
 
   archiveAgentSnapshot(serverId: string, agentId: string, archivedAt: string): void {
@@ -3128,12 +3241,19 @@ export class HostRuntimeStore {
     const directory = this.directorySyncByServer.get(serverId);
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
     const owner = useSessionStore.getState().sessions[serverId]?.viewedTimelineSync;
-    const page = await directory.fetchTimeline(agentId, request);
-    if (owner && useSessionStore.getState().sessions[serverId]?.viewedTimelineSync === owner) {
+    // A page served before a rewind this client applied is asked for again. Seqs only grow within
+    // an epoch, so the next page includes the rewind unless another one landed meanwhile.
+    for (let attempt = 1; ; attempt += 1) {
+      const page = await directory.fetchTimeline(agentId, request);
+      if (!owner || useSessionStore.getState().sessions[serverId]?.viewedTimelineSync !== owner) {
+        return page;
+      }
       owner.flushStreamAgent(agentId);
-      owner.applyTimelineResponse(page);
+      if (owner.applyTimelineResponse(page) !== "stale") return page;
+      if (attempt === MAX_STALE_TIMELINE_PAGE_ATTEMPTS) {
+        throw new Error(`Timeline page for ${agentId} stayed behind a rewind`);
+      }
     }
-    return page;
   }
 
   createViewedTimelineOwner(

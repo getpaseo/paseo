@@ -74,7 +74,7 @@ export class AgentRunState {
    */
   async waitForForegroundStart(agentId: string): Promise<void> {
     const run = this.getPendingRun(agentId);
-    if (run?.start.status !== "pending") {
+    if (!run || run.start.status === "started") {
       return;
     }
     await Promise.race([run.turnStartedPromise, run.settledPromise]);
@@ -359,6 +359,7 @@ export class ForegroundPromptStart {
   constructor(
     private readonly agentId: string,
     readonly admit?: () => boolean,
+    readonly switchReservationToken?: string,
   ) {
     this.started = new Promise<void>((resolve, reject) => {
       this.resolveStarted = resolve;

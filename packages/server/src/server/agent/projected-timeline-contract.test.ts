@@ -60,13 +60,19 @@ test("projects Codex child history and confines old-client degradation to the ch
       );
     }
     await expect
-      .poll(() => ctx.daemon.daemon.agentManager.listProviderSubagents(agent.id).length)
+      .poll(
+        async () => (await ctx.daemon.daemon.agentManager.listProviderSubagents(agent.id)).length,
+      )
       .toBe(1);
     await expect
       .poll(
-        () =>
-          ctx.daemon.daemon.agentManager.fetchProviderSubagentTimeline(agent.id, "child-thread")
-            .window.maxSeq,
+        async () =>
+          (
+            await ctx.daemon.daemon.agentManager.fetchProviderSubagentTimeline(
+              agent.id,
+              "child-thread",
+            )
+          ).window.maxSeq,
       )
       .toBe(3);
     const child = await ctx.client.fetchProviderSubagentTimeline(agent.id, "child-thread", {
@@ -170,9 +176,10 @@ test("resuming Codex restores child descriptors and complete messages without hi
 test("retains only the latest cumulative Pi tool progress payload", async () => {
   const { parseToolArgs, parseToolResult, mapToolDetail } =
     await import("./providers/pi/tool-call-mapper.js");
-  const { InMemoryAgentTimelineStore } = await import("./agent-timeline-store.js");
-  const store = new InMemoryAgentTimelineStore();
-  store.initialize("agent");
+  const { AgentTimeline } = await import("./timeline/index.js");
+  const timeline = new AgentTimeline();
+  const scope = { agentId: "agent" };
+  await timeline.create(scope);
   const tool = parseToolArgs("custom_progress", {});
   const messages: string[] = [];
   for (let index = 0; index < 20; index++) {
@@ -181,16 +188,20 @@ test("retains only the latest cumulative Pi tool progress payload", async () => 
       content: [{ type: "text", text: "running" }],
       details: { results: [{ messages: [...messages] }] },
     });
-    store.append("agent", {
-      type: "tool_call",
-      callId: "same-call",
-      name: "custom_progress",
-      status: "running",
-      error: null,
-      detail: mapToolDetail(tool, result),
-    });
+    await timeline.append(scope, [
+      {
+        item: {
+          type: "tool_call",
+          callId: "same-call",
+          name: "custom_progress",
+          status: "running",
+          error: null,
+          detail: mapToolDetail(tool, result),
+        },
+      },
+    ]);
   }
-  const history = store.fetch("agent", { limit: 0 });
+  const history = await timeline.fetch(scope, { limit: 0 });
   expect(history.rows).toHaveLength(1);
   expect(history.rows[0]).toMatchObject({
     seqStart: 1,

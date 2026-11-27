@@ -18,16 +18,20 @@ function useIsAgentUnarchiving({ serverId, agentId }: UnarchiveAgentTarget): boo
 export async function runAgentUnarchive(input: {
   serverId: string;
   agentId: string;
-  client: { refreshAgent: (agentId: string) => Promise<unknown> } | null;
+  client: { refreshAgent: (agentId: string) => Promise<{ historyDiverged?: boolean } | unknown> } | null;
   isConnected: boolean;
+  onRefreshed?: (result: { historyDiverged?: boolean }) => void;
 }): Promise<boolean> {
-  const { serverId, agentId, client, isConnected } = input;
+  const { serverId, agentId, client, isConnected, onRefreshed } = input;
   if (!client || !isConnected || isAgentUnarchiving({ serverId, agentId })) {
     return false;
   }
   const token = beginAgentUnarchive({ serverId, agentId });
   try {
-    await client.refreshAgent(agentId);
+    const refreshed = await client.refreshAgent(agentId);
+    if (refreshed && typeof refreshed === "object" && "historyDiverged" in refreshed) {
+      onRefreshed?.(refreshed as { historyDiverged?: boolean });
+    }
     return true;
   } finally {
     finishAgentUnarchive({ serverId, agentId }, token);
@@ -39,9 +43,18 @@ export function useUnarchiveAgent({ serverId, agentId }: UnarchiveAgentTarget) {
   const isConnected = useHostRuntimeIsConnected(serverId);
   const isUnarchiving = useIsAgentUnarchiving({ serverId, agentId });
 
-  const unarchive = useCallback(async (): Promise<void> => {
-    await runAgentUnarchive({ serverId, agentId, client, isConnected });
-  }, [agentId, client, isConnected, serverId]);
+  const unarchive = useCallback(
+    async (options?: { onRefreshed?: (result: { historyDiverged?: boolean }) => void }): Promise<void> => {
+      await runAgentUnarchive({
+        serverId,
+        agentId,
+        client,
+        isConnected,
+        onRefreshed: options?.onRefreshed,
+      });
+    },
+    [agentId, client, isConnected, serverId],
+  );
 
   return {
     unarchive,

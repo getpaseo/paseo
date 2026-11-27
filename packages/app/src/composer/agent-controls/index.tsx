@@ -16,12 +16,21 @@ import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
   buildProviderSelectorProviders,
+  buildSelectableProviderSelectorProviders,
   buildSelectorProvider,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useDraftProviderOptions } from "@/hooks/use-draft-provider-options";
+import {
+  clearStagedProviderSwitch,
+  isStagedProviderSwitchInFlight,
+  type StagedProviderSwitch,
+  useStagedProviderSwitch,
+  useStagedProviderSwitchStore,
+} from "@/composer/provider-switch";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import {
@@ -102,6 +111,7 @@ import {
   type AgentProfilePicker,
   type AgentProfileSeed,
   type DraftAgentProfileControls,
+  type MaterializedAgentProfile,
 } from "@/agent-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 
@@ -138,6 +148,7 @@ interface ControlledAgentControlsProps {
   modeControl?: AgentModeControlValue | null;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
+  openModelBrowserAtProviders?: boolean;
 }
 
 export interface DraftAgentControlsProps {
@@ -451,6 +462,7 @@ function ControlledAgentControls({
   modeControl,
   modelSelectorServerId = null,
   isCompactLayout,
+  openModelBrowserAtProviders,
 }: ControlledAgentControlsProps) {
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -710,6 +722,7 @@ function ControlledAgentControls({
             showLabels={presentation.showModelLabel}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
+            openModelBrowserAtProviders={openModelBrowserAtProviders}
           />
         )}
         {!isCompact ? (
@@ -907,6 +920,7 @@ interface SheetAgentControlsContentProps extends AgentControlsContentProps {
   displayThinking: string | null;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
   canSwitchProvider: boolean;
+  openModelBrowserAtProviders?: boolean;
 }
 
 function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
@@ -939,6 +953,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     showLabels,
     modelSelectorServerId,
     canSwitchProvider,
+    openModelBrowserAtProviders,
   } = props;
 
   const sheetControls = (
@@ -988,6 +1003,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       glyphs={glyphs}
       showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
+      openModelBrowserAtProviders={openModelBrowserAtProviders}
     >
       {sheetControls}
     </CompactModelSheet>
@@ -1006,6 +1022,148 @@ function useAgentOptionControls(
   );
 }
 
+function resolveActiveStagedSwitch(
+  supportsProviderSwitching: boolean,
+  rawStagedSwitch: StagedProviderSwitch | null,
+  liveProvider: string | undefined,
+): StagedProviderSwitch | null {
+  if (!supportsProviderSwitching || !rawStagedSwitch || !liveProvider) {
+    return null;
+  }
+  return rawStagedSwitch.provider !== liveProvider ? rawStagedSwitch : null;
+}
+
+function resolveDraftTargetModelId(
+  modelId: string,
+  preferredModel: string | undefined,
+  nextModels: AgentModelDefinition[] | null,
+): string | null {
+  if (modelId) return modelId;
+  if (preferredModel) return preferredModel;
+  const defaultModel = nextModels?.find((m) => m.isDefault);
+  return defaultModel?.id ?? nextModels?.[0]?.id ?? null;
+}
+
+function resolveDraftThinkingOptionId(
+  targetModelId: string | null,
+  targetModel: AgentModelDefinition | undefined,
+  thinkingByModel: Record<string, string> | undefined,
+): string | null {
+  const preferred = targetModelId ? thinkingByModel?.[targetModelId] : undefined;
+  if (preferred) return preferred;
+  return targetModel?.defaultThinkingOptionId ?? targetModel?.thinkingOptions?.[0]?.id ?? null;
+}
+
+function resolveDraftModeId(
+  preferredMode: string | undefined,
+  nextEntry: ReturnType<typeof resolveProviderSnapshotEntry>,
+): string | null {
+  if (preferredMode) return preferredMode;
+  return nextEntry?.defaultModeId ?? nextEntry?.modes?.[0]?.id ?? null;
+}
+
+function buildStagedProviderSwitchDraft(input: {
+  nextProvider: string;
+  modelId: string;
+  snapshotEntries: ReturnType<typeof useProvidersSnapshot>["entries"];
+  providerPreferences: ReturnType<typeof useFormPreferences>["preferences"]["providerPreferences"];
+}): StagedProviderSwitch {
+  const { nextProvider, modelId, snapshotEntries, providerPreferences } = input;
+  const nextEntry = resolveProviderSnapshotEntry(snapshotEntries, nextProvider);
+  const nextModels = filterSelectableModels(nextEntry?.models ?? null);
+  const preferred = providerPreferences?.[nextProvider];
+  const targetModelId = resolveDraftTargetModelId(modelId, preferred?.model, nextModels);
+  const targetModel = nextModels?.find((m) => m.id === targetModelId);
+  return {
+    provider: nextProvider,
+    model: targetModelId,
+    thinkingOptionId: resolveDraftThinkingOptionId(
+      targetModelId,
+      targetModel,
+      preferred?.thinkingByModel,
+    ),
+    modeId: resolveDraftModeId(preferred?.mode, nextEntry),
+    providerOptions: preferred?.options ? { ...preferred.options } : {},
+  };
+}
+
+function resolveAgentModelSelectionWithStagedSwitch(input: {
+  models: AgentModelDefinition[] | null;
+  agent: AgentControlsSlice;
+  activeStagedSwitch: StagedProviderSwitch | null;
+}) {
+  const { models, agent, activeStagedSwitch } = input;
+  return resolveAgentModelSelection({
+    models,
+    runtimeModelId: activeStagedSwitch ? null : agent?.runtimeModelId,
+    configuredModelId: activeStagedSwitch ? activeStagedSwitch.model : agent?.model,
+    runtimeThinkingOptionId: activeStagedSwitch ? null : agent?.runtimeThinkingOptionId,
+    explicitThinkingOptionId: activeStagedSwitch
+      ? activeStagedSwitch.thinkingOptionId
+      : agent?.thinkingOptionId,
+  });
+}
+
+function buildStagedDraftOptionsParams(input: {
+  serverId: string;
+  agentCwd: string | null | undefined;
+  activeStagedSwitch: StagedProviderSwitch | null;
+  getProvider: () => AgentProvider | null;
+  modelId: string | null;
+  thinkingOptionId: string | null;
+}) {
+  const { serverId, agentCwd, activeStagedSwitch, getProvider, modelId, thinkingOptionId } = input;
+  return {
+    serverId: activeStagedSwitch ? serverId : null,
+    provider: activeStagedSwitch ? activeStagedSwitch.provider : null,
+    getProvider,
+    cwd: agentCwd,
+    modeId: activeStagedSwitch?.modeId ?? null,
+    modelId,
+    thinkingOptionId,
+    initialOptions: activeStagedSwitch?.providerOptions,
+  };
+}
+
+function resolveAgentOptionControlsForComposer(input: {
+  activeStagedSwitch: StagedProviderSwitch | null;
+  stagedControls: ComposerOptionControls | null | undefined;
+  liveOptionControls: ComposerOptionControls;
+  onSetOption: (key: string, value: unknown) => void;
+}): ComposerOptionControls {
+  const { activeStagedSwitch, stagedControls, liveOptionControls, onSetOption } = input;
+  if (!activeStagedSwitch) {
+    return liveOptionControls;
+  }
+  if (stagedControls) {
+    return { ...stagedControls, onSetOption };
+  }
+  return { controls: [], options: activeStagedSwitch.providerOptions, onSetOption };
+}
+
+function resolveControlledAgentControlsProps(input: {
+  effectiveProvider: string | undefined;
+  liveProvider: string;
+  selectedModelId: string | null;
+  selectedThinkingId: string | null;
+  thinkingOptions: AgentControlOption[];
+  supportsProviderSwitching: boolean;
+  handleSelectProviderAndModel: (provider: string, modelId: string) => void;
+  snapshotIsLoading: boolean;
+  selectedProviderIsLoading: boolean;
+}) {
+  return {
+    provider: input.effectiveProvider ?? input.liveProvider,
+    selectedModelId: input.selectedModelId ?? undefined,
+    selectedThinkingOptionId: input.selectedThinkingId ?? undefined,
+    thinkingOptions: input.thinkingOptions.length > 0 ? input.thinkingOptions : undefined,
+    onSelectProviderAndModel: input.supportsProviderSwitching
+      ? input.handleSelectProviderAndModel
+      : undefined,
+    isModelLoading: input.snapshotIsLoading || input.selectedProviderIsLoading,
+  };
+}
+
 export const AgentControls = memo(function AgentControls({
   showToolbar,
   agentId,
@@ -1013,15 +1171,22 @@ export const AgentControls = memo(function AgentControls({
   onDropdownClose,
   isCompactLayout,
 }: AgentControlsProps) {
-  const { updatePreferences } = useFormPreferences();
+  const { preferences, updatePreferences } = useFormPreferences();
   const agent = useSessionStore(
     useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const supportsProviderSwitching = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.providerSwitching === true,
+  );
+  const rawStagedSwitch = useStagedProviderSwitch(serverId, agentId);
+  const activeStagedSwitch = resolveActiveStagedSwitch(
+    supportsProviderSwitching,
+    rawStagedSwitch,
+    agent?.provider,
+  );
   const toast = useToast();
-  const modeControl = useLiveAgentModeControl(serverId, agentId);
-  const commandCenterModes = toCommandCenterModes(modeControl);
-  const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
+  const liveModeControl = useLiveAgentModeControl(serverId, agentId);
 
   const {
     entries: snapshotEntries,
@@ -1031,24 +1196,35 @@ export const AgentControls = memo(function AgentControls({
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId, { cwd: agent?.cwd });
 
+  const stagedProvider = activeStagedSwitch ? activeStagedSwitch.provider : null;
+  const effectiveProvider = stagedProvider ?? agent?.provider;
+  const stagedProviderRef = useRef<AgentProvider | null>(stagedProvider);
+  stagedProviderRef.current = stagedProvider;
+
   const snapshotSelectedEntry = useMemo(
-    () => resolveProviderSnapshotEntry(snapshotEntries, agent?.provider),
-    [snapshotEntries, agent?.provider],
+    () => resolveProviderSnapshotEntry(snapshotEntries, effectiveProvider),
+    [snapshotEntries, effectiveProvider],
   );
 
   const models = filterSelectableModels(snapshotSelectedEntry?.models ?? null);
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
 
   const agentProviderDefinitions = useMemo(
-    () => buildAgentProviderDefinitions(agent?.provider, snapshotEntries),
-    [agent?.provider, snapshotEntries],
+    () => buildAgentProviderDefinitions(effectiveProvider, snapshotEntries),
+    [effectiveProvider, snapshotEntries],
   );
 
   const agentProviderModels = useMemo(
-    () => buildAgentProviderModels(agent?.provider, models),
-    [agent?.provider, models],
+    () => buildAgentProviderModels(effectiveProvider, models),
+    [effectiveProvider, models],
   );
   const agentModelSelectorProviders = useMemo(() => {
+    if (supportsProviderSwitching && snapshotEntries && snapshotEntries.length > 0) {
+      const selectable = buildSelectableProviderSelectorProviders(snapshotEntries, {
+        selectedProvider: effectiveProvider ?? null,
+      });
+      if (selectable.length > 0) return selectable;
+    }
     if (snapshotSelectedEntry) {
       return [buildSelectorProvider(snapshotSelectedEntry)];
     }
@@ -1056,14 +1232,19 @@ export const AgentControls = memo(function AgentControls({
       providerDefinitions: agentProviderDefinitions,
       modelsByProvider: agentProviderModels,
     });
-  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry]);
+  }, [
+    agentProviderDefinitions,
+    agentProviderModels,
+    effectiveProvider,
+    snapshotEntries,
+    snapshotSelectedEntry,
+    supportsProviderSwitching,
+  ]);
 
-  const modelSelection = resolveAgentModelSelection({
+  const modelSelection = resolveAgentModelSelectionWithStagedSwitch({
     models,
-    runtimeModelId: agent?.runtimeModelId,
-    configuredModelId: agent?.model,
-    runtimeThinkingOptionId: agent?.runtimeThinkingOptionId,
-    explicitThinkingOptionId: agent?.thinkingOptionId,
+    agent,
+    activeStagedSwitch,
   });
 
   const modelOptions = useMemo<AgentControlOption[]>(() => {
@@ -1080,13 +1261,71 @@ export const AgentControls = memo(function AgentControls({
   const agentProvider = agent?.provider;
   const activeModelId = modelSelection.activeModelId;
 
-  const handleSelectModel = useCallback(
+  const stagedModeOptions = useMemo<AgentMode[]>(() => {
+    if (!activeStagedSwitch || !snapshotSelectedEntry?.modes) return [];
+    return snapshotSelectedEntry.modes.map((mode) => ({
+      id: mode.id,
+      label: mode.label,
+      description: mode.description ?? "",
+    }));
+  }, [activeStagedSwitch, snapshotSelectedEntry?.modes]);
+
+  const handleSelectStagedMode = useCallback(
+    (modeId: string) => {
+      useStagedProviderSwitchStore.getState().patch(serverId, agentId, (current) => ({
+        ...current,
+        modeId,
+      }));
+    },
+    [agentId, serverId],
+  );
+
+  const modeControl = useMemo<AgentModeControlValue | null>(() => {
+    if (!activeStagedSwitch) return liveModeControl;
+    if (stagedModeOptions.length === 0) return null;
+    return {
+      provider: activeStagedSwitch.provider,
+      providerDefinitions: agentProviderDefinitions,
+      modeOptions: stagedModeOptions,
+      selectedModeId:
+        activeStagedSwitch.modeId ??
+        snapshotSelectedEntry?.defaultModeId ??
+        stagedModeOptions[0]?.id ??
+        null,
+      onSelectMode: handleSelectStagedMode,
+      disabled: !client,
+    };
+  }, [
+    activeStagedSwitch,
+    agentProviderDefinitions,
+    client,
+    handleSelectStagedMode,
+    liveModeControl,
+    snapshotSelectedEntry?.defaultModeId,
+    stagedModeOptions,
+  ]);
+  const commandCenterModes = toCommandCenterModes(modeControl);
+  const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
+
+  const getStagedProvider = useCallback(() => stagedProviderRef.current, []);
+  const stagedDraftOptions = useDraftProviderOptions(
+    buildStagedDraftOptionsParams({
+      serverId,
+      agentCwd: agent?.cwd,
+      activeStagedSwitch,
+      getProvider: getStagedProvider,
+      modelId: modelSelection.activeModelId,
+      thinkingOptionId: modelSelection.selectedThinkingId,
+    }),
+  );
+
+  const applyLiveModel = useCallback(
     async (modelId: string) => {
       if (!client || !agentProvider) {
         return;
       }
       try {
-        await client.setAgentModel(agentId, modelId);
+        await client.setAgentModel(agentId, modelId, { expectedProvider: agentProvider });
         await updatePreferences((current) =>
           mergeProviderPreferences({
             preferences: current,
@@ -1101,21 +1340,147 @@ export const AgentControls = memo(function AgentControls({
     },
     [agentId, agentProvider, client, toast, updatePreferences],
   );
-  const handleSelectCommandCenterModel = useCallback(
-    (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
-    [handleSelectModel],
+
+  const handleSelectModel = useCallback(
+    async (modelId: string) => {
+      if (activeStagedSwitch) {
+        const nextModel = models?.find((candidate) => candidate.id === modelId);
+        const preferredThinking =
+          preferences.providerPreferences?.[activeStagedSwitch.provider]?.thinkingByModel?.[
+            modelId
+          ];
+        const nextThinking =
+          preferredThinking ??
+          nextModel?.defaultThinkingOptionId ??
+          nextModel?.thinkingOptions?.[0]?.id ??
+          null;
+        useStagedProviderSwitchStore.getState().patch(serverId, agentId, (current) => ({
+          ...current,
+          model: modelId,
+          thinkingOptionId: nextThinking,
+        }));
+        return;
+      }
+      await applyLiveModel(modelId);
+    },
+    [
+      activeStagedSwitch,
+      agentId,
+      applyLiveModel,
+      models,
+      preferences.providerPreferences,
+      serverId,
+    ],
   );
 
-  // A running agent is one provider's process, so only that provider's profiles
-  // can apply to it.
-  const profileProviders = useMemo(() => (agentProvider ? [agentProvider] : []), [agentProvider]);
+  const handleSelectProviderAndModel = useCallback(
+    (nextProvider: string, modelId: string) => {
+      if (!agentProvider) return;
+      if (nextProvider === agentProvider && !isStagedProviderSwitchInFlight(serverId, agentId)) {
+        clearStagedProviderSwitch(serverId, agentId);
+        const liveModelId = agent?.runtimeModelId ?? agent?.model ?? null;
+        if (modelId && modelId !== liveModelId) {
+          void applyLiveModel(modelId);
+        }
+        return;
+      }
+      if (!supportsProviderSwitching) return;
+      useStagedProviderSwitchStore.getState().stage(
+        serverId,
+        agentId,
+        buildStagedProviderSwitchDraft({
+          nextProvider,
+          modelId,
+          snapshotEntries,
+          providerPreferences: preferences.providerPreferences,
+        }),
+      );
+    },
+    [
+      agent?.model,
+      agent?.runtimeModelId,
+      agentId,
+      agentProvider,
+      applyLiveModel,
+      preferences.providerPreferences,
+      serverId,
+      snapshotEntries,
+      supportsProviderSwitching,
+    ],
+  );
+
+  const handleSelectCommandCenterModel = useCallback(
+    (provider: AgentProvider, modelId: string) => {
+      if (supportsProviderSwitching) {
+        handleSelectProviderAndModel(provider, modelId);
+        return;
+      }
+      void handleSelectModel(modelId);
+    },
+    [handleSelectModel, handleSelectProviderAndModel, supportsProviderSwitching],
+  );
+
+  const handleStageAgentProfileSwitch = useCallback(
+    (resolved: MaterializedAgentProfile) => {
+      if (!supportsProviderSwitching) return;
+      const nextEntry = resolveProviderSnapshotEntry(snapshotEntries, resolved.provider);
+      const modeIds = resolveSnapshotModeIds(nextEntry);
+      const validModeId =
+        resolved.modeId && (!modeIds || modeIds.includes(resolved.modeId))
+          ? resolved.modeId
+          : (nextEntry?.defaultModeId ?? nextEntry?.modes?.[0]?.id ?? null);
+      useStagedProviderSwitchStore.getState().stage(serverId, agentId, {
+        provider: resolved.provider,
+        model: resolved.modelId ?? null,
+        modeId: validModeId,
+        thinkingOptionId: resolved.thinkingOptionId ?? null,
+        providerOptions: resolved.options ? { ...resolved.options } : {},
+      });
+      stagedDraftOptions.applyProfile({
+        provider: resolved.provider,
+        options: resolved.options ?? {},
+      });
+    },
+    [agentId, serverId, snapshotEntries, stagedDraftOptions, supportsProviderSwitching],
+  );
+
+  const handleClearStagedSwitchOnProfile = useCallback(() => {
+    clearStagedProviderSwitch(serverId, agentId);
+  }, [agentId, serverId]);
+
+  const profileProviders = useMemo(() => {
+    if (supportsProviderSwitching) {
+      return agentModelSelectorProviders.map((entry) => entry.id);
+    }
+    return agentProvider ? [agentProvider] : [];
+  }, [agentModelSelectorProviders, agentProvider, supportsProviderSwitching]);
+  const liveSnapshotEntry = useMemo(
+    () => resolveProviderSnapshotEntry(snapshotEntries, agentProvider),
+    [snapshotEntries, agentProvider],
+  );
   const profileModeIds = useMemo(
-    () => resolveSnapshotModeIds(snapshotSelectedEntry),
-    [snapshotSelectedEntry],
+    () => resolveSnapshotModeIds(liveSnapshotEntry),
+    [liveSnapshotEntry],
   );
   const profileTarget = useMemo<AgentProfileApplyTarget>(
-    () => ({ kind: "agent", agentId, availableModeIds: profileModeIds }),
-    [agentId, profileModeIds],
+    () => ({
+      kind: "agent",
+      agentId,
+      availableModeIds: profileModeIds,
+      currentProvider: agentProvider,
+      isSwitchInFlight: () => isStagedProviderSwitchInFlight(serverId, agentId),
+      onApplySameProvider: handleClearStagedSwitchOnProfile,
+      onStageProviderSwitch: supportsProviderSwitching ? handleStageAgentProfileSwitch : undefined,
+    }),
+    [
+      agentId,
+      agentProvider,
+      handleClearStagedSwitchOnProfile,
+      handleStageAgentProfileSwitch,
+      profileModeIds,
+      serverId,
+      supportsProviderSwitching,
+    ],
   );
   const agentProfiles = useAgentProfilePicker({
     serverId,
@@ -1128,6 +1493,13 @@ export const AgentControls = memo(function AgentControls({
 
   const handleSelectThinkingOption = useCallback(
     (thinkingOptionId: string) => {
+      if (activeStagedSwitch) {
+        useStagedProviderSwitchStore.getState().patch(serverId, agentId, (current) => ({
+          ...current,
+          thinkingOptionId,
+        }));
+        return;
+      }
       if (!client || !agentProvider) {
         return;
       }
@@ -1148,18 +1520,35 @@ export const AgentControls = memo(function AgentControls({
         });
       }
       void client
-        .setAgentThinkingOption(agentId, thinkingOptionId)
+        .setAgentThinkingOption(agentId, thinkingOptionId, { expectedProvider: agentProvider })
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
           console.warn("[AgentControls] setAgentThinkingOption failed", error);
           toast.error(toErrorMessage(error));
         });
     },
-    [activeModelId, agentId, agentProvider, client, toast, updatePreferences],
+    [
+      activeModelId,
+      activeStagedSwitch,
+      agentId,
+      agentProvider,
+      client,
+      serverId,
+      toast,
+      updatePreferences,
+    ],
   );
 
   const handleSetOption = useCallback(
     (key: string, value: unknown) => {
+      if (activeStagedSwitch) {
+        stagedDraftOptions.setOption(key, value);
+        useStagedProviderSwitchStore.getState().patch(serverId, agentId, (current) => ({
+          ...current,
+          providerOptions: { ...current.providerOptions, [key]: value },
+        }));
+        return;
+      }
       if (!client || !agentProvider) {
         return;
       }
@@ -1176,15 +1565,36 @@ export const AgentControls = memo(function AgentControls({
       ).catch((error) => {
         console.warn("[AgentControls] persist option preference failed", error);
       });
-      void client.setAgentOptions(agentId, { [key]: value }).catch((error) => {
-        console.warn("[AgentControls] setAgentOptions failed", error);
-        toast.error(toErrorMessage(error));
-      });
+      void client
+        .setAgentOptions(agentId, { [key]: value }, { expectedProvider: agentProvider })
+        .catch((error) => {
+          console.warn("[AgentControls] setAgentOptions failed", error);
+          toast.error(toErrorMessage(error));
+        });
     },
-    [agentId, agentProvider, client, toast, updatePreferences],
+    [
+      activeStagedSwitch,
+      agentId,
+      agentProvider,
+      client,
+      serverId,
+      stagedDraftOptions,
+      toast,
+      updatePreferences,
+    ],
   );
 
-  const agentOptionControls = useAgentOptionControls(agent, handleSetOption);
+  const liveOptionControls = useAgentOptionControls(agent, handleSetOption);
+  const agentOptionControls = useMemo<ComposerOptionControls>(
+    () =>
+      resolveAgentOptionControlsForComposer({
+        activeStagedSwitch,
+        stagedControls: stagedDraftOptions.optionControls,
+        liveOptionControls,
+        onSetOption: handleSetOption,
+      }),
+    [activeStagedSwitch, handleSetOption, liveOptionControls, stagedDraftOptions.optionControls],
+  );
 
   // The agent's composer exists apart from this component; while this is mounted, prompt
   // commands go through the input the user is typing in.
@@ -1208,12 +1618,12 @@ export const AgentControls = memo(function AgentControls({
     () => ({
       serverId,
       ownerKey: agentId,
-      provider: agentProvider,
+      provider: effectiveProvider,
       providerDefinitions: modeProviderDefinitions,
       profiles: agentProfiles,
       models: {
         providers: agentModelSelectorProviders,
-        selectedProvider: agentProvider,
+        selectedProvider: effectiveProvider,
         selectedModelId: activeModelId,
         select: handleSelectCommandCenterModel,
       },
@@ -1232,7 +1642,7 @@ export const AgentControls = memo(function AgentControls({
       client,
       agentId,
       agentModelSelectorProviders,
-      agentProvider,
+      effectiveProvider,
       commandCenterModes,
       handleSelectCommandCenterModel,
       handleSelectThinkingOption,
@@ -1252,8 +1662,8 @@ export const AgentControls = memo(function AgentControls({
   );
 
   const handleModelSelectorOpen = useCallback(() => {
-    refetchSnapshotIfStale(agentProvider);
-  }, [agentProvider, refetchSnapshotIfStale]);
+    refetchSnapshotIfStale(supportsProviderSwitching ? undefined : effectiveProvider);
+  }, [effectiveProvider, refetchSnapshotIfStale, supportsProviderSwitching]);
 
   const handleRetryModelProvider = useCallback(
     (provider: AgentProvider) => {
@@ -1266,6 +1676,18 @@ export const AgentControls = memo(function AgentControls({
     return null;
   }
 
+  const resolvedControlProps = resolveControlledAgentControlsProps({
+    effectiveProvider,
+    liveProvider: agent.provider,
+    selectedModelId: modelSelection.activeModelId,
+    selectedThinkingId: modelSelection.selectedThinkingId,
+    thinkingOptions,
+    supportsProviderSwitching,
+    handleSelectProviderAndModel,
+    snapshotIsLoading,
+    selectedProviderIsLoading,
+  });
+
   return (
     <ComposerModelProvider value={composer}>
       {commandCenterRegistration}
@@ -1273,21 +1695,17 @@ export const AgentControls = memo(function AgentControls({
         <>
           {profileEditor.element}
           <ControlledAgentControls
-            provider={agent.provider}
+            {...resolvedControlProps}
             modelSelectorProviders={agentModelSelectorProviders}
             modelOptions={modelOptions}
-            selectedModelId={modelSelection.activeModelId ?? undefined}
             onSelectModel={handleSelectModel}
             agentProfiles={agentProfiles}
             onApplyAgentProfile={agentProfiles?.applyProfile}
             onEditAgentProfiles={handleEditAgentProfiles}
             onCreateAgentProfile={profileActions.create}
             onEditAgentProfile={profileActions.edit}
-            thinkingOptions={thinkingOptions.length > 0 ? thinkingOptions : undefined}
-            selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
             onSelectThinkingOption={handleSelectThinkingOption}
             optionControls={agentOptionControls}
-            isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
             onModelSelectorOpen={handleModelSelectorOpen}
             onRetryModelProvider={handleRetryModelProvider}
             isRetryingModelProvider={snapshotIsRefreshing}
@@ -1521,6 +1939,7 @@ export function DraftAgentControls({
               modeControl={modeControl}
               modelSelectorServerId={modelSelectorServerId}
               isCompactLayout={isCompactLayout}
+              openModelBrowserAtProviders
             />
           </>
         ) : null}

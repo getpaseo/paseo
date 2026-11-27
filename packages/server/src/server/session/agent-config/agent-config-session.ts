@@ -1,5 +1,6 @@
 import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
+import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import type { AgentConfigApply } from "@getpaseo/protocol/messages";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
@@ -25,14 +26,31 @@ export interface AgentConfigSessionHost {
  * routes through setAgentModeCommand); tests wire an in-memory fake. Mode and
  * thinking yield a provider notice; model and options do not.
  */
+export interface AgentConfigMutationOptions {
+  expectedProvider?: AgentProvider;
+}
+
 export interface AgentConfigOperations {
-  ensureLoaded(agentId: string): Promise<void>;
-  setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
-  setModel(agentId: string, modelId: string | null): Promise<void>;
-  setOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void>;
+  ensureLoaded(agentId: string, options?: AgentConfigMutationOptions): Promise<void>;
+  setMode(
+    agentId: string,
+    modeId: string,
+    options?: AgentConfigMutationOptions,
+  ): Promise<AgentProviderNotice | null>;
+  setModel(
+    agentId: string,
+    modelId: string | null,
+    options?: AgentConfigMutationOptions,
+  ): Promise<void>;
+  setOptions(
+    agentId: string,
+    patch: ProviderOptionsPatch,
+    options?: AgentConfigMutationOptions,
+  ): Promise<void>;
   setThinking(
     agentId: string,
     thinkingOptionId: string | null,
+    options?: AgentConfigMutationOptions,
   ): Promise<AgentProviderNotice | null>;
 }
 
@@ -45,6 +63,7 @@ export interface AgentConfigSessionOptions {
 interface ConfigChange {
   agentId: string;
   requestId: string;
+  options?: AgentConfigMutationOptions;
   logLabel: string;
   logFields: Record<string, unknown>;
   failureText: string;
@@ -73,14 +92,16 @@ export class AgentConfigSession {
   handleSetAgentModeRequest(
     msg: Extract<SessionInboundMessage, { type: "set_agent_mode_request" }>,
   ): Promise<void> {
-    const { agentId, modeId, requestId } = msg;
+    const { agentId, modeId, expectedProvider, requestId } = msg;
+    const options = expectedProvider ? { expectedProvider } : undefined;
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_mode_request",
       logFields: { agentId, modeId, requestId },
       failureText: "Failed to set agent mode",
-      run: () => this.operations.setMode(agentId, modeId),
+      run: () => this.operations.setMode(agentId, modeId, options),
       emitResponse: (payload) => this.host.emit({ type: "set_agent_mode_response", payload }),
     });
   }
@@ -88,15 +109,17 @@ export class AgentConfigSession {
   handleSetAgentModelRequest(
     msg: Extract<SessionInboundMessage, { type: "set_agent_model_request" }>,
   ): Promise<void> {
-    const { agentId, modelId, requestId } = msg;
+    const { agentId, modelId, expectedProvider, requestId } = msg;
+    const options = expectedProvider ? { expectedProvider } : undefined;
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_model_request",
       logFields: { agentId, modelId, requestId },
       failureText: "Failed to set agent model",
       run: async () => {
-        await this.operations.setModel(agentId, modelId);
+        await this.operations.setModel(agentId, modelId, options);
         return undefined;
       },
       emitResponse: (payload) => this.host.emit({ type: "set_agent_model_response", payload }),
@@ -106,16 +129,18 @@ export class AgentConfigSession {
   handleSetAgentFeatureRequest(
     msg: Extract<SessionInboundMessage, { type: "set_agent_feature_request" }>,
   ): Promise<void> {
-    const { agentId, featureId, value, requestId } = msg;
+    const { agentId, featureId, value, expectedProvider, requestId } = msg;
+    const options = expectedProvider ? { expectedProvider } : undefined;
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_feature_request",
       logFields: { agentId, featureId, value, requestId },
       failureText: "Failed to set agent feature",
       // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A feature is a one-key options patch.
       run: async () => {
-        await this.operations.setOptions(agentId, { [featureId]: value });
+        await this.operations.setOptions(agentId, { [featureId]: value }, options);
         return undefined;
       },
       emitResponse: (payload) => this.host.emit({ type: "set_agent_feature_response", payload }),
@@ -125,14 +150,16 @@ export class AgentConfigSession {
   handleSetAgentThinkingRequest(
     msg: Extract<SessionInboundMessage, { type: "set_agent_thinking_request" }>,
   ): Promise<void> {
-    const { agentId, thinkingOptionId, requestId } = msg;
+    const { agentId, thinkingOptionId, expectedProvider, requestId } = msg;
+    const options = expectedProvider ? { expectedProvider } : undefined;
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "set_agent_thinking_request",
       logFields: { agentId, thinkingOptionId, requestId },
       failureText: "Failed to set agent thinking option",
-      run: () => this.operations.setThinking(agentId, thinkingOptionId),
+      run: () => this.operations.setThinking(agentId, thinkingOptionId, options),
       emitResponse: (payload) => this.host.emit({ type: "set_agent_thinking_response", payload }),
     });
   }
@@ -140,14 +167,16 @@ export class AgentConfigSession {
   handleAgentConfigApplyRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.config.apply.request" }>,
   ): Promise<void> {
-    const { agentId, config, requestId } = msg;
+    const { agentId, config, expectedProvider, requestId } = msg;
+    const options = expectedProvider ? { expectedProvider } : undefined;
     return this.applyConfigChange({
       agentId,
       requestId,
+      options,
       logLabel: "agent.config.apply.request",
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
-      run: () => this.applyBundle(agentId, config),
+      run: () => this.applyBundle(agentId, config, options),
       emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
     });
   }
@@ -175,37 +204,43 @@ export class AgentConfigSession {
   private async applyBundle(
     agentId: string,
     config: AgentConfigApply,
+    options?: AgentConfigMutationOptions,
   ): Promise<AgentProviderNotice | null> {
     let notice: AgentProviderNotice | null = null;
 
     if (config.modelId !== undefined) {
-      await this.operations.setModel(agentId, config.modelId);
+      await this.operations.setModel(agentId, config.modelId, options);
     }
     if (config.modeId !== undefined) {
       // Await first, assign second: `notice ??= await ...` would skip the call
       // entirely once an earlier step produced a notice.
-      const modeNotice = await this.operations.setMode(agentId, config.modeId);
+      const modeNotice = await this.operations.setMode(agentId, config.modeId, options);
       notice ??= modeNotice;
     }
     if (config.thinkingOptionId !== undefined) {
-      const thinkingNotice = await this.operations.setThinking(agentId, config.thinkingOptionId);
+      const thinkingNotice = await this.operations.setThinking(
+        agentId,
+        config.thinkingOptionId,
+        options,
+      );
       notice ??= thinkingNotice;
     }
     // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. `featureValues` is an options patch.
     const optionsPatch = { ...config.featureValues, ...config.options };
     if (Object.keys(optionsPatch).length > 0) {
-      await this.operations.setOptions(agentId, optionsPatch);
+      await this.operations.setOptions(agentId, optionsPatch, options);
     }
 
     return notice;
   }
 
   private async applyConfigChange(change: ConfigChange): Promise<void> {
-    const { agentId, requestId, logLabel, logFields, failureText, run, emitResponse } = change;
+    const { agentId, requestId, options, logLabel, logFields, failureText, run, emitResponse } =
+      change;
     this.logger.info(logFields, `session: ${logLabel}`);
 
     try {
-      await this.operations.ensureLoaded(agentId);
+      await this.operations.ensureLoaded(agentId, options);
       const notice = await run();
       this.logger.info(logFields, `session: ${logLabel} success`);
       emitResponse({ requestId, agentId, accepted: true, error: null, notice });

@@ -183,13 +183,15 @@ describe("daemon checkout ship loop", () => {
         expect(diffUncommitted.error).toBeNull();
         expect(diffUncommitted.files.length).toBeGreaterThan(0);
 
-        const timelineBeforeCommit = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+        const timelineBeforeCommit = (await ctx.daemon.daemon.agentManager.getTimeline(agent.id))
+          .length;
         const commitResult = await ctx.client.checkoutCommit(worktree.worktreePath, {
           addAll: true,
         });
         expect(commitResult.error).toBeNull();
         expect(commitResult.success).toBe(true);
-        const timelineAfterCommit = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+        const timelineAfterCommit = (await ctx.daemon.daemon.agentManager.getTimeline(agent.id))
+          .length;
         expect(timelineAfterCommit).toBe(timelineBeforeCommit);
 
         const diffAfterCommit = await ctx.client.getCheckoutDiff(worktree.worktreePath, {
@@ -203,13 +205,14 @@ describe("daemon checkout ship loop", () => {
         });
         expect(baseDiff.files.length).toBeGreaterThan(0);
 
-        const timelineBeforePr = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+        const timelineBeforePr = (await ctx.daemon.daemon.agentManager.getTimeline(agent.id))
+          .length;
         const prCreate = await ctx.client.checkoutPrCreate(worktree.worktreePath, {
           baseRef: "main",
         });
         expect(prCreate.error).toBeNull();
         expect(prCreate.url).toContain(repoName);
-        const timelineAfterPr = ctx.daemon.daemon.agentManager.getTimeline(agent.id).length;
+        const timelineAfterPr = (await ctx.daemon.daemon.agentManager.getTimeline(agent.id)).length;
         expect(timelineAfterPr).toBe(timelineBeforePr);
 
         const prStatus = await ctx.client.checkoutPrStatus(worktree.worktreePath);

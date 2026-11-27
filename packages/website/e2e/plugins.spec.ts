@@ -157,6 +157,8 @@ test("shows each plugin's author with their avatar on browse cards", async ({ pa
 test("filters by search and clears to all plugins", async ({ page }) => {
   await page.goto("/");
   await openPlugins(page);
+  // Enter submits only once hydration attaches the search form's handler.
+  await waitForHydration(page);
 
   await submitSearch(page, "graphite");
   await expect(page).toHaveURL(/\/plugins\/all\?q=graphite$/);
@@ -251,6 +253,7 @@ test("searches from the directory on submit, and Back returns to the directory",
 }) => {
   await page.goto("/");
   await openPlugins(page);
+  await waitForHydration(page);
   const entries = await historyLength(page);
 
   await typeSearch(page, "gra");

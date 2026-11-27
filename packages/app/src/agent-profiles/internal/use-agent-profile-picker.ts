@@ -23,7 +23,15 @@ export interface DraftAgentProfileControls {
 }
 
 export type AgentProfileApplyTarget =
-  | { kind: "agent"; agentId: string; availableModeIds: readonly string[] | null }
+  | {
+      kind: "agent";
+      agentId: string;
+      availableModeIds: readonly string[] | null;
+      currentProvider?: string | null;
+      isSwitchInFlight?: () => boolean;
+      onApplySameProvider?: () => void;
+      onStageProviderSwitch?: (profile: MaterializedAgentProfile) => void;
+    }
   | { kind: "draft"; controls: DraftAgentProfileControls };
 
 /** Everything the model picker renders for one profile. It never sees the profile itself. */
@@ -146,6 +154,16 @@ export function useAgentProfilePicker(
         return;
       }
 
+      if (
+        target.onStageProviderSwitch &&
+        (target.isSwitchInFlight?.() ||
+          (target.currentProvider && resolved.provider !== target.currentProvider))
+      ) {
+        target.onStageProviderSwitch(resolved);
+        return;
+      }
+
+      target.onApplySameProvider?.();
       const reconciled = reconcileMaterializedProfileMode(resolved, target.availableModeIds);
       if (!reconciled) {
         return;
@@ -155,7 +173,11 @@ export function useAgentProfilePicker(
         return;
       }
       void client
-        .applyAgentConfig(target.agentId, toAgentConfigApply(reconciled))
+        .applyAgentConfig(
+          target.agentId,
+          toAgentConfigApply(reconciled),
+          target.currentProvider ? { expectedProvider: target.currentProvider } : undefined,
+        )
         .then((notice) => showProviderNoticeToast(toast, notice))
         .catch((error) => {
           console.warn("[useAgentProfilePicker] applyAgentConfig failed", error);

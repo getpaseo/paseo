@@ -207,6 +207,10 @@ export const es: TranslationResources = {
       pasteImageFailed: "No se pudo pegar la imagen",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
+    providerSwitch: {
+      switchingNextMessage: "Cambiando a {{provider}} en el próximo mensaje",
+      switchingAfterTurn: "Se cambiará a {{provider}} después de este turno",
+    },
     clientCommands: {
       archiveAgent: "Archivar el agente actual",
       freshDraft: "Archive este agente y comience un nuevo borrador",
@@ -441,6 +445,13 @@ export const es: TranslationResources = {
     },
     turnFooter: {
       workedFor: "Trabajó durante {{duration}}",
+    },
+    providerSwitch: {
+      switched: "Cambiado de {{from}} a {{to}}",
+      contextSummary: "{{count}} elementos transferidos ({{chars}} / {{budget}} caracteres)",
+      trimmed: "Recortado: {{reasons}}",
+      reasonTailWindow: "historial anterior fuera de la ventana",
+      reasonCharBudget: "límite de caracteres",
     },
     compaction: {
       loading: "Compactando...",
@@ -767,6 +778,8 @@ export const es: TranslationResources = {
         resumeCommandUnavailable: "Comando de reanudación no disponible",
         reloadingAgent: "Agente de recarga...",
         reloadedAgent: "Agente recargado",
+        reloadedAgentHistoryDiverged:
+          "Agente recargado, pero el historial del proveedor no coincide con este chat, así que no se sincronizó",
         failedToReloadAgent: "No se pudo recargar el agente",
         failedToCloseAgent: "No se pudo cerrar el agente",
       },

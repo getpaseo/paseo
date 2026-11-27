@@ -244,6 +244,13 @@ function commitProcessedTimeline(input: {
   const agentId = payload.agentId;
   const store = useSessionStore.getState();
   if (result.commit !== "discard") {
+    const latestRewindSeq = Math.max(...(payload.retirements ?? []).map(({ seq }) => seq));
+    if (Number.isFinite(latestRewindSeq)) {
+      store.recordAgentTimelineRewind(serverId, agentId, {
+        epoch: payload.epoch,
+        seq: latestRewindSeq,
+      });
+    }
     store.applyAgentTimelineResponseState(serverId, agentId, {
       items: result.tail,
       head: result.head,
@@ -477,8 +484,15 @@ export type ViewedTimelineOwnerPorts = Omit<
   | "applyCurrentTimeline"
 >;
 
+/**
+ * `stale`: the page was served before a rewind this client already applied, so it can hold rows
+ * that rewind retired. Nothing was applied; request the page again.
+ * `discarded`: the archived chat was released while the page was in flight. Nothing was applied.
+ */
+export type TimelineResponseOutcome = "applied" | "stale" | "discarded";
+
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
-  applyTimelineResponse(payload: TimelineResponsePayload): void;
+  applyTimelineResponse(payload: TimelineResponsePayload): TimelineResponseOutcome;
   /**
    * Accepts one live stream event. Content is coalesced to the next frame; a turn boundary
    * commits the turn's queued content before its liveness changes, so the view never shows
@@ -486,6 +500,37 @@ export interface ViewedTimelineOwner extends ViewedTimelineSync {
    */
   applyStreamEvent(agentId: string, event: AgentStreamReducerEvent): void;
   flushStreamAgent(agentId: string): void;
+}
+
+/**
+ * The latest retirement each chat has seen, live or on a page. Tail, older and prompt-jump pages
+ * are served from active rows at one moment; one served before that retirement can still hold the
+ * rows it retired, and has no retirement to drop them with. Forward pages are sequenced against
+ * the loaded end instead, so they are never stale here.
+ */
+function createRetirementHighWater() {
+  const latest = new Map<string, { epoch: string; seq: number }>();
+  function note(agentId: string, retirement: { epoch: string; seq: number }): void {
+    const current = latest.get(agentId);
+    if (current?.epoch === retirement.epoch && current.seq >= retirement.seq) return;
+    latest.set(agentId, retirement);
+  }
+  return {
+    note,
+    notePage(payload: TimelineResponsePayload): void {
+      for (const retirement of payload.retirements ?? []) {
+        note(payload.agentId, { epoch: payload.epoch, seq: retirement.seq });
+      }
+    },
+    servedBefore(payload: TimelineResponsePayload): boolean {
+      const known = latest.get(payload.agentId);
+      return (
+        payload.direction !== "after" &&
+        known?.epoch === payload.epoch &&
+        payload.window.maxSeq < known.seq
+      );
+    },
+  };
 }
 
 export function createViewedTimelineOwner(input: {
@@ -502,6 +547,7 @@ export function createViewedTimelineOwner(input: {
   // Active chats stay resident while hidden so switching back needs no fetch. An archived
   // chat is resident only while it is shown, as when it is open from History.
   const isResident = (agentId: string) => sync.isVisible(agentId) || !isArchived(agentId);
+  const retirements = createRetirementHighWater();
   const sync = createViewedTimelineSync({
     ...input.ports,
     isArchived,
@@ -577,7 +623,9 @@ export function createViewedTimelineOwner(input: {
     },
     applyTimelineResponse(receivedPayload) {
       // A read that answers after its archived chat was released must not bring it back.
-      if (!isResident(receivedPayload.agentId)) return;
+      if (!isResident(receivedPayload.agentId)) return "discarded";
+      if (retirements.servedBefore(receivedPayload)) return "stale";
+      retirements.notePage(receivedPayload);
       const payload = consumeForcedTimelineTailReplacement(receivedPayload, forcedTailReplacements);
       const accepted = applyAuthoritativeTimelineResponse({
         serverId: input.serverId,
@@ -587,9 +635,13 @@ export function createViewedTimelineOwner(input: {
         drainQueuedAgentMessage: input.drainQueuedAgentMessage,
       });
       if (accepted) input.replica.timelineUpdated(payload.agentId);
+      return "applied";
     },
     applyStreamEvent(agentId, event) {
       if (!isResident(agentId)) return;
+      if (event.event.type === "rewind" && event.epoch !== undefined && event.seq !== undefined) {
+        retirements.note(agentId, { epoch: event.epoch, seq: event.seq });
+      }
       streamQueue.enqueue(agentId, event);
       const turnLiveness = deriveAgentStreamTurnLiveness([event]);
       if (turnLiveness.length === 0) return;

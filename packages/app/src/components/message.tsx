@@ -19,9 +19,11 @@ import {
   type RewindMode,
 } from "@/components/rewind";
 import { TaskListRow } from "@/components/task-list-row";
+import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -40,13 +42,17 @@ import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type {
   AgentCapabilityFlags,
   AgentMetric,
+  AgentProvider,
+  ProviderSwitchContextSummary,
   ToolCallDetail,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
+  ArrowRightLeft,
   Check,
   CheckSquare,
+  ChevronDown,
   ChevronRight,
   CircleDot,
   Copy,
@@ -1483,6 +1489,188 @@ export const CompactionMarker = memo(function CompactionMarker({
         <Text style={compactionStylesheet.text}>{label}</Text>
       </View>
       <View style={compactionStylesheet.line} />
+    </View>
+  );
+});
+
+const StyledSwitchIcon = withUnistyles(ArrowRightLeft, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+const StyledChevronDownIcon = withUnistyles(ChevronDown, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+const StyledChevronRightIcon = withUnistyles(ChevronRight, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
+
+export interface ProviderSwitchMarkerProps {
+  serverId?: string | null;
+  fromProvider: AgentProvider;
+  toProvider: AgentProvider;
+  fromModel?: string | null;
+  toModel?: string | null;
+  context: ProviderSwitchContextSummary;
+}
+
+const providerSwitchStylesheet = StyleSheet.create((theme) => ({
+  wrapper: {
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    gap: theme.spacing[2],
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    width: "100%",
+  },
+  line: {
+    flex: 1,
+    minWidth: 12,
+    height: 1,
+    backgroundColor: theme.colors.border,
+  },
+  triggerButton: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: "85%",
+  },
+  triggerContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: "100%",
+    gap: theme.spacing[1.5],
+  },
+  triggerText: {
+    flexShrink: 1,
+    minWidth: 0,
+    fontFamily: theme.fontFamily.ui,
+    fontSize: 13,
+    color: theme.colors.foregroundMuted,
+  },
+  detailsCard: {
+    alignSelf: "center",
+    maxWidth: 480,
+    width: "100%",
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+    gap: theme.spacing[1],
+  },
+  detailRow: {
+    fontFamily: theme.fontFamily.ui,
+    fontSize: 12,
+    color: theme.colors.foregroundMuted,
+  },
+}));
+
+function resolveProviderSwitchLabel(
+  provider: string,
+  entries: ReturnType<typeof useProvidersSnapshot>["entries"],
+): string {
+  return entries?.find((entry) => entry.provider === provider)?.label ?? provider;
+}
+
+function resolveProviderSwitchModelLabel(
+  provider: string,
+  modelId: string | null | undefined,
+  entries: ReturnType<typeof useProvidersSnapshot>["entries"],
+): string | null {
+  if (!modelId) return null;
+  const entry = entries?.find((candidate) => candidate.provider === provider);
+  return entry?.models?.find((model) => model.id === modelId)?.label ?? modelId;
+}
+
+function formatProviderSwitchEndpoint(providerLabel: string, modelLabel: string | null): string {
+  return modelLabel ? `${providerLabel} (${modelLabel})` : providerLabel;
+}
+
+export const ProviderSwitchMarker = memo(function ProviderSwitchMarker({
+  serverId = null,
+  fromProvider,
+  toProvider,
+  fromModel,
+  toModel,
+  context,
+}: ProviderSwitchMarkerProps) {
+  const { t } = useTranslation();
+  const { entries: providerEntries } = useProvidersSnapshot(serverId);
+  const [expanded, setExpanded] = useState(false);
+  const handleToggle = useCallback(() => setExpanded((prev) => !prev), []);
+
+  const fromLabel = resolveProviderSwitchLabel(fromProvider, providerEntries);
+  const toLabel = resolveProviderSwitchLabel(toProvider, providerEntries);
+  const fromModelLabel = resolveProviderSwitchModelLabel(fromProvider, fromModel, providerEntries);
+  const toModelLabel = resolveProviderSwitchModelLabel(toProvider, toModel, providerEntries);
+
+  const title = t("message.providerSwitch.switched", {
+    from: fromLabel,
+    to: toLabel,
+  });
+  const contextLine = t("message.providerSwitch.contextSummary", {
+    count: context.includedItems,
+    chars: context.charCount.toLocaleString(),
+    budget: context.budgetChars.toLocaleString(),
+  });
+  const reasonsLine =
+    context.truncated && context.omittedReasons?.length
+      ? t("message.providerSwitch.trimmed", {
+          reasons: context.omittedReasons
+            .map((reason) => {
+              if (reason === "tail_window_limit") {
+                return t("message.providerSwitch.reasonTailWindow");
+              }
+              if (reason === "char_budget") {
+                return t("message.providerSwitch.reasonCharBudget");
+              }
+              return reason;
+            })
+            .join(", "),
+        })
+      : null;
+
+  return (
+    <View style={providerSwitchStylesheet.wrapper} testID="provider-switch-marker">
+      <View style={providerSwitchStylesheet.row}>
+        <View style={providerSwitchStylesheet.line} />
+        <Button
+          variant="ghost"
+          size="sm"
+          style={providerSwitchStylesheet.triggerButton}
+          onPress={handleToggle}
+          accessibilityLabel={title}
+          testID="provider-switch-marker-toggle"
+        >
+          <View style={providerSwitchStylesheet.triggerContent}>
+            <StyledSwitchIcon size={12} />
+            <Text
+              style={providerSwitchStylesheet.triggerText}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {title}
+            </Text>
+            {expanded ? <StyledChevronDownIcon size={12} /> : <StyledChevronRightIcon size={12} />}
+          </View>
+        </Button>
+        <View style={providerSwitchStylesheet.line} />
+      </View>
+      {expanded ? (
+        <View style={providerSwitchStylesheet.detailsCard} testID="provider-switch-marker-details">
+          <Text style={providerSwitchStylesheet.detailRow}>
+            {`${formatProviderSwitchEndpoint(fromLabel, fromModelLabel)} → ${formatProviderSwitchEndpoint(toLabel, toModelLabel)}`}
+          </Text>
+          <Text style={providerSwitchStylesheet.detailRow}>{contextLine}</Text>
+          {reasonsLine ? (
+            <Text style={providerSwitchStylesheet.detailRow}>{reasonsLine}</Text>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 });

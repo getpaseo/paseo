@@ -207,6 +207,10 @@ export const ru: TranslationResources = {
       pasteImageFailed: "Не удалось вставить изображение",
       fileTooLarge: "Файл {{fileName}} слишком большой (максимальный размер: {{size}})",
     },
+    providerSwitch: {
+      switchingNextMessage: "Переключение на {{provider}} в следующем сообщении",
+      switchingAfterTurn: "Переключение на {{provider}} после этого хода",
+    },
     clientCommands: {
       archiveAgent: "Архивировать текущего агента",
       freshDraft: "Архивировать этого агента и создать новый черновик",
@@ -440,6 +444,13 @@ export const ru: TranslationResources = {
     },
     turnFooter: {
       workedFor: "Время работы: {{duration}}",
+    },
+    providerSwitch: {
+      switched: "Переключено с {{from}} на {{to}}",
+      contextSummary: "Передано элементов: {{count}} ({{chars}} / {{budget}} симв.)",
+      trimmed: "Сокращено: {{reasons}}",
+      reasonTailWindow: "более ранняя история вне окна",
+      reasonCharBudget: "лимит символов",
     },
     compaction: {
       loading: "Сжатие контекста...",
@@ -768,6 +779,8 @@ export const ru: TranslationResources = {
         resumeCommandUnavailable: "Команда возобновления недоступна",
         reloadingAgent: "Перезагрузка агента...",
         reloadedAgent: "Агент перезагружен",
+        reloadedAgentHistoryDiverged:
+          "Агент перезагружен, но история провайдера не совпадает с этим чатом, поэтому она не синхронизирована",
         failedToReloadAgent: "Не удалось перезагрузить агента",
         failedToCloseAgent: "Не удалось закрыть агента",
       },

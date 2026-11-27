@@ -205,6 +205,10 @@ export const ko: TranslationResources = {
       pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },
+    providerSwitch: {
+      switchingNextMessage: "다음 메시지에서 {{provider}}(으)로 전환합니다",
+      switchingAfterTurn: "이 턴이 끝난 후 {{provider}}(으)로 전환합니다",
+    },
     clientCommands: {
       archiveAgent: "현재 에이전트 보관",
       freshDraft: "이 에이전트를 보관하고 새 초안을 시작합니다",
@@ -437,6 +441,13 @@ export const ko: TranslationResources = {
     },
     turnFooter: {
       workedFor: "작업 시간 {{duration}}",
+    },
+    providerSwitch: {
+      switched: "{{from}}에서 {{to}}(으)로 전환됨",
+      contextSummary: "{{count}}개 항목 전달됨 ({{chars}} / {{budget}}자)",
+      trimmed: "생략됨: {{reasons}}",
+      reasonTailWindow: "창 범위를 벗어난 이전 기록",
+      reasonCharBudget: "문자 수 제한",
     },
     compaction: {
       loading: "압축하는 중...",
@@ -762,6 +773,8 @@ export const ko: TranslationResources = {
         resumeCommandUnavailable: "재개 명령을 사용할 수 없습니다",
         reloadingAgent: "에이전트 다시 로드 중...",
         reloadedAgent: "에이전트를 다시 로드했습니다",
+        reloadedAgentHistoryDiverged:
+          "에이전트를 다시 로드했지만 제공자 기록이 이 채팅과 일치하지 않아 동기화하지 않았습니다",
         failedToReloadAgent: "에이전트를 다시 로드하지 못했습니다",
         failedToCloseAgent: "에이전트를 닫지 못했습니다",
       },

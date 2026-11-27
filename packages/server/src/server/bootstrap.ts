@@ -14,9 +14,13 @@ import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open, rm, stat } from "fs/promises";
+import { mkdir, open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
-import { getCachedHostMachineKind, primeHostMachineKind } from "./host-machine-kind.js";
+import {
+  getCachedHostMachineKind,
+  primeHostMachineKind,
+  type HostMachineKind,
+} from "./host-machine-kind.js";
 import { getHostName } from "./host-name.js";
 import path from "node:path";
 import { createMcpHandler } from "@modelcontextprotocol/server";
@@ -101,6 +105,12 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { createSpeechSettingsOwner } from "./speech/speech-settings.js";
 import { AgentManager } from "./agent/agent-manager.js";
+import {
+  createStoredAgentTimeline,
+  timelineSchema,
+  type AgentTimeline,
+} from "./agent/timeline/index.js";
+import { openDaemonDatabase, type DaemonDatabase } from "./database/index.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
@@ -605,6 +615,47 @@ export async function createPaseoDaemon(
       "Failed to remove obsolete agent timeline data",
     );
   });
+  await mkdir(config.paseoHome, { recursive: true });
+  const database = openDaemonDatabase({
+    path: path.join(config.paseoHome, "paseo.db"),
+    modules: [timelineSchema],
+    logger: rootLogger.child({ module: "database" }),
+  });
+  const timeline = createStoredAgentTimeline(database);
+  try {
+    return await assemblePaseoDaemon({
+      config,
+      logger,
+      dependencies,
+      hostMachineKindReady,
+      database,
+      timeline,
+    });
+  } catch (error) {
+    await timeline.close();
+    database.close();
+    throw error;
+  }
+}
+
+/** What `createPaseoDaemon` opens before assembling the daemon around it. */
+interface PaseoDaemonAssembly {
+  config: PaseoDaemonConfig;
+  logger: Logger;
+  dependencies: PaseoDaemonDependencies;
+  hostMachineKindReady: Promise<HostMachineKind | null>;
+  database: DaemonDatabase;
+  timeline: AgentTimeline;
+}
+
+async function assemblePaseoDaemon({
+  config,
+  logger,
+  dependencies,
+  hostMachineKindReady,
+  database,
+  timeline,
+}: PaseoDaemonAssembly): Promise<PaseoDaemon> {
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = config.daemonVersion ?? resolveDaemonVersion(import.meta.url);
@@ -1021,6 +1072,7 @@ export async function createPaseoDaemon(
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
     registry: agentStorage,
+    timeline,
     appendSystemPrompt: config.appendSystemPrompt,
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
@@ -2031,100 +2083,111 @@ export async function createPaseoDaemon(
         httpServer.closeAllConnections();
         await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       }
+      await timeline.close();
+      database.close();
       throw error;
     }
   };
 
   const stop = async (options?: { keepTerminals?: boolean }) => {
-    const keepTerminals = options?.keepTerminals === true;
-    let terminalShutdownError: unknown = null;
-    localCredential = null;
-    await deleteLocalCredential(config.paseoHome);
-    // Stop tracking plugin provider registrations before anything tears plugins
-    // down, so plugin shutdown cannot withdraw a provider from under an agent
-    // that is still open. Plugins themselves are stopped once every session
-    // they serve has been closed, further down.
-    unsubscribePluginProviders();
-    await hubRelationships.stop();
-    workspaceReconciliation.dispose();
-    scriptHealthMonitor.stop();
-    unsubscribeIdleRuntimeCleanup();
-    await idleRuntimeCleanup.close();
-    // Freeze both ingress and registration before taking the agent closure snapshot.
-    wsServer?.prepareForShutdown();
-    await changeRequestWatches.close();
-    await finishSubscriptions.close();
-    await wsServer?.agentMessages.close();
-    agentManager.prepareForShutdown();
-    await restartRecovery.captureRunningAgents();
-    await closeAllAgents(logger, agentManager);
-    await withTimeout({
-      promise: pluginRuntime.drainEvents(),
-      timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
-      label: "drain plugin lifecycle events",
-    }).catch((error) => logger.warn({ err: error }, "Plugin lifecycle events did not finish"));
-    let shutdownFlushTimedOut = false;
-    await withTimeout({
-      promise: agentManager.flushForShutdown(),
-      timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
-      label: "flush agent shutdown tasks",
-    }).catch((error) => {
-      shutdownFlushTimedOut = true;
-      logger.warn({ err: error }, "Agent shutdown tasks did not finish before provider shutdown");
-    });
-    detachAgentStoragePersistence();
-    await agentStorage.flush().catch(() => undefined);
-    await agentProviderRuntime.shutdown();
-    if (shutdownFlushTimedOut) {
+    try {
+      const keepTerminals = options?.keepTerminals === true;
+      let terminalShutdownError: unknown = null;
+      localCredential = null;
+      await deleteLocalCredential(config.paseoHome);
+      // Stop tracking plugin provider registrations before anything tears plugins
+      // down, so plugin shutdown cannot withdraw a provider from under an agent
+      // that is still open. Plugins themselves are stopped once every session
+      // they serve has been closed, further down.
+      unsubscribePluginProviders();
+      await hubRelationships.stop();
+      workspaceReconciliation.dispose();
+      scriptHealthMonitor.stop();
+      unsubscribeIdleRuntimeCleanup();
+      await idleRuntimeCleanup.close();
+      // Freeze both ingress and registration before taking the agent closure snapshot.
+      wsServer?.prepareForShutdown();
+      await changeRequestWatches.close();
+      await finishSubscriptions.close();
+      await wsServer?.agentMessages.close();
+      agentManager.prepareForShutdown();
+      await restartRecovery.captureRunningAgents();
+      await closeAllAgents(logger, agentManager);
+      await withTimeout({
+        promise: pluginRuntime.drainEvents(),
+        timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+        label: "drain plugin lifecycle events",
+      }).catch((error) => logger.warn({ err: error }, "Plugin lifecycle events did not finish"));
+      let shutdownFlushTimedOut = false;
       await withTimeout({
         promise: agentManager.flushForShutdown(),
         timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
-        label: "flush agent shutdown tasks after provider shutdown",
-      }).catch((error) =>
-        logger.warn({ err: error }, "Agent shutdown tasks did not finish after provider shutdown"),
-      );
+        label: "flush agent shutdown tasks",
+      }).catch((error) => {
+        shutdownFlushTimedOut = true;
+        logger.warn({ err: error }, "Agent shutdown tasks did not finish before provider shutdown");
+      });
+      detachAgentStoragePersistence();
       await agentStorage.flush().catch(() => undefined);
-    }
-    await pluginRuntime.stopAllPlugins();
-    try {
-      if (keepTerminals) {
-        await terminalManager.detach();
-        logger.info("Terminals left running for the next daemon");
-      } else {
-        await terminalManager.closeTerminals();
+      await agentProviderRuntime.shutdown();
+      if (shutdownFlushTimedOut) {
+        await withTimeout({
+          promise: agentManager.flushForShutdown(),
+          timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+          label: "flush agent shutdown tasks after provider shutdown",
+        }).catch((error) =>
+          logger.warn(
+            { err: error },
+            "Agent shutdown tasks did not finish after provider shutdown",
+          ),
+        );
+        await agentStorage.flush().catch(() => undefined);
       }
-    } catch (error) {
-      // Finish the rest of the shutdown, then report it: the supervisor and `daemon stop`
-      // retry the cleanup from the record the reaper kept.
-      terminalShutdownError = error;
-      logger.error({ err: error }, "Terminal shutdown failed");
-    }
-    await speechService.stop();
-    await scheduleService.stop().catch(() => undefined);
-    await relayRuntime?.stop().catch(() => undefined);
-    await listeners.stop();
-    if (wsServer) {
-      await wsServer.close();
-    }
-    forgeResolver.dispose();
-    await serviceProxy.stopStandalone();
-    // Force-drop remaining sockets so httpServer.close() resolves promptly.
-    // We've already closed wsServer (which sent ws-layer close frames) and
-    // stopped every other service, so anything still attached is a TCP
-    // socket whose higher-level shutdown hasn't fully released it (e.g.
-    // upgraded WS sockets in the closing handshake, or HTTP keep-alive
-    // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
-    // upgraded sockets, so we use closeAllConnections() here.
-    httpServer.closeAllConnections();
-    await new Promise<void>((resolve) => {
-      httpServer.close(() => resolve());
-    });
-    // Clean up socket files
-    if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
-      unlinkSync(listenTarget.path);
-    }
-    if (terminalShutdownError) {
-      throw terminalShutdownError;
+      await pluginRuntime.stopAllPlugins();
+      try {
+        if (keepTerminals) {
+          await terminalManager.detach();
+          logger.info("Terminals left running for the next daemon");
+        } else {
+          await terminalManager.closeTerminals();
+        }
+      } catch (error) {
+        // Finish the rest of the shutdown, then report it: the supervisor and `daemon stop`
+        // retry the cleanup from the record the reaper kept.
+        terminalShutdownError = error;
+        logger.error({ err: error }, "Terminal shutdown failed");
+      }
+      await speechService.stop();
+      await scheduleService.stop().catch(() => undefined);
+      await relayRuntime?.stop().catch(() => undefined);
+      await listeners.stop();
+      if (wsServer) {
+        await wsServer.close();
+      }
+      forgeResolver.dispose();
+      await serviceProxy.stopStandalone();
+      // Force-drop remaining sockets so httpServer.close() resolves promptly.
+      // We've already closed wsServer (which sent ws-layer close frames) and
+      // stopped every other service, so anything still attached is a TCP
+      // socket whose higher-level shutdown hasn't fully released it (e.g.
+      // upgraded WS sockets in the closing handshake, or HTTP keep-alive
+      // sockets in CLOSE_WAIT). closeIdleConnections() does not catch
+      // upgraded sockets, so we use closeAllConnections() here.
+      httpServer.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        httpServer.close(() => resolve());
+      });
+      // Clean up socket files
+      if (listenTarget.type === "socket" && existsSync(listenTarget.path)) {
+        unlinkSync(listenTarget.path);
+      }
+      if (terminalShutdownError) {
+        throw terminalShutdownError;
+      }
+    } finally {
+      // A failed shutdown step must not leave paseo.db open for the next daemon.
+      await timeline.close();
+      database.close();
     }
   };
 

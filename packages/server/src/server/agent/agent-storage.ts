@@ -41,15 +41,14 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
   .nullable()
   .optional();
 
-const PERSISTENCE_HANDLE_SCHEMA = z
-  .object({
-    provider: z.string(),
-    sessionId: z.string(),
-    nativeHandle: z.any().optional(),
-    metadata: z.record(z.string(), z.any()).optional(),
-  })
-  .nullable()
-  .optional();
+const PERSISTENCE_HANDLE_OBJECT_SCHEMA = z.object({
+  provider: z.string(),
+  sessionId: z.string(),
+  nativeHandle: z.any().optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
+});
+
+const PERSISTENCE_HANDLE_SCHEMA = PERSISTENCE_HANDLE_OBJECT_SCHEMA.nullable().optional();
 
 const RAW_STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
@@ -82,6 +81,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Read-only; becomes controls.
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
+  previousSessions: z.array(PERSISTENCE_HANDLE_OBJECT_SCHEMA).optional(),
   sessionMetrics: z.array(AgentMetricSchema).optional(),
   lastError: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
@@ -126,6 +126,75 @@ const STORED_AGENT_SCHEMA = RAW_STORED_AGENT_SCHEMA.transform(foldLegacyRecordFi
 
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
+}
+
+type StoredPersistenceHandle = z.infer<typeof PERSISTENCE_HANDLE_OBJECT_SCHEMA>;
+
+/** Appends a prior persistence handle to `previousSessions`, deduplicating by provider + id. */
+export function appendUniquePreviousSession(
+  previousSessions: readonly StoredPersistenceHandle[] | undefined,
+  handle: StoredPersistenceHandle | null | undefined,
+): StoredPersistenceHandle[] | undefined {
+  const existing = previousSessions ? [...previousSessions] : [];
+  if (!handle) return existing.length > 0 ? existing : undefined;
+  const alreadyPresent = existing.some(
+    (entry) =>
+      entry.provider === handle.provider &&
+      entry.sessionId === handle.sessionId &&
+      entry.nativeHandle === handle.nativeHandle,
+  );
+  if (!alreadyPresent) existing.push(handle);
+  return existing;
+}
+
+function resolveSnapshotFields(
+  agent: ManagedAgent,
+  existing: StoredAgentRecord | null | undefined,
+  overrides: {
+    hasTitleOverride: boolean;
+    hasInternalOverride: boolean;
+    options?: { title?: string | null; internal?: boolean };
+  },
+) {
+  const title = overrides.hasTitleOverride
+    ? (overrides.options?.title ?? null)
+    : (existing?.title ?? null);
+  const internal = overrides.hasInternalOverride
+    ? overrides.options?.internal
+    : (agent.internal ?? existing?.internal);
+  return { title, createdAt: existing?.createdAt, internal };
+}
+
+function mergeStoredAgentSnapshot(
+  agent: ManagedAgent,
+  existing: StoredAgentRecord | null | undefined,
+  overrides: {
+    hasTitleOverride: boolean;
+    hasInternalOverride: boolean;
+    hasPreviousSessionsOverride: boolean;
+    options?: {
+      title?: string | null;
+      internal?: boolean;
+      previousSessions?: StoredPersistenceHandle[];
+    };
+  },
+): StoredAgentRecord {
+  const record = toStoredAgentRecord(agent, resolveSnapshotFields(agent, existing, overrides));
+  if (existing && existing.archivedAt !== undefined) {
+    record.archivedAt = existing.archivedAt;
+  }
+  if (existing?.background) {
+    record.background = true;
+  }
+  const previousSessions = overrides.hasPreviousSessionsOverride
+    ? overrides.options?.previousSessions
+    : existing?.previousSessions;
+  if (previousSessions && previousSessions.length > 0) {
+    record.previousSessions = previousSessions;
+  }
+  record.resumeOnStartup =
+    Boolean(existing?.resumeOnStartup) && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+  return record;
 }
 
 export class AgentStorage {
@@ -276,13 +345,17 @@ export class AgentStorage {
   async listByProviderSession(
     provider: string,
     providerHandleId: string,
+    options?: { includePreviousSessions?: boolean },
   ): Promise<StoredAgentRecord[]> {
     await this.load();
+    const includePrevious = options?.includePreviousSessions === true;
+    const matchesHandle = (handle: StoredPersistenceHandle | null | undefined) =>
+      handle?.provider === provider &&
+      (handle.sessionId === providerHandleId || handle.nativeHandle === providerHandleId);
     return Array.from(this.cache.values()).filter(
       (record) =>
-        record.persistence?.provider === provider &&
-        (record.persistence.sessionId === providerHandleId ||
-          record.persistence.nativeHandle === providerHandleId),
+        matchesHandle(record.persistence) ||
+        (includePrevious && (record.previousSessions?.some(matchesHandle) ?? false)),
     );
   }
 
@@ -364,6 +437,11 @@ export class AgentStorage {
     this.deleting.add(agentId);
   }
 
+  /** Ends a delete that did not happen; the agent's record takes writes again. */
+  abandonDelete(agentId: string): void {
+    this.deleting.delete(agentId);
+  }
+
   async remove(agentId: string): Promise<void> {
     await this.load();
     this.beginDelete(agentId);
@@ -401,32 +479,27 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: {
+      title?: string | null;
+      internal?: boolean;
+      previousSessions?: StoredPersistenceHandle[];
+    },
   ): Promise<void> {
     await this.load();
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
-    await this.queueRecordMutation(agent.id, (existing) => {
-      const record = toStoredAgentRecord(agent, {
-        title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-        createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-      });
-
-      // Preserve soft-delete/archive status across snapshot flushes. The
-      // projection runs inside the per-agent write queue so it cannot commit a
-      // stale pre-archive record after the archive mutation.
-      if (existing && existing.archivedAt !== undefined) {
-        record.archivedAt = existing.archivedAt;
-      }
-      // Background is fixed at creation; a runtime opened without it cannot clear it.
-      if (existing?.background) record.background = true;
-      record.resumeOnStartup =
-        existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
-      return record;
-    });
+    const hasPreviousSessionsOverride =
+      options !== undefined && Object.prototype.hasOwnProperty.call(options, "previousSessions");
+    await this.queueRecordMutation(agent.id, (existing) =>
+      mergeStoredAgentSnapshot(agent, existing, {
+        hasTitleOverride,
+        hasInternalOverride,
+        hasPreviousSessionsOverride,
+        options,
+      }),
+    );
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {

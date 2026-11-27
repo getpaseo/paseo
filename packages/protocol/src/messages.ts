@@ -830,6 +830,22 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     version: z.number(),
     data: JsonWireValueSchema,
   }),
+  z.object({
+    type: z.literal("provider_switch"),
+    fromProvider: AgentProviderSchema,
+    toProvider: AgentProviderSchema,
+    fromModel: z.string().nullable().optional(),
+    toModel: z.string().nullable().optional(),
+    fromSessionId: z.string().nullable().optional(),
+    toSessionId: z.string().nullable().optional(),
+    context: z.object({
+      includedItems: z.number().int().nonnegative(),
+      truncated: z.boolean(),
+      charCount: z.number().int().nonnegative(),
+      budgetChars: z.number().int().nonnegative(),
+      omittedReasons: z.array(z.string()).optional(),
+    }),
+  }),
 ]);
 
 export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
@@ -869,6 +885,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     provider: AgentProviderSchema,
     item: AgentTimelineItemPayloadSchema,
     turnId: z.string().optional(),
+    turnMetrics: z.array(AgentMetricSchema).optional(),
   }),
   z.object({
     type: z.literal("permission_requested"),
@@ -2200,6 +2217,7 @@ export const SetAgentModeRequestMessageSchema = z.object({
   type: z.literal("set_agent_mode_request"),
   agentId: z.string(),
   modeId: z.string(),
+  expectedProvider: AgentProviderSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2220,6 +2238,7 @@ export const SetAgentModelRequestMessageSchema = z.object({
   type: z.literal("set_agent_model_request"),
   agentId: z.string(),
   modelId: z.string().nullable(),
+  expectedProvider: AgentProviderSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2232,6 +2251,7 @@ export const SetAgentThinkingRequestMessageSchema = z.object({
   type: z.literal("set_agent_thinking_request"),
   agentId: z.string(),
   thinkingOptionId: z.string().nullable(),
+  expectedProvider: AgentProviderSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2245,6 +2265,7 @@ export const SetAgentFeatureRequestMessageSchema = z.object({
   agentId: z.string(),
   featureId: z.string(),
   value: z.unknown(),
+  expectedProvider: AgentProviderSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2280,6 +2301,7 @@ export const AgentConfigApplyRequestMessageSchema = z.object({
   type: z.literal("agent.config.apply.request"),
   agentId: z.string(),
   config: AgentConfigApplySchema,
+  expectedProvider: AgentProviderSchema.optional(),
   requestId: z.string(),
 });
 
@@ -2317,6 +2339,21 @@ export const AgentRewindResponseMessageSchema = z.object({
     ok: z.boolean(),
     error: z.string().nullable(),
   }),
+});
+
+export const AgentProviderSwitchRequestSchema = z.object({
+  type: z.literal("agent.provider.switch.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  provider: AgentProviderSchema,
+  model: z.string().nullable().optional(),
+  modeId: z.string().nullable().optional(),
+  thinkingOptionId: z.string().nullable().optional(),
+  providerOptions: z.record(z.string(), z.unknown()).optional(),
+  text: z.string(),
+  messageId: z.string().min(1),
+  images: z.array(ImageAttachmentSchema).optional(),
+  attachments: AgentAttachmentsSchema,
 });
 
 export const UpdateAgentResponseMessageSchema = z.object({
@@ -3648,6 +3685,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceArchiveUndoRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
+  AgentProviderSwitchRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonTailscaleSetRequestSchema,
@@ -4126,6 +4164,11 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-grapheme-widths": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
+        // COMPAT(timelineRewindOperations): added in v0.14.1, remove gate after 2027-05-10.
+        // A conversation rewind arrives as `agent.timeline.rewind`, not a replacement.
+        timelineRewindOperations: z.boolean().optional(),
+        // COMPAT(providerSwitching): added in v0.18.0, remove gate after 2027-05-25.
+        providerSwitching: z.boolean().optional(),
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
         agentTimelinePromptIndex: z.boolean().optional(),
         // COMPAT(agentHistorySearch): added in v0.3.0, remove gate after 2027-02-07.
@@ -4331,6 +4374,8 @@ export const AgentResumedStatusPayloadSchema = z
 export const AgentRefreshedStatusPayloadSchema = z
   .object({
     status: z.literal("agent_refreshed"),
+    /** The provider's history differs from the kept history, which Reload agent did not change. */
+    historyDiverged: z.boolean().optional(),
   })
   .extend(AgentStatusWithTimelineSchema.shape);
 
@@ -5191,6 +5236,12 @@ export const AgentTimelineEntryPayloadSchema = z.object({
   turnMetrics: z.array(AgentMetricSchema).optional(),
 });
 
+/** Active rows anchored in `[retireFromSeq, seq)` left the conversation. `seq` is the retirement's own. */
+export const AgentTimelineRetirementSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  retireFromSeq: z.number().int().nonnegative(),
+});
+
 export const FetchAgentTimelineResponseMessageSchema = z.object({
   type: z.literal("fetch_agent_timeline_response"),
   payload: z.object({
@@ -5214,6 +5265,11 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     hasNewer: z.boolean(),
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
+    // COMPAT(timelineRewindOperations): added in v0.14.1. Retirements whose seq lies in the page's
+    // span; apply them before the entries. Sent only to clients with the capability.
+    retirements: z.array(AgentTimelineRetirementSchema).optional(),
+    /** Seq of the latest active provider_switch marker, or 0 if never switched. */
+    activeSegmentStartSeq: z.number().int().nonnegative().optional(),
     error: z.string().nullable(),
   }),
 });
@@ -5224,6 +5280,18 @@ export const AgentTimelineReplacementMessageSchema = z.object({
     subscriptionId: z.string().optional(),
     agentId: z.string(),
     epoch: z.string(),
+  }),
+});
+
+/** A conversation rewind retired active rows. Apply it when `seq` follows the loaded end. */
+export const AgentTimelineRewindMessageSchema = z.object({
+  type: z.literal("agent.timeline.rewind"),
+  payload: z.object({
+    subscriptionId: z.string().optional(),
+    agentId: z.string(),
+    epoch: z.string(),
+    seq: z.number().int().nonnegative(),
+    retireFromSeq: z.number().int().nonnegative(),
   }),
 });
 
@@ -5588,6 +5656,17 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
     /** What happens to a queued agent message, and how the sender can change it. */
     guidance: z.string().optional(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentProviderSwitchResponseMessageSchema = z.object({
+  type: z.literal("agent.provider.switch.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    agent: AgentSnapshotPayloadSchema.optional(),
     error: z.string().nullable(),
   }),
 });
@@ -7888,6 +7967,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   AgentTimelineReplacementMessageSchema,
+  AgentTimelineRewindMessageSchema,
   AgentTimelineSearchResponseMessageSchema,
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
@@ -7909,6 +7989,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
+  AgentProviderSwitchResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonTailscaleSetResponseSchema,
@@ -8140,6 +8221,9 @@ export type AgentTimelineListPromptsResponseMessage = z.infer<
 export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextResponseMessageSchema>;
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
+export type AgentProviderSwitchResponseMessage = z.infer<
+  typeof AgentProviderSwitchResponseMessageSchema
+>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
@@ -8275,6 +8359,7 @@ export type ProjectSuggestionsResponse = z.infer<typeof ProjectSuggestionsRespon
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
+export type AgentProviderSwitchRequest = z.infer<typeof AgentProviderSwitchRequestSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;
 export type DictationStreamChunkMessage = z.infer<typeof DictationStreamChunkMessageSchema>;
@@ -8601,7 +8686,10 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
       [CLIENT_CAPS.providerSnapshotReferences]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
+      [CLIENT_CAPS.timelineRewindOperations]: z.boolean().optional(),
       [CLIENT_CAPS.timelineNotifications]: z.boolean().optional(),
+      [CLIENT_CAPS.pluginTimelineItems]: z.boolean().optional(),
+      [CLIENT_CAPS.timelineProviderSwitches]: z.boolean().optional(),
       [CLIENT_CAPS.backgroundAgents]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })

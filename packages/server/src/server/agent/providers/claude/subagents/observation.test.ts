@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
+import { AgentTimeline } from "../../../timeline/index.js";
 import { foldSubagentObservations, type SubagentObservation } from "./observation.js";
 
 describe("foldSubagentObservations", () => {
@@ -66,9 +67,9 @@ describe("foldSubagentObservations", () => {
     );
   });
 
-  it("accumulates through the store so a later status keeps the declared identity", () => {
+  it("accumulates through the store so a later status keeps the declared identity", async () => {
     // The property the whole design rests on: sources emit sparse facts, the store merges them.
-    const store = new ProviderSubagentStore();
+    const store = new ProviderSubagentStore(new AgentTimeline());
     const events = foldSubagentObservations([
       { kind: "declared", id: "toolu_1", title: "Explore", description: "Find the code" },
       { kind: "status", id: "toolu_1", status: "completed" },
@@ -76,7 +77,7 @@ describe("foldSubagentObservations", () => {
 
     let descriptor = null;
     for (const event of events) {
-      const applied = store.apply("parent", "claude", event);
+      const applied = await store.apply("parent", "claude", event);
       if (applied.type === "upsert") descriptor = applied.subagent;
     }
 
@@ -102,15 +103,15 @@ describe("subtitle observations", () => {
     expect(event).not.toHaveProperty("status");
   });
 
-  it("does not revert a finished subagent when presentation changes", () => {
-    const store = new ProviderSubagentStore();
+  it("does not revert a finished subagent when presentation changes", async () => {
+    const store = new ProviderSubagentStore(new AgentTimeline());
     let descriptor = null;
     for (const event of foldSubagentObservations([
       { kind: "declared", id: "toolu_1", title: "Explore" },
       { kind: "status", id: "toolu_1", status: "completed" },
       { kind: "subtitle", id: "toolu_1", subtitle: "Explore · Opus 5 · 32.3k tokens" },
     ])) {
-      const applied = store.apply("parent", "claude", event);
+      const applied = await store.apply("parent", "claude", event);
       if (applied.type === "upsert") descriptor = applied.subagent;
     }
     expect(descriptor).toMatchObject({
@@ -119,14 +120,14 @@ describe("subtitle observations", () => {
     });
   });
 
-  it("keeps identity when a later subtitle arrives", () => {
-    const store = new ProviderSubagentStore();
+  it("keeps identity when a later subtitle arrives", async () => {
+    const store = new ProviderSubagentStore(new AgentTimeline());
     let descriptor = null;
     for (const event of foldSubagentObservations([
       { kind: "declared", id: "toolu_1", title: "Explore", description: "Find the code" },
       { kind: "subtitle", id: "toolu_1", subtitle: "Explore · Opus 5" },
     ])) {
-      const applied = store.apply("parent", "claude", event);
+      const applied = await store.apply("parent", "claude", event);
       if (applied.type === "upsert") descriptor = applied.subagent;
     }
     expect(descriptor).toMatchObject({

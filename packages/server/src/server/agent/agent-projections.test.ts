@@ -96,7 +96,6 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     persistence: { ...basePersistence },
     lastUsage: undefined,
     lastError: lastErrorValue,
-    historyPrimed: true,
     lastUserMessageAt: now,
     attention: { requiresAttention: false },
   };

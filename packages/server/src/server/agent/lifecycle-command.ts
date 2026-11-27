@@ -6,7 +6,7 @@ import {
   type ManagedAgent,
 } from "./agent-manager.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
-import type { AgentProviderNotice } from "./agent-sdk-types.js";
+import type { AgentProvider, AgentProviderNotice } from "./agent-sdk-types.js";
 
 export type LifecycleAgentSnapshot = Pick<ManagedAgent, "id" | "cwd" | "lifecycle" | "internal">;
 
@@ -25,7 +25,11 @@ export interface LifecycleAgentManager {
     previousParentAgentId: string | null;
   }>;
   notifyAgentState(agentId: string): void;
-  setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
+  setAgentMode(
+    agentId: string,
+    modeId: string,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<AgentProviderNotice | null>;
   updateAgentMetadata(
     agentId: string,
     updates: {
@@ -212,9 +216,14 @@ export async function setAgentModeCommand(
   input: {
     agentId: string;
     modeId: string;
+    expectedProvider?: AgentProvider;
   },
 ): Promise<{ modeId: string; notice: AgentProviderNotice | null }> {
-  const notice = await dependencies.agentManager.setAgentMode(input.agentId, input.modeId);
+  const notice = await dependencies.agentManager.setAgentMode(
+    input.agentId,
+    input.modeId,
+    input.expectedProvider ? { expectedProvider: input.expectedProvider } : undefined,
+  );
   return { modeId: input.modeId, notice };
 }
 

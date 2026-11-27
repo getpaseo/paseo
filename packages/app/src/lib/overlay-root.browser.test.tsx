@@ -74,6 +74,74 @@ describe("useOverlayRegistration in the browser", () => {
 
     expect(openerFocusCalls).toBe(1);
   });
+
+  it("restores focus to the non-first opener button when a fading upper overlay closes over a lower overlay", async () => {
+    function StackedHarness({ upperActive }: { upperActive: boolean }) {
+      const setLowerScope = useOverlayRegistration({
+        keys: ["Escape"],
+        active: true,
+        layer: 10,
+        onKeyDown: () => false,
+      });
+      const setUpperScope = useOverlayRegistration({
+        keys: ["Escape"],
+        active: upperActive,
+        layer: 30,
+        onKeyDown: () => false,
+      });
+      return (
+        <>
+          <div
+            data-testid="lower-scope"
+            ref={setLowerScope as RefCallback<HTMLDivElement>}
+            tabIndex={-1}
+          >
+            <button data-testid="lower-first" type="button">
+              Back
+            </button>
+            <button data-testid="lower-second" type="button">
+              Settings
+            </button>
+          </div>
+          <div
+            data-testid="upper-scope"
+            ref={setUpperScope as RefCallback<HTMLDivElement>}
+            tabIndex={-1}
+          >
+            <button data-testid="upper-close" type="button">
+              Close
+            </button>
+          </div>
+        </>
+      );
+    }
+
+    flushSync(() => {
+      root.render(<StackedHarness upperActive={false} />);
+    });
+    await nextFrame();
+
+    const lowerSecond = document.querySelector<HTMLButtonElement>('[data-testid="lower-second"]');
+    expect(lowerSecond).toBeTruthy();
+    lowerSecond?.focus();
+    expect(document.activeElement).toBe(lowerSecond);
+
+    flushSync(() => {
+      root.render(<StackedHarness upperActive />);
+    });
+    await nextFrame();
+
+    const upperClose = document.querySelector<HTMLButtonElement>('[data-testid="upper-close"]');
+    expect(document.activeElement).toBe(upperClose);
+
+    // Keep upper-scope mounted while closing (mirrors AdaptiveModalSheet's web fade-out).
+    flushSync(() => {
+      root.render(<StackedHarness upperActive={false} />);
+    });
+    await nextFrame();
+
+    expect(document.activeElement).toBe(lowerSecond);
+  });
 });
 
 describe("hasOpenDomPopover", () => {

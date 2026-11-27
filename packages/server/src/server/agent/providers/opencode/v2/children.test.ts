@@ -5,6 +5,7 @@ import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 import { SessionChildren } from "./children.js";
 import { ProviderSubagentStore } from "../../../provider-subagents/store.js";
+import { AgentTimeline } from "../../../timeline/index.js";
 
 function setup() {
   const harness = new V2Harness();
@@ -54,20 +55,16 @@ function setupTree() {
     if (!info) throw { _tag: "SessionNotFoundError", sessionID };
     return info;
   };
-  const store = new ProviderSubagentStore();
+  const store = new ProviderSubagentStore(new AgentTimeline());
   const children = new SessionChildren({
     client: () => harness.api,
     id: "session",
     emit: (event) => {
-      if (event.type === "provider_subagent") store.apply("parent", "opencode", event.event);
+      if (event.type === "provider_subagent") void store.apply("parent", "opencode", event.event);
     },
     reconcilePermissions: async () => {},
   });
-  const ids = () =>
-    store
-      .list("parent")
-      .map((child) => child.id)
-      .sort();
+  const ids = async () => (await store.list("parent")).map((child) => child.id).sort();
   return { harness, sessions, children, ids, store };
 }
 
@@ -85,17 +82,17 @@ describe("OpenCode v2 child presentation", () => {
       return child;
     };
     harness.api.session.active = async () => (exists ? { child: { type: "running" } } : {});
-    const store = new ProviderSubagentStore();
+    const store = new ProviderSubagentStore(new AgentTimeline());
     const children = new SessionChildren({
       client: () => harness.api,
       id: "session",
       emit: (event) => {
-        if (event.type === "provider_subagent") store.apply("parent", "opencode", event.event);
+        if (event.type === "provider_subagent") void store.apply("parent", "opencode", event.event);
       },
       reconcilePermissions: async () => {},
     });
     await children.reconcile("session");
-    expect(store.list("parent")).toMatchObject([{ id: "child", status: "running" }]);
+    expect(await store.list("parent")).toMatchObject([{ id: "child", status: "running" }]);
     exists = false;
     if (trigger === "reconnect") await children.reconcile("session");
     else
@@ -106,7 +103,7 @@ describe("OpenCode v2 child presentation", () => {
         durable: { aggregateID: "child", seq: 1, version: 1 },
         data: { sessionID: "child" },
       });
-    expect(store.list("parent")).toEqual([]);
+    expect(await store.list("parent")).toEqual([]);
   });
 
   test.each(["deletion event", "reconnect"])(
@@ -114,7 +111,7 @@ describe("OpenCode v2 child presentation", () => {
     async (trigger) => {
       const { sessions, children, ids } = setupTree();
       await children.reconcile("session");
-      expect(ids()).toEqual(["first", "grandchild", "second"]);
+      expect(await ids()).toEqual(["first", "grandchild", "second"]);
       sessions.delete("first");
       sessions.delete("grandchild");
       if (trigger === "reconnect") await children.reconcile("session");
@@ -126,7 +123,7 @@ describe("OpenCode v2 child presentation", () => {
           durable: { aggregateID: "first", seq: 1, version: 1 },
           data: { sessionID: "first" },
         });
-      expect(ids()).toEqual(["second"]);
+      expect(await ids()).toEqual(["second"]);
     },
   );
 
@@ -142,7 +139,7 @@ describe("OpenCode v2 child presentation", () => {
     };
     await children.reconcile("session");
     await children.reconcile("first");
-    expect(ids()).toEqual(["first", "grandchild", "second"]);
+    expect(await ids()).toEqual(["first", "grandchild", "second"]);
   });
 
   test.each(["present", "deleted"])(
@@ -159,7 +156,7 @@ describe("OpenCode v2 child presentation", () => {
       }
       sessions.get("second")!.time = { created: 2, updated: 2 };
       await children.reconcile("session");
-      const expected = ids();
+      const expected = await ids();
       expect(expected).toHaveLength(102);
       if (grandchild === "deleted") sessions.delete("grandchild");
       const remaining = expected.filter((id) => grandchild === "present" || id !== "grandchild");
@@ -181,8 +178,8 @@ describe("OpenCode v2 child presentation", () => {
         return { data: page, cursor: { next } };
       };
       await children.reconcile("session");
-      expect(ids()).toEqual(remaining);
-      expect(store.list("parent").find((child) => child.id === "first")).toMatchObject({
+      expect(await ids()).toEqual(remaining);
+      expect((await store.list("parent")).find((child) => child.id === "first")).toMatchObject({
         title: "Updated during reconnect",
       });
       const get = harness.api.session.get;
@@ -200,8 +197,8 @@ describe("OpenCode v2 child presentation", () => {
           data: { sessionID: "first" },
         });
         await expect.poll(() => queuedReads).toBe(1);
-        expect(ids()).toEqual(remaining);
-        expect(store.list("parent").find((child) => child.id === "first")).toMatchObject({
+        expect(await ids()).toEqual(remaining);
+        expect((await store.list("parent")).find((child) => child.id === "first")).toMatchObject({
           title: "Updated during reconnect",
         });
       } finally {
@@ -220,10 +217,10 @@ describe("OpenCode v2 child presentation", () => {
       throw new Error("Provider disconnected");
     };
     await children.reconcile("session");
-    expect(ids()).toEqual(["first", "grandchild", "second"]);
+    expect(await ids()).toEqual(["first", "grandchild", "second"]);
     harness.api.session.get = get;
     await children.reconcile("session");
-    expect(ids()).toEqual(["second"]);
+    expect(await ids()).toEqual(["second"]);
   });
 
   test("keeps missing children when a listing fails before its last page", async () => {
@@ -239,10 +236,10 @@ describe("OpenCode v2 child presentation", () => {
       return list(input);
     };
     await expect(children.reconcile("session")).rejects.toThrow("Provider disconnected");
-    expect(ids()).toEqual(["first", "grandchild", "second"]);
+    expect(await ids()).toEqual(["first", "grandchild", "second"]);
     harness.api.session.list = list;
     await children.reconcile("session");
-    expect(ids()).toEqual(["second"]);
+    expect(await ids()).toEqual(["second"]);
   });
 
   test("restores agent, model, variant and all token categories in the child subtitle", async () => {

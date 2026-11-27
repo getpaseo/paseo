@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { ProviderSubagentStore } from "../../../../provider-subagents/store.js";
+import { AgentTimeline } from "../../../../timeline/index.js";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 import { streamPiHistory } from "../../history-mapper.js";
@@ -43,11 +44,17 @@ describe("@gotgenes/pi-subagents adapter", () => {
         if (block.type === "toolCall") block.arguments = start.args;
       }
       const events = await verifySubagentFixture(fixture);
-      const store = new ProviderSubagentStore();
-      store.apply("parent", "pi", { type: "upsert", id: "previous-child", status: "completed" });
-      for (const event of events) store.apply("parent", "pi", event.event);
+      const store = new ProviderSubagentStore(new AgentTimeline());
+      await store.apply("parent", "pi", {
+        type: "upsert",
+        id: "previous-child",
+        status: "completed",
+      });
+      for (const event of events) await store.apply("parent", "pi", event.event);
       expect(events.map(({ event }) => event.type)).toEqual(["upsert", "remove"]);
-      expect(store.list("parent")).toMatchObject([{ id: "previous-child", status: "completed" }]);
+      expect(await store.list("parent")).toMatchObject([
+        { id: "previous-child", status: "completed" },
+      ]);
     },
   );
 

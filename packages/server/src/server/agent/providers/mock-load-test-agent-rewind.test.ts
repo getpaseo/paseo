@@ -62,8 +62,11 @@ describe("MockLoadTestAgentSession rewind", () => {
     );
 
     await expect(rewind.files({ messageId })).resolves.toBeUndefined();
-    await expect(rewind.conversation({ messageId })).resolves.toBeUndefined();
-    await expect(rewind.both({ messageId })).resolves.toBeUndefined();
+    await expect(rewind.conversation({ messageId })).resolves.toEqual({ kind: "at_target" });
+    // The rewind removed the message, so it is no longer a target.
+    await expect(rewind.both({ messageId })).rejects.toThrow(
+      `Mock rewind target ${messageId} was not found in session history`,
+    );
     await session.close();
   });
 });

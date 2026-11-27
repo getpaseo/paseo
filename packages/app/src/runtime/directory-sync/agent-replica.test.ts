@@ -91,7 +91,7 @@ describe("AgentDirectoryReplica", () => {
             id: "reply",
             text: "server history",
             timestamp: new Date(),
-            timelineCursor: { epoch: "e", seq: 1 },
+            timelineCursor: { epoch: "e", seq: 1, anchorSeq: 1 },
           },
         ],
         head: [],

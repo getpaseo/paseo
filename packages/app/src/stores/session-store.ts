@@ -318,11 +318,18 @@ export interface AgentTimelineCursorState {
   epoch: string;
   startSeq: number;
   endSeq: number;
+  activeSegmentStartSeq?: number;
   retainedRanges?: Array<{
     startSeq: number;
     endSeq: number;
     hasOlder?: boolean;
   }>;
+}
+
+/** The latest conversation rewind applied to an agent's history, by its sequence number. */
+export interface AgentTimelineRewind {
+  epoch: string;
+  seq: number;
 }
 
 export type AgentTimelineState =
@@ -499,6 +506,7 @@ export interface SessionState {
   agentTimelineUnsettledTurn: Map<string, UnsettledTurn>;
   agentTimelineHasOlder: Map<string, boolean>;
   agentTimelineHasNewer: Map<string, boolean>;
+  agentTimelineLatestRewind: Map<string, AgentTimelineRewind>;
   agentTimelineOlderFetchInFlight: Map<string, boolean>;
   historySyncGeneration: number;
   agentHistorySyncGeneration: Map<string, number>;
@@ -529,6 +537,7 @@ export interface SessionState {
     string,
     Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
   >;
+  queuedSendErrors: Map<string, string>;
 }
 
 // Global store state
@@ -619,6 +628,12 @@ interface SessionStoreActions {
   setAgentTimelineHasNewer: (
     serverId: string,
     state: Map<string, boolean> | ((prev: Map<string, boolean>) => Map<string, boolean>),
+  ) => void;
+  /** Records a rewind applied to the agent's history; an older one of the same history is ignored. */
+  recordAgentTimelineRewind: (
+    serverId: string,
+    agentId: string,
+    rewind: AgentTimelineRewind,
   ) => void;
   setAgentTimelineOlderFetchInFlight: (
     serverId: string,
@@ -716,6 +731,7 @@ interface SessionStoreActions {
           prev: Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>,
         ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
   ) => void;
+  setQueuedSendError: (serverId: string, agentId: string, error: string | null) => void;
 
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
@@ -756,6 +772,7 @@ function createInitialSessionState(
     agentTimelineUnsettledTurn: new Map(),
     agentTimelineHasOlder: new Map(),
     agentTimelineHasNewer: new Map(),
+    agentTimelineLatestRewind: new Map(),
     agentTimelineOlderFetchInFlight: new Map(),
     historySyncGeneration: 0,
     agentHistorySyncGeneration: new Map(),
@@ -770,6 +787,7 @@ function createInitialSessionState(
     pendingPermissions: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
+    queuedSendErrors: new Map(),
   };
 }
 
@@ -1434,6 +1452,24 @@ export const useSessionStore = create<SessionStore>()(
         });
       },
 
+      recordAgentTimelineRewind: (serverId, agentId, rewind) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const current = session.agentTimelineLatestRewind.get(agentId);
+          if (current && current.epoch === rewind.epoch && current.seq >= rewind.seq) return prev;
+          const next = new Map(session.agentTimelineLatestRewind);
+          next.set(agentId, rewind);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentTimelineLatestRewind: next },
+            },
+          };
+        });
+      },
+
       setAgentTimelineOlderFetchInFlight: (serverId, state) => {
         set((prev) => {
           const session = prev.sessions[serverId];
@@ -1972,6 +2008,32 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, queuedMessages: nextValue },
+            },
+          };
+        });
+      },
+
+      setQueuedSendError: (serverId, agentId, error) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const existing = session.queuedSendErrors.get(agentId) ?? null;
+          if (existing === error) {
+            return prev;
+          }
+          const next = new Map(session.queuedSendErrors);
+          if (error === null) {
+            next.delete(agentId);
+          } else {
+            next.set(agentId, error);
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, queuedSendErrors: next },
             },
           };
         });

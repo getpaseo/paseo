@@ -31,6 +31,8 @@ export interface RewindCompletionGate {
   clearTimelineStreamCount(): void;
   release(): void;
   timelineStreamCount(): number;
+  /** Timeline reads this page sent since the last clear. */
+  timelineFetchCount(): number;
   waitForDelayedResponse(): Promise<void>;
 }
 
@@ -186,12 +188,20 @@ export async function holdDaemonHydration(page: Page): Promise<DaemonHydrationGa
   };
 }
 
+// The rewind response and the timeline change it causes; the change removes the rewound row too.
+const REWIND_COMPLETION_MESSAGES = new Set([
+  "agent.rewind.response",
+  "agent.timeline.rewind",
+  "agent.timeline.replacement",
+]);
+
 export async function holdRewindCompletion(
   page: Page,
   agentId: string,
 ): Promise<RewindCompletionGate> {
   let released = false;
   let timelineStreamCount = 0;
+  let timelineFetchCount = 0;
   const delayedForwards: Array<() => void> = [];
   let resolveDelayedResponse: (() => void) | null = null;
   const delayedResponse = new Promise<void>((resolve) => {
@@ -200,7 +210,16 @@ export async function holdRewindCompletion(
 
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
-    ws.onMessage((message) => server.send(message));
+    ws.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      if (
+        sessionMessage?.type === "fetch_agent_timeline_request" &&
+        sessionMessage.agentId === agentId
+      ) {
+        timelineFetchCount += 1;
+      }
+      server.send(message);
+    });
     server.onMessage((message) => {
       const sessionMessage = getSessionMessage(message);
       const payload = sessionMessage ? getPayload(sessionMessage) : null;
@@ -216,11 +235,11 @@ export async function holdRewindCompletion(
       }
       if (
         !released &&
-        (sessionMessage?.type === "agent.rewind.response" ||
-          sessionMessage?.type === "agent.timeline.replacement") &&
+        sessionMessage &&
+        REWIND_COMPLETION_MESSAGES.has(String(sessionMessage.type)) &&
         payload?.agentId === agentId
       ) {
-        // The replacement also signals completion and removes the rewound row/menu.
+        // The rewind also signals completion and removes the rewound row/menu.
         // Hold it with the response so the pending-state assertion observes a pending rewind.
         delayedForwards.push(() => ws.send(message));
         if (sessionMessage.type === "agent.rewind.response") resolveDelayedResponse?.();
@@ -233,6 +252,7 @@ export async function holdRewindCompletion(
   return {
     clearTimelineStreamCount() {
       timelineStreamCount = 0;
+      timelineFetchCount = 0;
     },
     release() {
       released = true;
@@ -241,6 +261,7 @@ export async function holdRewindCompletion(
       }
     },
     timelineStreamCount: () => timelineStreamCount,
+    timelineFetchCount: () => timelineFetchCount,
     waitForDelayedResponse: () => delayedResponse,
   };
 }

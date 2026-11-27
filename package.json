@@ -169,5 +169,8 @@
     "tiny-async-pool": {
       "semver@^5": "5.7.2"
     }
+  },
+  "engines": {
+    "node": ">=22.16.0"
   }
 }

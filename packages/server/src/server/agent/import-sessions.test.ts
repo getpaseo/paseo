@@ -100,7 +100,6 @@ function makeManagedAgent(args: {
       ...(args.nativeHandle ? { nativeHandle: args.nativeHandle } : {}),
       metadata: { provider, cwd: args.cwd },
     },
-    historyPrimed: true,
     lastUserMessageAt: null,
     attention: { requiresAttention: false },
     foregroundTurnWaiters: new Set(),
@@ -276,6 +275,47 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
       },
     ],
   });
+});
+
+test("listImportableProviderSessions excludes sessions recorded in active previousSessions", async () => {
+  const cwd = "/tmp/project";
+  const previousClaude = makeImportableSession({
+    provider: "claude",
+    sessionId: "claude-before-switch",
+    cwd,
+    lastActivityAt: "2026-04-30T12:02:00.000Z",
+  });
+  const freshClaude = makeImportableSession({
+    provider: "claude",
+    sessionId: "claude-unimported",
+    cwd,
+    lastActivityAt: "2026-04-30T12:01:00.000Z",
+  });
+  const listImportableSessions = vi.fn(async (options?: { limit?: number }) =>
+    makeImportableSessionsResult([previousClaude, freshClaude].slice(0, options?.limit)),
+  );
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ cwd, providers: ["claude"], limit: 5 }),
+    agentManager: {
+      listAgents: () => [],
+      listImportableSessions,
+    },
+    agentStorage: {
+      listAll: async () => [
+        {
+          id: "agent-switched",
+          provider: "codex",
+          persistence: { provider: "codex", sessionId: "codex-after-switch" },
+          previousSessions: [{ provider: "claude", sessionId: "claude-before-switch" }],
+        } as StoredAgentRecord,
+      ],
+    },
+    providerSnapshotManager: { getProviderLabel: () => "Claude" },
+  });
+
+  expect(result.filteredAlreadyImportedCount).toBe(1);
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["claude-unimported"]);
 });
 
 test("listImportableProviderSessions looks past already-imported rows to fill the requested limit", async () => {
@@ -678,8 +718,7 @@ class ProviderImportHarness {
         this.activeAgent = this.snapshot;
         return this.snapshot;
       },
-      hydrateTimelineFromProvider: async () => {},
-      getTimeline: () => this.timeline,
+      getTimeline: async () => this.timeline,
       closeAgent: async (agentId: string) => {
         this.closedAgentIds.push(agentId);
         this.activeAgent = null;

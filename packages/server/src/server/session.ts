@@ -34,6 +34,7 @@ import {
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
+import { legacyWireEpoch, readLegacyWireCursor } from "./session/legacy-rewind-epoch/index.js";
 import { v4 as uuidv4 } from "uuid";
 import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, join, resolve, sep } from "path";
@@ -81,9 +82,14 @@ import {
   resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
-import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
+import {
+  ensureAgentLoaded,
+  ensureUnarchivedAgentLoaded,
+  loadAgentHistory,
+} from "./agent/agent-loading.js";
 import {
   sendPromptToAgent,
+  startAgentRun,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
@@ -125,7 +131,11 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import {
+  AgentManager,
+  AgentProviderSwitchStartError,
+  AgentRunCancellationError,
+} from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -375,11 +385,18 @@ function clientUsesLegacyWorkspaceRestore(appVersion: string | null): boolean {
 
 type DeleteFencedAgentStorage = AgentStorage & {
   beginDelete(agentId: string): void;
+  abandonDelete(agentId: string): void;
 };
 
 function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string): void {
   if ("beginDelete" in agentStorage && typeof agentStorage.beginDelete === "function") {
     (agentStorage as DeleteFencedAgentStorage).beginDelete(agentId);
+  }
+}
+
+function abandonAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string): void {
+  if ("abandonDelete" in agentStorage && typeof agentStorage.abandonDelete === "function") {
+    (agentStorage as DeleteFencedAgentStorage).abandonDelete(agentId);
   }
 }
 
@@ -1199,19 +1216,27 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       operations: {
-        ensureLoaded: async (agentId) => {
+        ensureLoaded: async (agentId, mutationOptions) => {
+          agentManager.assertSettingsMutationAllowedDuringSwitch(agentId, mutationOptions);
           await ensureUnarchivedAgentLoaded(agentId, {
             agentManager,
             agentStorage,
             logger: this.sessionLogger,
           });
         },
-        setMode: async (agentId, modeId) =>
-          (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
-        setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
-        setOptions: (agentId, patch) => agentManager.setAgentOptions(agentId, patch),
-        setThinking: (agentId, thinkingOptionId) =>
-          agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
+        setMode: async (agentId, modeId, mutationOptions) =>
+          (
+            await setAgentModeCommand(
+              { agentManager },
+              { agentId, modeId, expectedProvider: mutationOptions?.expectedProvider },
+            )
+          ).notice,
+        setModel: (agentId, modelId, mutationOptions) =>
+          agentManager.setAgentModel(agentId, modelId, mutationOptions),
+        setOptions: (agentId, patch, mutationOptions) =>
+          agentManager.setAgentOptions(agentId, patch, mutationOptions),
+        setThinking: (agentId, thinkingOptionId, mutationOptions) =>
+          agentManager.setAgentThinkingOption(agentId, thinkingOptionId, mutationOptions),
       },
       logger: this.sessionLogger,
     });
@@ -1507,17 +1532,21 @@ export class Session {
     this.refreshObservationProducers();
   }
 
-  private compareTimelineCursors(
+  private async compareTimelineCursors(
     agentIds: string[],
     cursors: Record<string, AgentTimelineCursor>,
-  ): Record<string, "current" | "behind"> {
+    source?: object,
+  ): Promise<Record<string, "current" | "behind">> {
     const timelines: Record<string, "current" | "behind"> = {};
     for (const agentId of agentIds) {
       const cursor = cursors[agentId];
       if (!cursor) continue;
-      const head = this.agentManager.getLoadedTimelineHead(agentId);
+      const head = await this.agentManager.getLoadedTimelineHead(agentId);
+      // The client holds the epoch it was sent, which for a client that cannot apply rewinds
+      // changes with every retirement.
+      const epoch = head ? this.wireEpoch(head.epoch, head.retirementCount, source) : null;
       timelines[agentId] =
-        head?.epoch === cursor.epoch && head.seq === cursor.seq ? "current" : "behind";
+        head && epoch === cursor.epoch && head.seq === cursor.seq ? "current" : "behind";
     }
     return timelines;
   }
@@ -1525,6 +1554,7 @@ export class Session {
   private async answerTimelineFreshness(
     agentIds: string[],
     cursors: Record<string, AgentTimelineCursor>,
+    source?: object,
   ): Promise<{
     timelines: Record<string, "current" | "behind">;
     agents: Record<string, AgentSnapshotPayload>;
@@ -1536,7 +1566,7 @@ export class Session {
       }),
     );
     // Compared after the await, so a row appended while reading the snapshots answers behind.
-    const timelines = this.compareTimelineCursors(agentIds, cursors);
+    const timelines = await this.compareTimelineCursors(agentIds, cursors, source);
     const agents: Record<string, AgentSnapshotPayload> = {};
     for (const snapshot of snapshots) {
       if (timelines[snapshot.id] === "current") agents[snapshot.id] = snapshot;
@@ -1551,7 +1581,9 @@ export class Session {
     const agentIds = [...new Set(msg.agentIds)].sort();
     // Attach before comparing: a row appended after the comparison reaches this owner live.
     const owner = this.subscribeAgentTimelines(agentIds);
-    const freshness = msg.cursors ? await this.answerTimelineFreshness(agentIds, msg.cursors) : {};
+    const freshness = msg.cursors
+      ? await this.answerTimelineFreshness(agentIds, msg.cursors, source)
+      : {};
     this.emitForSource(
       {
         type: "agent.timeline.set_subscription.response",
@@ -1576,12 +1608,13 @@ export class Session {
     return owner;
   }
 
-  // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2.
-  // Remove after 2027-03-07 once the supported client floor is >= v0.8.0.
+  // COMPAT(timelineItemCapabilities): plugin items added in v0.8.0, notifications in v0.7.2,
+  // provider switches in v0.18.0. Remove each gate after its client floor advances.
   private supportsTimelineItem(item: { type: string }, source?: object): boolean {
     let capability: ClientCapability;
     if (item.type === "notification") capability = CLIENT_CAPS.timelineNotifications;
     else if (item.type === "plugin") capability = CLIENT_CAPS.pluginTimelineItems;
+    else if (item.type === "provider_switch") capability = CLIENT_CAPS.timelineProviderSwitches;
     else return true;
     return source ? this.supportsForSource(capability, source) : this.supports(capability);
   }
@@ -1603,10 +1636,17 @@ export class Session {
         },
       });
     }
-    const message: SessionOutboundMessage = {
+    const payload = this.buildAgentStreamPayload(event, serializedEvent);
+    const messageFor = (source?: object): SessionOutboundMessage => ({
       type: "agent_stream",
-      payload: this.buildAgentStreamPayload(event, serializedEvent),
-    };
+      payload:
+        payload.epoch === undefined
+          ? payload
+          : {
+              ...payload,
+              epoch: this.wireEpoch(payload.epoch, event.retirementCount ?? 0, source),
+            },
+    });
     for (const subscription of this.timelineSubscriptions.values()) {
       const source = subscription.owner.source;
       if (!subscription.agentIds.has(event.agentId)) continue;
@@ -1621,7 +1661,7 @@ export class Session {
         !this.supportsTimelineItem(serializedEvent.item, source)
       )
         continue;
-      subscription.owner.emit(message);
+      subscription.owner.emit(messageFor(source));
     }
     // COMPAT(ownedSubscriptions): added in v0.8.0, remove implicit timeline delivery after 2027-03-09.
     for (const [source, { capabilities }] of this.clientSources) {
@@ -1636,14 +1676,33 @@ export class Session {
         (subscription) =>
           subscription.owner.source === source && subscription.agentIds.has(event.agentId),
       );
-      if (!alreadyDelivered) this.onMessageToSource?.(source, message);
+      if (!alreadyDelivered) this.onMessageToSource?.(source, messageFor(source));
     }
     if (
       this.clientSources.size === 0 &&
       !this.supports(CLIENT_CAPS.selectiveAgentTimeline) &&
       this.timelineSubscriptions.size === 0
     )
-      this.emit(message);
+      this.emit(messageFor());
+  }
+
+  // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10 with
+  // ./session/legacy-rewind-epoch. A client that cannot apply rewinds sees each one as a new epoch.
+  private appliesRewinds(source?: object): boolean {
+    return source
+      ? this.supportsForSource(CLIENT_CAPS.timelineRewindOperations, source)
+      : this.supports(CLIENT_CAPS.timelineRewindOperations);
+  }
+
+  private wireEpoch(epoch: string, retirementCount: number, source?: object): string {
+    return this.appliesRewinds(source) ? epoch : legacyWireEpoch(epoch, retirementCount);
+  }
+
+  private readWireCursor(
+    cursor: { epoch: string; seq: number },
+    source?: object,
+  ): AgentTimelineCursor {
+    return this.appliesRewinds(source) ? cursor : readLegacyWireCursor(cursor);
   }
 
   supports(capability: ClientCapability): boolean {
@@ -2234,8 +2293,15 @@ export class Session {
 
     this.unsubscribeAgentEvents = this.agentManager.subscribe(
       (event) => {
-        if (event.type === "timeline_replacement") {
-          this.deliverTimelineReplacement(event.agentId, this.rewindInitiators.get(event.agentId));
+        if (event.type === "timeline_retirement") {
+          this.deliverTimelineRetirement(event, this.rewindInitiators.get(event.agentId)).catch(
+            (error) => {
+              this.sessionLogger.error(
+                { err: error, agentId: event.agentId },
+                "Failed to deliver timeline retirement",
+              );
+            },
+          );
           return;
         }
 
@@ -2439,6 +2505,19 @@ export class Session {
 
   private buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
     return this.enrichAgentPayload(toAgentPayload(agent));
+  }
+
+  /** The agent whose history a read serves, without opening its provider when it is stored. */
+  private async loadAgentHistoryPayload(agentId: string): Promise<AgentSnapshotPayload> {
+    const source = await loadAgentHistory(agentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+      purpose: "history",
+    });
+    return source.kind === "live"
+      ? await this.buildAgentPayload(source.agent)
+      : this.buildStoredAgentPayload(source.record);
   }
 
   private buildStoredAgentPayload(
@@ -3236,6 +3315,8 @@ export class Session {
     switch (msg.type) {
       case "agent.rewind.request":
         return this.handleAgentRewindRequest(msg, source);
+      case "agent.provider.switch.request":
+        return this.handleAgentProviderSwitchRequest(msg, source);
       default:
         return undefined;
     }
@@ -3897,14 +3978,17 @@ export class Session {
     // durable snapshot, otherwise an in-flight background write can recreate it.
     await this.agentManager.flush();
 
+    // History goes before the record: if it cannot be removed, the request fails and the record
+    // stays, so the user still sees the agent, can keep using it, and can delete it again.
     try {
-      await this.agentStorage.remove(agentId);
       await this.agentManager.deleteAgentState(agentId);
-      // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
-      if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
     } catch (error) {
-      this.sessionLogger.error({ err: error, agentId }, `Failed to fully delete agent ${agentId}`);
+      abandonAgentDeleteIfSupported(this.agentStorage, agentId);
+      throw error;
     }
+    await this.agentStorage.remove(agentId);
+    // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
+    if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
 
     this.emit({
       type: "agent_deleted",
@@ -5266,9 +5350,8 @@ export class Session {
         throw error;
       }
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
-      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);
-      const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
+      const timelineSize = (await this.agentManager.getTimeline(snapshot.id)).length;
       if (requestId) {
         const agentPayload = await this.buildAgentPayload(snapshot);
         this.emit({
@@ -5386,13 +5469,14 @@ export class Session {
     try {
       await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
       await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
+      // Without stored history, loading the agent imports the provider's; with it, Reload agent
+      // keeps the history and brings in what the provider added.
+      const historyPresent = await this.agentManager.hasStoredHistory(agentId);
       let snapshot: ManagedAgent;
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
         await this.interruptAgentIfRunning(agentId);
-        snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
-          rehydrateFromDisk: true,
-        });
+        snapshot = await this.agentManager.reloadAgentSession(agentId);
       } else {
         const record = await this.agentStorage.get(agentId);
         if (!record) {
@@ -5411,13 +5495,14 @@ export class Session {
         snapshot = await ensureAgentLoaded(agentId, {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
-          broadcastTimeline: true,
           logger: this.sessionLogger,
         });
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
-      await this.agentUpdates.forwardLiveAgent(snapshot);
-      const timelineSize = this.agentManager.getTimeline(agentId).length;
+      const reconciled = historyPresent
+        ? await this.agentManager.reconcileProviderHistory(agentId)
+        : null;
+      await this.agentUpdates.forwardLiveAgent(this.agentManager.getAgent(agentId) ?? snapshot);
+      const timelineSize = (await this.agentManager.getTimeline(agentId)).length;
       if (requestId) {
         this.emit({
           type: "status",
@@ -5426,6 +5511,7 @@ export class Session {
             agentId,
             requestId,
             timelineSize,
+            ...(reconciled?.kind === "diverged" ? { historyDiverged: true } : {}),
           },
         });
       }
@@ -5536,15 +5622,35 @@ export class Session {
     }
   }
 
-  private deliverTimelineReplacement(agentId: string, initiatingSource?: object): void {
+  private async deliverTimelineRetirement(
+    retirement: Extract<AgentManagerEvent, { type: "timeline_retirement" }>,
+    initiatingSource?: object,
+  ): Promise<void> {
+    const { agentId, epoch, seq, retireFromSeq, retirementCount } = retirement;
     const agent = this.agentManager.getAgent(agentId);
     if (!agent) return;
-    const timeline = this.agentManager.fetchTimeline(agentId, { limit: 0 });
-    const epoch = timeline.epoch;
+    const rewind: SessionOutboundMessage = {
+      type: "agent.timeline.rewind",
+      payload: { agentId, epoch, seq, retireFromSeq },
+    };
+    const legacyEpoch = legacyWireEpoch(epoch, retirementCount);
+    const replacement: SessionOutboundMessage = {
+      type: "agent.timeline.replacement",
+      payload: { agentId, epoch: legacyEpoch },
+    };
+    const readActiveRows = async () =>
+      (await this.agentManager.fetchTimeline(agentId, { limit: 0 })).rows;
 
     if (this.clientSources.size === 0 || !this.onMessageToSource) {
-      if (!this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) {
-        this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch);
+      if (this.appliesRewinds()) this.emit(rewind);
+      else if (this.supports(CLIENT_CAPS.timelineReplacementInvalidation)) this.emit(replacement);
+      else {
+        this.emitReconstructedTimelineRows(
+          agentId,
+          agent.provider,
+          await readActiveRows(),
+          legacyEpoch,
+        );
       }
       return;
     }
@@ -5552,26 +5658,32 @@ export class Session {
     for (const subscription of this.timelineSubscriptions.values()) {
       const source = subscription.owner.source;
       if (!subscription.agentIds.has(agentId)) continue;
-      const modern = this.delivery.isModern(source);
+      if (this.appliesRewinds(source)) {
+        subscription.owner.emit(rewind);
+        continue;
+      }
+      // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10. An older
+      // client that started the rewind refetches its history when the rewind response arrives.
       if (
-        modern ||
+        this.delivery.isModern(source) ||
         (source !== initiatingSource &&
           this.supportsForSource(CLIENT_CAPS.timelineReplacementInvalidation, source))
       ) {
-        subscription.owner.emit({
-          type: "agent.timeline.replacement",
-          payload: { agentId, epoch },
-        });
+        subscription.owner.emit(replacement);
       }
     }
     // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove reconstructed replay after 2027-02-21.
-    for (const [source, { capabilities }] of this.clientSources) {
-      if (
-        !this.delivery.isModern(source) &&
-        !capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation)
-      ) {
-        this.emitReconstructedTimelineRows(agentId, agent.provider, timeline.rows, epoch, source);
-      }
+    const replaySources = [...this.clientSources]
+      .filter(
+        ([source, { capabilities }]) =>
+          !this.delivery.isModern(source) &&
+          !capabilities.has(CLIENT_CAPS.timelineReplacementInvalidation),
+      )
+      .map(([source]) => source);
+    if (replaySources.length === 0) return;
+    const rows = await readActiveRows();
+    for (const source of replaySources) {
+      this.emitReconstructedTimelineRows(agentId, agent.provider, rows, legacyEpoch, source);
     }
   }
 
@@ -5588,7 +5700,7 @@ export class Session {
       }
       const event = serializeAgentStreamEvent({
         type: "timeline",
-        provider,
+        provider: row.provider ?? provider,
         item: row.item,
         ...(row.turnId ? { turnId: row.turnId } : {}),
         timestamp: row.timestamp,
@@ -8729,23 +8841,12 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     const projection = "projected" as const;
-    const cursor: AgentTimelineCursor | undefined = msg.cursor
-      ? {
-          epoch: msg.cursor.epoch,
-          seq: msg.cursor.seq,
-        }
-      : undefined;
+    const cursor = msg.cursor ? this.readWireCursor(msg.cursor, source) : undefined;
 
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-        purpose: "history",
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
+      const agentPayload = await this.loadAgentHistoryPayload(msg.agentId);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const fetchedControlTimeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
         limit: msg.limit,
@@ -8759,14 +8860,15 @@ export class Session {
         hasOlder: fetchedControlTimeline.hasOlder,
         hasNewer: fetchedControlTimeline.hasNewer,
       };
+      const epoch = this.wireEpoch(
+        fetchedControlTimeline.epoch,
+        fetchedControlTimeline.retirementCount,
+        source,
+      );
       const startCursor =
-        selectedTimeline.startSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
-          : null;
+        selectedTimeline.startSeq !== null ? { epoch, seq: selectedTimeline.startSeq } : null;
       const endCursor =
-        selectedTimeline.endSeq !== null
-          ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
-          : null;
+        selectedTimeline.endSeq !== null ? { epoch, seq: selectedTimeline.endSeq } : null;
       const entries = selectedTimeline.entries.filter((entry) =>
         this.supportsTimelineItem(entry.item, source),
       );
@@ -8780,7 +8882,7 @@ export class Session {
             agent: agentPayload,
             direction,
             projection,
-            epoch: selectedTimeline.timeline.epoch,
+            epoch,
             reset: fetchedControlTimeline.reset,
             staleCursor: fetchedControlTimeline.staleCursor,
             gap: fetchedControlTimeline.gap,
@@ -8790,9 +8892,14 @@ export class Session {
             hasOlder: selectedTimeline.hasOlder,
             hasNewer: selectedTimeline.hasNewer,
             ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
+            ...(this.appliesRewinds(source)
+              ? { retirements: fetchedControlTimeline.retirements }
+              : {}),
+            activeSegmentStartSeq: fetchedControlTimeline.activeSegmentStartSeq,
             entries: entries.map((entry) => {
               const payloadEntry = {
-                provider: snapshot.provider,
+                // A row keeps the provider that wrote it; older rows have none.
+                provider: entry.provider ?? agentPayload.provider,
                 item: entry.item,
                 timestamp: entry.timestamp,
                 seqStart: entry.seqStart,
@@ -8856,13 +8963,13 @@ export class Session {
     if (!pluginId) throw new Error("Only plugin sessions can append plugin timeline items");
     assertPluginTimelineKind(msg.item.kind);
     assertPluginTimelineDataSize(msg.item.data);
-    const { seq, epoch } = await this.agentManager.appendTimelineItem(msg.agentId, {
-      ...msg.item,
-      pluginId,
-    });
+    const { seq, epoch, retirementCount } = await this.agentManager.appendTimelineItem(
+      msg.agentId,
+      { ...msg.item, pluginId },
+    );
     this.emit({
       type: "agent.timeline.append.response",
-      payload: { requestId: msg.requestId, seq, epoch },
+      payload: { requestId: msg.requestId, seq, epoch: this.wireEpoch(epoch, retirementCount) },
     });
   }
 
@@ -8871,23 +8978,21 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadAgentHistoryPayload(msg.agentId);
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const { epoch } = this.agentManager.fetchTimeline(msg.agentId, {
+      const before = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 1,
       });
       const result = await searchTimeline({ rows, query: msg.query, cursor: msg.cursor });
-      if (
-        this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 1 }).epoch !==
-        epoch
-      ) {
+      const after = await this.agentManager.fetchTimeline(msg.agentId, {
+        direction: "tail",
+        limit: 1,
+      });
+      if (after.epoch !== before.epoch || after.retirementCount !== before.retirementCount) {
         throw new Error("History changed; search again");
       }
+      const epoch = this.wireEpoch(before.epoch, before.retirementCount, source);
       this.emitForSource(
         {
           type: "agent.timeline.search.response",
@@ -8924,17 +9029,12 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
-        direction: "tail",
-        limit: 1,
-      });
-      const index = buildTimelinePromptIndex(timeline.epoch, rows);
+      await this.loadAgentHistoryPayload(msg.agentId);
+      const { head, rows } = await this.agentManager.getTimelinePrompts(msg.agentId);
+      const index = buildTimelinePromptIndex(
+        this.wireEpoch(head.epoch, head.retirementCount, source),
+        rows,
+      );
       this.emitForSource(
         {
           type: "agent.timeline.list_prompts.response",
@@ -8968,21 +9068,33 @@ export class Session {
     }
   }
 
+  /**
+   * Provider children are part of their parent's history: a stored parent, archived or not, is
+   * read without resuming its provider.
+   */
+  private async loadProviderSubagentParent(parentAgentId: string): Promise<void> {
+    const source = await loadAgentHistory(parentAgentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+      purpose: "history",
+    });
+    if (source.kind === "stored" && source.record.internal) {
+      throw new Error(`Unknown agent '${parentAgentId}'`);
+    }
+  }
+
   private async handleProviderSubagentListRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadProviderSubagentParent(msg.parentAgentId);
       this.emit({
         type: "agent.provider_subagents.list.response",
         payload: {
           requestId: msg.requestId,
           parentAgentId: msg.parentAgentId,
-          subagents: this.agentManager.listProviderSubagents(msg.parentAgentId),
+          subagents: await this.agentManager.listProviderSubagents(msg.parentAgentId),
           error: null,
         },
       });
@@ -9081,12 +9193,11 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
+      await this.loadProviderSubagentParent(msg.parentAgentId);
+      const descriptor = await this.agentManager.getProviderSubagent(
+        msg.parentAgentId,
+        msg.subagentId,
+      );
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }
@@ -9094,7 +9205,7 @@ export class Session {
       const supportsProjection = source
         ? this.supportsForSource(CLIENT_CAPS.projectedSubagentTimeline, source)
         : this.supports(CLIENT_CAPS.projectedSubagentTimeline);
-      const timeline = this.agentManager.fetchProviderSubagentTimeline(
+      const timeline = await this.agentManager.fetchProviderSubagentTimeline(
         msg.parentAgentId,
         msg.subagentId,
         {
@@ -9179,24 +9290,22 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.fork_context.request" }>,
   ): Promise<void> {
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const agentPayload = await this.loadAgentHistoryPayload(msg.agentId);
+      const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
       });
       const forkContext = buildAgentForkContextAttachment({
         rows: timeline.rows,
         cursorBoundary: msg.boundaryCursor
-          ? { timelineEpoch: timeline.epoch, cursor: msg.boundaryCursor }
+          ? {
+              timelineEpoch: this.wireEpoch(timeline.epoch, timeline.retirementCount),
+              cursor: msg.boundaryCursor,
+            }
           : null,
         boundaryMessageId: msg.boundaryMessageId,
         agentTitle: agentPayload.title,
-        cwd: snapshot.cwd,
+        cwd: agentPayload.cwd,
       });
 
       this.emit({
@@ -9254,6 +9363,152 @@ export class Session {
     if (!this.supports(CLIENT_CAPS.agentActiveTurnBehaviors))
       return requested === "interrupt" ? "interrupt" : "queue";
     return requested ?? "queue";
+  }
+
+  private async handleAgentProviderSwitchRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.provider.switch.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    if (!resolved.ok) {
+      this.emitForSource(
+        {
+          type: "agent.provider.switch.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            accepted: false,
+            error: resolved.error,
+          },
+        },
+        source,
+      );
+      return;
+    }
+
+    const agentId = resolved.agentId;
+    try {
+      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const send = async (beforeDispatch: () => Promise<void>) => {
+        const admitted: {
+          dispatch: Awaited<ReturnType<typeof startAgentRun>> | null;
+        } = { dispatch: null };
+        const switched = await this.agentManager.switchAgentProvider(agentId, {
+          toProvider: msg.provider,
+          model: msg.model,
+          modeId: msg.modeId,
+          thinkingOptionId: msg.thinkingOptionId,
+          providerOptions: msg.providerOptions,
+          prompt,
+          messageId: msg.messageId,
+          admitFirstTurn: async (result, switchReservationToken) => {
+            try {
+              await beforeDispatch();
+              admitted.dispatch = await startAgentRun(
+                this.agentManager,
+                agentId,
+                result.handoffPrompt,
+                this.sessionLogger,
+                {
+                  idleOnly: true,
+                  skipPluginReload: true,
+                  switchReservationToken,
+                  runOptions: { clientMessageId: msg.messageId },
+                },
+              );
+            } catch (startError) {
+              const liveAgent = this.agentManager.getAgent(agentId) ?? result.agent;
+              throw new AgentProviderSwitchStartError(liveAgent, startError);
+            }
+          },
+        });
+        const stored = await this.agentStorage.get(agentId);
+        if (stored && !stored.title && !stored.lastUserMessageAt) {
+          const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: msg.text });
+          if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
+        }
+        if (admitted.dispatch?.disposition === "turn_started") {
+          try {
+            await waitForAgentRunStartWithTimeout(
+              this.agentManager,
+              agentId,
+              admitted.dispatch.started,
+              this.delivery.requestSignal,
+            );
+          } catch (startError) {
+            const liveAgent = this.agentManager.getAgent(agentId) ?? switched.agent;
+            throw new AgentProviderSwitchStartError(liveAgent, startError);
+          }
+        }
+      };
+
+      await this.messageReceipts.send({
+        agentId,
+        messageId: msg.messageId,
+        request: {
+          kind: "provider_switch",
+          provider: msg.provider,
+          model: msg.model ?? null,
+          modeId: msg.modeId ?? null,
+          thinkingOptionId: msg.thinkingOptionId ?? null,
+          providerOptions: msg.providerOptions ?? null,
+          prompt,
+        },
+        send,
+      });
+
+      const agentPayload = await this.getAgentPayloadById(agentId);
+      this.emitForSource(
+        {
+          type: "agent.provider.switch.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: true,
+            ...(agentPayload ? { agent: agentPayload } : {}),
+            error: null,
+          },
+        },
+        source,
+      );
+    } catch (error) {
+      if (this.delivery.requestSignal.aborted) return;
+      if (error instanceof AgentProviderSwitchStartError) {
+        this.handleAgentRunError(
+          agentId,
+          error.cause ?? error,
+          "Failed to start turn after provider switch",
+        );
+        const agentPayload =
+          (await this.getAgentPayloadById(agentId)) ?? toAgentPayload(error.agent);
+        this.emitForSource(
+          {
+            type: "agent.provider.switch.response",
+            payload: {
+              requestId: msg.requestId,
+              agentId,
+              accepted: false,
+              agent: agentPayload,
+              error: errorToFriendlyMessage(error),
+            },
+          },
+          source,
+        );
+        return;
+      }
+      this.emitForSource(
+        {
+          type: "agent.provider.switch.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: false,
+            error: errorToFriendlyMessage(error),
+          },
+        },
+        source,
+      );
+    }
   }
 
   private async handleSendAgentMessageRequest(
@@ -9430,10 +9685,9 @@ export class Session {
       : null;
 
     try {
-      await this.agentMessages.waitForDispatch(
-        agentId,
-        AbortSignal.any([abortController.signal, sourceSignal]),
-      );
+      const waitSignal = AbortSignal.any([abortController.signal, sourceSignal]);
+      await this.agentMessages.waitForDispatch(agentId, waitSignal);
+      await this.agentManager.waitForProviderSwitchUnlessAborted(agentId, waitSignal);
 
       const live = this.agentManager.getAgent(agentId);
       if (!live) {

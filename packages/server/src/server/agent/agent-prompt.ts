@@ -35,6 +35,8 @@ export class AgentTurnChangedError extends Error {}
 
 export interface StartAgentRunOptions {
   idleOnly?: boolean;
+  /** Skip plugin-reload lifecycle checks when caller already holds the agent lifecycle lock. */
+  skipPluginReload?: boolean;
   admit?: () => boolean;
   /** Called after selecting the run, before consuming its events. */
   onDispatch?: (disposition: PromptDispatchDisposition) => void;
@@ -43,6 +45,8 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /** Exclusive switch reservation token handed off from `switchAgentProvider` into `streamAgent`. */
+  switchReservationToken?: string;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
@@ -112,6 +116,30 @@ async function drainAgentRunIterator(
   }
 }
 
+async function startAgentRunWithPluginRecovery(
+  agentManager: AgentRunController,
+  agentId: string,
+  prompt: AgentPromptInput,
+  logger: Logger,
+  options: StartAgentRunOptions | undefined,
+  promptStart: ForegroundPromptStart,
+): Promise<PromptDispatchResult> {
+  if (options?.skipPluginReload) {
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
+  }
+  try {
+    await agentManager.reloadStalePluginSession(agentId);
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
+  } catch (error) {
+    if (!isStaleProviderSessionError(error)) throw error;
+    logger.info({ agentId, err: error }, "Provider session went stale; reopening from persistence");
+    // The live session belongs to a retired plugin runtime. Reload swaps in a
+    // fresh session on the current runtime while preserving history and labels.
+    await agentManager.reloadAgentSession(agentId);
+    return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
+  }
+}
+
 export async function startAgentRun(
   agentManager: AgentRunController,
   agentId: string,
@@ -145,22 +173,16 @@ export async function startAgentRun(
     options?.onDispatch?.("out_of_band");
     return { disposition: "out_of_band" };
   }
-  const promptStart = new ForegroundPromptStart(agentId, admit);
+  const promptStart = new ForegroundPromptStart(agentId, admit, options?.switchReservationToken);
   try {
-    try {
-      await agentManager.reloadStalePluginSession(agentId);
-      return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
-    } catch (error) {
-      if (!isStaleProviderSessionError(error)) throw error;
-      logger.info(
-        { agentId, err: error },
-        "Provider session went stale; reopening from persistence",
-      );
-      // The live session belongs to a retired plugin runtime. Reload swaps in a
-      // fresh session on the current runtime while preserving history and labels.
-      await agentManager.reloadAgentSession(agentId);
-      return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
-    }
+    return await startAgentRunWithPluginRecovery(
+      agentManager,
+      agentId,
+      prompt,
+      logger,
+      options,
+      promptStart,
+    );
   } catch (error) {
     promptStart.end();
     throw error;
@@ -179,7 +201,12 @@ async function startAgentRunInner(
   const steered = options?.idleOnly
     ? null
     : await steerOrReplaceActiveRun(agentManager, agentId, prompt, options, promptStart);
-  if (options?.idleOnly && agentManager.hasInFlightRun(agentId)) {
+  if (
+    options?.idleOnly &&
+    agentManager.hasInFlightRun(agentId, {
+      ignoreSwitchReservationToken: options.switchReservationToken,
+    })
+  ) {
     throw new AgentTurnBusyError(`Agent ${agentId} is running`);
   }
   if (steered?.disposition === "steered") {

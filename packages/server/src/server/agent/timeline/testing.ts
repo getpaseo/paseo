@@ -1,0 +1,204 @@
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { onTestFinished } from "vitest";
+import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { nextTestDatabasePath } from "../../test-utils/test-database-path.js";
+import { openDaemonDatabase, type DaemonDatabase } from "../../database/index.js";
+import type { AgentMetric, AgentTimelineItem } from "../agent-sdk-types.js";
+import type {
+  AgentTimelineFetchOptions,
+  AgentTimelineFetchResult,
+  AgentTimelineRow,
+} from "../agent-timeline-store-types.js";
+import type { ProjectedTimelineRow } from "../timeline-projection.js";
+import type { ProviderSubagentDescriptor } from "../provider-subagents/store.js";
+import type {
+  AgentTimelineBackend,
+  MaybePromise,
+  RetiredChildSelector,
+  TimelineBackendAppendResult,
+  TimelineBackendCommitProviderSwitchResult,
+  TimelineBackendRetireResult,
+  TimelineChild,
+  TimelineEntry,
+  TimelineHead,
+  TimelineProviderSwitchIntent,
+  TimelineRewindIntent,
+  TimelineScope,
+  TimelineSeed,
+} from "./internal/backend.js";
+import { MemoryTimelineBackend } from "./internal/memory-backend.js";
+import { SqliteTimelineBackend, timelineSchema } from "./internal/sqlite-backend.js";
+
+/**
+ * Testing entry point of the timeline module. Production code imports `./index.js`.
+ */
+
+/** A backend tests can also ask for the rows rewinds retired, which stay stored. */
+export interface InspectableTimelineBackend extends AgentTimelineBackend {
+  retiredRows(scope: TimelineScope): ProjectedTimelineRow[];
+}
+
+/**
+ * The backends the timeline contract suite (`agent-timeline.test.ts`) runs against. Every
+ * production backend is listed here.
+ */
+export const TIMELINE_CONTRACT_BACKENDS: ReadonlyArray<{
+  name: string;
+  create: () => InspectableTimelineBackend;
+}> = [
+  { name: "memory", create: () => new MemoryTimelineBackend() },
+  { name: "sqlite", create: () => new SqliteTimelineBackend(openTestTimelineDatabase()) },
+];
+
+/**
+ * Opens a fresh file-backed timeline database, closed when the calling test finishes, in a
+ * directory removed when the process exits. Pass the path of an earlier database to reopen it, as
+ * a daemon restart does.
+ */
+export function openTestTimelineDatabase(file?: string): DaemonDatabase {
+  const database = openDaemonDatabase({
+    path: file ?? nextTestDatabasePath(),
+    modules: [timelineSchema],
+    logger: createTestLogger(),
+  });
+  onTestFinished(() => database.close());
+  return database;
+}
+
+/**
+ * Wraps a backend: defers every call by a turn of the event loop, the shape of an I/O-backed
+ * store, records the committed appends and whole-history reads, and fails the next append,
+ * retirement, or metrics stamp on request.
+ */
+export class DeferredTimelineBackend implements AgentTimelineBackend {
+  readonly appends: TimelineEntry[][] = [];
+  readRowsCalls = 0;
+  failNextAppend = false;
+  failNextRetire = false;
+  failNextStampTurnMetrics = false;
+
+  constructor(private readonly inner: InspectableTimelineBackend = new MemoryTimelineBackend()) {}
+
+  private async defer<T>(call: () => MaybePromise<T>): Promise<T> {
+    await nextTurn();
+    return await call();
+  }
+
+  create(scope: TimelineScope, seed: TimelineSeed): Promise<TimelineHead> {
+    return this.defer(() => this.inner.create(scope, seed));
+  }
+  delete(scope: TimelineScope): Promise<void> {
+    return this.defer(() => this.inner.delete(scope));
+  }
+  head(scope: TimelineScope): Promise<TimelineHead | null> {
+    return this.defer(() => this.inner.head(scope));
+  }
+  append(
+    scope: TimelineScope,
+    entries: readonly TimelineEntry[],
+  ): Promise<TimelineBackendAppendResult> {
+    return this.defer(async () => {
+      if (this.failNextAppend) {
+        this.failNextAppend = false;
+        throw new Error("disk full");
+      }
+      const result = await this.inner.append(scope, entries);
+      this.appends.push([...entries]);
+      return result;
+    });
+  }
+  isRetired(scope: TimelineScope, entry: TimelineEntry): Promise<boolean> {
+    return this.defer(() => this.inner.isRetired(scope, entry));
+  }
+  promptRows(scope: TimelineScope): Promise<ProjectedTimelineRow[]> {
+    return this.defer(() => this.inner.promptRows(scope));
+  }
+  setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): Promise<TimelineHead> {
+    return this.defer(() => this.inner.setRewind(scope, rewind));
+  }
+  setProviderSwitch(
+    scope: TimelineScope,
+    providerSwitch: TimelineProviderSwitchIntent | null,
+  ): Promise<TimelineHead> {
+    return this.defer(() => this.inner.setProviderSwitch(scope, providerSwitch));
+  }
+  commitProviderSwitch(
+    scope: TimelineScope,
+    input: {
+      markerEntry: TimelineEntry;
+      nextIntent: TimelineProviderSwitchIntent | null;
+    },
+  ): Promise<TimelineBackendCommitProviderSwitchResult> {
+    return this.defer(() => this.inner.commitProviderSwitch(scope, input));
+  }
+  children(agentId: string): Promise<TimelineChild[]> {
+    return this.defer(() => this.inner.children(agentId));
+  }
+  child(scope: TimelineScope): Promise<TimelineChild | null> {
+    return this.defer(() => this.inner.child(scope));
+  }
+  setChild(scope: TimelineScope, descriptor: ProviderSubagentDescriptor): Promise<void> {
+    return this.defer(() => this.inner.setChild(scope, descriptor));
+  }
+  retire(
+    scope: TimelineScope,
+    input: { retireFromSeq: number; selectChildren: RetiredChildSelector },
+  ): Promise<TimelineBackendRetireResult> {
+    return this.defer(() => {
+      if (this.failNextRetire) {
+        this.failNextRetire = false;
+        throw new Error("disk full");
+      }
+      return this.inner.retire(scope, input);
+    });
+  }
+  /** Rows rewinds retired; they stay stored. */
+  retiredRows(scope: TimelineScope): ProjectedTimelineRow[] {
+    return this.inner.retiredRows(scope);
+  }
+  attachProviderMessageId(
+    scope: TimelineScope,
+    clientMessageId: string,
+    providerMessageId: string,
+    options?: { providerPromptText?: string },
+  ): Promise<AgentTimelineRow | null> {
+    return this.defer(() =>
+      this.inner.attachProviderMessageId(scope, clientMessageId, providerMessageId, options),
+    );
+  }
+  stampTurnMetrics(
+    scope: TimelineScope,
+    metrics: AgentMetric[],
+    options?: { turnId?: string },
+  ): Promise<ProjectedTimelineRow | null> {
+    return this.defer(() => {
+      if (this.failNextStampTurnMetrics) {
+        this.failNextStampTurnMetrics = false;
+        throw new Error("disk full");
+      }
+      return this.inner.stampTurnMetrics(scope, metrics, options);
+    });
+  }
+  findSubmittedPrompt(
+    scope: TimelineScope,
+    clientMessageId: string,
+  ): Promise<AgentTimelineRow | null> {
+    return this.defer(() => this.inner.findSubmittedPrompt(scope, clientMessageId));
+  }
+  fetch(
+    scope: TimelineScope,
+    options: AgentTimelineFetchOptions,
+  ): Promise<AgentTimelineFetchResult> {
+    return this.defer(() => this.inner.fetch(scope, options));
+  }
+  readRows(scope: TimelineScope): Promise<ProjectedTimelineRow[]> {
+    this.readRowsCalls += 1;
+    return this.defer(() => this.inner.readRows(scope));
+  }
+  lastItem(scope: TimelineScope): Promise<AgentTimelineItem | null> {
+    return this.defer(() => this.inner.lastItem(scope));
+  }
+  lastAssistantMessage(scope: TimelineScope): Promise<string | null> {
+    return this.defer(() => this.inner.lastAssistantMessage(scope));
+  }
+}

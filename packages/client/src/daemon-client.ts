@@ -130,6 +130,8 @@ import type {
   DaemonConfigReloadResponse,
   DiagnosticsResponse,
   AgentRewindResponseMessage,
+  AgentProviderSwitchRequest,
+  AgentProviderSwitchResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -510,6 +512,28 @@ export interface SendMessageOptions {
   activeTurnBehavior?: AgentActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+}
+
+export interface SwitchAgentProviderOptions {
+  provider: AgentProvider;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  providerOptions?: Record<string, unknown>;
+  text: string;
+  messageId?: string;
+  images?: Array<{ data: string; mimeType: string }>;
+  attachments?: AgentProviderSwitchRequest["attachments"];
+}
+
+export class AgentProviderSwitchError extends Error {
+  constructor(
+    message: string,
+    readonly agent?: AgentSnapshotPayload,
+  ) {
+    super(message);
+    this.name = "AgentProviderSwitchError";
+  }
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -4344,6 +4368,56 @@ export class DaemonClient {
     };
   }
 
+  async switchAgentProvider(
+    agentId: string,
+    options: SwitchAgentProviderOptions,
+  ): Promise<{ agent?: AgentSnapshotPayload }> {
+    if (this.lastServerInfoMessage?.features?.providerSwitching !== true) {
+      throw new Error("Update the Paseo host to switch providers in an existing chat.");
+    }
+    const requestId = this.createRequestId();
+    const messageId = options.messageId ?? crypto.randomUUID();
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.provider.switch.request",
+      requestId,
+      agentId,
+      provider: options.provider,
+      ...(options.model !== undefined ? { model: options.model } : {}),
+      ...(options.modeId !== undefined ? { modeId: options.modeId } : {}),
+      ...(options.thinkingOptionId !== undefined
+        ? { thinkingOptionId: options.thinkingOptionId }
+        : {}),
+      ...(options.providerOptions !== undefined
+        ? { providerOptions: options.providerOptions }
+        : {}),
+      text: options.text,
+      messageId,
+      images: options.images,
+      attachments: options.attachments,
+    });
+    const payload: AgentProviderSwitchResponseMessage["payload"] = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.provider.switch.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new AgentProviderSwitchError(
+        payload.error ?? "switchAgentProvider rejected",
+        payload.agent,
+      );
+    }
+    return payload.agent ? { agent: payload.agent } : {};
+  }
+
   /** The behavior to put on the wire for this host. */
   private activeTurnBehaviorForHost(
     options: SendMessageOptions,
@@ -4432,12 +4506,29 @@ export class DaemonClient {
     }
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+  private expectedProviderWireField(options?: {
+    expectedProvider?: AgentProvider;
+  }): { expectedProvider: AgentProvider } | Record<string, never> {
+    if (
+      options?.expectedProvider &&
+      this.lastServerInfoMessage?.features?.providerSwitching === true
+    ) {
+      return { expectedProvider: options.expectedProvider };
+    }
+    return {};
+  }
+
+  async setAgentMode(
+    agentId: string,
+    modeId: string,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_mode_request",
       agentId,
       modeId,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4460,12 +4551,17 @@ export class DaemonClient {
     return payload.notice ?? null;
   }
 
-  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+  async setAgentModel(
+    agentId: string,
+    modelId: string | null,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_model_request",
       agentId,
       modelId,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4487,13 +4583,19 @@ export class DaemonClient {
     }
   }
 
-  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+  async setAgentFeature(
+    agentId: string,
+    featureId: string,
+    value: unknown,
+    options?: { expectedProvider?: AgentProvider },
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_feature_request",
       agentId,
       featureId,
       value,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4522,6 +4624,7 @@ export class DaemonClient {
   async setAgentOptions(
     agentId: string,
     patch: Record<string, unknown>,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
     const legacy = this.legacyProviderOptions();
     if (legacy) {
@@ -4529,11 +4632,11 @@ export class DaemonClient {
       const pending = this.legacyResetControls(agentId, patch);
       const controls = pending ? await pending : [];
       for (const [featureId, value] of legacy.featureWrites(patch, controls)) {
-        await this.setAgentFeature(agentId, featureId, value);
+        await this.setAgentFeature(agentId, featureId, value, options);
       }
       return null;
     }
-    return this.applyAgentConfig(agentId, { options: patch });
+    return this.applyAgentConfig(agentId, { options: patch }, options);
   }
 
   /**
@@ -4553,12 +4656,14 @@ export class DaemonClient {
   async setAgentThinkingOption(
     agentId: string,
     thinkingOptionId: string | null,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_agent_thinking_request",
       agentId,
       thinkingOptionId,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -4591,6 +4696,7 @@ export class DaemonClient {
   async applyAgentConfig(
     agentId: string,
     config: AgentConfigApply,
+    options?: { expectedProvider?: AgentProvider },
   ): Promise<AgentProviderNotice | null> {
     let wireConfig = config;
     const legacy = this.legacyProviderOptions();
@@ -4604,6 +4710,7 @@ export class DaemonClient {
       type: "agent.config.apply.request",
       agentId,
       config: wireConfig,
+      ...this.expectedProviderWireField(options),
       requestId,
     });
     const payload = await this.sendRequest({

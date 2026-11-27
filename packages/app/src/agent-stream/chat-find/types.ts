@@ -9,6 +9,8 @@ export interface ChatFindProps {
   agentId: string;
   serverId: string;
   epoch: string | null;
+  /** The sequence number of the latest rewind applied to this history, if any. */
+  rewindSeq: number | null;
   items: StreamItem[];
   viewportRef: RefObject<StreamViewportHandle | null>;
   revealLoadedMessage(messageId: string): boolean;

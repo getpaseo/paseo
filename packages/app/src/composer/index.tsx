@@ -9,6 +9,20 @@ import { useStore } from "zustand";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  beginStagedProviderSwitch,
+  clearStagedProviderSwitch,
+  endStagedProviderSwitch,
+  getStagedProviderSwitch,
+  isStagedProviderSwitchInFlight,
+  settleCommittedProviderSwitch,
+  useFailedStartupSettings,
+  useStagedProviderSwitch,
+} from "@/composer/provider-switch";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { resolveProviderLabel } from "@/utils/provider-definitions";
 import {
   View,
   Pressable,
@@ -48,6 +62,7 @@ import { usePanelStore, type MobilePanelView } from "@/stores/panel-store";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { useShallow } from "zustand/shallow";
 import {
+  ArrowRightLeft,
   ArrowUp,
   Square,
   Pencil,
@@ -298,16 +313,29 @@ function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: bo
 
 const EMPTY_METRICS: AgentMetric[] = [];
 
+const EMPTY_AGENT_STATE = {
+  provider: null,
+  status: null,
+  contextWindowMaxTokens: null,
+  contextWindowUsedTokens: null,
+  totalCostUsd: null,
+  sessionMetrics: EMPTY_METRICS,
+  model: null,
+};
+
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    if (!agent) return EMPTY_AGENT_STATE;
+    const usage = agent.lastUsage;
     return {
-      status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
-      sessionMetrics: agent?.sessionMetrics ?? EMPTY_METRICS,
-      model: agent?.model ?? null,
+      provider: agent.provider ?? null,
+      status: agent.status ?? null,
+      contextWindowMaxTokens: usage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: usage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: usage?.totalCostUsd ?? null,
+      sessionMetrics: agent.sessionMetrics ?? EMPTY_METRICS,
+      model: agent.model ?? null,
     };
   };
 }
@@ -1351,9 +1379,55 @@ function ComposerContentImpl({
   const { settings: appSettings } = useAppSettings();
 
   const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
+  const supportsProviderSwitching = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.providerSwitching === true,
+  );
+  const rawStagedSwitch = useStagedProviderSwitch(serverId, agentId);
+  const failedStartupSettings = useFailedStartupSettings(serverId, agentId);
+  const stagedSwitch =
+    supportsProviderSwitching &&
+    rawStagedSwitch &&
+    agentState.provider &&
+    rawStagedSwitch.provider !== agentState.provider
+      ? rawStagedSwitch
+      : null;
+  const { entries: providerSnapshotEntries } = useProvidersSnapshot(serverId, { cwd });
+  const stagedProviderLabel = stagedSwitch
+    ? resolveProviderLabel(stagedSwitch.provider, providerSnapshotEntries)
+    : null;
+
+  useEffect(() => {
+    if (
+      rawStagedSwitch &&
+      agentState.provider &&
+      rawStagedSwitch.provider === agentState.provider &&
+      !isStagedProviderSwitchInFlight(serverId, agentId)
+    ) {
+      clearStagedProviderSwitch(serverId, agentId);
+    }
+  }, [agentId, agentState.provider, rawStagedSwitch, serverId]);
+
+  const handleCancelStagedSwitch = useCallback(() => {
+    clearStagedProviderSwitch(serverId, agentId);
+    setSendError(null);
+    useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
+  }, [agentId, serverId]);
+
+  const handleRetryFailedStartupSettings = useCallback(() => {
+    setSendError(null);
+    void getHostRuntimeStore().recoverFailedStartupSettings(serverId, agentId, "retry");
+  }, [agentId, serverId]);
+
+  const handleDismissFailedStartupSettings = useCallback(() => {
+    setSendError(null);
+    void getHostRuntimeStore().recoverFailedStartupSettings(serverId, agentId, "discard");
+  }, [agentId, serverId]);
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
+  );
+  const queuedSendError = useSessionStore(
+    (state) => state.sessions[serverId]?.queuedSendErrors?.get(agentId) ?? null,
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
@@ -1709,25 +1783,62 @@ function ComposerContentImpl({
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      await dispatchComposerAgentMessage({
-        client,
-        agentId: targetAgentId,
-        text,
-        attachments: sendAttachments,
-        attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
-          supportsForgeAttachments: supportsForgeSearch,
-        }),
-        encodeImages,
-        submission: createMessageSubmissionWriter(serverId),
-        activeTurnBehavior,
-        activeTurnId:
-          activeTurnBehavior === "steer"
-            ? (selectAgentTurnPresentation(
-                useSessionStore.getState().sessions[serverId],
-                targetAgentId,
-              ).turnId ?? undefined)
-            : undefined,
-      });
+      const sessionState = useSessionStore.getState().sessions[serverId];
+      const liveProvider = sessionState?.agents.get(targetAgentId)?.provider;
+      const canSwitch = sessionState?.serverInfo?.features?.providerSwitching === true;
+      const pendingSwitch = canSwitch ? getStagedProviderSwitch(serverId, targetAgentId) : null;
+      const stagedProviderSwitch =
+        pendingSwitch && pendingSwitch.provider !== liveProvider ? pendingSwitch : null;
+      useSessionStore.getState().setQueuedSendError(serverId, targetAgentId, null);
+      if (stagedProviderSwitch) {
+        beginStagedProviderSwitch(serverId, targetAgentId);
+      }
+      try {
+        await dispatchComposerAgentMessage({
+          client,
+          agentId: targetAgentId,
+          text,
+          attachments: sendAttachments,
+          attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
+            supportsForgeAttachments: supportsForgeSearch,
+          }),
+          encodeImages,
+          submission: createMessageSubmissionWriter(serverId),
+          stagedProviderSwitch,
+          onProviderSwitchCommitted: async (agent) => {
+            if (agent) {
+              getHostRuntimeStore().tryAcceptAgentSnapshot(
+                serverId,
+                normalizeAgentSnapshot(agent, serverId),
+              );
+            }
+            if (stagedProviderSwitch) {
+              const settled = await settleCommittedProviderSwitch({
+                serverId,
+                agentId: targetAgentId,
+                sentDraft: stagedProviderSwitch,
+                committedProvider: agent?.provider ?? null,
+                client,
+              });
+              if (!settled.applied) {
+                setSendError(settled.errorMessage);
+              }
+            }
+          },
+          activeTurnBehavior,
+          activeTurnId:
+            activeTurnBehavior === "steer"
+              ? (selectAgentTurnPresentation(
+                  useSessionStore.getState().sessions[serverId],
+                  targetAgentId,
+                ).turnId ?? undefined)
+              : undefined,
+        });
+      } finally {
+        if (stagedProviderSwitch) {
+          endStagedProviderSwitch(serverId, targetAgentId);
+        }
+      }
       onAttentionPromptSend?.();
     };
   }, [appSettings.sendBehavior, client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
@@ -1803,7 +1914,7 @@ function ComposerContentImpl({
         attachments: outgoingAttachments,
         hasExternalContent,
         allowEmptySubmit,
-        forceSend,
+        forceSend: stagedSwitch && isAgentRunning ? false : forceSend,
         submitBehavior,
         isAgentRunning,
         // Parent-managed submits are still valid submit paths even when the
@@ -1845,6 +1956,7 @@ function ComposerContentImpl({
       queueMessage,
       setSelectedAttachments,
       replaceUserInput,
+      stagedSwitch,
       submitBehavior,
       submitMessage,
       t,
@@ -2079,15 +2191,17 @@ function ComposerContentImpl({
         queue: queueWriter,
       });
       if (!result) return;
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
       replaceUserInput(result.text);
       setSelectedAttachments(result.attachments);
     },
-    [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+    [agentId, queueWriter, replaceUserInput, serverId, setSelectedAttachments],
   );
 
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
+      useSessionStore.getState().setQueuedSendError(serverId, agentId, null);
       // Reuse the regular send path; server-side send atomically interrupts any active run.
       const result = await sendQueuedComposerMessageNow({
         agentId,
@@ -2101,7 +2215,7 @@ function ComposerContentImpl({
         setSendError(result.errorMessage);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, queueWriter, serverId, submitMessage, t],
   );
 
   const handleQueue = useCallback(
@@ -2554,17 +2668,70 @@ function ComposerContentImpl({
   // Focusing the composer on a touch screen raises the on-screen keyboard over the conversation.
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint && hasFinePointer;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
-  const displayError = externalError || sendError;
+  const displayError =
+    externalError || sendError || failedStartupSettings?.errorMessage || queuedSendError;
   const sendErrorNode = useMemo(
     () =>
       displayError ? (
-        <Alert variant="error" size="sm" description={displayError} testID="composer-error" />
+        <Alert variant="error" size="sm" description={displayError} testID="composer-error">
+          {failedStartupSettings ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onPress={handleRetryFailedStartupSettings}
+                testID="retry-failed-startup-settings"
+              >
+                {t("common.actions.retry")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onPress={handleDismissFailedStartupSettings}
+                testID="dismiss-failed-startup-settings"
+              >
+                {t("common.actions.dismiss")}
+              </Button>
+            </>
+          ) : null}
+        </Alert>
       ) : null,
-    [displayError],
+    [
+      displayError,
+      failedStartupSettings,
+      handleDismissFailedStartupSettings,
+      handleRetryFailedStartupSettings,
+      t,
+    ],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")
     : t("composer.github.noResults");
+
+  const stagedSwitchBannerNode = useMemo(() => {
+    if (!stagedSwitch || !stagedProviderLabel) return null;
+    const message = isAgentRunning
+      ? t("composer.providerSwitch.switchingAfterTurn", { provider: stagedProviderLabel })
+      : t("composer.providerSwitch.switchingNextMessage", { provider: stagedProviderLabel });
+    return (
+      <View style={styles.stagedSwitchBanner} testID="staged-provider-switch-banner">
+        <View style={styles.stagedSwitchLabelRow}>
+          <ThemedArrowRightLeft size={ICON_SIZE.sm} uniProps={iconForegroundMutedMapping} />
+          <Text style={styles.stagedSwitchText} numberOfLines={1}>
+            {message}
+          </Text>
+        </View>
+        <Button
+          variant="ghost"
+          size="sm"
+          onPress={handleCancelStagedSwitch}
+          testID="cancel-staged-provider-switch"
+        >
+          {t("common.actions.cancel")}
+        </Button>
+      </View>
+    );
+  }, [handleCancelStagedSwitch, isAgentRunning, stagedProviderLabel, stagedSwitch, t]);
 
   return (
     <>
@@ -2591,6 +2758,7 @@ function ComposerContentImpl({
         >
           <View style={inputAreaContentStyle}>
             {isFullscreen ? null : queueList}
+            {isFullscreen ? null : stagedSwitchBannerNode}
             {!isFullscreen && sendErrorNode}
 
             <ComposerAutocompleteBinding
@@ -2846,9 +3014,35 @@ const styles = StyleSheet.create((theme: Theme) => ({
   queueSendButton: {
     backgroundColor: theme.colors.accent,
   },
+  stagedSwitchBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingLeft: theme.spacing[3],
+    paddingRight: theme.spacing[1.5],
+    paddingVertical: theme.spacing[1],
+    backgroundColor: theme.colors.surface1,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    gap: theme.spacing[2],
+  },
+  stagedSwitchLabelRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+    minWidth: 0,
+  },
+  stagedSwitchText: {
+    flex: 1,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
 })) as unknown as Record<string, object>;
 
 const ThemedAttachmentSpinner = withUnistyles(LoadingSpinner);
+const ThemedArrowRightLeft = withUnistyles(ArrowRightLeft);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);

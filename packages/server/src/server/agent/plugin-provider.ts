@@ -67,7 +67,9 @@ import type {
   SteerActiveTurnOptions,
   SteerResult,
   AgentClientDiagnosticContext,
+  ConversationRewindCut,
 } from "./agent-sdk-types.js";
+import { RewindAppliedError, RewindNotAppliedError } from "./agent-sdk-types.js";
 import {
   resolveProviderLaunch,
   checkProviderLaunchAvailable,
@@ -1649,16 +1651,20 @@ class PluginAgentSession implements AgentSession {
     return ended;
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
+  // Completing `session.revert` guarantees the plugin rewound to the supplied revert token. A
+  // failed request or replay throws so the manager leaves the rewind open to settle on reload.
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
     await this.revert(input.messageId, "conversation");
+    return { kind: "at_target" };
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
     await this.revert(input.messageId, "files");
   }
 
-  async revertBoth(input: { messageId: string }): Promise<void> {
+  async revertBoth(input: { messageId: string }): Promise<ConversationRewindCut> {
     await this.revert(input.messageId, "both");
+    return { kind: "at_target" };
   }
 
   timelineHistory(): ImportedProviderSession["timeline"] {
@@ -2082,7 +2088,9 @@ class PluginAgentSession implements AgentSession {
       throw new Error("Plugin conversation rewind requires session persistence for history replay");
     }
     const token = this.revertTokens.get(messageId);
-    if (token === undefined) throw new Error(`No provider revert token for message ${messageId}`);
+    if (token === undefined) {
+      throw new RewindNotAppliedError(`No provider revert token for message ${messageId}`);
+    }
     await this.bridge.revert({
       type: "session.revert",
       requestId: randomUUID(),
@@ -2091,10 +2099,17 @@ class PluginAgentSession implements AgentSession {
       scope,
     });
     if (scope !== "files") {
+      const cut: ConversationRewindCut = { kind: "at_target" };
       const persistence = this.bridge.persistence;
-      if (!persistence) throw new Error("Plugin rewind removed session persistence");
+      if (!persistence) {
+        throw RewindAppliedError.from(cut, new Error("Plugin rewind removed session persistence"));
+      }
       this.replay = { persistence, config: this.bridge.config, messageId, scope, closed: false };
-      await this.ensureReplay();
+      try {
+        await this.ensureReplay();
+      } catch (error) {
+        throw RewindAppliedError.from(cut, error);
+      }
     }
   }
 

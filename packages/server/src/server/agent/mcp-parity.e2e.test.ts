@@ -567,12 +567,12 @@ describe("Suite A: Core Fixes", () => {
         const notifications = await waitFor({
           timeoutMs: 10000,
           label: `${outcome} notification`,
-          check: () => {
-            const items = daemonHandle.daemon.agentManager
-              .getTimeline(parentAgentId)
-              .filter(
-                (item) => item.type === "tool_call" && item.agentMessage?.sender.id === childId,
-              );
+          check: async () => {
+            const items = (
+              await daemonHandle.daemon.agentManager.getTimeline(parentAgentId)
+            ).filter(
+              (item) => item.type === "tool_call" && item.agentMessage?.sender.id === childId,
+            );
             return items.length > 0 ? items : null;
           },
         });

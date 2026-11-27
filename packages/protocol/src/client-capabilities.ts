@@ -39,12 +39,18 @@ export const CLIENT_CAPS = {
   // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove legacy
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
+  // COMPAT(timelineRewindOperations): added in v0.14.1, remove after 2027-05-10 once the client
+  // floor applies rewinds. Clients without it see a rewound history under a derived epoch.
+  timelineRewindOperations: "timeline_rewind_operations",
   // COMPAT(timelineNotifications): added in v0.7.2. The daemon omits notification
   // timeline items for older clients whose strict timeline union rejects them.
   // Remove after 2027-03-03 once the supported client floor is >= v0.7.2.
   timelineNotifications: "timeline_notifications",
   // COMPAT(pluginTimelineItems): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   pluginTimelineItems: "plugin_timeline_items",
+  // COMPAT(timelineProviderSwitches): added in v0.18.0, remove after 2027-05-25 once client floor >= v0.18.0.
+  // The daemon omits provider_switch timeline items for older clients whose strict union rejects them.
+  timelineProviderSwitches: "timeline_provider_switches",
   workspaceSetupObservation: "workspace_setup_observation",
   // COMPAT(pluginBinaryPayloads): added in v0.15.0, remove after 2027-05-02 once client floor >= v0.15.0.
   // The daemon sends plugin RPC outputs as binary opcode 0x21 only to clients that decode it.

@@ -378,6 +378,11 @@ export type ProviderInput =
       sessionId: string;
       changes: ProviderConfigChanges;
     }
+  /**
+   * Rewind to the supplied `token`. Completing the request (`request.completed`) guarantees the
+   * plugin rewound to that exact point (removing that prompt and everything after it for
+   * `"conversation"` and `"both"`).
+   */
   | {
       type: "session.revert";
       requestId: string;

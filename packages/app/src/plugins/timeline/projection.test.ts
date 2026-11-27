@@ -197,7 +197,7 @@ describe("plugin timeline projection", () => {
       kind: "assistant_message",
       id: "assistant-1",
       messageId: "provider-msg-1",
-      timelineCursor: { epoch: "e1", seq: 7 },
+      timelineCursor: { epoch: "e1", seq: 7, anchorSeq: 7 },
       turnId: "turn-1",
       text: 'Summary\n\n```ui\nCard("Hi", [])\n```',
       timestamp: new Date("2026-01-01T00:00:02.000Z"),
@@ -226,13 +226,13 @@ describe("plugin timeline projection", () => {
       {
         kind: "plugin",
         id: "genui/assistant-1/text",
-        timelineCursor: { epoch: "e1", seq: 7 },
+        timelineCursor: { epoch: "e1", seq: 7, anchorSeq: 7 },
         turnId: "turn-1",
       },
       {
         kind: "plugin",
         id: "genui/assistant-1/card",
-        timelineCursor: { epoch: "e1", seq: 7 },
+        timelineCursor: { epoch: "e1", seq: 7, anchorSeq: 7 },
         turnId: "turn-1",
       },
     ]);

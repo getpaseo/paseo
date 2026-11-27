@@ -1,0 +1,299 @@
+import { randomUUID } from "node:crypto";
+import type { AgentMetric, AgentTimelineItem } from "../../agent-sdk-types.js";
+import type {
+  AgentTimelineFetchOptions,
+  AgentTimelineFetchResult,
+  AgentTimelineRow,
+} from "../../agent-timeline-store-types.js";
+import { TimelineProjection, type ProjectedTimelineRow } from "../../timeline-projection.js";
+import type { ProviderSubagentDescriptor } from "../../provider-subagents/store.js";
+import type {
+  AgentTimelineBackend,
+  TimelineBackendAppendResult,
+  TimelineBackendCommitProviderSwitchResult,
+  RetiredChildSelector,
+  TimelineBackendRetireResult,
+  TimelineChild,
+  TimelineEntry,
+  TimelineHead,
+  TimelineProviderSwitchIntent,
+  TimelineRewindIntent,
+  TimelineScope,
+  TimelineSeed,
+} from "./backend.js";
+import { UnknownTimelineError } from "./backend.js";
+import { fetchTimelinePage } from "./fetch-page.js";
+import { buildSourceRow } from "./source-row.js";
+
+interface MemoryTimelineState {
+  epoch: string;
+  projection: TimelineProjection;
+  minSeq: number;
+  nextSeq: number;
+  /** Rows rewinds took out of the active conversation, in retirement order. */
+  retired: ProjectedTimelineRow[];
+  retirementCount: number;
+  rewind: TimelineRewindIntent | null;
+  providerSwitch: TimelineProviderSwitchIntent | null;
+  /** Child scopes only. */
+  descriptor: ProviderSubagentDescriptor | null;
+  childRetired: boolean;
+}
+
+function scopeKey(scope: TimelineScope): string {
+  return scope.subagentId === undefined
+    ? scope.agentId
+    : childKeyPrefix(scope.agentId) + scope.subagentId;
+}
+
+function childKeyPrefix(agentId: string): string {
+  return `${agentId}\0`;
+}
+
+function cloneRow<T extends AgentTimelineRow>(row: T): T {
+  return { ...row };
+}
+
+/** Volatile backend: history lives in process memory and is lost when the daemon exits. */
+export class MemoryTimelineBackend implements AgentTimelineBackend {
+  private readonly states = new Map<string, MemoryTimelineState>();
+
+  create(scope: TimelineScope, seed: TimelineSeed): TimelineHead {
+    const timestamp = seed.timestamp ?? new Date().toISOString();
+    const startSeq = seed.nextSeq ?? 1;
+    const rows = seed.rows?.length
+      ? seed.rows.map(cloneRow)
+      : (seed.entries ?? []).map((entry, index) =>
+          buildSourceRow(entry, startSeq + index, timestamp),
+        );
+    const nextSeq = rows.reduce((next, row) => Math.max(next, row.seq + 1), startSeq);
+    const projection = new TimelineProjection(rows);
+    const state: MemoryTimelineState = {
+      epoch: seed.epoch ?? randomUUID(),
+      projection,
+      minSeq: projection.getRows()[0]?.seqStart ?? 0,
+      nextSeq,
+      retired: [],
+      retirementCount: 0,
+      rewind: null,
+      providerSwitch: null,
+      descriptor: null,
+      childRetired: false,
+    };
+    this.states.set(scopeKey(scope), state);
+    return this.describe(state);
+  }
+
+  delete(scope: TimelineScope): void {
+    this.states.delete(scopeKey(scope));
+    if (scope.subagentId !== undefined) return;
+    const prefix = childKeyPrefix(scope.agentId);
+    for (const key of this.states.keys()) {
+      if (key.startsWith(prefix)) this.states.delete(key);
+    }
+  }
+
+  children(agentId: string): TimelineChild[] {
+    const prefix = childKeyPrefix(agentId);
+    const children: TimelineChild[] = [];
+    for (const [key, state] of this.states) {
+      if (!key.startsWith(prefix)) continue;
+      children.push({
+        subagentId: key.slice(prefix.length),
+        descriptor: state.descriptor ? { ...state.descriptor } : null,
+        retired: state.childRetired,
+      });
+    }
+    return children;
+  }
+
+  child(scope: TimelineScope): TimelineChild | null {
+    const state = this.states.get(scopeKey(scope));
+    if (!state || scope.subagentId === undefined) return null;
+    return {
+      subagentId: scope.subagentId,
+      descriptor: state.descriptor ? { ...state.descriptor } : null,
+      retired: state.childRetired,
+    };
+  }
+
+  setChild(scope: TimelineScope, descriptor: ProviderSubagentDescriptor): void {
+    if (!this.states.has(scopeKey(scope))) this.create(scope, {});
+    this.requireState(scope).descriptor = { ...descriptor };
+  }
+
+  head(scope: TimelineScope): TimelineHead | null {
+    const state = this.states.get(scopeKey(scope));
+    return state ? this.describe(state) : null;
+  }
+
+  append(scope: TimelineScope, entries: readonly TimelineEntry[]): TimelineBackendAppendResult {
+    const state = this.requireState(scope);
+    const timestamp = new Date().toISOString();
+    const rows = entries.map((entry, index) =>
+      buildSourceRow(entry, state.nextSeq + index, timestamp),
+    );
+    for (const row of rows) {
+      state.projection.append(row);
+      state.nextSeq = row.seq + 1;
+      if (state.minSeq === 0) state.minSeq = row.seq;
+    }
+    return { rows: rows.map(cloneRow), head: this.describe(state) };
+  }
+
+  isRetired(scope: TimelineScope, entry: TimelineEntry): boolean {
+    return this.requireState(scope).projection.isRetired(entry);
+  }
+
+  promptRows(scope: TimelineScope): ProjectedTimelineRow[] {
+    return this.requireState(scope)
+      .projection.getRows()
+      .filter((row) => row.item.type === "user_message")
+      .map(cloneRow);
+  }
+
+  setRewind(scope: TimelineScope, rewind: TimelineRewindIntent | null): TimelineHead {
+    const state = this.requireState(scope);
+    state.rewind = rewind ? { ...rewind } : null;
+    return this.describe(state);
+  }
+
+  setProviderSwitch(
+    scope: TimelineScope,
+    providerSwitch: TimelineProviderSwitchIntent | null,
+  ): TimelineHead {
+    const state = this.requireState(scope);
+    state.providerSwitch = providerSwitch ? structuredClone(providerSwitch) : null;
+    return this.describe(state);
+  }
+
+  commitProviderSwitch(
+    scope: TimelineScope,
+    input: {
+      markerEntry: TimelineEntry;
+      nextIntent: TimelineProviderSwitchIntent | null;
+    },
+  ): TimelineBackendCommitProviderSwitchResult {
+    const state = this.requireState(scope);
+    const timestamp = new Date().toISOString();
+    const row = buildSourceRow(input.markerEntry, state.nextSeq, timestamp);
+    state.projection.append(row);
+    state.nextSeq = row.seq + 1;
+    if (state.minSeq === 0) state.minSeq = row.seq;
+    state.providerSwitch = input.nextIntent
+      ? structuredClone({ ...input.nextIntent, markerSeq: row.seq })
+      : null;
+    return { row: cloneRow(row), head: this.describe(state) };
+  }
+
+  retire(
+    scope: TimelineScope,
+    input: { retireFromSeq: number; selectChildren: RetiredChildSelector },
+  ): TimelineBackendRetireResult {
+    const state = this.requireState(scope);
+    const retirement = { seq: state.nextSeq, retireFromSeq: input.retireFromSeq };
+    const retiredRows = state.projection.retire(retirement);
+    const retiredChildIds = [...input.selectChildren(retiredRows, this.children(scope.agentId))];
+    for (const subagentId of retiredChildIds) {
+      const child = this.states.get(scopeKey({ agentId: scope.agentId, subagentId }));
+      if (child) child.childRetired = true;
+    }
+    state.retired.push(...retiredRows);
+    state.nextSeq = retirement.seq + 1;
+    if (state.minSeq === 0) state.minSeq = retirement.seq;
+    state.retirementCount += 1;
+    state.rewind = null;
+    return {
+      retirement,
+      retiredRows: retiredRows.map(cloneRow),
+      retiredChildIds,
+      head: this.describe(state),
+    };
+  }
+
+  /** Retired rows, oldest retirement first. Not part of the backend contract; tests read it. */
+  retiredRows(scope: TimelineScope): ProjectedTimelineRow[] {
+    return this.requireState(scope).retired.map(cloneRow);
+  }
+
+  attachProviderMessageId(
+    scope: TimelineScope,
+    clientMessageId: string,
+    providerMessageId: string,
+    options?: { providerPromptText?: string },
+  ): AgentTimelineRow | null {
+    return this.requireState(scope).projection.enrichSubmittedUserMessage(
+      clientMessageId,
+      providerMessageId,
+      options,
+    );
+  }
+
+  stampTurnMetrics(
+    scope: TimelineScope,
+    metrics: AgentMetric[],
+    options?: { turnId?: string },
+  ): ProjectedTimelineRow | null {
+    const row = this.requireState(scope).projection.stampTurnMetrics(metrics, options?.turnId);
+    return row ? { ...row } : null;
+  }
+
+  findSubmittedPrompt(scope: TimelineScope, clientMessageId: string): AgentTimelineRow | null {
+    const row = this.requireState(scope)
+      .projection.getRows()
+      .find(
+        (candidate) =>
+          candidate.item.type === "user_message" &&
+          candidate.item.clientMessageId === clientMessageId,
+      );
+    return row ? cloneRow(row) : null;
+  }
+
+  fetch(scope: TimelineScope, options: AgentTimelineFetchOptions): AgentTimelineFetchResult {
+    const state = this.requireState(scope);
+    return fetchTimelinePage({
+      history: {
+        epoch: state.epoch,
+        minSeq: state.minSeq,
+        nextSeq: state.nextSeq,
+        retirementCount: state.retirementCount,
+        activeSegmentStartSeq: state.projection.getActiveSegmentStartSeq(),
+      },
+      options,
+      selectPage: (page) => state.projection.selectPage(page),
+    });
+  }
+
+  readRows(scope: TimelineScope): ProjectedTimelineRow[] {
+    return this.requireState(scope).projection.getRows().map(cloneRow);
+  }
+
+  lastItem(scope: TimelineScope): AgentTimelineItem | null {
+    const state = this.requireState(scope);
+    return state.projection.getLastItem(state.nextSeq - 1);
+  }
+
+  lastAssistantMessage(scope: TimelineScope): string | null {
+    return this.requireState(scope).projection.getLastAssistantMessage();
+  }
+
+  private describe(state: MemoryTimelineState): TimelineHead {
+    return {
+      epoch: state.epoch,
+      seq: state.nextSeq - 1,
+      size: state.projection.size,
+      retirementCount: state.retirementCount,
+      activeSegmentStartSeq: state.projection.getActiveSegmentStartSeq(),
+      rewind: state.rewind ? { ...state.rewind } : null,
+      providerSwitch: state.providerSwitch ? structuredClone(state.providerSwitch) : null,
+    };
+  }
+
+  private requireState(scope: TimelineScope): MemoryTimelineState {
+    const state = this.states.get(scopeKey(scope));
+    if (!state) {
+      throw new UnknownTimelineError(scope);
+    }
+    return state;
+  }
+}

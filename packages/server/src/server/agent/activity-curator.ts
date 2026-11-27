@@ -10,7 +10,7 @@ import { projectTimelineRows, selectItemsByProjectedLimit } from "./timeline-pro
 const DEFAULT_MAX_ITEMS = 0;
 const MAX_TOOL_INPUT_CHARS = 400;
 const MAX_TOOL_SUMMARY_CHARS = 200;
-const MAX_FORK_CONTEXT_CHARS = 100_000;
+export const MAX_FORK_CONTEXT_CHARS = 100_000;
 const MAX_FORK_METADATA_CHARS = 1_000;
 const FORK_HISTORY_OMITTED = "[Earlier chat history omitted]\n";
 // A fork copies only these kinds.
@@ -27,7 +27,7 @@ interface ActivityCuratorOptions {
   includeExternalToolInput?: boolean;
 }
 
-interface ActivityEntry {
+export interface ActivityEntry {
   text: string;
 }
 
@@ -138,7 +138,7 @@ function appendAgentMessageEntries(entries: ActivityEntry[], message: AgentMessa
   if (body) entries.push(activityEntry(body));
 }
 
-function curateProjectedActivityEntries(
+export function curateProjectedActivityEntries(
   items: readonly AgentTimelineItem[],
   options?: ActivityCuratorOptions,
 ): ActivityEntry[] {
@@ -185,6 +185,11 @@ function curateProjectedActivityEntries(
         break;
       case "compaction":
         entries.push(activityEntry("[Compacted]"));
+        break;
+      case "provider_switch":
+        entries.push(
+          activityEntry(`[Switched provider: ${item.fromProvider} -> ${item.toProvider}]`),
+        );
         break;
     }
   }

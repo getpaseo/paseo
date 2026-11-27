@@ -114,8 +114,10 @@ test("logs --since filters history and live output through the CLI and daemon", 
         title: "logs since",
       });
       const manager = ctx.daemon.daemon.agentManager;
-      await manager.appendTimelineItem(agent.id, { type: "user_message", text: "OLD_USER" });
-      await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "OLD_REPLY" });
+      const oldUser = { type: "user_message", text: "OLD_USER", messageId: "old-user" } as const;
+      const oldReply = { type: "assistant_message", text: "OLD_REPLY" } as const;
+      await manager.appendTimelineItem(agent.id, oldUser);
+      await manager.appendTimelineItem(agent.id, oldReply);
       const host = `127.0.0.1:${ctx.daemon.port}`;
       const logs = (args: string[]) =>
         runLocalPaseo(["--host", host, ...args], {}, ctx.daemon.paseoHome);
@@ -218,16 +220,25 @@ test("logs --since filters history and live output through the CLI and daemon", 
         await Promise.all([
           waitForCliOutput(futureFollow, "AFTER_CUTOFF"),
           (async () => {
-            await manager.appendTimelineItem(agent.id, {
+            const liveUser = {
               type: "user_message",
               text: "LIVE_BEFORE_CUTOFF",
-            });
-            historyEvents.push({
-              type: "timeline",
-              provider: "codex",
-              timestamp: "2110-01-01T00:00:00Z",
-              item: { type: "user_message", text: "AFTER_CUTOFF" },
-            });
+              messageId: "live-user",
+            } as const;
+            await manager.appendTimelineItem(agent.id, liveUser);
+            // The provider's history continues the chat with a turn Paseo has not seen, which
+            // Reload agent appends with the provider's timestamp.
+            historyEvents.push(
+              { type: "timeline", provider: "codex", item: oldUser },
+              { type: "timeline", provider: "codex", item: oldReply },
+              { type: "timeline", provider: "codex", item: liveUser },
+              {
+                type: "timeline",
+                provider: "codex",
+                timestamp: "2110-01-01T00:00:00Z",
+                item: { type: "user_message", text: "AFTER_CUTOFF", messageId: "after-cutoff" },
+              },
+            );
             await ctx.client.refreshAgent(agent.id);
           })(),
         ]);

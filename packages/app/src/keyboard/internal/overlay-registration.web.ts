@@ -224,8 +224,9 @@ export function useOverlayRegistration({
       activeRef.current && typeof window !== "undefined" && typeof document !== "undefined";
     if (!shouldRegister) {
       const shouldRestoreFocus = !activeRef.current;
+      const removeEntry = removeEntryRef.current ?? detachedRemoveEntryRef.current;
       if (registeredRef.current || shouldRestoreFocus) {
-        removeEntryRef.current?.({ restoreFocus: shouldRestoreFocus });
+        removeEntry?.({ restoreFocus: shouldRestoreFocus });
       }
       registeredRef.current = false;
       if (shouldRestoreFocus) {
@@ -268,8 +269,14 @@ export function useOverlayRegistration({
     [syncRegistration],
   );
 
+  // Run `active` transitions in layout effects (after React's `resetAfterCommit`), so closing a
+  // fading overlay restores focus after React's commit-time selection restoration instead of
+  // having `resetAfterCommit` pull focus back into the still-mounted closing dialog.
   useLayoutEffect(() => {
     syncRegistration();
+  }, [active, syncRegistration]);
+
+  useLayoutEffect(() => {
     return () => {
       const removeEntry = removeEntryRef.current ?? detachedRemoveEntryRef.current;
       removeEntry?.();
@@ -277,7 +284,7 @@ export function useOverlayRegistration({
       detachedRemoveEntryRef.current = null;
       registeredRef.current = false;
     };
-  }, [active, syncRegistration]);
+  }, [syncRegistration]);
 
   return setScope;
 }

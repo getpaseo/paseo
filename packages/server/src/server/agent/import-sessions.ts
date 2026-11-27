@@ -206,15 +206,17 @@ async function importProviderSessionNow(
 ): Promise<ImportedProviderSession> {
   const { provider, providerHandleId, labels } = input.request;
 
-  const matchingRecords = await input.agentStorage.listByProviderSession(
+  const currentRecords = await input.agentStorage.listByProviderSession(provider, providerHandleId);
+  const allMatchingRecords = await input.agentStorage.listByProviderSession(
     provider,
     providerHandleId,
+    { includePreviousSessions: true },
   );
-  const activeRecord = matchingRecords.find((record) => !record.archivedAt);
+  const activeRecord = allMatchingRecords.find((record) => !record.archivedAt);
   if (activeRecord) {
     throw new Error(`Provider session is already imported: ${providerHandleId}`);
   }
-  const archivedRecord = matchingRecords.find((record) => record.archivedAt);
+  const archivedRecord = currentRecords.find((record) => record.archivedAt);
   if (archivedRecord?.persistence && archivedRecord.archivedAt) {
     if (!createRealpathAwarePathMatcher(cwd)(archivedRecord.cwd)) {
       throw new Error(`Provider session cwd does not match import cwd: ${providerHandleId}`);
@@ -239,7 +241,7 @@ async function importProviderSessionNow(
       });
       return {
         snapshot,
-        timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+        timelineSize: (await input.agentManager.getTimeline(snapshot.id)).length,
       };
     } catch (error) {
       await rollbackArchivedImport(input, archivedRecord, archivedRecord.archivedAt);
@@ -258,7 +260,7 @@ async function importProviderSessionNow(
 
   return {
     snapshot,
-    timelineSize: input.agentManager.getTimeline(snapshot.id).length,
+    timelineSize: (await input.agentManager.getTimeline(snapshot.id)).length,
   };
 }
 
@@ -292,6 +294,7 @@ async function resolveProviderSessionImportMutationKey(
     await input.agentStorage.listByProviderSession(
       input.request.provider,
       input.request.providerHandleId,
+      { includePreviousSessions: true },
     )
   ).at(0);
   return matchingRecord
@@ -372,6 +375,9 @@ async function collectImportedProviderSessions(
       continue;
     }
     collect(record.provider, record.persistence);
+    for (const previous of record.previousSessions ?? []) {
+      collect(previous.provider, previous);
+    }
   }
 
   return { handles, count: sessions.size };

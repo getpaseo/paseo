@@ -1,7 +1,10 @@
 import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
 import { createPaseoApi } from "@getpaseo/client";
 import type { AgentManager } from "./agent/agent-manager.js";
+import { AgentStorage } from "./agent/agent-storage.js";
+import { createTestLogger } from "../test-utils/test-logger.js";
 import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -1419,6 +1422,42 @@ test("archive and delete replies retain their historical names and reach only th
     expect(sibling.frames).toEqual([]);
   } finally {
     for (const peer of peers) peer.close();
+    await admin.close();
+    await daemon.close();
+  }
+});
+
+test("a delete that cannot remove the agent's history fails and leaves the agent usable", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  // A second connection to the daemon's database makes the history delete fail.
+  const database = new DatabaseSync(path.join(daemon.paseoHome, "paseo.db"));
+  try {
+    await admin.connect();
+    const agent = await admin.createAgent({ provider: "codex", cwd: daemon.staticDir });
+    database.exec(`CREATE TRIGGER refuse_history_delete BEFORE DELETE ON timeline_scopes
+      BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+
+    await expect(admin.deleteAgent(agent.id)).rejects.toThrow("disk I/O error");
+    const afterFailure = await admin.fetchAgents();
+    expect(afterFailure.entries.map((entry) => entry.agent.id)).toEqual([agent.id]);
+
+    await admin.updateAgent(agent.id, { name: "After the failed delete" });
+    // A fresh reader of the agent directory sees only what reached disk.
+    const stored = await new AgentStorage(
+      path.join(daemon.paseoHome, "agents"),
+      createTestLogger(),
+    ).get(agent.id);
+    expect(stored?.title).toBe("After the failed delete");
+
+    database.exec("DROP TRIGGER refuse_history_delete");
+    await admin.deleteAgent(agent.id);
+    expect((await admin.fetchAgents()).entries).toEqual([]);
+    expect(
+      database.prepare("SELECT agent_id FROM timeline_scopes WHERE agent_id = ?").all(agent.id),
+    ).toEqual([]);
+  } finally {
+    database.close();
     await admin.close();
     await daemon.close();
   }

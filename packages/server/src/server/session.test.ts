@@ -1582,7 +1582,9 @@ function createStoredAgentRecord(
 describe("plugin timeline append RPC", () => {
   test("stamps the plugin identity and returns the timeline position", async () => {
     const messages: SessionOutboundMessage[] = [];
-    const appendTimelineItem = vi.fn().mockResolvedValue({ seq: 7, epoch: "epoch-1" });
+    const appendTimelineItem = vi
+      .fn()
+      .mockResolvedValue({ seq: 7, epoch: "epoch-1", retirementCount: 0 });
     const session = createSessionForTest({
       clientId: "plugin:review",
       messages,
@@ -5827,6 +5829,8 @@ describe("agent config setters", () => {
     return {
       waitForAgentClose: vi.fn().mockResolvedValue(undefined),
       getAgent: vi.fn(() => ({ id: "agent-1" })),
+      assertSettingsMutationAllowedDuringSwitch: vi.fn(),
+      waitForProviderSwitchUnlessAborted: vi.fn(async () => undefined),
       ...overrides,
     };
   }

@@ -54,7 +54,6 @@ const CLOSED_PARENT: ManagedAgent = {
   inFlightPermissionResponses: new Set(),
   pendingReplacement: false,
   persistence: null,
-  historyPrimed: false,
   lastUserMessageAt: null,
   activeTurnId: null,
   activeTurnStartedAt: null,

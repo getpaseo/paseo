@@ -101,7 +101,7 @@ function summaryRow(
 }
 
 function staysVisibleWhenCollapsed(item: StreamItem): boolean {
-  return isTurnTrigger(item) || item.kind === "compaction";
+  return isTurnTrigger(item) || item.kind === "compaction" || item.kind === "provider_switch";
 }
 
 function findLastReplyIndex(tail: StreamItem[], start: number, end: number): number {

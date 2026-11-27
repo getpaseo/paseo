@@ -2,15 +2,16 @@ import type { ModelBrowserView } from "@/components/model-browser-view";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 
 export function resolveModelSheetOpening({
-  canSwitchProvider,
+  openAtProviders,
   providers,
   selectedProvider,
 }: {
-  canSwitchProvider: boolean;
+  /** Drafts open at the provider list; live agents open directly at their active provider. */
+  openAtProviders: boolean;
   providers: ProviderSelectorProvider[];
   selectedProvider: string;
 }): ModelBrowserView {
-  if (canSwitchProvider) return { kind: "all" };
+  if (openAtProviders) return { kind: "all" };
 
   const provider = providers.find((entry) => entry.id === selectedProvider) ?? providers[0] ?? null;
   return provider

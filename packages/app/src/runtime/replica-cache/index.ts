@@ -22,6 +22,7 @@ import {
   isUnreconciledLocalUserMessage,
   type AgentToolCallData,
   type StreamItem,
+  type TimelinePosition,
 } from "@/types/stream";
 import type { UnsettledTurn } from "@/timeline/turn-liveness";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -82,7 +83,15 @@ const IsoDateSchema = z.iso.datetime();
 const TimelinePositionSchema = z.strictObject({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
+  // COMPAT(timelineRewindOperations): absent on caches written before rows were anchored, added in
+  // v0.14.1, remove after 2027-05-10. Such a cache is not restored; the chat loads its tail instead.
+  anchorSeq: z.number().int().nonnegative().optional(),
 });
+type StoredTimelinePosition = z.infer<typeof TimelinePositionSchema>;
+
+function isAnchored(position: StoredTimelinePosition | undefined): boolean {
+  return position === undefined || position.anchorSeq !== undefined;
+}
 const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
   z.union([
     z.null(),
@@ -160,6 +169,23 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().nonnegative().optional(),
+  }),
+  z.strictObject({
+    ...TimelineItemBaseShape,
+    kind: z.literal("provider_switch"),
+    fromProvider: AgentProviderSchema,
+    toProvider: AgentProviderSchema,
+    fromModel: z.string().nullable().optional(),
+    toModel: z.string().nullable().optional(),
+    fromSessionId: z.string().nullable().optional(),
+    toSessionId: z.string().nullable().optional(),
+    context: z.strictObject({
+      includedItems: z.number().int().nonnegative(),
+      truncated: z.boolean(),
+      charCount: z.number().int().nonnegative(),
+      budgetChars: z.number().int().positive(),
+      omittedReasons: z.array(z.string()).optional(),
+    }),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
@@ -362,6 +388,7 @@ const StoredTimelineSchema = z.strictObject({
       epoch: z.string(),
       startSeq: z.number().int().nonnegative(),
       endSeq: z.number().int().nonnegative(),
+      activeSegmentStartSeq: z.number().int().nonnegative().optional(),
     })
     .nullable(),
   hasOlder: z.boolean(),
@@ -423,6 +450,10 @@ function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | nu
   if (!stored) {
     return null;
   }
+  // A rewind retires rows by anchor, so an unanchored row could not be retired.
+  if (!stored.items.every((item) => isAnchored(item.timelineCursor))) {
+    return null;
+  }
   return {
     agentId: stored.agentId,
     items: stored.items.map(deserializeTimelineItem),
@@ -467,6 +498,23 @@ function serializeAgentToolCall(data: AgentToolCallData): StoredToolCall {
     case "failed":
       return { ...base, status: data.status, error: data.error };
   }
+}
+
+function serializeProviderSwitchItem(
+  base: ReturnType<typeof timelineBase>,
+  item: Extract<StreamItem, { kind: "provider_switch" }>,
+): StoredTimelineItem {
+  return {
+    ...base,
+    kind: item.kind,
+    fromProvider: item.fromProvider,
+    toProvider: item.toProvider,
+    ...(item.fromModel !== undefined ? { fromModel: item.fromModel } : {}),
+    ...(item.toModel !== undefined ? { toModel: item.toModel } : {}),
+    ...(item.fromSessionId !== undefined ? { fromSessionId: item.fromSessionId } : {}),
+    ...(item.toSessionId !== undefined ? { toSessionId: item.toSessionId } : {}),
+    context: item.context,
+  };
 }
 
 function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
@@ -514,6 +562,8 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
+    case "provider_switch":
+      return serializeProviderSwitchItem(base, item);
     case "tool_call":
       if (item.payload.source !== "agent") return null;
       return {
@@ -539,11 +589,20 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   }
 }
 
+function anchoredPosition(position: StoredTimelinePosition | undefined): {
+  timelineCursor?: TimelinePosition;
+} {
+  if (!position || position.anchorSeq === undefined) return {};
+  return {
+    timelineCursor: { epoch: position.epoch, seq: position.seq, anchorSeq: position.anchorSeq },
+  };
+}
+
 function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   if (item.kind === "plugin") {
     return {
       id: item.id,
-      ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+      ...anchoredPosition(item.timelineCursor),
       ...(item.turnId ? { turnId: item.turnId } : {}),
       timestamp: new Date(item.timestamp),
       kind: item.kind,
@@ -557,12 +616,29 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   return deserializeBuiltinTimelineItem(item);
 }
 
+function deserializeProviderSwitchItem(
+  base: { id: string; timelineCursor?: TimelinePosition; turnId?: string; timestamp: Date },
+  item: Extract<StoredTimelineItem, { kind: "provider_switch" }>,
+): StreamItem {
+  return {
+    ...base,
+    kind: item.kind,
+    fromProvider: item.fromProvider,
+    toProvider: item.toProvider,
+    ...(item.fromModel !== undefined ? { fromModel: item.fromModel } : {}),
+    ...(item.toModel !== undefined ? { toModel: item.toModel } : {}),
+    ...(item.fromSessionId !== undefined ? { fromSessionId: item.fromSessionId } : {}),
+    ...(item.toSessionId !== undefined ? { toSessionId: item.toSessionId } : {}),
+    context: item.context,
+  };
+}
+
 function deserializeBuiltinTimelineItem(
   item: Exclude<StoredTimelineItem, { kind: "plugin" }>,
 ): StreamItem {
   const base = {
     id: item.id,
-    ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+    ...anchoredPosition(item.timelineCursor),
     ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),
   };
@@ -609,6 +685,8 @@ function deserializeBuiltinTimelineItem(
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
+    case "provider_switch":
+      return deserializeProviderSwitchItem(base, item);
     case "tool_call": {
       const tool = item.item;
       if (tool.type !== "tool_call") {
@@ -840,7 +918,14 @@ function serializeTimeline(timeline: CachedTimeline): StoredTimeline | null {
     agentId: timeline.agentId,
     items,
     range: canPersistCoverage
-      ? { epoch: range.epoch, startSeq: range.startSeq, endSeq: range.endSeq }
+      ? {
+          epoch: range.epoch,
+          startSeq: range.startSeq,
+          endSeq: range.endSeq,
+          ...(range.activeSegmentStartSeq !== undefined
+            ? { activeSegmentStartSeq: range.activeSegmentStartSeq }
+            : {}),
+        }
       : null,
     hasOlder: canPersistCoverage ? timeline.hasOlder : false,
     ...(timeline.unsettledTurn

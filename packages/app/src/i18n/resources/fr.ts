@@ -208,6 +208,10 @@ export const fr: TranslationResources = {
       pasteImageFailed: "Impossible de coller l’image",
       fileTooLarge: "{{fileName}} est trop volumineux (maximum {{size}})",
     },
+    providerSwitch: {
+      switchingNextMessage: "Passage à {{provider}} au prochain message",
+      switchingAfterTurn: "Passage à {{provider}} après ce tour",
+    },
     clientCommands: {
       archiveAgent: "Archiver l’agent actuel",
       freshDraft: "Archiver cet agent et démarrer un nouveau brouillon",
@@ -441,6 +445,13 @@ export const fr: TranslationResources = {
     },
     turnFooter: {
       workedFor: "A travaillé pendant {{duration}}",
+    },
+    providerSwitch: {
+      switched: "Passé de {{from}} à {{to}}",
+      contextSummary: "{{count}} éléments transférés ({{chars}} / {{budget}} caractères)",
+      trimmed: "Tronqué : {{reasons}}",
+      reasonTailWindow: "historique antérieur hors fenêtre",
+      reasonCharBudget: "limite de caractères",
     },
     compaction: {
       loading: "Compaction…",
@@ -767,6 +778,8 @@ export const fr: TranslationResources = {
         resumeCommandUnavailable: "Commande de reprise indisponible",
         reloadingAgent: "Rechargement de l’agent…",
         reloadedAgent: "Agent rechargé",
+        reloadedAgentHistoryDiverged:
+          "Agent rechargé, mais l’historique du fournisseur ne correspond pas à cette conversation, il n’a donc pas été synchronisé",
         failedToReloadAgent: "Impossible de recharger l’agent",
         failedToCloseAgent: "Impossible de fermer l’agent",
       },

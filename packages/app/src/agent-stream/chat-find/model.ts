@@ -76,6 +76,10 @@ export class ChatFindModel {
   private items: StreamItem[] = [];
   private epoch: string | null = null;
   private resultEpoch: string | null = null;
+  /** The latest rewind applied to the history. A rewind keeps the epoch and retires messages. */
+  private rewindSeq: number | null = null;
+  /** The latest rewind when the current result set's search started; undefined until a search starts. */
+  private searchedRewindSeq: number | null | undefined = undefined;
   private locations: Location[] = [];
   private resolved = new Map<Location, Target>();
   private current = -1;
@@ -113,6 +117,7 @@ export class ChatFindModel {
     this.cancel();
     this.locations = [];
     this.resultEpoch = null;
+    this.searchedRewindSeq = undefined;
     this.resolved.clear();
     this.current = -1;
     this.inMessage = { occurrence: 0, count: 0 };
@@ -144,6 +149,7 @@ export class ChatFindModel {
     });
   }
   private async search(signal: AbortSignal) {
+    this.searchedRewindSeq = this.rewindSeq;
     try {
       let cursor: number | undefined;
       do {
@@ -168,15 +174,14 @@ export class ChatFindModel {
       this.fail(error, signal);
     }
   }
-  updateHistory(epoch: string | null, items: StreamItem[]) {
-    if (
-      this.resultEpoch !== null &&
-      epoch !== null &&
-      epoch !== this.resultEpoch &&
-      this.state.open
-    ) {
+  /** `rewindSeq` is the sequence number of the latest rewind applied to this history. */
+  updateHistory(epoch: string | null, items: StreamItem[], rewindSeq: number | null) {
+    const replaced = this.resultEpoch !== null && epoch !== null && epoch !== this.resultEpoch;
+    const rewound = this.searchedRewindSeq !== undefined && rewindSeq !== this.searchedRewindSeq;
+    if ((replaced || rewound) && this.state.open) {
       this.fail(new ChatFindFailureError("historyChanged"), this.abort.signal);
     }
+    this.rewindSeq = rewindSeq;
     this.epoch = epoch;
     this.items = items;
     this.historyListeners.forEach((listener) => listener());

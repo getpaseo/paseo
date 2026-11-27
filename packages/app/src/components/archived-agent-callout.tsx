@@ -81,6 +81,7 @@ export function ArchivedAgentCallout({
   agentId,
   isWorkspaceRestoring = false,
 }: ArchivedAgentCalloutProps) {
+  const { t } = useTranslation();
   const targetKey = `${serverId}:${agentId}`;
   const toast = useToast();
   const { unarchive, isUnarchiving, canUnarchive } = useUnarchiveAgent({ serverId, agentId });
@@ -110,7 +111,15 @@ export function ArchivedAgentCallout({
     const attemptKey = targetKey;
     setUnarchiveErrorState(null);
     try {
-      await unarchive();
+      await unarchive({
+        onRefreshed: (refreshed) => {
+          if (refreshed.historyDiverged) {
+            toast.show(t("workspace.tabs.toasts.reloadedAgentHistoryDiverged"), {
+              variant: "warning",
+            });
+          }
+        },
+      });
     } catch (error) {
       deliverUnarchiveError({
         error,
@@ -121,7 +130,7 @@ export function ArchivedAgentCallout({
         onToastError: toast.error,
       });
     }
-  }, [canUnarchive, targetKey, toast, unarchive]);
+  }, [canUnarchive, t, targetKey, toast, unarchive]);
 
   return (
     <KeyboardTranslateView style={styles.container}>

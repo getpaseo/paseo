@@ -37,6 +37,7 @@ import {
   ToolCall,
   TodoListCard,
   CompactionMarker,
+  ProviderSwitchMarker,
   MessageOuterSpacingProvider,
   type InlinePathTarget,
 } from "@/components/message";
@@ -57,6 +58,7 @@ import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
 import { resolveContentMaxWidth, useSettings } from "@/hooks/use-settings";
 import type { ToastApi } from "@/components/toast-host";
+import { isPromptInActiveSegment } from "@/components/rewind/use-rewind-capabilities";
 import { returnToTimelineTail } from "./timeline-tail-navigation";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
@@ -408,6 +410,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const timelineEpoch = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
     );
+    const timelineRewindSeq = useSessionStore((state) => {
+      const rewind = state.sessions[resolvedServerId]?.agentTimelineLatestRewind.get(agentId);
+      return rewind && rewind.epoch === timelineEpoch ? rewind.seq : null;
+    });
     const isTimelineDetached = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
@@ -711,8 +717,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const setToolCallGroupExpanded = toolCallExpansion.setGroupExpanded;
 
+    const activeSegmentStartSeq = useSessionStore(
+      (state) =>
+        state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.activeSegmentStartSeq ??
+        0,
+    );
+
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
+        const canRewindPrompt = isPromptInActiveSegment(item.timelineCursor, activeSegmentStartSeq);
         return (
           <UserMessage
             itemId={item.id}
@@ -724,7 +737,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             images={item.images}
             attachments={item.attachments}
             timestamp={item.timestamp.getTime()}
-            capabilities={context.capabilities}
+            capabilities={canRewindPrompt ? context.capabilities : undefined}
             client={client}
             isFirstInGroup={layoutItem.isFirstInUserGroup}
             isLastInGroup={layoutItem.isLastInUserGroup}
@@ -735,7 +748,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.capabilities, agentId, client, pendingClientMessageIds, resolvedServerId],
+      [
+        activeSegmentStartSeq,
+        context.capabilities,
+        agentId,
+        client,
+        pendingClientMessageIds,
+        resolvedServerId,
+      ],
     );
 
     const renderAssistantMessageItem = useCallback(
@@ -938,6 +958,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 status={item.status}
                 trigger={item.trigger}
                 preTokens={item.preTokens}
+              />
+            );
+
+          case "provider_switch":
+            return (
+              <ProviderSwitchMarker
+                serverId={resolvedServerId}
+                fromProvider={item.fromProvider}
+                toProvider={item.toProvider}
+                fromModel={item.fromModel}
+                toModel={item.toModel}
+                context={item.context}
               />
             );
 
@@ -1166,6 +1198,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         agentId={agentId}
         serverId={resolvedServerId}
         epoch={timelineEpoch}
+        rewindSeq={timelineRewindSeq}
         items={findItems}
         viewportRef={viewportRef}
         revealLoadedMessage={revealLoadedMessage}
