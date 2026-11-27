@@ -98,6 +98,7 @@ export interface AgentProfileFormState {
   name: string;
   icon: string;
   color: string;
+  systemPrompt: string;
   notes: string;
   provider: string;
   modelId: string;
@@ -157,6 +158,7 @@ export interface AgentProfileFormModel {
   applyControlsUnavailable: (requestKey: string) => void;
   setName: (value: string) => void;
   setAppearance: (value: { icon: string; color: string }) => void;
+  setSystemPrompt: (value: string) => void;
   setNotes: (value: string) => void;
   setProvider: (providerId: string, display: AgentProfileFormDisplay) => void;
   setProviderModel: (
@@ -471,6 +473,7 @@ function formDraftFingerprint(state: AgentProfileFormState): string {
     state.modelId,
     state.modeId,
     state.thinkingOptionId,
+    state.systemPrompt.trim(),
     state.notes.trim(),
     stableOptionsKey(ownOptionsOf(state)),
   ]);
@@ -478,6 +481,7 @@ function formDraftFingerprint(state: AgentProfileFormState): string {
 
 function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | null {
   const name = state.name.trim();
+  const systemPrompt = state.systemPrompt.trim();
   const notes = state.notes.trim();
   if (!name || !state.provider) {
     return null;
@@ -493,6 +497,10 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     // Always sent, empty included: the daemon reads a write without `options` as one from an
     // app that predates them and keeps the profile's stored options.
     options: ownOptionsOf(state),
+    // COMPAT(agentProfileSystemPrompt): added in v0.17.6, remove after 2027-06-01.
+    // Always sent, empty included: the daemon treats an omitted `systemPrompt` as a write from
+    // an older app and preserves the stored prompt; `""` explicitly clears it.
+    systemPrompt,
     ...(notes ? { notes } : {}),
   };
 }
@@ -529,6 +537,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     name,
     icon: profile.icon ?? "",
     color: profile.color ?? "",
+    systemPrompt: profile.systemPrompt ?? "",
     notes: profile.notes ?? "",
     provider,
     modelId,
@@ -854,6 +863,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       publish((current) => ({ ...current, icon: value.icon, color: value.color }), {
         userEdit: true,
       }),
+    setSystemPrompt: (value) =>
+      publish((current) => ({ ...current, systemPrompt: value }), { userEdit: true }),
     setNotes: (value) => publish((current) => ({ ...current, notes: value }), { userEdit: true }),
     setProvider: (providerId, display) =>
       publish(

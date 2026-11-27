@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.17.6 - 2026-11-27
+
+### 改进
+
+- 将设置重组为设备和主机两个范围，并合并了内容较少的页面 ([#10933](https://github.com/getpaseo/paseo/pull/10933))
+- 为模型选择器中的模型、Provider 和配置文件新增方向键导航 ([#10929](https://github.com/getpaseo/paseo/pull/10929), [#10962](https://github.com/getpaseo/paseo/pull/10962))
+- 在主机设置和初始设置中新增就地刷新 Tailscale 可用性的按钮 ([#10903](https://github.com/getpaseo/paseo/pull/10903))
+
+### 变更
+
+- 移除了在后台运行 `agy -p /usage` 的 Antigravity 用量数据源 ([#10953](https://github.com/getpaseo/paseo/pull/10953)，贡献者：[@luoph](https://github.com/luoph))
+
+### 修复
+
+- 修复对话中出现代码块或引用时 Paseo Android 在三星设备上崩溃的问题 ([#10964](https://github.com/getpaseo/paseo/pull/10964))
+- 修复在 Android 上使用鼠标点击无法选择模型选择器行的问题 ([#10972](https://github.com/getpaseo/paseo/pull/10972))
+- 修复 macOS 桌面端因 Dock 进度条更新在启动时卡死的问题 ([#10939](https://github.com/getpaseo/paseo/pull/10939))
+- 修复 Linux AppImage 将其运行时环境变量泄漏到 Shell 和子进程的问题 ([#10920](https://github.com/getpaseo/paseo/pull/10920))
+- 修复 Linux 上后台 Git fetch 启动孤立 D-Bus 进程并在认证失败后循环重试的问题 ([#10921](https://github.com/getpaseo/paseo/pull/10921))
+- 修复恢复已归档工作区和 Agent 时的界面闪烁问题，并新增恢复中状态提示 ([#10928](https://github.com/getpaseo/paseo/pull/10928))
+- 修复 worktree 所有权超出已配置 worktrees 根目录的问题 ([#10878](https://github.com/getpaseo/paseo/pull/10878))
+- 修复另一个标签页淘汰目录缓存后，新打开的网页标签页丢失 project 的问题 ([#10942](https://github.com/getpaseo/paseo/pull/10942))
+- 修复 rewind epoch 变更时时间线丢失行的问题 ([#8794](https://github.com/getpaseo/paseo/pull/8794)，贡献者：[@LiebeLee](https://github.com/LiebeLee))
+
 ## 0.17.5 - 2026-11-26
 
 - **批量归档工作区**：在侧边栏按住 Cmd/Ctrl 点击工作区即可多选，一步归档。([#10798](https://github.com/getpaseo/paseo/pull/10798), [#10821](https://github.com/getpaseo/paseo/pull/10821))

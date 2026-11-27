@@ -3239,6 +3239,11 @@ export const FileDownloadTokenRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const NetworkTunnelCreateTicketRequestSchema = z.object({
+  type: z.literal("network.tunnel.create_ticket.request"),
+  requestId: z.string(),
+});
+
 export const FileUploadRequestSchema = z.object({
   type: z.literal("file.upload.request"),
   fileName: z.string().min(1),
@@ -3622,6 +3627,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HostsRouteOpenRequestSchema,
   HostsRouteFrameRequestSchema,
   HostsRouteCloseRequestSchema,
+  NetworkTunnelCreateTicketRequestSchema,
 
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
@@ -4276,6 +4282,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
+        networkTunnel: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6907,6 +6915,15 @@ export const FileDownloadTokenResponseSchema = z.object({
   }),
 });
 
+export const NetworkTunnelCreateTicketResponseSchema = z.object({
+  type: z.literal("network.tunnel.create_ticket.response"),
+  payload: z.object({
+    requestId: z.string(),
+    ticket: z.string().min(1),
+    expiresAtMs: z.number().int(),
+  }),
+});
+
 export const FileUploadResponseSchema = z.object({
   type: z.literal("file.upload.response"),
   payload: z.object({
@@ -7862,6 +7879,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HostsRouteOpenResponseSchema,
   HostsRouteFrameSchema,
   HostsRouteClosedSchema,
+  NetworkTunnelCreateTicketResponseSchema,
 
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
@@ -8583,6 +8601,13 @@ export type ProjectIconGetResponse = z.infer<typeof ProjectIconGetResponseSchema
 export type ProjectIcon = z.infer<typeof ProjectIconSchema>;
 export type FileDownloadTokenRequest = z.infer<typeof FileDownloadTokenRequestSchema>;
 export type FileDownloadTokenResponse = z.infer<typeof FileDownloadTokenResponseSchema>;
+export type NetworkTunnelCreateTicketRequest = z.infer<
+  typeof NetworkTunnelCreateTicketRequestSchema
+>;
+export type NetworkTunnelCreateTicketResponse = z.infer<
+  typeof NetworkTunnelCreateTicketResponseSchema
+>;
+export type NetworkTunnelCreateTicketPayload = NetworkTunnelCreateTicketResponse["payload"];
 export type FileUploadRequest = z.infer<typeof FileUploadRequestSchema>;
 export type FileUploadResponse = z.infer<typeof FileUploadResponseSchema>;
 export type RestartServerRequestMessage = z.infer<typeof RestartServerRequestMessageSchema>;
@@ -8704,10 +8729,34 @@ export const WSHelloRejectedMessageSchema = z.object({
   accepts: z.array(z.literal("password")),
 });
 
+export const WSTunnelHelloMessageSchema = z.object({
+  type: z.literal("tunnel_hello"),
+  ticket: z.string().min(1),
+});
+
+export const WSTunnelReadyMessageSchema = z.object({
+  type: z.literal("tunnel_ready"),
+  maxFramePayloadBytes: z.number().int().positive(),
+  initialStreamWindowBytes: z.number().int().positive(),
+  initialConnectionWindowBytes: z.number().int().positive(),
+});
+
+export const WSTunnelErrorMessageSchema = z.object({
+  type: z.literal("tunnel_error"),
+  code: z.string().min(1),
+  message: z.string(),
+});
+
+export const WSTunnelHandshakeResponseSchema = z.discriminatedUnion("type", [
+  WSTunnelReadyMessageSchema,
+  WSTunnelErrorMessageSchema,
+]);
+
 // Complete WebSocket message schemas
 export const WSInboundMessageSchema = z.discriminatedUnion("type", [
   WSPingMessageSchema,
   WSHelloMessageSchema,
+  WSTunnelHelloMessageSchema,
   WSRecordingStateMessageSchema,
   WSSessionInboundSchema,
 ]);
@@ -8721,6 +8770,10 @@ export const WSOutboundMessageSchema = z.discriminatedUnion("type", [
 export type WSInboundMessage = z.infer<typeof WSInboundMessageSchema>;
 export type WSOutboundMessage = z.infer<typeof WSOutboundMessageSchema>;
 export type WSHelloMessage = z.infer<typeof WSHelloMessageSchema>;
+export type WSTunnelHelloMessage = z.infer<typeof WSTunnelHelloMessageSchema>;
+export type WSTunnelReadyMessage = z.infer<typeof WSTunnelReadyMessageSchema>;
+export type WSTunnelErrorMessage = z.infer<typeof WSTunnelErrorMessageSchema>;
+export type WSTunnelHandshakeResponse = z.infer<typeof WSTunnelHandshakeResponseSchema>;
 
 // ============================================================================
 // Helper functions for message conversion

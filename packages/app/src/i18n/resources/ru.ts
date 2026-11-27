@@ -664,6 +664,24 @@ export const ru: TranslationResources = {
         unsupportedProtocol:
           "URL браузера с неподдерживаемым протоколом заблокирован: {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Просмотр через {{hostName}}. Нажмите, чтобы перейти в локальный режим.",
+        tooltipLocal: "Локальный просмотр. Нажмите, чтобы просматривать через {{hostName}}.",
+        switchToLocal: "Переключить маршрутизацию браузера с {{hostName}} на локальную",
+        switchToHost: "Переключить маршрутизацию браузера с локальной на {{hostName}}",
+      },
+      proxy: {
+        connecting: "Подключение к {{hostName}}...",
+        reconnecting: "Повторное подключение к {{hostName}}...",
+        updateTitle: "Обновите {{hostName}}, чтобы просматривать через этот хост",
+        updateDescription: "Этот хост пока не поддерживает проксирование браузера.",
+        routedTitle: "Прокси браузера недоступен для маршрутизируемых хостов",
+        routedDescription: "Подключитесь к хосту напрямую или просматривайте локально.",
+        offlineTitle: "{{hostName}} не в сети",
+        offlineDescription: "Дождитесь повторного подключения хоста или просматривайте локально.",
+        errorTitle: "Не удалось подключить прокси браузера",
+        browseLocally: "Просматривать локально",
+      },
     },
     terminal: {
       hostDisconnected: "Хост не подключён",
@@ -3203,6 +3221,8 @@ export const ru: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Профили агентов",
+        sectionDescription:
+          "Сохраняйте настройки агентов, чтобы быстро выбирать их и позволять агентам использовать их при делегировании задач",
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями агентов",
         unsupported: "На этом хосте запущен демон, который пока не поддерживает профили агентов",
         emptyState:
@@ -3227,6 +3247,9 @@ export const ru: TranslationResources = {
         featuresLabel: "Функции",
         featureCount: "Функции: {{count}}",
         featureCountOne: "{{count}} функция",
+        systemPromptLabel: "Системный промпт",
+        systemPromptPlaceholder: "Сосредоточься на вёрстке, доступности и дизайн-токенах.",
+        systemPromptHint: "Применяется только к новым агентам",
         notesLabel: "Когда использовать",
         notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
         notesHint: "Помогает агентам выбрать этот профиль при запуске другого агента.",

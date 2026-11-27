@@ -247,6 +247,25 @@ function AgentProfileAdvancedFields({
       />
 
       <Field
+        label={t("settings.host.agentProfiles.systemPromptLabel")}
+        hint={t("settings.host.agentProfiles.systemPromptHint")}
+        testID="agent-profile-system-prompt-field"
+      >
+        <FormTextInput
+          initialValue={state.systemPrompt}
+          onChangeText={model.setSystemPrompt}
+          placeholder={t("settings.host.agentProfiles.systemPromptPlaceholder")}
+          multiline
+          numberOfLines={3}
+          style={styles.multilineInput}
+          editable={!state.isSubmitting}
+          size={controlSize}
+          accessibilityLabel={t("settings.host.agentProfiles.systemPromptLabel")}
+          testID="agent-profile-system-prompt-input"
+        />
+      </Field>
+
+      <Field
         label={t("settings.host.agentProfiles.notesLabel")}
         hint={t("settings.host.agentProfiles.notesHint")}
         testID="agent-profile-notes-field"
@@ -257,7 +276,7 @@ function AgentProfileAdvancedFields({
           placeholder={t("settings.host.agentProfiles.notesPlaceholder")}
           multiline
           numberOfLines={3}
-          style={styles.notesInput}
+          style={styles.multilineInput}
           editable={!state.isSubmitting}
           size={controlSize}
           accessibilityLabel={t("settings.host.agentProfiles.notesLabel")}
@@ -435,7 +454,10 @@ export function AgentProfileFormFields({
           : t("settings.host.agentProfiles.featureCount", { count: state.controls.length }),
       );
     }
-    if (!state.notes.trim() && hasRuntimeDefaults) {
+    if (state.systemPrompt.trim()) {
+      parts.push(t("settings.host.agentProfiles.systemPromptLabel"));
+    }
+    if (!state.notes.trim() && !state.systemPrompt.trim() && hasRuntimeDefaults) {
       parts.push(t("settings.host.agentProfiles.addRoutingNoteShort"));
     }
     return parts.join(" · ");
@@ -444,13 +466,12 @@ export function AgentProfileFormFields({
     state.controls.length,
     state.modeDisplay?.label,
     state.notes,
+    state.systemPrompt,
     state.thinkingDisplay?.label,
     t,
   ]);
 
-  const collapsibleLabel = hasRuntimeDefaults
-    ? t("settings.host.agentProfiles.customizeSettings")
-    : t("settings.host.agentProfiles.addRoutingNoteShort");
+  const collapsibleLabel = t("settings.host.agentProfiles.customizeSettings");
 
   const advancedFields = (
     <AgentProfileAdvancedFields
@@ -556,7 +577,7 @@ const styles = StyleSheet.create((theme) => ({
   featureCardPending: {
     opacity: theme.opacity[50],
   },
-  notesInput: {
+  multilineInput: {
     minHeight: theme.spacing[20],
     textAlignVertical: "top",
   },

@@ -662,6 +662,24 @@ export const fr: TranslationResources = {
         invalidUrl: "URL du navigateur invalide",
         unsupportedProtocol: "URL bloquée, protocole non pris en charge : {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Navigation via {{hostName}}. Cliquez pour naviguer en local.",
+        tooltipLocal: "Navigation locale. Cliquez pour naviguer via {{hostName}}.",
+        switchToLocal: "Basculer le routage du navigateur de {{hostName}} vers Local",
+        switchToHost: "Basculer le routage du navigateur de Local vers {{hostName}}",
+      },
+      proxy: {
+        connecting: "Connexion à {{hostName}}...",
+        reconnecting: "Reconnexion à {{hostName}}...",
+        updateTitle: "Mettez à jour {{hostName}} pour naviguer via cet hôte",
+        updateDescription: "Cet hôte ne prend pas encore en charge le proxy du navigateur.",
+        routedTitle: "Le proxy du navigateur n’est pas disponible pour les hôtes routés",
+        routedDescription: "Connectez-vous directement à cet hôte ou naviguez en local.",
+        offlineTitle: "{{hostName}} est hors ligne",
+        offlineDescription: "Attendez la reconnexion de l’hôte ou naviguez en local.",
+        errorTitle: "Impossible de connecter le proxy du navigateur",
+        browseLocally: "Naviguer en local",
+      },
     },
     terminal: {
       hostDisconnected: "L’hôte n’est pas connecté",
@@ -3216,6 +3234,8 @@ export const fr: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Profils d’agent",
+        sectionDescription:
+          "Enregistrez des réglages d’agent à sélectionner rapidement et utilisables par les agents pour déléguer du travail",
         unavailable: "Connectez-vous à cet hôte pour gérer les profils d’agent",
         unsupported: "Le daemon de cet hôte ne prend pas encore en charge les profils d’agent",
         emptyState:
@@ -3240,6 +3260,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Fonctionnalités",
         featureCount: "{{count}} fonctionnalités",
         featureCountOne: "{{count}} fonctionnalité",
+        systemPromptLabel: "Prompt système",
+        systemPromptPlaceholder:
+          "Concentre-toi sur la mise en page, l’accessibilité et les jetons de design.",
+        systemPromptHint: "S’applique uniquement aux nouveaux agents",
         notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l’UI : composants, mise en page et design tokens.",

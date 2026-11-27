@@ -6868,7 +6868,7 @@ function daemonConfigStoreStub(agentProfiles?: AgentProfile[]): Pick<DaemonConfi
 describe("agent profile listing MCP tool", () => {
   const logger = createTestLogger();
 
-  it("returns configured profiles, including notes", async () => {
+  it("returns configured profiles, including systemPrompt and notes", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const profiles: AgentProfile[] = [
       {
@@ -6879,6 +6879,7 @@ describe("agent profile listing MCP tool", () => {
         modeId: "bypassPermissions",
         thinkingOptionId: "high",
         options: { fast_mode: true },
+        systemPrompt: "Focus on layout, accessibility, and design tokens.",
         notes: "Use for UI work: components, layout, design tokens. Not for backend.",
       },
     ];
@@ -6904,10 +6905,52 @@ describe("agent profile listing MCP tool", () => {
           modeId: "bypassPermissions",
           thinkingOptionId: "high",
           options: { fast_mode: true },
+          systemPrompt: "Focus on layout, accessibility, and design tokens.",
           notes: "Use for UI work: components, layout, design tokens. Not for backend.",
         },
       ],
     });
+  });
+
+  it("forwards settings.systemPrompt from create_agent into the created agent config", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "ui-worker-agent",
+      provider: "opencode",
+      cwd: process.cwd(),
+      workspaceId: "ws-system-prompt",
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "UI worker", systemPrompt: "Focus on layout and tokens." },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      ensureWorkspaceForCreate: async () => "ws-system-prompt",
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+
+    await tool.handler({
+      title: "UI worker",
+      provider: "opencode/test-model",
+      initialPrompt: "Polish the profile form",
+      settings: {
+        systemPrompt: "  Focus on layout and tokens.  ",
+      },
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "opencode",
+        model: "test-model",
+        systemPrompt: "Focus on layout and tokens.",
+      }),
+      undefined,
+      expect.any(Object),
+    );
   });
 
   it("returns an empty array when no profiles are configured", async () => {

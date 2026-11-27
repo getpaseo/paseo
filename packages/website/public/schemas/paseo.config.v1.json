@@ -183,6 +183,9 @@
                 },
                 "additionalProperties": {}
               },
+              "systemPrompt": {
+                "type": "string"
+              },
               "notes": {
                 "type": "string"
               }
