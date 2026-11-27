@@ -6,6 +6,7 @@ import type {
   AgentOptionSelectControlSchema,
   AgentOptionToggleControlSchema,
 } from "./messages.js";
+import type { ProviderPaseoToolsPolicy } from "./provider-config.js";
 import type { z } from "zod";
 
 export type AgentProvider = string;
@@ -574,6 +575,12 @@ export interface AgentSessionConfig {
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
+  /**
+   * Narrows the provider's `paseoTools` policy for this agent: `enabled: false` turns Paseo's
+   * tools off, and `disabledTools` adds to the provider's. It never turns on a tool the provider
+   * turns off. Gated by `server_info.features.agentPaseoTools`.
+   */
+  paseoTools?: ProviderPaseoToolsPolicy;
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.

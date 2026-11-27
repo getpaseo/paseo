@@ -78,7 +78,7 @@ describe("createGitMetadataGenerator", () => {
       logger: createLogger().logger,
     });
 
-    const message = await generator.generateCommitMessage("/repo");
+    const message = await generator.generateCommitMessage("/repo", { workspaceId: "wks_1" });
 
     expect(message).toBe("Fix the flaky retry test");
     expect(diffCalls).toEqual([
@@ -88,6 +88,7 @@ describe("createGitMetadataGenerator", () => {
       cwd: "/repo",
       schemaName: "CommitMessage",
       agentTitle: "Commit generator",
+      helper: { kind: "commit-message", workspaceId: "wks_1" },
     });
     expect(generateCalls[0].prompt).toContain("Write a concise git commit message");
     expect(generateCalls[0].prompt).toContain("M\tsrc/foo.ts\t(+3 -1)");
@@ -164,6 +165,8 @@ describe("createGitMetadataGenerator", () => {
       cwd: "/repo",
       schemaName: "PullRequest",
       agentTitle: "PR generator",
+      // Without the request's workspace, the helper serves none Paseo knows.
+      helper: { kind: "pull-request", workspaceId: null },
     });
     expect(generateCalls[0].prompt).toContain("Write a pull request title and body");
   });

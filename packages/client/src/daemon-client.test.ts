@@ -4520,6 +4520,34 @@ test("metadata needs a host that advertises entityMetadata and sends nothing to 
   expect(mock.sent).toHaveLength(0);
 });
 
+test("an agent's own Paseo tools policy needs a host that keeps it", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  // An older host would drop the policy and leave Paseo's tools on, so nothing is sent.
+  const update = "Update the host to set an agent's Paseo tools.";
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/tmp/project", paseoTools: { enabled: false } }),
+  ).rejects.toThrow(update);
+  await expect(
+    client.createWorkspace({
+      source: { kind: "directory", path: "/tmp/project" },
+      agent: { provider: "codex", cwd: "/tmp/project", paseoTools: { enabled: false } },
+    }),
+  ).rejects.toThrow(update);
+  expect(mock.sent).toHaveLength(0);
+});
+
 test("sends internal workspace creation and internal listings only to hosts that support them", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

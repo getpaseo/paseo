@@ -100,6 +100,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     const result = await generateBranchNameFromFirstAgentContext({
       agentManager: {} as AgentManager,
       cwd: "/tmp/repo",
+      workspaceId: "wks_1",
       firstAgentContext: { prompt: "Fix the login flow" },
       logger: createLogger(),
       deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },
@@ -115,6 +116,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
       cwd: "/tmp/repo",
       schemaName: "BranchName",
       maxRetries: 2,
+      helper: { kind: "workspace-name", workspaceId: "wks_1" },
       agentConfigOverrides: {
         title: "Branch name generator",
         internal: true,

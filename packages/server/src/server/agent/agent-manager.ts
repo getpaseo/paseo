@@ -119,7 +119,7 @@ import {
 } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
-import { isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
+import { isPaseoToolPolicyEnabled, narrowPaseoToolPolicy } from "./paseo-tool-policy.js";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
@@ -294,6 +294,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.providerOptions = record.config.providerOptions;
   }
   if (record.config.toolPolicy != null) config.toolPolicy = record.config.toolPolicy;
+  if (record.config.paseoTools != null) config.paseoTools = record.config.paseoTools;
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
@@ -407,6 +408,8 @@ export interface CreateAgentOptions {
   owner?: AgentOwner;
   /** Background agents stay out of discovery, tabs, tracks and attention. Fixed at creation. */
   background?: boolean;
+  /** One of Paseo's own helpers, and the workspace it works for; told to `agent.open.before`. */
+  helper?: NonNullable<PluginSessionOpenRequest["helper"]>;
 }
 
 export interface AgentManagerOptions {
@@ -767,8 +770,16 @@ function createAbortError(signal: AbortSignal | undefined, fallbackMessage: stri
 }
 
 /** The user labels and plugin metadata an agent carries; both default to empty. */
-function agentEntityData(source?: { labels?: Record<string, string>; metadata?: AgentMetadata }) {
-  return { labels: source?.labels ?? {}, metadata: source?.metadata ?? {} };
+function agentEntityData(source?: {
+  labels?: Record<string, string>;
+  metadata?: AgentMetadata;
+  helper?: CreateAgentOptions["helper"];
+}) {
+  return {
+    labels: source?.labels ?? {},
+    metadata: source?.metadata ?? {},
+    ...(source?.helper ? { helper: source.helper } : {}),
+  };
 }
 
 // PASEO_WORKSPACE_ID lets an agent rename or archive its own workspace; several workspaces can
@@ -1765,6 +1776,7 @@ export class AgentManager {
         background: options.background,
         labels: options.labels ?? {},
         metadata: options.metadata ?? {},
+        helper: options.helper,
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
@@ -6632,7 +6644,10 @@ export class AgentManager {
       resolveDefaultModel: options.resolveDefaultModel,
     });
     const paseoToolPolicy = this.paseoToolsEnabled
-      ? this.resolvePaseoToolPolicy(storedConfig.provider)
+      ? narrowPaseoToolPolicy(
+          this.resolvePaseoToolPolicy(storedConfig.provider),
+          storedConfig.paseoTools,
+        )
       : { enabled: false };
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
@@ -6675,6 +6690,7 @@ export class AgentManager {
       background?: boolean;
       labels?: Record<string, string>;
       metadata?: AgentMetadata;
+      helper?: CreateAgentOptions["helper"];
     },
   ): Promise<AgentLaunchContext> {
     let appendSystemPrompt: string[] | undefined;

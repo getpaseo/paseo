@@ -512,6 +512,13 @@ fails. The guarantee does not cover:
    queries, and Codex native archive and unarchive.
 4. Losing the plugin that chose the wrap is not covered: a later open without it runs unwrapped.
 
+Paseo's structured-generation helpers are internal agents, so they skip `agent.create.before` and
+belong to no workspace. `CreateAgentOptions.helper` carries their kind and the workspace they serve
+into the open request as a read-only `helper`, which a reopen keeps; `generateStructuredAgentResponse`
+creates them with `paseoTools: { enabled: false }`. An agent's own `config.paseoTools` reaches the
+launch through `narrowPaseoToolPolicy` in `prepareSessionConfig`, which only narrows the provider's
+policy.
+
 Worktree placement is resolved before Git source planning, so a hook can change the branch and base
 without undoing fetched refs. Restores use the recorded destination and bypass creation hooks.
 Workspace records decide ownership, including explicit non-ownership after recovery. Without a record,

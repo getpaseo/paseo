@@ -33,6 +33,8 @@ export interface GenerateBranchNameFromFirstAgentContextOptions {
     thinkingOptionId?: string | null;
   };
   firstAgentContext: FirstAgentContext | undefined;
+  /** The workspace being named, which the helper works for. */
+  workspaceId?: string;
   logger: BranchNameGeneratorLogger;
   deps?: {
     generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
@@ -123,6 +125,7 @@ export async function generateBranchNameFromFirstAgentContext(
       providers,
       persistSession: false,
       logger: options.logger,
+      helper: { kind: "workspace-name", workspaceId: options.workspaceId ?? null },
       agentConfigOverrides: {
         title: "Branch name generator",
         internal: true,

@@ -66,6 +66,12 @@ Omitting `paseoTools` enables the complete catalog. Set `enabled` to `false` to 
 or list exact tool IDs in `disabledTools` to remove selected tools. Custom profiles do not inherit
 this policy from `extends`; configure each custom provider ID separately.
 
+An agent can narrow its provider's policy with its own `paseoTools`, set when it is created, for
+example by a plugin's [`agent.create.before`](/docs/plugins/hooks#agentcreatebefore) hook. It takes
+the same fields. Either policy can remove the catalog, and their `disabledTools` add up, so an agent
+never gets a tool its provider removes. Paseo's own helper agents, which write commit messages, pull
+request text, and workspace names, run with the catalog removed.
+
 Browser tools still require browser tools to be enabled and a connected browser host. The
 voice-only `speak` tool is separate from this policy.
 

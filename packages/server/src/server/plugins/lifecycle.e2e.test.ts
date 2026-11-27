@@ -525,7 +525,7 @@ test("agent creation hooks change the provider and environment before the sessio
     hooks: `
   server.addHook("agent.create.before", async ({ request }) => {
     console.log(JSON.stringify({ hook: "agent.create.before", workspaceId: request.workspaceId }));
-    return { ...request, config: { ...request.config, provider: "${PROVIDER_ID}", model: "shutdown-model" }, env: { ...request.env, HOOK_CREATE: "created" } };
+    return { ...request, config: { ...request.config, provider: "${PROVIDER_ID}", model: "shutdown-model", paseoTools: { enabled: false } }, env: { ...request.env, HOOK_CREATE: "created" } };
   });
   server.addHook("agent.open.before", async ({ request }) => {
     console.log(JSON.stringify({ hook: "agent.open.before", request }));
@@ -570,7 +570,12 @@ test("agent creation hooks change the provider and environment before the sessio
     expect(agent.provider).toBe(PROVIDER_ID);
     expect(await daemon.daemon.agentStorage.get(agent.id)).toMatchObject({
       provider: PROVIDER_ID,
-      config: { model: "shutdown-model", systemPrompt: "Saved instructions" },
+      config: {
+        model: "shutdown-model",
+        systemPrompt: "Saved instructions",
+        // The hook turned Paseo's tools off for this agent alone.
+        paseoTools: { enabled: false },
+      },
     });
     await expect
       .poll(async () => {

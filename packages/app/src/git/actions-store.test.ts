@@ -73,6 +73,31 @@ describe("checkout-git-actions-store", () => {
     expect(store.getStatus({ serverId, cwd, actionId: "commit" })).toBe("idle");
   });
 
+  it("sends the workspace a commit or pull request comes from", async () => {
+    const client = {
+      checkoutCommit: vi.fn(async () => ({})),
+      checkoutPrCreate: vi.fn(async () => ({})),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+    const store = useCheckoutGitActionsStore.getState();
+
+    await store.commit({ serverId, cwd, workspaceId: "wks_1" });
+    await store.createPr({ serverId, cwd, workspaceId: "wks_1" });
+    await store.commit({ serverId, cwd });
+
+    expect(client.checkoutCommit.mock.calls).toEqual([
+      [cwd, { addAll: true, workspaceId: "wks_1" }],
+      [cwd, { addAll: true }],
+    ]);
+    expect(client.checkoutPrCreate.mock.calls).toEqual([[cwd, { workspaceId: "wks_1" }]]);
+  });
+
   it("runs pull then push sequentially for pull-and-push", async () => {
     const order: string[] = [];
     const client = {

@@ -102,12 +102,13 @@ interface CheckoutGitActionsStoreState {
     actionId: CheckoutGitAsyncActionId;
   }) => CheckoutGitActionStatus;
 
-  commit: (params: { serverId: string; cwd: string }) => Promise<void>;
+  /** `workspaceId`: the workspace the commit is made from, which the commit-message helper serves. */
+  commit: (params: { serverId: string; cwd: string; workspaceId?: string }) => Promise<void>;
   pull: (params: { serverId: string; cwd: string }) => Promise<void>;
   push: (params: { serverId: string; cwd: string }) => Promise<void>;
   pullAndPush: (params: { serverId: string; cwd: string }) => Promise<void>;
   refresh: (params: { serverId: string; cwd: string }) => Promise<void>;
-  createPr: (params: { serverId: string; cwd: string }) => Promise<void>;
+  createPr: (params: { serverId: string; cwd: string; workspaceId?: string }) => Promise<void>;
   mergePr: (params: {
     serverId: string;
     cwd: string;
@@ -182,14 +183,17 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
     return get().statusByCheckout[key]?.[actionId] ?? "idle";
   },
 
-  commit: async ({ serverId, cwd }) => {
+  commit: async ({ serverId, cwd, workspaceId }) => {
     await runCheckoutAction({
       serverId,
       cwd,
       actionId: "commit",
       run: async () => {
         const client = resolveClient(serverId);
-        const payload = await client.checkoutCommit(cwd, { addAll: true });
+        const payload = await client.checkoutCommit(cwd, {
+          addAll: true,
+          ...(workspaceId ? { workspaceId } : {}),
+        });
         if (payload.error) {
           throw new Error(payload.error.message);
         }
@@ -261,14 +265,14 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
     });
   },
 
-  createPr: async ({ serverId, cwd }) => {
+  createPr: async ({ serverId, cwd, workspaceId }) => {
     await runCheckoutAction({
       serverId,
       cwd,
       actionId: "create-pr",
       run: async () => {
         const client = resolveClient(serverId);
-        const payload = await client.checkoutPrCreate(cwd, {});
+        const payload = await client.checkoutPrCreate(cwd, workspaceId ? { workspaceId } : {});
         if (payload.error) {
           throw new Error(payload.error.message);
         }
