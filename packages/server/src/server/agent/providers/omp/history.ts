@@ -10,7 +10,11 @@ import type {
 import type { MeasuredStep } from "../turn-metrics.js";
 import { ompReplayedTurns } from "./metrics.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
+import {
+  OmpHistoryMapper,
+  type OmpCapturedUserMessageEntry,
+  type OmpSubmittedUserMessage,
+} from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
@@ -85,6 +89,7 @@ export async function* streamOmpHistory(input: {
   provider: AgentProvider;
   bridgedTools?: ReadonlyMap<string, OmpBridgedToolIdentity>;
   visitedSessionFiles?: Set<string>;
+  submittedUserMessages?: ReadonlyMap<string, OmpSubmittedUserMessage>;
 }): AsyncGenerator<AgentStreamEvent, OmpHistoryReplay> {
   const replay: OmpHistoryReplay = { lastReply: null };
   if (!input.sessionFile) {
@@ -130,6 +135,7 @@ export async function* streamOmpHistory(input: {
     userEntries,
     OMP_HISTORY_MAPPER_HOOKS,
     input.bridgedTools,
+    input.submittedUserMessages,
   );
   const turns = ompReplayedTurns();
   const turnCompleted = (metrics: AgentMetric[]): AgentStreamEvent[] =>

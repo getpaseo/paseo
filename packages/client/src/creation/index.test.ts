@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import type {
   AgentSnapshotPayload,
   CreationSnapshot,
@@ -50,6 +50,46 @@ const agent: AgentSnapshotPayload = {
   labels: {},
 };
 
+test("reconnection reuses the prepared upload for the same creation intent", async () => {
+  let observe!: (snapshot: CreationSnapshot | null) => void;
+  let resolvePrepare!: (input: Record<string, unknown>) => void;
+  const prepare = vi.fn(
+    () =>
+      new Promise<Record<string, unknown>>((resolve) => {
+        resolvePrepare = resolve;
+      }),
+  );
+  const request = vi.fn(async () => ({ agent, error: null }));
+  const client = new CreationClient({
+    supports: () => true,
+    requestId: () => "request",
+    prepare,
+    request,
+    observe: (_kind, _key, next) => {
+      observe = next;
+      return () => {};
+    },
+    legacyAgent: async () => agent,
+    legacyWorkspace: async () => ({
+      requestId: "legacy",
+      workspace,
+      error: null,
+      setupTerminalId: null,
+    }),
+  });
+  const input = { idempotencyKey: "image", config: { provider: "codex", cwd: "/project" } };
+  const first = client.createAgent(input);
+  expect(client.createAgent(input)).toBe(first);
+  client.reconnect();
+  observe(null);
+  expect(prepare).toHaveBeenCalledTimes(1);
+  resolvePrepare({ ...input, imageUploads: [{ id: "upload" }] });
+  await first;
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request.mock.calls[0]).toEqual(request.mock.calls[1]);
+  client.close();
+});
+
 function fixture(modern: boolean) {
   const requests: Array<{ kind: string; input: Record<string, unknown> }> = [];
   const legacy: Array<{ kind: string; input: unknown }> = [];
@@ -60,6 +100,7 @@ function fixture(modern: boolean) {
   const client = new CreationClient({
     supports: (feature) => (feature === "creationLifecycle" ? modern : true),
     requestId: () => "generated-key",
+    prepare: () => null,
     request: async (kind, input) => {
       requests.push({ kind, input });
       return result;

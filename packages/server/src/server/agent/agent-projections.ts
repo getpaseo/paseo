@@ -508,6 +508,7 @@ function projectPersistenceHandleForWire(
     return projected;
   }
   delete projected.metadata.mcpServers;
+  delete projected.metadata.submittedUserMessages;
   delete projected.metadata.pluginAppendSystemPrompt;
   delete projected.metadata.daemonAppendSystemPrompt;
   delete projected.metadata.paseoInstructionReceipt;

@@ -122,6 +122,16 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("user_message"),
+    inlineImages: z.array(z.strictObject({ data: z.string(), mimeType: z.string() })).optional(),
+    imageRefs: z
+      .array(
+        z.strictObject({
+          id: z.string(),
+          mimeType: z.string(),
+          size: z.number().int().nonnegative(),
+        }),
+      )
+      .optional(),
     clientMessageId: z.string().optional(),
     messageId: z.string().optional(),
     text: z.string(),
@@ -469,17 +479,26 @@ function serializeAgentToolCall(data: AgentToolCallData): StoredToolCall {
   }
 }
 
+function serializeUserMessageItem(
+  base: ReturnType<typeof timelineBase>,
+  item: Extract<StreamItem, { kind: "user_message" }>,
+): Extract<StoredTimelineItem, { kind: "user_message" }> {
+  return {
+    ...base,
+    kind: item.kind,
+    ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+    ...(item.messageId ? { messageId: item.messageId } : {}),
+    ...(item.inlineImages?.length ? { inlineImages: item.inlineImages } : {}),
+    ...(item.imageRefs?.length ? { imageRefs: item.imageRefs } : {}),
+    text: item.text,
+  };
+}
+
 function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
   const base = timelineBase(item);
   switch (item.kind) {
     case "user_message":
-      return {
-        ...base,
-        kind: item.kind,
-        ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
-        ...(item.messageId ? { messageId: item.messageId } : {}),
-        text: item.text,
-      };
+      return serializeUserMessageItem(base, item);
     case "assistant_message":
       return {
         ...base,
@@ -557,6 +576,26 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   return deserializeBuiltinTimelineItem(item);
 }
 
+function deserializeUserMessageItem(
+  base: {
+    id: string;
+    timelineCursor?: StreamItem["timelineCursor"];
+    turnId?: string;
+    timestamp: Date;
+  },
+  item: Extract<StoredTimelineItem, { kind: "user_message" }>,
+): Extract<StreamItem, { kind: "user_message" }> {
+  return {
+    ...base,
+    kind: item.kind,
+    ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+    ...(item.messageId ? { messageId: item.messageId } : {}),
+    ...(item.inlineImages?.length ? { inlineImages: item.inlineImages } : {}),
+    imageRefs: item.imageRefs,
+    text: item.text,
+  };
+}
+
 function deserializeBuiltinTimelineItem(
   item: Exclude<StoredTimelineItem, { kind: "plugin" }>,
 ): StreamItem {
@@ -568,13 +607,7 @@ function deserializeBuiltinTimelineItem(
   };
   switch (item.kind) {
     case "user_message":
-      return {
-        ...base,
-        kind: item.kind,
-        ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
-        ...(item.messageId ? { messageId: item.messageId } : {}),
-        text: item.text,
-      };
+      return deserializeUserMessageItem(base, item);
     case "assistant_message":
       return {
         ...base,

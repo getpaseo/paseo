@@ -7,8 +7,10 @@ import {
   CreationSnapshotSchema,
   type AgentSnapshotPayload,
   type CreationSnapshot,
+  type UploadedImage,
   type WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
+import { readUploadedImages } from "../agent/uploaded-images.js";
 import { writeFileAtomic } from "../atomic-file.js";
 import { generateWorkspaceId } from "../workspace-registry-model.js";
 
@@ -20,6 +22,11 @@ export interface CreatedAgent {
 interface CreationRequest {
   key: string;
   request: { [key: string]: unknown };
+  /**
+   * Digest of the creation intent when the caller resolves arguments that change between retries
+   * (upload IDs). Defaults to a digest of `request`.
+   */
+  fingerprint?: string;
   workspaceId?: string;
   agentId?: string;
   hasAgent: boolean;
@@ -65,7 +72,7 @@ export class CreationService {
     const identity = identityFor(input.kind, input.key);
     const admitted = this.admission.then(async () => {
       await mkdir(this.directory, { recursive: true });
-      const fingerprint = digest(input.request);
+      const fingerprint = input.fingerprint ?? digest(input.request);
       let record = await this.read(identity);
       if (!record) record = await this.readLegacyAgent(input, fingerprint);
       if (record && record.fingerprint !== fingerprint)
@@ -352,6 +359,39 @@ function initialRecord(input: CreationInput, fingerprint: string): Record {
       agentId: input.hasAgent ? (input.agentId ?? randomUUID()) : null,
     },
   };
+}
+
+/**
+ * Creation intent digest. A retry re-uploads identical images under new upload IDs, so uploads
+ * are hashed by content; every other argument is compared exactly as sent.
+ */
+export async function fingerprintCreationIntent(
+  paseoHome: string,
+  intent: { [key: string]: unknown },
+): Promise<string> {
+  const agent = intent.agent as { [key: string]: unknown } | undefined;
+  const [uploads, agentUploads] = await Promise.all([
+    uploadedImageDigests(paseoHome, intent.imageUploads as UploadedImage[] | undefined),
+    uploadedImageDigests(paseoHome, agent?.imageUploads as UploadedImage[] | undefined),
+  ]);
+  return digest({
+    ...intent,
+    ...(uploads ? { imageUploads: uploads } : {}),
+    ...(agent && agentUploads ? { agent: { ...agent, imageUploads: agentUploads } } : {}),
+  });
+}
+async function uploadedImageDigests(
+  paseoHome: string,
+  uploads: readonly UploadedImage[] | undefined,
+): Promise<string[] | undefined> {
+  if (!uploads?.length) return undefined;
+  const images = await readUploadedImages(paseoHome, uploads);
+  // Keep the sent order and the MIME type: the prompt preserves both, so reversed or retyped
+  // images are a different request even when the bytes match.
+  return images.map(
+    (image) =>
+      `${image.mimeType}:${createHash("sha256").update(Buffer.from(image.data, "base64")).digest("hex")}`,
+  );
 }
 function identityFor(kind: string, key: string): string {
   return digest([kind, key]);

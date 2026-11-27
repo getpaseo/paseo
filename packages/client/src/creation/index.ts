@@ -20,6 +20,7 @@ export interface CreationResult {
 interface Dependencies {
   supports: (feature: "creationLifecycle" | "agentRequestReceipts") => boolean;
   requestId: () => string;
+  prepare: (kind: Kind, input: Record<string, unknown>) => Promise<Record<string, unknown>> | null;
   request: (kind: Kind, input: Record<string, unknown>) => Promise<CreationResult>;
   observe: (
     kind: Kind,
@@ -37,6 +38,7 @@ interface Operation {
   key: string;
   fingerprint: string;
   input: Record<string, unknown>;
+  prepared?: Promise<Record<string, unknown>>;
   observers: Set<Observer>;
   snapshot?: CreationSnapshot;
   result: Promise<CreationResult>;
@@ -163,8 +165,18 @@ export class CreationClient {
 
   private async submit(operation: Operation): Promise<void> {
     try {
+      if (!operation.prepared) {
+        const prepared = this.deps.prepare(operation.kind, operation.input);
+        if (prepared) {
+          operation.prepared = prepared.catch((error) => {
+            operation.prepared = undefined;
+            throw error;
+          });
+        }
+      }
+      const input = operation.prepared ? await operation.prepared : operation.input;
       const result = await this.deps.request(operation.kind, {
-        ...operation.input,
+        ...input,
         subscribe: true,
       });
       if (result.creation) this.receive(result.creation);
