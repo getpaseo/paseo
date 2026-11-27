@@ -10375,3 +10375,96 @@ test("path archive of an archived exact child leaves its active parent untouched
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a detach from one session updates the former parent's workspace on every session", async () => {
+  const updatedAt = "2026-03-30T16:00:00.000Z";
+  // ws-root <- ws-lead <- ws-hidden. The worker's activity showed on ws-lead, the nearest
+  // visible ancestor workspace, which is not the delegation root ws-root.
+  const workspaces = [
+    ["ws-root", false],
+    ["ws-lead", false],
+    ["ws-hidden", true],
+  ].map(([workspaceId, background]) =>
+    createPersistedWorkspaceRecord({
+      workspaceId: workspaceId as string,
+      projectId: "proj",
+      cwd: REPO_CWD,
+      kind: "directory",
+      displayName: workspaceId as string,
+      background: background as boolean,
+      createdAt: updatedAt,
+      updatedAt,
+    }),
+  );
+  const records = new Map(
+    [
+      makeStoredAgent({ id: "root", cwd: REPO_CWD, workspaceId: "ws-root", updatedAt }),
+      makeStoredAgent({
+        id: "lead",
+        cwd: REPO_CWD,
+        workspaceId: "ws-lead",
+        updatedAt,
+        labels: { "paseo.parent-agent-id": "root" },
+      }),
+      makeStoredAgent({ id: "worker", cwd: REPO_CWD, workspaceId: "ws-hidden", updatedAt }),
+    ].map((record) => [record.id, record]),
+  );
+  // The worker as the shared manager publishes it after the detach: no parent label left.
+  const detachedWorker = makeManagedAgent({
+    id: "worker",
+    cwd: REPO_CWD,
+    workspaceId: "ws-hidden",
+    lifecycle: "running",
+    updatedAt,
+  }) as unknown as ManagedAgent;
+  const listeners: Array<(event: AgentManagerEvent) => void> = [];
+  const agentManager = {
+    subscribe: (listener: (event: AgentManagerEvent) => void) => {
+      listeners.push(listener);
+      return () => {};
+    },
+    detachAgent: async () => {
+      for (const listener of listeners) {
+        listener({ type: "agent_state", agent: detachedWorker, previousParentAgentId: "lead" });
+      }
+      return { record: records.get("worker")!, live: true, previousParentAgentId: "lead" };
+    },
+  };
+  const agentStorage = { get: async (agentId: string) => records.get(agentId) ?? null };
+  const requester = createSessionForWorkspaceTests({ agentManager, agentStorage });
+  const observer = createSessionForWorkspaceTests({ agentManager, agentStorage });
+  const updatedWorkspaceIds = new Map<TestSession, Set<string>>();
+  for (const session of [requester, observer]) {
+    session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () =>
+      workspaces;
+    session.workspaceRegistry.get = async (id: string) =>
+      workspaces.find((workspace) => workspace.workspaceId === id) ?? null;
+    const ids = new Set<string>();
+    updatedWorkspaceIds.set(session, ids);
+    session.emitWorkspaceUpdatesForWorkspaceIds = async (workspaceIds: Iterable<string>) => {
+      for (const id of workspaceIds) ids.add(id);
+    };
+  }
+  // Both watch only workspaces. The observer never sends the detach.
+  for (const [session, id] of [
+    [requester, "requester-workspaces"],
+    [observer, "observer-workspaces"],
+  ] as const) {
+    await session.handleMessage({
+      type: "fetch_workspaces_request",
+      requestId: id,
+      subscribe: { subscriptionId: id },
+    });
+  }
+
+  await requester.handleMessage({
+    type: "agent.detach.request",
+    agentId: "worker",
+    requestId: "detach-worker",
+  });
+
+  await vi.waitFor(() => {
+    expect(updatedWorkspaceIds.get(observer)).toEqual(new Set(["ws-hidden", "ws-lead"]));
+    expect(updatedWorkspaceIds.get(requester)).toContain("ws-lead");
+  });
+});

@@ -95,7 +95,9 @@ function makeProject(overrides?: Partial<ProjectPlacementPayload>): ProjectPlace
 
 function buildHarness() {
   const emitted: SessionOutboundMessage[] = [];
-  const workspaceUpdates: string[] = [];
+  // One entry per workspace update call, holding every workspace id it batched.
+  const workspaceUpdates: string[][] = [];
+  const visibleWorkspaceIdByParentId = new Map<string, string>();
   const loggedErrors: unknown[][] = [];
   const payloadById = new Map<string, AgentSnapshotPayload>();
   const queuedPayloadBuilds: Promise<AgentSnapshotPayload>[] = [];
@@ -134,8 +136,12 @@ function buildHarness() {
     isProviderVisibleToClient: (provider) => providerVisible(provider),
     buildProjectPlacementForWorkspaceId: async (workspaceId) =>
       projectByWorkspaceId.get(workspaceId) ?? null,
-    emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
-      workspaceUpdates.push(workspaceId);
+    emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
+      workspaceUpdates.push(workspaceIds);
+    },
+    resolveRollupWorkspaceId: async (agent) => {
+      const parentId = agent.labels["paseo.parent-agent-id"];
+      return parentId ? (visibleWorkspaceIdByParentId.get(parentId) ?? null) : null;
     },
     sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
       directorySync.sequenceAgentUpdate(
@@ -163,6 +169,10 @@ function buildHarness() {
         projectByWorkspaceId.set(payload.workspaceId, project);
       }
       return payload;
+    },
+    // Hidden children of this parent show their activity on this visible workspace.
+    parentShowsOn(parentAgentId: string, workspaceId: string) {
+      visibleWorkspaceIdByParentId.set(parentAgentId, workspaceId);
     },
     setProviderVisible(fn: (provider: string) => boolean) {
       providerVisible = fn;
@@ -353,7 +363,7 @@ describe("forwardLiveAgent", () => {
     expect(h.agentUpdates()).toEqual([
       { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
     ]);
-    expect(h.workspaceUpdates).toEqual(["ws-1"]);
+    expect(h.workspaceUpdates).toEqual([["ws-1"]]);
   });
 
   test("never projects MCP credentials into ordinary client updates", async () => {
@@ -435,7 +445,33 @@ describe("forwardLiveAgent", () => {
     await h.service.forwardLiveAgent(h.managed("a"));
 
     expect(h.agentUpdates()).toEqual([]);
-    expect(h.workspaceUpdates).toEqual(["ws-1"]);
+    expect(h.workspaceUpdates).toEqual([["ws-1"]]);
+  });
+
+  test("a hidden agent updates its own and its visible parent's workspace in one batch", async () => {
+    const h = buildHarness();
+    const labels = { "paseo.parent-agent-id": "lead" };
+    h.register(makeAgentPayload({ id: "worker", workspaceId: "hidden-ws", labels }));
+    h.parentShowsOn("lead", "parent-ws");
+
+    await h.service.forwardLiveAgent(h.managed("worker"));
+    await h.service.forwardStoredAgent({ ...h.stored("worker"), workspaceId: "hidden-ws", labels });
+
+    expect(h.workspaceUpdates).toEqual([
+      ["hidden-ws", "parent-ws"],
+      ["hidden-ws", "parent-ws"],
+    ]);
+  });
+
+  test("a detach also updates the workspace the agent showed on before", async () => {
+    const h = buildHarness();
+    // The detach state already has no parent label.
+    h.register(makeAgentPayload({ id: "worker", workspaceId: "hidden-ws" }));
+    h.parentShowsOn("lead", "parent-ws");
+
+    await h.service.forwardLiveAgent(h.managed("worker"), { previousParentAgentId: "lead" });
+
+    expect(h.workspaceUpdates).toEqual([["hidden-ws", "parent-ws"]]);
   });
 
   test("drops an upsert whose provider is not visible to the client", async () => {
@@ -449,7 +485,7 @@ describe("forwardLiveAgent", () => {
 
     expect(h.agentUpdates()).toEqual([]);
     // The workspace-update tail still fires regardless of visibility.
-    expect(h.workspaceUpdates).toEqual(["ws-1"]);
+    expect(h.workspaceUpdates).toEqual([["ws-1"]]);
   });
 
   test("swallows and logs a build error without throwing", async () => {
@@ -700,7 +736,7 @@ test("an idle session skips agent hydration while preserving workspace updates",
   await h.service.forwardLiveAgent(agent);
   expect(h.loggedErrors).toEqual([]);
   expect(h.agentUpdates()).toEqual([]);
-  expect(h.workspaceUpdates).toEqual([agent.workspaceId]);
+  expect(h.workspaceUpdates).toEqual([[agent.workspaceId]]);
 });
 
 test("skips non-matching agents that are not in the subscription without advancing DirectorySync", async () => {

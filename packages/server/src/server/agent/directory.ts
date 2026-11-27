@@ -1,4 +1,5 @@
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { isAgentRunning } from "@getpaseo/protocol/agent-state-bucket";
 import type { AgentSnapshotPayload } from "../messages.js";
 import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
@@ -16,6 +17,14 @@ import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
  */
 export type BackgroundVisibility = boolean | "workspaces";
 
+/** A running agent in a background workspace, counted against the workspace it rolls up to. */
+export interface HiddenRunningRollup {
+  workspaceId: string;
+  updatedAt: string;
+}
+
+export type RollupSource = Pick<StoredAgentRecord, "id" | "workspaceId" | "labels" | "background">;
+
 interface DiscoverableAgent {
   workspaceId?: string;
   internal?: boolean;
@@ -26,7 +35,7 @@ interface DiscoverableAgent {
 export class AgentDirectory {
   constructor(
     private readonly deps: {
-      manager: Pick<AgentManager, "listAgents">;
+      manager: Pick<AgentManager, "listAgents" | "getAgentBackgroundWorkSummary">;
       storage: Pick<
         AgentStorage,
         "get" | "listActive" | "listByWorkspaces" | "lastUserMessageAtByWorkspace"
@@ -66,6 +75,65 @@ export class AgentDirectory {
   ): Promise<boolean> {
     const workspace = agent.workspaceId ? await this.deps.workspaces.get(agent.workspaceId) : null;
     return admits(agent, workspace?.background === true, visibility);
+  }
+
+  /**
+   * Running agents in background workspaces, each counted against the workspace it rolls up to.
+   * A running agent is always live, so stored records are only read to walk parents. Every agent
+   * update rebuilds this, so it reads only what the rule needs and never projects an agent.
+   */
+  async listHiddenRunningRollups(): Promise<HiddenRunningRollup[]> {
+    const live = this.deps.manager.listAgents();
+    const liveById = new Map(live.map((agent) => [agent.id, agent]));
+    const rollups: HiddenRunningRollup[] = [];
+    for (const agent of live) {
+      const running = isAgentRunning({
+        status: agent.lifecycle,
+        backgroundWork: this.deps.manager.getAgentBackgroundWorkSummary(agent.id),
+      });
+      if (!running || !this.deps.isProviderVisible(agent.provider)) continue;
+      if (!(await this.rollsUp(agent))) continue;
+      // Archive stores the record before it closes the runtime.
+      if ((await this.deps.storage.get(agent.id))?.archivedAt) continue;
+      const workspaceId = await this.findVisibleAncestorWorkspaceId(agent, liveById);
+      if (workspaceId) rollups.push({ workspaceId, updatedAt: agent.updatedAt.toISOString() });
+    }
+    return rollups;
+  }
+
+  /**
+   * The visible workspace that shows a hidden agent's activity: the workspace of its nearest
+   * ancestor agent outside a background workspace. Null when the agent has its own visible row,
+   * is an agent-level background agent, or its parent chain ends first.
+   */
+  async resolveRollupWorkspaceId(agent: RollupSource): Promise<string | null> {
+    if (!(await this.rollsUp(agent))) return null;
+    const live = this.deps.manager.listAgents();
+    return this.findVisibleAncestorWorkspaceId(agent, new Map(live.map((a) => [a.id, a])));
+  }
+
+  /** Sits in a background workspace and is not itself a background agent. */
+  private async rollsUp(agent: RollupSource): Promise<boolean> {
+    if (agent.background || !agent.workspaceId) return false;
+    return (await this.deps.workspaces.get(agent.workspaceId))?.background === true;
+  }
+
+  private async findVisibleAncestorWorkspaceId(
+    agent: RollupSource,
+    liveById: ReadonlyMap<string, ManagedAgent>,
+  ): Promise<string | null> {
+    const seen = new Set([agent.id]);
+    let parentId = getParentAgentIdFromLabels(agent.labels);
+    while (parentId && !seen.has(parentId)) {
+      seen.add(parentId);
+      const parent = liveById.get(parentId) ?? (await this.deps.storage.get(parentId));
+      if (!parent?.workspaceId) return null;
+      const workspace = await this.deps.workspaces.get(parent.workspaceId);
+      if (!workspace) return null;
+      if (!workspace.background) return workspace.workspaceId;
+      parentId = getParentAgentIdFromLabels(parent.labels);
+    }
+    return null;
   }
 
   private async appendAncestors(

@@ -7,8 +7,9 @@ import type {
 } from "../../messages.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
-import type { BackgroundVisibility } from "../../agent/directory.js";
+import type { BackgroundVisibility, RollupSource } from "../../agent/directory.js";
 import { resolveEffectiveThinkingOptionId, toAgentPayload } from "../../agent/agent-projections.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = NonNullable<
@@ -56,7 +57,10 @@ export interface AgentUpdatesService {
   clearSubscription(subscriptionId: string): void;
   hasSubscription(): boolean;
   includesLiveAgent(agent: ManagedAgent, subscriptionIds?: ReadonlySet<string>): Promise<boolean>;
-  forwardLiveAgent(agent: ManagedAgent): Promise<void>;
+  forwardLiveAgent(
+    agent: ManagedAgent,
+    options?: { previousParentAgentId?: string },
+  ): Promise<void>;
   forwardStoredAgent(record: StoredAgentRecord): Promise<void>;
   emitStoredRecord(record: StoredAgentRecord): Promise<AgentSnapshotPayload>;
   removeAgent(agentId: string): Promise<void>;
@@ -75,7 +79,9 @@ export interface AgentUpdatesServiceDeps {
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
   isProviderVisibleToClient(provider: string): boolean;
   buildProjectPlacementForWorkspaceId(workspaceId: string): Promise<ProjectPlacementPayload | null>;
-  emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void>;
+  emitWorkspaceUpdatesForWorkspaceIds(workspaceIds: string[]): Promise<void>;
+  /** The visible workspace that shows this agent's activity when it has no row of its own. */
+  resolveRollupWorkspaceId(agent: RollupSource): Promise<string | null>;
   sequenceAgentUpdate<T extends AgentUpdatePayload>(
     payload: T,
     agent: AgentSnapshotPayload | null,
@@ -344,13 +350,29 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return payload;
   }
 
-  async function emitAgentUpdate(
-    workspaceId: string | undefined,
-    projectPayload?: () => AgentSnapshotPayload | Promise<AgentSnapshotPayload>,
-  ): Promise<void> {
+  async function emitAgentUpdate(input: {
+    agent: RollupSource;
+    projectPayload?: () => AgentSnapshotPayload | Promise<AgentSnapshotPayload>;
+    previousParentAgentId?: string;
+  }): Promise<void> {
+    const { agent, projectPayload, previousParentAgentId } = input;
     try {
       if (projectPayload && hasSubscription()) await publishPayload(await projectPayload());
-      if (workspaceId) await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+      const { workspaceId } = agent;
+      if (workspaceId) {
+        // A detach has already dropped the parent label, so also resolve the agent as it was
+        // before: the workspace it showed on must refresh too.
+        const sources = previousParentAgentId
+          ? [agent, { ...agent, labels: { [PARENT_AGENT_ID_LABEL]: previousParentAgentId } }]
+          : [agent];
+        const rollupWorkspaceIds = await Promise.all(
+          sources.map((source) => deps.resolveRollupWorkspaceId(source)),
+        );
+        await deps.emitWorkspaceUpdatesForWorkspaceIds([
+          workspaceId,
+          ...rollupWorkspaceIds.filter((id): id is string => id !== null),
+        ]);
+      }
     } catch (error) {
       deps.logger.error({ err: error }, "Failed to emit agent update");
     }
@@ -371,23 +393,33 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return next;
   }
 
-  function forwardLiveAgent(agent: ManagedAgent): Promise<void> {
+  function forwardLiveAgent(
+    agent: ManagedAgent,
+    options?: { previousParentAgentId?: string },
+  ): Promise<void> {
+    const previousParentAgentId = options?.previousParentAgentId;
     if (!hasSubscription()) {
-      const workspaceId = agent.workspaceId;
-      return workspaceId
-        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate(workspaceId))
+      return agent.workspaceId
+        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate({ agent, previousParentAgentId }))
         : Promise.resolve();
     }
     const payload = toAgentPayload(agent);
     return enqueueAgentUpdate(payload.id, () =>
-      emitAgentUpdate(payload.workspaceId, () => deps.enrichAgentPayload(payload)),
+      emitAgentUpdate({
+        agent,
+        projectPayload: () => deps.enrichAgentPayload(payload),
+        previousParentAgentId,
+      }),
     );
   }
 
   function forwardStoredAgent(record: StoredAgentRecord): Promise<void> {
     if (!hasSubscription() && !record.workspaceId) return Promise.resolve();
     return enqueueAgentUpdate(record.id, () =>
-      emitAgentUpdate(record.workspaceId, () => deps.buildStoredAgentPayload(record)),
+      emitAgentUpdate({
+        agent: record,
+        projectPayload: () => deps.buildStoredAgentPayload(record),
+      }),
     );
   }
 

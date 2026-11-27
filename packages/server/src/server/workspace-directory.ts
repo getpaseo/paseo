@@ -21,6 +21,7 @@ import {
   type TerminalActivity,
 } from "@getpaseo/protocol/terminal-activity";
 import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
+import type { HiddenRunningRollup } from "./agent/directory.js";
 
 const FETCH_WORKSPACES_SORT_KEYS = [
   "status_priority",
@@ -85,6 +86,7 @@ export interface WorkspaceDirectoryDeps {
     workspaceIds?: Iterable<string>,
   ): Promise<ReadonlyMap<string, string>>;
   listProviderSubagentActivity(): Promise<ProviderSubagentWorkspaceActivity[]>;
+  listHiddenRunningRollups(): Promise<HiddenRunningRollup[]>;
   listTerminalActivityContributions(): Promise<
     Array<{ cwd: string; workspaceId?: string; activity: TerminalActivity | null }>
   >;
@@ -215,6 +217,7 @@ export class WorkspaceDirectory {
       agents,
       lastUserMessageTimes,
       providerSubagentActivity,
+      hiddenRunningRollups,
       persistedWorkspaces,
       persistedProjects,
       terminalContributions,
@@ -222,6 +225,7 @@ export class WorkspaceDirectory {
       this.deps.listAgentPayloads(requestedIds),
       this.deps.workspaceLastUserMessageTimes(requestedIds),
       this.deps.listProviderSubagentActivity(),
+      this.deps.listHiddenRunningRollups(),
       requestedIds
         ? Promise.all(Array.from(requestedIds, (id) => this.deps.workspaceRegistry.get(id))).then(
             (records) =>
@@ -291,6 +295,16 @@ export class WorkspaceDirectory {
       descriptorsByWorkspaceId,
       activityEntriesByWorkspaceId,
     });
+    // A running agent in a background workspace has no visible row of its own. Its visible
+    // ancestor's workspace shows it as running; its own row keeps its full status.
+    for (const rollup of hiddenRunningRollups) {
+      contributeRunning({
+        workspaceId: rollup.workspaceId,
+        changedAtIso: rollup.updatedAt,
+        descriptorsByWorkspaceId,
+        activityEntriesByWorkspaceId,
+      });
+    }
 
     const contributingAgentsByWorkspaceId = groupAgentsByWorkspaceId(
       activeAgents,
@@ -350,19 +364,12 @@ export class WorkspaceDirectory {
       if (!workspaceId) {
         continue;
       }
-      const descriptor = descriptorsByWorkspaceId.get(workspaceId);
-      if (!descriptor) {
-        continue;
-      }
-      if (
-        getWorkspaceStateBucketPriority("running") <
-        getWorkspaceStateBucketPriority(descriptor.status)
-      ) {
-        descriptor.status = "running";
-      }
-      const entries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
-      entries.push({ bucket: "running", changedAtIso: subagent.updatedAt });
-      activityEntriesByWorkspaceId.set(workspaceId, entries);
+      contributeRunning({
+        workspaceId,
+        changedAtIso: subagent.updatedAt,
+        descriptorsByWorkspaceId,
+        activityEntriesByWorkspaceId,
+      });
     }
   }
 
@@ -728,6 +735,30 @@ export class WorkspaceDirectory {
       },
     };
   }
+}
+
+// Raise a workspace to `running` and record when that activity changed, for
+// `resolveStatusEnteredAt`. A workspace outside the descriptor map is skipped.
+function contributeRunning(params: {
+  workspaceId: string;
+  changedAtIso: string;
+  descriptorsByWorkspaceId: Map<string, WorkspaceDescriptorPayload>;
+  activityEntriesByWorkspaceId: Map<string, WorkspaceBucketTimestampEntry[]>;
+}): void {
+  const { workspaceId, changedAtIso, descriptorsByWorkspaceId, activityEntriesByWorkspaceId } =
+    params;
+  const descriptor = descriptorsByWorkspaceId.get(workspaceId);
+  if (!descriptor) {
+    return;
+  }
+  if (
+    getWorkspaceStateBucketPriority("running") < getWorkspaceStateBucketPriority(descriptor.status)
+  ) {
+    descriptor.status = "running";
+  }
+  const entries = activityEntriesByWorkspaceId.get(workspaceId) ?? [];
+  entries.push({ bucket: "running", changedAtIso });
+  activityEntriesByWorkspaceId.set(workspaceId, entries);
 }
 
 function groupAgentsByWorkspaceId(

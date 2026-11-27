@@ -1312,8 +1312,9 @@ export class Session {
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildProjectPlacementForWorkspaceId: (workspaceId) =>
         this.buildProjectPlacementForWorkspaceId(workspaceId),
-      emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
-        this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+      emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+        this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+      resolveRollupWorkspaceId: (agent) => this.agentDirectory.resolveRollupWorkspaceId(agent),
       sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence, includeBackground) =>
         this.directorySync.sequenceAgentUpdate(
           payload,
@@ -1409,6 +1410,7 @@ export class Session {
       workspaceLastUserMessageTimes: (workspaceIds) =>
         this.agentDirectory.workspaceLastUserMessageTimes(workspaceIds),
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
+      listHiddenRunningRollups: () => this.agentDirectory.listHiddenRunningRollups(),
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
@@ -2271,7 +2273,9 @@ export class Session {
             },
             "agent.session.forward_update",
           );
-          void this.agentUpdates.forwardLiveAgent(event.agent);
+          void this.agentUpdates.forwardLiveAgent(event.agent, {
+            previousParentAgentId: event.previousParentAgentId,
+          });
           return;
         }
 

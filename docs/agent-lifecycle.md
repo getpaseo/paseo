@@ -234,7 +234,8 @@ normal behavior. Both flags are fixed at creation.
   out of tabs, the parent's subagent track and agent lists in the app. A tab opened by id still
   works.
 - **Workspace.** `workspace.background` hides the workspace from the sidebar unless **Show
-  background** is on.
+  background** is on. A running agent inside still shows as `running` on its nearest visible
+  ancestor's workspace (see [Workspace activity](#workspace-activity)).
 - **Inheritance.** When `background` is omitted, an agent created by a caller agent takes the
   caller's own `background`. A new workspace takes the caller's effective background. A request
   that creates its workspace applies `background` to both the agent and the workspace. Explicit
@@ -363,6 +364,8 @@ The asymmetry is intentional: a subagent's persistent relationship lives in the 
 Agent lifecycle status stays literal: a parent agent is `idle` when its own turn is idle, even if a child is running.
 
 Workspace status is an aggregate activity signal computed **per `workspaceId`**. Ownership is never derived from `cwd` — many workspaces may share one directory, and same-`cwd` siblings do not clump under one status. Root agents and cross-workspace subagents contribute their normal state bucket to their own workspace. Same-workspace descendants contribute `running` to the nearest ancestor in that workspace; their non-running attention, permission, and error states stay in the parent's subagents track. This makes a cross-workspace subagent behave like a detached agent for workspace visibility and status without removing its parent relationship.
+
+A workspace with `background: true` has no sidebar row while **Show background** is off. While an agent in one runs (a turn or running background work), it also contributes `running` to the workspace of its nearest ancestor agent outside a background workspace. The walk follows parent agents on this host and passes over ancestors in other background workspaces. Only `running` moves up: the background workspace keeps its full bucket, and attention, permission, and error stay in the parent's subagents track. Agent-level background agents add nothing. `AgentDirectory.listHiddenRunningRollups` owns the rule. Any change to that agent also refreshes the ancestor's workspace, so the row clears when the agent finishes, is archived, or is detached.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
