@@ -1,8 +1,10 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EditingTextInput as ComposerTextInput } from "@/components/ui/text-input/text-input.web";
 import type { EditingTextInputHandle as ComposerTextInputHandle } from "@/components/ui/text-input";
+
+import { useComposerHeight } from "./height.web";
 
 interface MountedInput {
   root: Root;
@@ -236,4 +238,34 @@ describe("ComposerTextInput web IME composition", () => {
 
     expect(mounted.textarea.value).toBe("");
   });
+});
+
+it("resizes a tall draft to a new cap without measuring its text again", async () => {
+  const getText = vi.fn(() => "one line\n".repeat(50));
+  function Draft({ maxHeight }: { maxHeight: number }) {
+    const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+    const { style } = useComposerHeight({ getText, textareaRef, minHeight: 40, maxHeight });
+    return <textarea ref={textareaRef} data-height={Number(style.height)} />;
+  }
+
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const render = (maxHeight: number) => act(() => root.render(<Draft maxHeight={maxHeight} />));
+  try {
+    render(120);
+    await expect.poll(() => host.querySelector("textarea")?.dataset.height).toBe("120");
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    getText.mockClear();
+    render(80);
+    expect(host.querySelector("textarea")?.dataset.height).toBe("80");
+    render(180);
+    expect(host.querySelector("textarea")?.dataset.height).toBe("180");
+    expect(getText).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
 });

@@ -1,11 +1,6 @@
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import { useCallback, useMemo, useState } from "react";
-import {
-  Pressable,
-  type PressableStateCallbackType,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -165,12 +160,12 @@ export function ContextWindowMeter({
   toolbarRing,
 }: ContextWindowMeterProps) {
   const { t, i18n } = useTranslation();
-  const { width } = useWindowDimensions();
+
   // Usage cards and session metrics need a wider popover; without them it keeps the plain tooltip
   // shape.
   const showsUsage = useHostReportsUsage(serverId);
   const isWide = showsUsage || sessionMetrics.length > 0;
-  const popoverWidth = Math.min(USAGE_POPOVER_WIDTH, width - 24);
+  const popoverWidth = useWindowMetric(({ width }) => Math.min(USAGE_POPOVER_WIDTH, width - 24));
   // Compact screens open the details in a sheet, which can hold a pressable Refresh.
   const isCompact = useIsCompactFormFactor();
   const [isSheetOpen, setIsSheetOpen] = useState(false);

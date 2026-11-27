@@ -1,13 +1,8 @@
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { router } from "expo-router";
-import {
-  View,
-  Pressable,
-  Keyboard,
-  useWindowDimensions,
-  type LayoutChangeEvent,
-} from "react-native";
+import { View, Pressable, Keyboard, type LayoutChangeEvent } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { Settings2 } from "lucide-react-native";
@@ -459,7 +454,7 @@ function ControlledAgentControls({
   // wide window (`isCompactLayout`) changes which labels show, never how large a control is.
   const toolbarSizing = controlSizingForLayout(isCompactFormFactor);
   const toolbarGeometry = useMemo(() => composerToolbarGeometry(toolbarSizing), [toolbarSizing]);
-  const { fontScale } = useWindowDimensions();
+  const fontScale = useWindowMetric((size) => size.fontScale);
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<string | null>(null);
   // A compact composer always folds its controls into the model sheet; the width budget only

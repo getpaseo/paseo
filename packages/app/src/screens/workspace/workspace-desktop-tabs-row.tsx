@@ -1,3 +1,4 @@
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   Fragment,
@@ -807,11 +808,11 @@ function TabChip({
       styles.tab,
       isFilled && styles.tabFill(chipBackdrop),
       isWeb && isDragging && ({ cursor: "grabbing" } as object),
-      {
+      inlineUnistylesStyle({
         minWidth: resolvedTabWidth,
         width: resolvedTabWidth,
         maxWidth: resolvedTabWidth,
-      },
+      }),
     ],
     [chipBackdrop, isDragging, isFilled, resolvedTabWidth],
   );

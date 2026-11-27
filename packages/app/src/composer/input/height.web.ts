@@ -43,6 +43,7 @@ export function useComposerHeight({
 }: ComposerHeightArgs): ComposerHeightResult {
   const [height, setHeight] = useState(minHeight);
   const heightRef = useRef(minHeight);
+  const naturalHeightRef = useRef(minHeight);
   const paramsRef = useRef({ getText, minHeight, maxHeight, onRenderedLinesChange });
   paramsRef.current = { getText, minHeight, maxHeight, onRenderedLinesChange };
   const mirrorRef = useRef<HTMLTextAreaElement | null>(null);
@@ -72,11 +73,13 @@ export function useComposerHeight({
       const padding =
         parseFloat(computedStyle.paddingTop) + parseFloat(computedStyle.paddingBottom);
       const lineHeight = parseFloat(computedStyle.lineHeight);
+      const naturalHeight = mirror.scrollHeight;
+      naturalHeightRef.current = naturalHeight;
       if (lineHeight > 0)
         paramsRef.current.onRenderedLinesChange?.(
-          Math.round((mirror.scrollHeight - padding) / lineHeight),
+          Math.round((naturalHeight - padding) / lineHeight),
         );
-      setBoundedHeight(mirror.scrollHeight);
+      setBoundedHeight(naturalHeight);
     },
     [setBoundedHeight, textareaRef],
   );
@@ -112,7 +115,11 @@ export function useComposerHeight({
 
   useLayoutEffect(() => {
     measure(getText());
-  }, [maxHeight, minHeight, getText, measure, presentationKey]);
+  }, [getText, measure, presentationKey]);
+
+  useLayoutEffect(() => {
+    setBoundedHeight(naturalHeightRef.current);
+  }, [maxHeight, minHeight, setBoundedHeight]);
 
   useEffect(() => {
     const source = textareaRef.current;
@@ -133,8 +140,13 @@ export function useComposerHeight({
     (_previousText: string, nextText: string) => measure(nextText),
     [measure],
   );
-  const reset = useCallback(() => setBoundedHeight(minHeight), [minHeight, setBoundedHeight]);
-  const style = useMemo(() => ({ height, minHeight, maxHeight }), [height, maxHeight, minHeight]);
+  const reset = useCallback(() => {
+    naturalHeightRef.current = minHeight;
+    setBoundedHeight(minHeight);
+  }, [minHeight, setBoundedHeight]);
+  // The mirror already clamps the textarea. Only its effective height changes the CSS rule.
+  const visibleHeight = Math.min(height, maxHeight);
+  const style = useMemo(() => ({ height: visibleHeight, minHeight }), [visibleHeight, minHeight]);
 
   return {
     mode: "measured",

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useWindowDimensions } from "react-native";
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import {
   computeWorkspaceTabLayout,
   type WorkspaceTabLayoutMetrics,
@@ -20,11 +20,10 @@ interface UseWorkspaceTabLayoutResult {
 export function useWorkspaceTabLayout(
   input: UseWorkspaceTabLayoutInput,
 ): UseWorkspaceTabLayoutResult {
-  const { width: viewportWidth } = useWindowDimensions();
-  const resolvedViewportWidth =
-    typeof input.viewportWidthOverride === "number" && input.viewportWidthOverride > 0
-      ? input.viewportWidthOverride
-      : viewportWidth;
+  const override = input.viewportWidthOverride;
+  const resolvedViewportWidth = useWindowMetric(({ width }) =>
+    typeof override === "number" && override > 0 ? override : width,
+  );
 
   const layout = useMemo(
     () =>

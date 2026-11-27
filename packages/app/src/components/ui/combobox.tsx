@@ -17,7 +17,6 @@ import {
   ScrollView,
   Platform,
   StatusBar,
-  useWindowDimensions,
   type LayoutChangeEvent,
   type PressableStateCallbackType,
   type StyleProp,
@@ -27,6 +26,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useWindowMetric } from "@/hooks/use-window-metric";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { BottomSheetScrollView, type BottomSheetBackgroundProps } from "@gorhom/bottom-sheet";
@@ -72,6 +72,7 @@ import { buildDesktopFrameStyle } from "./combobox-frame-style";
 export { buildDesktopFrameStyle } from "./combobox-frame-style";
 
 const IS_WEB = isWeb;
+const INACTIVE_VIEWPORT = { width: 0, height: 0 };
 const TRAILING_ACTION_DATASET = { comboboxTrailingAction: true };
 const FOOTER_DATASET = { comboboxFooter: true };
 const FOCUSED_COMBOBOX_ACTION_SELECTOR =
@@ -1454,7 +1455,6 @@ export function Combobox({
   const titleColor = theme.colors.foreground;
   const effectiveOptionsPosition = resolveEffectiveOptionsPosition(isMobile, optionsPosition);
   const isDesktopAboveSearch = resolveIsDesktopAboveSearch(isMobile, effectiveOptionsPosition);
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const snapPoints = useMemo(() => ["60%", "90%"], []);
   const [availableSize, setAvailableSize] = useState<{ width?: number; height?: number } | null>(
     null,
@@ -1471,6 +1471,9 @@ export function Combobox({
 
   const [internalOpen, setInternalOpen] = useState(false);
   const { isControlled, isOpen } = resolveControlledOpen(open, internalOpen);
+  const { width: windowWidth, height: windowHeight } = useWindowMetric((size) =>
+    isOpen && !isMobile ? size : INACTIVE_VIEWPORT,
+  );
 
   const setOpen = useCallback(
     (nextOpen: boolean) => applySetOpen(isControlled, setInternalOpen, onOpenChange, nextOpen),
