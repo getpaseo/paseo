@@ -1922,12 +1922,20 @@ test("review actions only change the selected chat", async () => {
       workspaceId: done.workspaceId,
     });
     await client.markAgentUnread(id);
-    expect((await client.fetchAgent(id))?.agent).toMatchObject({
+    const unread = (await client.fetchAgent(id))!.agent;
+    expect(unread).toMatchObject({
       requiresAttention: true,
       attentionReason: "finished",
       updatedAt: done.updatedAt,
-      reopenableReviewResultId: reopened.reviewResult!.id,
+      reviewResult: { id: expect.any(String) },
     });
+    expect(unread.reviewResult?.id).not.toBe(reopened.reviewResult!.id);
+    expect(unread.reviewResult?.followUpAt).toBeUndefined();
+    expect(unread.reopenableReviewResultId).toBeUndefined();
+    await client.markAgentDone(id, reopened.reviewResult!.id);
+    expect((await client.fetchAgent(id))?.agent.reviewResult).toEqual(unread.reviewResult);
+    await client.markAgentDone(id, unread.reviewResult!.id);
+    expect((await client.fetchAgent(id))?.agent.reviewResult).toBeUndefined();
     expect((await client.fetchAgent(sibling.id))?.agent.requiresAttention).toBe(false);
 
     const third = await finish();

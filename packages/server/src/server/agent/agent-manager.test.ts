@@ -6799,8 +6799,10 @@ test("successful results survive acknowledgement, manual unread and restart unti
   });
   const snapshot = () => toAgentPayload(manager.getAgent(id)!);
   await manager.markAgentUnread(id);
-  await manager.clearAgentAttention(id, getAttentionKey(snapshot()));
-  expect(snapshot().reviewResult).toBeUndefined();
+  const manualReview = snapshot().reviewResult!;
+  expect(manualReview).toEqual({ id: expect.any(String) });
+  await manager.markAgentDone(id, manualReview.id);
+  expect(snapshot()).toMatchObject({ requiresAttention: false, reviewResult: undefined });
 
   for await (const _ of manager.streamAgent(id, "first")) {
     /* drain the turn */
@@ -6856,7 +6858,16 @@ test("successful results survive acknowledgement, manual unread and restart unti
   expect(resolved?.reviewResult).toBeUndefined();
   const afterResolution = new AgentManager({ clients, registry: resolvedStore, logger });
   await afterResolution.markAgentDone(id, second.reviewResult!.id);
-  await afterResolution.markAgentForFollowUp(id, second.reviewResult!.id);
+  await afterResolution.markAgentUnread(id);
+  const unread = (await resolvedStore.get(id))!;
+  expect(unread).toMatchObject({
+    requiresAttention: true,
+    updatedAt: storedUpdatedAt,
+    reviewResult: { id: expect.any(String) },
+  });
+  expect(unread.reviewResult?.id).not.toBe(second.reviewResult!.id);
+  await afterResolution.markAgentDone(id, unread.reviewResult!.id);
+  await afterResolution.markAgentForFollowUp(id, unread.reviewResult!.id);
   const restored = await resolvedStore.get(id);
   expect(restored).toMatchObject({
     requiresAttention: false,

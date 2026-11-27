@@ -534,6 +534,17 @@ function unreadAttentionReason(status: AgentLifecycleStatus): "finished" | "erro
   return null;
 }
 
+function reviewStateForUnread(
+  { reviewResult, reopenableReviewResultId }: ReviewState,
+  attentionReason: "finished" | "error",
+): ReviewState {
+  if (attentionReason === "finished" && !reviewResult) {
+    // A retry of Mark done for the previous result must leave this review open.
+    return { reviewResult: { id: randomUUID() }, reopenableReviewResultId: undefined };
+  }
+  return { reviewResult, reopenableReviewResultId };
+}
+
 function resolveInitialAttention(input: AttentionState | undefined): AttentionState {
   if (input == null || !input.requiresAttention) {
     return { requiresAttention: false };
@@ -3230,8 +3241,7 @@ export class AgentManager {
       }
       await this.persistAgentReview(liveAgent, {
         attention: { requiresAttention: true, attentionReason, attentionTimestamp: new Date() },
-        reviewResult: liveAgent.reviewResult,
-        reopenableReviewResultId: liveAgent.reopenableReviewResultId,
+        ...reviewStateForUnread(liveAgent, attentionReason),
       });
       return;
     }
@@ -3246,6 +3256,7 @@ export class AgentManager {
     }
     const nextRecord: StoredAgentRecord = {
       ...record,
+      ...reviewStateForUnread(record, attentionReason),
       requiresAttention: true,
       attentionReason,
       attentionTimestamp: new Date().toISOString(),
