@@ -19,10 +19,9 @@ import {
   HEADER_TOP_PADDING_MOBILE,
 } from "@/constants/layout";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
-import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
+import { PairDeviceModal } from "@/devices";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
-
-const WINDOW_CONTENT_DATASET = { "window-content": "" };
+import { WINDOW_CONTENT_DATASET } from "@/components/desktop/titlebar-drag-region";
 
 export function OpenProjectScreen() {
   const { t } = useTranslation();

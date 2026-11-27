@@ -31,10 +31,13 @@ async function expectContextMenuAtPointer(
   menuTestID: string,
   anchor: ContextMenuAnchor,
 ): Promise<void> {
-  const bounds = await page.getByTestId(menuTestID).boundingBox();
-  if (!bounds) throw new Error(`Could not measure ${menuTestID}`);
-  expect(Math.abs(bounds.x - anchor.x)).toBeLessThanOrEqual(2);
-  expect(Math.abs(bounds.y - (anchor.y + 4))).toBeLessThanOrEqual(2);
+  // The visible measuring surface is replaced when layout places the menu at its anchor.
+  await expect(async () => {
+    const bounds = await page.getByTestId(menuTestID).boundingBox();
+    if (!bounds) throw new Error(`Could not measure ${menuTestID}`);
+    expect(Math.abs(bounds.x - anchor.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(bounds.y - (anchor.y + 4))).toBeLessThanOrEqual(2);
+  }).toPass({ timeout: 10_000 });
 }
 
 export async function openWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {
@@ -94,6 +97,35 @@ export async function expectWorkspaceHoverCardStaysOpen(page: Page): Promise<voi
   // Longer than the hover card's close grace period.
   await page.waitForTimeout(300);
   await expectWorkspaceHoverCardOpen(page);
+}
+
+/** Scans the rows in the given order at about a user's pace, then rests on the last one. */
+export async function sweepPointerAcrossWorkspaceRows(
+  page: Page,
+  workspaceIds: string[],
+): Promise<void> {
+  const centers: Array<{ x: number; y: number }> = [];
+  for (const workspaceId of workspaceIds) {
+    const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    const bounds = await row.boundingBox();
+    if (!bounds) throw new Error(`Could not measure the row of ${workspaceId}`);
+    centers.push({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 });
+  }
+  const [first, ...rest] = centers;
+  await page.mouse.move(first!.x, first!.y);
+  for (const center of rest) {
+    await page.mouse.move(center.x, center.y, { steps: 3 });
+  }
+}
+
+export async function expectOnlyWorkspaceHoverCardFor(
+  page: Page,
+  workspaceName: string,
+): Promise<void> {
+  const cards = page.getByTestId("workspace-hover-card");
+  await expect(cards).toHaveCount(1);
+  await expect(cards.getByTestId("hover-card-workspace-name")).toHaveText(workspaceName);
 }
 
 export async function expectWorkspaceHoverCardClosed(page: Page): Promise<void> {
@@ -158,14 +190,25 @@ export async function selectWorkspaceInSidebar(page: Page, workspaceId: string):
   await row.click();
 }
 
-async function openWorkspaceSidebarKebab(page: Page, workspaceId: string) {
+/**
+ * Opens a workspace row's kebab menu the way a pointer does: enter the row, then press the kebab
+ * it reveals.
+ *
+ * The kebab only mounts while the row holds hover, and hover only arrives on pointerenter. A row
+ * that re-renders or shifts under a parked pointer drops that hover with no new pointerenter to
+ * restore it, so each attempt leaves the row and enters it again instead of waiting on a kebab
+ * that a still pointer cannot bring back.
+ */
+export async function openWorkspaceSidebarKebab(page: Page, workspaceId: string) {
   const serverId = getServerId();
   const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.hover();
-
   const kebab = page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`);
-  await expect(kebab).toBeVisible({ timeout: 10_000 });
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await row.hover();
+    await expect(kebab).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
   await kebab.click();
 
   return serverId;

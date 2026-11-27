@@ -49,7 +49,7 @@ than downloading a published desktop release.
 - The **server itself** (e.g. when launched by the desktop app or `npm run start`) defaults to `~/.paseo` (see `packages/server/src/server/paseo-home.ts`).
 - **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app.
 - **`npm run cli -- ...`** runs through the same dev-home wrapper as the dev scripts, so the in-repo CLI automatically targets the current checkout's `.dev/paseo-home` and configured dev daemon endpoint.
-- **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
+- **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying agent and project JSON metadata and configuration. Both this setup and `PASEO_DEV_SEED_HOME` use the same seeder, which disables `agents.resumeOnStartup` in the copied config. Startup repairs copied running records without resuming agents or sending recovery prompts. Schedules and heartbeats (stored under `schedules/`), runtime files, identities, sockets, and logs are not copied. Existing nonempty homes are left unchanged unless explicitly reset. Copied agents still reference the original provider sessions and working directories: manually prompting one reaches that real session.
 - **This repo's worktree setup** also best-effort seeds `packages/app/ios` and the newest `.dev/ios-build` entry from the source checkout so iOS simulator services can reuse native project and Xcode cache state when it is safe enough to do so.
 
 Override knobs:
@@ -575,8 +575,9 @@ where the overrides apply; workspace scripts still find the binary through the r
 
 ## Dependency signature audit
 
-The `quality` CI job runs `npm audit signatures`. It verifies every lockfile package's registry
-signature and, for packages published with provenance, fetches
+The [pre-release dependency checks](release.md#pre-release-dependency-checks) include
+`npm audit signatures`. The command verifies registry signatures and, for packages published
+with provenance, fetches
 `/-/npm/v1/attestations/<name>@<version>` from the registry. Cloudflare caches that document
 for a year. An edge that cached it in the seconds before the registry attached the publish
 attestation keeps serving a document with only the provenance bundle, and npm fails with:
@@ -587,11 +588,10 @@ npm error <name>@<version> has attestations but no corresponding public key(s) c
 ```
 
 The same package's registry signature verified a moment earlier with the same keys, so the
-key list is intact. The failure names one package, repeats only for that package, and depends
-on the Azure region the runner landed in, because each region maps to one Cloudflare colo. A
-rerun passes only by landing elsewhere.
+key list is intact. The failure names one package and depends on which Cloudflare edge serves
+the cached attestation.
 
-To confirm, fetch the URL from several runners and compare `content-length`, the `cf-ray` colo
+To confirm, fetch the URL from several regions and compare `content-length`, the `cf-ray` colo
 suffix, and the number of `attestations` entries (#7730 has the probe). To fix, remove or
 replace that version in the lockfile. If the dependent’s range cannot be changed, pin a clean
 version in root `overrides`. Report the URL to npm so they purge it.

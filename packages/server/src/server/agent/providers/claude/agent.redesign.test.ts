@@ -201,23 +201,6 @@ test("exposes and applies auto permission mode", async () => {
   }
 });
 
-test("rejects auto mode when Claude Code uses Bedrock", async () => {
-  const previousBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
-  process.env.CLAUDE_CODE_USE_BEDROCK = "1";
-
-  const session = await createSession();
-
-  try {
-    await expect(session.setMode("auto")).rejects.toThrow(
-      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Bedrock",
-    );
-    expect(sdkQueryFactory).not.toHaveBeenCalled();
-  } finally {
-    restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
-    await session.close();
-  }
-});
-
 test.each([
   { env: {}, expected: "auto" },
   { env: { CLAUDE_CODE_USE_BEDROCK: "1" }, expected: "default" },
@@ -289,40 +272,6 @@ test("allows launch env to disable inherited Bedrock transport for auto mode", a
     expect(await session.getCurrentMode()).toBe("auto");
   } finally {
     restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
-    await session.close();
-  }
-});
-
-test("fails an auto mode turn when Claude Code uses Vertex", async () => {
-  const previousVertex = process.env.CLAUDE_CODE_USE_VERTEX;
-  process.env.CLAUDE_CODE_USE_VERTEX = "true";
-  sdkQueryFactory.mockImplementation(() => {
-    throw new Error("query should not start");
-  });
-  const client = new ClaudeAgentClient({
-    logger: createTestLogger(),
-    queryFactory: sdkQueryFactory,
-    resolveBinary: async () => "/test/claude/bin",
-  });
-  const session = await client.createSession({
-    provider: "claude",
-    cwd: process.cwd(),
-    modeId: "auto",
-  });
-
-  try {
-    const events = await collectUntilTerminal(streamSession(session, "hello"));
-    const failure = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
-        event.type === "turn_failed",
-    );
-
-    expect(failure?.error).toContain(
-      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Vertex",
-    );
-    expect(sdkQueryFactory).not.toHaveBeenCalled();
-  } finally {
-    restoreEnvValue("CLAUDE_CODE_USE_VERTEX", previousVertex);
     await session.close();
   }
 });
@@ -1206,7 +1155,7 @@ test("reuses one autonomous run for unbound stream_event bursts with no foregrou
   );
 
   const firstRunId = internal.autonomousTurn?.id ?? null;
-  expect(firstRunId).toBe("autonomous-turn-1");
+  expect(firstRunId).toEqual(expect.stringMatching(/^autonomous-turn-[0-9a-f-]{36}-1$/));
   expect(internal.nextTurnOrdinal).toBe(2);
 
   await internal.routeSdkMessageFromPump(
@@ -1360,7 +1309,9 @@ test("a main-session frame opens no turn until Claude starts one", async () => {
   // session start a turn of its own, with no prompt from the user.
   await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
   await internal.routeSdkMessageFromPump(unboundTextDelta("picking this up"), queryMock);
-  expect(internal.autonomousTurn?.id).toBe("autonomous-turn-1");
+  expect(internal.autonomousTurn?.id).toEqual(
+    expect.stringMatching(/^autonomous-turn-[0-9a-f-]{36}-1$/),
+  );
 
   await internal.routeSdkMessageFromPump(successResult(), queryMock);
   expect(internal.autonomousTurn).toBeNull();
@@ -1410,7 +1361,9 @@ test("Claude waking up after a helper finishes gets an autonomous turn that its 
   expect(internal.autonomousTurn).toBeNull();
 
   await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
-  expect(internal.autonomousTurn?.id).toBe("autonomous-turn-1");
+  expect(internal.autonomousTurn?.id).toEqual(
+    expect.stringMatching(/^autonomous-turn-[0-9a-f-]{36}-1$/),
+  );
   expect(internal.turnState).toBe("autonomous");
 
   await internal.routeSdkMessageFromPump(unboundTextDelta("the helper is done"), queryMock);
@@ -1446,7 +1399,9 @@ test("a steer folded into a turn keeps one turn, and a turn Claude starts after 
 
   // A message that arrived while Claude wrote its final answer runs as a turn of its own.
   await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
-  expect(internal.autonomousTurn?.id).toBe("autonomous-turn-2");
+  expect(internal.autonomousTurn?.id).toEqual(
+    expect.stringMatching(/^autonomous-turn-[0-9a-f-]{36}-2$/),
+  );
   await internal.routeSdkMessageFromPump(successResult(), queryMock);
   expect(internal.autonomousTurn).toBeNull();
   expect(internal.turnState).toBe("idle");
@@ -1483,7 +1438,9 @@ test("an idle session state closes an autonomous turn that no result closed", as
   session.subscribe((event) => events.push(event));
 
   await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
-  expect(internal.autonomousTurn?.id).toBe("autonomous-turn-1");
+  expect(internal.autonomousTurn?.id).toEqual(
+    expect.stringMatching(/^autonomous-turn-[0-9a-f-]{36}-1$/),
+  );
 
   // Safety net: Claude says nothing at all is running any more.
   await internal.routeSdkMessageFromPump(sessionState("idle"), queryMock);
@@ -1685,7 +1642,9 @@ test("a new turn clears an interrupt flag no result will consume", async () => {
 
   await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
   expect(internal.pendingInterruptAbort).toBe(false);
-  expect(internal.autonomousTurn?.id).toBe("autonomous-turn-1");
+  expect(internal.autonomousTurn?.id).toEqual(
+    expect.stringMatching(/^autonomous-turn-[0-9a-f-]{36}-1$/),
+  );
 
   // This turn's own failure is reported, not swallowed as the interrupted turn's leftover.
   await internal.routeSdkMessageFromPump(
@@ -2057,6 +2016,215 @@ test("does not use stream_event uuid as assistant message identity when message_
     timelineAssembler: { messages: Map<string, unknown> };
   } = asInternals(session);
   expect(assembler.timelineAssembler.messages.size).toBe(0);
+
+  await session.close();
+});
+
+// A background command's notification starts a turn. When Claude responds, the notification and
+// the response are one turn. When Claude does not respond, the notification is a turn in itself.
+// The frame sequences below are the ones Claude Code 2.1.321 sent on the wire.
+
+function backgroundCommandNotification(taskId: string, status: "completed" | "stopped") {
+  return {
+    type: "system",
+    subtype: "task_notification",
+    task_id: taskId,
+    tool_use_id: `toolu_${taskId}`,
+    status,
+    summary: `Background command ${status}`,
+    output_file: `/tmp/${taskId}.output`,
+    uuid: `uuid-${taskId}-${status}`,
+    session_id: "sess-1",
+  };
+}
+
+const backgroundTasksChanged = {
+  type: "system",
+  subtype: "background_tasks_changed",
+  tasks: [],
+  uuid: "uuid-background-tasks-changed",
+  session_id: "sess-1",
+};
+
+function notificationRowTurnIds(events: AgentStreamEvent[]): (string | undefined)[] {
+  return events
+    .filter(
+      (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "task_notification",
+    )
+    .map((event) => event.turnId);
+}
+
+function startedTurnIds(events: AgentStreamEvent[]): (string | undefined)[] {
+  return events
+    .filter((event) => event.type === "turn_started")
+    .map((event) => (event.type === "turn_started" ? event.turnId : undefined));
+}
+
+async function createObservedSession() {
+  sdkQueryFactory.mockImplementation(() => createPendingQueryMock());
+  const session = await createSession();
+  const internal: SessionStateInternals = asInternals(session);
+  const queryMock = createPendingQueryMock();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  async function route(...frames: Record<string, unknown>[]) {
+    for (const frame of frames) await internal.routeSdkMessageFromPump(frame, queryMock);
+  }
+  return { session, internal, events, route };
+}
+
+test("a completed command's notification and Claude's response to it are one turn", async () => {
+  const { session, internal, events, route } = await createObservedSession();
+
+  await route(backgroundCommandNotification("sleep-40", "completed"), backgroundTasksChanged);
+  const [notificationTurnId] = notificationRowTurnIds(events);
+  expect(notificationTurnId).toEqual(expect.any(String));
+  expect(startedTurnIds(events)).toEqual([]);
+  expect(internal.turnState).toBe("idle");
+
+  await route(sessionState("running"), claudeTurnInit(), unboundTextDelta("SECOND REPLY"));
+  expect(startedTurnIds(events)).toEqual([notificationTurnId]);
+  expect(internal.turnState).toBe("autonomous");
+
+  await route(successResult(), sessionState("idle"));
+  expect(internal.turnState).toBe("idle");
+
+  await session.close();
+});
+
+test("a stopped command Claude does not respond to is a turn in itself, and the next notification starts the next turn", async () => {
+  const { session, internal, events, route } = await createObservedSession();
+
+  await route(backgroundCommandNotification("sleep-300", "stopped"), backgroundTasksChanged);
+  const [stoppedTurnId] = notificationRowTurnIds(events);
+  expect(stoppedTurnId).toEqual(expect.any(String));
+  expect(startedTurnIds(events)).toEqual([]);
+  expect(internal.turnState).toBe("idle");
+
+  await route(backgroundCommandNotification("sleep-60", "completed"), backgroundTasksChanged);
+  const [, completedTurnId] = notificationRowTurnIds(events);
+  expect(completedTurnId).toEqual(expect.any(String));
+  expect(completedTurnId).not.toBe(stoppedTurnId);
+
+  await route(sessionState("running"), claudeTurnInit(), successResult(), sessionState("idle"));
+  expect(startedTurnIds(events)).toEqual([completedTurnId]);
+
+  await session.close();
+});
+
+test("a run Claude announces as a queued command does not belong to the notification before it", async () => {
+  const { session, events, route } = await createObservedSession();
+
+  await route(backgroundCommandNotification("sleep-300", "stopped"), backgroundTasksChanged);
+  const [stoppedTurnId] = notificationRowTurnIds(events);
+
+  // A scheduled wake-up: Claude announces the queued command it starts before the run's init.
+  await route(
+    sessionState("running"),
+    commandLifecycle("cron-prompt", "started"),
+    claudeTurnInit(),
+  );
+  const [runTurnId] = startedTurnIds(events);
+  expect(runTurnId).toEqual(expect.any(String));
+  expect(runTurnId).not.toBe(stoppedTurnId);
+
+  await session.close();
+});
+
+test("a run Claude starts for a finished background subagent does not belong to the notification before it", async () => {
+  const { session, events, route } = await createObservedSession();
+
+  await route(helperTaskStarted);
+  await route(backgroundCommandNotification("sleep-300", "stopped"), backgroundTasksChanged);
+  const [stoppedTurnId] = notificationRowTurnIds(events);
+
+  await route(helperCompleted, claudeTurnInit());
+  const [runTurnId] = startedTurnIds(events);
+  expect(runTurnId).toEqual(expect.any(String));
+  expect(runTurnId).not.toBe(stoppedTurnId);
+
+  await session.close();
+});
+
+test("the user's next message starts its own turn after a notification Claude did not respond to", async () => {
+  const { session, internal, events, route } = await createObservedSession();
+
+  await route(backgroundCommandNotification("sleep-300", "stopped"), backgroundTasksChanged);
+  const [stoppedTurnId] = notificationRowTurnIds(events);
+
+  const { turnId } = await session.startTurn("PING");
+  expect(turnId).not.toBe(stoppedTurnId);
+  await route(claudeTurnInit(), successResult());
+  expect(internal.activeForegroundTurnId).toBeNull();
+
+  // A run Claude starts later, with nothing announced, is not the stopped command's turn either.
+  await route(claudeTurnInit());
+  expect(startedTurnIds(events).at(-1)).not.toBe(stoppedTurnId);
+
+  await session.close();
+});
+
+test("a run Claude starts without announcing anything belongs to the last notification", async () => {
+  const { session, events, route } = await createObservedSession();
+
+  // Claude sends no frame for a Monitor event, so its wake-up reads as the response to the stop.
+  await route(backgroundCommandNotification("sleep-300", "stopped"), backgroundTasksChanged);
+  const [stoppedTurnId] = notificationRowTurnIds(events);
+
+  await route(sessionState("running"), claudeTurnInit());
+  expect(startedTurnIds(events)).toEqual([stoppedTurnId]);
+
+  await session.close();
+});
+
+test("a notification during a turn belongs to that turn", async () => {
+  const { session, events, route } = await createObservedSession();
+
+  await route(claudeTurnInit());
+  const [runTurnId] = startedTurnIds(events);
+  await route(backgroundCommandNotification("sleep-40", "completed"));
+  expect(notificationRowTurnIds(events)).toEqual([runTurnId]);
+  await route(successResult(), claudeTurnInit());
+  expect(startedTurnIds(events)).toHaveLength(2);
+  expect(startedTurnIds(events)[1]).not.toBe(runTurnId);
+
+  await session.close();
+});
+
+test("a background subagent's own job notification does not start a main-session turn", async () => {
+  const { session, events, route } = await createObservedSession();
+
+  // The helper runs a background Bash of its own; its notification reports to the helper.
+  await route(helperTaskStarted, {
+    type: "assistant",
+    parent_tool_use_id: "toolu_helper",
+    session_id: "sess-1",
+    message: {
+      id: "msg-helper-bash",
+      role: "assistant",
+      model: "opus",
+      content: [{ type: "tool_use", id: "toolu_subagent_bash", name: "Bash", input: {} }],
+    },
+  });
+
+  await route(backgroundCommandNotification("sleep-40", "completed"), backgroundTasksChanged);
+  const [notificationTurnId] = notificationRowTurnIds(events);
+  await route(subagentOwnedTaskNotification);
+  expect(
+    events.some(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call" &&
+        event.event.item.name === "task_notification",
+    ),
+  ).toBe(true);
+
+  await route(claudeTurnInit());
+  expect(startedTurnIds(events)).toEqual([notificationTurnId]);
 
   await session.close();
 });

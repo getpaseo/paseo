@@ -49,13 +49,17 @@ function installation(
     cleanup: () => undefined,
     settingsScreens: [],
     surfaces: surfaces.map((id) => ({ id, title: id, Component: () => null })),
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
+    workspaceRowBadgeItems: [],
     legacySidebarItems: sidebarItems.map((item) => ({
       ...item,
       title: item.id,
       icon: "Blocks",
     })),
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -63,6 +67,7 @@ function installation(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
 }
 

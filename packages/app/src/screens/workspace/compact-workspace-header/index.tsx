@@ -1,10 +1,6 @@
 import { Fragment, useMemo, type ReactNode } from "react";
-import { useTranslation } from "react-i18next";
+import { usePanelStore } from "@/stores/panel-store";
 import { CompactHeader } from "@/components/headers/compact-header";
-import {
-  EXPLORER_TOGGLE_KEYS,
-  WorkspaceExplorerToggle,
-} from "@/screens/workspace/workspace-explorer-toggle";
 import { WorkspaceHeaderProjectRow } from "@/screens/workspace/workspace-header-project-row";
 import {
   useWindowLayout,
@@ -22,14 +18,14 @@ interface CompactWorkspaceHeaderProps {
   title: string;
   subtitle: string;
   isSubtitleDistinct: boolean;
-  onToggleExplorer: () => void;
-  explorerToggleLabel: string;
-  explorerToggleAccessibilityState: { expanded: boolean };
+  explorerAction: ReactNode;
   tabSwitcher: ReactNode;
+  inDesktopTitlebar: boolean;
   /** Workspace overflow menu. */
   children: ReactNode;
   headerVariant: "compact" | "full";
-  actionsActive: boolean;
+  isRouteFocused: boolean;
+  isCompact: boolean;
 }
 
 /** The compact header with the workspace's project row and controls. */
@@ -38,16 +34,15 @@ export function CompactWorkspaceHeader({
   title,
   subtitle,
   isSubtitleDistinct,
-  onToggleExplorer,
-  explorerToggleLabel,
-  explorerToggleAccessibilityState,
+  explorerAction,
   children,
   tabSwitcher,
+  inDesktopTitlebar,
   serverId,
   headerVariant,
-  actionsActive,
+  isRouteFocused,
+  isCompact,
 }: CompactWorkspaceHeaderProps) {
-  const { t } = useTranslation();
   const actionsInBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
   const projectRow = useMemo(
     () => (
@@ -62,16 +57,7 @@ export function CompactWorkspaceHeader({
   const symbols = {
     "tab-count": tabSwitcher,
     overflow: children,
-    explorer: (
-      <WorkspaceExplorerToggle
-        onPress={onToggleExplorer}
-        label={explorerToggleLabel}
-        tooltipLabel={t("workspace.tabs.explorerSidebar.toggle")}
-        tooltipKeys={EXPLORER_TOGGLE_KEYS}
-        accessibilityState={explorerToggleAccessibilityState}
-        mobile
-      />
-    ),
+    explorer: explorerAction,
   };
   const actions = resolveWorkspaceBarActions(headerVariant).map((symbol) => (
     <Fragment key={symbol}>{symbols[symbol]}</Fragment>
@@ -82,6 +68,7 @@ export function CompactWorkspaceHeader({
       {headerVariant === "compact" ? (
         <CompactHeader
           navigation="menu"
+          inDesktopTitlebar={inDesktopTitlebar}
           title={title}
           titleTestID="workspace-header-title"
           subtitle={projectRow}
@@ -89,7 +76,26 @@ export function CompactWorkspaceHeader({
           actions={actionsInBar ? undefined : actions}
         />
       ) : null}
-      <WindowLayoutActions active={actionsActive}>{actions}</WindowLayoutActions>
+      <WorkspaceWindowActions isRouteFocused={isRouteFocused} isCompact={isCompact}>
+        {actions}
+      </WorkspaceWindowActions>
     </IconButtonChromeProvider>
   );
+}
+
+// Panel changes only affect the portaled controls. Keep their subscription below the
+// workspace and header so opening a sidebar does not render the chat or rebuild its actions.
+function WorkspaceWindowActions({
+  isRouteFocused,
+  isCompact,
+  children,
+}: {
+  isRouteFocused: boolean;
+  isCompact: boolean;
+  children: ReactNode;
+}) {
+  const active = usePanelStore(
+    (state) => isRouteFocused && (!isCompact || state.mobilePanel.target === "agent"),
+  );
+  return <WindowLayoutActions active={active}>{children}</WindowLayoutActions>;
 }

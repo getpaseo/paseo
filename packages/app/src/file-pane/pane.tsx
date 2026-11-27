@@ -1,7 +1,8 @@
 import { usePaneContext } from "@/panels/pane-context";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PluginFile, PluginTab } from "@getpaseo/plugin/client";
 import { Text, View } from "react-native";
+import { Download } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import { useFileHandle, useFileHandleSnapshot } from "@/file-panels/file";
 import { FilePanelLoading } from "@/file-panels/loading";
 import { FilePanelPicker, FilePanelView, useFilePanelChoice, type FilePanel } from "@/file-panels";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
+import { useFileDownload } from "@/hooks/use-file-download";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import { useSessionStore } from "@/stores/session-store";
@@ -24,11 +26,13 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
  */
 export function FilePane({
   serverId,
+  workspaceId,
   workspaceRoot,
   location,
   navigationRevision,
 }: {
   serverId: string;
+  workspaceId?: string | null;
   workspaceRoot: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
@@ -41,6 +45,16 @@ export function FilePane({
     () => (path ? resolveFilePreviewReadTarget({ path, workspaceRoot: root }) : null),
     [path, root],
   );
+  const downloadFile = useFileDownload({
+    serverId,
+    workspaceId,
+    workspaceRoot: target?.cwd ?? root,
+  });
+  const handleDownload = useCallback(() => {
+    if (target) {
+      downloadFile({ fileName: path.split(/[\\/]/).pop() ?? path, path: target.path });
+    }
+  }, [downloadFile, path, target]);
   const absolutePath = useMemo(
     () => buildAbsoluteExplorerPath({ workspaceRoot: root, entryPath: path }),
     [path, root],
@@ -100,6 +114,9 @@ export function FilePane({
       <>
         <Text style={styles.mutedText}>{t("panels.file.binaryPreviewUnavailable")}</Text>
         <Text style={styles.mutedText}>{formatFileSize(snapshot.size)}</Text>
+        <Button variant="outline" leftIcon={Download} onPress={handleDownload}>
+          {t("workspace.fileActions.download")}
+        </Button>
       </>
     );
   } else {

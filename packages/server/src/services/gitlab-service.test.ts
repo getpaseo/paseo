@@ -260,6 +260,38 @@ const DISCUSSIONS = [
   },
 ];
 
+describe("createGitLabService getReferenceRepository", () => {
+  it("names the project a fork was forked from, asking about the origin project explicitly", async () => {
+    const { service, calls } = makeService(() =>
+      ok(
+        JSON.stringify({
+          path_with_namespace: "example-group/example-project",
+          forked_from_project: { path_with_namespace: "upstream-group/sub/example-project" },
+        }),
+      ),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBe(
+      "upstream-group/sub/example-project",
+    );
+    expect(calls).toEqual([["api", "projects/example-group%2Fexample-project"]]);
+  });
+
+  it("rejects when glab api answers with an error body", async () => {
+    const { service } = makeService(() => ok(JSON.stringify({ message: "404 Project Not Found" })));
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
+  it("is null for a project that is not a fork", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ path_with_namespace: "example-group/example-project" })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBeNull();
+  });
+});
+
 describe("createGitLabService", () => {
   it("maps a glab merge request view to the neutral current PR status", async () => {
     const { service, calls } = makeService((args) =>
@@ -355,6 +387,26 @@ describe("createGitLabService", () => {
 
     expect(status?.number).toBe(270);
     expect(calls[1]).toEqual(["mr", "view", "270", "-F", "json"]);
+  });
+
+  it("hides a historical MR on the project's default branch", async () => {
+    const historical = { ...OPEN_MR, state: "merged", source_branch: "trunk" };
+    const { service } = makeService((args) => {
+      if (args[1] === "list") return ok(JSON.stringify([historical]));
+      if (args[1] === "view") return ok(JSON.stringify(historical));
+      if (args[0] === "api" && args[1] === "projects/example-group%2Fexample-project") {
+        return ok(
+          JSON.stringify({
+            path_with_namespace: "example-group/example-project",
+            default_branch: "trunk",
+          }),
+        );
+      }
+      return ok("{}");
+    });
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "trunk" }),
+    ).resolves.toBeNull();
   });
 
   it("keeps a merged MR when its remote head advances beyond the checkout", async () => {
@@ -1601,5 +1653,50 @@ describe("createGitLabService", () => {
     await expect(service.searchIssuesAndPrs({ cwd: "/repo", query: "release" })).rejects.toThrow(
       GlabCommandError,
     );
+  });
+
+  it("forwards the resolved glab executablePath to the command runner", async () => {
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGitLabService({
+      resolveGlabPath: async () => "/opt/gitlab-cli/bin/glab",
+      resolveRemoteUrl: async () => "git@gitlab.example.com:example-group/example-project.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        return ok("[]");
+      },
+    });
+
+    await expect(service.isAuthenticated({ cwd: "/repo" })).resolves.toBe(true);
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "release", kinds: ["github-pr"] });
+    expect(seenExecutablePaths).toEqual(["/opt/gitlab-cli/bin/glab", "/opt/gitlab-cli/bin/glab"]);
+  });
+
+  it("re-resolves glab and retries when the previously cached executable disappears", async () => {
+    let availablePath = "/first/bin/glab";
+    const seenExecutablePaths: Array<string | undefined> = [];
+    const service = createGitLabService({
+      resolveGlabPath: async () => availablePath,
+      resolveRemoteUrl: async () => "git@gitlab.example.com:example-group/example-project.git",
+      runner: async (_args, options) => {
+        seenExecutablePaths.push(options.executablePath);
+        if (options.executablePath !== availablePath) {
+          const error = new Error("spawn ENOENT") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return ok("[]");
+      },
+    });
+
+    await service.searchIssuesAndPrs({ cwd: "/repo", query: "first", kinds: ["github-pr"] });
+    availablePath = "/second/bin/glab";
+    const secondResult = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "second",
+      kinds: ["github-pr"],
+    });
+
+    expect(secondResult.featuresEnabled).toBe(true);
+    expect(seenExecutablePaths).toEqual(["/first/bin/glab", "/first/bin/glab", "/second/bin/glab"]);
   });
 });

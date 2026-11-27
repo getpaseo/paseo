@@ -2,12 +2,14 @@ import type { PressableProps, StyleProp, ViewStyle } from "react-native";
 
 export interface PressHighlightProps extends PressableProps {
   /**
-   * What the native finger-down surface is painted with — a background colour, an opacity.
-   * Desktop hover remains owned by the caller.
-   *
-   * Shape is not part of it: the highlight takes its corners from the pressable's own `style`, so
-   * a rounded row gets a rounded flash without restating the radius. Set a corner here only to
-   * depart from the row's shape on purpose.
+   * The pressed fill. iOS and web paint it while the pressable is pressed; Android draws the
+   * platform ripple over the content instead. Callers do not paint their own pressed fill.
    */
   highlightStyle?: StyleProp<ViewStyle>;
+  /**
+   * Reports when `highlightStyle` starts and stops painting, so content that knocks out of the
+   * surface (a badge ring, a text scrim) can match it. The Android ripple tints over the content,
+   * so it never reports a highlight.
+   */
+  onHighlightChange?: (highlighted: boolean) => void;
 }

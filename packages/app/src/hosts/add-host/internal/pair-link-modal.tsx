@@ -212,7 +212,7 @@ function PairLinkModalContent({
 
       <View style={styles.field}>
         <Text style={styles.label}>{t("pairing.link.label")}</Text>
-        <ThemedAdaptiveTextInput
+        <AdaptiveTextInput
           ref={inputRef}
           initialValue={initialUrl}
           testID="pair-link-input"
@@ -234,11 +234,13 @@ function PairLinkModalContent({
           <Text style={styles.label}>
             {t("pairing.hostPassword.title", { host: parsedHostLabel(offerUrlRef.current) })}
           </Text>
-          <ThemedAdaptiveTextInput
+          <AdaptiveTextInput
             testID="pair-link-password-input"
             resetKey={`pair-link-password-${passwordResetKey}`}
             accessibilityLabel={t("pairing.hostPassword.label")}
+            placeholder={t("pairing.hostPassword.label")}
             onChangeText={setPassword}
+            autoFocus
             secureTextEntry
             style={styles.input}
           />
@@ -275,7 +277,3 @@ function PairLinkModalContent({
 }
 
 const ThemedLink = withUnistyles(Link, (theme) => ({ color: theme.colors.accentForeground }));
-
-const ThemedAdaptiveTextInput = withUnistyles(AdaptiveTextInput, (theme) => ({
-  placeholderTextColor: theme.colors.foregroundMuted,
-}));

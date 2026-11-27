@@ -19,18 +19,16 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
-import {
-  PiProviderOptionsSchema,
-  PiRpcAgentClient,
-  PiRpcAgentSession,
-  transformPiModels,
-} from "./agent.js";
+import { PiProviderOptionsSchema, PiRpcAgentClient, PiRpcAgentSession } from "./agent.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
+
+// A run Pi starts by itself carries the id the session assigns to it.
+const AUTONOMOUS_TURN_ID = expect.stringMatching(/^autonomous-/);
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -1136,13 +1134,15 @@ describe("PiRpcAgentSession", () => {
         error: null,
       },
     ]);
-    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+    ]);
 
     fakeSession.settleTurn();
 
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1226,12 +1226,14 @@ describe("PiRpcAgentSession", () => {
 
       const stopping = session.interrupt();
       await turnFinished.promise;
-      expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+      expect(events.turnLifecycleEvents()).toEqual([
+        { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      ]);
       abortFinished.resolve();
       await stopping;
       expect(events.turnLifecycleEvents()).toEqual([
-        { type: "turn_started", turnId: undefined },
-        { type: "turn_canceled", turnId: undefined },
+        { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+        { type: "turn_canceled", turnId: AUTONOMOUS_TURN_ID },
       ]);
 
       const { turnId } = await session.startTurn("follow-up");
@@ -1261,10 +1263,10 @@ describe("PiRpcAgentSession", () => {
     fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
 
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1290,8 +1292,8 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnLifecycleEvents()).toEqual([
       { type: "turn_started", turnId },
       { type: "turn_completed", turnId },
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1313,8 +1315,8 @@ describe("PiRpcAgentSession", () => {
 
     await expect(session.interrupt()).rejects.toThrow("Pi process exited");
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
     await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi process exited" });
   });
@@ -1336,7 +1338,7 @@ describe("PiRpcAgentSession", () => {
 
     await expect(session.interrupt()).rejects.toThrow("Abort failed");
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
-      turnId: undefined,
+      turnId: AUTONOMOUS_TURN_ID,
       error: expect.stringContaining("Provider disconnected"),
     });
   });
@@ -1892,6 +1894,7 @@ describe("PiRpcAgentSession", () => {
       createConfig({
         systemPrompt: "Agent prompt",
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       }),
     );
 
@@ -1910,7 +1913,9 @@ describe("PiRpcAgentSession", () => {
 
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
 
     await session.close();
   });
@@ -1933,6 +1938,7 @@ describe("PiRpcAgentSession", () => {
       },
       {
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       },
     );
 
@@ -1956,7 +1962,9 @@ describe("PiRpcAgentSession", () => {
     ]);
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
   });
 
   test("updates model and thinking through Pi runtime commands", async () => {
@@ -2231,11 +2239,11 @@ describe("PiRpcAgentSession", () => {
 
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
       error: "Pi exited",
-      turnId: undefined,
+      turnId: AUTONOMOUS_TURN_ID,
     });
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -2517,6 +2525,37 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentSession steering", () => {
+  test("steers a run Pi started by itself instead of refusing it", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    const [started] = events.turnLifecycleEvents();
+    // The manager keeps a provider turn id and steers with it.
+    const result = await session.steerActiveTurn("join the running work", {
+      expectedTurnId: started?.turnId ?? "autonomous-assigned-by-manager",
+    });
+
+    expect(started?.turnId).toEqual(expect.any(String));
+    expect(result).toEqual({ status: "accepted" });
+    expect(fakeSession.steerCalls).toEqual([{ message: "join the running work", imageCount: 0 }]);
+
+    fakeSession.finishAgentRun({
+      message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] },
+      willRetry: false,
+    });
+    fakeSession.settleTurn();
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toEqual([
+      expect.objectContaining({ turnId: started?.turnId }),
+    ]);
+    const idle = await session.steerActiveTurn("after the run", {
+      expectedTurnId: started?.turnId ?? "autonomous-assigned-by-manager",
+    });
+    expect(idle).toEqual({ status: "unavailable" });
+  });
+
   test("steers the active Pi turn and correlates the echoed user message", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -3078,13 +3117,13 @@ describe("PiRpcAgentClient", () => {
     },
   );
 
-  test("lists no draft features without starting a Pi session", async () => {
+  test("lists no draft controls without starting a Pi session", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
 
     await expect(
-      client.listFeatures(createConfig({ model: "openrouter/test/model" })),
-    ).resolves.toEqual([]);
+      client.listControls(createConfig({ model: "openrouter/test/model" })),
+    ).resolves.toEqual({ controls: [], options: {} });
 
     expect(pi.recordedLaunches).toHaveLength(0);
   });
@@ -3970,35 +4009,73 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   });
 });
 
-describe("transformPiModels", () => {
-  test("normalizes labels that include the upstream provider prefix", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/google/gemini-2.5-flash-lite",
-          label: "openrouter/google/gemini_2.5 flash lite",
-        },
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-5.5",
-          label: "openrouter/OpenAI: GPT-5.5",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/google/gemini-2.5-flash-lite",
-        label: "gemini 2.5 flash lite",
-        description: "openrouter/google/gemini_2.5 flash lite",
+describe("Pi catalog model labels", () => {
+  test.each([
+    {
+      name: "keeps slashes and underscores inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "s-q3fn(p-t)",
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
       },
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-5.5",
-        label: "GPT-5.5",
-        description: "openrouter/OpenAI: GPT-5.5",
+      label: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+    },
+    {
+      name: "keeps a free-text name that ends in a slash-separated word",
+      model: {
+        provider: "llama-swap",
+        id: "ds-strata-6",
+        name: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
       },
-    ]);
+      label: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+    },
+    {
+      name: "keeps a colon inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "qwen3-tail",
+        name: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+      },
+      label: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    },
+    {
+      name: "drops the vendor prefix from an upstream model name",
+      model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
+      label: "GPT-5.5",
+    },
+    {
+      name: "shortens a path-like name to its last segment",
+      model: {
+        provider: "openrouter",
+        id: "google/gemini-2.5-flash-lite",
+        name: "google/gemini-2.5-flash-lite",
+      },
+      label: "gemini-2.5-flash-lite",
+    },
+    {
+      name: "falls back to the last segment of a path-like id",
+      model: { provider: "openrouter", id: "google/gemini_2.5-flash-lite" },
+      label: "gemini 2.5-flash-lite",
+    },
+    {
+      name: "falls back to an id with spaces when the name is blank",
+      model: { provider: "local", id: "DeepSeek-V4.1-Flash 2.25bpw (Strata)", name: "  " },
+      label: "DeepSeek-V4.1-Flash 2.25bpw (Strata)",
+    },
+  ])("$name", async ({ model, label }) => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = [model];
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
+    expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
   });
 });
 

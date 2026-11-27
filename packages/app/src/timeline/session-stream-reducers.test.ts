@@ -53,6 +53,7 @@ it.each([false, true])(
   (hasAuthoritativeBaseline) => {
     let head: StreamItem[] = [];
     let tail: StreamItem[] = [];
+    let cursor: TimelineCursor | undefined;
     for (const [index, turnId] of ["turn-1", "turn-2"].entries()) {
       const result = processAgentStreamEvent({
         event: {
@@ -65,12 +66,13 @@ it.each([false, true])(
         epoch: "epoch-1",
         currentTail: tail,
         currentHead: head,
-        currentCursor: undefined,
+        currentCursor: cursor,
         timestamp: new Date(1000),
         hasAuthoritativeBaseline,
       });
       head = result.head;
       tail = result.tail;
+      cursor = result.cursor ?? cursor;
     }
     expect([...tail, ...head]).toMatchObject([
       { kind: "thought", text: "turn-1", turnId: "turn-1" },
@@ -2848,7 +2850,7 @@ describe("processTimelineResponse", () => {
       ],
       currentTail: [],
       currentHead: [],
-      currentCursor: undefined,
+      currentCursor: { epoch: "epoch-1", startSeq: 60, endSeq: 79 },
     });
     expect(getAssistantTexts([...live.tail, ...live.head])).toEqual([
       "First paragraph.\n\nSecond paragraph.",
@@ -3677,6 +3679,7 @@ describe("processAgentStreamEvent", () => {
       event: makeAssistantTimelineEvent("[System Error] failed"),
       epoch: "timeline-1",
       seq: 42,
+      currentCursor: { epoch: "timeline-1", startSeq: 1, endSeq: 41 },
     });
 
     expect(result.head).toEqual([
@@ -3831,7 +3834,7 @@ describe("processAgentStreamEvent", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
-  it("drops timeline event with epoch mismatch", () => {
+  it("requests authoritative recovery when a live row has a different epoch", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",
       startSeq: 1,
@@ -3849,7 +3852,9 @@ describe("processAgentStreamEvent", () => {
     expect(result.cursorChanged).toBe(false);
     expect(result.changedTail).toBe(false);
     expect(result.changedHead).toBe(false);
-    expect(result.sideEffects).toEqual([]);
+    expect(result.sideEffects).toEqual([
+      { type: "catch_up", cursor: { epoch: "epoch-1", endSeq: 5 } },
+    ]);
   });
 
   it("resets visible timeline when a new epoch starts at seq 1", () => {
@@ -3894,6 +3899,24 @@ describe("processAgentStreamEvent", () => {
       epoch: "epoch-1",
       startSeq: 1,
       endSeq: 1,
+    });
+  });
+
+  it("catches up from the first row when a chat that was empty receives a later row", () => {
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent("word3"),
+      seq: 6,
+      epoch: "epoch-1",
+      currentCursor: undefined,
+    });
+
+    expect(result).toMatchObject({
+      head: [],
+      changedHead: false,
+      cursor: null,
+      cursorChanged: false,
+      sideEffects: [{ type: "catch_up", cursor: { epoch: "epoch-1", endSeq: 0 } }],
     });
   });
 
@@ -4087,7 +4110,7 @@ describe("processAgentStreamEvents", () => {
       ],
       currentTail: [],
       currentHead: [],
-      currentCursor: undefined,
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 237 },
     });
 
     expect(result.changedTail).toBe(false);
@@ -4261,6 +4284,7 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
       timestamp: new Date("2026-05-02T10:00:00.186Z"),
     });
 
@@ -4462,7 +4486,7 @@ describe("createAgentStreamReducerQueue", () => {
     const scheduler = createManualScheduler();
     let currentTail: StreamItem[] = [];
     let currentHead: StreamItem[] = [];
-    let currentCursor: TimelineCursor | undefined;
+    let currentCursor: TimelineCursor | undefined = { epoch: "epoch-1", startSeq: 1, endSeq: 1 };
 
     const queue = createAgentStreamReducerQueue({
       getSnapshot: () => ({
@@ -4505,7 +4529,7 @@ describe("createAgentStreamReducerQueue", () => {
     expect(getAssistantTexts(currentHead)).toEqual(["This is a paragraph continues."]);
     expect(currentCursor).toEqual({
       epoch: "epoch-1",
-      startSeq: 2,
+      startSeq: 1,
       endSeq: 4,
     });
   });
@@ -4534,5 +4558,264 @@ describe("createAgentStreamReducerQueue", () => {
 
     expect(commits).toEqual(["agent-1:queued"]);
     expect(scheduler.size).toBe(0);
+  });
+});
+
+describe("turn metrics", () => {
+  const metrics = [
+    { label: "Model", value: "opus" },
+    { label: "Cache", value: "82%", tone: "ok" as const },
+  ];
+
+  function liveTurn(events: AgentStreamEventPayload[]) {
+    let seq = 0;
+    return processAgentStreamEvents({
+      events: events.map((event) =>
+        event.type === "timeline"
+          ? makeStreamReducerEvent(event, ++seq)
+          : { event, seq: undefined, epoch: undefined, timestamp: new Date(1000 + seq) },
+      ),
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+    });
+  }
+
+  function inTurn(event: AgentStreamEventPayload, turnId: string): AgentStreamEventPayload {
+    return { ...event, turnId } as AgentStreamEventPayload;
+  }
+
+  function turnCompleted(turnId?: string, turnMetrics = metrics): AgentStreamEventPayload {
+    return {
+      type: "turn_completed",
+      provider: "claude",
+      ...(turnId ? { turnId } : {}),
+      metrics: turnMetrics,
+    };
+  }
+
+  function metricsByKind(items: StreamItem[]) {
+    return items.map((item) => ({
+      kind: item.kind,
+      turnMetrics: "turnMetrics" in item ? item.turnMetrics : undefined,
+    }));
+  }
+
+  it("puts a live turn's metrics on its last assistant message", () => {
+    const result = liveTurn([
+      inTurn(makeTimelineEvent("question", "user_message"), "turn-1"),
+      inTurn(makeAssistantTimelineEvent("Looking."), "turn-1"),
+      inTurn(makeToolCallTimelineEvent("read-1"), "turn-1"),
+      inTurn(makeAssistantTimelineEvent("Done."), "turn-1"),
+      turnCompleted("turn-1"),
+    ]);
+
+    expect(metricsByKind([...result.tail, ...result.head])).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: undefined },
+      { kind: "tool_call", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: metrics },
+    ]);
+  });
+
+  it("puts a live tool-only turn's metrics on its last tool call", () => {
+    const result = liveTurn([
+      inTurn(makeTimelineEvent("question", "user_message"), "turn-1"),
+      inTurn(makeToolCallTimelineEvent("read-1"), "turn-1"),
+      inTurn(makeToolCallTimelineEvent("read-2"), "turn-1"),
+      turnCompleted("turn-1"),
+    ]);
+
+    expect(metricsByKind(result.tail)).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "tool_call", turnMetrics: undefined },
+      { kind: "tool_call", turnMetrics: metrics },
+    ]);
+  });
+
+  it("does not put a turn's metrics on an earlier turn's reply", () => {
+    const result = liveTurn([
+      inTurn(makeTimelineEvent("first", "user_message"), "turn-1"),
+      inTurn(makeAssistantTimelineEvent("First reply."), "turn-1"),
+      turnCompleted("turn-1", [{ label: "Model", value: "first" }]),
+      inTurn(makeTimelineEvent("second", "user_message"), "turn-2"),
+      inTurn(makeToolCallTimelineEvent("read-1"), "turn-2"),
+      inTurn(makeTimelineEvent("thinking", "reasoning"), "turn-2"),
+      turnCompleted("turn-2"),
+    ]);
+
+    expect(metricsByKind(result.tail)).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: [{ label: "Model", value: "first" }] },
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "tool_call", turnMetrics: undefined },
+      { kind: "thought", turnMetrics: undefined },
+    ]);
+  });
+
+  it("leaves the timeline untouched when a turn completes without metrics", () => {
+    const before = liveTurn([
+      inTurn(makeTimelineEvent("question", "user_message"), "turn-1"),
+      inTurn(makeAssistantTimelineEvent("Done."), "turn-1"),
+      turnCompleted("turn-1", []),
+    ]);
+    const after = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: { type: "turn_completed", provider: "claude", turnId: "turn-1" },
+      currentTail: before.tail,
+      currentHead: before.head,
+    });
+
+    expect(after.tail).toBe(before.tail);
+    expect(metricsByKind(after.tail)).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: undefined },
+    ]);
+  });
+
+  it("hydrates turn metrics from a replaced history page", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        startCursor: { seq: 1 },
+        endCursor: { seq: 4 },
+        entries: [
+          makeTimelineEntry(1, "question", "user_message"),
+          { ...makeTimelineEntry(2, "Reply."), turnMetrics: metrics },
+          makeTimelineEntry(3, "next question", "user_message"),
+          {
+            ...makeToolCallTimelineEntry(4, "read-1", "completed", {
+              type: "read",
+              filePath: "/tmp/a.ts",
+            }),
+            turnMetrics: [{ label: "Model", value: "sonnet" }],
+          },
+        ],
+      },
+    });
+
+    expect(metricsByKind(result.tail)).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: metrics },
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "tool_call", turnMetrics: [{ label: "Model", value: "sonnet" }] },
+    ]);
+  });
+
+  it("hydrates turn metrics from an older history page", () => {
+    const currentTail: StreamItem[] = [
+      { kind: "user_message", id: "current-3", text: "current-3", timestamp: new Date(3000) },
+    ];
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 3 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          makeTimelineEntry(1, "older question", "user_message"),
+          { ...makeTimelineEntry(2, "Older reply."), turnMetrics: metrics },
+        ],
+      },
+    });
+
+    expect(metricsByKind(result.tail)).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: metrics },
+      { kind: "user_message", turnMetrics: undefined },
+    ]);
+  });
+
+  it("hydrates turn metrics on a projected reply that replaces the live one", () => {
+    const live = processAgentStreamEvents({
+      events: [makeStreamReducerEvent(makeAssistantTimelineEvent("Partial"), 2)],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
+    });
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        startCursor: { seq: 3 },
+        endCursor: { seq: 3 },
+        entries: [
+          {
+            ...makeTimelineEntry(2, "Partial reply.", "assistant_message", 3),
+            sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+            turnMetrics: metrics,
+          },
+        ],
+      },
+    });
+
+    expect(metricsByKind([...result.tail, ...result.head])).toEqual([
+      { kind: "assistant_message", turnMetrics: metrics },
+    ]);
+  });
+
+  it("keeps live turn metrics when canonical history replaces the timeline", () => {
+    const live = liveTurn([
+      makeTimelineEvent("question", "user_message"),
+      makeAssistantTimelineEvent("Done."),
+      turnCompleted(),
+    ]);
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: live.tail,
+      currentHead: live.head,
+      currentCursor: live.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          makeTimelineEntry(1, "question", "user_message"),
+          { ...makeTimelineEntry(2, "Done."), turnMetrics: metrics },
+        ],
+      },
+    });
+
+    expect(metricsByKind(result.tail)).toEqual([
+      { kind: "user_message", turnMetrics: undefined },
+      { kind: "assistant_message", turnMetrics: metrics },
+    ]);
+  });
+
+  it("keeps row identity when a page repeats metrics the row already has", () => {
+    const first = processTimelineResponse({
+      ...baseTimelineInput,
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [{ ...makeTimelineEntry(1, "Reply."), turnMetrics: metrics }],
+      },
+    });
+    const repeated = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: first.tail,
+      currentCursor: first.cursor ?? undefined,
+      payload: {
+        ...baseTimelineInput.payload,
+        startCursor: { seq: 1 },
+        endCursor: { seq: 1 },
+        entries: [{ ...makeTimelineEntry(1, "Reply."), turnMetrics: [...metrics] }],
+      },
+    });
+
+    expect(repeated.tail).toBe(first.tail);
   });
 });

@@ -1,4 +1,3 @@
-import { usesDesktopBindings } from "../conventions";
 import { getDesktopHost } from "@/desktop/host";
 import { getResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
@@ -26,7 +25,7 @@ export function attachKeyboardSources(handlers: KeyboardSourceHandlers): () => v
 }
 export function publishKeyboardPolicy(input: import("./contract").KeyboardPolicyInput): void {
   const policy = input.enabled
-    ? buildBrowserKeyboardPolicy({ ...input, usesDesktopBindings: usesDesktopBindings })
+    ? buildBrowserKeyboardPolicy(input)
     : { menuPrefixes: [], prefixes: [] };
   void getDesktopHost()?.browser?.setShortcutPolicy?.(policy);
 }

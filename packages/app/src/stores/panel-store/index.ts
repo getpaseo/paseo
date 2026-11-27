@@ -52,6 +52,7 @@ export type ExpandedPathsUpdate = string[] | ((currentPaths: string[]) => string
 export interface PanelState {
   // Mobile: React's durable target plus the generation that owns it.
   mobilePanel: MobilePanelSelection;
+  layout: PanelLayout;
 
   // Desktop: independent sidebar toggles
   desktop: DesktopSidebarState;
@@ -120,6 +121,7 @@ export const usePanelStore = create<PanelState>()(
     (set) => ({
       // Mobile always starts at agent view
       mobilePanel: { target: "agent", revision: 0 },
+      layout: { isCompact: false, leftSidebar: "hidden" },
 
       // Desktop defaults based on platform
       desktop: {
@@ -215,7 +217,12 @@ export const usePanelStore = create<PanelState>()(
       applyPanelLayout: (layout) =>
         set((state) => {
           const mobilePanel = reconcileMobilePanel(state.mobilePanel, layout);
-          return mobilePanel === state.mobilePanel ? state : { mobilePanel };
+          const layoutUnchanged =
+            state.layout.isCompact === layout.isCompact &&
+            state.layout.leftSidebar === layout.leftSidebar;
+          return mobilePanel === state.mobilePanel && layoutUnchanged
+            ? state
+            : { mobilePanel, layout };
         }),
 
       setExpandedPathsForWorkspace: (workspaceKey, paths) =>

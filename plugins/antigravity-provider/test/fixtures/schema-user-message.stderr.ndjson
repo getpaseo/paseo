@@ -1,1 +1,0 @@
-{"t_ms": 386, "stream": "stderr", "data": "error: failed to decode stream input: json: cannot unmarshal string into Go struct field streamInputMessage.message of type printmode.streamInputUserMessage"}

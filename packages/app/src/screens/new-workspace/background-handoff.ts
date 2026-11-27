@@ -1,6 +1,28 @@
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
+
+/**
+ * The ready workspace's draft tab owns the draft once New workspace hands it off, including a
+ * retry after the first agent start fails. Its metadata moves with it, like its text and setup.
+ */
+export function handOffDraftMetadata(input: {
+  serverId: string;
+  draftId: string;
+  metadata: Readonly<Record<string, JsonValue>>;
+}): void {
+  if (Object.keys(input.metadata).length === 0) return;
+  useDraftStore.getState().patchDraftMetadata({
+    draftKey: buildDraftStoreKey({
+      serverId: input.serverId,
+      agentId: input.draftId,
+      draftId: input.draftId,
+    }),
+    patch: { ...input.metadata },
+  });
+}
 
 interface WorkspaceDraftCleanupInput {
   draftId?: string;

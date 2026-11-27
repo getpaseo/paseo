@@ -1,5 +1,5 @@
-import { RotateCw } from "lucide-react-native";
-import { useCallback, useMemo } from "react";
+import { GripVertical, RotateCw } from "lucide-react-native";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -8,15 +8,17 @@ import {
   iconButtonChromeGlyphSize,
   smallIconButtonChromeFrameSize,
 } from "@/components/ui/icon-button-chrome";
+import { DraggableListHandle } from "@/components/draggable-list";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import type { TFunction } from "i18next";
+import { useCallback } from "react";
 import { UsageBalanceBar } from "./balance-bar";
 import type { UsageDisplay } from "./display";
-import { formatAgo, formatProviderUsageLabel } from "./format";
+import { formatAgo, formatProviderUsageLabel, formatUsageAccountName } from "./format";
 import { resolveUsageReport, type UsageRefresh } from "./model";
 import { useReportRefresh } from "./queries";
 import { UsageSourceIcon } from "./source-icon";
@@ -32,6 +34,13 @@ function statusText(report: UsageReport, t: TFunction): string | null {
 }
 
 const ThemedRotateCw = withUnistyles(RotateCw);
+const ThemedGripVertical = withUnistyles(GripVertical);
+
+/** A card in the user's arrangement: dragged by its handle. */
+export interface UsageCardArrangement {
+  /** The handle is always there; it shows while the card is hovered or where there is no hover. */
+  handleVisible: boolean;
+}
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 export function UsageCard({
@@ -41,6 +50,7 @@ export function UsageCard({
   display,
   pinnable,
   refreshable,
+  arrangement,
   compact = false,
 }: {
   serverId: string;
@@ -51,18 +61,19 @@ export function UsageCard({
   pinnable: boolean;
   /** Whether the header has a Refresh button. Without one the freshness shows on the card. */
   refreshable: boolean;
+  /** Present where the user arranges cards. */
+  arrangement?: UsageCardArrangement;
   compact?: boolean;
 }) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const { refresh, refreshState } = useReportRefresh(serverId, entry.id, agentId);
+  const { refresh, refreshState } = useReportRefresh(serverId, entry, agentId);
   // Where there is no hover the freshness is printed on the card; elsewhere the Refresh tooltip.
   const showsFreshnessInline = isNative || isCompact || !refreshable;
   const usage = entry.report;
   const status = statusText(usage, t);
-  const footer = entry.account.label ?? null;
-  const { windows, balances, details, planLabel, successfulAt, retained, messages } =
-    resolveUsageReport(entry, t);
+  const report = resolveUsageReport(entry, t);
+  const { planLabel, successfulAt, retained } = report;
 
   const containerStyle = useMemo(
     () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
@@ -79,7 +90,13 @@ export function UsageCard({
 
   return (
     <View style={containerStyle} testID={`usage-report-${entry.id}`}>
-      <View style={styles.header}>
+      <View style={arrangement ? styles.headerWithHandle : styles.header}>
+        {arrangement ? (
+          <UsageCardDragHandle
+            name={formatUsageAccountName(entry)}
+            visible={arrangement.handleVisible}
+          />
+        ) : null}
         <UsageSourceIcon svg={entry.icon ?? null} size={14} />
         <Text style={styles.name} numberOfLines={1}>
           {entry.sourceLabel}
@@ -104,6 +121,38 @@ export function UsageCard({
         ) : null}
       </View>
 
+      <UsageCardBody
+        entry={entry}
+        display={display}
+        pinnable={pinnable}
+        report={report}
+        showsFreshnessInline={showsFreshnessInline}
+        refreshState={refreshState}
+      />
+    </View>
+  );
+}
+
+function UsageCardBody({
+  entry,
+  display,
+  pinnable,
+  report,
+  showsFreshnessInline,
+  refreshState,
+}: {
+  entry: UsageReportEntry;
+  display: UsageDisplay;
+  pinnable: boolean;
+  report: ReturnType<typeof resolveUsageReport>;
+  showsFreshnessInline: boolean;
+  refreshState: UsageRefresh;
+}) {
+  const { t } = useTranslation();
+  const { windows, balances, details, retained, successfulAt, forecastAt, messages } = report;
+  const footer = entry.account.label ?? null;
+  return (
+    <>
       {messages.length > 0 ? (
         <Text style={styles.error} testID="usage-login-error">
           {messages.join("\n")}
@@ -118,6 +167,7 @@ export function UsageCard({
               entry={entry}
               window={window}
               retained={retained}
+              forecastAt={forecastAt}
               display={display}
               pinnable={pinnable}
             />
@@ -164,7 +214,24 @@ export function UsageCard({
           {t("providerUsage.refreshFailed")}
         </Text>
       ) : null}
-    </View>
+    </>
+  );
+}
+
+/**
+ * Drags the card. It hangs in the card's left padding, so the logo, name and body share one rail
+ * and revealing it on hover moves nothing.
+ */
+function UsageCardDragHandle({ name, visible }: { name: string; visible: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <DraggableListHandle
+      accessibilityLabel={t("providerUsage.reorderCard", { source: name })}
+      style={visible ? styles.dragHandle : styles.dragHandleHidden}
+      testID="usage-card-drag-handle"
+    >
+      <ThemedGripVertical size={DRAG_GRIP_SIZE} uniProps={extraMutedIconColorMapping} />
+    </DraggableListHandle>
   );
 }
 
@@ -174,8 +241,10 @@ function CardWindowBar({
   display,
   pinnable,
   retained,
+  forecastAt,
 }: {
   retained: boolean;
+  forecastAt: string | null;
   entry: UsageReportEntry;
   window: UsageWindow;
   display: UsageDisplay;
@@ -192,6 +261,7 @@ function CardWindowBar({
     <UsageWindowBar
       window={window}
       retained={retained}
+      forecastAt={forecastAt}
       displayAs={display.displayAs}
       pinnable={pinnable}
       pinned={display.isPinned(pin)}
@@ -279,6 +349,21 @@ function UsageFreshness({
   );
 }
 
+const DRAG_GRIP_SIZE = 14;
+
+// The handle fills the card's left padding beside the header.
+function dragHandleSlot(spacing: { 4: number }) {
+  return {
+    position: "absolute",
+    left: 0,
+    width: spacing[4],
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  } as const;
+}
+
 // The Refresh glyph lands on the card's right rail and the header keeps its text height;
 // the button's larger hitbox overhangs both instead of pushing them.
 function iconHitboxOverhang(compact: boolean) {
@@ -304,6 +389,18 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  // The row reaches into the card's left padding and above and below its text, so the handle
+  // there is inside it: Android delivers no touches to a child where it overflows its parent.
+  headerWithHandle: {
+    position: "relative",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    marginLeft: -theme.spacing[4],
+    paddingLeft: theme.spacing[4],
+    marginVertical: -theme.spacing[2],
+    paddingVertical: theme.spacing[2],
   },
   name: {
     flexShrink: 1,
@@ -379,6 +476,8 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.popoverForeground,
     fontSize: theme.fontSize.sm,
   },
+  dragHandle: dragHandleSlot(theme.spacing),
+  dragHandleHidden: { ...dragHandleSlot(theme.spacing), opacity: 0 },
   refreshButton: iconHitboxOverhang(false),
   refreshButtonCompact: iconHitboxOverhang(true),
 }));

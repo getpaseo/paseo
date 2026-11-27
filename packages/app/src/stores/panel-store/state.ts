@@ -26,8 +26,8 @@ export interface PanelLayoutInput {
   isCompact: boolean;
 }
 
-/** How app chrome presents the left sidebar: over the workspace, beside it, or not at all. */
-export type LeftSidebarPresentation = "overlay" | "dock" | "hidden";
+/** Sidebar presentation; suspended retains an overlay while Settings covers it. */
+export type LeftSidebarPresentation = "overlay" | "dock" | "hidden" | "suspended";
 
 /** The panels app chrome presents, which decide the mobile panel targets that can stay selected. */
 export interface PanelLayout extends PanelLayoutInput {
@@ -77,7 +77,7 @@ export function setMobilePanelTarget(
 }
 
 /**
- * Only an overlay sidebar shows the `agent-list` target. A docked or hidden sidebar drops it, so
+ * Only an overlay or suspended sidebar holds `agent-list`. A docked or hidden sidebar drops it, so
  * a stale target cannot resurface the overlay on the next collapse. Always invalidate in-flight
  * gestures, even when an opening swipe has not committed `agent-list` yet.
  */
@@ -98,7 +98,9 @@ export function reconcileMobilePanel(
   layout: PanelLayout,
 ): MobilePanelSelection {
   const sidebarReconciled =
-    layout.leftSidebar === "overlay" ? selection : dropOverlayAgentList(selection);
+    layout.leftSidebar === "overlay" || layout.leftSidebar === "suspended"
+      ? selection
+      : dropOverlayAgentList(selection);
   if (!layout.isCompact && sidebarReconciled.target === "file-explorer") {
     return setMobilePanelTarget(sidebarReconciled, "agent");
   }

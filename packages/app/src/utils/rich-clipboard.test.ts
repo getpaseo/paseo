@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   createCodeClipboardContent,
   createMarkdownClipboardContent,
+  createSelectionClipboardContent,
   type MarkdownClipboardEnvironment,
   type RichClipboardWriter,
+  writeClipboardContent,
   writeMarkdownToRichClipboard,
 } from "./rich-clipboard";
 
@@ -14,9 +16,9 @@ interface RecordingClipboard {
 }
 
 function createRecordingClipboard(
-  options: { supportsHtml?: boolean; richWriteFails?: boolean } = {},
+  options: { supportsHtml?: boolean; richWriteFails?: boolean; plainWriteResult?: unknown } = {},
 ): RecordingClipboard {
-  const { supportsHtml = true, richWriteFails = false } = options;
+  const { supportsHtml = true, richWriteFails = false, plainWriteResult } = options;
   const richWrites: Array<Record<"text/plain" | "text/html", Blob>> = [];
   const plainTexts: string[] = [];
 
@@ -34,13 +36,48 @@ function createRecordingClipboard(
     richWriter,
     writePlainText: async (text) => {
       plainTexts.push(text);
+      return plainWriteResult;
     },
   };
 
   return { environment, richWrites, plainTexts };
 }
 
+describe("createSelectionClipboardContent", () => {
+  it.each(["README.md", "main.py", "https://example.com", "www.example.com", "user@example.com"])(
+    "keeps bare text unlinked in clipboard HTML: %s",
+    (text) => {
+      expect(createSelectionClipboardContent(text, text)).toEqual({
+        plainText: text,
+        html: `<meta charset="utf-8"><p>${text}</p>\n`,
+      });
+    },
+  );
+
+  it("writes the given plain flavor", () => {
+    expect(createSelectionClipboardContent("a \\| b", "a | b")).toEqual({
+      plainText: "a | b",
+      html: '<meta charset="utf-8"><p>a | b</p>\n',
+    });
+  });
+});
+
 describe("createMarkdownClipboardContent", () => {
+  it("links a bare URL in clipboard HTML", () => {
+    expect(createMarkdownClipboardContent("https://example.com").html).toBe(
+      '<meta charset="utf-8"><p><a href="https://example.com">https://example.com</a></p>\n',
+    );
+  });
+
+  it("preserves explicit filename and web links in clipboard HTML", () => {
+    const markdown = "[README.md](README.md) and [website](https://example.com)";
+
+    expect(createMarkdownClipboardContent(markdown)).toEqual({
+      plainText: markdown,
+      html: '<meta charset="utf-8"><p><a href="README.md">README.md</a> and <a href="https://example.com">website</a></p>\n',
+    });
+  });
+
   it("renders markdown structures to clipboard html", () => {
     const markdown = [
       "# Heading",
@@ -148,5 +185,46 @@ describe("writeMarkdownToRichClipboard", () => {
 
     expect(clipboard.plainTexts).toEqual(["**bold**"]);
     expect(clipboard.richWrites).toEqual([]);
+  });
+});
+
+describe("writeClipboardContent", () => {
+  const content = { plainText: "_raw_ draft", html: "<p>\\_raw\\_ draft</p>" };
+
+  it("writes both flavors and reports the write", async () => {
+    const clipboard = createRecordingClipboard();
+
+    await expect(writeClipboardContent(content, clipboard.environment)).resolves.toBe(true);
+
+    const written = clipboard.richWrites[0];
+    if (!written) {
+      throw new Error("Expected rich clipboard data to be written");
+    }
+    await expect(written["text/plain"].text()).resolves.toBe(content.plainText);
+    await expect(written["text/html"].text()).resolves.toBe(content.html);
+  });
+
+  it("falls back to the plain flavor when the rich write fails", async () => {
+    const clipboard = createRecordingClipboard({ richWriteFails: true });
+
+    await expect(writeClipboardContent(content, clipboard.environment)).resolves.toBe(true);
+
+    expect(clipboard.plainTexts).toEqual([content.plainText]);
+  });
+
+  it("reports a plain write the host refused", async () => {
+    const clipboard = createRecordingClipboard({ supportsHtml: false, plainWriteResult: false });
+
+    await expect(writeClipboardContent(content, clipboard.environment)).resolves.toBe(false);
+  });
+
+  it("propagates a plain write that throws", async () => {
+    const environment: MarkdownClipboardEnvironment = {
+      writePlainText: async () => {
+        throw new Error("clipboard denied");
+      },
+    };
+
+    await expect(writeClipboardContent(content, environment)).rejects.toThrow("clipboard denied");
   });
 });

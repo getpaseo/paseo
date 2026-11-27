@@ -15,7 +15,17 @@ export const COMPACT = { width: 390, height: 844 };
 /** A plugin written against the current API: a screen, header and footer items, a command. */
 const SHOWCASE_SOURCE = `import React from "react";
 import { Pressable, Text, View } from "react-native";
+import { useWorkspaces } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
+
+function WorkspacesScreen({ theme }) {
+  const workspaces = useWorkspaces();
+  return (
+    <View style={{ flex: 1, padding: 24, gap: 8 }}>
+      {workspaces.map((ref) => <Text key={ref.id} style={{ color: theme.colors.foreground }}>{"Workspace " + ref.id}</Text>)}
+    </View>
+  );
+}
 
 function DeploysScreen({ theme }) {
   return <View style={{ flex: 1, padding: 24 }}><Text style={{ color: theme.colors.foreground }}>Deploys screen body</Text></View>;
@@ -63,11 +73,13 @@ function Broken() {
 
 export default function contribute(client) {
   client.addScreen({ id: "deploys", title: "Deploys", Component: DeploysScreen });
+  client.addScreen({ id: "workspaces", title: "Workspaces", Component: WorkspacesScreen });
   client.addSidebarHeaderItem({ id: "deploys", title: "Deploys", Component: DeploysItem });
   client.addSidebarHeaderItem({ id: "broken", title: "Broken header", Component: Broken });
   client.addSidebarFooterItem({ id: "sync", title: "Sync", Component: SyncItem });
   client.addSidebarFooterItem({ id: "broken", title: "Broken footer", Component: Broken });
   client.addCommandCenterItem({ id: "open-deploys", title: "Open deploys", icon: "Rocket", context: "global", onSelect: (ctx) => ctx.openScreen({ screenId: "deploys" }) });
+  client.addCommandCenterItem({ id: "open-workspaces", title: "Open plugin workspaces", icon: "List", context: "global", onSelect: (ctx) => ctx.openScreen({ screenId: "workspaces" }) });
   return () => {};
 }
 `;

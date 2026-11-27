@@ -1,6 +1,15 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+// eslint-disable-next-line no-restricted-imports -- verify plugin runtime does not leak raw ReactNative.
+import * as ReactNative from "react-native";
 import { describe, expect, it } from "vitest";
 import { useRevealedText } from "@/hooks/use-revealed-text";
-import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+import {
+  OMITTED_REACT_NATIVE_EXPORTS,
+  createPluginReactNativeRuntime,
+  runPluginClientBundle,
+  type PluginClientRuntime,
+} from "./evaluate";
 
 const runtime = {
   paseo: {},
@@ -55,6 +64,29 @@ describe("evaluatePluginClientBundle", () => {
     expect(active).toBe(0);
   });
 
+  it("registers sidebar views without selecting one and removes them on cleanup", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "sidebar",
+      bundle(`
+      plugin.addSidebarView({ id: "workspaces", title: "Workspaces", Component() { return null; } });
+    `),
+    );
+    expect(plugin.sidebarViews.map((view) => view.id)).toEqual(["workspaces"]);
+    await plugin.cleanup();
+    expect(plugin.sidebarViews).toEqual([]);
+  });
+  it("rejects duplicate sidebar view ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "sidebar",
+        bundle(`
+      const view = { id: "workspaces", title: "Workspaces", Component() { return null; } };
+      plugin.addSidebarView(view); plugin.addSidebarView(view);
+    `),
+      ),
+    ).toThrow("Duplicate sidebar view");
+  });
+
   it("accepts memoized settings screens", () => {
     const plugin = evaluatePluginClientBundle(
       "settings",
@@ -78,6 +110,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addSettingsScreen({ id: "display", title: "Display", icon: "Settings", Component }),
           plugin.addSidebarHeaderItem({ id: "main", title: "Main", Component }),
           plugin.addSidebarFooterItem({ id: "status", title: "Status", Component }),
+          plugin.addWorkspaceRowBadgeItem({ id: "status", title: "Status", icon: "Blocks", Component }),
           plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
           plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
@@ -86,6 +119,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
           plugin.addTimelineRenderer({ kind: "card", version: 1, schema, Component }),
+          plugin.onNotificationOpen(function handleOpen() {}),
         ];
       `),
       {
@@ -109,6 +143,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.settingsScreens,
         plugin.sidebarItems.header,
         plugin.sidebarItems.footer,
+        plugin.workspaceRowBadgeItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
         plugin.clientSlashCommands,
@@ -116,6 +151,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.notificationOpenHandlers,
       ].every((items) => items.length === 1),
     ).toBe(true);
     expect(pillCount).toBe(1);
@@ -129,6 +165,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.settingsScreens,
         plugin.sidebarItems.header,
         plugin.sidebarItems.footer,
+        plugin.workspaceRowBadgeItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
         plugin.clientSlashCommands,
@@ -136,6 +173,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.notificationOpenHandlers,
       ].every((items) => items.length === 0),
     ).toBe(true);
     expect(pillCount).toBe(0);
@@ -257,6 +295,44 @@ describe("evaluatePluginClientBundle", () => {
         ),
       ),
     ).toThrow("Sidebar item main has no title");
+  });
+
+  it("collects workspace row badge items and rejects duplicate and malformed ones", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      bundle(`
+        function Item() { return null; }
+        plugin.addWorkspaceRowBadgeItem({ id: "status", title: " Status ", icon: "Blocks", Component: Item });
+      `),
+    );
+    expect(
+      plugin.workspaceRowBadgeItems.map(({ id, title, icon }) => ({ id, title, icon })),
+    ).toEqual([{ id: "status", title: "Status", icon: "Blocks" }]);
+
+    const row = (fields: string) =>
+      bundle(`function Item() { return null; } plugin.addWorkspaceRowBadgeItem({ ${fields} });`);
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        bundle(`
+          function Item() { return null; }
+          plugin.addWorkspaceRowBadgeItem({ id: "status", title: "One", icon: "Blocks", Component: Item });
+          plugin.addWorkspaceRowBadgeItem({ id: "status", title: "Two", icon: "Blocks", Component: Item });
+        `),
+      ),
+    ).toThrow("Duplicate workspace row badge item: status");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        row(`id: "status", title: " ", icon: "Blocks", Component: Item`),
+      ),
+    ).toThrow("Workspace row badge item status has no title");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        row(`id: "status", title: "Status", icon: "Blocks", Component: "Item"`),
+      ),
+    ).toThrow("Workspace row badge item status is not a component");
   });
 
   it("expands the addSurface and addSidebarItem aliases to a screen and a legacy header item", () => {
@@ -529,6 +605,38 @@ describe("evaluatePluginClientBundle", () => {
         `),
       ),
     ).toThrow("Duplicate Command Center item: review");
+  });
+
+  it("collects composer items and releases an id on removal", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function Item() { return null; }
+        const remove = plugin.addComposerItem({ id: "flag", Component: Item });
+        remove();
+        plugin.addComposerItem({ id: "flag", Component: Item });
+      `),
+    );
+    expect(plugin.composerItems.map((item) => item.id)).toEqual(["flag"]);
+  });
+
+  it("rejects duplicate and non-component composer items", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          function Item() { return null; }
+          plugin.addComposerItem({ id: "flag", Component: Item });
+          plugin.addComposerItem({ id: "flag", Component: Item });
+        `),
+      ),
+    ).toThrow("Duplicate composer item: flag");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`plugin.addComposerItem({ id: "flag", Component: "nope" })`),
+      ),
+    ).toThrow("Composer item flag is not a component");
   });
 
   it("runs the client entry with the full runtime context", () => {
@@ -809,6 +917,117 @@ describe("evaluatePluginClientBundle", () => {
         } }; })`,
       ),
     ).toThrow("setup exploded");
+  });
+
+  it("omits PushNotificationIOS, default, and non-enumerable getters while keeping other exports lazy", () => {
+    let platformReads = 0;
+    let pushReads = 0;
+    let nativeModulesReads = 0;
+    let asyncStorageReads = 0;
+    const raw = {
+      get Platform() {
+        platformReads += 1;
+        return { OS: "ios" };
+      },
+      get PushNotificationIOS() {
+        pushReads += 1;
+        throw new Error("`new NativeEventEmitter()` requires a non-null argument.");
+      },
+      get NativeModules() {
+        nativeModulesReads += 1;
+        return { CustomModule: true };
+      },
+    };
+    const interopNamespace = Object.defineProperties(
+      {},
+      {
+        Platform: Object.getOwnPropertyDescriptor(raw, "Platform")!,
+        PushNotificationIOS: Object.getOwnPropertyDescriptor(raw, "PushNotificationIOS")!,
+        NativeModules: Object.getOwnPropertyDescriptor(raw, "NativeModules")!,
+        AsyncStorage: {
+          configurable: true,
+          enumerable: false,
+          get() {
+            asyncStorageReads += 1;
+            throw new Error("AsyncStorage has been removed from react-native core.");
+          },
+        },
+        default: { enumerable: true, value: raw },
+      },
+    );
+
+    const safe = createPluginReactNativeRuntime(interopNamespace);
+
+    expect(platformReads).toBe(0);
+    expect(pushReads).toBe(0);
+    expect(nativeModulesReads).toBe(0);
+    expect(asyncStorageReads).toBe(0);
+    expect(Object.getOwnPropertyNames(safe)).toEqual(["Platform", "NativeModules"]);
+    expect("PushNotificationIOS" in safe).toBe(false);
+    expect("AsyncStorage" in safe).toBe(false);
+    expect("default" in safe).toBe(false);
+    expect(Object.assign({}, safe)).toEqual({
+      Platform: { OS: "ios" },
+      NativeModules: { CustomModule: true },
+    });
+    expect(platformReads).toBe(1);
+    expect(nativeModulesReads).toBe(1);
+    expect(pushReads).toBe(0);
+    expect(asyncStorageReads).toBe(0);
+  });
+
+  it("wires require('react-native') to the filtered runtime instead of the raw namespace", () => {
+    let exposed: Record<string, unknown> | undefined;
+    const plugin = evaluatePluginClientBundle(
+      "rn-safe",
+      `(function(require) {
+        const rn = require("react-native");
+        return {
+          default: function(plugin) {
+            plugin.addSurface("probe", function() { return null; });
+            globalThis.__testPluginRn = rn;
+            return function() {};
+          },
+        };
+      })`,
+    );
+    exposed = (globalThis as Record<string, unknown>).__testPluginRn as
+      | Record<string, unknown>
+      | undefined;
+    delete (globalThis as Record<string, unknown>).__testPluginRn;
+
+    expect(plugin.id).toBe("rn-safe");
+    expect(exposed).toBeDefined();
+    expect(exposed).not.toBe(ReactNative);
+    const expectedKeys = Object.keys(ReactNative)
+      .filter((key) => !OMITTED_REACT_NATIVE_EXPORTS.has(key))
+      .sort();
+    expect(Object.getOwnPropertyNames(exposed!).sort()).toEqual(expectedKeys);
+    expect("PushNotificationIOS" in exposed!).toBe(false);
+    expect("default" in exposed!).toBe(false);
+    expect(exposed!.Platform).toBe(ReactNative.Platform);
+    expect(exposed!.NativeModules).toBe(ReactNative.NativeModules);
+  });
+
+  it("excludes PushNotificationIOS and checks enumerable react-native/index.js getters for invariant throws", () => {
+    const require = createRequire(import.meta.url);
+    const rnIndexPath = require.resolve("react-native/index.js");
+    const rnIndexSource = readFileSync(rnIndexPath, "utf8");
+    const getterBodies = new Map<string, string>();
+    const getterPattern = /get\s+([A-Za-z0-9_$]+)\s*\(\)\s*\{([\s\S]*?)\n\s*\},/g;
+    for (const match of rnIndexSource.matchAll(getterPattern)) {
+      getterBodies.set(match[1]!, match[2]!);
+    }
+    expect(getterBodies.size).toBeGreaterThan(0);
+    expect(getterBodies.has("PushNotificationIOS")).toBe(true);
+    expect(OMITTED_REACT_NATIVE_EXPORTS.has("PushNotificationIOS")).toBe(true);
+
+    for (const [name, body] of getterBodies) {
+      if (OMITTED_REACT_NATIVE_EXPORTS.has(name)) continue;
+      expect(body, `throwing enumerable getter ${name} in react-native/index.js`).not.toContain(
+        "invariant(",
+      );
+    }
   });
 });
 

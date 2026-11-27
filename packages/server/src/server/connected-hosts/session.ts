@@ -23,7 +23,10 @@ interface SessionRoute {
 export class ConnectedHostSession {
   private readonly routes = new Map<string, SessionRoute>();
   constructor(
-    private readonly hosts: ConnectedHosts,
+    private readonly hosts: Pick<
+      ConnectedHosts,
+      "list" | "observe" | "add" | "update" | "remove" | "openRoute"
+    >,
     private readonly delivery: SessionDelivery,
     private readonly actor: HostActor,
     private readonly permissions: () => DaemonPermission[],
@@ -206,7 +209,7 @@ export class ConnectedHostSession {
         originSessionId: this.originSessionId,
         permissions: this.permissions(),
         signal: owner.signal,
-        frame: (data) => {
+        frame: async (data) => {
           const output: SessionOutboundMessage | null =
             typeof data === "string"
               ? {
@@ -223,8 +226,8 @@ export class ConnectedHostSession {
             fail("resource_limit", "The receiving client cannot keep up with host output");
             return;
           }
-          if (output) owner.emit(output);
-          else owner.emitBinary(binary!);
+          if (output) await owner.emitAndWait(output);
+          else await owner.emitBinaryAndWait(binary!);
         },
         ended: fail,
       });

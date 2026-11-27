@@ -33,7 +33,7 @@ The relay is optional. To connect your client and daemon, it processes:
 - Message sizes and aggregate bandwidth
 - Temporary connection and routing state
 
-Your client and daemon encrypt application traffic end-to-end with NaCl box encryption. The relay carries ciphertext and cannot read your code, prompts, terminal output, or agent conversations. Payloads exist in relay memory only while being forwarded. We do not store message contents. Infrastructure may retain limited operational logs and aggregate metrics for security, capacity planning, and troubleshooting.
+Your client and daemon encrypt application traffic end-to-end with Noise NK (ChaCha20-Poly1305), with legacy NaCl box fallback when either side has not updated. The relay carries ciphertext and cannot read your code, prompts, terminal output, or agent conversations. Payloads exist in relay memory only while being forwarded. We do not store message contents. Infrastructure may retain limited operational logs and aggregate metrics for security, capacity planning, and troubleshooting.
 
 ## Paseo Hub
 

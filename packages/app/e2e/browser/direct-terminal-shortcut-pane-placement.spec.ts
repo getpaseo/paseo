@@ -51,7 +51,7 @@ test.describe("Direct terminal shortcut pane placement", () => {
   });
 });
 
-async function prepareUnfocusedCompactPane(page: Page, workspaceId: string) {
+async function prepareNarrowSplit(page: Page, workspaceId: string) {
   await page.setViewportSize({ width: 1600, height: 900 });
   await gotoWorkspace(page, workspaceId);
   await waitForWorkspaceTabsVisible(page);
@@ -74,33 +74,38 @@ async function prepareUnfocusedCompactPane(page: Page, workspaceId: string) {
   };
 }
 
-async function launchTerminalFromCompactPane(page: Page, pane: Locator) {
-  await pane.getByTestId("workspace-tab-switcher-trigger").click();
-  await page.getByTestId("workspace-tab-switcher-new-terminal").click();
+async function expectPanesKeepTabRails(page: Page, panes: Locator[]) {
+  for (const pane of panes) {
+    await expect(pane.getByTestId("workspace-tabs-row")).toBeVisible();
+  }
+  await expect(
+    page.getByTestId("workspace-tab-switcher-trigger").filter({ visible: true }),
+  ).toHaveCount(0);
+}
+
+async function launchTerminalFromPaneRail(page: Page, pane: Locator) {
+  await pane.getByTestId("workspace-new-tab-button").click();
+  await page.getByTestId("workspace-new-tab-menu-terminal").filter({ visible: true }).click();
   await expect(pane.getByTestId("terminal-surface")).toBeVisible({ timeout: 30_000 });
 }
 
-async function maximizeAndRestoreCompactPane(page: Page, pane: Locator) {
-  await pane.getByTestId("workspace-header-menu-trigger").click();
-  await expect(page.getByRole("menuitem", { name: "Split pane right", exact: true })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Maximize pane", exact: true }).click();
-  await pane.getByTestId("workspace-header-menu-trigger").click();
-  await page.getByRole("menuitem", { name: "Restore pane", exact: true }).click();
+async function maximizeAndRestorePane(pane: Locator) {
+  await pane.getByTestId("workspace-maximize-pane").click();
+  await pane.getByTestId("workspace-restore-pane").click();
 }
 
-test("compact pane launch stays in its owning pane and pane controls remain reachable", async ({
+test("narrow split panes keep their tab rails and launches stay in the owning pane", async ({
   page,
 }) => {
-  const workspace = await seedWorkspace({ repoPrefix: "compact-pane-launch-" });
+  const workspace = await seedWorkspace({ repoPrefix: "narrow-split-launch-" });
   try {
-    const { originalPane, otherPane } = await prepareUnfocusedCompactPane(
-      page,
-      workspace.workspaceId,
-    );
-    await launchTerminalFromCompactPane(page, originalPane);
+    const { originalPane, otherPane } = await prepareNarrowSplit(page, workspace.workspaceId);
+    await expectPanesKeepTabRails(page, [originalPane, otherPane]);
+    await launchTerminalFromPaneRail(page, originalPane);
     await expect(otherPane.getByTestId("workspace-new-tab-panel")).toBeVisible();
-    await maximizeAndRestoreCompactPane(page, originalPane);
+    await maximizeAndRestorePane(originalPane);
     await expect(otherPane).toBeVisible();
+    await expectPanesKeepTabRails(page, [originalPane, otherPane]);
   } finally {
     await workspace.cleanup();
   }
@@ -118,17 +123,15 @@ async function expectPaneHasWindowDragSurface(pane: Locator) {
     .toBe(true);
 }
 
-test("compact desktop panes retain window dragging with both sidebars closed", async ({ page }) => {
-  const workspace = await seedWorkspace({ repoPrefix: "compact-pane-window-drag-" });
+test("narrow desktop split panes retain window dragging with both sidebars closed", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "narrow-split-window-drag-" });
   try {
     await installLocalDesktopHost(page, workspace.repoPath);
-    const { originalPane, otherPane } = await prepareUnfocusedCompactPane(
-      page,
-      workspace.workspaceId,
-    );
+    const { originalPane, otherPane } = await prepareNarrowSplit(page, workspace.workspaceId);
     await runWorkspaceActionFromCommandCenter(page, "Toggle left sidebar");
-    await expect(originalPane.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
-    await expect(otherPane.getByTestId("workspace-tab-switcher-trigger")).toBeVisible();
+    await expectPanesKeepTabRails(page, [originalPane, otherPane]);
     await expectPaneHasWindowDragSurface(originalPane);
     await expectPaneHasWindowDragSurface(otherPane);
   } finally {

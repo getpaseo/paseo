@@ -11,10 +11,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { type RewindMode, useRewindCapabilities } from "./use-rewind-capabilities";
+import { type RewindMode, useRewindMenuItems } from "./use-rewind-capabilities";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
-
-export type { RewindMode };
 
 interface RewindMenuProps {
   capabilities: AgentCapabilityFlags;
@@ -44,15 +42,7 @@ export const RewindMenu = memo(function RewindMenu({
 }: RewindMenuProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const rewindLabels = useMemo(
-    () => ({
-      conversation: t("rewind.actions.conversation"),
-      files: t("rewind.actions.files"),
-      both: t("rewind.actions.both"),
-    }),
-    [t],
-  );
-  const items = useRewindCapabilities(capabilities, rewindLabels);
+  const items = useRewindMenuItems(capabilities);
   const [isOpen, setIsOpen] = useState(false);
   const [pendingMode, setPendingMode] = useState<RewindMode | null>(null);
   const isLocked = isPendingProp || pendingMode !== null;

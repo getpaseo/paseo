@@ -1,0 +1,8 @@
+Fixed
+- Fixed Collapse turns hiding a finished reply when Claude answers a later background task notification
+- Fixed detached worktree commits getting lost when archiving a workspace
+- Fixed Desktop updates leaving an older daemon running when an earlier Desktop session started it
+- Fixed daemons losing their Hub connection after execution permissions changed
+- Fixed saved hosts disappearing when one stored entry could not be read
+
+Full notes: https://paseo.sh/changelog

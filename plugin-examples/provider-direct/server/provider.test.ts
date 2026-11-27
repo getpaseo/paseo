@@ -40,13 +40,14 @@ describe("direct provider example", () => {
     await connection.close();
   });
 
-  it("demonstrates settings, commands, persistence, and provider-rendered timeline items", async () => {
+  it("demonstrates option controls, commands, persistence, and provider-rendered timeline items", async () => {
     const connection = await createDirectExampleProvider().connect({
       versions: [1],
       capabilities: [
         "prompt.message",
         "prompt.command",
         "session.configure",
+        "session.metrics",
         "session.persistence",
         "session.subsession",
         "timeline.plugin",
@@ -65,8 +66,8 @@ describe("direct provider example", () => {
         mcpServers: {},
         model: "example-1",
         mode: "build",
-        settings: { concise: true, voice: "calm" },
-        providerOptions: { privateValue: 1 },
+        settings: {},
+        providerOptions: { concise: true, voice: "calm", privateValue: 1 },
         persist: true,
       },
       history: "skip",
@@ -75,10 +76,11 @@ describe("direct provider example", () => {
       expect.objectContaining({
         type: "session.config",
         config: expect.objectContaining({
-          settings: expect.arrayContaining([
-            expect.objectContaining({ id: "concise", value: true }),
-            expect.objectContaining({ id: "voice", value: "calm" }),
-          ]),
+          controls: [
+            expect.objectContaining({ key: "concise", icon: "Zap" }),
+            expect.objectContaining({ key: "voice", icon: "Mic", defaultValue: "calm" }),
+          ],
+          providerOptions: { concise: true, voice: "calm" },
         }),
       }),
     );
@@ -88,7 +90,29 @@ describe("direct provider example", () => {
       type: "session.configure",
       requestId: "configure-complete",
       sessionId: "session-complete",
-      changes: { settings: { voice: "direct" } },
+      changes: { providerOptions: { voice: "direct", concise: null } },
+    });
+    expect(events.findLast((event) => event.type === "session.config")).toMatchObject({
+      config: { providerOptions: { voice: "direct" } },
+    });
+    await connection.send({
+      type: "session.configure",
+      requestId: "configure-refused",
+      sessionId: "session-complete",
+      changes: { model: "other-model", providerOptions: { voice: "loud" } },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "request.failed", requestId: "configure-refused" }),
+    );
+    // A refused request changes nothing, the model it named included.
+    await connection.send({
+      type: "session.configure",
+      requestId: "configure-after-refused",
+      sessionId: "session-complete",
+      changes: {},
+    });
+    expect(events.findLast((event) => event.type === "session.config")).not.toMatchObject({
+      config: { model: "other-model" },
     });
     await connection.send({
       type: "session.prompt",
@@ -142,6 +166,54 @@ describe("direct provider example", () => {
       }),
     );
     expect(events).toContainEqual(expect.objectContaining({ type: "session.persistence" }));
+    expect(events).toContainEqual({
+      type: "session.turn",
+      sessionId: "session-complete",
+      turnId: "turn-1",
+      state: "completed",
+      metrics: [
+        { label: "Model", value: "example-1" },
+        { label: "Reply", value: "11 characters" },
+      ],
+    });
+    expect(events).toContainEqual({
+      type: "session.metrics",
+      sessionId: "session-complete",
+      metrics: [{ label: "Turns", value: "1" }],
+    });
+    await connection.close();
+  });
+
+  it("keeps session metrics from a Paseo that does not offer them", async () => {
+    const connection = await createDirectExampleProvider().connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send({
+      type: "session.open",
+      requestId: "open-older",
+      sessionId: "session-older",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: false },
+      history: "skip",
+    });
+
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "session-older",
+      prompt: {
+        clientMessageId: "message-older",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "session.turn", state: "completed" }),
+    );
+    expect(events.filter((event) => event.type === "session.metrics")).toEqual([]);
     await connection.close();
   });
 

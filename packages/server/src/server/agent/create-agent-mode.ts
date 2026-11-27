@@ -94,7 +94,7 @@ export function resolveDefaultAgentCreateConfig(
       availableModes: availableModeIds,
       targetUnattendedMode: input.availableModes?.find(isUnattendedMode)?.id,
     }),
-    featureValues: input.featureValues,
+    providerOptions: input.providerOptions,
   };
 }
 

@@ -1,10 +1,5 @@
 import { memo, type ReactElement, useCallback, useMemo, useState } from "react";
-import {
-  Text,
-  View,
-  type GestureResponderEvent,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Text, View, type GestureResponderEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
 import { DiffStat } from "@/components/diff-stat";
@@ -28,11 +23,11 @@ import {
   fileNameForPath,
   formatDiffCount,
 } from "@/git/file-header-presentation";
-import type { ParsedDiffFile } from "@/git/use-diff-query";
+import type { DiffFileHeader } from "@/git/diff-snapshot";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 export interface FileHeaderProps {
-  file: ParsedDiffFile;
+  file: DiffFileHeader;
   workspaceFileDragScope?: { serverId: string; workspaceId: string };
   bodyVisible: boolean;
   showsBodyState?: boolean;
@@ -73,7 +68,7 @@ function expandedAriaValue(showsBodyState: boolean, bodyVisible: boolean): boole
   return showsBodyState ? bodyVisible : undefined;
 }
 
-function fileHeaderAccessibilityLabel(canvasRendered: boolean, file: ParsedDiffFile) {
+function fileHeaderAccessibilityLabel(canvasRendered: boolean, file: DiffFileHeader) {
   if (!canvasRendered) return undefined;
   return `${file.path}, +${formatDiffCount(file.additions)}, -${formatDiffCount(file.deletions)}`;
 }
@@ -92,18 +87,17 @@ function useFileHeaderHover(enabled: boolean, onActiveChange?: (active: boolean)
   return { isHovered, handlePointerEnter, handlePointerLeave };
 }
 
+// Press feedback is the pressable's `highlightStyle`, so it is not part of the active fill.
 function fileHeaderIsActive(input: {
   isHovered: boolean;
-  pressed: boolean;
   showsBodyState: boolean;
   isSelected: boolean;
 }): boolean {
-  return input.isHovered || input.pressed || (!input.showsBodyState && input.isSelected);
+  return input.isHovered || (!input.showsBodyState && input.isSelected);
 }
 
 function fileHeaderInteractionStyle(input: {
   isHovered: boolean;
-  pressed: boolean;
   showsBodyState: boolean;
   isSelected: boolean;
 }) {
@@ -130,7 +124,7 @@ function fileHeaderNameStyle(showsBodyState: boolean, isHovered: boolean) {
   ];
 }
 
-function fileChange(file: ParsedDiffFile): "added" | "deleted" | "modified" {
+function fileChange(file: DiffFileHeader): "added" | "deleted" | "modified" {
   return diffFileChangeKind(file);
 }
 
@@ -217,8 +211,8 @@ export const FileHeader = memo(function FileHeader({
       [file.path, onHeaderHeightChange],
     ),
   });
-  const pressableStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [
+  const pressableStyle = useMemo(
+    () => [
       styles.header,
       !showsBodyState && workspaceTreeRowStyles.row,
       showsBodyState && styles.documentHeader,
@@ -229,18 +223,14 @@ export const FileHeader = memo(function FileHeader({
         : null,
       fileHeaderInteractionStyle({
         isHovered: hover.isHovered,
-        pressed,
         showsBodyState,
         isSelected,
       }),
     ],
     [depth, hover.isHovered, isSelected, showsBodyState],
   );
-  const canvasPressableStyle = useCallback(
-    (state: PressableStateCallbackType) => [
-      pressableStyle(state),
-      canvasRendered && styles.canvasInteraction,
-    ],
+  const canvasPressableStyle = useMemo(
+    () => [pressableStyle, canvasRendered && styles.canvasInteraction],
     [canvasRendered, pressableStyle],
   );
   const accessibilityState = useMemo(
@@ -324,7 +314,7 @@ export const FileHeader = memo(function FileHeader({
   } else {
     trigger = (
       <View
-        style={[pressableStyle({ pressed: false }), canvasRendered && styles.canvasInteraction]}
+        style={[pressableStyle, canvasRendered && styles.canvasInteraction]}
         accessibilityLabel={accessibilityLabel}
       >
         {renderedContent}

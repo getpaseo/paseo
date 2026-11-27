@@ -186,8 +186,8 @@ function createRecordingAgentClients(): Record<AgentProvider, AgentClient> {
     if (client.listCommands) {
       wrappedClient.listCommands = async (config) => await client.listCommands!(config);
     }
-    if (client.listFeatures) {
-      wrappedClient.listFeatures = async (config) => await client.listFeatures!(config);
+    if (client.listControls) {
+      wrappedClient.listControls = async (config) => await client.listControls!(config);
     }
     if (client.listImportableSessions) {
       wrappedClient.listImportableSessions = async (options) =>
@@ -947,6 +947,45 @@ describe("Suite C: Schedule Tools", () => {
           model: "gpt-5.4",
         },
       });
+    } finally {
+      await deleteScheduleIfPresent(scheduleId);
+    }
+  });
+
+  test("create_schedule and update_schedule set archive on finish", async () => {
+    let scheduleId: string | null = null;
+    try {
+      const createArgs = {
+        prompt: "say hello",
+        cron: "*/5 * * * *",
+        name: "Parity archive on finish schedule",
+        provider: "claude",
+      };
+      const created = await callToolStructured(topLevelClient, "create_schedule", createArgs);
+      scheduleId = str(created.id);
+      expect(created.target).toMatchObject({ type: "new-agent", config: {} });
+      expect(created.target).not.toHaveProperty("config.archiveOnFinish");
+
+      const recreated = await callToolStructured(topLevelClient, "create_schedule", {
+        ...createArgs,
+        archiveOnFinish: false,
+      });
+      expect(recreated.id).toBe(scheduleId);
+      expect(recreated.target).toMatchObject({ config: { archiveOnFinish: false } });
+
+      for (const archiveOnFinish of [true, false]) {
+        const updated = await callToolStructured(topLevelClient, "update_schedule", {
+          id: scheduleId,
+          archiveOnFinish,
+        });
+        expect(updated.target).toMatchObject({ config: { archiveOnFinish } });
+      }
+
+      const listed = await callToolStructured(topLevelClient, "list_schedules", {});
+      const named = recordArr(listed.schedules).filter(
+        (schedule) => schedule.name === createArgs.name,
+      );
+      expect(named).toHaveLength(1);
     } finally {
       await deleteScheduleIfPresent(scheduleId);
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  PluginListingIndexSchema,
   PluginRegistryIndexSchema,
   PublishedPluginDetailSchema,
   pluginMediaKind,
@@ -79,5 +80,17 @@ describe("plugin listing translations", () => {
       plugins: [{ ...nameless, translations: { "zh-CN": { name: "Acme 主题" } } }],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("plugin listings sent to apps", () => {
+  it("keep a listing whose artifact kind or index version the app does not know", () => {
+    const future = { ...LEGACY_PLUGIN, id: "acme/future", artifact: { kind: "oci", image: "x" } };
+    const index = PluginListingIndexSchema.parse({
+      ...LEGACY_INDEX,
+      schemaVersion: 2,
+      plugins: [LEGACY_PLUGIN, future],
+    });
+    expect(index.plugins.map((plugin) => plugin.artifact.kind)).toEqual(["git", "oci"]);
   });
 });

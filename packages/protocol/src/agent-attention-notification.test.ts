@@ -71,6 +71,25 @@ describe("buildAgentAttentionNotificationPayload", () => {
     });
   });
 
+  it("includes the tool input when a permission has a reason but no title", () => {
+    const payload = buildAgentAttentionNotificationPayload({
+      reason: "permission",
+      serverId: "srv-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+      permissionRequest: {
+        id: "perm-1",
+        provider: "claude",
+        name: "Bash",
+        kind: "tool",
+        input: { command: "echo hello" },
+        description: "Hook requires approval",
+      },
+    });
+
+    expect(payload.body).toBe('{"command":"echo hello"} - Hook requires approval');
+  });
+
   it("uses error-specific defaults when reason is error", () => {
     const payload = buildAgentAttentionNotificationPayload({
       reason: "error",

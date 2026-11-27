@@ -643,26 +643,37 @@ export default function contribute() { return title(" plugin "); }`;
     expect(Buffer.byteLength(clientBundle)).toBeLessThan(Buffer.byteLength(serverBundle) * 0.9);
   });
 
-  it("keeps distinct host exports eager when minifying in the worker", async () => {
+  it("keeps distinct host exports lazy with per-key closures when minifying in the worker", async () => {
     const entries = await createSplitPlugin();
     await writeFile(
       entries.client,
-      `import * as host from "zod";
+      `import * as host from "react-native";
 export default function contribute() { return [host.first, host.second]; }`,
     );
     const { clientBundle } = await compilePlugin({ client: entries.client, server: null });
-    const host = { first: "first export", second: "second export" };
+    expect(clientBundle).toContain("(k=>()=>from[k])(key)");
+    expect(clientBundle).not.toContain("value:from[key]");
+
+    let throwingReads = 0;
+    const host = {
+      first: "first export",
+      second: "second export",
+      get PushNotificationIOS() {
+        throwingReads += 1;
+        throw new Error("`new NativeEventEmitter()` requires a non-null argument.");
+      },
+    };
     const factory = new Function(`return ${clientBundle}`)() as (
       require: (specifier: string) => typeof host,
     ) => { default: () => unknown };
     function requireHost(specifier: string): typeof host {
-      expect(specifier).toBe("zod");
+      expect(specifier).toBe("react-native");
       return host;
     }
     const exports = factory(requireHost);
-    host.first = "changed first export";
-    host.second = "changed second export";
+    expect(throwingReads).toBe(0);
     expect(exports.default()).toEqual(["first export", "second export"]);
+    expect(throwingReads).toBe(0);
   });
 
   it("rejects node imports from the client entry", async () => {

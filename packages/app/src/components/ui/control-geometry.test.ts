@@ -12,10 +12,19 @@ import {
   resolveControlSizing,
   switchGeometryForLayout,
   getControlInteractionPhase,
+  TOOLBAR_CONTROL_GAP,
+  TOOLBAR_CONTROL_GAPS,
   TOOLBAR_CONTROL_HEIGHT,
   TOOLBAR_CONTROL_SIZES,
+  TOOLBAR_DISC_GLYPH_SIZES,
   TOOLBAR_DISC_SIZE,
   TOOLBAR_DISC_SIZES,
+  TOOLBAR_GLYPH_SIZES,
+  TOOLBAR_RINGS,
+  toolbarGlyphColor,
+  toolbarGlyphsFor,
+  toolbarGlyphTone,
+  toolbarSlot,
   TOUCH_TARGET,
 } from "@/components/ui/control-geometry";
 import type { Theme } from "@/styles/theme";
@@ -59,24 +68,27 @@ const theme = {
 } as unknown as Theme;
 
 describe("control sizing gate", () => {
-  it("is touch-sized in the compact layout or on a touch screen, and pointer-sized otherwise", () => {
-    expect(resolveControlSizing({ compactLayout: true, touchScreen: true })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: true, touchScreen: false })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: false, touchScreen: true })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: false, touchScreen: false })).toBe("pointer");
+  it("is touch-sized in the compact layout or where touch is the primary input, and pointer-sized otherwise", () => {
+    expect(resolveControlSizing({ compactLayout: true, touchPrimaryPointer: true })).toBe("touch");
+    expect(resolveControlSizing({ compactLayout: true, touchPrimaryPointer: false })).toBe("touch");
+    expect(resolveControlSizing({ compactLayout: false, touchPrimaryPointer: true })).toBe("touch");
+    expect(resolveControlSizing({ compactLayout: false, touchPrimaryPointer: false })).toBe(
+      "pointer",
+    );
   });
 
-  it("gives a touch screen its touch sizes at every width", () => {
+  it("gives a touch primary pointer its touch sizes at every width", () => {
     const sizes = { touch: 44, pointer: 32 };
 
     // An iPad: touch-sized in the docked desktop layout too.
     expect(bySizing(sizes, true)).toEqual({ xs: 44, md: 44 });
-    // A mouse-driven window: touch-sized only once it narrows into the compact layout.
+    // A mouse- or trackpad-driven window, touch screen or not: touch-sized only once it narrows
+    // into the compact layout.
     expect(bySizing(sizes, false)).toEqual({ xs: 44, md: 32 });
   });
 
-  it("keeps a device without a touch screen on pointer sizes from md up", () => {
-    // The unit runtime has no touch screen, which is the desktop that must not change.
+  it("keeps a device without a touch primary pointer on pointer sizes from md up", () => {
+    // The unit runtime has no touch primary pointer, which is the desktop that must not change.
     expect(controlSizingForLayout(false)).toBe("pointer");
     expect(controlSizingForLayout(true)).toBe("touch");
     expect(CONTROL_HEIGHTS.md).toEqual({ xs: 44, md: 32 });
@@ -106,6 +118,66 @@ describe("control sizing gate", () => {
     for (const size of ["xs", "sm", "md", "lg"] as const) {
       expect(iconSizeFor(size).touch).toBeGreaterThan(iconSizeFor(size).pointer);
     }
+  });
+});
+
+describe("toolbar glyphs and spacing", () => {
+  it("lays touch toolbar controls out at their highlight with no gap and keeps the pointer's 4px gap", () => {
+    expect(TOOLBAR_CONTROL_GAPS).toEqual({ touch: 0, pointer: 4 });
+    expect(TOOLBAR_CONTROL_GAP).toEqual({ xs: 0, md: 4 });
+    expect(toolbarSlot()).toEqual({ width: TOOLBAR_DISC_SIZE, height: TOOLBAR_DISC_SIZE });
+  });
+
+  it("paints touch toolbar glyphs at the header icons' 20pt and 1.5px stroke and leaves pointer unchanged", () => {
+    const pointerGlyph = { size: 16, strokeWidth: 1.5, tone: "muted" };
+    expect(toolbarGlyphsFor("touch").icon).toEqual({
+      size: 20,
+      strokeWidth: 1.5,
+      tone: "foreground",
+    });
+    expect(toolbarGlyphsFor("pointer")).toEqual({ icon: pointerGlyph, label: pointerGlyph });
+    expect(TOOLBAR_GLYPH_SIZES.icon).toEqual({ xs: 20, md: 16 });
+    expect(toolbarGlyphsFor("touch").icon.size).toBeLessThan(TOOLBAR_CONTROL_SIZES.touch);
+    expect(toolbarGlyphsFor("pointer").icon.size).toBeLessThan(TOOLBAR_CONTROL_SIZES.pointer);
+    // A disc's solid glyph stays at the `md` size so the stop square does not fill its disc.
+    expect(TOOLBAR_DISC_GLYPH_SIZES).toEqual({ touch: 20, pointer: 16 });
+  });
+
+  it("keeps a touch glyph beside a label at the label's 20pt scale", () => {
+    expect(toolbarGlyphsFor("touch").label).toEqual({
+      size: 20,
+      strokeWidth: 1.5,
+      tone: "muted",
+    });
+    expect(TOOLBAR_GLYPH_SIZES.label).toEqual({ xs: 20, md: 16 });
+  });
+
+  it("mutes a touch glyph paired with a label while keeping an icon-only touch glyph foreground", () => {
+    const { icon, label } = toolbarGlyphsFor("touch");
+    const colors = { foreground: "#fafafa", foregroundMuted: "#a1a5a4" };
+    const palette = { colors } as unknown as Theme;
+
+    expect(toolbarGlyphColor(palette, label.tone)).toBe(colors.foregroundMuted);
+    expect(toolbarGlyphColor(palette, icon.tone)).toBe(colors.foreground);
+  });
+
+  it("sizes the touch context ring to the toolbar glyph's ink and keeps the pointer ring", () => {
+    expect(TOOLBAR_RINGS).toEqual({
+      touch: { size: 18, strokeWidth: 2 },
+      pointer: { size: 16, strokeWidth: 2 },
+    });
+  });
+
+  it("brightens a muted toolbar glyph under a hovering pointer", () => {
+    const pointer = toolbarGlyphsFor("pointer").icon;
+    const touch = toolbarGlyphsFor("touch").icon;
+    expect(toolbarGlyphTone(pointer, false)).toBe("muted");
+    expect(toolbarGlyphTone(pointer, true)).toBe("foreground");
+    expect(toolbarGlyphTone(touch, false)).toBe("foreground");
+    const colors = { foreground: "#fafafa", foregroundMuted: "#a1a5a4" };
+    const palette = { colors } as unknown as Theme;
+    expect(toolbarGlyphColor(palette, "foreground")).toBe("#fafafa");
+    expect(toolbarGlyphColor(palette, "muted")).toBe("#a1a5a4");
   });
 });
 
@@ -230,23 +302,23 @@ describe("control geometry", () => {
       trackHeight: 20,
       thumbSize: 16,
       thumbTravel: 14,
-      reservedHeight: 32,
+      hitHeight: 32,
     });
     expect(switchGeometryForLayout("md", true)).toEqual({
       trackWidth: 44,
       trackHeight: 26,
       thumbSize: 22,
       thumbTravel: 18,
-      reservedHeight: 44,
+      hitHeight: 44,
     });
-    // Tight chrome keeps the pointer-sized track on every layout and reserves its row's height.
+    // Tight chrome keeps the pointer-sized track on every layout and takes presses over its row's control height.
     expect(switchGeometryForLayout("sm", true)).toMatchObject({
       trackWidth: 34,
-      reservedHeight: 32,
+      hitHeight: 32,
     });
     expect(switchGeometryForLayout("sm", false)).toMatchObject({
       trackWidth: 34,
-      reservedHeight: 28,
+      hitHeight: 28,
     });
   });
 

@@ -20,7 +20,6 @@ interface Props {
   workspaceId?: string | null;
   cwd: string;
   baseRef: string;
-  isWorktree: boolean;
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -31,13 +30,7 @@ function refLabel(ref: string): string {
   return ref.replace(/^refs\/(heads|remotes)\//, "");
 }
 
-export function WorkspaceBaseBranchPicker({
-  serverId,
-  workspaceId,
-  cwd,
-  baseRef,
-  isWorktree,
-}: Props) {
+export function WorkspaceBaseBranchPicker({ serverId, workspaceId, cwd, baseRef }: Props) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
@@ -135,7 +128,7 @@ export function WorkspaceBaseBranchPicker({
     [t, isPending, error, isError, handleRetry],
   );
 
-  if (!supported || !isWorktree || !workspaceId) return <Text style={styles.text}>{label}</Text>;
+  if (!supported || !workspaceId) return <Text style={styles.text}>{label}</Text>;
 
   return (
     <View ref={anchorRef} collapsable={false} style={styles.anchor}>
@@ -172,7 +165,9 @@ export function WorkspaceBaseBranchPicker({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  anchor: { flexShrink: 1, minWidth: 0 },
+  // The branch name truncates first so a short base like "main" stays readable; the cap lets
+  // a long base still truncate instead of overflowing the header.
+  anchor: { flexShrink: 0, minWidth: 0, maxWidth: "40%" },
   footer: { padding: theme.spacing[3], gap: theme.spacing[2] },
   text: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm },
   error: { color: theme.colors.destructive, fontSize: theme.fontSize.sm },

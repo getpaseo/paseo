@@ -27,6 +27,7 @@ describe("bootstrap provider availability", () => {
 
   test("loads a persisted Codex record without spawning a missing Codex binary", async () => {
     const { createPaseoDaemon } = await import("./bootstrap.js");
+    const { BuiltinPluginLoader } = await import("./plugins/builtin/index.js");
     const root = await mkdtemp(path.join(os.tmpdir(), "paseo-bootstrap-provider-"));
     tempRoots.push(root);
     const gitPath = execFileSync(process.platform === "win32" ? "where" : "which", ["git"], {
@@ -93,7 +94,10 @@ describe("bootstrap provider availability", () => {
     process.on("unhandledRejection", onUnhandledRejection);
     process.on("uncaughtException", onUncaughtException);
 
-    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }));
+    const daemon = await createPaseoDaemon(config, pino({ level: "silent" }), {
+      builtinPlugins: new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: true,
+    });
     try {
       await expect(daemon.agentStorage.listAll()).resolves.toHaveLength(1);
       await expect(daemon.agentManager.listProviderAvailability()).resolves.toContainEqual({

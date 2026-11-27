@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
 import { selectOpenCodeService } from "./service-selection.js";
 
-test("selects the registered service with its credential and ignores stale registration", async () => {
+test("selects the registered service with its credential unless the provider configures the process", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-service-"));
   const file = path.join(directory, "service.json");
   let requests = 0;
@@ -38,6 +38,24 @@ test("selects the registered service with its credential and ignores stale regis
       await selectOpenCodeService({ file, explicit: { url: "http://explicit.test" } }),
     ).toEqual({ kind: "explicit", server: { url: "http://explicit.test" } });
     expect(requests).toBe(1);
+    // Provider environment that configures the server process needs a server Paseo starts.
+    expect(
+      await selectOpenCodeService({
+        file,
+        env: { OPENCODE_CONFIG_CONTENT: "{}", PROVIDER_KEY: "key" },
+      }),
+    ).toEqual({ kind: "owned" });
+    // Locating the service and the bridge is not process configuration.
+    expect(
+      await selectOpenCodeService({
+        file,
+        env: {
+          XDG_CONFIG_HOME: directory,
+          OPENCODE_CONFIG_DIR: directory,
+          PASEO_OPENCODE_BRIDGE_URL: "http://127.0.0.1:1",
+        },
+      }),
+    ).toEqual({ kind: "discovered", server: { url, password: "secret" } });
     await writeFile(file, JSON.stringify({ url, password: "secret", pid: process.pid + 1 }));
     expect(await selectOpenCodeService({ file })).toEqual({ kind: "owned" });
   } finally {

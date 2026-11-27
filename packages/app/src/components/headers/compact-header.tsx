@@ -12,8 +12,13 @@ import {
   iconButtonChromeGlyphSize,
   mutedIconColorMapping,
 } from "@/components/ui/icon-button-chrome";
-import { HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
+import {
+  HEADER_INNER_HEIGHT,
+  HEADER_INNER_HEIGHT_MOBILE,
+  HEADER_TOP_PADDING_MOBILE,
+} from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { useTopBand } from "@/window-layout";
 
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
 
@@ -22,6 +27,7 @@ const NO_SHORTCUT: ShortcutKey[] = [];
 interface CompactHeaderProps {
   /** The leading island: the sidebar menu, or a back button. */
   navigation: "menu" | "back";
+  inDesktopTitlebar?: boolean;
   /** Back button action. Defaults to navigating back. */
   onBack?: () => void;
   title?: string;
@@ -39,10 +45,12 @@ interface CompactHeaderProps {
  * left-aligned between them. Neither the header nor its islands draw a background, so it reads the
  * same in flow and floating over content (see `FloatingHeaderLayout`, whose fade gives the icons
  * contrast). Its height matches the old flat header, so anything
- * offset by the header height still lines up.
+ * offset by the header height still lines up. In a window's top band it takes the top bar's
+ * place, like the full header. The column hosting it reserves any window-chrome corner it owns.
  */
 export function CompactHeader({
   navigation,
+  inDesktopTitlebar = false,
   onBack,
   title,
   titleTestID,
@@ -51,22 +59,29 @@ export function CompactHeader({
   actions,
 }: CompactHeaderProps) {
   const insets = useSafeAreaInsets();
+  const inTopBand = useTopBand() !== null;
+  const usesTitlebarHeight = inTopBand || inDesktopTitlebar;
   const rootStyle = useMemo(
     () => [
       styles.root,
       {
-        paddingTop: insets.top + HEADER_TOP_PADDING_MOBILE,
+        paddingTop: insets.top + (usesTitlebarHeight ? 0 : HEADER_TOP_PADDING_MOBILE),
         marginLeft: insets.left,
         marginRight: insets.right,
       },
     ],
-    [insets.top, insets.left, insets.right],
+    [usesTitlebarHeight, insets.top, insets.left, insets.right],
   );
 
   return (
     <IconButtonChromeProvider value="header-island">
       <View style={rootStyle}>
-        <View style={styles.row}>
+        <View
+          style={[
+            usesTitlebarHeight ? styles.titlebarRow : styles.row,
+            inDesktopTitlebar && styles.desktopTitlebarDividerSpace,
+          ]}
+        >
           <View style={styles.island}>
             {navigation === "menu" ? <SidebarMenuToggle /> : <BackButton onBack={onBack} />}
           </View>
@@ -147,6 +162,16 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  titlebarRow: {
+    height: HEADER_INNER_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  desktopTitlebarDividerSpace: {
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: "transparent",
   },
   titleGroup: {
     flex: 1,

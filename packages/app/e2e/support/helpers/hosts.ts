@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { identityForeground, type IdentityColorName } from "@/styles/identity-colors";
 import { openSettings } from "./app";
 import { buildSeededHost } from "./daemon-registry";
-import { clickSettingsBackToWorkspace, openHostSection, selectSettingsHost } from "./settings";
+import { clickSettingsBackToWorkspace, openClientHostSettings } from "./settings";
 
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
@@ -132,7 +132,10 @@ export async function waitForConnectedHost(
 ): Promise<void> {
   await page.getByTestId("sidebar-hosts-trigger").click();
   const host = page.getByTestId(`sidebar-host-row-${input.serverId}`);
-  await expect(host).toContainText(input.endpoint, { timeout: 30_000 });
+  const escapedEndpoint = input.endpoint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Local daemons render "Local" without repeating localhost:<port>; remote hosts render the endpoint.
+  await expect(host).toContainText(new RegExp(`${escapedEndpoint}|Local`), { timeout: 30_000 });
+  await expect(host).toContainText(/\d+(?:\.\d+)?(?:µs|ms|s)/, { timeout: 30_000 });
   await page.keyboard.press("Escape");
   await expect(host).not.toBeVisible();
 }
@@ -167,8 +170,7 @@ export async function selectAllHostsFilter(page: Page): Promise<void> {
 
 export async function openHostAppearanceSettings(page: Page, serverId: string): Promise<void> {
   await openSettings(page);
-  await selectSettingsHost(page, serverId);
-  await openHostSection(page, serverId, "host");
+  await openClientHostSettings(page, serverId);
   await expect(page.getByTestId("host-appearance-preview")).toBeVisible({ timeout: 15_000 });
 }
 
@@ -193,6 +195,12 @@ export async function chooseHostColor(page: Page, colorName: string): Promise<vo
   await page.getByRole("button", { name: /^Color, / }).click();
   await page.getByRole("menuitem", { name: colorName, exact: true }).click();
   await expect(page.getByRole("button", { name: `Color, ${colorName}` })).toBeVisible();
+}
+
+export async function chooseHostIcon(page: Page, iconName: string): Promise<void> {
+  await page.getByTestId("host-appearance-icon").click();
+  await page.getByRole("menuitem", { name: iconName, exact: true }).click();
+  await expect(page.getByRole("button", { name: `Icon, ${iconName}` })).toBeVisible();
 }
 
 export async function chooseHostBadgeDisplay(

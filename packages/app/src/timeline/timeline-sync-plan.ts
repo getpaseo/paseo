@@ -64,6 +64,21 @@ export function planTimelineResumeFetch(
     : planTimelineTailFetch();
 }
 
+/**
+ * A catch-up that waited behind another starts after the rows applied meanwhile. A forward
+ * page is applied row by row, so asking again for rows the chat already holds repeats them.
+ */
+export function planTimelineCatchUpPastApplied(
+  request: ProjectedTimelineForwardFetchPlan,
+  applied: { epoch: string; endSeq: number } | undefined,
+): ProjectedTimelineForwardFetchPlan {
+  if (request.direction !== "after" || !applied) return request;
+  if (applied.epoch !== request.cursor.epoch || applied.endSeq <= request.cursor.seq) {
+    return request;
+  }
+  return planTimelineCatchUpAfter({ epoch: applied.epoch, seq: applied.endSeq });
+}
+
 export function planTimelineOlderFetch(cursor: TimelineSyncCursor) {
   return {
     direction: "before",

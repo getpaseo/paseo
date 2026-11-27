@@ -1,4 +1,5 @@
 import { StyleSheet } from "react-native-unistyles";
+import { mapLayout, SWITCH_HEIGHT } from "@/components/ui/control-geometry";
 
 export const settingsStyles = StyleSheet.create((theme) => ({
   section: {
@@ -34,6 +35,8 @@ export const settingsStyles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     paddingVertical: theme.spacing[4],
     paddingHorizontal: theme.spacing[4],
+    // As tall as a row holding a switch, so rows with and without one line up.
+    minHeight: mapLayout(SWITCH_HEIGHT, (height) => height + theme.spacing[4] * 2),
   },
   rowBorder: {
     borderTopWidth: 1,

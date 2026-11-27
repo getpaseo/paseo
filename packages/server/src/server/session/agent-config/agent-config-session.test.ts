@@ -12,7 +12,7 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
   readonly loadedAgentIds: string[] = [];
   readonly modeCalls: Array<{ agentId: string; modeId: string }> = [];
   readonly modelCalls: Array<{ agentId: string; modelId: string | null }> = [];
-  readonly featureCalls: Array<{ agentId: string; featureId: string; value: unknown }> = [];
+  readonly optionsCalls: Array<{ agentId: string; patch: Record<string, unknown> }> = [];
   readonly thinkingCalls: Array<{ agentId: string; thinkingOptionId: string | null }> = [];
   /** Cross-operation ordering, which the per-operation arrays above cannot show. */
   readonly callLog: string[] = [];
@@ -39,9 +39,9 @@ class FakeAgentConfigOperations implements AgentConfigOperations {
     if (this.failWith) throw this.failWith;
   }
 
-  async setFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
-    this.featureCalls.push({ agentId, featureId, value });
-    this.callLog.push(`feature:${featureId}`);
+  async setOptions(agentId: string, patch: Record<string, unknown>): Promise<void> {
+    this.optionsCalls.push({ agentId, patch });
+    this.callLog.push("options");
     if (this.failWith) throw this.failWith;
   }
 
@@ -206,7 +206,7 @@ describe("AgentConfigSession", () => {
     });
   });
 
-  test("set feature: forwards the feature value and emits an accepted response with no notice", async () => {
+  test("set feature: maps the feature value to a one-key options patch and emits an accepted response with no notice", async () => {
     const { subsystem, emitted, operations } = makeSubsystem();
 
     await subsystem.handleSetAgentFeatureRequest({
@@ -217,9 +217,7 @@ describe("AgentConfigSession", () => {
       requestId: "req-1",
     });
 
-    expect(operations.featureCalls).toEqual([
-      { agentId: "agent-1", featureId: "web_search", value: true },
-    ]);
+    expect(operations.optionsCalls).toEqual([{ agentId: "agent-1", patch: { web_search: true } }]);
     expect(emitted).toEqual([
       {
         type: "set_agent_feature_response",
@@ -309,7 +307,7 @@ describe("AgentConfigSession", () => {
     });
   });
 
-  test("apply: sets model before thinking and features last, in one accepted response", async () => {
+  test("apply: sets model before thinking and options last, in one accepted response", async () => {
     const { subsystem, emitted, operations } = makeSubsystem();
 
     await subsystem.handleAgentConfigApplyRequest({
@@ -319,18 +317,16 @@ describe("AgentConfigSession", () => {
         modelId: "opus-5",
         modeId: "plan",
         thinkingOptionId: "high",
-        featureValues: { webSearch: true },
+        options: { webSearch: true },
       },
       requestId: "req-1",
     });
 
-    expect(operations.callLog).toEqual(["model", "mode", "thinking", "feature:webSearch"]);
+    expect(operations.callLog).toEqual(["model", "mode", "thinking", "options"]);
     expect(operations.modelCalls).toEqual([{ agentId: "agent-1", modelId: "opus-5" }]);
     expect(operations.modeCalls).toEqual([{ agentId: "agent-1", modeId: "plan" }]);
     expect(operations.thinkingCalls).toEqual([{ agentId: "agent-1", thinkingOptionId: "high" }]);
-    expect(operations.featureCalls).toEqual([
-      { agentId: "agent-1", featureId: "webSearch", value: true },
-    ]);
+    expect(operations.optionsCalls).toEqual([{ agentId: "agent-1", patch: { webSearch: true } }]);
     expect(operations.loadedAgentIds).toEqual(["agent-1"]);
     expect(emitted).toEqual([
       {
@@ -343,6 +339,39 @@ describe("AgentConfigSession", () => {
           notice: null,
         },
       },
+    ]);
+  });
+
+  test("apply: passes an options patch through, null included, in one call", async () => {
+    const { subsystem, operations } = makeSubsystem();
+
+    await subsystem.handleAgentConfigApplyRequest({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { options: { fast_mode: true, service_tier: null } },
+      requestId: "req-1",
+    });
+
+    expect(operations.optionsCalls).toEqual([
+      { agentId: "agent-1", patch: { fast_mode: true, service_tier: null } },
+    ]);
+  });
+
+  test("apply: folds legacy featureValues into the options patch, options winning", async () => {
+    const { subsystem, operations } = makeSubsystem();
+
+    await subsystem.handleAgentConfigApplyRequest({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: {
+        featureValues: { fast_mode: true, service_tier: "fast" },
+        options: { fast_mode: false },
+      },
+      requestId: "req-1",
+    });
+
+    expect(operations.optionsCalls).toEqual([
+      { agentId: "agent-1", patch: { fast_mode: false, service_tier: "fast" } },
     ]);
   });
 
@@ -381,11 +410,11 @@ describe("AgentConfigSession", () => {
     await subsystem.handleAgentConfigApplyRequest({
       type: "agent.config.apply.request",
       agentId: "agent-1",
-      config: { modeId: "plan", thinkingOptionId: "high", featureValues: { webSearch: true } },
+      config: { modeId: "plan", thinkingOptionId: "high", options: { webSearch: true } },
       requestId: "req-1",
     });
 
-    expect(operations.callLog).toEqual(["mode", "thinking", "feature:webSearch"]);
+    expect(operations.callLog).toEqual(["mode", "thinking", "options"]);
     expect(emitted).toEqual([
       {
         type: "agent.config.apply.response",

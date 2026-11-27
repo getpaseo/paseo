@@ -1,3 +1,5 @@
+import { pluginGallery } from "./plugin-gallery";
+
 const shared = {
   logs: {
     action: "Logs",
@@ -13,6 +15,7 @@ const shared = {
 export const pluginSettings = {
   ar: {
     ...shared,
+    gallery: pluginGallery.ar,
     screens: {
       open: "فتح",
       offline: "اتصل بهذا المضيف لفتح إعدادات الإضافة.",
@@ -41,21 +44,22 @@ export const pluginSettings = {
       enabling: "جارٍ التفعيل…",
       disable: "تعطيل",
       disabling: "جارٍ التعطيل…",
-      remove: "إزالة",
-      removing: "جارٍ الإزالة…",
+      remove: "إلغاء التثبيت",
+      removing: "جارٍ إلغاء التثبيت…",
     },
     feedback: {
       installed: "تم تثبيت {{name}}",
       reload: "تمت إعادة تحميل {{name}}",
       enable: "تم تفعيل {{name}}",
       disable: "تم تعطيل {{name}}",
-      remove: "تمت إزالة {{name}}",
+      remove: "تم إلغاء تثبيت {{name}}",
       kept: "تم الإبقاء على {{name}}",
       globalEnabled: "تم تفعيل الإضافات",
       globalDisabled: "تم تعطيل الإضافات",
     },
-    removeConfirmTitle: "إزالة {{name}}؟",
-    removeConfirmMessage: "يؤدي هذا إلى إزالة الإعداد فقط. لن يُحذف مجلد المصدر.",
+    removeConfirmTitle: "إلغاء تثبيت {{name}}؟",
+    removeConfirmMessage: "تُحذف نسختها المنزّلة وإعداداتها على هذا المضيف.",
+    removeConfirmLocalMessage: "تُحذف إعداداتها. يبقى مجلدها على القرص.",
     states: {
       offlineTitle: "مضيف الإضافات غير متصل",
       offlineDescription: "أعد الاتصال بهذا المضيف لإدارة إضافاته.",
@@ -69,6 +73,7 @@ export const pluginSettings = {
   },
   es: {
     ...shared,
+    gallery: pluginGallery.es,
     screens: {
       open: "Abrir",
       offline: "Conéctate a este host para abrir los ajustes del plugin.",
@@ -97,21 +102,22 @@ export const pluginSettings = {
       enabling: "Activando…",
       disable: "Desactivar",
       disabling: "Desactivando…",
-      remove: "Eliminar",
-      removing: "Eliminando…",
+      remove: "Desinstalar",
+      removing: "Desinstalando…",
     },
     feedback: {
       installed: "{{name}} instalado",
       reload: "{{name}} recargado",
       enable: "{{name}} activado",
       disable: "{{name}} desactivado",
-      remove: "{{name}} eliminado",
+      remove: "{{name}} desinstalado",
       kept: "Se conservó {{name}}",
       globalEnabled: "Plugins activados",
       globalDisabled: "Plugins desactivados",
     },
-    removeConfirmTitle: "¿Eliminar {{name}}?",
-    removeConfirmMessage: "Esto elimina la configuración. El directorio de origen no se borra.",
+    removeConfirmTitle: "¿Desinstalar {{name}}?",
+    removeConfirmMessage: "Se borran su descarga y sus ajustes en este host.",
+    removeConfirmLocalMessage: "Se borran sus ajustes. Su carpeta se queda en el disco.",
     states: {
       offlineTitle: "El host de plugins está sin conexión",
       offlineDescription: "Vuelve a conectar este host para gestionar sus plugins.",
@@ -125,6 +131,7 @@ export const pluginSettings = {
   },
   fr: {
     ...shared,
+    gallery: pluginGallery.fr,
     screens: {
       open: "Ouvrir",
       offline: "Connectez-vous à cet hôte pour ouvrir les paramètres du plugin.",
@@ -153,21 +160,22 @@ export const pluginSettings = {
       enabling: "Activation…",
       disable: "Désactiver",
       disabling: "Désactivation…",
-      remove: "Supprimer",
-      removing: "Suppression…",
+      remove: "Désinstaller",
+      removing: "Désinstallation…",
     },
     feedback: {
       installed: "{{name}} installé",
       reload: "{{name}} rechargé",
       enable: "{{name}} activé",
       disable: "{{name}} désactivé",
-      remove: "{{name}} supprimé",
+      remove: "{{name}} désinstallé",
       kept: "{{name}} conservé",
       globalEnabled: "Plugins activés",
       globalDisabled: "Plugins désactivés",
     },
-    removeConfirmTitle: "Supprimer {{name}} ?",
-    removeConfirmMessage: "La configuration sera supprimée. Le dossier source ne sera pas effacé.",
+    removeConfirmTitle: "Désinstaller {{name}} ?",
+    removeConfirmMessage: "Son téléchargement et ses réglages sur cet hôte sont supprimés.",
+    removeConfirmLocalMessage: "Ses réglages sont supprimés. Son dossier reste sur le disque.",
     states: {
       offlineTitle: "L’hôte des plugins est hors ligne",
       offlineDescription: "Reconnectez cet hôte pour gérer ses plugins.",
@@ -181,6 +189,7 @@ export const pluginSettings = {
   },
   ja: {
     ...shared,
+    gallery: pluginGallery.ja,
     screens: {
       open: "開く",
       offline: "このホストに接続してプラグイン設定を開いてください。",
@@ -209,21 +218,22 @@ export const pluginSettings = {
       enabling: "有効化中…",
       disable: "無効化",
       disabling: "無効化中…",
-      remove: "削除",
-      removing: "削除中…",
+      remove: "アンインストール",
+      removing: "アンインストール中…",
     },
     feedback: {
       installed: "{{name}} をインストールしました",
       reload: "{{name}} を再読み込みしました",
       enable: "{{name}} を有効にしました",
       disable: "{{name}} を無効にしました",
-      remove: "{{name}} を削除しました",
+      remove: "{{name}} をアンインストールしました",
       kept: "{{name}} を保持しました",
       globalEnabled: "プラグインを有効にしました",
       globalDisabled: "プラグインを無効にしました",
     },
-    removeConfirmTitle: "{{name}} を削除しますか？",
-    removeConfirmMessage: "設定のみを削除します。ソースディレクトリは削除されません。",
+    removeConfirmTitle: "{{name}} をアンインストールしますか？",
+    removeConfirmMessage: "このホスト上のダウンロードと設定が削除されます。",
+    removeConfirmLocalMessage: "設定が削除されます。フォルダはディスクに残ります。",
     states: {
       offlineTitle: "プラグインホストはオフラインです",
       offlineDescription: "プラグインを管理するにはホストに再接続してください。",
@@ -237,6 +247,7 @@ export const pluginSettings = {
   },
   ko: {
     ...shared,
+    gallery: pluginGallery.ko,
     screens: {
       open: "열기",
       offline: "플러그인 설정을 열려면 이 호스트에 연결하세요.",
@@ -278,7 +289,8 @@ export const pluginSettings = {
       globalDisabled: "플러그인 비활성화됨",
     },
     removeConfirmTitle: "{{name}}을(를) 제거할까요?",
-    removeConfirmMessage: "설정만 제거합니다. 소스 디렉터리는 삭제되지 않습니다.",
+    removeConfirmMessage: "이 호스트의 다운로드와 설정이 삭제됩니다.",
+    removeConfirmLocalMessage: "설정이 삭제됩니다. 폴더는 디스크에 남습니다.",
     states: {
       offlineTitle: "플러그인 호스트가 오프라인입니다",
       offlineDescription: "플러그인을 관리하려면 호스트에 다시 연결하세요.",
@@ -292,6 +304,7 @@ export const pluginSettings = {
   },
   "pt-BR": {
     ...shared,
+    gallery: pluginGallery["pt-BR"],
     screens: {
       open: "Abrir",
       offline: "Conecte-se a este host para abrir as configurações do plugin.",
@@ -320,21 +333,22 @@ export const pluginSettings = {
       enabling: "Ativando…",
       disable: "Desativar",
       disabling: "Desativando…",
-      remove: "Remover",
-      removing: "Removendo…",
+      remove: "Desinstalar",
+      removing: "Desinstalando…",
     },
     feedback: {
       installed: "{{name}} instalado",
       reload: "{{name}} recarregado",
       enable: "{{name}} ativado",
       disable: "{{name}} desativado",
-      remove: "{{name}} removido",
+      remove: "{{name}} desinstalado",
       kept: "{{name}} mantido",
       globalEnabled: "Plugins ativados",
       globalDisabled: "Plugins desativados",
     },
-    removeConfirmTitle: "Remover {{name}}?",
-    removeConfirmMessage: "Isso remove a configuração. O diretório de origem não será excluído.",
+    removeConfirmTitle: "Desinstalar {{name}}?",
+    removeConfirmMessage: "O download e as configurações neste host são apagados.",
+    removeConfirmLocalMessage: "As configurações são apagadas. A pasta continua no disco.",
     states: {
       offlineTitle: "O host de plugins está offline",
       offlineDescription: "Reconecte este host para gerenciar seus plugins.",
@@ -348,6 +362,7 @@ export const pluginSettings = {
   },
   ru: {
     ...shared,
+    gallery: pluginGallery.ru,
     screens: {
       open: "Открыть",
       offline: "Подключитесь к этому хосту, чтобы открыть настройки плагина.",
@@ -390,7 +405,8 @@ export const pluginSettings = {
       globalDisabled: "Плагины отключены",
     },
     removeConfirmTitle: "Удалить {{name}}?",
-    removeConfirmMessage: "Конфигурация будет удалена. Исходный каталог останется на месте.",
+    removeConfirmMessage: "Загруженные файлы и настройки на этом хосте будут удалены.",
+    removeConfirmLocalMessage: "Настройки будут удалены. Папка останется на диске.",
     states: {
       offlineTitle: "Хост плагинов не в сети",
       offlineDescription: "Подключите хост снова, чтобы управлять плагинами.",
@@ -404,6 +420,7 @@ export const pluginSettings = {
   },
   "zh-CN": {
     ...shared,
+    gallery: pluginGallery["zh-CN"],
     screens: {
       open: "打开",
       offline: "连接到此主机以打开插件设置。",
@@ -431,21 +448,22 @@ export const pluginSettings = {
       enabling: "正在启用…",
       disable: "禁用",
       disabling: "正在禁用…",
-      remove: "移除",
-      removing: "正在移除…",
+      remove: "卸载",
+      removing: "正在卸载…",
     },
     feedback: {
       installed: "已安装 {{name}}",
       reload: "已重新加载 {{name}}",
       enable: "已启用 {{name}}",
       disable: "已禁用 {{name}}",
-      remove: "已移除 {{name}}",
+      remove: "已卸载 {{name}}",
       kept: "已保留 {{name}}",
       globalEnabled: "插件已启用",
       globalDisabled: "插件已禁用",
     },
-    removeConfirmTitle: "移除 {{name}}？",
-    removeConfirmMessage: "这会移除配置，但不会删除源目录。",
+    removeConfirmTitle: "卸载 {{name}}？",
+    removeConfirmMessage: "将删除此主机上的下载内容和设置。",
+    removeConfirmLocalMessage: "将删除其设置。文件夹保留在磁盘上。",
     states: {
       offlineTitle: "插件主机离线",
       offlineDescription: "重新连接此主机以管理其插件。",

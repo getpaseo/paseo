@@ -17,6 +17,8 @@ type NewWorkspaceDaemonClient = Pick<
   | "connect"
   | "createPaseoWorktree"
   | "createWorkspace"
+  | "createTerminal"
+  | "killTerminal"
   | "fetchAgents"
   | "fetchWorkspaces"
   | "getPaseoWorktreeList"
@@ -34,6 +36,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "removePlugin"
   | "reloadPlugin"
   | "setWorkspaceTitle"
+  | "setWorkspaceLabel"
 >;
 
 type CreateWorkspacePayload = Awaited<ReturnType<NewWorkspaceDaemonClient["createWorkspace"]>>;
@@ -229,12 +232,23 @@ export async function expectNewWorkspaceControlsEnabled(page: Page): Promise<voi
   });
 }
 
-export async function openNewWorkspaceProjectPickerWithShortcut(page: Page): Promise<void> {
-  await page.keyboard.press("Control+P");
+export async function openNewWorkspaceProjectPickerWithShortcut(
+  page: Page,
+  shortcut = "Control+P",
+): Promise<void> {
+  await page.keyboard.press(shortcut);
 
   const searchInput = page.getByPlaceholder("Search projects");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await expect(searchInput).toBeFocused();
+}
+
+export async function chooseProjectWithKeyboard(page: Page, projectName: string): Promise<void> {
+  const searchInput = page.getByPlaceholder("Search projects");
+  await expect(searchInput).toBeFocused({ timeout: 30_000 });
+  await page.keyboard.type(projectName);
+  await page.keyboard.press("Enter");
+  await expect(searchInput).toBeHidden({ timeout: 10_000 });
 }
 
 export async function expectNewWorkspaceProjectSelected(
@@ -328,16 +342,19 @@ export async function selectNewWorkspaceProject(
   await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
 }
 
-// The isolation trigger renders the active isolation's label ("Local" / "New
-// worktree"), so asserting its text proves what the screen currently remembers.
-const ISOLATION_TRIGGER_LABEL: Record<"local" | "worktree", string> = {
-  local: "Local",
+type IsolationChoice = "local" | "worktree" | "existing";
+
+// The isolation trigger renders the active isolation's label ("Project directory" / "New
+// worktree" / "Existing worktree"), so asserting its text proves what the screen remembers.
+const ISOLATION_TRIGGER_LABEL: Record<IsolationChoice, string> = {
+  local: "Project directory",
   worktree: "New worktree",
+  existing: "Existing worktree",
 };
 
 export async function expectWorkspaceIsolationSelected(
   page: Page,
-  isolation: "local" | "worktree",
+  isolation: IsolationChoice,
 ): Promise<void> {
   const trigger = page.getByRole("button", { name: "Workspace isolation" });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
@@ -346,7 +363,7 @@ export async function expectWorkspaceIsolationSelected(
 
 export async function selectWorkspaceIsolation(
   page: Page,
-  isolation: "local" | "worktree",
+  isolation: IsolationChoice,
 ): Promise<void> {
   const trigger = page.getByTestId("workspace-create-isolation-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });
@@ -379,8 +396,16 @@ export async function selectBranchInPicker(page: Page, name: string): Promise<vo
   await branchRow.click();
 }
 
+// The ref picker lists branches and pull requests separately.
+async function showRefList(page: Page, list: "branches" | "pull-requests"): Promise<void> {
+  const tab = page.getByTestId(`new-workspace-ref-picker-tab-${list}`);
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await tab.click();
+}
+
 export async function searchAndSelectBranchInPicker(page: Page, name: string): Promise<void> {
-  const searchInput = page.getByPlaceholder("Search branches and PRs");
+  await showRefList(page, "branches");
+  const searchInput = page.getByPlaceholder("Search branches");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await searchInput.fill(name);
   await selectBranchInPicker(page, name);
@@ -404,6 +429,7 @@ export async function captureStartingRefPicker(page: Page, screenshotPath: strin
 }
 
 export async function selectGitHubPrInPicker(page: Page, number: number): Promise<void> {
+  await showRefList(page, "pull-requests");
   const prRow = page.getByTestId(`new-workspace-ref-picker-pr-${number}`);
   await expect(prRow).toBeVisible({ timeout: 30_000 });
   await prRow.click();
@@ -426,7 +452,7 @@ export async function openBranchPicker(page: Page): Promise<void> {
 }
 
 export async function selectPickerOptionByKeyboard(page: Page, label: string): Promise<void> {
-  const searchInput = page.getByPlaceholder("Search branches and PRs");
+  const searchInput = page.getByPlaceholder("Search branches");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await page.keyboard.type(label);
   await expect(page.getByTestId(`new-workspace-ref-picker-branch-${label}`)).toBeVisible({

@@ -59,6 +59,7 @@ describe("Paseo tool-call detail presentation", () => {
         cron: "0 9 * * 1",
         timezone: "Europe/Berlin",
         provider: "codex/gpt-5.4",
+        archiveOnFinish: false,
         maxRuns: 1,
       },
       {
@@ -78,6 +79,7 @@ describe("Paseo tool-call detail presentation", () => {
           { label: "Cron", value: "0 9 * * 1" },
           { label: "Timezone", value: "Europe/Berlin" },
           { label: "Provider", value: "codex/gpt-5.4" },
+          { label: "Archive on finish", value: "No" },
           { label: "Maximum runs", value: "1" },
         ],
       },

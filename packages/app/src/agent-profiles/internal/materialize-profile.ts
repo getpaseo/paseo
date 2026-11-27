@@ -12,7 +12,9 @@ export interface MaterializedAgentProfile {
   modelId: string;
   modeId: string;
   thinkingOptionId: string;
-  featureValues: Record<string, unknown>;
+  options: Record<string, unknown>;
+  /** Creation-only; empty when unset. Ignored when applying to a running agent. */
+  systemPrompt: string;
 }
 
 function trimmed(value: string | undefined): string {
@@ -25,7 +27,8 @@ export function materializeAgentProfile(profile: AgentProfile): MaterializedAgen
     modelId: trimmed(profile.model),
     modeId: trimmed(profile.modeId),
     thinkingOptionId: trimmed(profile.thinkingOptionId),
-    featureValues: profile.featureValues ?? {},
+    options: profile.options ?? {},
+    systemPrompt: trimmed(profile.systemPrompt),
   };
 }
 
@@ -44,16 +47,14 @@ export function reconcileMaterializedProfileMode(
 
 /**
  * The payload for a running agent. Omitted fields are left alone by the daemon,
- * so a profile that names no mode does not reset the agent's mode. Provider is
- * absent because a running agent cannot change the process it is.
+ * so a profile that names no mode does not reset the agent's mode. Provider and
+ * systemPrompt are absent because a running agent cannot change either.
  */
 export function toAgentConfigApply(profile: MaterializedAgentProfile): AgentConfigApply {
   return {
     ...(profile.modelId ? { modelId: profile.modelId } : {}),
     ...(profile.modeId ? { modeId: profile.modeId } : {}),
     ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),
-    ...(Object.keys(profile.featureValues).length > 0
-      ? { featureValues: profile.featureValues }
-      : {}),
+    ...(Object.keys(profile.options).length > 0 ? { options: profile.options } : {}),
   };
 }

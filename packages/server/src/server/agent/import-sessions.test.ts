@@ -661,7 +661,7 @@ class ProviderImportHarness {
       notifyAgentState: () => {},
       getAgent: () => this.activeAgent,
       getRegisteredProviderIds: () => ["codex"],
-      createAgent: async () => {
+      createAgentFromRecord: async () => {
         throw new Error("Stored provider imports must resume their persisted session");
       },
       resumeAgentFromPersistence: async (

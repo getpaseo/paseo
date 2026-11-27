@@ -1,56 +1,85 @@
 ---
 name: paseo-plugin
-description: Build and manage trusted local Paseo plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, or troubleshoot a Paseo plugin; add lifecycle hooks; transform agent configuration, environment, MCP servers, or workspace creation; automate permissions or turn follow-ups; add a screen, sidebar header or footer item, workspace panel, or file panel; add Command Center items or slash commands; add composer pills or attachment sources; transform, render, or append agent timeline items; contribute a theme; use Paseo from plugin code; or add plugin RPCs.
+description: Build and manage trusted Paseo plugins. Use when the user asks to create, edit, install, reload, enable, disable, remove, publish, or troubleshoot a Paseo plugin, or to add a plugin contribution such as a screen, sidebar item, sidebar view, workspace row badge, workspace, agent, or file panel, Command Center item, slash command, header button, composer pill, composer control, attachment source, New workspace field, settings screen, theme, timeline item, lifecycle hook, system prompt instructions, agent tools, MCP servers, agent provider, usage source, worktree manager, plugin RPC or subscription, or Paseo SDK calls from plugin code.
 ---
 
 # Paseo plugins
 
-Build or manage the requested plugin directly. Use the current public docs to catch contract changes, but keep working from this skill if the network is unavailable.
+Build or manage the plugin that the user asked for. Do the work yourself. Do not send the user to the docs in place of the work.
 
-Use the user's request and current conversation as input, including any arguments supplied with the skill invocation.
+Use the user's request and the current conversation as input, including any arguments supplied with the skill invocation.
 
-## Check current documentation
+This skill gives the workflow, a map of every contribution, and the rules that break plugins most often. The public docs hold the complete contract of each contribution.
 
-Fetch [https://paseo.sh/llms.txt](https://paseo.sh/llms.txt) first. Select and fetch the current plugin Markdown pages from that index before changing a plugin:
+## Read the current contract
 
-- [Plugin quickstart](https://paseo.sh/docs/plugins.md) ([browser page](https://paseo.sh/docs/plugins))
-- [Publishing](https://paseo.sh/docs/plugins/publishing.md): npm package contents, dependencies, Git preparation, and private registries.
-- [Plugin reference](https://paseo.sh/docs/plugins/reference.md) ([browser page](https://paseo.sh/docs/plugins/reference))
+Before you write a contribution, read its section in the docs:
 
-Use the deployed docs when they disagree with this skill. Do not send the user away to read them instead of completing the work.
+- In a Paseo checkout, read the files in `public-docs/plugins/`. They describe the API of that checkout, including unreleased changes.
+- Elsewhere, fetch [https://paseo.sh/llms.txt](https://paseo.sh/llms.txt), then fetch the plugin pages that it lists.
+- If the network is not available, continue from this skill.
 
-In the Paseo repository, use `public-docs/plugins/reference.md` for the checkout's API, including
-unreleased changes. Use `docs/plugins.md` for maintainer guidance. Complete contracts belong in the
-public docs; this skill indexes the references and examples.
+| Page                                                            | Read it for                                                                                                      |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [Quickstart](https://paseo.sh/docs/plugins.md)                  | A first plugin, installation, and reload                                                                         |
+| [Reference](https://paseo.sh/docs/plugins/reference.md)         | Client contributions, host UI, the Paseo SDK, RPCs, usage sources, worktree managers, the CLI, and load failures |
+| [Hooks](https://paseo.sh/docs/plugins/hooks.md)                 | Lifecycle hooks, payloads, ordering, agent tools, and MCP servers                                                |
+| [Provider plugins](https://paseo.sh/docs/plugins/providers.md)  | Coding agents added as providers, direct or through ACP                                                          |
+| [Sidebar views](https://paseo.sh/docs/plugins/sidebar-views.md) | Sidebar views and the ref queries that feed them                                                                 |
+| [Publishing](https://paseo.sh/docs/plugins/publishing.md)       | The listing page, npm, Git, and the plugin registry                                                              |
+| [Migration](https://paseo.sh/docs/plugins/migration.md)         | Plugins written before 0.8 runtime entries, and renamed APIs                                                     |
 
-## What a plugin can contribute
+If the docs and this skill disagree, follow the docs.
 
-Pick the contribution that matches the request. Each row names the registration, when it fits, and where the full contract lives. Most plugins combine several: a slash command that calls an RPC, which appends a timeline row, which a renderer draws.
+## Choose the contributions
 
-| Contribution              | Registration                                                | Use it when                                                                                                                                                      | Reference                                                                                                  |
-| ------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Screen and sidebar item   | `addScreen` + `addSidebarHeaderItem`/`addSidebarFooterItem` | A full screen of plugin UI, or sidebar header or footer rows that open a screen or popover                                                                       | reference.md → Screens and sidebar items                                                                   |
-| Workspace panel           | `addWorkspacePanel`                                         | UI that lives as a tab beside agents, terminals, files, and diffs; `locations: ["explorer"]` for the Explorer                                                    | reference.md → Workspace panels                                                                            |
-| File panel                | `addFilePanel`                                              | View or edit a matching file inside the file tab through its file handle                                                                                         | reference.md → File panels; `plugin-examples/pdf-panel`, `plugin-examples/markdown-panel`                  |
-| Command Center item       | `addCommandCenterItem`                                      | A global, workspace, or agent action reachable from ⌘K                                                                                                           | reference.md → Command Center items                                                                        |
-| Client slash command      | `addSlashCommand`                                           | A `/command args` in the composer that runs plugin code instead of prompting the agent                                                                           | reference.md → Slash commands                                                                              |
-| Composer pill             | `addComposerPill`                                           | A per-agent button in the composer track bar next to Tasks and Subagents                                                                                         | reference.md → Composer pills                                                                              |
-| Timeline transformer      | `addTimelineTransformer` + `addTimelineRenderer`            | Replace, explode, or hide a built-in timeline item, including while it streams                                                                                   | reference.md → Timeline items; `plugin-examples/timeline-items`, `plugin-examples/inline-thinking`         |
-| Timeline row              | `paseo.agents.ref(id).timeline.append(...)`                 | Push a plugin-owned row into an agent timeline from a server handler and update it later                                                                         | reference.md → Append a timeline row from the daemon                                                       |
-| Attachment source         | `client.addAttachmentSource` + `server.handle`              | Let the user attach a searchable external resource, such as an issue, to a prompt                                                                                | reference.md → Add a composer attachment source; `plugin-examples/linear`                                  |
-| Theme                     | `addTheme`                                                  | A light or dark palette under Settings → Appearance                                                                                                              | reference.md → Contribute a theme; `plugin-examples/catppuccin`                                            |
-| Plugin RPC                | `defineRpc` + `server.handle` + `useRpc`                    | Daemon-side work that is not a normal Paseo operation: vendor APIs, credentials, local files                                                                     | reference.md → Add plugin-specific backend behavior                                                        |
-| Plugin subscription       | `defineSubscription` + `server.handle` + `useSubscription`  | A daemon handler that pushes events while a surface listens: watchers, tails, live media; a top-level `Uint8Array` rides as binary                               | reference.md → Stream events from the daemon; `plugin-examples/diff-watch`, `plugin-examples/media-stream` |
-| Lifecycle events          | `server.on`                                                 | Observe agent/workspace lifecycle, inspect ended turns, and answer permission requests                                                                           | [Lifecycle hooks](https://paseo.sh/docs/plugins/reference.md#lifecycle-hooks)                              |
-| Creation and launch hooks | `server.before`                                             | `agent.create` edits saved config; `agent.session_open` contributes launch-only `env`, `tools`, `mcpServers` on every open; `workspace.create` chooses isolation | [Before hooks](https://paseo.sh/docs/plugins/reference.md#before-hooks)                                    |
-| Paseo SDK                 | `usePaseo()` / handler `{ paseo }`                          | Normal Paseo operations: workspaces, agents, providers, config                                                                                                   | reference.md → Use the Paseo SDK                                                                           |
+A plugin usually combines several contributions. For example, a slash command calls an RPC, the RPC handler appends a timeline row, and a renderer draws the row.
 
-| Lifecycle task                                                         | Example                                                                                                |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Log all eleven hooks                                                   | [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       |
-| Follow-ups, permissions, environment, provider switching, worktrees    | [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     |
-| Inject launch-only MCP servers and save Codex sandbox/approval options | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) |
-| Attach a tool to selected agents                                       | [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 |
+Build only on the registrations below. If no registration fits what the user wants, tell the user. Do not import Paseo internals or `@getpaseo/plugin/client/host`.
+
+### Client contributions
+
+Register these on `client` in `index.client.tsx`. Each returns a remover. `addHeaderButton` and `addComposerPill` return `{ update, remove }` instead.
+
+| Registration                                    | Use it for                                                                                                                   | Docs section                                 | Example                             |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------- |
+| `addScreen`                                     | A full page of plugin UI. Open it with `openScreen({ screenId, params })`.                                                   | Reference > Screens and sidebar items        | `hosts`                             |
+| `addSidebarHeaderItem`, `addSidebarFooterItem`  | Sidebar rows, drawn with `SidebarRow`, that open a screen or a popover                                                       | Reference > Sidebar items                    | `hosts`                             |
+| `addSidebarView`                                | A replacement for the sidebar list. The user selects it in Settings > Sidebar.                                               | Sidebar views                                | `sidebar-views`                     |
+| `addWorkspaceRowBadgeItem`                      | Badges under each workspace title, drawn with `WorkspaceRowBadge`                                                            | Reference > Workspace row badge items        | `workspace-row-badges`              |
+| `addWorkspacePanel`, `addAgentPanel`            | A tab beside agents, terminals, and files. Add `locations: ["explorer"]` to show it in the Explorer.                         | Reference > Workspace panels                 | `local-plugin`                      |
+| `addFilePanel`                                  | A view or editor for files that match `files: { extensions, filenames }`                                                     | Reference > File panels                      | `pdf-panel`, `markdown-panel`       |
+| `addCommandCenterItem`                          | A global, workspace, or agent action in the Command Center                                                                   | Reference > Command Center items             | `local-plugin`                      |
+| `addSlashCommand`                               | A `/name args` command that runs plugin code and sends nothing to the agent                                                  | Reference > Slash commands                   | `translations`                      |
+| `addHeaderButton`                               | An action, menu, or popover in the workspace header                                                                          | Reference > Header buttons                   | `buttons`                           |
+| `addComposerPill`                               | A button above the composer of one agent, beside Tasks and Subagents                                                         | Reference > Composer pills                   | `local-plugin`                      |
+| `addComposerItem`                               | Composer controls that change the prompt, model, mode, provider options, or agent metadata through `useComposer()`           | Reference > Composer items                   | `composer-controls`                 |
+| `addNewWorkspaceItem`                           | A field on the New workspace screen that sets the branch, base, isolation, or workspace metadata through `useNewWorkspace()` | Reference > New workspace items              | `new-workspace-issues`              |
+| `addAttachmentSource`                           | Outside resources, such as issues, that the user searches and attaches to a prompt                                           | Reference > Add a composer attachment source | `linear`                            |
+| `addSettingsScreen`                             | A settings tab for the plugin under Settings > Plugins                                                                       | Reference > Settings screens                 | `settings`                          |
+| `addTheme`                                      | A light or dark palette under Settings > Appearance                                                                          | Reference > Contribute a theme               | `catppuccin`                        |
+| `addTimelineTransformer`, `addTimelineRenderer` | Replacing, splitting, or hiding a built-in timeline item, also while it streams                                              | Reference > Timeline items                   | `inline-thinking`, `timeline-items` |
+
+Examples live in [`plugin-examples/`](https://github.com/getpaseo/paseo/tree/main/plugin-examples).
+
+The client context also has `paseo`, `rpc`, `subscribe`, `openScreen`, `openPanel`, `openSettings`, `composers`, `playAudio`, and `i18n`. Import hooks such as `usePaseo`, `useRpc`, `useSubscription`, `useSettings`, `useWorkspace`, `useAgent`, and `useTabState` from `@getpaseo/plugin/client`.
+
+### Server contributions
+
+Register these on `server` in `index.server.ts`.
+
+| Registration                | Use it for                                                                                    | Docs section                                                                       | Example                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------- |
+| `handle(contract, handler)` | Plugin RPCs from `defineRpc` and event streams from `defineSubscription`                      | Reference > Add plugin-specific backend behavior and Stream events from the daemon | `diff-watch`                                  |
+| `addHook(name, handler)`    | Changing or observing workspace, worktree, and agent operations                               | Hooks                                                                              | `lifecycle-actions`, `lifecycle-logger`       |
+| `registerSettings`          | A persisted settings document from `defineSettings` that server code reads                    | Reference > Settings screens                                                       | `settings`                                    |
+| `registerProvider`          | A coding agent as a Paseo provider. Use `runAcpProvider` from `/server/acp` for an ACP agent. | Provider plugins                                                                   | `provider-direct`, `provider-acp-transformer` |
+| `registerUsageSource`       | Quota reports for the logins of a provider, with helpers from `/server/usage`                 | Reference > Usage sources                                                          |                                               |
+| `registerWorktreeManager`   | An outside tool, such as Worktrunk, that creates, removes, and restores Git worktrees         | Reference > Worktree managers                                                      | `worktrunk`                                   |
+
+Server handlers and hooks receive `{ paseo }`. Call `paseo.agents.ref(id).timeline.append(item)` to put a plugin-owned row in an agent timeline. `@getpaseo/plugin/server` also exports `defineAgentTool`, `execCommand`, `spawnProcess`, and `terminateProcess`.
+
+Do not write `server.on` or `server.before`. They are deprecated aliases. When you edit a plugin that uses them, move each one to `addHook`. The Renamed hooks table in Hooks gives the new name for each old name.
 
 ## Create the project
 
@@ -73,47 +102,52 @@ my-plugin/
   index.client.tsx
   index.server.ts
   client/greeting.tsx
+  client/web.ts
   server/greeting.ts
   shared/greeting.ts
 ```
 
-The manifest supplies the default install ID and supported Paseo versions:
+The manifest supplies the default installation ID and the supported Paseo versions:
 
 ```json
 { "id": "my-plugin", "requirements": { "paseo": ">=0.8.0" } }
 ```
 
-Keep `requirements.paseo` correct whenever creating or editing a plugin. `init` uses `>=` followed
-by the CLI version. Raise the minimum when adopting newer APIs; add an upper bound when a later
-Paseo release is incompatible. Use npm semver ranges and explicitly include beta versions when
-targeting betas. Missing requirements mean `<0.8.0`; complete the 0.8 entry migration before adding
-`>=0.8.0`. Verify compatibility with both the daemon and the app running client contributions.
-See [requirements](https://paseo.sh/docs/plugins/reference#requirements).
+Keep `requirements.paseo` correct each time you create or edit a plugin:
 
-Each runtime has its own optional entry. A plugin must have at least one. Both entries accept
-`.ts` or `.tsx`; use `.tsx` when an entry imports components.
+- `init` writes `>=` followed by the CLI version.
+- Raise the minimum when you use an API from a newer release. The reference names the release for each newer API.
+- Add an upper bound when a later release breaks the plugin.
+- A missing `requirements.paseo` means `<0.8.0`. Finish the [migration](https://paseo.sh/docs/plugins/migration.md) before you add `>=0.8.0`.
 
-| Path                             | Runtime           |
-| -------------------------------- | ----------------- |
-| `index.client.tsx` and `client/` | App               |
-| `index.server.ts` and `server/`  | Daemon subprocess |
-| `shared/`                        | Both              |
+The daemon and each app check the range separately. Make sure that the daemon and the app both satisfy it.
 
-Do not put any other code modules in the plugin root.
+Each runtime has its own entry. A plugin needs at least one entry.
 
-A client import of `server/`, a server import of `client/`, and every `node:` import reachable from
-client code is a compile error. A relative import to another code file in the plugin root is also a
-compile error; move it into `client/`, `server/`, or `shared/`. Shared modules contain Zod contracts
-and plain values; they do not import Node or React Native runtime APIs.
+| Path                             | Runtime                             |
+| -------------------------------- | ----------------------------------- |
+| `index.client.tsx` and `client/` | The Paseo app, once for each client |
+| `index.server.ts` and `server/`  | A daemon subprocess                 |
+| `shared/`                        | Both runtimes                       |
 
-Default-export one contribution function from each entry and return cleanup:
+Paseo compiles each entry into its own bundle and rejects imports across the boundary:
+
+- Client code cannot import `server/` or a `node:` module.
+- Server code cannot import `client/`, React, or React Native.
+- `shared/` holds Zod contracts and plain values only.
+- Put every other code module in `client/`, `server/`, or `shared/`. A code module in the plugin root is a compile error.
+- Import shared helpers such as `defineRpc` from `@getpaseo/plugin`, client contexts and hooks from `/client`, Paseo UI from `/client/ui`, and server contexts from `/server`.
+
+These rules apply to type imports and to transitive imports too.
+
+Each entry default-exports one function and returns cleanup:
 
 ```tsx
 // index.client.tsx
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 
 export default function contribute(client: PluginClientContext) {
-  // Register components and client callbacks here.
+  // Register client contributions here.
   return () => {};
 }
 ```
@@ -123,23 +157,43 @@ export default function contribute(client: PluginClientContext) {
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 export default function contribute(server: PluginServerContext) {
-  // Register daemon-side RPC handlers here.
+  // Register handlers, hooks, and providers here.
   return () => {};
 }
 ```
 
-Cleanup can be async. Use it for timers, watchers, sockets, subscriptions, and other resources
-created by plugin code. Every client `add*` method returns an idempotent remover. Paseo calls the
-entry cleanup first, removes registrations that remain, rejects pending RPCs, closes the plugin
-session, and stops the subprocess when the plugin stops.
+Cleanup can be async. Use it to release the timers, watchers, sockets, and subscriptions that your code created. When a plugin stops, Paseo runs the entry cleanup, removes the remaining registrations, and stops the subprocess.
 
-## Add a workspace panel
+## Write client UI that works on every platform
 
-Workspace panels live beside agents, terminals, files, and diffs. Plugins run on desktop and
-mobile, and Paseo has multiple themes. Every `Text` must take its color from `theme.colors`.
-Use `layout.compact` for padding and stacking. Unstyled text is black and fails in dark themes.
+Client code runs on desktop, in browsers, and on iOS and Android. A component that works in the browser and crashes on a phone is the most common plugin bug.
+
+- Use React Native primitives: `View`, `Text`, `Pressable`, `ScrollView`, and `TextInput`.
+- Do not use HTML elements, `className`, CSS strings, `onClick`, or DOM globals.
+- Do not add `"DOM"` to `tsconfig.json` or write `/// <reference lib="dom" />`. Put DOM code only in `client/web.ts`, gate each export on `Platform.OS === "web"`, and give native a fallback or a no-op.
+- Take every color from `theme.colors`. Text without a color is black and cannot be read in dark themes. Use `foreground` for text, `foregroundMuted` for labels, and `surface0` for the root view.
+- Use `layout.compact` for padding and stacking. It is true on phones and narrow windows.
+- Set `icon` fields to a [Lucide](https://lucide.dev/icons/) name, an inline `{ svg }`, or a component. Do not import `lucide-react-native` or `react-native-svg`.
+
+Before you report a plugin done, run this audit on `client/`. A hit outside `client/web.ts` is a bug.
+
+```bash
+rg -n "document\.|window\.|localStorage|navigator\.|<[a-z]+[ >]|className=|onClick=" client/
+```
+
+Read and change data through the API that owns it:
+
+- Read cached workspace and agent state with `useWorkspace(id, selector)` and `useAgent(id, selector)`. Select only the fields you render. Do not add an RPC to find the active workspace or agent.
+- Use `usePaseo()` for normal Paseo operations on projects, workspaces, agents, terminals, providers, and daemon configuration. It is the plugin's one client for the selected host. Do not create another client, and release the subscriptions that you open.
+- Use a plugin RPC only for work that Paseo does not do: vendor APIs, credentials, local files, and shell commands.
+- Use TanStack Query for request state, caching, and mutations.
+
+### Add a workspace panel
+
+A workspace panel opens as a tab beside agents, terminals, and files. This plugin also adds a Command Center item that opens it:
 
 ```tsx
+// index.client.tsx
 import {
   type PluginClientContext,
   type PluginWorkspacePanelProps,
@@ -155,7 +209,6 @@ function Overview({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
       screen: {
         flex: 1,
         padding: layout.compact ? 16 : 24,
-        gap: layout.compact ? 8 : 12,
         backgroundColor: theme.colors.surface0,
       },
       title: { color: theme.colors.foreground, fontSize: layout.compact ? 20 : 24 },
@@ -174,7 +227,6 @@ export default function contribute(client: PluginClientContext) {
     id: "overview",
     title: "Workspace overview",
     icon: "PanelsTopLeft",
-    context: "workspace",
     Component: Overview,
   });
   client.addCommandCenterItem({
@@ -190,52 +242,35 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Use `useWorkspace(id, selector)` and `useAgent(id, selector)`. Selectors are required
-and their results use shallow equality. Never select the whole snapshot or add an RPC to discover
-the active workspace or agent. Command callbacks receive the selected host's `paseo`, typed
-`rpc(contract, input)`, `openScreen({ screenId, params? })`, and contextual `openPanel(id)`
-capabilities.
+Register a panel that belongs to one agent with `addAgentPanel`, and read `params.agentId` in it. Command Center callbacks receive `paseo`, `rpc`, `openScreen`, and, in workspace and agent context, `openPanel`.
 
-## Add a screen and a sidebar item
+### Add a screen and a sidebar item
 
-Plugin screens use React Native primitives and work across desktop, browser, iOS, and Android. A sidebar item, in the header or the footer, is a component: render one or more `SidebarRow`s from `@getpaseo/plugin/client/ui`, with `SidebarSeparator` between groups, and call `openScreen` or `openPopover` from them. A screen's `title` is a string or a function of its `params`; its component receives the `params` it was opened with. Color text from `theme.colors` and pad from `layout.compact`.
+A sidebar item is a component. It renders one or more `SidebarRow`s and decides what a press does:
 
 ```tsx
+// index.client.tsx
 import type {
   PluginClientContext,
   PluginScreenProps,
   PluginSidebarItemProps,
 } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 function Counter({ theme, layout }: PluginScreenProps) {
   const [count, setCount] = useState(0);
-  const styles = useMemo(
-    () => ({
-      screen: {
-        flex: 1,
-        padding: layout.compact ? 16 : 24,
-        gap: 16,
-        backgroundColor: theme.colors.surface0,
-      },
-      count: { color: theme.colors.foreground, fontSize: layout.compact ? 36 : 48 },
-      button: { padding: 14, borderRadius: 10, backgroundColor: theme.colors.accent },
-      buttonText: { color: theme.colors.accentForeground, textAlign: "center" as const },
-    }),
-    [theme, layout.compact],
-  );
   return (
-    <View style={styles.screen}>
-      <Text style={styles.count}>{count}</Text>
+    <View
+      style={{ flex: 1, padding: layout.compact ? 16 : 24, backgroundColor: theme.colors.surface0 }}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Increment counter, currently ${count}`}
         onPress={() => setCount((value) => value + 1)}
-        style={styles.button}
       >
-        <Text style={styles.buttonText}>Count me in</Text>
+        <Text style={{ color: theme.colors.foreground }}>Count: {count}</Text>
       </Pressable>
     </View>
   );
@@ -258,83 +293,64 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Icons are Lucide icon names, inline SVG (`{ svg }`), or components; see [Icons](https://paseo.sh/docs/plugins/reference.md#icons). `theme` is a typed `PluginTheme` on every screen and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
+Call `openPopover(Content)` from an item to open a popover instead of a screen. Paseo owns the route, the header, the host picker, and the error boundary of a screen.
 
-Before writing imports, classify each module as shared, client, or server. Follow the
-[SDK import boundaries](https://paseo.sh/docs/plugins/reference.md#runtime-modules), including
-transitive and type dependencies. The root is shared-only; hooks and client contexts belong to
-`@getpaseo/plugin/client`, server contexts to `/server`, and host UI to `/client/ui`.
-Install dependencies locally for typechecking; Paseo supplies host runtime modules. JSX uses the
-automatic runtime. Do not import `/client/host` from plugin code.
+### Add a composer control
 
-## Works on mobile
-
-Before reporting a plugin done:
-
-- Use React Native primitives only: `View`, `Text`, `Pressable`, `ScrollView`, and `TextInput`.
-- Do not use HTML elements, `className`, CSS strings, or `onClick`.
-- Do not put `"DOM"` in `tsconfig.json` or use `/// <reference lib="dom" />`. Put DOM globals only in
-  `client/web.ts`, declare only what that module uses, gate every export on `Platform.OS === "web"`,
-  and provide the native alternative or a no-op.
-- Take colors from `theme.colors`.
-- Check the compact layout.
-
-Run this audit on `client/`:
-
-```bash
-rg -n "document\.|window\.|localStorage|navigator\.|<[a-z]+[ >]|className=|onClick=" client/
-```
-
-A hit outside `client/web.ts` is a bug.
-
-## Choose the correct API
-
-Use the existing Paseo SDK for normal Paseo operations. Use plugin RPC only for plugin-specific backend behavior.
-
-### Call Paseo from a surface
-
-`usePaseo()` borrows the selected host's current connection. Never create another client inside a surface. It is the plugin's one client in every surface: release your subscriptions in your cleanup; plugin teardown ends the rest.
+A composer item renders in the composer of a running agent, of a draft agent, and of the New workspace screen. `useComposer()` returns the composer that the item sits in:
 
 ```tsx
-import { usePaseo } from "@getpaseo/plugin/client";
+// index.client.tsx
+import { type PluginClientContext, useComposer } from "@getpaseo/plugin/client";
+import { Action, Toggle } from "@getpaseo/plugin/client/ui";
 
-function PullRequestAction() {
-  const paseo = usePaseo();
+function ReviewFlag() {
+  const composer = useComposer();
+  return (
+    <Toggle
+      title="Needs review"
+      icon="Flag"
+      value={composer.agent.metadata["review.needsReview"] === true}
+      onValueChange={({ value }) =>
+        composer.setMetadata({ "review.needsReview": value ? true : null })
+      }
+    />
+  );
+}
 
-  async function createReviewWorkspace() {
-    const workspace = await paseo.workspaces.create({
-      title: "Review PR 42",
-      source: {
-        kind: "worktree",
-        cwd: "/absolute/path/to/repository",
-        action: "checkout",
-        checkoutSource: { kind: "change_request", forge: "github", number: 42 },
-      },
-    });
-    await workspace.agents.create({
-      config: { provider: "codex/gpt-5.5" },
-      prompt: "Review PR #42.",
-    });
-  }
+function Checklist() {
+  const composer = useComposer();
+  return (
+    <Action
+      title="Insert checklist"
+      icon="ListChecks"
+      onPress={async () => {
+        composer.insertText("- [ ] Tests\n- [ ] Docs\n");
+        await composer.focus();
+      }}
+    />
+  );
+}
 
-  // Wire createReviewWorkspace to a Pressable.
-  return null;
+export default function contribute(client: PluginClientContext) {
+  client.addComposerItem({ id: "review-flag", Component: ReviewFlag });
+  client.addComposerItem({ id: "checklist", Component: Checklist });
+  return () => {};
 }
 ```
 
-The API covers workspaces, agents, providers, and daemon config. It omits connection lifecycle because Paseo owns the connection. Consult the current [SDK reference](https://paseo.sh/docs/sdk/reference.md) for method details.
+Paseo places each control inline when the composer has room, and in the overflow sheet when it does not. On a phone, controls are always in the sheet. Keep effects in an item safe to run twice, because the sheet mounts a second instance. To reach a composer from outside it, call `useComposers({ agentId })`, `useComposers({ focused: true })`, or `client.composers(selector)`.
 
-### Add daemon-side behavior
+## Add daemon-side behavior
 
-Define one Zod contract in `shared/`, register its subprocess handler in `index.server.ts`, and
-call it from client code with `useRpc()`:
+Define one Zod contract in `shared/`, handle it in `index.server.ts`, and call it from client code with `useRpc()`. `paseo plugin init` generates this RPC with the same files and export names:
 
 ```ts
 // shared/greeting.ts
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-const greeting = defineRpc({
+export const greetingRpc = defineRpc({
   name: "greeting.create",
   input: z.object({ name: z.string() }),
   output: z.object({ message: z.string() }),
@@ -344,9 +360,9 @@ const greeting = defineRpc({
 ```ts
 // server/greeting.ts
 import type { RpcInput } from "@getpaseo/plugin";
-import { greeting } from "../shared/greeting";
+import type { greetingRpc } from "../shared/greeting";
 
-export async function createGreeting({ name }: RpcInput<typeof greeting>) {
+export async function createGreeting({ name }: RpcInput<typeof greetingRpc>) {
   return { message: `Hello, ${name}!` };
 }
 ```
@@ -355,413 +371,202 @@ export async function createGreeting({ name }: RpcInput<typeof greeting>) {
 // index.server.ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createGreeting } from "./server/greeting";
-import { greeting } from "./shared/greeting";
+import { greetingRpc } from "./shared/greeting";
 
 export default function contribute(server: PluginServerContext) {
-  server.handle(greeting, createGreeting);
+  server.handle(greetingRpc, createGreeting);
   return () => {};
 }
 ```
 
 ```tsx
 // client/greeting.tsx
-import { useRpc } from "@getpaseo/plugin/client";
-import { greeting } from "../shared/greeting";
+import { type PluginScreenProps, useRpc } from "@getpaseo/plugin/client";
+import { useMutation } from "@tanstack/react-query";
+import { Pressable, Text, View } from "react-native";
+import { greetingRpc } from "../shared/greeting";
 
-function Greeting() {
-  const createGreeting = useRpc(greeting);
-  // Use createGreeting({ name: "Ada" }) in a query, mutation, or event.
-  return null;
+export function GreetingScreen({ theme, layout }: PluginScreenProps) {
+  const createGreeting = useRpc(greetingRpc);
+  const greeting = useMutation({ mutationFn: createGreeting });
+  return (
+    <View
+      style={{ flex: 1, padding: layout.compact ? 16 : 24, backgroundColor: theme.colors.surface0 }}
+    >
+      <Pressable accessibilityRole="button" onPress={() => greeting.mutate({ name: "Ada" })}>
+        <Text style={{ color: theme.colors.foreground }}>
+          {greeting.data?.message ?? "Ask the daemon for a greeting"}
+        </Text>
+      </Pressable>
+    </View>
+  );
 }
 ```
 
-Inputs and outputs are validated on both sides. A top-level `Uint8Array` input or output (declared `z.instanceof(Uint8Array)`) crosses as binary; a nested one fails validation. For a stream of events, use `defineSubscription` and `useSubscription`; see [subscriptions](https://paseo.sh/docs/plugins/reference.md#subscriptions). Backend handlers receive the same `PaseoApi` as `{ paseo }`; their IPC-backed daemon session lives exactly as long as the subprocess. Backend code can use Node APIs and installed dependencies. Keep credentials, filesystem access, shell commands, and vendor API calls in the handler rather than the client surface.
+The generated `index.client.tsx` registers `GreetingScreen` as a screen and adds a Greeting sidebar item that opens it. Keep it to try the RPC from the app.
 
-Use TanStack Query for async request state, caching, and mutations.
+- Paseo validates the input and the output on both sides. A top-level `Uint8Array`, declared as `z.instanceof(Uint8Array)`, crosses as binary. A nested one fails validation.
+- For a stream of events, use `defineSubscription`, `server.handle`, and `useSubscription`.
+- Keep credentials, file access, shell commands, and vendor calls in the server handler.
+- `console.log` and `console.error` in server code go to the plugin logs. Do not log credentials.
 
-### Contribute tools and MCP servers at session open
+## Hook into agent and workspace operations
 
-Use `before("agent.session_open")` for per-agent tools and plugin-owned MCP servers. Add this
-callback inside `contribute(server)`:
-
-```ts
-server.before("agent.session_open", ({ request }) => {
-  if (request.provider !== "codex") return;
-  return {
-    ...request,
-    mcpServers: {
-      ...request.mcpServers,
-      company: { type: "http", url: "https://tools.example.com/mcp" },
-    },
-  };
-});
-```
-
-`tools` and `mcpServers` start empty for each plugin and accumulate across its own callbacks.
-They are launch-only. Use `agent.create` to edit configuration that should be saved with the agent.
-See [Attach tools to agents](https://paseo.sh/docs/plugins/reference.md#attach-tools-to-agents)
-for `defineAgentTool` and targeting, and
-[Inject MCP servers](https://paseo.sh/docs/plugins/reference.md#inject-mcp-servers) for server configuration and collisions.
-
-Starting, stopping, or reloading a plugin with a session-open hook marks open agent sessions stale.
-Each reopens before its next idle prompt without interrupting a running turn.
-`await paseo.agents.ref(id).reload()` applies changes immediately and interrupts a running turn;
-`refresh()` only reads the current snapshot.
-
-### Debug daemon-side behavior
-
-Backend contributions can use normal Node logging. `console.log()` writes to the plugin's stdout;
-`console.error()` writes to stderr. Paseo captures both streams without interfering with plugin IPC.
-
-Inspect recent output after install, reload, an RPC failure, or a subprocess crash:
-
-```bash
-paseo plugin logs my-plugin
-paseo plugin logs my-plugin --json
-paseo plugin logs my-plugin --host <url>
-```
-
-The same tail is available from **Settings → Plugins → Logs**. It includes initialization, handler,
-cleanup, and final crash output. Reload, disable, and process failure retain the tail. Removing the
-plugin clears it; restarting the daemon clears the in-memory tail. Structured copies also go to the
-daemon log. Never log credentials or other secrets.
-
-## Add a composer attachment source
-
-Define a search RPC and declarative source in `shared/`, handle it on the server, and register it on
-the client:
-
-```ts
-// shared/issues.ts
-import { defineAttachmentSource, defineRpc } from "@getpaseo/plugin";
-import { z } from "zod";
-
-const searchIssues = defineRpc({
-  name: "issues.search",
-  input: z.object({ query: z.string() }),
-  output: z.object({
-    items: z.array(
-      z.object({
-        id: z.string(),
-        identifier: z.string(),
-        title: z.string(),
-        subtitle: z.string().optional(),
-        url: z.string().url(),
-        text: z.string(),
-        resourceType: z.string(),
-      }),
-    ),
-  }),
-});
-
-const issues = defineAttachmentSource({
-  id: "issues",
-  title: "Acme issue",
-  icon: "CircleDot",
-  pickerTitle: "Attach Acme issue",
-  searchPlaceholder: "Search by identifier or title",
-  search: searchIssues,
-});
-```
+Register an async handler with `server.addHook(name, handler)`. This plugin adds instructions and an MCP server each time a Codex agent opens:
 
 ```ts
 // index.server.ts
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { searchIssues } from "./shared/issues";
 
 export default function contribute(server: PluginServerContext) {
-  server.handle(searchIssues, ({ query }) => searchAcmeIssues(query));
-  return () => {};
-}
-```
-
-```tsx
-// index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { issues } from "./shared/issues";
-
-export default function contribute(client: PluginClientContext) {
-  client.addAttachmentSource(issues);
-  return () => {};
-}
-```
-
-Return complete text snapshots. Paseo owns the composer menu, picker, pills, drafts, and submission. Credentials and vendor calls stay in the daemon handler.
-
-## Add a client slash command
-
-A slash command runs plugin code in the app when the user submits `/name args`. Nothing is sent to the agent. `args` is the raw text after the command name, trimmed; parse it in the plugin.
-
-```ts
-client.addSlashCommand({
-  name: "review",
-  description: "Run the review bot",
-  argumentHint: "[scope]",
-  context: "agent", // or "workspace" so drafts get it too
-  async onSubmit({ args, agent, rpc, openPanel }) {
-    await rpc(startReview, { agentId: agent.id, scope: args });
-    openPanel("review");
-  },
-});
-```
-
-The callback receives the same context as the matching Command Center item plus `args`. Paseo owns the autocomplete row, input clearing, and the error toast; put pending UI in a pill or panel. Precedence is built-in client commands, then plugin commands, then provider commands; a lower-precedence collision is dropped. Commands do not run while the composer has attachments. Server-side slash commands do not exist.
-
-## Add a composer pill
-
-A pill is a per-agent button in the composer track bar next to Tasks and Subagents. Add and remove pills from the client entry lifecycle. `addComposerPill` exists on `PluginClientContext`.
-
-```tsx
-import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-
-export function contributeClient(client: PluginClientContext) {
-  const pills = new Map<string, PluginButtonRegistration>();
-  const lifetime = new AbortController();
-  const register = (agent: { id: string; workspaceId?: string | null }) => {
-    if (lifetime.signal.aborted || !agent.workspaceId) return;
-    const agentId = agent.id;
-    const workspaceId = agent.workspaceId;
-    pills.get(agentId)?.remove();
-    pills.set(
-      agentId,
-      client.addComposerPill({
-        id: "review",
-        workspaceId,
-        agentId,
-        button: {
-          title: "Open review",
-          icon: "Scan",
-          label: "Review",
-          behavior: {
-            kind: "action",
-            onPress() {
-              client.openPanel("review", { workspaceId, agentId });
-            },
-          },
-        },
-      }),
-    );
-  };
-  const removeAll = () => {
-    for (const pill of pills.values()) pill.remove();
-    pills.clear();
-  };
-  // An owned list subscription delivers existing agents, then updates, and a fresh snapshot after a reconnect.
-  void client.paseo.agents
-    .list({ subscribe: {}, signal: lifetime.signal })
-    .then(({ subscription }) => {
-      subscription.subscribe({
-        snapshot: ({ entries }) => {
-          removeAll();
-          for (const { agent } of entries) register(agent);
-        },
-        update: (message) => {
-          if (message.type !== "agent_update") return;
-          const update = message.payload;
-          if (update.kind === "upsert") return register(update.agent);
-          pills.get(update.agentId)?.remove();
-          pills.delete(update.agentId);
-        },
-      });
-      return undefined;
-    })
-    .catch((error) => {
-      if (!lifetime.signal.aborted) console.error("Agent observation failed", error);
-    });
-  return () => {
-    lifetime.abort();
-    removeAll();
-  };
-}
-```
-
-Call `contributeClient(client)` from `index.client.tsx`, or move its body into that entry. The `button` descriptor sets the icon, label, and behavior; Paseo owns the pressable, chrome, pending state, error reporting, and placement. `addComposerPill` returns a registration with `update()` and `remove()`. `remove()` is idempotent, and Paseo removes every pill when the plugin, client entrypoint, or host connection is torn down.
-
-## Transform and render timeline items
-
-Timeline transformers and renderers are client contributions. A transformer selects one built-in `AgentTimelineItem.type`, inspects the item, and returns zero or more versioned plugin items. `undefined` keeps the source item, `items` replaces it, `[]` removes it. A renderer draws one `kind` and `version` after validating `data` with its Zod schema.
-
-```ts
-client.addTimelineTransformer({
-  id: "inline-thinking",
-  query: { itemType: "reasoning" },
-  transform: ({ item, phase }) => ({
-    items: [
-      { type: "plugin", kind: "inline-thinking", version: 1, data: { text: item.text, phase } },
-    ],
-  }),
-});
-client.addTimelineRenderer({
-  kind: "inline-thinking",
-  version: 1,
-  schema: z.object({ text: z.string(), phase: z.enum(["streaming", "complete"]) }),
-  Component: InlineThinking,
-});
-```
-
-Transformers run while the render model is built, on fetched history and on every live update, so `phase` is `"streaming"` for a loading thought or running tool call. Identity comes from the source item, so a streaming item keeps its mounted component; set an output `id` when one source explodes into several items. Transformers must be synchronous and deterministic, `data` must be JSON, and a transformer that throws is logged and skipped. Render `<StreamedText text={text} phase={phase} />` from `@getpaseo/plugin/client/ui` for paced assistant text; use its `style` prop to customize text appearance. `plugin-examples/inline-thinking` replaces the thinking row with inline text; `plugin-examples/timeline-items` replaces a todo tool call with a task card.
-
-## Append a timeline row from the daemon
-
-A server handler can push a plugin-owned row into any agent timeline. The same renderer registration draws it.
-
-```ts
-server.handle(publishReview, async ({ agentId, verdict }, { paseo }) => {
-  await paseo.agents.ref(agentId).timeline.append({
-    type: "plugin",
-    id: "review",
-    kind: "review-result",
-    version: 1,
-    data: { verdict },
+  server.addHook("agent.open.before", async ({ request }) => {
+    if (request.provider !== "codex" || request.background) return;
+    return {
+      ...request,
+      appendSystemPrompt: [
+        ...(request.appendSystemPrompt ?? []),
+        "Follow the team engineering guide.",
+      ],
+      mcpServers: {
+        ...request.mcpServers,
+        company: { type: "http", url: "https://tools.example.com/mcp" },
+      },
+    };
   });
-  return {};
-});
+  return () => {};
+}
 ```
 
-The daemon stamps `pluginId` from the plugin session, so only plugin code can call this. Re-appending with the same `id` replaces the earlier row live and on refetch, which is how a plugin updates a row. `data` is capped at 64 KiB serialized and rejected above that. Rows live in the daemon's in-memory timeline and survive scroll, refetch, and reconnect, but not a daemon restart. A row whose plugin is missing renders an unavailable placeholder. Hosts advertise support through `server_info.features.pluginTimelineItems`.
+| Hook                                                             | Waits | Use it to                                                                                       |
+| ---------------------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------- |
+| `workspace.create.before`                                        | Yes   | Change the create request, such as the isolation                                                |
+| `worktree.create.before`                                         | Yes   | Change the branch, slug, or path of a new worktree                                              |
+| `worktree.create.after`                                          | Yes   | Prepare files in the worktree, or throw to stop creation                                        |
+| `agent.create.before`                                            | Yes   | Change the saved configuration, `env`, or `metadata` of a new agent                             |
+| `agent.open.before`                                              | Yes   | Add launch-only `env`, `appendSystemPrompt`, `tools`, and `mcpServers` each time an agent opens |
+| `workspace.create.after`, `workspace.archive.after`              | No    | Observe workspaces                                                                              |
+| `agent.create.after`, `agent.close.after`, `agent.archive.after` | No    | Observe agents                                                                                  |
+| `agent.turn.before`, `agent.turn.after`                          | No    | Observe turns. Read the turn and send a follow-up through `paseo`.                              |
+| `agent.permission.before`, `agent.permission.after`              | No    | Answer a pending permission through `paseo`, or observe its result                              |
 
-## Contribute a theme
-
-`addTheme` takes a small light or dark palette; Paseo expands it into the full token set. Every color is a hex string.
-
-```ts
-client.addTheme({
-  id: "mocha",
-  name: "Catppuccin Mocha",
-  appearance: "dark",
-  colors: {
-    background: "#1e1e2e",
-    foreground: "#cdd6f4",
-    raised: "#313244",
-    control: "#45475a",
-    border: "#45475a",
-    accent: "#cba6f7",
-    mutedForeground: "#a6adc8",
-    ring: "#6c7086",
-  },
-});
-```
-
-It appears under Settings → Appearance. A client that predates `addTheme` cannot evaluate the entry and reports `client.addTheme is not a function`; update the client. See `plugin-examples/catppuccin`.
+- Every handler must be async.
+- A waiting hook that throws, returns invalid data, or runs longer than 30 seconds fails the operation.
+- A notification hook that fails only logs an error, and the operation continues.
+- Return a complete replacement request, or `undefined` to keep the request.
+- In `agent.open.before`, do not await a write to the agent that is opening, such as `setMetadata`. The write waits for the open, so the hook times out. Start the write without `await`.
+- Put configuration that must be saved with the agent in `agent.create.before`. Changes from `agent.open.before` apply to one launch only.
+- `tools` and `mcpServers` start empty for each plugin. Define tools with `defineAgentTool`.
+- When a plugin with an `agent.open.before` hook starts, stops, or reloads, each open agent reopens before its next prompt. A running turn is not interrupted.
 
 ## Hosts and trust
 
-Plugins are installed per daemon and are trusted, unsandboxed code. Backend code can access files, processes, credentials, and network services on the daemon machine. Client contributions run inside the Paseo app. Do not install a plugin the user has not authorized or source code you have not inspected.
+Plugins are installed for each daemon. They are trusted code with no sandbox. Server code can use the files, processes, credentials, and network of the daemon machine. Client code runs inside the Paseo app. Do not install a plugin that the user has not authorized, or source code that you have not read.
 
-### Check the global switch before installing
+When several connected hosts have the same plugin, Paseo shows its screens and sidebar items once and adds a host picker. The selected host owns the bundle, SDK calls, RPCs, and query cache. Paseo does not fall back to another host when the selected host is offline.
 
-Identify the target daemon and inspect its root `pluginsEnabled` value in `config.json`. For the local daemon, `paseo daemon status --json` reports its `home`; the file is `<home>/config.json`. Treat a missing field as `false`. Do not infer the global value from a plugin's `disabled` status, because an individual plugin can also be disabled.
+### Check the global switch before you install
 
-If `pluginsEnabled` is already `true`, continue without asking the user to enable it.
+1. Find the target daemon. For the local daemon, `paseo daemon status --json` reports its `home`. The configuration file is `<home>/config.json`.
+2. Read the root `pluginsEnabled` field. A missing field means `false`. Do not infer the switch from the status of one plugin, because each plugin can also be disabled.
+3. If `pluginsEnabled` is `true`, continue.
+4. If it is `false` or missing, stop. Ask the user for permission before you change anything, and include this warning:
 
-If it is false or absent, stop and ask the user for explicit permission before editing or enabling anything. Include this warning in the request:
+   > Plugins are trusted, unsandboxed code. Backend plugin code can access your daemon machine, including files, processes, credentials, and network services. Client plugin code runs inside the Paseo app. May I enable plugins on this daemon?
 
-> Plugins are trusted, unsandboxed code. Backend plugin code can access your daemon machine, including files, processes, credentials, and network services. Client plugin code runs inside the Paseo app. May I enable plugins on this daemon?
+5. If the user does not agree, stop.
+6. Set the root `pluginsEnabled` field to `true`, and keep the rest of `config.json`.
+7. Run `paseo reload --json` against that daemon.
+8. Make sure that `appliedPaths` contains `pluginsEnabled`. If `appliedPaths` is empty, read the file again and make sure that the plugin catalog is enabled.
+9. After installation, run `paseo plugin ls` and make sure that the plugin reaches `running`.
 
-Do not continue unless the user agrees. After permission:
+To turn the switch off, set `pluginsEnabled` to `false`, run `paseo reload --json`, and make sure that the plugins report `disabled`.
 
-1. Preserve the rest of `config.json` and set the root `pluginsEnabled` field to `true`.
-2. Run `paseo reload --json` against that daemon.
-3. Require `pluginsEnabled` in `appliedPaths`, or accept an empty `appliedPaths` only after re-reading the file and confirming the live plugin catalog is enabled.
-4. Run `paseo plugin ls` and verify the intended plugin reaches `running` after installation.
+If the daemon is remote, do not edit a local file. Edit the file on the daemon machine, or ask the user to use Settings > Plugins > Enable plugins. `paseo reload --host <url>` reloads the remote file but does not edit it.
 
-If the user asks to disable the global switch, set `pluginsEnabled` to `false`, run `paseo reload --json`, and verify configured plugins report `disabled`.
+## Develop in a local folder
 
-Do not edit a local config when the target is a remote daemon. Perform the edit on the daemon machine, or ask the user to use **Settings → Plugins → Enable plugins**. `paseo reload --host <url>` reloads the remote daemon's own file but does not edit it.
+Develop a plugin in a folder that you own and install that folder by path. Paseo runs the plugin from that folder, and `paseo plugin reload <id>` loads your edits.
 
-When the same screen or sidebar item exists on several connected hosts, Paseo shows it once. The screen header has a host picker; a sidebar item uses the host of the screen on display, else the host last picked in one of the plugin's screens. The selected host owns the bundle, SDK calls, RPCs, and query cache. An offline selected host does not fall through to another host. Attachment sources stay scoped to the composer's host.
+Do not edit, build, or commit inside the installation of a Git, npm, or registry plugin. That folder is managed storage in the `plugins/` directory of the daemon home. `paseo plugin update` replaces it, and `paseo plugin remove` deletes it, with every edit and commit inside it.
 
-## Publishing a listing
+Before you edit an installed plugin, run `paseo plugin ls <id>` and read the SOURCE column. A `git:`, `npm:`, or registry source such as `<registry host>/owner/slug` is a managed installation. The DIRECTORY column shows its managed folder.
 
-Write `OVERVIEW.md` beside `paseo-plugin.json` for the plugin page inside Paseo.
-It helps someone decide whether to install your plugin; the install command is already at
-the top of that page. A README assumes a GitHub audience and carries installation
-instructions, technical details, and badges. Long, AI-generated READMEs make people read
-past that material to understand what a plugin does.
+To develop a plugin that is installed from Git, npm, or the registry:
 
-`OVERVIEW.md` is required to list your plugin in the registry. Commit it beside
-`paseo-plugin.json` in the source repository at the pinned commit. The registry resolves it
-relative to the manifest, under `pluginPath` for monorepos. Include it in the published npm
-package too; the scaffold's `files` list includes it. Replace the scaffold's guidance comment
-with useful facts before publishing.
+1. Clone the source repository of the plugin into a folder outside the daemon home. For an npm plugin, find the repository in its `package.json`.
+2. If SOURCE ends with `:<path>`, use that subfolder of the clone as the plugin folder.
+3. If the managed folder has edits or commits, move them into the plugin folder.
+4. In the plugin folder, install the dependencies and run the `build` commands from `paseo-plugin.json`. Paseo runs `build` only for managed installations.
+5. Ask the user before you remove the managed installation. `paseo plugin remove <id>` also deletes the saved settings of the plugin.
+6. Run `paseo plugin remove <id>`.
+7. Run `paseo plugin install /absolute/path/to/plugin-folder --id <id>` to keep the runtime ID.
+8. Edit the plugin folder. After each change, run its `build` commands if the change needs them, then run `paseo plugin reload <id>`.
 
-The repository overview takes precedence over a registry import stopgap. Online validation
-fails when the pinned commit has no `OVERVIEW.md`, except for unchanged imported records
-that already carry `plugins/<owner>/<slug>.md` in the registry repository. Every version bump
-requires a repository overview and removes the stopgap in the same PR. A bump without the
-repository overview fails validation. README files do not supply the overview.
+## Install, reload, and debug
 
-Author overviews and registry stopgaps follow the same content contract, in this order.
-Choose headings only when they help; length follows complexity. A theme needs one paragraph.
-
-1. Explain what the plugin is and does in plain terms first.
-2. Explain how it works only when that is not obvious.
-3. Explain setup when needed: settings, accounts, tokens, providers, external tools, or other
-   plugins. Include applicable daemon version and operating system requirements. Setup
-   guidance is allowed; installation instructions are not.
-4. Explain capabilities and settings worth understanding, what each option does, what the
-   plugin reads or sends and where, permissions, and known limits.
-
-Use sentence case and plain factual language, with no em dashes. Omit installation commands,
-badges, changelog, contributing or license sections, marketing, and unsupported claims.
-Avoid implementation filler such as empty cleanup functions, catalogs of theme-token fields,
-or lists of absent features. Keep only what helps someone choose the plugin.
-
-If your plugin is an unchanged imported record, you can propose an author-written overview
-to replace the registry stopgap. Do not add import credit to your own `OVERVIEW.md`.
-
-See [Your listing page](https://paseo.sh/docs/plugins/publishing.md#your-listing-page).
-
-## Typecheck and manage
-
-When editing a plugin, typecheck its source before install or reload:
+Typecheck the plugin before each install or reload:
 
 ```bash
 npm run typecheck
 paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
-paseo plugin install npm:@acme/paseo-review
+paseo plugin install acme/review
 paseo plugin install npm:@acme/paseo-review@1.2.0
-paseo plugin install github:owner/repository
 paseo plugin install github:owner/repository --ref main
-paseo plugin update my-plugin
 paseo plugin ls
 paseo plugin reload my-plugin
 paseo plugin logs my-plugin
+paseo plugin update my-plugin
 paseo plugin disable my-plugin
 paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-For npm, ensure npm is on the daemon's `PATH`; use that host's registry configuration and credentials. Install selectors choose
-content once; they do not pin updates. `install` and `add` are aliases. Follow the
-[publishing guide](https://paseo.sh/docs/plugins/publishing.md) for Paseo's package contents and
-preparation requirements; standard npm publishing commands apply.
+- `install` and `add` are aliases. A bare `owner/slug` installs from the plugin registry.
+- Put `--host <url>` before a command to manage a daemon other than the CLI default.
+- Source edits need `paseo plugin reload <id>`. A change to the global switch needs `paseo reload`.
+- Do not restart the daemon to load changes. A restart can stop the agent that does the work.
+- A failed reload stays failed. Read the load error in `paseo plugin ls` and the output in `paseo plugin logs <id>`, fix the source, typecheck, and reload again.
+- `paseo plugin logs <id>` shows the recent stdout and stderr of the subprocess, including initialization, handler, cleanup, and crash output. Settings > Plugins > Logs shows the same output.
+- `remove` keeps a local folder and deletes a managed installation.
+- Most plugins do not need `build`. Declare it in `paseo-plugin.json` only when the plugin must install a dependency or generate files after acquisition. Paseo skips npm lifecycle scripts, so an npm plugin that generates files declares `build` too. Reference: CLI reference describes the format, and Publishing > Plugins with a build step describes the npm rules.
 
-Use `--host <url>` when managing a daemon other than the CLI default. A Git source that must install or generate something declares `build` in `paseo-plugin.json` as a list of argv arrays; Paseo runs them without a shell on install and update and keeps the old version if one fails. Plugin source edits require `paseo plugin reload`; config changes to the global switch require `paseo reload`. A failed plugin reload stays failed; inspect `paseo plugin ls` for the load error and `paseo plugin logs <id>` for subprocess output, fix the source, typecheck, and reload again. `remove` keeps local source directories and deletes managed Git/npm installations.
+## Publish
 
-Do not restart the daemon to load source changes. Restarting it can kill the agent performing the work.
+Follow [Publishing](https://paseo.sh/docs/plugins/publishing.md) to publish on npm or Git and to submit to the registry.
 
-For an old mixed entry, follow the standalone [runtime-entry migration guide](https://paseo.sh/docs/plugins/migration) mechanically.
+To maintain the listing page yourself, put `OVERVIEW.md` beside `paseo-plugin.json` and include it in the npm package. Without it, the registry reviewer writes the page. Explain these points in order:
+
+1. What the plugin does.
+2. How it works, if that is not obvious.
+3. Setup: settings, accounts, tokens, external tools, and supported operating systems and Paseo versions.
+4. Capabilities, settings, the data it reads and where it sends that data, permissions, and limits.
+
+Use plain facts and sentence case. Do not include installation commands. The validator rejects `paseo plugin add`, `npm install`, and `npm i` anywhere in the overview. Also leave out badges, changelogs, and marketing.
 
 ## Verify the outcome
 
-After a change:
+After each change:
 
 1. Run `npm run typecheck`.
 2. Install or reload the exact runtime ID.
-3. Run `paseo plugin ls` and require `running` with no error.
-4. Confirm the contribution on the intended host. Open the Command Center with **⌘K** (macOS) or **Ctrl+K** (Windows/Linux). Type `/` in the composer for slash commands. For timeline work, run an agent turn that produces the source item and watch it while it streams, not only after it completes. For UI work, check a wide desktop window and a compact/mobile client, and switch theme to confirm text still uses `foreground` / `foregroundMuted`.
-5. Exercise the changed action or RPC, including its error state.
+3. Run `paseo plugin ls` and make sure that the plugin is `running` with no error.
+4. Find the contribution on the intended host. Open the Command Center with Cmd+K on macOS or Ctrl+K on Windows and Linux. Type `/` in the composer to see slash commands. For a sidebar view, select it in Settings > Sidebar.
+5. For timeline work, run an agent turn that produces the source item and watch it while it streams.
+6. For UI work, check a wide desktop window and a compact window, and switch to a dark theme.
+7. Use the changed action, RPC, or hook, and check its error state.
 
-Common failures:
+If it fails, find the symptom:
 
-- Missing sidebar item: wrong host, plugin not `running`, the item is hidden in Settings > Sidebar, or its component throws (a `SidebarRow` with an unknown Lucide name or unsafe SVG throws).
-- Unavailable client module: client bundles can use only the host-provided modules listed above.
-- RPC rejection: input or output failed its Zod schema, or the handler threw. Inspect `paseo plugin logs <id>` for handler output.
-- Plugin exits or reload fails: inspect `paseo plugin ls` for status and `paseo plugin logs <id>` for initialization, cleanup, or crash output.
-- Stale UI: source was edited without `paseo plugin reload <id>`.
-- Timeline item shows "Plugin timeline item unavailable": no renderer registered for that `kind` and `version`, the renderer schema rejected `data`, or the plugin is not running on that host.
-- Transformer has no effect: `query.itemType` does not match the source type, the transform returned `undefined`, or it threw and was skipped; check the app console for `[Plugins] Timeline transformer failed`.
-- Slash command not offered: name collides with a built-in or another plugin, the context is `agent` on a draft, or the composer has attachments.
-- Append rejected: the caller is not a plugin session, `data` exceeds 64 KiB, or the host predates `features.pluginTimelineItems`.
+| Symptom                                                  | Check                                                                                                                                                            |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A sidebar item is missing                                | The host, the `running` status, Settings > Sidebar, and whether the component throws. A `SidebarRow` with an unknown Lucide name throws.                         |
+| A sidebar view does not show                             | The user must select it in Settings > Sidebar. Installation does not select it.                                                                                  |
+| A client module is not available                         | Client bundles can import only `@getpaseo/plugin`, its `/client` and `/client/ui` entries, `react`, `react-native`, `@tanstack/react-query`, and `zod`.          |
+| An RPC rejects                                           | The input or output failed its Zod schema, or the handler threw. Read `paseo plugin logs <id>`.                                                                  |
+| A hook fails an operation                                | The handler threw, returned invalid data, or ran longer than 30 seconds. Read `paseo plugin logs <id>`.                                                          |
+| The UI shows old code                                    | The source changed without `paseo plugin reload <id>`.                                                                                                           |
+| A timeline item shows "Plugin timeline item unavailable" | No renderer matches its `kind` and `version`, the renderer schema rejected `data`, or the plugin is not running on that host.                                    |
+| A transformer has no effect                              | `query.itemType` does not match the source item, the transform returned `undefined`, or it threw. The app console shows `[Plugins] Timeline transformer failed`. |
+| A slash command is not offered                           | Its name collides with a built-in or another plugin, its context is `agent` in a draft, or the composer has attachments.                                         |
+| A client registration is "not a function"                | The app is older than the API. Update the app, or raise `requirements.paseo`.                                                                                    |

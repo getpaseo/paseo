@@ -61,6 +61,10 @@ The daemon journals the assigned agent ID before creation. Concurrent retries sh
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a
 workspace or starting a turn. Deleting that agent does not make its old creation key reusable.
 Confirmed message delivery is also journaled, so retrying its message ID does not submit it again.
+A direct send (one without `sourceAgentId`) rejected before its prompt is handed to a run, for
+example because the agent could not be loaded or the requested mode could not be set, leaves no
+receipt, so retrying its message ID submits it. A failure during or after run startup is treated
+as an unfinished delivery.
 An unfinished delivery after restart reports `agent_request_outcome_unknown`: a provider can have
 accepted a prompt before the daemon recorded success, so automatic resubmission could duplicate
 work. Inspect the agent before choosing a new message ID. Receipts contain identity and request
@@ -68,8 +72,9 @@ hashes, never prompts, environment values, or credentials.
 
 Before messaging an archived workspace, call `workspace.recovery.inspect.request`, then
 `workspace.recovery.restore.request` and await success. The native message handler unarchives the
-agent and loads its persisted provider session. `activeTurnBehavior: "steer"` uses the provider's
-native steering behavior, including Paseo's existing behavior when that provider cannot steer.
+agent and loads its persisted provider session. A Hub message is a direct send (no `sourceAgentId`), so
+`activeTurnBehavior: "steer"` uses the provider's native steering and interrupts the running turn
+when that provider cannot steer. The daemon rejects `queue` on a direct send.
 Execution completion and arrival-specific output authority remain Hub responsibilities.
 
 The older `hub.execution.*` RPCs remain accepted for existing clients. Their execution ownership

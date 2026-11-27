@@ -21,6 +21,7 @@ import {
   openAgent,
   pressContextWindowMeter,
   qaScreenshot,
+  recordContextWindowFrames,
   refreshUsageCard,
   reloadAgent,
   scriptAgentUsage,
@@ -299,9 +300,10 @@ for (const theme of ["light", "dark"] as const) {
       const slowSource = gate();
       usage.answerNext({ stream: [slowSource.promise, onWorkLogin(claude!)] });
       const closedEarly = await hoverContextWindowMeter(page);
-      await expect(closedEarly.getByText("Loading usage...", { exact: true })).toBeVisible();
+      await expect(usageCard(closedEarly, "claude:work").getByText(LOGIN_EXPIRED)).toBeVisible();
       await leaveContextWindowMeter(page);
 
+      await usage.resumeAgent(agent);
       const resumed = gate();
       const finished = gate();
       usage.answerNext({
@@ -384,6 +386,58 @@ for (const theme of ["light", "dark"] as const) {
     });
   });
 }
+
+test("an open with loaded usage paints it in its first frame and never moves", async ({
+  page,
+  agent,
+}) => {
+  const [claude] = claudeAndCodexReports();
+  const usage = await scriptAgentUsage(page);
+  await page.setViewportSize(DESKTOP);
+  await openAgent(page, agent);
+  usage.answerNext([onWorkLogin(claude!)]);
+  const loaded = await hoverContextWindowMeter(page);
+  await expect(usageCard(loaded, "claude:work")).toBeVisible();
+  await leaveContextWindowMeter(page);
+
+  // The reopen's own request stays unanswered until the card has been on screen a while.
+  const refetch = gate();
+  usage.answerNext({ stream: [refetch.promise, onWorkLogin(claude!)] });
+  const recording = await recordContextWindowFrames(page);
+  const reopened = await hoverContextWindowMeter(page);
+  await page.waitForTimeout(300);
+  refetch.open();
+  await page.waitForTimeout(300);
+  await expect(usageCard(reopened, "claude:work")).toBeVisible();
+  const frames = (await recording.stop()).filter((frame) => frame.mounted);
+  await leaveContextWindowMeter(page);
+
+  expect(frames.filter((frame) => frame.loading)).toEqual([]);
+  expect(frames.filter((frame) => frame.usageCards !== 1)).toEqual([]);
+  expect(new Set(frames.map((frame) => frame.bottom)).size).toBe(1);
+});
+
+test("usage arriving after the card opens never moves its bottom edge", async ({ page, agent }) => {
+  const [claude] = claudeAndCodexReports();
+  const usage = await scriptAgentUsage(page);
+  await page.setViewportSize(DESKTOP);
+  await openAgent(page, agent);
+
+  const arrival = gate();
+  usage.answerNext({ stream: [arrival.promise, onWorkLogin(claude!)] });
+  const recording = await recordContextWindowFrames(page);
+  const card = await hoverContextWindowMeter(page);
+  await expect(card.getByText("Loading usage...", { exact: true })).toBeVisible();
+  arrival.open();
+  await expect(usageCard(card, "claude:work")).toBeVisible();
+  await page.waitForTimeout(300);
+  const frames = (await recording.stop()).filter((frame) => frame.mounted);
+  await leaveContextWindowMeter(page);
+
+  expect(frames.some((frame) => frame.loading)).toBe(true);
+  expect(frames.at(-1)?.usageCards).toBe(1);
+  expect(new Set(frames.map((frame) => frame.bottom)).size).toBe(1);
+});
 
 test("context details support keyboard entry and dismiss when the viewport moves", async ({
   page,

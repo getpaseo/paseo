@@ -392,6 +392,8 @@ dns.lookup = function(host, ...args) {
             HOME: root,
             USERPROFILE: root,
             CODEX_HOME: path.join(root, ".codex"),
+            OPENROUTER_API_KEY: "fixture-openrouter",
+            OPENROUTER_MANAGEMENT_KEY: "fixture-openrouter-management",
             CLAUDE_CONFIG_DIR: path.join(root, ".claude"),
             NODE_OPTIONS: `--require=${JSON.stringify(guard.replaceAll("\\", "/"))}`,
             https_proxy: `http://127.0.0.1:${address.port}`,
@@ -402,6 +404,7 @@ dns.lookup = function(host, ...args) {
       );
       expect(tunnels).toContain("api.anthropic.com:443");
       expect(tunnels).toContain("chatgpt.com:443");
+      expect(tunnels.filter((target) => target === "openrouter.ai:443")).toHaveLength(2);
     } finally {
       proxy.closeAllConnections();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
@@ -410,3 +413,57 @@ dns.lookup = function(host, ...args) {
   },
   60_000,
 );
+
+test("resolves a plugin provider launch for cold usage discovery", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-usage-launch-"));
+  const directory = path.join(root, "launch-source");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: "launch-source", requirements: { paseo: ">=0.9.2" } }),
+  );
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `
+import { z } from 'zod';
+export default function contribute(server) {
+  server.registerProvider({ id: 'usage-launch-fixture', label: 'Launch fixture', command: [${JSON.stringify(process.execPath)}, 'fixture-arg'], connect: async () => { throw new Error('Must not connect'); } });
+  server.registerUsageSource({ id: 'launch-fixture', label: 'Launch fixture', provider: 'usage-launch-fixture', input: z.object({}),
+    discover: async scope => scope.kind === 'global' && scope.launch?.args[0] === 'fixture-arg' ? [{ key: 'default', input: {} }] : [],
+    fetch: async () => ({ status: 'available', windows: [{ id: 'weekly', label: 'Weekly', usedPct: 12 }] }) });
+  return () => {};
+}`,
+  );
+  const daemon = await createTestPaseoDaemon({
+    daemonVersion: "0.16.2",
+    pluginsEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(root, ["launch-source"]),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.16.2",
+  });
+  try {
+    await client.connect();
+    const result = await client.listUsageReports();
+    expect(result.reports).toContainEqual(
+      expect.objectContaining({
+        id: "launch-fixture:default",
+        report: expect.objectContaining({
+          status: "available",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 12 }],
+        }),
+      }),
+    );
+    await client.patchDaemonConfig({
+      providers: {
+        "usage-launch-fixture": { command: [path.join(root, "missing-cli")] },
+      },
+    });
+    expect((await client.listUsageReports()).reports).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);

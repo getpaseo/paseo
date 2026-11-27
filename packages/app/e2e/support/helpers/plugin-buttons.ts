@@ -198,6 +198,14 @@ async function expectDetails(page: Page) {
   await expect(page.getByText("All systems operational", { exact: true })).toBeInViewport();
 }
 
+// The details render before the daemon answers their event subscription, and reopened
+// details show the cached summary at once, so wait for the subscription id to arrive.
+async function readContentObservation(page: Page): Promise<string> {
+  const observation = page.getByLabel("Content observation", { exact: true });
+  await expect(observation).not.toHaveText("");
+  return (await observation.textContent())!;
+}
+
 function workspaceMenuRow(page: Page, title: string): Locator {
   return compactWorkspaceMenu(page).getByRole("menuitem", { name: title, exact: true });
 }
@@ -354,14 +362,12 @@ export async function withButtonShowcase(
         test.step("closing and crashing content release its owner while sibling buttons and app remain live", async () => {
           await press(page, "Header status");
           await expectDetails(page);
-          const observation = page.getByLabel("Content observation", { exact: true });
-          await expect(observation).not.toHaveText("");
-          const first = (await observation.textContent())!;
+          const first = await readContentObservation(page);
           await press(page, "Close deployment details");
           await expect.poll(() => released.has(first)).toBe(true);
           await press(page, "Composer status");
           await expectDetails(page);
-          const second = (await observation.textContent())!;
+          const second = await readContentObservation(page);
           expect(second).not.toBe(first);
           await workspace.client.renameProject(workspace.projectId, "Observer control");
           await expect(page.getByText("Observed updates: 1", { exact: true })).toBeVisible();
@@ -373,7 +379,7 @@ export async function withButtonShowcase(
           await page.keyboard.press("Escape");
           await press(page, "Header status");
           await expectDetails(page);
-          const recovered = (await observation.textContent())!;
+          const recovered = await readContentObservation(page);
           expect([first, second]).not.toContain(recovered);
           await showcase.setTitle("Healthy app after button failure");
           await expect(page.getByTestId("workspace-header-title")).toHaveText(
@@ -687,9 +693,7 @@ export async function withButtonShowcase(
             page,
             page.getByRole("button", { name: "Close deployment details", exact: true }),
           );
-          const observation = page.getByLabel("Content observation", { exact: true });
-          await expect(observation).not.toHaveText("");
-          const owner = (await observation.textContent())!;
+          const owner = await readContentObservation(page);
           await showcase.disable();
           await expect.poll(() => released.has(owner)).toBe(true);
           await expect(

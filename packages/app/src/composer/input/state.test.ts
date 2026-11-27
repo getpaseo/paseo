@@ -603,12 +603,14 @@ describe("retained selection", () => {
 });
 
 describe("fullscreen glyph rail", () => {
-  it("nudges 16px fullscreen glyphs onto the Send arrow's ink edge", () => {
-    expect(
-      resolveGlyphRailOffset({ controlSize: 28, sendIconSize: 16, glyphIconSize: 16 }),
-    ).toBeCloseTo(4 / 3);
-    expect(
-      resolveGlyphRailOffset({ controlSize: 28, sendIconSize: 20, glyphIconSize: 16 }),
-    ).toBeCloseTo(1 / 6);
+  it.each([
+    { controlSize: 28, glyphIconSize: 16 },
+    { controlSize: 44, glyphIconSize: 20 },
+  ])("puts the visible fullscreen edge on the text rail ($controlSize)", (geometry) => {
+    const offset = resolveGlyphRailOffset(geometry);
+    // Maximize2 and Minimize2 reach x21 in a 24-unit viewBox, with a 2-unit stroke.
+    const inkInset =
+      (geometry.controlSize - geometry.glyphIconSize) / 2 + (geometry.glyphIconSize * 2) / 24;
+    expect(offset + inkInset).toBeCloseTo(0);
   });
 });

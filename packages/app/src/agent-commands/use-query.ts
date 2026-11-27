@@ -1,3 +1,5 @@
+import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import { useTranslation } from "react-i18next";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -7,7 +9,7 @@ import { useShallow } from "zustand/shallow";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import {
   agentCommandsQueryKey,
-  sessionCommandQueryPolicy,
+  agentCommandQueryPolicy,
   type AgentCommandsDraftConfig,
 } from "./cache";
 
@@ -35,6 +37,18 @@ export interface AgentCommandsClient {
   listCommands(options: ListAgentCommandsOptions): ReturnType<DaemonClient["listCommands"]>;
 }
 
+// COMPAT(dedupeListCommands): added in v0.17.0, remove after 2027-05-20 once daemon floor >= v0.17.0.
+function dedupeSlashCommands(commands: readonly AgentSlashCommand[]): AgentSlashCommand[] {
+  const seen = new Set<string>();
+  const unique: AgentSlashCommand[] = [];
+  for (const command of commands) {
+    if (seen.has(command.name)) continue;
+    seen.add(command.name);
+    unique.push(command);
+  }
+  return unique;
+}
+
 export async function fetchAgentCommands(input: {
   client: AgentCommandsClient;
   agentId: string;
@@ -45,7 +59,7 @@ export async function fetchAgentCommands(input: {
     draftConfig: input.draftConfig,
   });
   if (response.error) throw new Error(response.error);
-  return response.commands as AgentSlashCommand[];
+  return dedupeSlashCommands(response.commands as AgentSlashCommand[]);
 }
 
 interface UseAgentCommandsQueryOptions {
@@ -75,6 +89,7 @@ export function useAgentCommandsQuery({
     }),
   );
 
+  const queryClient = useQueryClient();
   const query = useFetchQuery({
     queryKey: agentCommandsQueryKey({ serverId, agentId, draftConfig }),
     queryFn: async () => {
@@ -89,9 +104,8 @@ export function useAgentCommandsQuery({
       agentCommandProvider: draftConfig?.provider ?? provider,
       agentCommandCwd: draftConfig?.cwd ?? cwd,
     },
-    ...(draftConfig
-      ? { immutableWhen: () => true as const }
-      : { ...sessionCommandQueryPolicy, staleTimeMs: sessionCommandQueryPolicy.staleTime }),
+    ...agentCommandQueryPolicy,
+    staleTimeMs: agentCommandQueryPolicy.staleTime,
     subscribed: queryEnabled,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
@@ -101,10 +115,20 @@ export function useAgentCommandsQuery({
   // isLoading is true when fetching and no data yet
   const isLoading = query.isPending || query.isLoading;
 
+  // Reset rather than refetch: a refetch keeps the error status while it runs, and the menu
+  // shows loading for the retry.
+  const retry = useCallback(() => {
+    void queryClient.resetQueries({
+      queryKey: agentCommandsQueryKey({ serverId, agentId, draftConfig }),
+      exact: true,
+    });
+  }, [agentId, draftConfig, queryClient, serverId]);
+
   return {
     commands: query.data ?? [],
     isLoading,
     isError: query.isError && query.data === undefined,
     error: query.error,
+    retry,
   };
 }

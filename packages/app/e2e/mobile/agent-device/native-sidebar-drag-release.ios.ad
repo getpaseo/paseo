@@ -3,7 +3,7 @@ env APP_ID=sh.paseo.debug
 
 # Start with the sidebar closed. WORKSPACE_ROW is the testID of a visible,
 # unselected PINNED workspace row. Ordinary workspace rows are not draggable.
-# Hold past drag arming (180ms), then release.
+# Hold past press feedback (130ms) and drag arming (180ms), then release.
 open "${APP_ID}"
 press "label=\"Open menu\""
 wait "id=\"sidebar-close\"" 10000
@@ -12,7 +12,7 @@ press "id=\"sidebar-close\""
 wait "label=\"Open menu\"" 5000
 press "label=\"Open menu\""
 wait "id=\"${WORKSPACE_ROW}\"" 10000
-longpress "id=\"${WORKSPACE_ROW}\"" 250
+longpress "id=\"${WORKSPACE_ROW}\"" 400
 press "id=\"${WORKSPACE_ROW}\""
 # A released drag must not swallow the next tap: navigation closes the sidebar.
 wait "label=\"Open menu\"" 5000

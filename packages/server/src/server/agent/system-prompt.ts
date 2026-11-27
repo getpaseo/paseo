@@ -8,3 +8,15 @@ export function composeSystemPromptParts(
 
   return prompt.length > 0 ? prompt : undefined;
 }
+
+export function composeAgentSystemPrompt(config: {
+  systemPrompt?: string;
+  daemonAppendSystemPrompt?: string;
+  pluginAppendSystemPrompt?: string[];
+}): string | undefined {
+  return composeSystemPromptParts(
+    config.systemPrompt,
+    config.daemonAppendSystemPrompt,
+    ...(config.pluginAppendSystemPrompt ?? []),
+  );
+}

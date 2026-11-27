@@ -79,7 +79,9 @@ test.describe("Schedules", () => {
     cleanupTasks.length = 0;
   });
 
-  test("edit form hydrates the scheduled model selection", async ({ page }) => {
+  test("hydrates schedule editing and opens a pristine creation form afterward", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-model-hydration-" });
     cleanupTasks.push(() => workspace.cleanup());
     const scheduleName = `Hydrate model ${Date.now()}`;
@@ -93,29 +95,45 @@ test.describe("Schedules", () => {
 
     await row.click();
     const formSheet = page.getByTestId("schedule-form-sheet");
-    await expect(formSheet).toBeVisible({ timeout: 10_000 });
-    await expectStableHeight(formSheet);
     const hostTrigger = page.getByTestId("schedule-host-trigger");
     const projectTrigger = page.getByTestId("schedule-project-trigger");
     const modelTrigger = page.getByTestId("schedule-model-trigger");
     const thinkingTrigger = page.getByTestId("schedule-thinking-trigger");
     const modeTrigger = page.getByTestId("schedule-mode-trigger");
-    await expect(hostTrigger).toBeVisible({ timeout: 30_000 });
-    await expect(hostTrigger).toBeDisabled();
-    await expectSettled(hostTrigger);
-    await expect(projectTrigger).toContainText(workspace.projectDisplayName, { timeout: 30_000 });
-    await expectSettled(projectTrigger);
-    await expect(modelTrigger).toContainText("Ten second stream", { timeout: 30_000 });
-    await expectSettled(modelTrigger);
-    await expect(thinkingTrigger).toContainText("Low");
-    await expectSettled(thinkingTrigger);
-    await expect(modeTrigger).toBeVisible({ timeout: 30_000 });
-    await expectSettled(modeTrigger);
-    await expect(page.getByTestId("cadence-mode")).toHaveCount(0);
-    await expect(page.getByTestId("cadence-interval-value")).toHaveCount(0);
-    await expect(page.getByTestId("schedule-cadence-preset-trigger")).toContainText("Daily 9:00");
-    await expect(page.getByText(/Times are in/)).toHaveCount(0);
-    await expect(formSheet.getByText("Cron", { exact: true })).toHaveCount(0);
+    await test.step("edit form hydrates the saved model and controls", async () => {
+      await expect(formSheet).toBeVisible({ timeout: 10_000 });
+      await expectStableHeight(formSheet);
+      await expect(hostTrigger).toBeVisible({ timeout: 30_000 });
+      await expect(hostTrigger).toBeDisabled();
+      await expectSettled(hostTrigger);
+      await expect(projectTrigger).toContainText(workspace.projectDisplayName, { timeout: 30_000 });
+      await expectSettled(projectTrigger);
+      await expect(modelTrigger).toContainText("Ten second stream", { timeout: 30_000 });
+      await expectSettled(modelTrigger);
+      await expect(thinkingTrigger).toContainText("Low");
+      await expectSettled(thinkingTrigger);
+      await expect(modeTrigger).toBeVisible({ timeout: 30_000 });
+      await expectSettled(modeTrigger);
+      await expect(page.getByTestId("cadence-mode")).toHaveCount(0);
+      await expect(page.getByTestId("cadence-interval-value")).toHaveCount(0);
+      await expect(page.getByTestId("schedule-cadence-preset-trigger")).toContainText("Daily 9:00");
+      await expect(page.getByText(/Times are in/)).toHaveCount(0);
+      await expect(formSheet.getByText("Cron", { exact: true })).toHaveCount(0);
+    });
+
+    await test.step("closing edit leaves the new schedule form pristine", async () => {
+      await page.getByRole("button", { name: "Cancel" }).click();
+      await expect(formSheet).toHaveCount(0, { timeout: 30_000 });
+
+      await page.getByTestId("schedules-new").click();
+      await expect(formSheet).toBeVisible({ timeout: 10_000 });
+      await expect(projectTrigger).toContainText(/select project/i);
+      await expectSettled(projectTrigger);
+      await expect(page.getByTestId("schedule-model-trigger")).toHaveCount(0);
+      await expect(page.getByTestId("schedule-thinking-trigger")).toHaveCount(0);
+      await expect(page.getByTestId("schedule-mode-trigger")).toHaveCount(0);
+      await expect(page.getByTestId("cadence-interval-value")).toHaveCount(0);
+    });
   });
 
   test("edit form hydrates a non-default host schedule after reload", async ({ page }) => {
@@ -164,33 +182,5 @@ test.describe("Schedules", () => {
     await expectSettled(modeTrigger);
     await expect(page.getByTestId("cadence-mode")).toHaveCount(0);
     await expect(page.getByTestId("schedule-cadence-preset-trigger")).toContainText("Daily 9:00");
-  });
-
-  test("create opens pristine after closing an edit form", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "schedule-pristine-create-" });
-    cleanupTasks.push(() => workspace.cleanup());
-    const scheduleName = `Pristine create ${Date.now()}`;
-    const scheduleId = await seedMockSchedule(workspace, scheduleName);
-    cleanupTasks.push(() => deleteSeededSchedule(workspace, scheduleId));
-
-    await page.goto(buildSchedulesRoute());
-    const row = page.getByTestId(`schedule-row-${scheduleId}`);
-    await expect(row).toBeVisible({ timeout: 30_000 });
-    await row.click();
-    const formSheet = page.getByTestId("schedule-form-sheet");
-    await expect(formSheet).toBeVisible({ timeout: 10_000 });
-    await expectStableHeight(formSheet);
-    await page.getByRole("button", { name: "Cancel" }).click();
-    await expect(formSheet).toHaveCount(0, { timeout: 30_000 });
-
-    await page.getByTestId("schedules-new").click();
-    await expect(formSheet).toBeVisible({ timeout: 10_000 });
-    const projectTrigger = page.getByTestId("schedule-project-trigger");
-    await expect(projectTrigger).toContainText(/select project/i);
-    await expectSettled(projectTrigger);
-    await expect(page.getByTestId("schedule-model-trigger")).toHaveCount(0);
-    await expect(page.getByTestId("schedule-thinking-trigger")).toHaveCount(0);
-    await expect(page.getByTestId("schedule-mode-trigger")).toHaveCount(0);
-    await expect(page.getByTestId("cadence-interval-value")).toHaveCount(0);
   });
 });

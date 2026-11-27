@@ -34,6 +34,7 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
 - **First sight of a text is revealed whole.** Only growth is paced. This is what makes history hydration, timeline replay, a virtualized row remounting on scroll, and an already-finished message all render complete on first paint without a special case for each.
 - **Leaving `phase: "streaming"` snaps the reveal.** A completed turn must never be left holding characters. `layoutStream` sets the phase, so anything outside the live head with an active turn is already complete.
 - **The reducer queue commits on a frame, with a timer as the ceiling.** A frame callback never fires in a hidden tab, so a timer races it and wins when nothing is painting — the store has to keep advancing either way.
+- **A turn boundary commits the queue before turn liveness changes.** The final reply arrives a few milliseconds before `turn_completed`, so it is still queued when the turn ends. `applyStreamEvent` in `viewed-timeline-sync.ts` flushes the agent's queue first; otherwise the chat paints a finished turn with no reply, drops the footer, and jumps twice.
 - **A history row re-renders only when its item or layout item identity changes.** Every
   coalesced tick hands the list a new layout. Without a memo boundary each tick re-rendered every
   mounted row (measured on the inverted FlatList native used before LegendList: about 50 rows on a

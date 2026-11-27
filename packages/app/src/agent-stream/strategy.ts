@@ -1,6 +1,6 @@
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
-import type { StreamItem } from "@/types/stream";
+import { getAssistantReply, type StreamItem } from "@/types/stream";
 import type { ReadingRowReplacements } from "./reading-anchor";
 import { continuesResponse } from "./turn-membership";
 import type { StreamHistoryBoundary, StreamRenderSegments } from "./model";
@@ -46,16 +46,23 @@ export interface ScrollToMessageOccurrence {
   targetTop(): number | null;
 }
 
+/**
+ * The edge of its row a disclosure's trigger sits on. A header trigger sits on the top: the content
+ * it opens grows below it. A trigger under the content it opens, such as a long message's show
+ * more, sits on the bottom.
+ */
+export type DisclosureTriggerEdge = "top" | "bottom";
+
 export interface StreamViewportHandle {
   /** Give keyboard navigation back to the scrolling surface on web. */
   focus?: () => void;
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
   /**
-   * Run a disclosure's state change so the row that owns its trigger keeps its visual top.
-   * Following output stops; it resumes if the change leaves the list at its end.
+   * Run a disclosure's state change so the row that owns its trigger keeps the edge the trigger
+   * sits on in place. Following output stops; it resumes if the change leaves the list at its end.
    */
-  holdRow: (rowId: string, apply: () => void) => void;
+  holdRow: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge) => void;
   scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 
@@ -85,11 +92,13 @@ export interface StreamRenderInput {
   viewportRef: RefObject<StreamViewportHandle | null>;
   routeBottomAnchorRequest: BottomAnchorRouteRequest | null;
   isAuthoritativeHistoryReady: boolean;
+  isInitialHistoryLoading?: boolean;
+  revealInitialHistory?: boolean;
   onNearBottomChange: (value: boolean) => void;
   // The history row under the top of the viewport, for surfaces that mark where the reader
   // is in the transcript. Only the web viewport measures it today.
   onReadingPositionChange?: (rowId: string | null) => void;
-  onNearHistoryStart: () => boolean | Promise<boolean>;
+  onNearHistoryStart: () => Promise<boolean>;
   isLoadingOlderHistory: boolean;
   hasOlderHistory: boolean;
   olderHistoryProgressKey: string | null;
@@ -98,7 +107,8 @@ export interface StreamRenderInput {
   baseListContentContainerStyle: StyleProp<ViewStyle>;
   forwardListContentContainerStyle: StyleProp<ViewStyle>;
   // The chat column's max width. The web viewport estimates unmeasured row heights with it.
-  contentMaxWidth: number;
+  contentMaxWidth: number | undefined;
+  outlineInset?: number;
 }
 
 export interface ResolveStreamRenderStrategyInput {
@@ -175,6 +185,7 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
     },
     collectAssistantResponseContent: (items, startIndex) => {
       const messages: string[] = [];
+      const seenReplies = new Set<StreamItem>();
       let laterItem: StreamItem | null = null;
       for (
         let index = startIndex;
@@ -185,8 +196,11 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
         if (!currentItem || (laterItem && !continuesResponse(currentItem, laterItem))) {
           break;
         }
-        if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
+        // A transformer can split one reply into several cards; copy the reply once.
+        const reply = getAssistantReply(currentItem);
+        if (reply && !seenReplies.has(reply)) {
+          seenReplies.add(reply);
+          messages.push(reply.text);
         }
         laterItem = currentItem;
       }

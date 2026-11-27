@@ -37,6 +37,9 @@ class MemoryStorage implements ReplicaRowStore {
   onRead: (() => void) | null = null;
   /** Throws once a read goes past this count, so a non-terminating read loop fails the test. */
   readLimit: number | null = null;
+  /** Awaited before the store lists every row or deletes a host, so a test can interleave there. */
+  beforeReadAll: (() => Promise<void>) | null = null;
+  beforeDeleteHost: (() => Promise<void>) | null = null;
 
   private key(row: Pick<ReplicaRow, "serverId" | "kind" | "id">): string {
     return `${row.serverId}:${row.kind}:${row.id}`;
@@ -68,6 +71,7 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async readAll(): Promise<ReplicaHostRows[]> {
+    await this.beforeReadAll?.();
     const hosts = new Map<string, ReplicaRow[]>();
     for (const row of this.rows.values()) {
       const rows = hosts.get(row.serverId) ?? [];
@@ -91,6 +95,7 @@ class MemoryStorage implements ReplicaRowStore {
   }
 
   async deleteHost(serverId: string): Promise<void> {
+    await this.beforeDeleteHost?.();
     for (const [key, row] of this.rows) if (row.serverId === serverId) this.rows.delete(key);
   }
 
@@ -215,6 +220,19 @@ function timeline(text = "Cached") {
     hasOlder: true,
   };
 }
+
+it("keeps the unsettled turn with the cached messages", async () => {
+  const storage = new MemoryStorage();
+  const writer = createCache(storage);
+  const cached = {
+    ...timeline(),
+    unsettledTurn: { startedAt: new Date("2026-08-26T09:59:00.000Z"), turnId: "turn-1" },
+  };
+  writer.commitTimeline(SERVER_ID, "agent-1", cached);
+  await writer.flush();
+
+  expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(cached);
+});
 
 function commitDirectory(
   cache: ReplicaCache,
@@ -341,6 +359,21 @@ describe("ReplicaCache", () => {
     );
   });
 
+  it("preserves where the workspace's forge is on the web across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const forgeWeb = { host: "github.com", referenceRepository: "main-owner/repo" };
+    const workspace = normalizeWorkspaceDescriptor({ ...workspacePayload(), forgeWeb });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.workspaces.get(workspace.id)?.forgeWeb).toEqual(forgeWeb);
+  });
+
   it("preserves workspace sorting timestamps across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -408,40 +441,49 @@ describe("ReplicaCache", () => {
     await expectLegacyWorkspaceRefresh(cached);
   });
 
-  it("rejects pre-baseline-fix checkpoints without discarding cached rows or timelines", async () => {
-    const storage = new MemoryStorage();
-    const writer = createCache(storage);
-    const baseline = directory();
-    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
-    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
-    await writer.flush();
-    await storage.apply({
-      deletes: [],
-      upserts: [
-        {
-          serverId: SERVER_ID,
-          kind: "checkpoint",
-          id: "singleton",
-          payload: JSON.stringify(baseline.checkpoint),
-        },
-      ],
-    });
+  it.each([
+    ["before the baseline fix", (checkpoint: DirectoryCheckpoint): unknown => checkpoint],
+    [
+      "before the eviction fix",
+      (checkpoint: DirectoryCheckpoint): unknown => ({ version: 1, cursors: checkpoint }),
+    ],
+  ])(
+    "rejects checkpoints written %s without discarding cached rows or timelines",
+    async (_era, legacyPayload) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const baseline = directory();
+      writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+      writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+      await writer.flush();
+      await storage.apply({
+        deletes: [],
+        upserts: [
+          {
+            serverId: SERVER_ID,
+            kind: "checkpoint",
+            id: "singleton",
+            payload: JSON.stringify(legacyPayload(baseline.checkpoint)),
+          },
+        ],
+      });
 
-    const reader = createCache(storage);
-    const restored = await reader.readDirectory(SERVER_ID);
-    expect(restored.checkpoint).toBeUndefined();
-    expect([...restored.workspaces.keys()]).toEqual([...baseline.workspaces.keys()]);
-    expect([...restored.projects.keys()]).toEqual([...baseline.projects.keys()]);
-    expect([...restored.agents.keys()]).toEqual([...baseline.agents.keys()]);
-    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
-    expect(await storage.read(SERVER_ID, ["checkpoint"])).toEqual([]);
+      const reader = createCache(storage);
+      const restored = await reader.readDirectory(SERVER_ID);
+      expect(restored.checkpoint).toBeUndefined();
+      expect([...restored.workspaces.keys()]).toEqual([...baseline.workspaces.keys()]);
+      expect([...restored.projects.keys()]).toEqual([...baseline.projects.keys()]);
+      expect([...restored.agents.keys()]).toEqual([...baseline.agents.keys()]);
+      expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+      expect(await storage.read(SERVER_ID, ["checkpoint"])).toEqual([]);
 
-    reader.replaceDirectoryBaseline(SERVER_ID, baseline);
-    await reader.flush();
-    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
-      baseline.checkpoint,
-    );
-  });
+      reader.replaceDirectoryBaseline(SERVER_ID, baseline);
+      await reader.flush();
+      expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+        baseline.checkpoint,
+      );
+    },
+  );
 
   it("does nothing until an owner explicitly commits data", async () => {
     const storage = new MemoryStorage();
@@ -764,6 +806,28 @@ describe("ReplicaCache", () => {
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem("New")]);
   });
 
+  it("keeps a turn's stats on its footer row across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const answer: StreamItem = {
+      ...(timelineItem("Done") as Extract<StreamItem, { kind: "assistant_message" }>),
+      turnMetrics: [
+        { label: "Model", value: "gemini-3.6-flash" },
+        { label: "Cache", value: "64%", tone: "ok" },
+      ],
+    };
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items: [answer],
+      range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+      hasOlder: false,
+    });
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([answer]);
+  });
+
   it("round-trips plugin timeline items", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -1072,6 +1136,113 @@ describe("ReplicaCache", () => {
         .map((row) => row.kind)
         .sort(),
     ).toEqual(["agent", "checkpoint", "project", "workspace"]);
+  });
+
+  it.each(["beforeReadAll", "beforeDeleteHost"] as const)(
+    "stores no checkpoint for a host evicted after its update was queued (%s)",
+    async (pausePoint) => {
+      const storage = new MemoryStorage();
+      const previousSession = new ReplicaCache(storage, noLegacyCleanup);
+      previousSession.setHosts([SERVER_ID, "other-host"]);
+      previousSession.replaceDirectoryBaseline(SERVER_ID, directory());
+      previousSession.replaceDirectoryBaseline("other-host", directory());
+      await previousSession.flush();
+
+      const cache = new ReplicaCache(storage, { ...noLegacyCleanup, maxBytes: 8_192 });
+      cache.setHosts([SERVER_ID, "other-host"]);
+      const paused = deferred();
+      const resume = deferred();
+      storage[pausePoint] = async () => {
+        storage[pausePoint] = null;
+        paused.resolve();
+        await resume.promise;
+      };
+      // Larger than the whole budget, so this persist evicts both hosts.
+      cache.commitTimeline(SERVER_ID, "agent-1", timeline("x".repeat(16_384)));
+      const eviction = cache.flush();
+      await paused.promise;
+      cache.commitDirectoryMutations(SERVER_ID, [], { agents: { generation: "g", afterSeq: 13 } });
+      resume.resolve();
+      await eviction;
+      await cache.flush();
+
+      const restored = await createCache(storage).readDirectory(SERVER_ID);
+      expect(restored.agents.size).toBe(0);
+      expect(restored.checkpoint).toBeUndefined();
+    },
+  );
+
+  it("stores no checkpoint for a host evicted while a malformed row is repaired", async () => {
+    const { storage } = await cacheWithoutBackgroundVisibility();
+    const reader = createCache(storage, 8_192);
+    storage.onRead = () => {
+      if (!storage.reads.at(-1)?.kinds.includes("checkpoint")) return;
+      storage.onRead = null;
+      // Larger than the whole budget, so this persist evicts the host before the repair writes.
+      reader.commitTimeline(SERVER_ID, "agent-1", timeline("x".repeat(16_384)));
+      void reader.flush();
+    };
+
+    expect(await reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+    await reader.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.projects.size).toBe(0);
+    expect(restored.checkpoint).toBeUndefined();
+  });
+
+  it("repairs a malformed row's cursor when the overlapping eviction fails", async () => {
+    const { storage } = await cacheWithoutBackgroundVisibility();
+    const reader = createCache(storage, 8_192);
+    storage.onRead = () => {
+      if (!storage.reads.at(-1)?.kinds.includes("checkpoint")) return;
+      storage.onRead = null;
+      storage.beforeDeleteHost = async () => {
+        storage.beforeDeleteHost = null;
+        throw new Error("Eviction aborted");
+      };
+      reader.commitTimeline(SERVER_ID, "agent-1", timeline("x".repeat(16_384)));
+      void reader.flush();
+    };
+
+    expect(await reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+    // A newer timeline fits the budget, so no later eviction clears the checkpoint.
+    reader.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await reader.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toEqual({
+      agents: { generation: "g", afterSeq: 12 },
+      projects: { generation: "g", afterSeq: 4 },
+    });
+  });
+
+  it("keeps an update queued behind the baseline that rebuilds an evicted host", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ReplicaCache(storage, { ...noLegacyCleanup, maxBytes: 2_500 });
+    cache.setHosts([SERVER_ID, "other-host"]);
+    const baseline = directory();
+    cache.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await cache.flush();
+    cache.replaceDirectoryBaseline("other-host", baseline);
+    await cache.flush();
+    expect((await cache.readDirectory(SERVER_ID)).agents.size).toBe(0);
+
+    const renamed = { ...agent(), title: "Renamed agent" };
+    cache.replaceDirectoryBaseline(SERVER_ID, baseline);
+    cache.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "agent", type: "upsert", id: renamed.id, value: renamed }],
+      { agents: { generation: "g", afterSeq: 13 } },
+    );
+    await cache.flush();
+    cache.commitDirectoryMutations(SERVER_ID, [], { agents: { generation: "g", afterSeq: 14 } });
+    await cache.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toEqual({ agents: { generation: "g", afterSeq: 14 } });
+    expect(restored.agents.get(renamed.id)?.title).toBe("Renamed agent");
   });
 
   it("runs legacy cleanup once when storage is first used", async () => {

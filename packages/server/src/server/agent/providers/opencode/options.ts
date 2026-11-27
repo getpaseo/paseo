@@ -10,6 +10,8 @@ const PermissionRuleSchema = z.union([
 // OpenCode Config.permission, maintained against @opencode-ai/sdk 1.14.46.
 export const OpenCodeProviderOptionsSchema = z
   .object({
+    // Composer control: approves permission prompts without asking.
+    auto_accept: z.boolean().optional(),
     permission: z
       .union([
         PermissionActionSchema,

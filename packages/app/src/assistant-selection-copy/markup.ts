@@ -2,11 +2,17 @@ export const MARKDOWN_COPY_TAG_ATTRIBUTE = "data-paseo-markdown-tag";
 export const MARKDOWN_COPY_IGNORE_ATTRIBUTE = "data-paseo-markdown-ignore";
 export const MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE = "data-paseo-markdown-list-marker";
 export const MARKDOWN_COPY_UNWRAP_ATTRIBUTE = "data-paseo-markdown-unwrap";
+/** A link Paseo recognized in the reply text, as opposed to one the Markdown wrote. */
+export const MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE = "data-paseo-markdown-recognized-link";
 export const MARKDOWN_COPY_LIST_START_ATTRIBUTE = "data-paseo-markdown-list-start";
 export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
+export const MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE = "data-paseo-markdown-fence-source";
 export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
 export const MARKDOWN_COPY_SRC_ATTRIBUTE = "data-paseo-markdown-src";
 export const MARKDOWN_COPY_ALT_ATTRIBUTE = "data-paseo-markdown-alt";
+/** Set by the Markdown library's web admonition renderer on the box and on its generated title. */
+export const MARKDOWN_ADMONITION_TYPE_ATTRIBUTE = "data-enrm-admonition-type";
+export const MARKDOWN_ADMONITION_TITLE_ATTRIBUTE = "data-enrm-admonition-title";
 
 /**
  * Trailing line breaks, with any indentation that followed the last one.

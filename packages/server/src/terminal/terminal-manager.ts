@@ -54,6 +54,16 @@ export type TerminalWorkspaceContributionChangedListener = (
   event: TerminalWorkspaceContributionChangedEvent,
 ) => void;
 
+/**
+ * Who asked for a terminal: an agent's Paseo tool, a `paseo.json` script or service, or a
+ * `paseo.json` worktree terminal; anything else is a client. `input` is the command Paseo types
+ * into the shell once it starts.
+ */
+export interface TerminalOrigin {
+  source: "client" | "agent" | "script" | "worktree";
+  input?: string;
+}
+
 export interface TerminalManager {
   /**
    * Set when this host's terminals cannot be served at all (a worker from a newer Paseo holds
@@ -62,6 +72,8 @@ export interface TerminalManager {
   getUnavailableError?(): Error | null;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
+    /** Where the terminal comes from, for plugins' `terminal.create.before` hooks. */
+    origin?: TerminalOrigin;
     id?: string;
     cwd: string;
     workspaceId: string;

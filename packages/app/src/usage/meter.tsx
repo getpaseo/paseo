@@ -6,14 +6,12 @@ import type { UsageTone } from "./types";
 
 function fillToneStyle(tone: UsageTone) {
   switch (tone) {
-    case "ok":
-      return styles.fillOk;
     case "warning":
       return styles.fillWarning;
     case "danger":
       return styles.fillDanger;
     default:
-      return styles.fillDefault;
+      return styles.fillOk;
   }
 }
 
@@ -58,9 +56,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   fillQuiet: {
     backgroundColor: theme.colors.surface4,
-  },
-  fillDefault: {
-    backgroundColor: theme.colors.foregroundMuted,
   },
   fillOk: {
     backgroundColor: theme.colors.statusSuccess,

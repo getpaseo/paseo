@@ -128,13 +128,28 @@ function selectionsEqual(left: SkillSelection, right: SkillSelection): boolean {
   );
 }
 
+/**
+ * Ordered roots for transaction capture and recovery. Pre-0.17 manifests
+ * recorded `[agents, claude, codex]` at indices 0–2, so `codexDir` stays at
+ * index 2 and newer install roots follow at index 3+.
+ */
+function skillRoots(targets: SkillTargets): string[] {
+  const [agentsDir, claudeDir, ...additionalInstallDirs] = targets.installDirs;
+  return [
+    ...(agentsDir ? [agentsDir] : []),
+    ...(claudeDir ? [claudeDir] : []),
+    targets.codexDir,
+    ...additionalInstallDirs,
+  ];
+}
+
 async function validateEntries(
   targets: SkillTargets,
   transactionDir: string,
   entries: CapturedDirectory[],
 ): Promise<boolean> {
   const names = new Set(await listManagedSkillNames(targets.sourceDir));
-  const roots = [targets.agentsDir, targets.claudeDir, targets.codexDir];
+  const roots = skillRoots(targets);
   return entries.every((entry) => {
     const rootIndex = roots.findIndex((root) => path.dirname(entry.livePath) === root);
     if (rootIndex === -1) return false;
@@ -409,6 +424,10 @@ async function restore(
       continue;
     }
     const liveInfo = await lstat(entry.livePath).catch(() => null);
+    // An add entry with no backup and no readable live path wrote nothing here
+    // (absent, under a file, or under an unreadable parent). Skipping avoids
+    // failing rollback with ENOTDIR/EACCES and leaving a stuck transaction.
+    if (liveInfo === null && backup === null) continue;
     if (liveInfo !== null && !(await isDirectory(entry.livePath))) {
       // Add/update rollback has the same conflict state as delete rollback. A
       // recreated file or file symlink belongs to the external writer; preserve
@@ -441,11 +460,7 @@ async function restore(
 }
 
 function transactionParents(targets: SkillTargets): string[] {
-  return [
-    ...new Set(
-      [targets.agentsDir, targets.claudeDir, targets.codexDir].map((root) => path.dirname(root)),
-    ),
-  ];
+  return [...new Set(skillRoots(targets).map((root) => path.dirname(root)))];
 }
 
 /**
@@ -493,7 +508,7 @@ export async function beginSkillsTransaction(
   nextSelection: SkillSelection,
   ops: readonly SkillOp[],
 ): Promise<SkillsTransaction> {
-  const roots = [targets.agentsDir, targets.claudeDir, targets.codexDir];
+  const roots = skillRoots(targets);
   const seenRoots = new Set<string>();
   const uniqueRoots: Array<{ root: string; rootIndex: number }> = [];
   for (const [rootIndex, root] of roots.entries()) {

@@ -32,6 +32,12 @@ export interface SeedDaemonClient {
     config: import("@getpaseo/protocol/messages").MutableDaemonConfigPatch,
   ): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
   getDaemonConfig(): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
+  installDirectoryPlugin(
+    directoryPath: string,
+    id?: string,
+  ): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+  removePlugin(pluginId: string): Promise<void>;
+  invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{
@@ -131,6 +137,7 @@ export interface SeedDaemonClient {
         currentModeId: string | null;
         status: string;
         title?: string | null;
+        metadata?: Record<string, unknown>;
       };
     }>;
   }>;
@@ -157,8 +164,11 @@ export interface SeedDaemonClient {
   sendAgentMessage(
     agentId: string,
     text: string,
-    options?: { sourceAgentId?: string },
+    options?: { sourceAgentId?: string; activeTurnBehavior?: "interrupt" | "steer" | "queue" },
   ): Promise<void>;
+  listAgentBackgroundWork(
+    agentId: string,
+  ): Promise<import("@getpaseo/client").PaseoAgentBackgroundWorkItem[]>;
   waitForFinish(
     agentId: string,
     timeout?: number,

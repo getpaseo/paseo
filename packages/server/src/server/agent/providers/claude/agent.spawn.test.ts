@@ -1,9 +1,15 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
-import type {
-  Options,
-  Query,
-  SpawnOptions as ClaudeSpawnOptions,
+import {
+  query as sdkQuery,
+  type Options,
+  type Query,
+  type SpawnOptions as ClaudeSpawnOptions,
+  type SpawnedProcess,
 } from "@anthropic-ai/claude-agent-sdk";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -101,5 +107,118 @@ describe("Claude spawn override", () => {
     expect(claudeSpawnCall).toBeDefined();
     const spawnOptions = claudeSpawnCall?.[2];
     expect(spawnOptions?.shell).toBe(false);
+  });
+
+  test("keeps the Paseo MCP bearer token off the Claude Code command line", async () => {
+    let capturedOptions: Options | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedOptions = options;
+      return createQueryMock([]);
+    });
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => "2.1.326",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      mcpServers: {
+        paseo: {
+          type: "http",
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          headers: { Authorization: "Bearer secret-token" },
+        },
+      },
+    });
+    await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+    await session.close();
+    if (!capturedOptions) {
+      throw new Error("Claude query options were not captured");
+    }
+
+    // Feed Paseo's options to the real SDK and record the argv it would launch with.
+    let launchArgs: string[] | undefined;
+    let stdinText = "";
+    const stdin = new PassThrough();
+    stdin.on("data", (chunk: Buffer) => {
+      stdinText += chunk.toString("utf8");
+    });
+    const abortController = new AbortController();
+    const sdk = sdkQuery({
+      prompt: "hello",
+      options: {
+        ...capturedOptions,
+        abortController,
+        spawnClaudeCodeProcess: (spawnOptions: ClaudeSpawnOptions): SpawnedProcess => {
+          launchArgs = spawnOptions.args;
+          const child = new EventEmitter() as EventEmitter & SpawnedProcess;
+          Object.assign(child, {
+            stdin,
+            stdout: new PassThrough(),
+            killed: false,
+            exitCode: null,
+            kill: () => true,
+          });
+          return child;
+        },
+      },
+    });
+    // The fake process never answers, so the first message never arrives; only the launch matters.
+    void sdk.next().catch(() => undefined);
+    await vi.waitFor(() => {
+      expect(stdinText).toContain("secret-token");
+    });
+    abortController.abort();
+
+    expect(launchArgs).toBeDefined();
+    expect(launchArgs?.join(" ")).not.toContain("secret-token");
+    expect(launchArgs).not.toContain("--mcp-config");
+  });
+
+  test("starts Claude Code behind the session's launch wrap", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "claude-launch-wrap-"));
+    const launcher = path.join(root, "launcher.mjs");
+    await writeFile(launcher, "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");
+    let capturedOptions: Options | undefined;
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory: ({ options }: ClaudeQueryInput) => {
+        capturedOptions = options;
+        return createQueryMock([]);
+      },
+      resolveBinary: async () => "/test/claude/bin",
+      resolveVersion: async () => "2.1.326",
+    });
+    const session = await client.createSession(
+      { provider: "claude", cwd: root },
+      { wrap: [process.execPath, launcher, "--sandbox"] },
+    );
+    try {
+      await (session as unknown as { ensureQuery(): Promise<unknown> }).ensureQuery();
+      const child = capturedOptions?.spawnClaudeCodeProcess?.({
+        command: "/test/claude/bin",
+        args: ["--output-format", "stream-json"],
+        cwd: root,
+        env: {},
+        signal: new AbortController().signal,
+      }) as ChildProcess | undefined;
+      if (!child?.stdout) throw new Error("Claude Code was not spawned");
+      let stdout = "";
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
+      await new Promise((resolve) => child.once("close", resolve));
+      expect(JSON.parse(stdout)).toEqual([
+        "--sandbox",
+        "/test/claude/bin",
+        "--output-format",
+        "stream-json",
+      ]);
+    } finally {
+      await session.close();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

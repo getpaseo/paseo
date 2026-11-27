@@ -3,10 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Platform, ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
-import { ArrowLeft, Settings } from "lucide-react-native";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Button } from "@/components/ui/button";
-import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostFeature } from "@/runtime/host-features";
@@ -18,38 +16,11 @@ import type { InstalledPlugin } from "../types";
 import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
-import { buildPluginSettingsRoute } from "./routes";
 
 interface SettingsIdentity {
   serverId: string;
   pluginId: string;
   screenId: string;
-}
-
-const ThemedSettingsIcon = withUnistyles(Settings);
-const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
-/** Opens the plugin's settings at its first screen. Renders nothing when it has none. */
-export function PluginSettingsButton({ serverId, pluginId }: Omit<SettingsIdentity, "screenId">) {
-  const { t } = useTranslation();
-  const plugin = useInstalledPlugin(serverId, pluginId);
-  const supported = useHostFeature(serverId, "pluginSettings");
-  const firstScreenId = plugin?.settingsScreens[0]?.id;
-  const open = useCallback(() => {
-    if (firstScreenId) router.push(buildPluginSettingsRoute(serverId, pluginId, firstScreenId));
-  }, [serverId, pluginId, firstScreenId]);
-  const compact = useIsCompactFormFactor();
-  if (!supported || !firstScreenId) return null;
-  return (
-    <ToolbarButton
-      label={t("settings.plugins.actions.settings")}
-      compact={compact}
-      onPress={open}
-      testID={`plugin-settings-${pluginId}`}
-    >
-      <ThemedSettingsIcon size={paneContentToolbarIconSize(compact)} uniProps={mutedIconMapping} />
-    </ToolbarButton>
-  );
 }
 
 function renderNoIcon() {
@@ -172,30 +143,12 @@ function SettingsContent({
 const ThemedSettingsContent = withUnistyles(SettingsContent);
 // Settings routes carry no screen params.
 const themeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
-export function PluginSettingsContent({
-  onBackToPlugins,
-  showBackToPlugins,
-  ...identity
-}: SettingsIdentity & { onBackToPlugins: () => void; showBackToPlugins: boolean }) {
-  const { t } = useTranslation();
-  return (
-    <View>
-      {showBackToPlugins ? (
-        <Button
-          onPress={onBackToPlugins}
-          variant="ghost"
-          leftIcon={ArrowLeft}
-          style={styles.backButton}
-        >
-          {t("settings.plugins.screens.backToPlugins")}
-        </Button>
-      ) : null}
-      <ThemedSettingsContent {...identity} uniProps={themeMapping} />
-    </View>
-  );
+
+/** One of the plugin's settings screens, with tabs to the others. Renders inside its plugin page. */
+export function PluginSettingsContent(identity: SettingsIdentity) {
+  return <ThemedSettingsContent {...identity} uniProps={themeMapping} />;
 }
 const styles = StyleSheet.create((theme) => ({
   message: { color: theme.colors.foregroundMuted },
   tabs: { flexGrow: 0, marginBottom: theme.spacing[4] },
-  backButton: { alignSelf: "flex-start", paddingHorizontal: 0, marginBottom: theme.spacing[4] },
 }));

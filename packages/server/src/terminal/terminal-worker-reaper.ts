@@ -6,7 +6,8 @@ import { connectTerminalWorker } from "./terminal-worker-client.js";
 import { pruneTerminalWorkerRuntimes } from "./terminal-worker-runtime.js";
 import {
   classifyTerminalProgramProcess,
-  classifyTerminalWorkerProcess,
+  identifyTerminalWorker,
+  authorizeTerminalWorkerTermination,
   type ProcessOwnership,
 } from "./terminal-worker-ownership.js";
 import {
@@ -30,7 +31,8 @@ import {
 // uses for its own kill stop. Every kill intent (stop, quit, --force, a kill restart whose
 // shutdown hung, a dead or stopped worker, a program that ignores HUP) ends here:
 //
-// 1. Classify the worker and every terminal program of each record on its own, by birth time.
+// 1. Classify each record's worker by its pid and socket, and every terminal program on its
+//    own, by birth time (Windows records none; its programs end with their worker's console).
 //    A record from an earlier boot names only processes the reboot ended: retire it unsignaled.
 //    Descendants of owned programs (and, on Linux, members of their sessions) join the
 //    candidates from one process-table snapshot taken before anything is signaled. Once a
@@ -38,9 +40,10 @@ import {
 //    program's session joins only when its environment carries that terminal's id. When the
 //    table cannot be read, nothing in the record is signaled: ending a program would reparent
 //    the children only the table can find, and a retry could never reach them again.
-// 2. An owned worker gets an authenticated `shutdown`: it kills each terminal and waits for it.
-// 3. After `gracefulMs`, SIGKILL whatever owned process is left, re-inspecting right before
-//    each signal.
+// 2. A worker whose socket accepts is owned and gets an authenticated `shutdown`: it kills each
+//    terminal and waits for it.
+// 3. After `gracefulMs`, SIGKILL whatever owned process is left, checking its socket or birth
+//    time again right before each signal.
 // 4. Succeed only when every candidate is gone or proven unrelated. Otherwise keep a record of
 //    the unresolved entries, marked closing, in a cleanup record no worker rewrites, and throw
 //    TerminalCleanupNotConfirmedError. An unreadable record is never reported confirmed.
@@ -161,7 +164,7 @@ export interface ReapTerminalWorkersOptions {
 
 interface Candidate {
   pid: number;
-  startedAt: string;
+  startedAt: string | null;
   role: UnresolvedTerminalProcess["role"];
   terminalId: string;
   state: ProcessOwnership;
@@ -252,7 +255,7 @@ async function reapRecord(
     return { signaled: [], unresolved: [] };
   }
 
-  const worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+  const worker = await identifyTerminalWorker(record);
   const discovery = await collectCandidates(record, inspector, log);
   const tracked: TrackedProcesses = {
     record,
@@ -265,13 +268,11 @@ async function reapRecord(
     return await keepUnresolved(input, tracked, [], `not signaled: ${discovery.tableError}`);
   }
 
-  if (tracked.worker.status === "owned" && input.gracefulMs > 0) {
-    await requestWorkerShutdown(record, input.gracefulMs, log);
+  const shutdownMs = shutdownWindow(tracked.worker, input.gracefulMs);
+  if (shutdownMs > 0) {
+    await requestWorkerShutdown(record, shutdownMs, log);
   }
-  await waitUntilSettled(
-    tracked,
-    Date.now() + (tracked.worker.status === "owned" ? input.gracefulMs : 0),
-  );
+  await waitUntilSettled(tracked, Date.now() + shutdownMs);
 
   let signaled: number[] = [];
   if (!isSettled(tracked)) {
@@ -280,6 +281,13 @@ async function reapRecord(
   }
 
   return await keepUnresolved(input, tracked, signaled, null);
+}
+
+// Only an accepting socket authorizes shutdown and eventual forced termination.
+function shutdownWindow(worker: ProcessOwnership, gracefulMs: number): number {
+  if (worker.status === "owned") return gracefulMs;
+
+  return 0;
 }
 
 // Retires the record when every process it names is settled; otherwise writes the cleanup
@@ -337,10 +345,7 @@ function isSettled(tracked: TrackedProcesses): boolean {
 
 async function refreshTracked(tracked: TrackedProcesses): Promise<void> {
   if (isOpen(tracked.worker)) {
-    tracked.worker = classifyTerminalWorkerProcess(
-      tracked.record,
-      await tracked.inspector.inspect(tracked.record.pid),
-    );
+    tracked.worker = await identifyTerminalWorker(tracked.record);
   }
   for (const candidate of tracked.candidates) {
     if (isOpen(candidate.state)) {
@@ -369,7 +374,7 @@ async function forceKillOwned(
   const { record, inspector } = tracked;
   const signaled: number[] = [];
   if (tracked.worker.status === "owned") {
-    tracked.worker = classifyTerminalWorkerProcess(record, await inspector.inspect(record.pid));
+    tracked.worker = await authorizeTerminalWorkerTermination(record);
     if (tracked.worker.status === "owned") {
       await forceKillWorker(record.pid);
       signaled.push(record.pid);
@@ -447,6 +452,7 @@ async function collectCandidates(
   log: NonNullable<ReapTerminalWorkersOptions["log"]>,
 ): Promise<CandidateDiscovery> {
   const candidates = new Map<number, Candidate>();
+  if (inspector.reportsBirthTimes === false) return { candidates: [], tableError: null };
   for (const entry of record.terminals) {
     candidates.set(entry.pid, {
       pid: entry.pid,
@@ -461,8 +467,12 @@ async function collectCandidates(
   // already gone: the kernel keeps a session id reserved while a member lives, so a job the
   // shell left behind is still found. A pid reused by another process (unrelated) leads someone
   // else's session and is never walked.
+  // A program recorded without a birth time is never walked: the worker could not read the
+  // process table when it started it, so the walk would only keep the cleanup unconfirmed.
   const roots = Array.from(candidates.values()).filter(
-    (c) => c.state.status === "owned" || (c.state.status === "gone" && inspector.reportsSessions),
+    (c) =>
+      c.state.status === "owned" ||
+      (c.state.status === "gone" && c.startedAt !== null && inspector.reportsSessions),
   );
   if (roots.length === 0) return { candidates: Array.from(candidates.values()), tableError: null };
 
@@ -564,7 +574,7 @@ async function requestWorkerShutdown(
       timeoutMs: Math.min(gracefulMs, 2_000),
     });
   } catch (error) {
-    // A worker that cannot be reached is escalated by birth time below; a failed connection
+    // A worker that cannot be reached is probed again below; a failed authentication
     // alone never authorizes a signal.
     log("Terminal worker did not accept a shutdown request", {
       pid: record.pid,

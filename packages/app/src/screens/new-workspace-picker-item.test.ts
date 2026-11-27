@@ -8,6 +8,8 @@ import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemToCheckoutRequest,
+  refListOptions,
+  startsNewBranch,
   type PickerItem,
 } from "./new-workspace-picker-item";
 
@@ -102,6 +104,72 @@ describe("pickerItemToCheckoutRequest", () => {
         projectPath: "acme/repo",
       },
     });
+  });
+});
+
+describe("pickerItemToCheckoutRequest with an action", () => {
+  it("checks a branch out by its branch name, whichever ref the row stands for", () => {
+    const item: PickerItem = {
+      kind: "branch",
+      name: "dev",
+      refName: "refs/remotes/origin/dev",
+      accessibilityLabel: "dev, origin branch",
+    };
+    expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
+      action: "checkout",
+      refName: "dev",
+    });
+  });
+
+  it("branches off a pull request, still naming the pull request", () => {
+    const item: PickerItem = { kind: "github-pr", item: prItem };
+    expect(pickerItemToCheckoutRequest(item, "branch-off")).toEqual({
+      action: "branch-off",
+      refName: "feature/picker",
+      checkoutSource: { kind: "change_request", forge: "github", number: 42 },
+      githubPrNumber: 42,
+    });
+  });
+});
+
+describe("refListOptions", () => {
+  const branchDetails: BranchPickerDetail[] = [
+    {
+      name: "main",
+      committerDate: 20,
+      hasLocal: true,
+      hasRemote: true,
+      localAhead: 1,
+      localBehind: 0,
+    },
+    { name: "dev", committerDate: 10, hasLocal: true, hasRemote: false },
+  ];
+  const data = buildPickerOptionData({ branchDetails, prItems: [prItem], baseItem: null });
+
+  it("lists branches and pull requests apart", () => {
+    const list = (kind: PickerItem["kind"]) =>
+      refListOptions({ ...data, kind, action: "branch-off" }).map((option) => option.label);
+    expect(list("branch")).toEqual(["main", "main (local)", "dev"]);
+    expect(list("github-pr")).toEqual(["#42 Add picker"]);
+  });
+
+  it("shows one row per branch when checking out, since both refs check out the same branch", () => {
+    const rows = refListOptions({ ...data, kind: "branch", action: "checkout" });
+    expect(rows.map((option) => option.label)).toEqual(["main", "dev"]);
+  });
+
+  it("keeps the selected row of a branch when checking out", () => {
+    const localMain = branchPickerOptionId("refs/heads/main");
+    const rows = refListOptions({
+      ...data,
+      selectedOptionId: localMain,
+      kind: "branch",
+      action: "checkout",
+    });
+    expect(rows.map((option) => [option.id, option.label])).toEqual([
+      [localMain, "main"],
+      [branchPickerOptionId("refs/heads/dev"), "dev"],
+    ]);
   });
 });
 
@@ -385,4 +453,30 @@ describe("starting-ref search", () => {
       ).toEqual(visible);
     },
   );
+});
+
+describe("startsNewBranch", () => {
+  it("is true for a branch-off and for no request, which is the default base on a detached HEAD", () => {
+    expect(startsNewBranch(undefined)).toBe(true);
+    expect(startsNewBranch({ action: "branch-off", refName: "main" })).toBe(true);
+  });
+
+  it("is false for a checkout of a branch or a change request", () => {
+    expect(startsNewBranch({ action: "checkout", refName: "feature" })).toBe(false);
+    expect(
+      startsNewBranch({
+        checkoutSource: { kind: "change_request", forge: "github", number: 7 },
+      }),
+    ).toBe(false);
+    expect(startsNewBranch({ githubPrNumber: 7 })).toBe(false);
+  });
+
+  it("is true for a branch-off from a change request", () => {
+    expect(
+      startsNewBranch({
+        action: "branch-off",
+        checkoutSource: { kind: "change_request", forge: "github", number: 7 },
+      }),
+    ).toBe(true);
+  });
 });

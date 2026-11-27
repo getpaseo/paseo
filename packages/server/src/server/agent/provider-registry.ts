@@ -48,6 +48,7 @@ import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
+import { convertLegacyOptions } from "./option-controls.js";
 import { ToolPolicyUnsupportedError, mergeProviderOptions } from "./provider-options.js";
 import {
   AGENT_PROVIDER_DEFINITIONS,
@@ -77,6 +78,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
    */
   derivedFromProviderId: string | null;
   supportsExactMcpPreapproval: boolean;
+  supportsLaunchWrap: boolean;
   applyToolPolicy: (
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
@@ -93,6 +95,18 @@ export interface ProviderDefinition extends AgentProviderDefinition {
     client?: AgentClient,
     context?: ProviderRefreshContext,
   ) => Promise<ProviderCatalog>;
+  /**
+   * Discovers the provider's raw catalog before applying static config overlays
+   * (`models`, `additionalModels`, mode icons/colors). `discovered: false` indicates
+   * the catalog came purely from static config without invoking the provider runtime.
+   */
+  fetchRawCatalog?: (
+    options: FetchCatalogOptions,
+    client?: AgentClient,
+    context?: ProviderRefreshContext,
+  ) => Promise<{ catalog: ProviderCatalog; discovered: boolean }>;
+  /** Applies static provider config overlays (`models`, `additionalModels`, mode metadata). */
+  applyCatalogConfig?: (catalog: ProviderCatalog) => ProviderCatalog;
 }
 
 /** Provider metadata and an unconfigured factory; the registry owns override application. */
@@ -100,6 +114,7 @@ export interface RegisteredProviderDefinition extends AgentProviderDefinition {
   requiresConfiguration?: boolean;
   iconSvg?: string;
   supportsExactMcpPreapproval: boolean;
+  supportsLaunchWrap: boolean;
   createClient: (logger: Logger, runtimeSettings?: ProviderRuntimeSettings) => AgentClient;
 }
 
@@ -147,17 +162,29 @@ interface ResolvedProvider {
 
 interface ProviderContract {
   supportsExactMcpPreapproval: boolean;
+  /** Sessions spawn their harness behind an `agent.open.before` wrap. */
+  supportsLaunchWrap?: boolean;
   applyToolPolicy?: (provider: string, toolPolicy: ToolPolicy) => ToolPolicy;
 }
 
+// Every built-in provider that starts a local harness honors a wrap; the mock providers start none.
 const PROVIDER_CONTRACTS: Record<string, ProviderContract> = {
-  claude: { supportsExactMcpPreapproval: true },
-  codex: { supportsExactMcpPreapproval: true },
-  opencode: { supportsExactMcpPreapproval: true },
+  claude: { supportsExactMcpPreapproval: true, supportsLaunchWrap: true },
+  codex: { supportsExactMcpPreapproval: true, supportsLaunchWrap: true },
+  copilot: { supportsExactMcpPreapproval: false, supportsLaunchWrap: true },
+  opencode: { supportsExactMcpPreapproval: true, supportsLaunchWrap: true },
+  pi: { supportsExactMcpPreapproval: false, supportsLaunchWrap: true },
+  omp: { supportsExactMcpPreapproval: false, supportsLaunchWrap: true },
 };
 
 const UNSUPPORTED_PROVIDER_CONTRACT: ProviderContract = {
   supportsExactMcpPreapproval: false,
+};
+
+// A user-defined ACP provider is a local command, which starts behind the wrap.
+const CUSTOM_ACP_PROVIDER_CONTRACT: ProviderContract = {
+  supportsExactMcpPreapproval: false,
+  supportsLaunchWrap: true,
 };
 
 const HUB_E2E_PROVIDER_ID = "hub-e2e";
@@ -166,6 +193,7 @@ const HUB_E2E_TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u;
 // The cross-repository Hub harness owns this synthetic provider ID. It exercises the production
 // registry path without extending exact-preapproval support to user-defined ACP providers.
 const HUB_E2E_PROVIDER_CONTRACT: ProviderContract = {
+  ...CUSTOM_ACP_PROVIDER_CONTRACT,
   supportsExactMcpPreapproval: true,
   applyToolPolicy: (provider, toolPolicy) => {
     for (const grant of toolPolicy.preapproved) {
@@ -447,13 +475,21 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get initialTimeline() {
       return inner.initialTimeline;
     },
-    get features() {
-      return inner.features;
+    get persistenceUpdatedOnResume() {
+      return inner.persistenceUpdatedOnResume;
+    },
+    get controls() {
+      return inner.controls;
+    },
+    get openOptionsPatch() {
+      return inner.openOptionsPatch;
     },
     usageSession: inner.usageSession?.bind(inner),
     run: (prompt, options) => inner.run(prompt, options),
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
-    steerActiveTurn: inner.steerActiveTurn?.bind(inner),
+    get steerActiveTurn() {
+      return inner.steerActiveTurn?.bind(inner);
+    },
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),
     async *streamHistory() {
       for await (const event of inner.streamHistory()) {
@@ -468,12 +504,14 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     respondToPermission: (requestId, response) => inner.respondToPermission(requestId, response),
     describePersistence: () => mapPersistenceHandle(provider, inner.describePersistence()),
     interrupt: () => inner.interrupt(),
+    stopBackgroundWork: inner.stopBackgroundWork?.bind(inner),
     close: () => inner.close(),
     canStopRuntime: inner.canStopRuntime?.bind(inner),
+    hasPendingWakeup: inner.hasPendingWakeup?.bind(inner),
     listCommands: inner.listCommands?.bind(inner),
     setModel: inner.setModel?.bind(inner),
     setThinkingOption: inner.setThinkingOption?.bind(inner),
-    setFeature: inner.setFeature?.bind(inner),
+    applyOptions: inner.applyOptions?.bind(inner),
     revertConversation: inner.revertConversation?.bind(inner),
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),
@@ -481,27 +519,55 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
   } satisfies ForwardedAgentSession;
 }
 
+function bindClientDirectMethods(inner: AgentClient) {
+  return {
+    shutdown: inner.shutdown?.bind(inner),
+    resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
+    resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
+    isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    resolveUsageLaunch: inner.resolveUsageLaunch?.bind(inner),
+    requireLaunchWrap: inner.requireLaunchWrap?.bind(inner),
+    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
+    getCatalogBinaryFingerprint: inner.getCatalogBinaryFingerprint?.bind(inner),
+    checkAvailability: inner.checkAvailability?.bind(inner),
+    getDiagnostic: inner.getDiagnostic?.bind(inner),
+  };
+}
+
+// Maps wrapped registry clients back to their unmerged provider discovery call so
+// persistent catalog caches store only discovered entries and apply config overlays on load.
+const rawCatalogFetchers = new WeakMap<AgentClient, AgentClient["fetchCatalog"]>();
+
 function wrapClientProvider(
   provider: AgentProvider,
   inner: AgentClient,
   profileModels: ProviderProfileModel[],
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
-  providerOptions: ProviderOptions | undefined,
+  configuredOptions: ProviderOptions | undefined,
+  supportsLaunchWrap: boolean,
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
-  const listFeatures = inner.listFeatures?.bind(inner);
+  const listControls = inner.listControls?.bind(inner);
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
   const configuredModelIds = [...profileModels, ...additionalModels].map((model) => model.id);
+  // Converted where it is used, so a malformed configured default fails the call that reads it
+  // rather than the registry that holds every provider.
+  const configuredDefaults = () =>
+    convertLegacyOptions({ provider: inner.provider, options: configuredOptions });
+  const withDefaults = (own: ProviderOptions | undefined) =>
+    mergeProviderOptions(configuredDefaults(), own);
 
-  return {
+  const wrapped: AgentClient = {
+    ...bindClientDirectMethods(inner),
     provider,
     get capabilities() {
       return inner.capabilities;
     },
-    shutdown: inner.shutdown?.bind(inner),
+    catalogRefresh: inner.catalogRefresh,
+    supportsLaunchWrap,
     createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
         provider,
@@ -509,7 +575,7 @@ function wrapClientProvider(
           {
             ...config,
             provider: inner.provider,
-            providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
+            providerOptions: withDefaults(config.providerOptions),
           },
           launchContext,
           { ...options, configuredModelIds },
@@ -526,14 +592,17 @@ function wrapClientProvider(
           {
             ...overrides,
             provider: inner.provider,
-            providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
+            providerOptions: withDefaults(overrides?.providerOptions),
           },
           launchContext,
           { ...options, configuredModelIds },
         ),
       ),
     fetchCatalog: async (options, context) => {
-      const catalog = await inner.fetchCatalog({ ...options, providerOptions }, context);
+      const catalog = await inner.fetchCatalog(
+        { ...options, providerOptions: configuredDefaults() },
+        context,
+      );
       return {
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
@@ -548,25 +617,24 @@ function wrapClientProvider(
             config: {
               ...config,
               provider: inner.provider,
-              providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
+              providerOptions: withDefaults(config.providerOptions),
             },
             env,
             signal,
           })
       : undefined,
-    resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
-    resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
-    isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
-    listFeatures: listFeatures
+    effectiveOptions: (own) => withDefaults(own) ?? {},
+    listControls: listControls
       ? async (config) =>
-          await listFeatures({
+          await listControls({
             ...config,
             provider: inner.provider,
-            providerOptions: mergeProviderOptions(providerOptions, config.providerOptions),
+            providerOptions: withDefaults(config.providerOptions),
           })
       : undefined,
     listImportableSessions: listImportableSessions
-      ? async (options) => await listImportableSessions({ ...options, providerOptions })
+      ? async (options) =>
+          await listImportableSessions({ ...options, providerOptions: configuredDefaults() })
       : undefined,
     importSession: importSession
       ? async (input, context) => {
@@ -575,10 +643,7 @@ function wrapClientProvider(
             config: {
               ...context.config,
               provider: inner.provider,
-              providerOptions: mergeProviderOptions(
-                providerOptions,
-                context.config.providerOptions,
-              ),
+              providerOptions: withDefaults(context.config.providerOptions),
             },
             storedConfig: {
               ...context.storedConfig,
@@ -607,10 +672,13 @@ function wrapClientProvider(
     unarchiveNativeSession: unarchiveNativeSession
       ? async (handle) => await unarchiveNativeSession({ ...handle, provider: inner.provider })
       : undefined,
-    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
-    getDiagnostic: inner.getDiagnostic?.bind(inner),
+    installation: inner.installation,
   };
+  rawCatalogFetchers.set(wrapped, (options, context) =>
+    inner.fetchCatalog({ ...options, providerOptions: configuredDefaults() }, context),
+  );
+  return wrapped;
 }
 
 function createRegistryEntry(
@@ -643,13 +711,68 @@ function createRegistryEntry(
 
   const hasStaticModes = resolved.definition.modes.length > 0;
 
+  const applyCatalogConfig = (catalog: ProviderCatalog): ProviderCatalog => {
+    if (hasReplacementModels) {
+      return {
+        ...catalog,
+        models: mergeModelAdditions(provider, replacementModels, additionalModels),
+        modes: decorateModes(hasStaticModes ? resolved.definition.modes : catalog.modes),
+      };
+    }
+    return {
+      ...catalog,
+      models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
+        profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+      }),
+      modes: decorateModes(catalog.modes),
+    };
+  };
+
+  const fetchRawCatalog = async (
+    options: FetchCatalogOptions,
+    client?: AgentClient,
+    context?: ProviderRefreshContext,
+  ): Promise<{ catalog: ProviderCatalog; discovered: boolean }> => {
+    const catalogClient = client ?? modelClient;
+    if (hasReplacementModels && hasStaticModes) {
+      const defaultModeId = await runProviderRefreshActivity(
+        context,
+        "default-mode",
+        async () =>
+          await catalogClient.resolveDefaultModeId?.({
+            config: {
+              provider,
+              cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
+            },
+            signal: context?.signal,
+          }),
+      );
+      return {
+        discovered: false,
+        catalog: {
+          models: [],
+          modes: resolved.definition.modes,
+          defaultModeId,
+        },
+      };
+    }
+    const rawFetch = rawCatalogFetchers.get(catalogClient);
+    const catalog = rawFetch
+      ? await rawFetch(options, context)
+      : await catalogClient.fetchCatalog(options, context);
+    return { discovered: true, catalog };
+  };
+
   const { createBaseClient: _createBaseClient, contract: _contract, ...configuration } = resolved;
   return {
     ...resolved.definition,
+    catalogRefresh:
+      resolved.definition.catalogRefresh ?? modelClient.catalogRefresh ?? "background",
     configuration,
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
+    supportsLaunchWrap: resolved.contract.supportsLaunchWrap === true,
     applyToolPolicy: (config, toolPolicy) => {
       if (toolPolicy && !resolved.contract.supportsExactMcpPreapproval) {
         throw new ToolPolicyUnsupportedError(provider);
@@ -666,49 +789,13 @@ function createRegistryEntry(
     resolveCreateConfig: modelClient.resolveCreateConfig ?? resolveDefaultAgentCreateConfig,
     isCreateConfigUnattended:
       modelClient.isCreateConfigUnattended ?? isDefaultAgentCreateConfigUnattended,
+    applyCatalogConfig,
+    fetchRawCatalog,
     fetchCatalog: async (
       options: FetchCatalogOptions,
       client?: AgentClient,
       context?: ProviderRefreshContext,
-    ) => {
-      const catalogClient = client ?? modelClient;
-      if (hasReplacementModels) {
-        // Replacement models skip runtime model discovery, but additionalModels
-        // must still be merged on top. If modes are dynamic, probe for modes via
-        // the single catalog API; otherwise use static/empty modes with no runtime.
-        const models = mergeModelAdditions(provider, replacementModels, additionalModels);
-        if (hasStaticModes) {
-          const defaultModeId = await runProviderRefreshActivity(
-            context,
-            "default-mode",
-            async () =>
-              await catalogClient.resolveDefaultModeId?.({
-                config: {
-                  provider,
-                  cwd: options.scope === "workspace" ? options.cwd : process.cwd(),
-                },
-                signal: context?.signal,
-              }),
-          );
-          return {
-            models,
-            modes: decorateModes(resolved.definition.modes),
-            defaultModeId,
-          };
-        }
-        const catalog = await catalogClient.fetchCatalog(options, context);
-        return { ...catalog, models, modes: decorateModes(catalog.modes) };
-      }
-
-      const catalog = await catalogClient.fetchCatalog(options, context);
-      return {
-        ...catalog,
-        models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
-          profileModelsAreAdditive: resolved.profileModelsAreAdditive,
-        }),
-        modes: decorateModes(catalog.modes),
-      };
-    },
+    ) => applyCatalogConfig((await fetchRawCatalog(options, client, context)).catalog),
   };
 }
 
@@ -727,6 +814,7 @@ function createResolvedProviderClient(
     additionalModels,
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
+    resolved.contract.supportsLaunchWrap === true,
   );
 }
 
@@ -860,7 +948,7 @@ function addDerivedProviders(
         contract:
           providerId === HUB_E2E_PROVIDER_ID
             ? HUB_E2E_PROVIDER_CONTRACT
-            : UNSUPPORTED_PROVIDER_CONTRACT,
+            : CUSTOM_ACP_PROVIDER_CONTRACT,
       });
       continue;
     }
@@ -942,6 +1030,7 @@ export function buildProviderRegistry(
         createClient: definition.createClient,
         contract: {
           supportsExactMcpPreapproval: definition.supportsExactMcpPreapproval,
+          supportsLaunchWrap: definition.supportsLaunchWrap,
         },
       }),
     );

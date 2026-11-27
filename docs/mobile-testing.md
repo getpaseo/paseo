@@ -49,6 +49,21 @@ restarting the process. It writes snapshots and native failure state under
 production package. This needs a native rebuild when the Unistyles patch changes; a Metro
 reload cannot update it.
 
+To check the first Android composer tap after pinch-to-zoom, install the rebuilt
+APK and connect it to a chat whose latest assistant message contains a visible
+Markdown image. For example, put `picture.png` in the agent workspace and have
+the assistant reply with `![Test image](picture.png)`. Set `CHAT_URL` to the
+chat's Paseo deep link and run from the repository root:
+
+```bash
+agent-device test packages/app/e2e/mobile/composer-keyboard/lightbox-pinch.android.ad \
+  --platform android --serial emulator-5554 -e APP_ID=sh.paseo -e "CHAT_URL=$CHAT_URL"
+```
+
+Use `APP_ID=sh.paseo.debug` for a development build. If the image has different
+alt text, pass it with `-e IMAGE_LABEL="..."`. The test pinches the image, closes
+it, types in the composer, and checks that a single Attach tap opens Upload file.
+
 For Android keyboard continuity, run the current checkout in the app, open an idle terminal
 with an empty prompt, hide its keyboard, and run:
 

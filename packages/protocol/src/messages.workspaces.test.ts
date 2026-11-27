@@ -1251,6 +1251,15 @@ describe("workspace message schemas", () => {
     expect(
       WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, forge: "gitlab" }).forge,
     ).toBe("gitlab");
+
+    // forgeWeb is optional: an old daemon omits it, a new daemon's value round-trips.
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).forgeWeb).toBeUndefined();
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({
+        ...baseWorkspace,
+        forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+      }).forgeWeb,
+    ).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
   });
 
   test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {

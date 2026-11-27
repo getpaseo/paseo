@@ -1652,6 +1652,23 @@ test("agent_update emits remove when the agent has no workspaceId", async () => 
   const getSnapshot = vi.fn(async () => {
     throw new Error("getSnapshot should not be called for unregistered agent_update placement");
   });
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-30T15:00:00.000Z",
+    updatedAt: "2026-03-30T15:00:00.000Z",
+  });
   const session = asTestSession(
     createSessionForWorkspaceTests({
       onMessage: (message) => emitted.push(message),
@@ -1661,15 +1678,31 @@ test("agent_update emits remove when the agent has no workspaceId", async () => 
       },
     }),
   );
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.workspaceRegistry.listActive = async () => [workspace];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
 
   await activateAgentUpdatesSubscription(session, "sub-agents", {});
+
+  // First include the agent in the subscription, then forward an update with no workspaceId.
+  await session.agentUpdates.forwardLiveAgent(
+    makeManagedAgent({
+      id: "agent-1",
+      cwd: REPO_CWD,
+      workspaceId: workspace.workspaceId,
+      lifecycle: "running",
+      updatedAt: "2026-03-30T15:00:00.000Z",
+    }),
+  );
+  emitted.length = 0;
 
   await session.agentUpdates.forwardLiveAgent(
     makeManagedAgent({
       id: "agent-1",
       cwd: UNREGISTERED_CWD,
       lifecycle: "running",
-      updatedAt: "2026-03-30T15:00:00.000Z",
+      updatedAt: "2026-03-30T15:00:01.000Z",
     }),
   );
 
@@ -1847,81 +1880,6 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
   });
 });
 
-test("workspace clear attention clears stored-only agents and responds", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const workspace = createPersistedWorkspaceRecord({
-    workspaceId: REPO_CWD,
-    projectId: REPO_CWD,
-    cwd: REPO_CWD,
-    kind: "directory",
-    displayName: "repo",
-    createdAt: "2026-03-30T15:00:00.000Z",
-    updatedAt: "2026-03-30T15:00:00.000Z",
-  });
-  const project = createPersistedProjectRecord({
-    projectId: REPO_CWD,
-    rootPath: REPO_CWD,
-    kind: "non_git",
-    displayName: "repo",
-    createdAt: "2026-03-30T15:00:00.000Z",
-    updatedAt: "2026-03-30T15:00:00.000Z",
-  });
-  let storedRecord = makeStoredAgent({
-    id: "stored-agent-1",
-    cwd: REPO_CWD,
-    updatedAt: "2026-03-30T15:00:00.000Z",
-    requiresAttention: true,
-    attentionReason: "finished",
-  });
-  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
-
-  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
-    workspace,
-  ];
-  session.workspaceRegistry.get = async (id: string) =>
-    id === workspace.workspaceId ? workspace : null;
-  session.projectRegistry.list = async () => [project];
-  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
-  session.agentStorage.get = async (agentId: string) =>
-    agentId === storedRecord.id ? storedRecord : null;
-  session.agentStorage.upsert = async (record: unknown) => {
-    storedRecord = record as StoredAgentRecord;
-  };
-  session.listAgentPayloads = async () => [
-    makeAgent({
-      id: storedRecord.id,
-      cwd: storedRecord.cwd,
-      workspaceId: workspace.workspaceId,
-      status: "closed",
-      updatedAt: storedRecord.updatedAt,
-      requiresAttention: true,
-      attentionReason: "finished",
-    }),
-  ];
-
-  await session.handleMessage({
-    type: "workspace.clear_attention.request",
-    workspaceId: workspace.workspaceId,
-    requestId: "req-1",
-  });
-
-  expect(storedRecord.requiresAttention).toBe(false);
-  expect(storedRecord.attentionReason).toBeNull();
-  expect(storedRecord.attentionTimestamp).toBeNull();
-  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
-    requestId: "req-1",
-    workspaceId: workspace.workspaceId,
-    clearedAgentIds: [storedRecord.id],
-    success: true,
-    error: null,
-  });
-  const agentUpdate = findByType(emitted, "agent_update");
-  expect(agentUpdate.payload.kind).toBe("upsert");
-  if (agentUpdate.payload.kind === "upsert") {
-    expect(agentUpdate.payload.agent.requiresAttention).toBe(false);
-  }
-});
-
 test("workspace clear attention responds with an error instead of timing out", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
@@ -2097,7 +2055,8 @@ test("workspace mark unread selects a finished cross-workspace child with scoped
     projectLive: async () => {
       throw new Error("No live agents");
     },
-    projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
+    projectStored: (record) =>
+      buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
     isProviderVisible: () => true,
     isStoredProviderAvailable: () => true,
   });
@@ -2197,110 +2156,6 @@ test("workspace mark unread rejects workspaces without a read root agent", async
     markedAgentId: null,
     success: false,
     error: `Workspace has no read agent to mark unread: ${workspace.workspaceId}`,
-  });
-});
-
-test("workspace clear attention can clear multiple workspaces in one request", async () => {
-  const emitted: SessionOutboundMessage[] = [];
-  const workspaces = [
-    createPersistedWorkspaceRecord({
-      workspaceId: "ws-repo-a",
-      projectId: "/tmp/repo-a",
-      cwd: "/tmp/repo-a",
-      kind: "directory",
-      displayName: "repo-a",
-      createdAt: "2026-03-30T15:00:00.000Z",
-      updatedAt: "2026-03-30T15:00:00.000Z",
-    }),
-    createPersistedWorkspaceRecord({
-      workspaceId: "ws-repo-b",
-      projectId: "/tmp/repo-b",
-      cwd: "/tmp/repo-b",
-      kind: "directory",
-      displayName: "repo-b",
-      createdAt: "2026-03-30T15:00:00.000Z",
-      updatedAt: "2026-03-30T15:00:00.000Z",
-    }),
-  ];
-  const projects = workspaces.map((workspace) =>
-    createPersistedProjectRecord({
-      projectId: workspace.projectId,
-      rootPath: workspace.cwd,
-      kind: "non_git",
-      displayName: workspace.displayName,
-      createdAt: "2026-03-30T15:00:00.000Z",
-      updatedAt: "2026-03-30T15:00:00.000Z",
-    }),
-  );
-  const storedRecords = new Map(
-    workspaces.map((workspace, index) => [
-      `stored-agent-${index + 1}`,
-      makeStoredAgent({
-        id: `stored-agent-${index + 1}`,
-        cwd: workspace.cwd,
-        updatedAt: "2026-03-30T15:00:00.000Z",
-        requiresAttention: true,
-        attentionReason: "finished",
-      }),
-    ]),
-  );
-  const session = createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) });
-
-  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => workspaces;
-  session.workspaceRegistry.get = async (id: string) =>
-    workspaces.find((workspace) => workspace.workspaceId === id) ?? null;
-  session.projectRegistry.list = async () => projects;
-  session.projectRegistry.get = async (id: string) =>
-    projects.find((project) => project.projectId === id) ?? null;
-  session.agentStorage.get = async (agentId: string) => storedRecords.get(agentId) ?? null;
-  session.agentStorage.upsert = async (record: unknown) => {
-    const storedRecord = record as StoredAgentRecord;
-    storedRecords.set(storedRecord.id, storedRecord);
-  };
-  session.listAgentPayloads = async () =>
-    Array.from(storedRecords.values()).map((record) => {
-      const owner = workspaces.find((workspace) => workspace.cwd === record.cwd);
-      return makeAgent({
-        id: record.id,
-        cwd: record.cwd,
-        ...(owner ? { workspaceId: owner.workspaceId } : {}),
-        status: "closed",
-        updatedAt: record.updatedAt,
-        requiresAttention: record.requiresAttention,
-        attentionReason: record.attentionReason,
-      });
-    });
-
-  await session.handleMessage({
-    type: "workspace.clear_attention.request",
-    workspaceId: workspaces.map((workspace) => workspace.workspaceId),
-    requestId: "req-1",
-  });
-
-  expect(Array.from(storedRecords.values()).map((record) => record.requiresAttention)).toEqual([
-    false,
-    false,
-  ]);
-  expect(findByType(emitted, "workspace.clear_attention.response").payload).toMatchObject({
-    requestId: "req-1",
-    workspaceId: workspaces.map((workspace) => workspace.workspaceId),
-    clearedAgentIds: ["stored-agent-1", "stored-agent-2"],
-    results: [
-      {
-        workspaceId: workspaces[0].workspaceId,
-        clearedAgentIds: ["stored-agent-1"],
-        success: true,
-        error: null,
-      },
-      {
-        workspaceId: workspaces[1].workspaceId,
-        clearedAgentIds: ["stored-agent-2"],
-        success: true,
-        error: null,
-      },
-    ],
-    success: true,
-    error: null,
   });
 });
 
@@ -6797,6 +6652,45 @@ test("lists Git runtime for a checkout explicitly owned by a non-Git project", a
   });
 });
 
+test("lists where the workspace's forge is on the web so every client builds the same links", async () => {
+  const session = createSessionForWorkspaceTests();
+  const project = createPersistedProjectRecord({
+    projectId: "proj-forge-web",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-forge-web",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.listAgentPayloads = async () => [];
+  session.projectRegistry.list = async () => [project];
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
+  session.workspaceRuntimeStore.get = () => ({
+    ...createWorkspaceRuntimeSnapshot(REPO_CWD),
+    forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+  });
+
+  const [descriptor] = (
+    await session.buildWorkspaceDescriptorMap({ includeGitData: true })
+  ).values();
+
+  expect(descriptor?.forgeWeb).toEqual({
+    host: "github.com",
+    referenceRepository: "main-owner/repo",
+  });
+});
+
 test("buildWorkspaceDescriptorMap computes statusEnteredAt from runtime agent fields", async () => {
   const setupSession = () => {
     const session = createSessionForWorkspaceTests();
@@ -10188,6 +10082,8 @@ test("workspace PR status survives session cleanup and reconnect", async () => {
     comparisonBaseRef: null,
     branchRemoteName: "origin",
     branchMergeRef: "refs/heads/feature",
+    upstreamStatus: { state: "none" },
+    pushTarget: null,
     pullRequestLookupTarget: { headRef: "feature" },
   };
   const githubStub = {

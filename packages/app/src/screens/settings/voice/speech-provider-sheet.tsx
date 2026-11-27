@@ -487,10 +487,7 @@ function LocalModelRow({
   }
 
   const rowStyle = useCallback(
-    ({ hovered, pressed }: HoverState) => [
-      !selectionLocked && hovered && styles.rowHovered,
-      !selectionLocked && pressed && styles.rowPressed,
-    ],
+    ({ hovered }: HoverState) => [!selectionLocked && hovered && styles.rowHovered],
     [selectionLocked],
   );
   const accessibilityState = useMemo(

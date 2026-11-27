@@ -1,7 +1,8 @@
 import type {
-  AgentFeature,
-  AgentFeatureSelect,
-  AgentFeatureToggle,
+  AgentMetric,
+  AgentOptionControl,
+  AgentOptionSelectControl,
+  AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
   JsonValue,
@@ -9,13 +10,21 @@ import type {
   ToolPolicy,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { AgentAttachment, ProviderInstallationInspection } from "@getpaseo/protocol/messages";
+import type {
+  ProviderCatalogRefreshMode,
+  ProviderInspection,
+  ProviderUpdateCheck,
+  ProviderUpdateReport,
+  ProviderUpdateResult,
+} from "@getpaseo/plugin/server/provider";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
 export type {
-  AgentFeature,
-  AgentFeatureSelect,
-  AgentFeatureToggle,
+  AgentMetric,
+  AgentOptionControl,
+  AgentOptionSelectControl,
+  AgentOptionToggleControl,
   AgentProviderNotice,
   AgentTaskItem,
 };
@@ -136,7 +145,10 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   iconSvg?: string;
+  /** The page that helps users set up and troubleshoot this provider. */
+  docsUrl?: string;
   defaultModeId?: string | null;
+  launchWrap?: boolean;
 }
 
 export interface AgentCreateConfigParent {
@@ -148,7 +160,7 @@ export interface AgentCreateConfigParent {
 export interface ResolveAgentCreateConfigInput {
   provider: AgentProvider;
   requestedMode: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
   parent: AgentCreateConfigParent | null;
   unattended: boolean;
   availableModes: AgentMode[] | undefined;
@@ -156,13 +168,13 @@ export interface ResolveAgentCreateConfigInput {
 
 export interface ResolveAgentCreateConfigResult {
   modeId: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
 }
 
 export interface AgentCreateConfigUnattendedInput {
   modeId: string | null;
   config: AgentSessionConfig;
-  features?: AgentFeature[];
+  controls?: AgentOptionControl[];
   availableModes: AgentMode[];
 }
 
@@ -415,8 +427,17 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnId?: string;
+      /** Shown on the completed turn's footer. */
+      metrics?: AgentMetric[];
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
+  /** Full replacement of the metrics shown for the session. An empty list clears them. */
+  | { type: "session_metrics_updated"; provider: AgentProvider; metrics: AgentMetric[] }
   | {
       type: "mode_changed";
       provider: AgentProvider;
@@ -429,6 +450,14 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       thinkingOptionId: string | null;
     }
+  /**
+   * The provider changed options on its own: after `createSession`/`resumeSession` or
+   * `applyOptions` it ended up different from what it was given, or later it changed a setting
+   * itself. The daemon stores the patch and forwards it; it does not undo it. `null` removes the
+   * agent's own value. Only for changes that happen on the provider's own initiative: the result
+   * of opening goes in `openOptionsPatch` and the result of `applyOptions` is its return value.
+   */
+  | { type: "options_changed"; provider: AgentProvider; patch: Record<string, unknown> }
   | {
       type: "turn_failed";
       provider: AgentProvider;
@@ -468,6 +497,12 @@ export type AgentStreamEvent =
       type: "provider_subagent";
       provider: AgentProvider;
       event: import("./provider-subagents/store.js").ProviderSubagentInputEvent;
+    }
+  | {
+      /** Full replacement of the agent's live background work (shells, monitors…). */
+      type: "background_work";
+      provider: AgentProvider;
+      items: import("./background-work/index.js").AgentBackgroundWorkInput[] | null;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
@@ -514,6 +549,14 @@ export type AgentPermissionResponse =
       interrupt?: boolean;
     };
 
+/** A requested turn was canceled before the provider accepted it. */
+export class AgentTurnStartCanceledError extends Error {
+  constructor() {
+    super("Turn was canceled before starting");
+    this.name = "AgentTurnStartCanceledError";
+  }
+}
+
 export interface AgentRunResult {
   sessionId: string;
   finalText: string;
@@ -545,6 +588,8 @@ export interface AgentSlashCommand {
 }
 
 export interface ListImportableSessionsOptions {
+  /** Aborts provider work when the caller stops waiting for a listing. */
+  signal?: AbortSignal;
   providerOptions?: ProviderOptions;
   limit?: number;
   /** Optional case-insensitive descriptor search text. */
@@ -584,6 +629,8 @@ export interface ImportProviderSessionContext {
 export interface ImportedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
+  /** Set on the last entry of a turn the provider reported stats for. */
+  turnMetrics?: AgentMetric[];
 }
 
 export interface ImportedProviderSession {
@@ -591,6 +638,7 @@ export interface ImportedProviderSession {
   config: AgentSessionConfig;
   persistence: AgentPersistenceHandle;
   timeline: ImportedTimelineEntry[];
+  sessionMetrics?: AgentMetric[];
   providerSubagentEvents?: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }
 
@@ -607,10 +655,11 @@ export interface AgentSessionConfig {
    * persisted into agent config so daemon setting changes apply cleanly.
    */
   daemonAppendSystemPrompt?: string;
+  /** Plugin instructions for this launch; never persisted. */
+  pluginAppendSystemPrompt?: string[];
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
-  featureValues?: Record<string, unknown>;
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
@@ -623,11 +672,15 @@ export interface AgentSessionConfig {
 }
 
 export interface AgentLaunchContext {
+  /** Launch-only instructions contributed by plugins. */
+  appendSystemPrompt?: string[];
   /** Launch-only plugin MCP servers and their owners; never persisted. */
   mcpServers?: Record<string, McpServerConfig>;
   mcpServerOwners?: Record<string, string>;
   agentId?: string;
   env?: Record<string, string>;
+  /** Spawn the harness as `[...wrap, command, ...args]`. Selected by a plugin hook; never persisted. */
+  wrap?: readonly [string, ...string[]];
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.
@@ -668,6 +721,7 @@ export interface AgentPermissionResult {
 }
 
 export interface AgentUsageSession {
+  launch?: import("@getpaseo/plugin/server/provider").ProviderLaunch;
   provider: string;
   model?: string;
   env: Record<string, string>;
@@ -675,15 +729,25 @@ export interface AgentUsageSession {
 }
 
 export interface AgentSession {
+  /** Persist the session's current handle immediately after an interactive resume. */
+  readonly persistenceUpdatedOnResume?: boolean;
   usageSession?(): AgentUsageSession | null;
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
-  readonly features?: AgentFeature[];
+  /** Composer controls over top-level option keys. Values come from the agent's effective options. */
+  readonly controls?: AgentOptionControl[];
+  /**
+   * How the session ended up different from the options it was opened with, as a patch (`null`
+   * removes a key). Set by the time `createSession`/`resumeSession` resolves; the daemon stores it
+   * before the agent is published.
+   */
+  readonly openOptionsPatch?: Record<string, unknown>;
   /** New provider-owned rows to commit on registration. streamHistory must also
    * replay them at their original timestamps; restored sessions omit old rows. */
   readonly initialTimeline?: ImportedTimelineEntry[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
+  /** Returns an ID unique across the agent lifetime, including resumed sessions and daemon restarts. */
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
@@ -705,16 +769,38 @@ export interface AgentSession {
    * still uncertain.
    */
   interrupt(): Promise<void>;
+  /** Stop one currently owned background item and wait for provider confirmation. */
+  stopBackgroundWork?(id: string): Promise<void>;
   /** True only when releasing this runtime loses no background work or pending replies.
    * An optional additional veto: missing methods use daemon baseline eligibility;
    * implemented checks that reject or return false keep the runtime resident. */
   canStopRuntime?(): Promise<boolean>;
+  /**
+   * True while work this session started will start another turn by itself, such as a
+   * background task that reports back when it ends. Recurring triggers do not count.
+   */
+  hasPendingWakeup?(): boolean;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;
-  setModel?(modelId: string | null): Promise<void>;
+  /** A returned model is the effective selection committed by this mutation.
+   * Returning void means the requested selection was accepted. No status read is required. */
+  setModel?(modelId: string | null): Promise<void | { model: string | null }>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
-  setFeature?(featureId: string, value: unknown): Promise<void>;
+  /**
+   * Apply an options patch. `options` holds only the keys the patch touches, resolved against
+   * the `config.json` defaults; `null` means nothing is set for the key, so return it to the
+   * session's own default if that can be done. Leave every other setting alone. Throw to reject a
+   * value, or a key the running session cannot apply (one the provider reads only when it
+   * opens): the daemon stores the patch only when this resolves, so a stored option always
+   * describes what runs, and the call is all-or-nothing.
+   * Emit nothing from here. Return the options the session ended up with when they differ from
+   * the request (a patch, `null` removes a key), for example a value it kept because it could not
+   * be reverted; the daemon stores it together with the patch. When a throw leaves the session's
+   * state moved anyway, report the moved values once as `options_changed` after the call has
+   * ended, so the stored options still match what runs.
+   */
+  applyOptions?(options: ProviderOptions): Promise<Record<string, unknown> | void>;
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
@@ -753,6 +839,8 @@ export interface ProviderCatalog {
   models: AgentModelDefinition[];
   modes: AgentMode[];
   defaultModeId?: string | null;
+  /** Part of discovery failed, so the catalogue omits models the provider could not confirm. */
+  incomplete?: boolean;
 }
 
 export interface ResolveAgentDefaultModeInput {
@@ -761,14 +849,72 @@ export interface ResolveAgentDefaultModeInput {
   signal?: AbortSignal;
 }
 
+export interface AgentDraftControls {
+  controls: AgentOptionControl[];
+  options: ProviderOptions;
+}
+
+export interface AgentClientInstallationContext {
+  /** Aborted when Paseo stops waiting for the result. */
+  signal: AbortSignal;
+}
+
+export interface AgentClientInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: AgentClientInstallationContext): Promise<ProviderInspection>;
+  /** See `ProviderInstallation.checkForUpdates` in the plugin contract. */
+  checkForUpdates?(context: AgentClientUpdateCheckContext): Promise<ProviderUpdateCheck>;
+  /** Runs the provider's updater. See `ProviderInstallation.update` in the plugin contract. */
+  update?(context: AgentClientUpdateContext): Promise<ProviderUpdateResult>;
+}
+
+export interface AgentClientUpdateCheckContext extends AgentClientInstallationContext {
+  /** The version `inspect` reported, as written. Absent when it reported none or there is no `inspect`. */
+  installedVersion?: string;
+}
+
+export interface AgentClientUpdateContext extends AgentClientInstallationContext {
+  report(event: ProviderUpdateReport): void;
+}
+
+/** What the daemon gives a provider's diagnostic report. */
+export interface AgentClientDiagnosticContext {
+  /**
+   * The installation as the provider's Installation row shows it, under the same deadline and
+   * cache. Undefined when the provider does not report its installation.
+   */
+  inspectInstallation(): Promise<ProviderInstallationInspection | undefined>;
+}
+
+export type AgentClientAvailability =
+  | { status: "available" }
+  | { status: "unavailable" }
+  | { status: "error"; message: string };
+
 export interface AgentClient {
+  resolveUsageLaunch?(): Promise<
+    import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined
+  >;
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  /** How ProviderSnapshotManager schedules and caches catalog discovery for this client. */
+  readonly catalogRefresh?: ProviderCatalogRefreshMode;
+  /** Sessions honor `AgentLaunchContext.wrap`. The provider registry sets it from the provider contract. */
+  supportsLaunchWrap?: boolean;
+  /** Throw unless the live provider runtime can apply a wrap. Plugin providers connect to learn it. */
+  requireLaunchWrap?(): Promise<void>;
+  /**
+   * Create the agent with `config.providerOptions` (defaults already merged in). Emit nothing
+   * about options while creating. If the agent ended up different from the options, say so in the
+   * session's `openOptionsPatch`.
+   */
   createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession>;
+  /** Same contract as `createSession`: open with the options, report any difference in `openOptionsPatch`. */
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
@@ -779,6 +925,11 @@ export interface AgentClient {
    * Include the execution environment and effective configuration; omit to use target identity.
    * force must not affect identity. Resolve before every cache lookup. */
   getCatalogCacheKey?(options: FetchCatalogOptions): Promise<string | undefined>;
+  /**
+   * Optional fingerprint (`mtimeMs:size`) of the resolved provider binary, used to invalidate
+   * on-disk cached catalogs for `"on_demand"` providers when the CLI changes on disk.
+   */
+  getCatalogBinaryFingerprint?(options: FetchCatalogOptions): Promise<string | undefined>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers
@@ -797,7 +948,14 @@ export interface AgentClient {
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
   listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
-  listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  /**
+   * The controls of a draft, with the options a session opened from `config` would run with:
+   * `config.providerOptions` (defaults already merged in) plus what the provider resolves
+   * natively for the ones nobody set.
+   */
+  listControls?(config: AgentSessionConfig): Promise<AgentDraftControls>;
+  /** Effective options: provider defaults from `config.json` deep-merged with the agent's own. */
+  effectiveOptions?(own: ProviderOptions | undefined): ProviderOptions;
   listImportableSessions?(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;
@@ -810,7 +968,21 @@ export interface AgentClient {
    * Returns true if available, false otherwise.
    */
   isAvailable(signal?: AbortSignal, options?: FetchCatalogOptions): Promise<boolean>;
-  getDiagnostic?(): Promise<{ diagnostic: string }>;
+  /**
+   * Detailed availability check distinguishing a missing binary (`"unavailable"`) from an
+   * installed binary that fails readiness checks (`"error"` with an actionable message).
+   */
+  checkAvailability?(
+    signal?: AbortSignal,
+    options?: FetchCatalogOptions,
+  ): Promise<AgentClientAvailability>;
+  getDiagnostic?(context: AgentClientDiagnosticContext): Promise<{ diagnostic: string }>;
+  /**
+   * Installation links and the installed version. The same contract as plugin providers'
+   * `ProviderRegistration.installation`; built-ins resolve their own launch inside `inspect`.
+   * Never consulted by availability, discovery, or session creation.
+   */
+  readonly installation?: AgentClientInstallation;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.

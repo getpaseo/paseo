@@ -8,7 +8,6 @@ import {
 import {
   View,
   type GestureResponderEvent,
-  type PressableProps,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewProps,
@@ -27,6 +26,7 @@ import {
   type MenuTriggerState,
 } from "@/components/ui/menu";
 import { PressHighlight } from "@/components/ui/press-highlight";
+import type { PressHighlightProps } from "@/components/ui/press-highlight.types";
 
 /**
  * A menu opened by a long press or a right click, anchored to the point of the gesture rather
@@ -109,8 +109,7 @@ export function ContextMenuTrigger({
   triggerRef,
   ...props
 }: PropsWithChildren<
-  Omit<PressableProps, "style"> & {
-    highlightStyle?: StyleProp<ViewStyle>;
+  Omit<PressHighlightProps, "style"> & {
     style?: TriggerStyleProp;
     enabled?: boolean;
     enabledOnMobile?: boolean;
@@ -151,21 +150,23 @@ export function ContextMenuTrigger({
   );
 
   const propsOnLongPress = props.onLongPress;
-  const handleLongPress = useCallback(
+  const handleNativeLongPress = useCallback(
     (event: GestureResponderEvent) => {
-      if (isWeb) {
-        propsOnLongPress?.(event);
-        return;
-      }
       openAtEvent(event);
       propsOnLongPress?.(event);
     },
     [propsOnLongPress, openAtEvent],
   );
+  // The web menu opens on right-click, not long press. Any onLongPress makes react-native-web cancel
+  // the click that ends a held press, and only a later press-in clears that, which Ctrl+click never
+  // gets. So on web, pass the caller's onLongPress through and nothing else.
+  const handleLongPress = isWeb ? propsOnLongPress : handleNativeLongPress;
 
   const handleContextMenu = useCallback(
     (event: unknown) => {
-      if (isNative) return;
+      // A trigger with no menu of its own leaves the browser's menu alone, e.g. copy and paste
+      // in a field rendered inside it.
+      if (isNative || !shouldEnableOnThisPlatform) return;
       if (typeof event === "object" && event !== null) {
         const preventDefault = Reflect.get(event, "preventDefault");
         const stopPropagation = Reflect.get(event, "stopPropagation");
@@ -175,7 +176,7 @@ export function ContextMenuTrigger({
       onContextMenu?.(event);
       openAtEvent(event);
     },
-    [onContextMenu, openAtEvent],
+    [onContextMenu, openAtEvent, shouldEnableOnThisPlatform],
   );
 
   const resolveDynamicStyle = useCallback(

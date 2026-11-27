@@ -147,6 +147,96 @@ export function usageModal(page: Page): Locator {
   return visible(page, "usage-modal-body");
 }
 
+/** The Usage modal's cards, top to bottom, by report id. */
+export async function expectUsageCardOrder(page: Page, reportIds: string[]): Promise<void> {
+  const cards = usageModal(page).locator('[data-testid^="usage-report-"]');
+  await expect(cards).toHaveCount(reportIds.length);
+  await expect
+    .poll(() =>
+      cards.evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-testid")?.slice("usage-report-".length)),
+      ),
+    )
+    .toEqual(reportIds);
+}
+
+/** Turns a source on or off from the Sources page in Usage Settings, by report id. */
+export async function setUsageCardOn(page: Page, reportId: string, on: boolean): Promise<void> {
+  await openUsageSources(page);
+  const item = visible(page, `usage-source-toggle-${reportId}`);
+  const checked = (await item.getAttribute("aria-checked")) === "true";
+  if (checked !== on) {
+    await item.click();
+    await expect(item).toHaveAttribute("aria-checked", String(on));
+  }
+  await closeUsageOptions(page);
+}
+
+/** Opens the Sources submenu inside Usage Settings (flyout on wide, in-place page on compact). */
+export async function openUsageSources(page: Page): Promise<void> {
+  await openUsageOptions(page);
+  await visible(page, "usage-options-sources").click();
+  await expect(page.locator('[data-testid^="usage-source-toggle-"]:visible').first()).toBeVisible();
+}
+
+/** Drags a card by its handle until it sits above another card, with the mouse. */
+export async function dragUsageCardAbove(
+  page: Page,
+  reportId: string,
+  targetReportId: string,
+): Promise<void> {
+  const card = usageModal(page).getByTestId(`usage-report-${reportId}`);
+  const target = usageModal(page).getByTestId(`usage-report-${targetReportId}`);
+  await card.hover();
+  const handle = await card.getByTestId("usage-card-drag-handle").boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!handle || !targetBox) throw new Error("Both cards must be on screen to drag.");
+  const x = handle.x + handle.width / 2;
+  await page.mouse.move(x, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x, handle.y + handle.height / 2 - 10, { steps: 3 });
+  await page.mouse.move(x, targetBox.y + 4, { steps: 12 });
+  await page.mouse.up();
+}
+
+/**
+ * Starts recording where the cards are painted on every frame after the next mouse release.
+ * Call the returned function to stop and read the frames, each as "id@top" for every card.
+ */
+export async function recordUsageCardPositionsAfterRelease(
+  page: Page,
+): Promise<() => Promise<string[]>> {
+  const recording = await usageModal(page).evaluateHandle((modal) => {
+    const state = { released: false, stopped: false, frames: [] as string[] };
+    const markReleased = () => {
+      state.released = true;
+    };
+    window.addEventListener("mouseup", markReleased, { capture: true, once: true });
+    const recordFrame = () => {
+      if (state.stopped) return;
+      if (state.released) {
+        const cards = Array.from(modal.querySelectorAll('[data-testid^="usage-report-"]'));
+        state.frames.push(
+          cards
+            .map((card) => {
+              const id = card.getAttribute("data-testid")?.slice("usage-report-".length);
+              return `${id}@${Math.round(card.getBoundingClientRect().top)}`;
+            })
+            .join(" "),
+        );
+      }
+      requestAnimationFrame(recordFrame);
+    };
+    requestAnimationFrame(recordFrame);
+    return state;
+  });
+  return () =>
+    recording.evaluate((state) => {
+      state.stopped = true;
+      return state.frames;
+    });
+}
+
 /** Each pinned window as it reads: its percent and short label, "31% 5h". */
 export async function expectPinnedUsage(page: Page, windows: string[]): Promise<void> {
   const pinned = usageItem(page).getByTestId("sidebar-usage-pinned-window");
@@ -167,7 +257,7 @@ export function pinRow(scope: Locator, source: string, window: string): Locator 
 
 /**
  * A report card whose window rows do not pin: no pin toggle, no pin glyph, and nothing focusable
- * but buttons, so no row presses or highlights on hover.
+ * but the header's buttons, so no row presses or highlights on hover.
  */
 export async function expectUnpinnableRows(card: Locator): Promise<void> {
   await expect(card.getByRole("checkbox")).toHaveCount(0);
@@ -197,6 +287,18 @@ export async function openUsageFromIcon(page: Page): Promise<void> {
 /** The footer's Usage item, its summary of pinned windows. */
 export async function openUsageFromItem(page: Page): Promise<void> {
   await usageItem(page).click();
+  await expect(usageModal(page)).toBeVisible();
+}
+
+export async function openUsageFromItemWithPressFeedback(page: Page): Promise<void> {
+  const summary = page.getByRole("button", { name: /^Usage:/ });
+  await summary.hover();
+  const hoveredFill = await summary.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  await page.mouse.down();
+  await expect(summary).not.toHaveCSS("background-color", hoveredFill);
+  await page.mouse.up();
   await expect(usageModal(page)).toBeVisible();
 }
 
@@ -261,6 +363,19 @@ export async function openUsageOptions(page: Page): Promise<void> {
   await expect(visible(page, "usage-display-used")).toBeVisible();
 }
 
+/** Picks the host Usage shows, from the Host row of its Settings. */
+export async function pickUsageHost(page: Page, serverId: string): Promise<void> {
+  await openUsageOptions(page);
+  await visible(page, "usage-options-host").click();
+  await visible(page, `usage-options-host-${serverId}`).click();
+  await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+}
+
+/** The host Usage shows, under its title; absent with a single host. */
+export function usageModalHost(page: Page): Locator {
+  return visible(page, "usage-modal-host");
+}
+
 export function usageOptionsSurface(page: Page): Locator {
   return page
     .locator(
@@ -281,6 +396,7 @@ export async function closeUsageOptions(page: Page): Promise<void> {
   await waitForSettledPosition(usageOptionsSurface(page));
   await page.mouse.click(0, 0);
   await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+  await expect(page.locator('[data-testid^="usage-source-toggle-"]:visible')).toHaveCount(0);
 }
 
 export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {

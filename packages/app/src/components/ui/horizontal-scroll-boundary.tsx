@@ -74,12 +74,15 @@ export function HorizontalScrollBoundaryShades({
   leftStyle,
   rightStyle,
   testIDPrefix = "horizontal-scroll-boundary",
+  bottomInset = 1,
 }: {
   visible: boolean;
   backdrop: "surface" | "sidebar";
   leftStyle: AnimatedStyle<{ opacity: number }>;
   rightStyle: AnimatedStyle<{ opacity: number }>;
   testIDPrefix?: string;
+  /** Set to 0 when the scrolled content's own border reaches the bottom edge and must fade too. */
+  bottomInset?: number;
 }) {
   if (!visible) return null;
   const colorMapping = backdrop === "sidebar" ? sidebarColorMapping : surfaceColorMapping;
@@ -88,14 +91,14 @@ export function HorizontalScrollBoundaryShades({
       <Animated.View
         pointerEvents="none"
         testID={`${testIDPrefix}-left`}
-        style={[styles.shade, styles.left, leftStyle]}
+        style={[styles.shade(bottomInset), styles.left, leftStyle]}
       >
         <ThemedScrollBoundaryShadeSvg side="left" uniProps={colorMapping} />
       </Animated.View>
       <Animated.View
         pointerEvents="none"
         testID={`${testIDPrefix}-right`}
-        style={[styles.shade, styles.right, rightStyle]}
+        style={[styles.shade(bottomInset), styles.right, rightStyle]}
       >
         <ThemedScrollBoundaryShadeSvg side="right" uniProps={colorMapping} />
       </Animated.View>
@@ -104,12 +107,12 @@ export function HorizontalScrollBoundaryShades({
 }
 
 const styles = StyleSheet.create(() => ({
-  shade: {
+  shade: (bottomInset: number) => ({
     position: "absolute",
     top: 0,
-    bottom: 1,
+    bottom: bottomInset,
     width: SHADE_WIDTH,
-  },
+  }),
   left: { left: 0 },
   right: { right: 0 },
 }));

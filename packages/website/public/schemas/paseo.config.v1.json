@@ -176,6 +176,16 @@
                 },
                 "additionalProperties": {}
               },
+              "options": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "systemPrompt": {
+                "type": "string"
+              },
               "notes": {
                 "type": "string"
               }

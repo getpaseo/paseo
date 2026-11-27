@@ -68,7 +68,7 @@ describe("MockLoadTestAgentClient", () => {
       provider: "mock",
       cwd: process.cwd(),
       model: "ten-second-stream",
-      featureValues: { mockPromptRejections: 1 },
+      providerOptions: { mockPromptRejections: 1 },
     });
 
     await expect(session.startTurn("Reject this prompt.")).rejects.toThrow(
@@ -95,7 +95,7 @@ describe("MockLoadTestAgentClient", () => {
       provider: "mock",
       cwd: process.cwd(),
       model: "ten-second-stream",
-      featureValues: {
+      providerOptions: {
         mockStreamingAssistantResponse: response,
         mockStreamingAssistantIntervalMs: 20,
       },
@@ -467,7 +467,7 @@ describe("MockLoadTestAgentClient", () => {
       provider: "mock",
       cwd: process.cwd(),
       model: "e2e-fast-stream",
-      featureValues: { mockAssistantResponses: ["First response", "![Second](second.png)"] },
+      providerOptions: { mockAssistantResponses: ["First response", "![Second](second.png)"] },
     });
     await session.run("Emit a synthetic turn failure.");
     expect((await session.run("First prompt")).finalText).toBe("First response");

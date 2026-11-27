@@ -1,6 +1,7 @@
 // Browser compatibility tests run a real daemon in a separate Node runtime.
 //
 // argv: <daemonVersion> [port] [paseoHomeRoot]
+// env: PASEO_PLUGIN_REGISTRY, read as the real daemon reads it.
 // A fixed port and a caller-owned home let a test stop this daemon and start a
 // replacement under the same endpoint and serverId.
 import path from "node:path";
@@ -24,6 +25,7 @@ const daemon = await createTestPaseoDaemon({
       }
     : {}),
   pluginsEnabled: true,
+  pluginRegistryUrl: process.env.PASEO_PLUGIN_REGISTRY,
   mcpEnabled: false,
   corsAllowedOrigins: ["*"],
 });

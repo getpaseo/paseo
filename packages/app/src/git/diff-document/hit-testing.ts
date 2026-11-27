@@ -3,6 +3,7 @@ import type {
   DiffCell,
   DiffCharacterPosition,
   DiffDocumentModel,
+  DiffFragment,
   DiffHit,
   DiffSelection,
 } from "./types";
@@ -33,12 +34,7 @@ export function hitTestDiffDocument(input: {
     localX - file.gutterWidth - CODE_LEFT_PADDING + input.horizontalOffset,
   );
   const textY = input.documentY - row.top;
-  const sourceOffset = characterOffsetAtPoint({
-    cell,
-    x: contentX,
-    y: textY,
-    lineHeight: input.model.lineHeight,
-  });
+  const point = { cell, x: contentX, y: textY, lineHeight: input.model.lineHeight };
   return {
     kind: "cell",
     target: cell.reviewTarget,
@@ -47,8 +43,9 @@ export function hitTestDiffDocument(input: {
       rowIndex: row.index,
       cellIndex,
       side: cell.reviewTarget?.side ?? (cellIndex === 0 ? "old" : "new"),
-      sourceOffset,
+      sourceOffset: characterOffsetAtPoint(point),
     },
+    graphemeOffset: graphemeOffsetAtPoint(point),
   };
 }
 
@@ -58,11 +55,7 @@ export function characterOffsetAtPoint(input: {
   y: number;
   lineHeight: number;
 }): number {
-  const fragmentIndex = Math.min(
-    input.cell.fragments.length - 1,
-    Math.max(0, Math.floor(input.y / input.lineHeight)),
-  );
-  const fragment = input.cell.fragments[fragmentIndex];
+  const fragment = fragmentAtPoint(input);
   if (!fragment) return 0;
   let width = 0;
   for (const grapheme of fragment.graphemes) {
@@ -70,6 +63,36 @@ export function characterOffsetAtPoint(input: {
     width += grapheme.width;
   }
   return fragment.end;
+}
+
+/** The grapheme under the pointer, unlike `characterOffsetAtPoint`, which snaps to the nearest caret. */
+export function graphemeOffsetAtPoint(input: {
+  cell: DiffCell;
+  x: number;
+  y: number;
+  lineHeight: number;
+}): number {
+  const fragment = fragmentAtPoint(input);
+  if (!fragment) return 0;
+  let width = 0;
+  for (const grapheme of fragment.graphemes) {
+    if (input.x < width + grapheme.width) return grapheme.start;
+    width += grapheme.width;
+  }
+  const lastGrapheme = fragment.graphemes.at(-1);
+  return lastGrapheme ? lastGrapheme.start : fragment.start;
+}
+
+function fragmentAtPoint(input: {
+  cell: DiffCell;
+  y: number;
+  lineHeight: number;
+}): DiffFragment | null {
+  const fragmentIndex = Math.min(
+    input.cell.fragments.length - 1,
+    Math.max(0, Math.floor(input.y / input.lineHeight)),
+  );
+  return input.cell.fragments[fragmentIndex] ?? null;
 }
 
 function rowAtOffset(
@@ -163,7 +186,7 @@ export function selectAllSource(
   return first && last ? { anchor: first, focus: last } : null;
 }
 
-function comparePosition(left: DiffCharacterPosition, right: DiffCharacterPosition): number {
+export function comparePosition(left: DiffCharacterPosition, right: DiffCharacterPosition): number {
   return (
     left.rowIndex - right.rowIndex ||
     left.cellIndex - right.cellIndex ||

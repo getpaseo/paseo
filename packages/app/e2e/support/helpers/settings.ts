@@ -3,6 +3,7 @@ import { buildCreateAgentPreferences, buildSeededHost, TEST_HOST_LABEL } from ".
 import { getServerId } from "./server-id";
 import { expectAppRoute } from "./route-assertions";
 import {
+  buildClientHostSettingsRoute,
   buildSettingsHostSectionRoute,
   buildSettingsRoute,
   buildSettingsSectionRoute,
@@ -12,6 +13,33 @@ const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 const REGISTRY_KEY = "@paseo:daemon-registry";
 
+export async function openSidebarHostPicker(page: Page) {
+  await page.getByRole("button", { name: "Hosts", exact: true }).click();
+}
+
+export function sidebarHostRowButton(page: Page) {
+  return page.getByTestId(`sidebar-host-row-${getServerId()}`);
+}
+
+export async function bindCommandCenterToEnter(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:keyboard-shortcut-overrides",
+      JSON.stringify({
+        "command-center-toggle-cmd-k-mac": "Enter",
+        "command-center-toggle-ctrl-k-non-mac": "Enter",
+      }),
+    );
+  });
+}
+
+export async function activateSidebarHostSettingsWithKeyboard(page: Page) {
+  const host = sidebarHostRowButton(page);
+  await expect(host).toBeVisible();
+  await expect(host).toBeFocused();
+  await page.keyboard.press("Enter");
+}
+
 interface SavedSettingsHostInput {
   serverId: string;
   label: string;
@@ -20,35 +48,29 @@ interface SavedSettingsHostInput {
 
 const SECTION_LABELS = {
   general: "General",
-  chat: "Chat",
+  hosts: "Hosts",
   appearance: "Appearance",
   sidebar: "Sidebar",
-  editor: "Editor",
-  files: "Files",
-  terminal: "Terminal",
-  browser: "Browser",
+  chat: "Chat & panes",
   shortcuts: "Shortcuts",
-  integrations: "Integrations",
-  permissions: "Permissions",
-  diagnostics: "Diagnostics",
+  notifications: "Notifications",
   about: "About",
 } as const;
 
 export type SettingsSection = keyof typeof SECTION_LABELS;
 
 type HostSection =
-  | "projects"
-  | "connections"
-  | "pair-device"
-  | "agents"
-  | "metadata"
-  | "voice"
-  | "workspaces"
   | "providers"
+  | "agent-profiles"
+  | "tools"
+  | "projects"
+  | "workspaces"
+  | "voice"
   | "usage"
   | "terminals"
   | "plugins"
-  | "host";
+  | "devices"
+  | "daemon";
 
 export async function openSettingsSection(page: Page, section: SettingsSection): Promise<void> {
   const sidebar = page.getByTestId("settings-sidebar");
@@ -106,6 +128,33 @@ export async function changeSettingsInterfaceFontSize(page: Page, size: number):
   await input.fill(String(size));
   await input.press("Tab");
   await expect(input).toHaveValue(String(size));
+  await expect(
+    page.getByRole("navigation", { name: "Settings" }).getByText("Appearance", { exact: true }),
+  ).toHaveCSS("font-size", `${size}px`);
+}
+
+export async function changeSettingsInterfaceFontSizeKeepingSidebarPosition(
+  page: Page,
+  size: number,
+): Promise<number> {
+  const navigation = page.getByRole("navigation", { name: "Settings" });
+  const anchor = navigation.getByRole("button", { name: "About", exact: true });
+  const before = await anchor.evaluate((node) => ({
+    top: node.getBoundingClientRect().top,
+    height: node.getBoundingClientRect().height,
+  }));
+  await changeSettingsInterfaceFontSize(page, size);
+  // Larger fonts reflow rows. Preserve the visible destination, rather than its old pixel offset.
+  await expect
+    .poll(() =>
+      anchor.evaluate((node, top) => Math.abs(node.getBoundingClientRect().top - top), before.top),
+    )
+    .toBeLessThan(before.height);
+  const offset = await page
+    .getByTestId("settings-sidebar-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
 }
 
 export async function scrollSettingsSidebarToEnd(page: Page): Promise<number> {
@@ -144,12 +193,17 @@ export async function expectSettingsDetailScrollOffset(page: Page, offset: numbe
   await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBe(offset);
 }
 
-export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
-  // Host sections are now flat top-level rows under the Host group. Navigate by
-  // clicking the Connections section row; the picker only matters when >1 host.
-  await page.getByTestId("settings-host-section-connections").click();
-  await expectHostSettingsUrl(page, serverId);
+export async function openClientHostSettings(page: Page, serverId: string): Promise<void> {
+  await openSettingsSection(page, "hosts");
+  await page.getByTestId(`client-host-row-${serverId}`).click();
+  await expectAppRoute(page, buildClientHostSettingsRoute(serverId));
   await expect(page.getByTestId("host-page-connections-card")).toBeVisible();
+}
+
+export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
+  await page.getByTestId("settings-host-section-daemon").click();
+  await expectHostSettingsUrl(page, serverId);
+  await expect(page.getByTestId("host-page-identity")).toBeVisible();
 }
 
 export async function openSettingsHostSection(
@@ -194,6 +248,14 @@ export async function addDirectHostFromSettings(
   }
   await page.getByTestId("direct-host-submit").click();
   await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
+}
+
+export async function expectAddHostFieldDrawnAsInput(page: Page, testId: string): Promise<void> {
+  const field = page.getByTestId(testId);
+  await expect(field).toBeVisible();
+  await expect(field).toHaveCSS("border-top-width", "1px");
+  await expect(field).not.toHaveCSS("padding-left", "0px");
+  await expect(field).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 }
 
 export async function toggleHostAdvanced(page: Page): Promise<void> {
@@ -305,7 +367,7 @@ export async function removeCurrentHostFromSettings(page: Page): Promise<void> {
   await page.getByTestId("host-page-remove-host-button").click();
   await expect(page.getByTestId("remove-host-confirm-modal")).toBeVisible();
   await page.getByTestId("remove-host-confirm").click();
-  await expectAppRoute(page, buildSettingsRoute());
+  await expectAppRoute(page, buildSettingsSectionRoute("hosts"));
 }
 
 export async function expectSettingsBackButton(page: Page): Promise<void> {
@@ -317,7 +379,7 @@ export async function clickSettingsBackToWorkspace(page: Page): Promise<void> {
 }
 
 export async function expectHostSettingsUrl(page: Page, serverId: string): Promise<void> {
-  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "connections"));
+  await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, "daemon"));
 }
 
 export async function verifyLegacyHostSettingsRedirect(page: Page): Promise<void> {
@@ -387,7 +449,7 @@ export async function expectAboutContent(page: Page): Promise<void> {
 }
 
 export async function expectGeneralContent(page: Page): Promise<void> {
-  await expect(page.getByText("Default send", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Language", { exact: true }).first()).toBeVisible();
 }
 
 export async function expectAppearanceContent(page: Page): Promise<void> {
@@ -412,14 +474,7 @@ export async function expectHostLabelEditMode(page: Page, expectedLabel: string)
 export async function expectHostConnectionsCard(page: Page, port: string): Promise<void> {
   const card = page.getByTestId("host-page-connections-card");
   await expect(card).toBeVisible();
-  // "Connections" appears three times on this page: the sidebar section row, the
-  // detail header title, and the SettingsSection heading above the card. Match
-  // the first to keep the heading assertion without tripping Playwright strict
-  // mode.
-  await expect(page.getByText("Connections", { exact: true }).first()).toBeVisible();
-  await expect(
-    card.getByText(new RegExp(`TCP \\((localhost|127\\.0\\.0\\.1):${port}\\)`)),
-  ).toBeVisible();
+  await expect(card.getByText(new RegExp(`(localhost|127\\.0\\.0\\.1):${port}`))).toBeVisible();
 }
 
 export async function expectHostInjectMcpCard(page: Page): Promise<void> {
@@ -456,11 +511,11 @@ export async function openHostSection(
 }
 
 export async function expectHostActionCards(page: Page, serverId: string): Promise<void> {
-  // Restart + remove cards live on the Host section; providers moved to its
-  // own Providers section (asserted via expectHostProvidersCard).
-  await openSettingsHostSection(page, serverId, "host");
+  // Restart lives on Daemon; removing the saved host lives on This device -> Hosts.
+  await openSettingsHostSection(page, serverId, "daemon");
   await expect(page.getByTestId("host-page-restart-card")).toBeVisible();
   await expect(page.getByTestId("host-page-restart-button")).toBeVisible();
+  await openClientHostSettings(page, serverId);
   await expect(page.getByTestId("host-page-remove-host-card")).toBeVisible();
   await expect(page.getByTestId("host-page-remove-host-button")).toBeVisible();
 }
@@ -480,8 +535,8 @@ export async function serveJson(page: Page, url: string, body: unknown): Promise
   });
 }
 
-export async function openAddProviderArea(page: Page): Promise<void> {
-  await page.getByTestId("host-page-add-provider-card").scrollIntoViewIfNeeded();
+export async function openAddProvider(page: Page): Promise<void> {
+  await page.getByTestId("provider-list-add").click();
   await expect(page.getByRole("textbox", { name: "Search providers" })).toBeVisible();
 }
 
@@ -493,15 +548,82 @@ export async function findAcpCatalogProvider(page: Page, providerName: string): 
 export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await findAcpCatalogProvider(page, providerName);
   await page.getByRole("button", { name: `Add ${providerName}`, exact: true }).click();
+  // The sheet closes once the add is done. Adding probes the new provider, which can outlast an
+  // assertion's default wait.
+  await expect(page.getByRole("textbox", { name: "Search providers" })).toHaveCount(0, {
+    timeout: 60_000,
+  });
 }
 
+/** Adding opens the new provider's page; its row waits in the list behind it. */
 export async function expectProviderInstalledInSettings(
   page: Page,
   providerName: string,
 ): Promise<void> {
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName);
+  await page.getByTestId("provider-detail-back").click();
   await expect(
     page.getByRole("button", { name: `${providerName} provider details`, exact: true }),
   ).toBeVisible();
+}
+
+export async function openProviderDetail(page: Page, providerName: string): Promise<void> {
+  await page.getByRole("button", { name: `${providerName} provider details`, exact: true }).click();
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName);
+}
+
+/** Load a provider's Settings page from its URL, as a reload or a shared link does. */
+export async function gotoProviderPage(
+  page: Page,
+  serverId: string,
+  providerId: string,
+): Promise<void> {
+  await page.goto(
+    `/settings/hosts/${encodeURIComponent(serverId)}/providers/${encodeURIComponent(providerId)}`,
+  );
+}
+
+export async function expectProviderPageLoaded(page: Page, providerName: string): Promise<void> {
+  await expect(page.getByTestId("provider-detail-title")).toHaveText(providerName, {
+    timeout: 30_000,
+  });
+  await expect(page.getByRole("button", { name: "Diagnostic report" })).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+export async function expectProviderNotOnHost(page: Page): Promise<void> {
+  await expect(page.getByText("This provider isn't on this host")).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
+/**
+ * The provider page says the provider's CLI is missing, and Install opens the given guide. The
+ * guide is served locally so the test never reaches the network.
+ */
+export async function expectInstallOpensGuide(page: Page, guideUrl: string): Promise<void> {
+  const installation = page.getByTestId("provider-installation");
+  await expect(installation.getByText("Not installed", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.context().route(guideUrl, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<title>Install guide</title>",
+    }),
+  );
+  const guide = page.waitForEvent("popup");
+  await installation.getByRole("button", { name: "Install", exact: true }).click();
+  const opened = await guide;
+  expect(opened.url()).toBe(guideUrl);
+  await opened.close();
+}
+
+export async function leaveProviderDetail(page: Page): Promise<void> {
+  await page.getByTestId("provider-detail-back").click();
+  await expect(page.getByTestId("provider-list")).toBeVisible();
 }
 
 export async function expectHostNoDaemonLifecycleRow(page: Page): Promise<void> {
@@ -512,27 +634,30 @@ export async function expectRetiredSidebarSectionsAbsent(page: Page): Promise<vo
   const sidebar = page.getByTestId("settings-sidebar");
   await expect(sidebar).toBeVisible();
 
-  // App group rows remain top-level.
+  // App group ("This device") rows remain top-level.
   await expect(sidebar.getByRole("button", { name: "General", exact: true })).toBeVisible();
-  await expect(sidebar.getByRole("button", { name: "Diagnostics", exact: true })).toBeVisible();
+  await expect(sidebar.getByRole("button", { name: "Hosts", exact: true })).toBeVisible();
   await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeVisible();
-  await expect(sidebar.getByRole("button", { name: "Daemon", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("button", { name: "Diagnostics", exact: true })).toHaveCount(0);
 
-  // Host group rows are now flat top-level sections (no drill-in).
-  await expect(sidebar.getByTestId("settings-host-section-connections")).toBeVisible();
-  await expect(sidebar.getByTestId("settings-host-section-projects")).toBeVisible();
-  await expect(sidebar.getByTestId("settings-host-section-agents")).toBeVisible();
-  await expect(sidebar.getByTestId("settings-host-section-workspaces")).toBeVisible();
+  // Host group rows are daemon-scoped flat top-level sections.
   await expect(sidebar.getByTestId("settings-host-section-providers")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-agent-profiles")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-tools")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-projects")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-workspaces")).toBeVisible();
   await expect(sidebar.getByTestId("settings-host-section-usage")).toBeVisible();
-  await expect(sidebar.getByTestId("settings-host-section-host")).toBeVisible();
+  await expect(sidebar.getByTestId("settings-host-section-daemon")).toBeVisible();
 
-  // The old per-host entry rows are replaced by the host picker.
+  // Retired host rows and old per-host entry rows are absent.
+  await expect(sidebar.getByTestId("settings-host-section-connections")).toHaveCount(0);
+  await expect(sidebar.getByTestId("settings-host-section-agents")).toHaveCount(0);
+  await expect(sidebar.getByTestId("settings-host-section-metadata")).toHaveCount(0);
   await expect(sidebar.locator('[data-testid^="settings-host-entry-"]')).toHaveCount(0);
 }
 
 export async function expectHostPageVisible(page: Page, _serverId: string): Promise<void> {
-  await expect(page.getByTestId("host-page-connections-card")).toBeVisible();
+  await expect(page.getByTestId("host-page-identity")).toBeVisible();
 }
 
 export async function expectLocalHostEntryFirst(page: Page, _serverId: string): Promise<void> {
@@ -568,7 +693,7 @@ export async function expectNoHostPasswordControls(page: Page): Promise<void> {
 export async function removeHostFromHostPage(page: Page, serverId: string): Promise<void> {
   await page.getByTestId("host-page-remove-host-button").click();
   await page.getByTestId("remove-host-confirm").click();
-  await expect(page).not.toHaveURL(new RegExp(`/settings/hosts/${serverId}`));
+  await expect(page).not.toHaveURL(new RegExp(`/settings/(hosts|device-hosts)/${serverId}`));
 }
 
 export async function expectHostOnlineWithoutError(page: Page): Promise<void> {
@@ -612,4 +737,193 @@ export async function expectRestartRecoveryPrompt(page: Page, prompt: string) {
   );
   await sheet.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(sheet).toHaveCount(0);
+}
+
+export async function revealSettingsSyntaxTheme(page: Page) {
+  await page.getByLabel(/Highlight theme:/).scrollIntoViewIfNeeded();
+  const offset = await page
+    .getByTestId("settings-detail-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  const keywordColor = await page
+    .getByRole("img", { name: "Live preview of content typography, syntax theme, and code font" })
+    .getByText("export", { exact: true })
+    .first()
+    .evaluate((node) => getComputedStyle(node).color);
+  return { offset, keywordColor };
+}
+
+export async function changeSettingsSyntaxTheme(page: Page, theme: string): Promise<void> {
+  await page.getByLabel(/Highlight theme:/).click();
+  await page.getByRole("menuitem", { name: theme, exact: true }).click();
+  await expect(page.getByLabel(`Highlight theme: ${theme}`, { exact: true })).toBeVisible();
+}
+
+export async function expectSettingsSyntaxColorChanged(
+  page: Page,
+  previousColor: string,
+): Promise<void> {
+  await expect(
+    page
+      .getByRole("img", { name: "Live preview of content typography, syntax theme, and code font" })
+      .getByText("export", { exact: true })
+      .first(),
+  ).not.toHaveCSS("color", previousColor);
+}
+
+export async function changeSettingsTypography(page: Page): Promise<void> {
+  const input = page.getByRole("textbox", { name: "Interface font size", exact: true });
+  await input.fill("18");
+  await input.press("Enter");
+  await expect(input).toHaveValue("18");
+  await expect(input).toHaveCSS("font-size", "18px");
+  await expect(page.getByText("Code size", { exact: true })).toHaveCSS("font-size", "18px");
+  const navigation = page.getByRole("navigation", { name: "Settings" });
+  await expect(navigation.getByText("Appearance", { exact: true })).toHaveCSS("font-size", "18px");
+  await expect(navigation.getByText("Providers", { exact: true })).toHaveCSS("font-size", "18px");
+  await expect(page.getByText("Dracula", { exact: true })).toHaveCSS("font-size", "18px");
+  const familyInput = page.getByRole("textbox", { name: "Code font family", exact: true });
+  await familyInput.fill("Courier New, Courier, monospace");
+  await familyInput.press("Enter");
+  const codeInput = page.getByRole("textbox", { name: "Code font size", exact: true });
+  await codeInput.fill("16");
+  await codeInput.press("Enter");
+  await expect(codeInput).toHaveValue("16");
+  const preview = page.getByRole("img", {
+    name: "Live preview of content typography, syntax theme, and code font",
+  });
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS("font-size", "16px");
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS(
+    "line-height",
+    "24px",
+  );
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS(
+    "font-family",
+    /Courier/,
+  );
+  const contentInput = page.getByRole("textbox", { name: "Content font size", exact: true });
+  await contentInput.fill("20");
+  await contentInput.press("Enter");
+  await expect(preview.getByText("Readable content and code preview", { exact: true })).toHaveCSS(
+    "font-size",
+    "20px",
+  );
+}
+
+export async function normalizeSettingsFontSizes(page: Page): Promise<void> {
+  for (const [name, minimum, maximum] of [
+    ["Interface font size", "10", "21"],
+    ["Content font size", "10", "21"],
+    ["Code font size", "9", "22"],
+  ] as const) {
+    const input = page.getByRole("textbox", { name, exact: true });
+    await input.fill("999");
+    await input.press("Enter");
+    await expect(input).toHaveValue(maximum);
+    // Clamp again when the saved value is already at the maximum.
+    await input.fill("999");
+    await input.press("Tab");
+    await expect(input).toHaveValue(maximum);
+    await input.fill("");
+    await input.press("Enter");
+    await expect(input).toHaveValue(maximum);
+    await input.fill("1");
+    await input.press("Enter");
+    await expect(input).toHaveValue(minimum);
+    await input.fill("1");
+    await input.press("Tab");
+    await expect(input).toHaveValue(minimum);
+  }
+}
+
+/** Sample actual paints, including the first workspace frame after Settings. */
+export async function captureCompactSidebarReturn(page: Page, returnAction: () => Promise<void>) {
+  await page.evaluate(() => {
+    const capture = {
+      frames: [] as {
+        time: number;
+        pathname: string;
+        sidebarVisible: boolean;
+        settingsVisible: boolean;
+        closeX: number | null;
+      }[],
+      stopped: false,
+    };
+    Object.assign(window, { __sidebarFrameCapture: capture });
+    const start = performance.now();
+    function sample() {
+      if (capture.stopped) return;
+      const close = document.querySelector('[data-testid="sidebar-close"]');
+      capture.frames.push({
+        time: performance.now() - start,
+        pathname: location.pathname,
+        settingsVisible:
+          document
+            .querySelector('[data-testid="settings-sidebar"]')
+            ?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false,
+        sidebarVisible:
+          (close?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false) &&
+          close!.getBoundingClientRect().x >= 0 &&
+          close!.getBoundingClientRect().right <= innerWidth,
+        closeX: close?.getBoundingClientRect().x ?? null,
+      });
+      requestAnimationFrame(sample);
+    }
+    requestAnimationFrame(sample);
+  });
+  await returnAction();
+  return page.evaluate(async () => {
+    const capture = (
+      window as typeof window & {
+        __sidebarFrameCapture: {
+          frames: {
+            time: number;
+            pathname: string;
+            sidebarVisible: boolean;
+            settingsVisible: boolean;
+            closeX: number | null;
+          }[];
+          stopped: boolean;
+        };
+      }
+    ).__sidebarFrameCapture;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+    capture.stopped = true;
+    return capture.frames;
+  });
+}
+
+export async function captureCompactSidebarContext(page: Page) {
+  const sidebar = await page.getByTestId("sidebar-project-workspace-list-scroll").elementHandle();
+  if (!sidebar) throw new Error("Open sidebar has no workspace list");
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(0);
+  const offset = await sidebar.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    return el.scrollTop;
+  });
+  expect(offset).toBeGreaterThan(0);
+  return async () => {
+    expect(await sidebar.evaluate((el) => el.isConnected)).toBe(true);
+    expect(await sidebar.evaluate((el) => el.scrollTop)).toBe(offset);
+    await sidebar.dispose();
+  };
+}
+
+export async function expectCompactSidebarOpen(page: Page) {
+  await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeInViewport();
+}
+
+export async function closeCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Close sidebar", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Open menu", exact: true }).first(),
+  ).toBeInViewport();
+}
+
+export async function openSettingsFromCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expectAppRoute(page, buildSettingsRoute());
+  await expectCompactSettingsList(page);
 }

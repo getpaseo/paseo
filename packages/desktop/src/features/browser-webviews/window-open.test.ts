@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { decideBrowserWindowOpenRequest, PendingBrowserWindowOpenRequests } from ".";
+import {
+  buildBrowserPopupWebPreferences,
+  decideBrowserWindowOpenRequest,
+  PendingBrowserWindowOpenRequests,
+} from ".";
 
 describe("browser webview window-open requests", () => {
   it("routes foreground tabs to a Paseo workspace tab", () => {
@@ -172,5 +176,18 @@ describe("pending browser window-open requests", () => {
     pending.delete(202);
 
     expect(pending.take(202)).toEqual([]);
+  });
+});
+
+describe("buildBrowserPopupWebPreferences", () => {
+  it("inherits the opener guest session instead of hardcoding a partition", () => {
+    const openerSession = { id: "proxied-host-session" };
+    const prefs = buildBrowserPopupWebPreferences(openerSession);
+
+    expect(prefs.session).toBe(openerSession);
+    expect("partition" in prefs).toBe(false);
+    expect(prefs.sandbox).toBe(true);
+    expect(prefs.contextIsolation).toBe(true);
+    expect(prefs.nodeIntegration).toBe(false);
   });
 });

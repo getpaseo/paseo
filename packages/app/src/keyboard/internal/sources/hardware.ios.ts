@@ -1,9 +1,10 @@
 import { requireNativeModule } from "expo-modules-core";
-import type { HardwareKeyboardEvent } from "./hardware";
+import type { ClaimedShortcut, HardwareKeyboardEvent } from "./hardware";
 interface HardwareKeyboardModule {
   getHardwareKeyboardPresent(): boolean;
   addListener(event: "onHardwareKeyboardPresenceChanged", handler: () => void): { remove(): void };
   setOverlayKeys(keys: readonly string[]): void;
+  setClaimedShortcuts(shortcuts: readonly ClaimedShortcut[]): void;
   addListener(
     event: "onHardwareKeyboardShortcut",
     handler: (event: HardwareKeyboardEvent) => void,
@@ -18,6 +19,9 @@ export function subscribeHardwareKeyboard(
 }
 export function setHardwareKeyboardOverlayKeys(keys: readonly string[]): void {
   module.setOverlayKeys(keys);
+}
+export function setHardwareKeyboardClaimedShortcuts(shortcuts: readonly ClaimedShortcut[]): void {
+  module.setClaimedShortcuts(shortcuts);
 }
 
 export function getHardwareKeyboardPresent(): boolean {

@@ -431,7 +431,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
       <View style={styles.portRow}>
         <View style={hostFieldStyle}>
           <Text style={styles.label}>{t("pairing.direct.fields.host")}</Text>
-          <ThemedAdaptiveTextInput
+          <AdaptiveTextInput
             testID="direct-host-input"
             nativeID="direct-host-input"
             accessibilityLabel={t("pairing.direct.fields.host")}
@@ -449,7 +449,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
         </View>
         <View style={portFieldStyle}>
           <Text style={styles.label}>{t("pairing.direct.fields.port")}</Text>
-          <ThemedAdaptiveTextInput
+          <AdaptiveTextInput
             testID="direct-port-input"
             nativeID="direct-port-input"
             accessibilityLabel={t("pairing.direct.fields.port")}
@@ -491,7 +491,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
       <View style={styles.field}>
         <Text style={styles.label}>{t("pairing.direct.fields.password")}</Text>
         <View style={styles.passwordRow}>
-          <ThemedAdaptiveTextInput
+          <AdaptiveTextInput
             testID="direct-password-input"
             nativeID="direct-password-input"
             accessibilityLabel={t("pairing.direct.fields.password")}
@@ -539,7 +539,7 @@ function AddHostModalContent({ visible, onClose, onCancel, onSaved }: AddHostMod
           <Text style={styles.advancedText}>{t("pairing.direct.advanced.label")}</Text>
         </PressHighlight>
         {isAdvancedOpen ? (
-          <ThemedAdaptiveTextInput
+          <AdaptiveTextInput
             testID="direct-host-uri-input"
             nativeID="direct-host-uri-input"
             accessibilityLabel={t("pairing.direct.fields.connectionUri")}
@@ -598,7 +598,3 @@ const ThemedChevronRight = withUnistyles(ChevronRight, (theme) => ({
 const ThemedEye = withUnistyles(Eye, (theme) => ({ color: theme.colors.foregroundMuted }));
 
 const ThemedEyeOff = withUnistyles(EyeOff, (theme) => ({ color: theme.colors.foregroundMuted }));
-
-const ThemedAdaptiveTextInput = withUnistyles(AdaptiveTextInput, (theme) => ({
-  placeholderTextColor: theme.colors.foregroundMuted,
-}));

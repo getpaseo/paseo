@@ -17,8 +17,13 @@ export function resolveBundledSkillsDir(moduleUrl: string | URL = import.meta.ur
 export function resolveSkillTargets(home: string = os.homedir()): SkillTargets {
   return {
     sourceDir: resolveBundledSkillsDir(),
-    agentsDir: path.join(home, ".agents", "skills"),
-    claudeDir: path.join(home, ".claude", "skills"),
+    // Append new install roots to the end — transaction backups reference roots
+    // by index, so existing positions must remain stable across upgrades.
+    installDirs: [
+      path.join(home, ".agents", "skills"),
+      path.join(home, ".claude", "skills"),
+      path.join(home, ".gemini", "config", "skills"),
+    ],
     codexDir: path.join(home, ".codex", "skills"),
   };
 }

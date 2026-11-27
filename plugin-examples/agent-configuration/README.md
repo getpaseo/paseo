@@ -6,7 +6,7 @@ Sets saved Codex options through `server.addHook("agent.create.before", async ..
 - Sets `config.providerOptions.approval_policy` to `on-request`.
 - Preserves other configuration and provider options.
 
-Adds the `company` MCP server to Codex launches through
+Adds the `company` MCP server to Codex launches, skipping background agents, through
 `server.addHook("agent.open.before", async ...)`. The server is never saved in the agent's configuration;
 existing saved MCP servers are preserved. Existing agents receive the server through the
 [session reopen behavior](../../public-docs/plugins/hooks.md#attach-tools-to-agents).

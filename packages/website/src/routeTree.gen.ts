@@ -31,11 +31,13 @@ import { Route as Char123LocaleChar125KimiRouteImport } from "./routes/{-$locale
 import { Route as Char123LocaleChar125KiloRouteImport } from "./routes/{-$locale}/kilo";
 import { Route as Char123LocaleChar125JunieRouteImport } from "./routes/{-$locale}/junie";
 import { Route as Char123LocaleChar125HubRouteImport } from "./routes/{-$locale}/hub";
+import { Route as Char123LocaleChar125HopliteRouteImport } from "./routes/{-$locale}/hoplite";
 import { Route as Char123LocaleChar125HermesRouteImport } from "./routes/{-$locale}/hermes";
 import { Route as Char123LocaleChar125GrokRouteImport } from "./routes/{-$locale}/grok";
 import { Route as Char123LocaleChar125GooseRouteImport } from "./routes/{-$locale}/goose";
 import { Route as Char123LocaleChar125GlmRouteImport } from "./routes/{-$locale}/glm";
 import { Route as Char123LocaleChar125GeminiRouteImport } from "./routes/{-$locale}/gemini";
+import { Route as Char123LocaleChar125FxRouteImport } from "./routes/{-$locale}/fx";
 import { Route as Char123LocaleChar125FastAgentRouteImport } from "./routes/{-$locale}/fast-agent";
 import { Route as Char123LocaleChar125FactoryDroidRouteImport } from "./routes/{-$locale}/factory-droid";
 import { Route as Char123LocaleChar125DownloadRouteImport } from "./routes/{-$locale}/download";
@@ -209,6 +211,12 @@ const Char123LocaleChar125HubRoute = Char123LocaleChar125HubRouteImport.update({
   path: "/hub",
   getParentRoute: () => Char123LocaleChar125RouteRoute,
 } as any);
+const Char123LocaleChar125HopliteRoute =
+  Char123LocaleChar125HopliteRouteImport.update({
+    id: "/hoplite",
+    path: "/hoplite",
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any);
 const Char123LocaleChar125HermesRoute =
   Char123LocaleChar125HermesRouteImport.update({
     id: "/hermes",
@@ -238,6 +246,11 @@ const Char123LocaleChar125GeminiRoute =
     path: "/gemini",
     getParentRoute: () => Char123LocaleChar125RouteRoute,
   } as any);
+const Char123LocaleChar125FxRoute = Char123LocaleChar125FxRouteImport.update({
+  id: "/fx",
+  path: "/fx",
+  getParentRoute: () => Char123LocaleChar125RouteRoute,
+} as any);
 const Char123LocaleChar125FastAgentRoute =
   Char123LocaleChar125FastAgentRouteImport.update({
     id: "/fast-agent",
@@ -523,11 +536,13 @@ export interface FileRoutesByFullPath {
   "/{-$locale}/download": typeof Char123LocaleChar125DownloadRoute;
   "/{-$locale}/factory-droid": typeof Char123LocaleChar125FactoryDroidRoute;
   "/{-$locale}/fast-agent": typeof Char123LocaleChar125FastAgentRoute;
+  "/{-$locale}/fx": typeof Char123LocaleChar125FxRoute;
   "/{-$locale}/gemini": typeof Char123LocaleChar125GeminiRoute;
   "/{-$locale}/glm": typeof Char123LocaleChar125GlmRoute;
   "/{-$locale}/goose": typeof Char123LocaleChar125GooseRoute;
   "/{-$locale}/grok": typeof Char123LocaleChar125GrokRoute;
   "/{-$locale}/hermes": typeof Char123LocaleChar125HermesRoute;
+  "/{-$locale}/hoplite": typeof Char123LocaleChar125HopliteRoute;
   "/{-$locale}/hub": typeof Char123LocaleChar125HubRoute;
   "/{-$locale}/junie": typeof Char123LocaleChar125JunieRoute;
   "/{-$locale}/kilo": typeof Char123LocaleChar125KiloRoute;
@@ -592,11 +607,13 @@ export interface FileRoutesByTo {
   "/{-$locale}/download": typeof Char123LocaleChar125DownloadRoute;
   "/{-$locale}/factory-droid": typeof Char123LocaleChar125FactoryDroidRoute;
   "/{-$locale}/fast-agent": typeof Char123LocaleChar125FastAgentRoute;
+  "/{-$locale}/fx": typeof Char123LocaleChar125FxRoute;
   "/{-$locale}/gemini": typeof Char123LocaleChar125GeminiRoute;
   "/{-$locale}/glm": typeof Char123LocaleChar125GlmRoute;
   "/{-$locale}/goose": typeof Char123LocaleChar125GooseRoute;
   "/{-$locale}/grok": typeof Char123LocaleChar125GrokRoute;
   "/{-$locale}/hermes": typeof Char123LocaleChar125HermesRoute;
+  "/{-$locale}/hoplite": typeof Char123LocaleChar125HopliteRoute;
   "/{-$locale}/hub": typeof Char123LocaleChar125HubRoute;
   "/{-$locale}/junie": typeof Char123LocaleChar125JunieRoute;
   "/{-$locale}/kilo": typeof Char123LocaleChar125KiloRoute;
@@ -665,11 +682,13 @@ export interface FileRoutesById {
   "/{-$locale}/download": typeof Char123LocaleChar125DownloadRoute;
   "/{-$locale}/factory-droid": typeof Char123LocaleChar125FactoryDroidRoute;
   "/{-$locale}/fast-agent": typeof Char123LocaleChar125FastAgentRoute;
+  "/{-$locale}/fx": typeof Char123LocaleChar125FxRoute;
   "/{-$locale}/gemini": typeof Char123LocaleChar125GeminiRoute;
   "/{-$locale}/glm": typeof Char123LocaleChar125GlmRoute;
   "/{-$locale}/goose": typeof Char123LocaleChar125GooseRoute;
   "/{-$locale}/grok": typeof Char123LocaleChar125GrokRoute;
   "/{-$locale}/hermes": typeof Char123LocaleChar125HermesRoute;
+  "/{-$locale}/hoplite": typeof Char123LocaleChar125HopliteRoute;
   "/{-$locale}/hub": typeof Char123LocaleChar125HubRoute;
   "/{-$locale}/junie": typeof Char123LocaleChar125JunieRoute;
   "/{-$locale}/kilo": typeof Char123LocaleChar125KiloRoute;
@@ -739,11 +758,13 @@ export interface FileRouteTypes {
     | "/{-$locale}/download"
     | "/{-$locale}/factory-droid"
     | "/{-$locale}/fast-agent"
+    | "/{-$locale}/fx"
     | "/{-$locale}/gemini"
     | "/{-$locale}/glm"
     | "/{-$locale}/goose"
     | "/{-$locale}/grok"
     | "/{-$locale}/hermes"
+    | "/{-$locale}/hoplite"
     | "/{-$locale}/hub"
     | "/{-$locale}/junie"
     | "/{-$locale}/kilo"
@@ -808,11 +829,13 @@ export interface FileRouteTypes {
     | "/{-$locale}/download"
     | "/{-$locale}/factory-droid"
     | "/{-$locale}/fast-agent"
+    | "/{-$locale}/fx"
     | "/{-$locale}/gemini"
     | "/{-$locale}/glm"
     | "/{-$locale}/goose"
     | "/{-$locale}/grok"
     | "/{-$locale}/hermes"
+    | "/{-$locale}/hoplite"
     | "/{-$locale}/hub"
     | "/{-$locale}/junie"
     | "/{-$locale}/kilo"
@@ -880,11 +903,13 @@ export interface FileRouteTypes {
     | "/{-$locale}/download"
     | "/{-$locale}/factory-droid"
     | "/{-$locale}/fast-agent"
+    | "/{-$locale}/fx"
     | "/{-$locale}/gemini"
     | "/{-$locale}/glm"
     | "/{-$locale}/goose"
     | "/{-$locale}/grok"
     | "/{-$locale}/hermes"
+    | "/{-$locale}/hoplite"
     | "/{-$locale}/hub"
     | "/{-$locale}/junie"
     | "/{-$locale}/kilo"
@@ -1086,6 +1111,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof Char123LocaleChar125HubRouteImport;
       parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
+    "/{-$locale}/hoplite": {
+      id: "/{-$locale}/hoplite";
+      path: "/hoplite";
+      fullPath: "/{-$locale}/hoplite";
+      preLoaderRoute: typeof Char123LocaleChar125HopliteRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
+    };
     "/{-$locale}/hermes": {
       id: "/{-$locale}/hermes";
       path: "/hermes";
@@ -1119,6 +1151,13 @@ declare module "@tanstack/react-router" {
       path: "/gemini";
       fullPath: "/{-$locale}/gemini";
       preLoaderRoute: typeof Char123LocaleChar125GeminiRouteImport;
+      parentRoute: typeof Char123LocaleChar125RouteRoute;
+    };
+    "/{-$locale}/fx": {
+      id: "/{-$locale}/fx";
+      path: "/fx";
+      fullPath: "/{-$locale}/fx";
+      preLoaderRoute: typeof Char123LocaleChar125FxRouteImport;
       parentRoute: typeof Char123LocaleChar125RouteRoute;
     };
     "/{-$locale}/fast-agent": {
@@ -1483,11 +1522,13 @@ interface Char123LocaleChar125RouteRouteChildren {
   Char123LocaleChar125DownloadRoute: typeof Char123LocaleChar125DownloadRoute;
   Char123LocaleChar125FactoryDroidRoute: typeof Char123LocaleChar125FactoryDroidRoute;
   Char123LocaleChar125FastAgentRoute: typeof Char123LocaleChar125FastAgentRoute;
+  Char123LocaleChar125FxRoute: typeof Char123LocaleChar125FxRoute;
   Char123LocaleChar125GeminiRoute: typeof Char123LocaleChar125GeminiRoute;
   Char123LocaleChar125GlmRoute: typeof Char123LocaleChar125GlmRoute;
   Char123LocaleChar125GooseRoute: typeof Char123LocaleChar125GooseRoute;
   Char123LocaleChar125GrokRoute: typeof Char123LocaleChar125GrokRoute;
   Char123LocaleChar125HermesRoute: typeof Char123LocaleChar125HermesRoute;
+  Char123LocaleChar125HopliteRoute: typeof Char123LocaleChar125HopliteRoute;
   Char123LocaleChar125HubRoute: typeof Char123LocaleChar125HubRoute;
   Char123LocaleChar125JunieRoute: typeof Char123LocaleChar125JunieRoute;
   Char123LocaleChar125KiloRoute: typeof Char123LocaleChar125KiloRoute;
@@ -1553,11 +1594,13 @@ const Char123LocaleChar125RouteRouteChildren: Char123LocaleChar125RouteRouteChil
     Char123LocaleChar125FactoryDroidRoute:
       Char123LocaleChar125FactoryDroidRoute,
     Char123LocaleChar125FastAgentRoute: Char123LocaleChar125FastAgentRoute,
+    Char123LocaleChar125FxRoute: Char123LocaleChar125FxRoute,
     Char123LocaleChar125GeminiRoute: Char123LocaleChar125GeminiRoute,
     Char123LocaleChar125GlmRoute: Char123LocaleChar125GlmRoute,
     Char123LocaleChar125GooseRoute: Char123LocaleChar125GooseRoute,
     Char123LocaleChar125GrokRoute: Char123LocaleChar125GrokRoute,
     Char123LocaleChar125HermesRoute: Char123LocaleChar125HermesRoute,
+    Char123LocaleChar125HopliteRoute: Char123LocaleChar125HopliteRoute,
     Char123LocaleChar125HubRoute: Char123LocaleChar125HubRoute,
     Char123LocaleChar125JunieRoute: Char123LocaleChar125JunieRoute,
     Char123LocaleChar125KiloRoute: Char123LocaleChar125KiloRoute,

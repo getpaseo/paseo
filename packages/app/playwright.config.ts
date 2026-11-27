@@ -23,6 +23,12 @@ export default defineConfig({
   // spec on one worker avoids repeating its file-level setup across daemons.
   fullyParallel: false,
   workers: Number(process.env.E2E_WORKERS ?? (process.env.CI ? "2" : "1")),
+  // Workspace packages are already compiled. Tests import them at run time, so
+  // on a cold cache every worker transpiles the same files and writes them into
+  // Playwright's shared transform cache without locking. A worker that reads an
+  // entry mid-write loads an empty module and fails with "does not provide an
+  // export named".
+  build: { external: ["**/packages/*/dist/**"] },
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
   use: {

@@ -23,14 +23,13 @@ function keepEditorFocused(event: import("react-native").PointerEvent) {
 /**
  * One tree for both layout modes. The editing surface keeps its position so the
  * mounted editor, its native buffer, selection, and focus survive every toggle;
- * only the chrome around it changes. Fullscreen shows exit top right and Send
- * bottom right, both on the rail the inline Send button uses; a send error sits
+ * only the chrome around it changes. Fullscreen keeps the exit glyph on the text
+ * rail and Send at the bottom right; a send error sits
  * in the same footer as Send.
  */
 export function ComposerInputPresentation({
   fullscreen,
   controlSizing,
-  sendIconSize,
   surface,
   toolbar,
   send,
@@ -47,7 +46,6 @@ export function ComposerInputPresentation({
   fullscreen: boolean;
   /** The sizing the toolbar's stylesheet resolves to; see `resolveControlSizing`. */
   controlSizing: ControlSizing;
-  sendIconSize: number;
   surface: ReactNode;
   toolbar: ReactNode;
   send: ReactNode;
@@ -69,7 +67,6 @@ export function ComposerInputPresentation({
   const glyphSize = iconSizeFor("md")[controlSizing];
   const railOffset = resolveGlyphRailOffset({
     controlSize: TOOLBAR_CONTROL_SIZES[controlSizing],
-    sendIconSize,
     glyphIconSize: glyphSize,
   });
   const maximizeIcon = useCallback(
@@ -80,8 +77,8 @@ export function ComposerInputPresentation({
     (color: string) => <Minimize2 color={color} size={glyphSize} />,
     [glyphSize],
   );
-  // The toolbar row bleeds 6px past the input padding; the inline glyph sits on that edge.
-  const enterStyle = useMemo(() => [styles.enterButton, { right: -6 + railOffset }], [railOffset]);
+  // Fullscreen controls share the text rail; the toolbar disc owns its separate corner inset.
+  const enterStyle = useMemo(() => [styles.enterButton, { right: railOffset }], [railOffset]);
   const exitStyle = useMemo(() => [styles.iconButton, { marginRight: railOffset }], [railOffset]);
   return (
     <View
@@ -129,7 +126,8 @@ export function ComposerInputPresentation({
               </Button>
             ) : null}
           </View>
-          {fullscreen ? null : toolbar}
+          {/* Keep the agent controls mounted for composer commands in fullscreen. */}
+          {toolbar}
         </View>
       </ComposerFullscreenBody>
       {fullscreen ? (

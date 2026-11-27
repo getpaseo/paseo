@@ -2,19 +2,28 @@ import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import {
+  AgentFeatureSchema,
+  AgentMetricSchema,
+  AgentOptionControlSchema,
+  AgentStatusSchema,
+} from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { controlsFromFeatures } from "@getpaseo/protocol/option-controls";
+import { foldFeatureValues } from "./option-controls.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Read-only; folded on parse.
     featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
     providerOptions: z.record(z.string(), z.unknown()).nullable().optional(),
     toolPolicy: z
@@ -42,7 +51,7 @@ const PERSISTENCE_HANDLE_SCHEMA = z
   .nullable()
   .optional();
 
-const STORED_AGENT_SCHEMA = z.object({
+const RAW_STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   provider: z.string(),
   cwd: z.string(),
@@ -53,6 +62,7 @@ const STORED_AGENT_SCHEMA = z.object({
   lastUserMessageAt: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
+  metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
   resumeOnStartup: z.boolean().optional(),
   lastModeId: z.string().nullable().optional(),
@@ -68,8 +78,11 @@ const STORED_AGENT_SCHEMA = z.object({
       extra: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
+  controls: z.array(AgentOptionControlSchema).optional(),
+  // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. Read-only; becomes controls.
   features: z.array(AgentFeatureSchema).optional(),
   persistence: PERSISTENCE_HANDLE_SCHEMA,
+  sessionMetrics: z.array(AgentMetricSchema).optional(),
   lastError: z.string().nullable().optional(),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
@@ -85,14 +98,32 @@ export type SerializableAgentConfig = Pick<
   | "modeId"
   | "model"
   | "thinkingOptionId"
-  | "featureValues"
   | "providerOptions"
   | "toolPolicy"
   | "systemPrompt"
   | "mcpServers"
 >;
 
-export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
+type RawStoredAgentRecord = z.infer<typeof RAW_STORED_AGENT_SCHEMA>;
+type RawStoredAgentConfig = NonNullable<RawStoredAgentRecord["config"]>;
+
+/** Records carry `providerOptions` and `controls` only; legacy fields are folded when read. */
+export type StoredAgentRecord = Omit<RawStoredAgentRecord, "config" | "features"> & {
+  config?: Omit<RawStoredAgentConfig, "featureValues"> | null;
+};
+
+// COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01.
+function foldLegacyRecordFields(record: RawStoredAgentRecord): StoredAgentRecord {
+  const { features, config, controls, ...rest } = record;
+  return {
+    ...rest,
+    ...(config ? { config: foldFeatureValues(config) } : { config }),
+    ...((controls ?? features) ? { controls: controls ?? controlsFromFeatures(features) } : {}),
+  };
+}
+
+const STORED_AGENT_SCHEMA = RAW_STORED_AGENT_SCHEMA.transform(foldLegacyRecordFields);
+
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
@@ -309,7 +340,15 @@ export class AgentStorage {
 
     if (previousPath && previousPath !== nextPath) {
       try {
-        await fs.unlink(previousPath);
+        // Compare the entries after the atomic replacement. On a case-insensitive
+        // volume both spellings can now address the file we just wrote.
+        const [previous, next] = await Promise.all([
+          fs.lstat(previousPath, { bigint: true }),
+          fs.lstat(nextPath, { bigint: true }),
+        ]);
+        if (previous.dev !== next.dev || previous.ino !== next.ino) {
+          await fs.unlink(previousPath);
+        }
       } catch {
         // ignore cleanup errors
       }

@@ -15,7 +15,8 @@ function createPagingClient() {
     cwd: "/tmp/project",
     createdAt: `2026-10-0${n}T00:00:00.000Z`,
     updatedAt: `2026-10-0${n}T00:00:00.000Z`,
-    labels: {},
+    labels: n === 3 ? { bot: "worker", issue: "42" } : {},
+    workspaceId: n === 3 ? "workspace-3" : undefined,
     model: null,
     lastUserMessageAt: null,
     currentModeId: null,
@@ -124,6 +125,19 @@ describe("buildAgentLsFetchOptions", () => {
 });
 
 describe("runLsCommand", () => {
+  it("includes labels and workspace IDs in JSON listings", async () => {
+    const result = await listAgents({ daemonTarget, global: true }, async () =>
+      createPagingClient(),
+    );
+    const rows = JSON.parse(render(result, { format: "json" }));
+
+    expect(rows).toMatchObject([
+      { name: "agent 3", labels: { bot: "worker", issue: "42" }, workspaceId: "workspace-3" },
+      { name: "agent 2", labels: {}, workspaceId: null },
+      { name: "agent 1", labels: {}, workspaceId: null },
+    ]);
+  });
+
   it("lists agents on every page, including one updated during the listing", async () => {
     const result = await listAgents({ daemonTarget, all: true, global: true }, async () =>
       createPagingClient(),

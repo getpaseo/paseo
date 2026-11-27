@@ -61,6 +61,23 @@ function explorerSidebar(page: Page) {
   return visibleTestId(page, "workspace-explorer-sidebar").first();
 }
 
+export async function dragTabIntoExplorer(page: Page, tabId: string): Promise<void> {
+  const source = page.getByTestId("workspace-pane-main").getByTestId(`workspace-tab-${tabId}`);
+  const destination = explorerSidebar(page).getByTestId("workspace-tab-files");
+  const sourceBox = await source.boundingBox();
+  const destinationBox = await destination.boundingBox();
+  if (!sourceBox || !destinationBox)
+    throw new Error("Tab drag requires visible source and destination");
+  const start = { x: sourceBox.x + 12, y: sourceBox.y + sourceBox.height / 2 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 12, start.y + 4);
+  await page.mouse.move(destinationBox.x + 12, destinationBox.y + destinationBox.height / 2, {
+    steps: 20,
+  });
+  await page.mouse.up();
+}
+
 async function selectWorkspaceTab(tab: Locator): Promise<void> {
   if ((await tab.getAttribute("aria-selected")) !== "true") {
     // The close action overlays the chip's trailing edge on hover. Click the
@@ -74,10 +91,13 @@ async function selectWorkspaceTab(tab: Locator): Promise<void> {
 export async function ensureExplorerSidebar(page: Page): Promise<Locator> {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   await expect(toggle).toBeVisible({ timeout: 30_000 });
-  const explorer = explorerSidebar(page);
-  if ((await explorer.count()) === 0) {
+  // Decide from the toggle, which reports the open state. The sidebar's own visibility lags it:
+  // a compact layout draws its closed Explorer for a frame before hiding it.
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
   }
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const explorer = explorerSidebar(page);
   await expect(explorer).toBeVisible({ timeout: 30_000 });
   return explorer;
 }

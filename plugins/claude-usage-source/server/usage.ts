@@ -263,6 +263,7 @@ function unscopedWindows(resp: ClaudeUsageResponse): UsageWindow[] {
         shortLabel: spec.shortLabel,
         summary: spec.summary,
         utilizationPct: window.utilization,
+        durationSeconds: spec.field === "five_hour" ? 5 * 3600 : 7 * 86400,
         resetsAt: window.resets_at ?? null,
         tone: toneFromUsedPct(window.utilization),
       }),
@@ -283,6 +284,7 @@ function scopedWindows(limits: ScopedLimit[]): UsageWindow[] {
       label: `Weekly \u00b7 ${limit.name}`,
       shortLabel: `wk ${limit.name}`,
       utilizationPct: limit.usedPct,
+      durationSeconds: 7 * 86400,
       resetsAt: limit.resetsAt,
       tone: toneFromUsedPct(limit.usedPct),
     });
@@ -383,7 +385,8 @@ export async function discover(
     const harness = { pi: "Pi", omp: "OMP", claude: "Claude", keychain: "Claude" }[
       input.route.store
     ];
-    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), harness, input };
+    const provider = input.route.store === "keychain" ? "claude" : input.route.store;
+    const fallback = { key: hashAccountKey(JSON.stringify(input.route)), harness, provider, input };
     if (credentials.expires !== undefined && credentials.expires <= (lookup.now ?? Date.now)()) {
       accounts.push(fallback);
       continue;
@@ -394,7 +397,11 @@ export async function discover(
         fetchApi,
         lookup.now ?? Date.now,
       );
-      accounts.push("status" in profile ? fallback : { ...profile, harness, input });
+      accounts.push(
+        "status" in profile
+          ? fallback
+          : { ...profile, harness, provider, input: { ...input, accountKey: profile.key } },
+      );
     } catch {
       // Keep the login visible; fetching usage reports the vendor failure.
       accounts.push(fallback);
@@ -567,16 +574,14 @@ export async function fetchUsage(
       expiresAt: new Date(credentials.expires).toISOString(),
       refreshedBy,
     });
-  const profile = await cachedProfile(
-    credentials.oauth.accessToken,
-    (credentialLookup.now ?? Date.now)(),
-  );
-  if (profile && "status" in profile)
-    return unavailable({ kind: "rejected", status: profile.status, refreshedBy });
-
   const { oauth } = credentials;
+  const now = credentialLookup.now ?? Date.now;
+  const rejected = await verifyLoginAccount(oauth.accessToken, input.accountKey, fetchApi, now);
+  if (rejected !== undefined)
+    return unavailable({ kind: "rejected", status: rejected, refreshedBy });
+
   const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-  const resp = await callClaudeApi(oauth.accessToken, (credentialLookup.now ?? Date.now)());
+  const resp = await callClaudeApi(oauth.accessToken, now());
 
   if (typeof resp === "number") return unavailable({ kind: "rejected", status: resp, refreshedBy });
 
@@ -640,9 +645,21 @@ const PROFILE_TTL_MS = 300_000;
 const PROFILE_CACHE_LIMIT = 128;
 const profileCache = new Map<string, { at: number; result: Promise<ClaudeIdentity> }>();
 
-function cachedProfile(token: string, now: number): Promise<ClaudeIdentity> | undefined {
-  pruneProfileCache(now);
-  return profileCache.get(hashAccountKey(token))?.result;
+async function verifyLoginAccount(
+  token: string,
+  accountKey: string | undefined,
+  fetchApi: typeof fetch,
+  now: () => number,
+): Promise<number | undefined> {
+  pruneProfileCache(now());
+  const profile = accountKey
+    ? await readProfile(token, fetchApi, now)
+    : await profileCache.get(hashAccountKey(token))?.result;
+  if (profile && "status" in profile) return profile.status;
+  if (accountKey && profile?.key !== accountKey)
+    throw new Error(
+      "This Claude login now belongs to a different account. Refresh the usage list.",
+    );
 }
 
 function pruneProfileCache(now: number): void {

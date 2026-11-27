@@ -1,9 +1,7 @@
-import { Children, isValidElement, useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
-import { settingsStyles } from "@/styles/settings";
-import { NestedSettingsRows } from "./row-density";
+import { SettingsRowChildren } from "./row-children";
 import { SettingsRowHeader } from "./row-header";
 
 interface SettingsCollapsibleRowProps {
@@ -48,27 +46,7 @@ export function SettingsCollapsibleRow({
         webAccessibilityProps={webExpandedProps}
         testID={testID ? `${testID}-toggle` : undefined}
       />
-      {expanded ? (
-        <View style={styles.children}>
-          <NestedSettingsRows>
-            {Children.toArray(children).map((child, index) => (
-              <View
-                key={isValidElement(child) ? child.key : index}
-                style={settingsStyles.rowBorder}
-              >
-                {child}
-              </View>
-            ))}
-          </NestedSettingsRows>
-        </View>
-      ) : null}
+      {expanded ? <SettingsRowChildren>{children}</SettingsRowChildren> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  // The revealed rows keep the card's rails; the tint is what groups them under their header.
-  children: {
-    backgroundColor: theme.colors.surface0,
-  },
-}));

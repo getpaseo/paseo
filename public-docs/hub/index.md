@@ -1,6 +1,6 @@
 ---
 title: Hub
-description: The layer above your daemons. Register them, give them capabilities, and share them with your team.
+description: Automate coding agents on your Paseo daemons from GitHub, Linear, Slack, Discord, schedules, and webhooks.
 nav: Overview
 order: 60
 category: Hub
@@ -8,27 +8,30 @@ category: Hub
 
 # Hub
 
-A daemon runs agents on one machine, for you. Paseo Hub is the layer above your daemons. You register your daemons with it, and it gives them capabilities they do not have on their own.
+A Paseo daemon runs coding agents on one machine. Paseo Hub sits above your daemons so external events, schedules, and webhooks can start agents on those machines and share the history with your team.
 
 ```text
-             Hub
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
- laptop    devbox    build server
+GitHub · Linear · Slack · Discord · Schedules · Webhooks
+                           │
+                           ▼
+                          Hub
+               ┌───────────┼───────────┐
+               ▼           ▼           ▼
+            laptop       devbox   build server
 ```
 
-What that gives you today:
+Hub gives your team four things:
 
-- Agents that start on their own, from activity in GitHub, Slack, and Discord.
-- Triggers you can keep in a repository and deploy from the CLI.
-- A record of everything that arrived, what it matched, and what ran.
-- One place for your team to see all of it.
+- Event-driven agents that start from GitHub, Linear, Slack, Discord, recurring schedules, and inbound webhooks.
+- Triggers you can edit in the browser or store in `.paseo/triggers/*.yml` and deploy from the CLI.
+- Scoped integration tools that let any trigger read or post to Slack and Discord or act on GitHub.
+- [Activity](/docs/hub/activity) for recent runs and **Integrations → Known unrouted events** for deliveries that did not start a run.
 
-Your daemons keep running agents where they always did. Hub decides when to ask them to.
+Your daemons still run agents on your machines with your existing subscriptions, models, and skills. Hub decides when to invoke them.
 
 ## What lives in your repository
 
-`paseo hub init` creates one self-contained starter trigger:
+You can manage triggers in the Hub dashboard or store each trigger as one YAML file in your repository:
 
 ```text
 .paseo/
@@ -36,7 +39,7 @@ Your daemons keep running agents where they always did. Hub decides when to ask 
     └── slack-help.yml
 ```
 
-The file names the app connection, allowed user, daemon, working directory, agent runtime, prompt, and outputs. Setup validates it and asks whether to deploy. Mentioning the bot then starts an agent on your machine. [Quickstart](/docs/hub/quickstart) runs it end to end; the [generated starter trigger](/docs/hub/configuration#generated-starter-trigger) shows what setup wrote.
+Each file is self-contained. It names the event, allowed senders, target daemon, working directory, agent configuration, prompt, and any tools or reply bounds. Run `paseo hub init` to generate a starter file, or run `paseo hub deploy` to validate and install your triggers.
 
 ## Reading order
 
@@ -44,15 +47,15 @@ The file names the app connection, allowed user, daemon, working directory, agen
 2. [How it works](/docs/hub/concepts)
 3. [Daemons](/docs/hub/daemons)
 4. [Triggers](/docs/hub/triggers)
-5. [Workflows](/docs/hub/workflows)
+5. [Integration tools](/docs/hub/tools)
 6. [GitHub access](/docs/hub/github)
 7. [Configuration](/docs/hub/configuration)
 8. [Security](/docs/hub/security)
 
-If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
+Before giving a trigger access to a working directory, GitHub permissions, or chat channels, read [Hub security](/docs/hub/security).
 
-## Run Hub yourself
+## Hosted or self-hosted
 
-Start on your machine with the embedded database, then add PostgreSQL or a public deployment only when you need them. [Self-hosting](/docs/hub/self-hosting) covers each step.
+[Hosted Hub](/docs/hub/hosted) manages the server and provider apps for you. Create a free account at [hub.paseo.sh](https://hub.paseo.sh) with no card and no expiry.
 
-[Hosted Hub](/docs/hub/hosted) uses the same triggers, daemons, and activity model. [Create a free account](https://hub.paseo.sh); it needs no card and does not expire.
+To run Hub on your own machine or server, start with `npx @getpaseo/hub` and an embedded database, then add PostgreSQL or a public HTTPS deployment when you need them. See [Self-hosting](/docs/hub/self-hosting).

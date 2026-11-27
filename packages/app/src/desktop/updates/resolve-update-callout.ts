@@ -1,8 +1,10 @@
 import type { DesktopAppUpdateStatus } from "@/desktop/updates/use-desktop-app-updater";
+import type { DesktopAppUpdateDownloadProgress } from "@/desktop/updates/desktop-updates";
 import { i18n } from "@/i18n/i18next";
 
 export type UpdateCalloutBody =
-  | { kind: "available"; versionLabel: string | null }
+  | { kind: "available"; versionLabel: string | null; readyToInstall?: boolean }
+  | { kind: "downloading"; versionLabel: string | null; percent: number }
   | { kind: "installing" }
   | { kind: "error"; message: string };
 
@@ -31,13 +33,67 @@ export interface ResolveUpdateCalloutInput {
   isDesktopApp: boolean;
   status: DesktopAppUpdateStatus;
   isInstalling: boolean;
-  availableUpdate: { latestVersion?: string | null } | null;
+  availableUpdate: { latestVersion?: string | null; readyToInstall?: boolean } | null;
+  downloadProgress?: DesktopAppUpdateDownloadProgress | null;
   errorMessage: string | null;
 }
 
 function formatVersionLabel(latestVersion: string | null | undefined): string | null {
   if (!latestVersion) return null;
   return `v${latestVersion.replace(/^v/i, "")}`;
+}
+
+function resolveCalloutPresentation(input: {
+  isError: boolean;
+  isInstalling: boolean;
+  readyToInstall: boolean;
+  latestVersion: string | null;
+  downloadProgress: DesktopAppUpdateDownloadProgress | null | undefined;
+  errorMessage: string | null;
+}): { title: string; body: UpdateCalloutBody } {
+  if (input.isInstalling && input.downloadProgress != null) {
+    return {
+      title: i18n.t("desktop.updates.callout.downloadingTitle"),
+      body: {
+        kind: "downloading",
+        versionLabel: formatVersionLabel(input.latestVersion),
+        percent: Math.round(input.downloadProgress.percent),
+      },
+    };
+  }
+  if (input.isInstalling) {
+    return {
+      title: i18n.t("desktop.updates.callout.installingTitle"),
+      body: { kind: "installing" },
+    };
+  }
+  if (input.isError) {
+    return {
+      title: i18n.t("desktop.updates.callout.failedTitle"),
+      body: {
+        kind: "error",
+        message: input.errorMessage ?? i18n.t("desktop.updates.callout.genericError"),
+      },
+    };
+  }
+  const versionLabel = formatVersionLabel(input.latestVersion);
+  return {
+    title: i18n.t("desktop.updates.callout.availableTitle"),
+    body: input.readyToInstall
+      ? { kind: "available", versionLabel }
+      : { kind: "available", versionLabel, readyToInstall: false },
+  };
+}
+
+function resolveInstallActionLabel(input: {
+  isDownloading: boolean;
+  isInstalling: boolean;
+  readyToInstall: boolean;
+}): string {
+  if (input.isDownloading) return i18n.t("desktop.updates.callout.downloadingAction");
+  if (input.isInstalling) return i18n.t("desktop.updates.callout.installingAction");
+  if (input.readyToInstall) return i18n.t("desktop.updates.callout.installAndRestart");
+  return i18n.t("desktop.updates.callout.downloadAndRestart");
 }
 
 export function resolveUpdateCalloutDescriptor(
@@ -50,26 +106,22 @@ export function resolveUpdateCalloutDescriptor(
 
   const isError = input.status === "error";
   const isInstalling = input.isInstalling;
+  const isDownloading = isInstalling && input.downloadProgress != null;
   const isAvailable = !isInstalling && !isError;
+  const readyToInstall = input.availableUpdate?.readyToInstall !== false;
 
-  const latestVersion = input.availableUpdate?.latestVersion ?? null;
+  const latestVersion =
+    input.availableUpdate?.latestVersion ?? input.downloadProgress?.version ?? null;
   const dismissalKey = `desktop-update:${input.status}:${latestVersion ?? "unknown"}`;
 
-  let title: string;
-  let body: UpdateCalloutBody;
-  if (isInstalling) {
-    title = i18n.t("desktop.updates.callout.installingTitle");
-    body = { kind: "installing" };
-  } else if (isError) {
-    title = i18n.t("desktop.updates.callout.failedTitle");
-    body = {
-      kind: "error",
-      message: input.errorMessage ?? i18n.t("desktop.updates.callout.genericError"),
-    };
-  } else {
-    title = i18n.t("desktop.updates.callout.availableTitle");
-    body = { kind: "available", versionLabel: formatVersionLabel(latestVersion) };
-  }
+  const { title, body } = resolveCalloutPresentation({
+    isError,
+    isInstalling,
+    readyToInstall,
+    latestVersion,
+    downloadProgress: input.downloadProgress,
+    errorMessage: input.errorMessage,
+  });
 
   const actions: UpdateCalloutActionDescriptor[] = [
     { role: "changelog", label: i18n.t("desktop.updates.callout.whatsNew") },
@@ -79,9 +131,7 @@ export function resolveUpdateCalloutDescriptor(
   } else {
     actions.push({
       role: "install",
-      label: isInstalling
-        ? i18n.t("desktop.updates.callout.installingAction")
-        : i18n.t("desktop.updates.callout.installAndRestart"),
+      label: resolveInstallActionLabel({ isDownloading, isInstalling, readyToInstall }),
       variant: "primary",
       disabled: isInstalling,
     });

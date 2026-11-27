@@ -117,7 +117,10 @@ There is no renderer prep/restore handshake or lifetime background-throttling ov
 Screenshot capture temporarily enables frame production inside the shared serialized queue,
 restores the previous throttling policy on success or failure, and retains a 5-second capture budget.
 The browser tool takes one viewport frame through Electron's frame subscription and releases the
-subscription on completion or cancellation. A resized resident guest can produce fresh pixels
+subscription on completion or cancellation. Guest pages have a transparent base background, so a page
+that has painted nothing yet (a dev server hiding `body` until its JS boots) produces frames where
+every pixel is transparent. Both screenshot paths skip those frames and return `screenshot_no_frame`
+when the capture budget expires without a painted one. A resized resident guest can produce fresh pixels
 while `capturePage()` leaves its surface-copy request pending; waiting for animation frames or
 retrying the copy does not repair that state. Full-page screenshots retain the CDP path with layout
 metrics and screenshot clip.

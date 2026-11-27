@@ -8,6 +8,7 @@ import { isWeb } from "@/constants/platform";
 // (detachable keyboards, tablet mode, devtools touch emulation).
 const FINE_POINTER_QUERY = "(hover: hover) and (pointer: fine)";
 const TOUCH_SCREEN_QUERY = "(any-pointer: coarse)";
+const TOUCH_PRIMARY_POINTER_QUERY = "(pointer: coarse)";
 
 export interface PointerCapabilities {
   /** A mouse-like pointer drives the UI. */
@@ -21,6 +22,7 @@ type MatchMedia = (query: string) => MediaQueryList;
 export interface PointerCapabilitiesSource {
   getSnapshot: () => PointerCapabilities;
   subscribe: (onChange: () => void) => () => void;
+  hasTouchPrimaryPointer: () => boolean;
 }
 
 export function createPointerCapabilitiesSource(
@@ -28,9 +30,11 @@ export function createPointerCapabilitiesSource(
 ): PointerCapabilitiesSource {
   const finePointerQuery = matchMedia?.(FINE_POINTER_QUERY) ?? null;
   const touchScreenQuery = matchMedia?.(TOUCH_SCREEN_QUERY) ?? null;
+  const touchPrimaryPointerQuery = matchMedia?.(TOUCH_PRIMARY_POINTER_QUERY) ?? null;
   let snapshot: PointerCapabilities = { finePointer: false, touchScreen: false };
 
   return {
+    hasTouchPrimaryPointer: () => touchPrimaryPointerQuery?.matches ?? false,
     getSnapshot() {
       const finePointer = finePointerQuery?.matches ?? false;
       const touchScreen = touchScreenQuery?.matches ?? false;
@@ -61,6 +65,7 @@ const NATIVE_POINTER_CAPABILITIES: PointerCapabilities = { finePointer: false, t
 const nativeSource: PointerCapabilitiesSource = {
   getSnapshot: () => NATIVE_POINTER_CAPABILITIES,
   subscribe: () => () => {},
+  hasTouchPrimaryPointer: () => true,
 };
 
 const source = isWeb ? createPointerCapabilitiesSource(browserMatchMedia()) : nativeSource;
@@ -79,10 +84,11 @@ export function hasFinePointer(): boolean {
   return source.getSnapshot().finePointer;
 }
 
-/** Touch sizing remains enabled on hybrid browsers that report touch points. */
-export function hasTouchScreen(): boolean {
-  return (
-    source.getSnapshot().touchScreen ||
-    (isWeb && typeof window !== "undefined" && window.navigator.maxTouchPoints > 0)
-  );
+/**
+ * True when touch is the primary input, read at call time. iPadOS keeps touch primary with a
+ * trackpad attached; a laptop with a touch screen that its trackpad drives reports a fine primary
+ * pointer.
+ */
+export function hasTouchPrimaryPointer(): boolean {
+  return source.hasTouchPrimaryPointer();
 }

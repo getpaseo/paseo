@@ -1,3 +1,4 @@
+import type { createDaemonListeners } from "./listeners.js";
 import {
   loadPersistedConfig,
   savePersistedConfigAsync,
@@ -5,6 +6,14 @@ import {
   type PersistedConfig,
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
+import {
+  convertLegacyClaudeUltracode,
+  convertLegacyOptions,
+  foldProfileFeatureValues,
+  resolveAdapter,
+  withLegacyProfileFeatureValues,
+} from "./agent/option-controls.js";
+import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
 import {
   MutableDaemonConfigSchema,
   MutableDaemonConfigPatchSchema,
@@ -61,6 +70,7 @@ export interface DaemonConfigReloadResult {
 export interface DaemonConfigReloadSource {
   resolve(persisted: PersistedConfig): {
     mutable: MutableDaemonConfig;
+    listen?: string;
     overrideControlledPaths: readonly string[];
   };
 }
@@ -166,6 +176,86 @@ function omitProvidersFromOverrides(
   }
 
   return Object.keys(nextOverrides).length > 0 ? nextOverrides : undefined;
+}
+
+// COMPAT(agentProfileSystemPrompt): added in v0.17.6, remove after 2027-06-01.
+// Apps predating `systemPrompt` omit the key when saving an edited profile; preserve
+// the stored prompt unless the write explicitly sends `systemPrompt` (empty clears it).
+function foldProfileSystemPrompt(
+  profile: AgentProfile,
+  stored: AgentProfile | undefined,
+  source: "stored" | "client write",
+): AgentProfile {
+  if (profile.systemPrompt === undefined) {
+    if (source === "client write" && stored?.systemPrompt) {
+      return { ...profile, systemPrompt: stored.systemPrompt };
+    }
+    return profile;
+  }
+  const trimmed = profile.systemPrompt.trim();
+  const { systemPrompt: _ignored, ...rest } = profile;
+  return trimmed.length > 0 ? { ...rest, systemPrompt: trimmed } : rest;
+}
+
+/**
+ * Profiles are held and persisted with `options` only, in the current keys: a profile is old
+ * data entering, so it is converted for the adapter its provider runs on, which `config.json`'s
+ * `providers` section names through `extends`.
+ */
+function foldConfigProfiles<T extends { agentProfiles?: AgentProfile[] }>(input: {
+  config: T;
+  providers: Record<string, ProviderOverride> | undefined;
+  source: "stored" | "client write";
+  held?: AgentProfile[];
+}): T {
+  const { config, providers, source, held = [] } = input;
+  if (!config.agentProfiles) return config;
+  const convert = (provider: string, options: Record<string, unknown> | undefined) =>
+    convertLegacyOptions({
+      provider: resolveAdapter({ provider, extendsOf: (id) => providers?.[id]?.extends }),
+      options,
+    });
+  const identity = (_provider: string, options: Record<string, unknown> | undefined) => options;
+  const foldWith = (profile: AgentProfile, convertWith: typeof convert) => {
+    const stored = held.find((candidate) => candidate.id === profile.id);
+    const folded = foldProfileFeatureValues<
+      Pick<AgentProfile, "provider" | "options" | "featureValues">
+    >({
+      profile,
+      stored,
+      source,
+      convert: convertWith,
+    });
+    const { providerOptions, ...converted } = convertLegacyClaudeUltracode(
+      { ...folded, thinkingOptionId: profile.thinkingOptionId, providerOptions: folded.options },
+      resolveAdapter({ provider: profile.provider, extendsOf: (id) => providers?.[id]?.extends }),
+    );
+    return foldProfileSystemPrompt(
+      { ...(converted as AgentProfile), options: providerOptions },
+      stored,
+      source,
+    );
+  };
+  return {
+    ...config,
+    agentProfiles: config.agentProfiles.map((profile) => {
+      // A malformed value rejects a client write before anything is committed.
+      if (source === "client write") return foldWith(profile, convert);
+      try {
+        return foldWith(profile, convert);
+      } catch {
+        // A hand-edited `config.json` value that cannot convert must not stop the daemon from
+        // starting; it keeps its keys and is rejected when an agent is created from it.
+        return foldWith(profile, identity);
+      }
+    }),
+  };
+}
+
+/** The config API boundary: the unchanged app reads profile options from `featureValues`. */
+export function toWireDaemonConfig(config: MutableDaemonConfig): MutableDaemonConfig {
+  if (!config.agentProfiles) return config;
+  return { ...config, agentProfiles: config.agentProfiles.map(withLegacyProfileFeatureValues) };
 }
 
 function getValueAtPath(config: MutableDaemonConfig, path: string): unknown {
@@ -359,6 +449,7 @@ export class DaemonConfigStore {
   private readonly reloadSource: DaemonConfigReloadSource | undefined;
   private readonly startupPersisted: PersistedConfig;
   private readonly speechOwner: SpeechSettingsOwner | undefined;
+  private listeners?: ReturnType<typeof createDaemonListeners>;
   private lastKnownPersisted: PersistedConfig;
 
   constructor(
@@ -380,7 +471,7 @@ export class DaemonConfigStore {
     this.startupPersisted = options.startupPersisted ?? loadPersistedConfig(paseoHome, this.logger);
     this.lastKnownPersisted = this.startupPersisted;
     this.current = MutableDaemonConfigSchema.parse({
-      ...initial,
+      ...foldConfigProfiles({ config: initial, providers: initial.providers, source: "stored" }),
       relay: initial.relay ?? { enabled: true },
       ...this.readSpeech(this.startupPersisted),
     });
@@ -410,6 +501,18 @@ export class DaemonConfigStore {
     return this.enqueue(() => this.applySupportedPatch({ skills: { selection } }));
   }
 
+  private foldPatchProfiles<
+    T extends { agentProfiles?: AgentProfile[]; providers?: Record<string, ProviderOverride> },
+  >(submittedPatch: T): T {
+    return foldConfigProfiles({
+      config: submittedPatch,
+      // The provider graph this request will commit, so `extends` survives a partial edit.
+      providers: deepMerge(this.current.providers ?? {}, submittedPatch.providers ?? {}),
+      source: "client write",
+      held: this.current.agentProfiles,
+    });
+  }
+
   private async applySupportedPatch(
     parsedPatch: SupportedMutableConfigPatch,
   ): Promise<MutableDaemonConfig> {
@@ -418,7 +521,8 @@ export class DaemonConfigStore {
         "Relay is controlled by a daemon launch override. Remove PASEO_RELAY_ENABLED or the relay CLI flag before changing it here.",
       );
     }
-    const { removeProviders = [], ...patch } = parsedPatch;
+    const { removeProviders = [], ...submittedPatch } = parsedPatch;
+    const patch = this.foldPatchProfiles(submittedPatch);
     const { features: speechPatch, ...configPatch } = patch;
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
@@ -437,7 +541,16 @@ export class DaemonConfigStore {
     const configChanged = !isEqualValue(this.current, next);
 
     // A replaced API key leaves the speech view unchanged, so a speech patch always persists.
-    if (!configChanged && removedProviders.length === 0 && speechPatch === undefined) {
+    // Profiles held folded in memory may still be on disk with `featureValues`; saving them writes `options`.
+    const profilesStaleOnDisk =
+      patch.agentProfiles !== undefined &&
+      !isEqualValue(patch.agentProfiles, this.lastKnownPersisted.daemon?.agentProfiles);
+    if (
+      !configChanged &&
+      removedProviders.length === 0 &&
+      speechPatch === undefined &&
+      !profilesStaleOnDisk
+    ) {
       return this.current;
     }
 
@@ -481,6 +594,41 @@ export class DaemonConfigStore {
     );
   }
 
+  public attachListeners(listeners: ReturnType<typeof createDaemonListeners>) {
+    this.listeners = listeners;
+  }
+
+  public setTailscaleEnabled(
+    enabled: boolean,
+    localEndpoint: string | undefined,
+    confirmed: boolean,
+  ) {
+    return this.enqueue(async () => {
+      const listeners = this.listeners;
+      if (!listeners) throw new Error("Tailscale is unavailable");
+      const persisted = await loadPersistedConfigAsync(this.paseoHome, this.logger);
+      const change = listeners.prepareTailscaleChange(
+        persisted.daemon?.listen,
+        enabled,
+        localEndpoint,
+        confirmed,
+      );
+      if (change.confirmationRequired) {
+        return { confirmationRequired: true, ...listeners.status(localEndpoint) };
+      }
+      await savePersistedConfigAsync(
+        this.paseoHome,
+        {
+          ...persisted,
+          daemon: { ...persisted.daemon, listen: change.listen },
+        },
+        this.logger,
+      );
+      await change.apply();
+      return { confirmationRequired: false, ...listeners.status(localEndpoint) };
+    });
+  }
+
   public reload(): Promise<DaemonConfigReloadResult> {
     return this.enqueue(() => this.reloadPersisted());
   }
@@ -495,7 +643,11 @@ export class DaemonConfigStore {
     // Plugin source changes require the plugin lifecycle operation or a daemon
     // restart. The global switch is independently reloadable.
     const desired = MutableDaemonConfigSchema.parse({
-      ...resolved.mutable,
+      ...foldConfigProfiles({
+        config: resolved.mutable,
+        providers: resolved.mutable.providers,
+        source: "stored",
+      }),
       plugins: this.current.plugins,
       ...this.readSpeech(persisted),
     });
@@ -519,8 +671,11 @@ export class DaemonConfigStore {
         )
       );
     });
+    const listenChange = await this.listeners?.apply(resolved.listen ?? persisted.daemon?.listen);
+    if (listenChange?.applied) appliedPaths.push("daemon.listen");
     const restartRequiredPaths = compactOwnedPaths(
       diffPaths(this.startupPersisted, persisted).filter((path) => {
+        if (path === "daemon.listen" && listenChange) return false;
         if (path === "$schema" || path === "version") return false;
         if (RELOADABLE_PATHS.some((owner) => pathBelongsTo(path, owner))) return false;
         if (this.speechOwner && SPEECH_PERSISTED_PATHS.some((owner) => pathBelongsTo(path, owner)))
@@ -529,6 +684,11 @@ export class DaemonConfigStore {
       }),
       [],
     );
+
+    if (listenChange?.restartRequired) {
+      restartRequiredPaths.push("daemon.listen");
+      restartRequiredPaths.sort();
+    }
 
     const removedProviders = Object.keys(this.current.providers).filter(
       (provider) => !(provider in desired.providers),

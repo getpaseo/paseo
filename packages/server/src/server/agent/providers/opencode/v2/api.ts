@@ -2,7 +2,7 @@ import type { OpenCodeClient } from "@opencode/client";
 
 export interface V2Api {
   server: OpenCodeClient["server"];
-  shell: Pick<OpenCodeClient["shell"], "list">;
+  shell: Pick<OpenCodeClient["shell"], "list" | "remove">;
   session: Pick<
     OpenCodeClient["session"],
     | "create"
@@ -19,7 +19,6 @@ export interface V2Api {
     | "compact"
     | "interrupt"
     | "revert"
-    | "log"
   > & {
     inbox: Pick<OpenCodeClient["session"]["inbox"], "list">;
     form: Pick<OpenCodeClient["session"]["form"], "list" | "reply" | "cancel">;

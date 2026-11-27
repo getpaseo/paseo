@@ -1,0 +1,4 @@
+{
+  "id": "sidebar-views",
+  "requirements": { "paseo": ">=0.16.0" }
+}

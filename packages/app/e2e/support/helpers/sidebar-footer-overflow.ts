@@ -60,14 +60,8 @@ export function footerOverflowMenu(page: Page): Locator {
   return page.getByTestId("sidebar-footer-overflow-menu");
 }
 
-/**
- * The icon line shows exactly `testIDs`, in order, each `controlSize` square and wholly inside the
- * line's box, so no button is cut off by the sidebar's edge.
- */
-export async function expectFooterLine(
-  page: Page,
-  input: { testIDs: string[]; controlSize: number },
-): Promise<void> {
+/** The icon line shows exactly `testIDs`, in order. */
+export async function expectFooterActionsInline(page: Page, testIDs: string[]): Promise<void> {
   const line = footerLine(page);
   await expect(line).toHaveCount(1);
   await expect
@@ -76,7 +70,16 @@ export async function expectFooterLine(
         .locator(FOOTER_LINE_TEST_IDS.map((testID) => `[data-testid="${testID}"]`).join(","))
         .evaluateAll((elements) => elements.map((element) => element.getAttribute("data-testid"))),
     )
-    .toEqual(input.testIDs);
+    .toEqual(testIDs);
+}
+
+/** The actions are square and fit inside the line. */
+export async function expectFooterLine(
+  page: Page,
+  input: { testIDs: string[]; controlSize: number },
+): Promise<void> {
+  await expectFooterActionsInline(page, input.testIDs);
+  const line = footerLine(page);
   const { row, buttons } = await line.evaluate((element, testIDs) => {
     const rect = (node: Element) => {
       const { x, width, height } = node.getBoundingClientRect();

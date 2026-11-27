@@ -394,6 +394,56 @@ describe("bottom anchor controller driver", () => {
     expect(harness.scrollAttempts).toHaveLength(0);
   });
 
+  it("honors a submit made during a gesture when that gesture ends away", () => {
+    const harness = createDriverHarness({ isNearBottom: false });
+    harness.driver.beginUserScroll();
+    harness.driver.requestLocalAnchor({ agentId: "agent-1", reason: "message-sent" });
+    harness.scheduler.flushAll();
+    expect(harness.scrollAttempts).toEqual([]);
+
+    harness.driver.endUserScroll({ isAtEnd: false });
+    harness.scheduler.flushAll();
+
+    expect(harness.context.measurementState.offsetY).toBe(
+      harness.context.measurementState.contentHeight -
+        harness.context.measurementState.viewportHeight,
+    );
+    expect(harness.driver.getSnapshot()).toMatchObject({
+      mode: "sticky-bottom",
+      pendingRequest: null,
+    });
+  });
+
+  it.each(["rewind", "jump-to-bottom"] as const)(
+    "lets scrolling away supersede a late %s request",
+    (reason) => {
+      const harness = createDriverHarness({ isNearBottom: false });
+      harness.driver.beginUserScroll();
+      harness.driver.requestLocalAnchor({ agentId: "agent-1", reason });
+      harness.driver.endUserScroll({ isAtEnd: false });
+      harness.scheduler.flushAll();
+
+      expect(harness.scrollAttempts).toEqual([]);
+      expect(harness.driver.getSnapshot()).toMatchObject({
+        mode: "detached",
+        pendingRequest: null,
+      });
+    },
+  );
+
+  it("lets a new gesture supersede a submit requested during the previous gesture", () => {
+    const harness = createDriverHarness({ isNearBottom: false });
+    harness.driver.beginUserScroll();
+    harness.driver.requestLocalAnchor({ agentId: "agent-1", reason: "message-sent" });
+    harness.driver.endUserScroll({ isAtEnd: false });
+    harness.driver.beginUserScroll();
+    harness.driver.endUserScroll({ isAtEnd: false });
+    harness.scheduler.flushAll();
+
+    expect(harness.scrollAttempts).toEqual([]);
+    expect(harness.driver.getSnapshot()).toMatchObject({ mode: "detached", pendingRequest: null });
+  });
+
   it("resumes following when a user scroll ends at the end", () => {
     const harness = createDriverHarness({
       transportBehavior: {

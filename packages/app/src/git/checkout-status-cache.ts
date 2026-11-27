@@ -8,7 +8,7 @@ import {
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
-import { resetDraftAgentCommandsForCheckout } from "@/agent-commands/cache";
+import { invalidateDraftAgentCommandsForCheckout } from "@/agent-commands/cache";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 export type { CheckoutPrStatusPayload } from "@/git/pr-status";
@@ -66,7 +66,7 @@ export function applyCheckoutStatusUpdateFromEvent({
   );
   queryClient.setQueryData(checkoutStatusQueryKey(serverId, payload.cwd), cachePayload);
   if (previousStatus?.currentBranch !== payload.currentBranch) {
-    void resetDraftAgentCommandsForCheckout(queryClient, { serverId, cwd: payload.cwd });
+    void invalidateDraftAgentCommandsForCheckout(queryClient, { serverId, cwd: payload.cwd });
   }
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),

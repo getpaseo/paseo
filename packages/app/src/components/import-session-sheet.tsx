@@ -1,6 +1,6 @@
 import React, { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import { keepPreviousData, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
@@ -9,7 +9,11 @@ import type {
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { ChevronDown, Inbox, Layers, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  SheetHeaderIconButton,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { ImportSessionList } from "@/components/import-session-list";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -36,6 +40,7 @@ import {
   resolveDirectoryLabel,
   nextPageLimit,
   PER_PROVIDER_LIMIT,
+  previousPageLimit,
   type ProviderErrorRow,
   resolveImportTarget,
   resolveProvidersToFetch,
@@ -74,15 +79,19 @@ type RecentSessionsResponse = Awaited<
 
 type SessionsQueryKey = ReadonlyArray<string | number | null>;
 
+function buildSessionsQueryRoot(serverId: string | null, cwd: string | null) {
+  return ["recent-provider-sessions", serverId, cwd] as const;
+}
+
 function buildSessionsQueryKey(input: {
+  serverId: string | null;
   cwd: string | null;
   query: string;
   limit: number;
   provider?: string;
 }): SessionsQueryKey {
   return [
-    "recent-provider-sessions",
-    input.cwd,
+    ...buildSessionsQueryRoot(input.serverId, input.cwd),
     input.query,
     input.limit,
     ...(input.provider === undefined ? [] : [input.provider]),
@@ -96,27 +105,42 @@ interface SessionsQueryConfig {
   // Query's default retry would keep the header spinner turning and pile up
   // in-flight daemon requests behind a dead provider (#2512).
   retry: false;
-  placeholderData: typeof keepPreviousData;
+  refetchOnMount: true;
+  placeholderData: () => RecentSessionsResponse | undefined;
   queryFn: () => Promise<RecentSessionsResponse>;
 }
 
 function buildSessionsQueriesConfig(args: {
+  queryClient: QueryClient;
   providersToFetch: AgentProvider[] | null;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
+  serverId: string | null;
   cwd: string | null;
   query: string;
   limit: number;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, visible, client, cwd, query, limit, hostDisconnectedMessage } = args;
+  const { queryClient, providersToFetch, visible, client, serverId, cwd, query, limit } = args;
+  const { hostDisconnectedMessage } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
+  const previousLimit = previousPageLimit(limit);
   return providersToFetch.map((provider) => ({
-    queryKey: buildSessionsQueryKey({ cwd, query, limit, provider }),
+    queryKey: buildSessionsQueryKey({ serverId, cwd, query, limit, provider }),
     enabled,
     retry: false as const,
-    placeholderData: keepPreviousData,
+    // An import can invalidate an inactive host. Refresh its listing when observed again.
+    refetchOnMount: true as const,
+    // While Load more fetches the next page, keep showing the page it grew from. React Query's
+    // keepPreviousData cannot do this here: useQueries gives a changed key a new observer, which
+    // has no previous data, so the rows would vanish and the list would remount at the top.
+    placeholderData: () =>
+      previousLimit === null
+        ? undefined
+        : queryClient.getQueryData<RecentSessionsResponse>(
+            buildSessionsQueryKey({ serverId, cwd, query, limit: previousLimit, provider }),
+          ),
     queryFn: async () => {
       if (!client) {
         throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
@@ -201,48 +225,26 @@ function ProviderErrorBannerRow({
   const handleRetry = useCallback(() => onRetry(row.provider), [onRetry, row.provider]);
   return (
     <View style={styles.errorRow}>
-      <Text style={styles.errorText}>
-        {t("importSession.status.failedProvider", { provider: row.label })}
-      </Text>
+      <View style={styles.errorContent}>
+        <Text style={styles.errorText}>
+          {t("importSession.status.failedProvider", { provider: row.label })}
+        </Text>
+        {row.message ? (
+          <Text style={styles.errorDetail} selectable>
+            {row.message}
+          </Text>
+        ) : null}
+      </View>
       <Button
         variant="ghost"
         size="sm"
         onPress={handleRetry}
+        loading={row.retrying}
         testID={`import-session-retry-${row.provider}`}
       >
         {t("common.actions.retry")}
       </Button>
     </View>
-  );
-}
-
-function RefreshAction({ isRefreshing, onPress }: { isRefreshing: boolean; onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const { t } = useTranslation();
-  const pressableStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [
-      styles.refreshButton,
-      pressed && styles.refreshButtonPressed,
-    ],
-    [],
-  );
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={isRefreshing}
-      accessibilityLabel={t("importSession.actions.refresh")}
-      accessibilityRole="button"
-      testID="import-session-refresh"
-      style={pressableStyle}
-    >
-      <View style={styles.refreshIconSlot}>
-        {isRefreshing ? (
-          <LoadingSpinner color={theme.colors.foregroundMuted} />
-        ) : (
-          <RotateCw size={16} color={theme.colors.foregroundMuted} />
-        )}
-      </View>
-    </Pressable>
   );
 }
 
@@ -543,20 +545,25 @@ export function ImportSessionSheet({
     [snapshotEntries],
   );
 
-  const sessionsQueryRoot = useMemo(() => ["recent-provider-sessions", scopeCwd], [scopeCwd]);
+  const sessionsQueryRoot = useMemo(
+    () => buildSessionsQueryRoot(serverId, scopeCwd),
+    [serverId, scopeCwd],
+  );
 
   const queriesConfig = useMemo(
     () =>
       buildSessionsQueriesConfig({
+        queryClient,
         providersToFetch,
         visible,
         client,
+        serverId,
         cwd: scopeCwd,
         query,
         limit: pageLimit,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
+    [queryClient, providersToFetch, visible, client, serverId, scopeCwd, query, pageLimit, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -695,19 +702,17 @@ export function ImportSessionSheet({
         cwd: entry.cwd,
         ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
       });
-      return { agent, target };
-    },
-    onSuccess: ({ agent, target }) => {
+      // A pending import keeps the listing and navigation from the host it was sent to.
+      void queryClient.invalidateQueries({
+        queryKey: sessionsQueryRoot,
+        refetchType: "none",
+      });
       onClose();
       if (target.crossWorkspace) {
         onImported?.(agent);
       } else {
         onImportedAgent?.(agent.id);
       }
-      void queryClient.invalidateQueries({
-        queryKey: sessionsQueryRoot,
-        refetchType: "none",
-      });
     },
   });
 
@@ -738,10 +743,16 @@ export function ImportSessionSheet({
   const handleRetryProvider = useCallback(
     (provider: string) => {
       void queryClient.refetchQueries({
-        queryKey: buildSessionsQueryKey({ cwd: scopeCwd, query, limit: pageLimit, provider }),
+        queryKey: buildSessionsQueryKey({
+          serverId,
+          cwd: scopeCwd,
+          query,
+          limit: pageLimit,
+          provider,
+        }),
       });
     },
-    [pageLimit, query, queryClient, scopeCwd],
+    [pageLimit, query, queryClient, scopeCwd, serverId],
   );
 
   const handleShowAll = useCallback(() => setIsShowingAllDirectories(true), []);
@@ -775,7 +786,15 @@ export function ImportSessionSheet({
             },
           }
         : {}),
-      actions: <RefreshAction isRefreshing={isRefreshing} onPress={handleRefresh} />,
+      actions: (
+        <SheetHeaderIconButton
+          icon={RotateCw}
+          label={t("importSession.actions.refresh")}
+          onPress={handleRefresh}
+          busy={isRefreshing}
+          testID="import-session-refresh"
+        />
+      ),
     }),
     [handleRefresh, handleShowAll, hostLabel, isRefreshing, scopeCwd, supportsSearch, t, visible],
   );
@@ -1076,11 +1095,21 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  errorContent: {
+    flex: 1,
+    minWidth: 0,
+    gap: theme.spacing[1],
   },
   errorText: {
     flexShrink: 1,
     minWidth: 0,
     color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.sm,
+  },
+  errorDetail: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
   },
   emptyState: {
@@ -1098,19 +1127,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     textAlign: "center",
-  },
-  refreshButton: {
-    padding: theme.spacing[2],
-    marginRight: theme.spacing[1],
-    borderRadius: theme.borderRadius.lg,
-  },
-  refreshButtonPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
-  refreshIconSlot: {
-    width: 16,
-    height: 16,
-    alignItems: "center",
-    justifyContent: "center",
   },
 }));

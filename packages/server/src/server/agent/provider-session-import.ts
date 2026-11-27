@@ -1,5 +1,7 @@
+import { sanitizeAgentMetrics } from "./agent-metrics.js";
 import type {
   AgentClient,
+  AgentMetric,
   AgentPersistenceHandle,
   AgentProvider,
   AgentSessionConfig,
@@ -38,9 +40,28 @@ export async function importSessionFromPersistence(input: {
   return {
     session,
     config: storedConfig,
-    persistence,
-    timeline: history.timeline,
-    providerSubagentEvents: history.providerSubagentEvents,
+    persistence: canonicalImportPersistence(persistence, session),
+    ...history,
+  };
+}
+
+/**
+ * Import handles identify a session by whatever the provider lists, which is not
+ * always the session id: OMP lists session files. Persist the resumed session's own
+ * identity instead, so records, dedupe and resume all agree, while the provider's
+ * native handle still resolves the session.
+ */
+function canonicalImportPersistence(
+  requested: AgentPersistenceHandle,
+  session: ImportedProviderSession["session"],
+): AgentPersistenceHandle {
+  const described = session.describePersistence();
+  if (!described?.sessionId) return requested;
+  return {
+    ...described,
+    provider: requested.provider,
+    nativeHandle: described.nativeHandle ?? requested.nativeHandle,
+    metadata: { ...requested.metadata, ...described.metadata },
   };
 }
 
@@ -61,24 +82,51 @@ function buildImportPersistenceHandle(
   };
 }
 
-async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>): Promise<{
-  timeline: ImportedTimelineEntry[];
-  providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
-}> {
-  const timeline: ImportedTimelineEntry[] = [];
-  const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-  for await (const event of events) {
-    if (event.type === "provider_subagent") {
-      providerSubagentEvents.push(event);
-      continue;
+/** What an import keeps of a provider's replayed history, whichever way the events arrive. */
+export class ImportedHistory {
+  readonly timeline: ImportedTimelineEntry[] = [];
+  readonly providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+  sessionMetrics: AgentMetric[] | undefined;
+
+  add(event: AgentStreamEvent): void {
+    switch (event.type) {
+      case "provider_subagent":
+        this.providerSubagentEvents.push(event);
+        return;
+      case "session_metrics_updated":
+        this.sessionMetrics = sanitizeAgentMetrics(event.metrics);
+        return;
+      case "turn_completed": {
+        const metrics = sanitizeAgentMetrics(event.metrics);
+        const last = this.timeline.at(-1);
+        if (last && metrics.length > 0) last.turnMetrics = metrics;
+        return;
+      }
+      case "timeline":
+        this.timeline.push({
+          item: event.item,
+          ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        });
+        return;
+      default:
+        return;
     }
-    if (event.type !== "timeline") {
-      continue;
-    }
-    timeline.push({
-      item: event.item,
-      ...(event.timestamp ? { timestamp: event.timestamp } : {}),
-    });
   }
-  return { timeline, providerSubagentEvents };
+
+  result(): Pick<
+    ImportedProviderSession,
+    "timeline" | "sessionMetrics" | "providerSubagentEvents"
+  > {
+    return {
+      timeline: this.timeline,
+      ...(this.sessionMetrics ? { sessionMetrics: this.sessionMetrics } : {}),
+      providerSubagentEvents: this.providerSubagentEvents,
+    };
+  }
+}
+
+async function collectImportedHistory(events: AsyncGenerator<AgentStreamEvent>) {
+  const history = new ImportedHistory();
+  for await (const event of events) history.add(event);
+  return history.result();
 }

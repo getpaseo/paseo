@@ -1,0 +1,17 @@
+Excerpt of actual Electron renderer DOM captured after opening the resumed child.
+Test-root paths replaced with <QA_ROOT>; unrelated earlier history omitted.
+
+Task: You are reviving a previous subagent conversation.
+
+Original run: 832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122
+Original agent: qa-marker
+Original session file: <QA_ROOT>/pi/sessions/<QA_WORKSPACE>/2026-11-10T04-08-20-423Z_01a1c3a4-80c7-75ad-8526-1844853a0f02/832f02f3-3cf9-4f7b-a8f2-b6cc06c5e122/run-0/session.jsonl
+
+Use the stored session context as background. Answer the orchestrator's follow-up below. Do not assume the original child session is still running.
+
+Follow-up:
+Run bash sleep 45 then printf PASEO_DESKTOP_B_OBSERVE; do not read or write files
+Show more
+12:17 PM
+QA #9200 — Pi resume A→B→C
+Open parent

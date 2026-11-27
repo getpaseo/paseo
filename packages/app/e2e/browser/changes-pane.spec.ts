@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
@@ -8,7 +9,11 @@ import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import {
+  openChangesPanel,
+  openChangesTreePanel,
+  waitForWorkspaceTabsVisible,
+} from "../support/helpers/workspace-tabs";
 
 interface DirtyWorkspace {
   id: string;
@@ -262,6 +267,150 @@ test.afterEach(async () => {
   }
 });
 
+test("Changes without a comparison base explains how to view pending changes", async ({ page }) => {
+  const workspace = await createWorkspaceWithManyTinyDiffs(2, "dev");
+  await openWorkspaceChangesTree(page, workspace);
+  await expect(
+    page.getByText("Comparison base is unavailable. Select Uncommitted to view pending changes."),
+  ).toBeVisible();
+  await selectChangesComparison(page, "Uncommitted");
+  await expect(changesTree(page).getByText("file-0000.ts", { exact: true })).toBeVisible();
+});
+async function openWorkspaceChangesTree(page: Page, workspace: DirtyWorkspace): Promise<void> {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await openChangesTreePanel(page);
+}
+
+test("streamed Changes shows the tree before completion and applies a one-file refresh", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const workspace = await createLargeStreamedWorkspace();
+  await addOversizedSibling(workspace);
+  const stream = await holdDiffCompletion(page);
+  await openWorkspaceChangesSurface(page, workspace, 90_000);
+  await expectAnnouncedTreeAndLoader(page);
+  await page.screenshot({ path: testInfo.outputPath("tree-loading.png") });
+  stream.finish();
+  await expect.poll(() => stream.completed, { timeout: 60_000 }).toBeGreaterThan(0);
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  const connections = stream.connections;
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("src/file-0000.ts, +90, -1");
+  await addOneLineToFirstFile(workspace);
+  await expect.poll(() => stream.changedBodies.at(-1), { timeout: 30_000 }).toBe(1);
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("src/file-0000.ts, +91, -1");
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  expect(stream.connections).toBe(connections);
+  await page.screenshot({ path: testInfo.outputPath("refreshed.png") });
+});
+
+test("reopening compact Changes keeps the painted diff while it resubscribes", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  const stream = await holdDiffCompletion(page);
+  const explorer = await openCompactChanges(page, workspace);
+  stream.finish();
+  const firstFile = explorer.getByTestId("diff-file-0");
+  await expect(firstFile).toBeVisible({ timeout: 30_000 });
+  const painted = await firstFile.getAttribute("aria-label");
+
+  await explorer.getByTestId("workspace-tab-files").click();
+  stream.hold();
+  await explorer.getByTestId("workspace-tab-changes_tree").click();
+  await expect.poll(() => stream.held, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(page.getByRole("progressbar", { name: "Loading..." })).toHaveCount(0);
+  await expect(firstFile).toHaveAccessibleName(painted ?? "");
+  stream.finish();
+});
+
+async function createLargeStreamedWorkspace(): Promise<DirtyWorkspace> {
+  const workspace = await createWorkspaceWithManyTinyDiffs(252);
+  await Promise.all(
+    Array.from({ length: 252 }, (_, file) =>
+      writeFile(
+        path.join(workspace.repoPath, `src/file-${String(file).padStart(4, "0")}.ts`),
+        Array.from(
+          { length: 90 },
+          (_unused, line) =>
+            `export const fn${line} = (param: string) => ({ key: param, value: ${file} });`,
+        ).join("\n") + "\n",
+      ),
+    ),
+  );
+  return workspace;
+}
+async function addOversizedSibling(workspace: DirtyWorkspace): Promise<void> {
+  await writeFile(path.join(workspace.repoPath, "zz-too-large.txt"), "x".repeat(1024 * 1024 + 1));
+}
+async function addOneLineToFirstFile(workspace: DirtyWorkspace): Promise<void> {
+  const file = path.join(workspace.repoPath, "src/file-0000.ts");
+  await writeFile(file, (await readFile(file, "utf8")) + "export const refreshed = true;\n");
+}
+async function holdDiffCompletion(page: Page) {
+  const { decodeDiffFrame, DiffOpcode } = await import("@getpaseo/protocol/binary-frames/index");
+  let holding = true;
+  let connections = 0;
+  let completed = 0;
+  const completions: Array<() => void> = [];
+  const changedBodies: number[] = [];
+  const bodyCounts = new Map<number, number>();
+  await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+    connections++;
+    const serverSocket = browserSocket.connectToServer();
+    browserSocket.onMessage((message) => serverSocket.send(message));
+    serverSocket.onMessage((message) => {
+      if (
+        typeof message !== "string" &&
+        message[0] >= DiffOpcode.Begin &&
+        message[0] <= DiffOpcode.End
+      ) {
+        const frame = decodeDiffFrame(message);
+        if (frame.opcode === DiffOpcode.Begin) bodyCounts.set(frame.slot, 0);
+        else if (frame.opcode === DiffOpcode.Bodies)
+          bodyCounts.set(frame.slot, (bodyCounts.get(frame.slot) ?? 0) + frame.files.length);
+        else {
+          completed++;
+          changedBodies.push(bodyCounts.get(frame.slot) ?? 0);
+        }
+      }
+      if (holding && typeof message !== "string" && message[0] === DiffOpcode.End) {
+        completions.push(() => browserSocket.send(message));
+        return;
+      }
+      browserSocket.send(message);
+    });
+  });
+  return {
+    changedBodies,
+    get connections() {
+      return connections;
+    },
+    get completed() {
+      return completed;
+    },
+    get held() {
+      return completions.length;
+    },
+    hold: () => {
+      holding = true;
+    },
+    finish: () => {
+      holding = false;
+      completions.splice(0).forEach((send) => send());
+    },
+  };
+}
+async function expectWorkingDiffLoaded(page: Page, timeout: number): Promise<void> {
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("diff-file-0")).toBeAttached({ timeout });
+}
+async function expectAnnouncedTreeAndLoader(page: Page): Promise<void> {
+  await expect(changesTree(page).first()).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: "Loading..." }).first()).toBeVisible();
+}
+
 test("Changes opens All changes for a clean checkout", async ({ page }) => {
   const workspace = await createWorkspaceWithCommittedDiff();
 
@@ -320,6 +469,83 @@ test("All changes combines committed and pending edits and preserves an unfinish
     await writeFile(path.join(workspace.repoPath, "a-tracked.ts"), "base\n");
     await expectNetComparisonFiles(page, ["b-committed.ts", "c-untracked.txt"]);
     await expect(mode).toContainText("All changes");
+  });
+});
+
+test("Changes offers Push for a branch that was never pushed and the push sets its upstream", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithRemote((repoPath) => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoPath });
+  });
+  await openWorkspaceChangesSurface(page, workspace);
+  const primary = page.getByTestId("changes-primary-cta");
+
+  await test.step("committing the edit makes Push the primary action", async () => {
+    await expect(primary).toHaveAccessibleName("Commit", { timeout: 30_000 });
+    commitAllWithGit(workspace.repoPath, "Feature work");
+    await expect(primary).toHaveAccessibleName("Push", { timeout: 30_000 });
+  });
+  await test.step("Push sends the branch and sets its upstream", async () => {
+    await primary.click();
+    await expect
+      .poll(() => remoteBranchHead(workspace, "feature"), { timeout: 30_000 })
+      .toBe(localHead(workspace));
+    // git writes the upstream after the remote has the branch, so wait for it too.
+    await expect
+      .poll(() => branchUpstream(workspace, "feature"), { timeout: 30_000 })
+      .toBe("origin/feature");
+    await expect(primary).not.toHaveAccessibleName("Push", { timeout: 30_000 });
+  });
+});
+
+test("Changes pushes and pulls a branch whose only remote is not named origin", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithRemote((repoPath) => {
+    execFileSync("git", ["remote", "rename", "origin", "doras-mono"], { cwd: repoPath });
+    // git pull stops on a branch that is both ahead and behind until it is told how to combine them.
+    execFileSync("git", ["config", "pull.rebase", "false"], { cwd: repoPath });
+  });
+  await openWorkspaceChangesSurface(page, workspace);
+  const primary = page.getByTestId("changes-primary-cta");
+
+  await test.step("a branch that is ahead offers Push and the push updates the remote", async () => {
+    await expect(primary).toHaveAccessibleName("Commit", { timeout: 30_000 });
+    commitAllWithGit(workspace.repoPath, "Local work");
+    expect(trackingStatus(workspace)).toBe("## main...doras-mono/main [ahead 1]");
+    await expect(primary).toHaveAccessibleName("Push", { timeout: 30_000 });
+    await primary.click();
+    await expectInSyncWithRemote(workspace);
+    expect(remoteBranchSubjects(workspace, "main")).toContain("Local work");
+    await expectNoGitActionLeft(page);
+  });
+  await test.step("a branch that is behind offers Pull and the pull brings the commits in", async () => {
+    pushTeammateCommits(workspace, ["Teammate one", "Teammate two"]);
+    fetchRemote(workspace, "doras-mono");
+    expect(trackingStatus(workspace)).toBe("## main...doras-mono/main [behind 2]");
+    await expect(primary).toHaveAccessibleName("Pull", { timeout: 30_000 });
+    await primary.click();
+    await expectInSyncWithRemote(workspace);
+    expect(localBranchSubjects(workspace)).toEqual(
+      expect.arrayContaining(["Local work", "Teammate one", "Teammate two"]),
+    );
+    await expectNoGitActionLeft(page);
+  });
+  await test.step("a branch that is ahead and behind pulls and then pushes", async () => {
+    await writeFile(path.join(workspace.repoPath, "tracked.ts"), "export const tracked = 3;\n");
+    commitAllWithGit(workspace.repoPath, "More local work");
+    pushTeammateCommits(workspace, ["Teammate three", "Teammate four"]);
+    fetchRemote(workspace, "doras-mono");
+    expect(trackingStatus(workspace)).toBe("## main...doras-mono/main [ahead 1, behind 2]");
+    await expect(primary).toHaveAccessibleName("Pull", { timeout: 30_000 });
+    await page.getByTestId("changes-primary-cta-caret").click();
+    await page.getByTestId("changes-menu-pull-and-push").click();
+    await expectInSyncWithRemote(workspace);
+    expect(remoteBranchSubjects(workspace, "main")).toEqual(
+      expect.arrayContaining(["More local work", "Teammate three", "Teammate four"]),
+    );
+    await expectNoGitActionLeft(page);
   });
 });
 
@@ -427,6 +653,15 @@ test("Changes shows the base as text on a host without the base-branch capabilit
   expect(baseRequests).toBe(0);
 });
 
+test("Changes shows no base on a checkout that is not a Paseo worktree", async ({ page }) => {
+  const workspace = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, workspace);
+  const header = page.getByTestId("changes-repository-header").filter({ visible: true });
+  await expect(header).toContainText("feature");
+  await expect(header).not.toContainText("main");
+  await expect(page.getByTestId("workspace-base-branch-trigger")).toHaveCount(0);
+});
+
 test("Changes keeps a manual comparison when checkout dirtiness changes", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await openWorkspaceChanges(page, workspace);
@@ -489,6 +724,35 @@ test("an empty Changes comparison links to the populated comparison", async ({ p
   await expect(mode).toContainText("Committed");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
+
+test("legacy diff hosts keep All, Committed and Uncommitted comparisons", async ({ page }) => {
+  await useLegacyDiffHost(page);
+  const workspace = await createWorkspaceWithScrollableComparisons();
+  await openWorkspaceChangesSurface(page, workspace);
+  await expect(changesTree(page).getByText("committed", { exact: true })).toBeVisible();
+  await expect(changesTree(page).getByText("uncommitted", { exact: true })).toBeVisible();
+  await selectChangesComparison(page, "Committed");
+  await expectWorkingComparisonFiles(page, "committed");
+  await selectChangesComparison(page, "Uncommitted");
+  await expectWorkingComparisonFiles(page, "uncommitted");
+});
+async function useLegacyDiffHost(page: Page): Promise<void> {
+  await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+    const serverSocket = browserSocket.connectToServer();
+    browserSocket.onMessage((message) => serverSocket.send(message));
+    serverSocket.onMessage((message) => {
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message);
+        if (envelope.message?.payload?.status === "server_info") {
+          delete envelope.message.payload.features.diffSubscription;
+          browserSocket.send(JSON.stringify(envelope));
+          return;
+        }
+      }
+      browserSocket.send(message);
+    });
+  });
+}
 
 test("Changes comparison controls the working diff and tree selection focuses its file", async ({
   page,
@@ -1302,11 +1566,13 @@ test("canvas diff uses the overlay scrollbar and its thumb controls vertical scr
 test("canvas headers keep a many-file diff bounded while scrolling end to end", async ({
   page,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
   const workspace = await createWorkspaceWithManyTinyDiffs(2_000);
   await useUnwrappedDiffLines(page);
   await openWorkspaceChangesSurface(page, workspace, 90_000);
 
+  // Measure document bounds after delivery, independently of the cold Git read.
+  await expectWorkingDiffLoaded(page, 240_000);
   const root = page.getByTestId("git-diff-canvas-root");
   const scroller = page.getByTestId("git-diff-scroll");
   await expect(root.locator('[data-testid^="git-diff-sticky-header-"]')).toHaveCount(2);
@@ -1408,6 +1674,237 @@ test("canvas diff replaces a selection with forward and backward drags", async (
     await page.keyboard.press("ControlOrMeta+C");
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expectedText);
   }
+});
+
+test("canvas diff double-click selects the grapheme under the pointer, not the nearest caret", async ({
+  context,
+  page,
+}) => {
+  const content = "call(foo bar)";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 2,
+    fraction: 0.75,
+    start: { line: 0, offset: 3 },
+    end: { line: 0, offset: 3 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "call");
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 2,
+    fraction: 0.1,
+    start: { line: 0, offset: 4 },
+    end: { line: 0, offset: 4 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "(");
+});
+
+test("canvas diff double-click selects the clicked word and replaces an existing selection", async ({
+  context,
+  page,
+}) => {
+  const content = "alpha bravo charlie delta";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    start: { line: 0, offset: 0 },
+    end: { line: 0, offset: 4 },
+  });
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 2,
+    start: { line: 0, offset: 8 },
+    end: { line: 0, offset: 8 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "bravo");
+});
+
+test("canvas diff double-click drag extends the selection word by word in both directions", async ({
+  context,
+  page,
+}) => {
+  const content = "alpha bravo charlie delta";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  for (const [start, end, expectedText] of [
+    [{ line: 0, offset: 8 }, { line: 0, offset: 14 }, "bravo charlie"],
+    [{ line: 0, offset: 14 }, { line: 0, offset: 2 }, "alpha bravo charlie"],
+  ] as const) {
+    await dragAddedTextRange(page, { lines: [content], clickCount: 2, start, end });
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, expectedText);
+  }
+});
+
+test("canvas diff double-click drag extends word by word across lines and wrapped lines", async ({
+  context,
+  page,
+}) => {
+  const lines = ["alpha bravo", "charlie delta"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  for (const [start, end, expectedText] of [
+    [{ line: 0, offset: 8 }, { line: 1, offset: 10 }, "bravo\ncharlie delta"],
+    [{ line: 1, offset: 10 }, { line: 0, offset: 2 }, "alpha bravo\ncharlie delta"],
+  ] as const) {
+    await dragAddedTextRange(page, { lines, clickCount: 2, start, end });
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, expectedText);
+  }
+
+  const wrapped = `${"alpha ".repeat(40)}bravo charlie`;
+  const wrappedWorkspace = await createWorkspaceWithExactSelectionDiff(wrapped);
+  await configureDiffPresentation(page, { layout: "unified", wrapLines: true });
+  await openSelectionWorkspaceChanges(page, wrappedWorkspace);
+  await setOpenChangesPresentation(page, { layout: "unified", wrapLines: true });
+  const bravoStart = 40 * "alpha ".length;
+  await dragAddedTextRange(page, {
+    lines: [wrapped],
+    wrapped: true,
+    clickCount: 2,
+    start: { line: 0, offset: bravoStart + 2 },
+    end: { line: 0, offset: bravoStart + 9 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, "bravo charlie");
+});
+
+test("canvas diff double-click drag keeps word selection on the split side", async ({
+  context,
+  page,
+}) => {
+  const lines = ["RIGHT-ONE", "RIGHT-TWO"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "split", wrapLines: false });
+  await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "split", wrapLines: false });
+
+  await dragAddedTextRange(page, {
+    lines,
+    side: "right",
+    clickCount: 2,
+    start: { line: 0, offset: 7 },
+    end: { line: 1, offset: 3 },
+  });
+  await page.keyboard.press("ControlOrMeta+C");
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ONE\nRIGHT");
+});
+
+test("canvas diff triple-click selects the whole source line and replaces an existing selection", async ({
+  context,
+  page,
+}) => {
+  const content = "alpha bravo";
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    start: { line: 0, offset: 0 },
+    end: { line: 0, offset: 3 },
+  });
+  await dragAddedTextRange(page, {
+    lines: [content],
+    clickCount: 3,
+    start: { line: 0, offset: 8 },
+    end: { line: 0, offset: 8 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, content);
+});
+
+test("canvas diff triple-click drag extends whole source lines in both directions", async ({
+  context,
+  page,
+}) => {
+  const lines = ["alpha", "bravo", "charlie"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await useUnwrappedDiffLines(page);
+  await openSelectionWorkspaceChanges(page, workspace);
+
+  for (const [start, end] of [
+    [
+      { line: 0, offset: 2 },
+      { line: 2, offset: 3 },
+    ],
+    [
+      { line: 2, offset: 3 },
+      { line: 0, offset: 1 },
+    ],
+  ] as const) {
+    await dragAddedTextRange(page, { lines, clickCount: 3, start, end });
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, "alpha\nbravo\ncharlie");
+  }
+});
+
+test("canvas diff triple-click selects every wrapped fragment of a source line", async ({
+  context,
+  page,
+}) => {
+  const content = `${"alpha ".repeat(80)}omega`;
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "unified", wrapLines: true });
+  await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "unified", wrapLines: true });
+
+  await dragAddedTextRange(page, {
+    lines: [content],
+    wrapped: true,
+    clickCount: 3,
+    start: { line: 0, offset: 20 },
+    end: { line: 0, offset: 20 },
+  });
+  await copyDiffSelectionWithKeyboard(page);
+  await expectClipboardText(page, content);
+});
+
+test("canvas diff triple-click drag keeps whole source lines on the split side", async ({
+  context,
+  page,
+}) => {
+  const lines = ["RIGHT-ONE", "RIGHT-TWO"];
+  const workspace = await createWorkspaceWithExactSelectionDiff(lines.join("\n"));
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "split", wrapLines: false });
+  await openSelectionWorkspaceChanges(page, workspace);
+  await setOpenChangesPresentation(page, { layout: "split", wrapLines: false });
+
+  await dragAddedTextRange(page, {
+    lines,
+    side: "right",
+    clickCount: 3,
+    start: { line: 1, offset: 3 },
+    end: { line: 0, offset: 4 },
+  });
+  await page.keyboard.press("ControlOrMeta+C");
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("RIGHT-ONE\nRIGHT-TWO");
 });
 
 test("canvas diff copies only the selected split side", async ({ context, page }) => {
@@ -1703,6 +2200,141 @@ async function createWorkspaceWithMountedTabDiff(
   return { id: createdWorkspace.workspace.id, repoPath: repo.path };
 }
 
+interface RemoteWorkspace extends DirtyWorkspace {
+  remotePath: string;
+}
+
+// A regular checkout with a local bare remote and one uncommitted edit.
+async function createWorkspaceWithRemote(
+  prepare: (repoPath: string) => void,
+): Promise<RemoteWorkspace> {
+  const repo = await createTempGitRepo("changes-push-", {
+    withRemote: true,
+    files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close();
+      await repo.cleanup();
+    },
+  });
+  // The helper keeps the bare remote inside the checkout; keep it out of the status.
+  await writeFile(path.join(repo.path, ".git/info/exclude"), "remote.git/\n");
+  prepare(repo.path);
+  await writeFile(path.join(repo.path, "tracked.ts"), "export const tracked = 2;\n");
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!created.workspace) {
+    throw new Error(created.error ?? `Failed to create workspace ${repo.path}`);
+  }
+  return {
+    id: created.workspace.id,
+    repoPath: repo.path,
+    remotePath: path.join(repo.path, "remote.git"),
+  };
+}
+
+// The app's Commit asks an agent provider for a message, and this harness has none.
+function commitAllWithGit(repoPath: string, message: string): void {
+  execFileSync("git", ["commit", "-am", message], { cwd: repoPath, stdio: "ignore" });
+}
+
+function localHead(workspace: RemoteWorkspace): string {
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: workspace.repoPath,
+    encoding: "utf8",
+  }).trim();
+}
+
+function remoteBranchHead(workspace: RemoteWorkspace, branch: string): string | null {
+  const line = execFileSync("git", ["ls-remote", "--heads", workspace.remotePath, branch], {
+    encoding: "utf8",
+  }).trim();
+  return line ? (line.split("\t")[0] ?? null) : null;
+}
+
+// The branch line of `git status -sb`, such as "## main...origin/main [ahead 1, behind 2]".
+function trackingStatus(workspace: RemoteWorkspace): string {
+  const status = execFileSync("git", ["status", "-sb"], {
+    cwd: workspace.repoPath,
+    encoding: "utf8",
+  });
+  return status.split("\n")[0] ?? "";
+}
+
+// Neither ahead nor behind, which a push reaches only after the remote accepted it.
+async function expectInSyncWithRemote(workspace: RemoteWorkspace): Promise<void> {
+  await expect
+    .poll(() => trackingStatus(workspace), { timeout: 30_000 })
+    .toMatch(/^## [^ ]+\.\.\.[^ ]+$/);
+}
+
+// A clean main that is in sync with its remote has no git action, so the button is gone.
+async function expectNoGitActionLeft(page: Page): Promise<void> {
+  await expect(page.getByTestId("changes-primary-cta")).toBeHidden({ timeout: 30_000 });
+}
+
+function localBranchSubjects(workspace: RemoteWorkspace): string[] {
+  return commitSubjects(workspace.repoPath, "HEAD");
+}
+
+function remoteBranchSubjects(workspace: RemoteWorkspace, branch: string): string[] {
+  return commitSubjects(workspace.remotePath, branch);
+}
+
+function commitSubjects(repoPath: string, revision: string): string[] {
+  const log = execFileSync("git", ["log", "--format=%s", revision], {
+    cwd: repoPath,
+    encoding: "utf8",
+  });
+  return log.trim().split("\n");
+}
+
+// Paseo fetches only origin in the background, so the checkout learns about another remote's
+// commits when the user fetches it.
+function fetchRemote(workspace: RemoteWorkspace, remoteName: string): void {
+  execFileSync("git", ["fetch", "--quiet", remoteName], { cwd: workspace.repoPath });
+}
+
+// Lands commits on the remote's main from a second clone, as a teammate's push does.
+function pushTeammateCommits(workspace: RemoteWorkspace, subjects: string[]): void {
+  const clonePath = mkdtempSync(path.join(path.dirname(workspace.repoPath), "changes-teammate-"));
+  try {
+    execFileSync("git", ["clone", "--quiet", workspace.remotePath, clonePath]);
+    for (const subject of subjects) {
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Teammate",
+          "-c",
+          "user.email=teammate@paseo.test",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "--quiet",
+          "--allow-empty",
+          "-m",
+          subject,
+        ],
+        { cwd: clonePath },
+      );
+    }
+    execFileSync("git", ["push", "--quiet", "origin", "HEAD:main"], { cwd: clonePath });
+  } finally {
+    rmSync(clonePath, { recursive: true, force: true });
+  }
+}
+
+// Empty until the branch has an upstream.
+function branchUpstream(workspace: RemoteWorkspace, branch: string): string {
+  return execFileSync(
+    "git",
+    ["for-each-ref", "--format=%(upstream:short)", `refs/heads/${branch}`],
+    { cwd: workspace.repoPath, encoding: "utf8" },
+  ).trim();
+}
+
 async function createWorkspaceWithNetDiff(): Promise<DirtyWorkspace> {
   const repo = await createTempGitRepo("changes-net-", {
     files: [{ path: "a-tracked.ts", content: "base\n" }],
@@ -1885,12 +2517,16 @@ async function createWorkspaceWithTwoSelectionDiffs(): Promise<DirtyWorkspace> {
   return { id: created.workspace.id, repoPath: repo.path };
 }
 
-async function createWorkspaceWithManyTinyDiffs(fileCount: number): Promise<DirtyWorkspace> {
+async function createWorkspaceWithManyTinyDiffs(
+  fileCount: number,
+  branch = "main",
+): Promise<DirtyWorkspace> {
   const files = Array.from({ length: fileCount }, (_, index) => ({
     path: `src/file-${String(index).padStart(4, "0")}.ts`,
     content: "export const value = 0;\n",
   }));
   const repo = await createTempGitRepo("changes-canvas-many-files-", { files });
+  if (branch !== "main") execFileSync("git", ["branch", "-m", branch], { cwd: repo.path });
   await Promise.all(
     files.map((file, index) =>
       writeFile(path.join(repo.path, file.path), `export const value = ${index + 1};\n`),
@@ -2105,13 +2741,9 @@ async function changeCodeTypographyFromSettings(
   await page.getByTestId("sidebar-settings").click();
   await expect(page).toHaveURL(new RegExp(`${buildSettingsSectionRoute("general")}|/settings$`));
   await page.getByRole("button", { name: "Appearance" }).click();
-  // A committed font change remounts the screen (AppearanceStyleBoundary), and the new form starts
-  // from the stored size. Edit the size only in the remounted form, or the remount drops it.
   const sizeField = page.getByLabel("Code font size");
-  await sizeField.evaluate((field) => field.setAttribute("data-e2e-before-font-family", ""));
   await page.getByLabel("Code font family").fill(typography.fontFamily);
   await page.getByLabel("Code font family").press("Enter");
-  await expect(page.locator("[data-e2e-before-font-family]")).toHaveCount(0);
   await sizeField.fill(String(typography.fontSize));
   await page.getByLabel("Code font size").press("Enter");
   await expect(page.getByLabel("Code font family")).toHaveValue(typography.fontFamily);
@@ -2294,6 +2926,8 @@ async function dragAddedTextRange(
     side?: "left" | "right";
     wrapped?: boolean;
     horizontalOffset?: number;
+    clickCount?: 1 | 2 | 3;
+    fraction?: number;
   },
 ): Promise<void> {
   const body = page.getByTestId("diff-file-0-body");
@@ -2332,14 +2966,38 @@ async function dragAddedTextRange(
         columnLeft +
         gutterWidth +
         8 +
-        localOffset * metrics.characterWidth -
+        (localOffset + (input.fraction ?? 0)) * metrics.characterWidth -
         (input.horizontalOffset ?? 0),
       y: bounds.y + (1 + fragmentsBefore(line) + fragment + 0.5) * lineHeight,
     };
   };
   const start = point(input.start);
   const end = point(input.end);
+  const clickCount = input.clickCount ?? 1;
   await page.mouse.move(start.x, start.y);
+  if (clickCount > 1) {
+    const isSinglePoint =
+      input.start.line === input.end.line && input.start.offset === input.end.offset;
+    if (isSinglePoint && clickCount === 2) {
+      await page.mouse.dblclick(start.x, start.y);
+      return;
+    }
+    if (isSinglePoint) {
+      for (let count = 1; count <= clickCount; count += 1) {
+        await page.mouse.down({ clickCount: count });
+        await page.mouse.up({ clickCount: count });
+      }
+      return;
+    }
+    for (let count = 1; count < clickCount; count += 1) {
+      await page.mouse.down({ clickCount: count });
+      await page.mouse.up({ clickCount: count });
+    }
+    await page.mouse.down({ clickCount });
+    await page.mouse.move(end.x, end.y, { steps: 12 });
+    await page.mouse.up({ clickCount });
+    return;
+  }
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 12 });
   await page.mouse.up();

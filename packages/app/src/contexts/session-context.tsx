@@ -1,6 +1,7 @@
 import { useRef, ReactNode, useCallback, useEffect } from "react";
 import { Buffer } from "buffer";
 import { AppState } from "react-native";
+import { isNative } from "@/constants/platform";
 import { observeOpenWorkspaceAgentIds } from "@/stores/workspace-layout-store";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -11,22 +12,22 @@ import {
   createSetAgentInitializing,
   refreshAgentInitializationTimeout,
 } from "@/hooks/use-agent-initialization";
-import type { StreamItem } from "@/types/stream";
-import { deriveAgentStreamTurnLiveness } from "@/timeline/session-stream-reducers";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
 import { type ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
+import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
-  buildAgentAttentionNotificationPayload,
-  type AgentAttentionReason,
-  type AgentAttentionNotificationPayload,
-  type NotificationPermissionRequest,
-} from "@getpaseo/protocol/agent-attention-notification";
+  deliverAgentAttentionOsNotification,
+  deliverPluginOsNotification,
+  deliverTerminalAttentionOsNotification,
+  getCurrentNotificationPreferences,
+} from "./session-notifications";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
+import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/audio";
@@ -34,10 +35,9 @@ import {
   selectAgentTimelineState,
   toDaemonServerInfo,
   useSessionStore,
-  type SessionState,
 } from "@/stores/session-store";
 import { sendOsNotification } from "@/utils/os-notifications";
-import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
+import { getIsAppVisible } from "@/utils/app-visibility";
 import {
   getInitKey,
   getInitDeferred,
@@ -99,71 +99,6 @@ function buildAudioPlaybackSource(chunks: BufferedAudioChunk[]): AudioPlaybackSo
   };
 }
 
-const findLatestAssistantMessageText = (items: StreamItem[]): string | null => {
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (item.kind === "assistant_message") {
-      return item.text;
-    }
-  }
-  return null;
-};
-
-const getLatestPermissionRequest = (
-  session: SessionState | undefined,
-  agentId: string,
-): NotificationPermissionRequest | null => {
-  if (!session) {
-    return null;
-  }
-
-  let latest: NotificationPermissionRequest | null = null;
-  for (const pending of session.pendingPermissions.values()) {
-    if (pending.agentId === agentId) {
-      latest = pending.request;
-    }
-  }
-  if (latest) {
-    return latest;
-  }
-
-  const agentPending = session.agents.get(agentId)?.pendingPermissions;
-  if (agentPending && agentPending.length > 0) {
-    return agentPending[agentPending.length - 1] as NotificationPermissionRequest;
-  }
-
-  return null;
-};
-
-interface AgentAttentionNotificationInput {
-  notification?: AgentAttentionNotificationPayload;
-  reason: AgentAttentionReason;
-  serverId: string;
-  workspaceId: string | undefined;
-  agentId: string;
-  assistantMessage: string | null;
-  permissionRequest: NotificationPermissionRequest | null;
-}
-
-function resolveAgentAttentionNotification(
-  input: AgentAttentionNotificationInput,
-): AgentAttentionNotificationPayload | null {
-  if (input.notification) {
-    return input.notification.data.workspaceId ? input.notification : null;
-  }
-  if (!input.workspaceId) {
-    return null;
-  }
-  return buildAgentAttentionNotificationPayload({
-    reason: input.reason,
-    serverId: input.serverId,
-    workspaceId: input.workspaceId,
-    agentId: input.agentId,
-    assistantMessage: input.reason === "finished" ? input.assistantMessage : null,
-    permissionRequest: input.reason === "permission" ? input.permissionRequest : null,
-  });
-}
-
 function notifyVoiceAbortFailure(
   data: Extract<SessionOutboundMessage, { type: "activity_log" }>["payload"],
   notifyError: (message: string) => void,
@@ -203,6 +138,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const queryClient = useQueryClient();
   const isConnected = useHostRuntimeIsConnected(serverId);
+  // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+  const supportsPluginNotifications =
+    useHostFeature(serverId, "pluginNotifications") ||
+    client.getLastServerInfoMessage()?.features?.pluginNotifications === true;
   const toast = useToast();
 
   // Zustand store actions
@@ -252,7 +191,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     focusedAgentId,
     focusedTerminalId,
   });
-  useEffect(() => startPushNotifications({ client, serverId }), [client, serverId]);
+  useEffect(
+    () => startPushNotifications({ client, serverId, queryClient }),
+    [client, queryClient, serverId],
+  );
 
   const notifyAgentAttention = useCallback(
     (params: {
@@ -261,52 +203,17 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       timestamp: string;
       notification?: AgentAttentionNotificationPayload;
     }) => {
-      const appState = appStateRef.current;
-      const session = useSessionStore.getState().sessions[serverId];
-      const attentionFocusedAgentId = session?.focusedAgentId ?? null;
-      if (params.reason === "error") {
-        return;
-      }
-      const isActivelyVisible = getIsAppActivelyVisible(appState);
-      const isAwayFromAgent = !isActivelyVisible || attentionFocusedAgentId !== params.agentId;
-      if (!isAwayFromAgent) {
-        return;
-      }
-
-      const timestampMs = new Date(params.timestamp).getTime();
-      const lastNotified = attentionNotifiedRef.current.get(params.agentId);
-      if (lastNotified && lastNotified >= timestampMs) {
-        return;
-      }
-      attentionNotifiedRef.current.set(params.agentId, timestampMs);
-
-      const head = session?.agentStreamHead.get(params.agentId) ?? [];
-      const tail = session?.agentStreamTail.get(params.agentId) ?? [];
-      const assistantMessage =
-        findLatestAssistantMessageText(head) ?? findLatestAssistantMessageText(tail);
-      const permissionRequest = getLatestPermissionRequest(session, params.agentId);
-      const workspaceId = session?.agents?.get(params.agentId)?.workspaceId;
-
-      const notification = resolveAgentAttentionNotification({
-        notification: params.notification,
-        reason: params.reason,
+      deliverAgentAttentionOsNotification({
         serverId,
-        workspaceId,
-        agentId: params.agentId,
-        assistantMessage,
-        permissionRequest,
-      });
-      if (!notification) {
-        return;
-      }
-
-      void sendOsNotification({
-        title: notification.title,
-        body: notification.body,
-        data: notification.data,
+        params,
+        appState: appStateRef.current,
+        session: useSessionStore.getState().sessions[serverId],
+        attentionNotified: attentionNotifiedRef.current,
+        preferences: getCurrentNotificationPreferences(queryClient),
+        sendNotification: sendOsNotification,
       });
     },
-    [serverId],
+    [queryClient, serverId],
   );
 
   useEffect(() => {
@@ -360,8 +267,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const onStream = (message: SessionOutboundMessage) => {
       if (message.type !== "agent_stream") return;
       const { agentId, event, timestamp, seq, epoch } = message.payload;
-      const parsedTimestamp = new Date(timestamp);
-      const streamEvent = event;
       if (
         event.type === "turn_started" ||
         event.type === "turn_completed" ||
@@ -370,18 +275,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ) {
         voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
       }
-      const turnLiveness = deriveAgentStreamTurnLiveness([
-        { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
-      ]);
-      if (turnLiveness.length > 0) {
-        getHostRuntimeStore().applyAgentTurnLiveness(serverId, agentId, turnLiveness);
-      }
-      sync.enqueueStreamEvent(agentId, {
-        event: streamEvent,
-        seq,
-        epoch,
-        timestamp: parsedTimestamp,
-      });
+      sync.applyStreamEvent(agentId, { event, seq, epoch, timestamp: new Date(timestamp) });
 
       // NOTE: We don't update lastActivityAt on every stream event to prevent
       // cascading rerenders. The agent_update handler updates agent.lastActivityAt
@@ -400,8 +294,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     };
     const sync = getHostRuntimeStore().createViewedTimelineOwner(serverId, {
-      observe: (agentIds) => {
-        const observation = client.observeTimeline(agentIds);
+      canCheckFreshness: () =>
+        client.getLastServerInfoMessage()?.features?.timelineFreshnessCheck === true,
+      observe: (agentIds, cursors) => {
+        const observation = client.observeTimeline(agentIds, { cursors });
         observation.subscribe({
           snapshot: () => {},
           update: (message) => {
@@ -659,20 +555,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       if (message.type !== "terminal_attention_required") {
         return;
       }
-      if (!message.payload.shouldNotify) {
-        return;
-      }
-      void sendOsNotification({
-        title: message.payload.title,
-        body: message.payload.body,
-        // serverId + workspaceId + terminalId route a tap to the terminal tab; cwd is
-        // carried as a fallback identifier when the daemon resolved no workspace.
-        data: {
-          serverId: message.payload.serverId ?? serverId,
-          terminalId: message.payload.terminalId,
-          cwd: message.payload.cwd,
-          ...(message.payload.workspaceId ? { workspaceId: message.payload.workspaceId } : {}),
-        },
+      deliverTerminalAttentionOsNotification({
+        serverId,
+        payload: message.payload,
+        preferences: getCurrentNotificationPreferences(queryClient),
+        sendNotification: sendOsNotification,
       });
     });
 
@@ -709,6 +596,41 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     voiceRuntime,
     voiceAudioEngine,
   ]);
+
+  useEffect(() => {
+    // Native apps receive plugin alerts via remote push only (`sendOsNotification` is a no-op
+    // on native). Subscribing on native would mark the phone as the active in-app recipient and
+    // suppress its own Expo push without rendering anything in-app.
+    // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
+    if (isNative || !supportsPluginNotifications) {
+      return;
+    }
+    const pluginNotificationsFeed = client.observeEvents(["plugin.notification"], {
+      notifications: true,
+    });
+    const unsubPluginNotification = pluginNotificationsFeed.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "plugin.notification") {
+          return;
+        }
+        deliverPluginOsNotification({
+          serverId,
+          payload: message.payload,
+          preferences: getCurrentNotificationPreferences(queryClient),
+          sendNotification: sendOsNotification,
+        });
+      },
+    });
+    return () => {
+      unsubPluginNotification();
+      void pluginNotificationsFeed
+        .release()
+        .catch((error) =>
+          console.warn("[Session] Failed to release plugin notifications feed", error),
+        );
+    };
+  }, [client, queryClient, serverId, supportsPluginNotifications]);
 
   const _cancelAgentRun = useCallback(
     (agentId: string) => {

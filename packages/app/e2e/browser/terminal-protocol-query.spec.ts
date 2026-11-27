@@ -45,6 +45,11 @@ process.stdin.on("data", (chunk) => {
   for (;;) {
     const paste = /\x1b\[200~([^]*?)\x1b\[201~/.exec(buffer);
     if (!paste) break;
+    const pasted = JSON.stringify(paste[1]).replace(
+      /\s/g,
+      (space) => "\\u" + space.charCodeAt(0).toString(16).padStart(4, "0"),
+    );
+    process.stdout.write("PASTED:" + pasted + "\r\n");
     for (const [, path] of paste[1].matchAll(/'([^']*)'/g)) {
       const digest = crypto.createHash("sha256").update(fs.readFileSync(path)).digest("hex");
       const location = /[\\/]uploads[\\/]upload_/.test(path) ? "upload" : "local";
@@ -202,6 +207,21 @@ test.describe("Terminal protocol queries", () => {
     await expect.poll(() => terminalOutput(terminalId), { timeout: 10_000 }).toContain(text);
   }
 
+  // Every bracketed paste body the receiver consumed, in order and joined: what a
+  // shell would read as one command line.
+  async function pastedText(terminalId: string): Promise<string> {
+    const output = await terminalOutput(terminalId);
+    return [...output.matchAll(/PASTED:("(?:[^"\\]|\\.)*")/g)]
+      .map(([, json]) => JSON.parse(json) as string)
+      .join("");
+  }
+
+  // Exactly one ASCII space after each quoted path and nothing else between them,
+  // so the paths stay separate shell words.
+  async function expectSeparatePastedPaths(terminalId: string): Promise<void> {
+    await expect.poll(() => pastedText(terminalId)).toMatch(/^'[^']+' '[^']+' $/);
+  }
+
   test("pastes images from two panes into their own terminals as uploaded host files", async ({
     page,
   }) => {
@@ -238,6 +258,23 @@ test.describe("Terminal protocol queries", () => {
 
       await expectTerminalOutput(terminal.id, fileRead(pngBytes(3), "upload"));
       await expectTerminalOutput(terminal.id, fileRead(Buffer.from("remote notes"), "upload"));
+      await expectSeparatePastedPaths(terminal.id);
+    } finally {
+      await harness.killTerminal(terminal.id);
+    }
+  });
+
+  test("keeps the paths of two consecutive drops to another machine apart", async ({ page }) => {
+    const terminal = await openFileReceiver(page, "file-drop-remote-twice");
+    const first = { name: "first.png", type: "image/png", bytes: pngBytes(10) };
+    const second = { name: "second.txt", type: "text/plain", bytes: Buffer.from("second drop") };
+    try {
+      await dropFiles(page, [first]);
+      await expectTerminalOutput(terminal.id, fileRead(first.bytes, "upload"));
+      await dropFiles(page, [second]);
+      await expectTerminalOutput(terminal.id, fileRead(second.bytes, "upload"));
+
+      await expectSeparatePastedPaths(terminal.id);
     } finally {
       await harness.killTerminal(terminal.id);
     }

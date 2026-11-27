@@ -32,6 +32,7 @@ import {
   waitForWorkspaceTabsVisible,
 } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
+import { openSettingsSection } from "../support/helpers/settings";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace";
@@ -350,6 +351,7 @@ async function selectSendBehaviorInSettings(
   behaviorLabel: string,
   stored: string,
 ): Promise<void> {
+  await openSettingsSection(page, "chat");
   await page.getByRole("button", { name: /^Default send: / }).click();
   await page.getByRole("menuitem", { name: behaviorLabel, exact: true }).click();
   await expect
@@ -527,7 +529,17 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     expect(gate.getClientRequestCount("agent.timeline.set_subscription.request")).toBe(
       subscriptionRequests,
     );
+    const requestsBeforeRelease = rememberTimelineRequestCounts(gate, target.agentId);
     gate.releaseHeldAgentStreamEvent("turn_started");
+    // The chat never saw the hidden prompt's live row, so the reply's first row is a gap.
+    // The chat recovers the missing rows once, while its workspace is still evicted.
+    await expect
+      .poll(() => gate.getTimelineRequestCount("after", target.agentId))
+      .toBe(requestsBeforeRelease.after + 1);
+    await gate.waitForServerMessage(
+      "fetch_agent_timeline_response",
+      gate.getClientRequestCount("fetch_agent_timeline_request"),
+    );
     const requestsBeforeReturn = rememberTimelineRequestCounts(gate, target.agentId);
     await waitForWorkspaceInSidebar(page, {
       serverId: getServerId(),

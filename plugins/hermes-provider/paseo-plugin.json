@@ -1,0 +1,1 @@
+{ "id": "hermes-provider", "requirements": { "paseo": ">=0.17.3" } }

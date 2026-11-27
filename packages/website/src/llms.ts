@@ -1,6 +1,6 @@
 import { getAlternativePages } from "~/data/alternative-pages";
 import { AGENT_PAGES, getAgentPage } from "~/data/agent-pages";
-import { type Doc, getDocs } from "~/docs";
+import { type Doc, getDocsInSidebarOrder } from "~/docs";
 import { getTranslator, type Locale, localizePath, withLocalePrefix } from "~/i18n";
 
 const SITE_URL = "https://paseo.sh";
@@ -50,7 +50,7 @@ Distribution: native apps for Mac, Windows, Linux, iOS, and Android; web app; Ho
         path: "/hub",
         title: "Paseo Hub",
         description:
-          "Connect daemons and run GitHub, Slack, Discord, and Linear workflows through the hosted service or your own deployment.",
+          "Connect daemons and automate agents from GitHub, Linear, Slack, Discord, schedules, and webhooks through the hosted service or your own deployment.",
       },
       {
         path: "/blog",
@@ -104,7 +104,7 @@ Paseo 支持 Claude Code、Codex、GitHub Copilot、OpenCode、Pi、Antigravity�
         path: "/hub",
         title: "Paseo Hub",
         description:
-          "连接 daemon，通过托管服务或你自己的部署运行 GitHub、Slack、Discord 和 Linear 工作流。",
+          "连接 daemon，通过托管服务或你自己的部署，使用 GitHub、Linear、Slack、Discord、定时任务和 webhook 自动化运行 Agent。",
       },
       { path: "/blog", title: "博客", description: "Paseo 团队的动态和技术文章。" },
       { path: "/privacy", title: "隐私", description: "隐私政策。" },
@@ -144,14 +144,10 @@ function alternativeLine(
   return `- [${page.title}](${absoluteUrl(page.href, locale)})${suffix}`;
 }
 
-function topLevelDocs(locale: Locale): Doc[] {
-  return getDocs(locale).filter((d) => !d.slug.includes("/"));
-}
-
 /** The site index for language models, in a language: `/llms.txt` or `/zh-CN/llms.txt`. */
 export function buildLlmsTxt(locale: Locale): string {
   const copy = COPY[locale];
-  const docs = topLevelDocs(locale)
+  const docs = getDocsInSidebarOrder(locale)
     .map((doc) => docLine(doc, locale))
     .join("\n");
   const alternatives = getAlternativePages(locale)

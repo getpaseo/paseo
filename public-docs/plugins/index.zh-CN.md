@@ -6,7 +6,7 @@ nav: 快速上手
 
 # 插件快速上手 {#plugin-quickstart}
 
-插件是安装到某个 Paseo daemon 中的 TypeScript 项目。它可以添加[界面和侧边栏项](/docs/plugins/reference#screens-and-sidebar-items)、[工作区面板](/docs/plugins/reference#workspace-panels)、[文件面板](/docs/plugins/reference#file-panels)、[Command Center 项](/docs/plugins/reference#command-center-items)、[斜杠命令](/docs/plugins/reference#slash-commands)、[Composer 标签](/docs/plugins/reference#composer-pills)、[时间线条目](/docs/plugins/reference#timeline-items)、[主题](/docs/plugins/reference#contribute-a-theme)、[附件来源](/docs/plugins/reference#add-a-composer-attachment-source)和 [daemon 端 RPC](/docs/plugins/reference#add-plugin-specific-backend-behavior)。它还可以[把编程 Agent 接入为 Provider](/docs/plugins/providers)。客户端贡献会在连接到该 daemon 的每个 Paseo 客户端上运行，包括移动端。
+插件是安装到某个 Paseo daemon 中的 TypeScript 项目。它可以添加[界面和侧边栏项](/docs/plugins/reference#screens-and-sidebar-items)、[工作区面板](/docs/plugins/reference#workspace-panels)、[文件面板](/docs/plugins/reference#file-panels)、[Command Center 项](/docs/plugins/reference#command-center-items)、[斜杠命令](/docs/plugins/reference#slash-commands)、[Composer 项](/docs/plugins/reference#composer-items)、[新建工作区项](/docs/plugins/reference#new-workspace-items)、[Composer 标签](/docs/plugins/reference#composer-pills)、[时间线条目](/docs/plugins/reference#timeline-items)、[主题](/docs/plugins/reference#contribute-a-theme)、[附件来源](/docs/plugins/reference#add-a-composer-attachment-source)和 [daemon 端 RPC](/docs/plugins/reference#add-plugin-specific-backend-behavior)。它还可以[把编程 Agent 接入为 Provider](/docs/plugins/providers)。客户端贡献会在连接到该 daemon 的每个 Paseo 客户端上运行，包括移动端。
 
 浏览[已发布的插件](https://paseo.sh/plugins)，然后在你的 daemon 上安装一个：
 

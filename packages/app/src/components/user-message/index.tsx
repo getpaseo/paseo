@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { View, type LayoutChangeEvent, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -9,8 +9,12 @@ import { useProviderIcon } from "@/components/provider-icons";
 import { useSessionStore } from "@/stores/session-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { isNative } from "@/constants/platform";
+import { useDisclosureHold } from "@/agent-stream/disclosure";
+import { useUserMessageExpanded } from "./expansion-context";
 
 const PREVIEW_HEIGHT = 240;
+// Show more and show less sit under the text they open and close.
+const TRIGGER_BELOW_CONTENT = { triggerEdge: "bottom" } as const;
 // Native View still clips with "scroll", but Yoga measures its children without
 // the height cap. "hidden" caps the measured body too, hiding the expand control.
 const previewStyle: ViewStyle = {
@@ -18,20 +22,35 @@ const previewStyle: ViewStyle = {
   overflow: isNative ? "scroll" : "hidden",
 };
 
-export function MessagePreview({ children }: { children: ReactNode }) {
+/** Caps a long message at the preview height, with a control to read the rest. */
+export function MessagePreview({ itemId, children }: { itemId: string; children: ReactNode }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
+  const { expanded, toggle: toggleExpanded } = useUserMessageExpanded(itemId);
+  const bodyRef = useRef<View>(null);
   const [overflowing, setOverflowing] = useState(false);
+  // A hidden panel lays out at zero height, which says nothing about the message.
+  const applyBodyHeight = useCallback((height: number) => {
+    if (height > 0) setOverflowing(height > PREVIEW_HEIGHT);
+  }, []);
+  // Measure in the commit that mounts the body: an update from a layout effect paints with it, so
+  // the first frame already shows the fade and the control. `onLayout` only lands after paint.
+  useLayoutEffect(() => {
+    applyBodyHeight(bodyRef.current!.getBoundingClientRect().height);
+  }, [applyBodyHeight]);
   const measure = useCallback(
-    (event: LayoutChangeEvent) => setOverflowing(event.nativeEvent.layout.height > PREVIEW_HEIGHT),
-    [],
+    (event: LayoutChangeEvent) => applyBodyHeight(event.nativeEvent.layout.height),
+    [applyBodyHeight],
   );
-  const toggle = useCallback(() => setExpanded((value) => !value), []);
+  const hold = useDisclosureHold();
+  const toggle = useCallback(
+    () => hold(toggleExpanded, TRIGGER_BELOW_CONTENT),
+    [hold, toggleExpanded],
+  );
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
   return (
     <>
       <View style={!expanded && previewStyle}>
-        <View style={styles.body} onLayout={measure}>
+        <View ref={bodyRef} style={styles.body} onLayout={measure}>
           {children}
         </View>
         {overflowing && !expanded ? (

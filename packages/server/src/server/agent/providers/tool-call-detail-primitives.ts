@@ -12,6 +12,13 @@ import {
 export const CommandValueSchema = z.union([z.string(), z.array(z.string())]);
 
 type ToolDetailSchema = z.ZodType;
+
+// Neither arguments nor output have arrived: the detail keeps its kind with empty fields,
+// which clients render as loading until the arguments fill it in.
+function isAwaitingArguments(input: unknown, output: unknown): boolean {
+  return input === null && (output === null || output === undefined);
+}
+
 // Zod 4 loses the generic output type when these branch helpers constrain
 // schemas through z.ZodType, so the paired shape/value interfaces preserve the
 // transform callback types without changing runtime parsing.
@@ -701,7 +708,7 @@ export const ToolGrepOutputSchema = z
 export const ToolWebFetchInputSchema = z
   .object({
     url: z.string(),
-    prompt: z.string(),
+    prompt: z.string().optional(),
   })
   .passthrough();
 
@@ -812,7 +819,7 @@ export function toShellToolDetail(
 ): ToolCallDetail | undefined {
   const command = input?.command ?? output?.command;
   if (!command) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "shell", command: "" } : undefined;
   }
 
   return {
@@ -831,7 +838,7 @@ export function toReadToolDetail(
 ): ToolCallDetail | undefined {
   const filePath = normalizeDetailPath(input?.filePath ?? output?.filePath, options?.normalizePath);
   if (!filePath) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "read", filePath: "" } : undefined;
   }
 
   const stripped = output?.content ? stripReadLineNumberGutter(output.content) : undefined;
@@ -854,7 +861,7 @@ export function toWriteToolDetail(
 ): ToolCallDetail | undefined {
   const filePath = normalizeDetailPath(input?.filePath ?? output?.filePath, options?.normalizePath);
   if (!filePath) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "write", filePath: "" } : undefined;
   }
 
   const content = input?.content ?? output?.content;
@@ -872,7 +879,7 @@ export function toEditToolDetail(
 ): ToolCallDetail | undefined {
   const filePath = normalizeDetailPath(input?.filePath ?? output?.filePath, options?.normalizePath);
   if (!filePath) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "edit", filePath: "" } : undefined;
   }
 
   const newString = input?.newString ?? output?.newString;
@@ -941,7 +948,9 @@ export function toSearchToolDetail(params: {
 }): ToolCallDetail | undefined {
   const { input, output, toolName } = params;
   if (!input?.query) {
-    return undefined;
+    return isAwaitingArguments(input, output)
+      ? { type: "search", query: "", ...(toolName ? { toolName } : {}) }
+      : undefined;
   }
 
   return {
@@ -958,7 +967,7 @@ export function toFetchToolDetail(
 ): ToolCallDetail | undefined {
   const url = input?.url ?? output?.url;
   if (!url) {
-    return undefined;
+    return isAwaitingArguments(input, output) ? { type: "fetch", url: "" } : undefined;
   }
 
   return {
@@ -1049,4 +1058,29 @@ export function toolDetailBranchByNameWithCwd<
     const parsedValue = value as ToolDetailNameWithCwdValue<Name, InputSchema, OutputSchema>;
     return mapper(parsedValue.input, parsedValue.output, parsedValue.cwd ?? null);
   });
+}
+
+interface ToolDetailEnvelope {
+  input: unknown;
+  output: unknown;
+}
+
+// A tool call streams before its arguments are complete: Claude's tool_use block opens with
+// `input: {}` and fills in field by field, in whatever order the model writes them, and
+// OpenCode's pending part carries `input: {}`. Until the call has output, arguments that do not
+// yet satisfy the tool's schema are parsed as absent, so a known tool keeps its canonical detail
+// kind (and its title and icon) from its first state.
+export function parseKnownToolDetail<Envelope extends ToolDetailEnvelope>(
+  branches: z.ZodType<ToolCallDetail | null | undefined>,
+  envelope: Envelope,
+): ToolCallDetail | undefined {
+  const parsed = branches.safeParse(envelope);
+  if (parsed.success && parsed.data) {
+    return parsed.data;
+  }
+  if (envelope.input === null || (envelope.output !== null && envelope.output !== undefined)) {
+    return undefined;
+  }
+  const awaiting = branches.safeParse({ ...envelope, input: null });
+  return awaiting.success && awaiting.data ? awaiting.data : undefined;
 }

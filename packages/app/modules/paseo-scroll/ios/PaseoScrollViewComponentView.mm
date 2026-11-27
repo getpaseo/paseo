@@ -54,6 +54,28 @@ using namespace facebook::react;
   [[RCTComponentViewFactory currentComponentViewFactory] registerComponentViewClass:self];
 }
 
+// iOS 26 blurs a scroll view's edges and places the blur in the scroll view's own coordinates,
+// ignoring transforms. The keyboard lifts the chat with a translateY, so on iPhones the blur lands
+// over the readable chat and stays until the next scroll (#7883). React Native hides it for
+// inverted lists for the same reason (https://github.com/react/react-native/pull/58684). The app
+// draws its own header fade, so every edge is hidden; hiding only top and bottom leaves the side
+// effects, which also cover a transformed list on device.
+- (instancetype)initWithFrame:(CGRect)frame
+{
+  if (self = [super initWithFrame:frame]) {
+#if defined(__IPHONE_26_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_26_0
+    if (@available(iOS 26.0, *)) {
+      UIScrollView *scrollView = self.scrollView;
+      scrollView.topEdgeEffect.hidden = YES;
+      scrollView.bottomEdgeEffect.hidden = YES;
+      scrollView.leftEdgeEffect.hidden = YES;
+      scrollView.rightEdgeEffect.hidden = YES;
+    }
+#endif
+  }
+  return self;
+}
+
 - (void)mountingTransactionWillMount:(const MountingTransaction &)transaction
                 withSurfaceTelemetry:(const SurfaceTelemetry &)surfaceTelemetry
 {
@@ -110,7 +132,7 @@ using namespace facebook::react;
   if (!props.maintainVisibleContentPosition || scrollView.contentSize.width > self.frame.size.width) {
     return nil;
   }
-  NSArray<UIView *> *children = [self contentView].subviews;
+  NSArray<UIView *> *children = [self paseoScrollContentView].subviews;
   NSUInteger first = props.maintainVisibleContentPosition.value().minIndexForVisible;
   for (NSUInteger index = first; index < children.count; ++index) {
     UIView *child = children[index];
@@ -127,7 +149,11 @@ using namespace facebook::react;
       [((RCTViewComponentView *)view).nativeId isEqualToString:@"paseo-end-pin"];
 }
 
-- (UIView *)contentView
+// Not `contentView`: that name would override RCTViewComponentView's getter, which
+// react-native-gesture-handler reads to pick the view a gesture binds to. Bound to the content
+// child, a bottom sheet's scroll gesture loses its pairing with the scroll view, so body drags
+// neither expand the sheet nor scroll the list until the sheet is at its top detent.
+- (UIView *)paseoScrollContentView
 {
   for (UIView *child in self.containerView.subviews) {
     if (![child conformsToProtocol:@protocol(RCTCustomPullToRefreshViewProtocol)]) {

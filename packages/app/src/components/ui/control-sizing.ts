@@ -1,4 +1,4 @@
-import { hasTouchScreen } from "@/hooks/pointer-capabilities";
+import { hasTouchPrimaryPointer } from "@/hooks/pointer-capabilities";
 
 // The sizing gate, apart from the control sizes so that low-level modules such as
 // `constants/layout` can size by it without loading the theme. Import it through
@@ -14,28 +14,32 @@ export type ControlSizing = "touch" | "pointer";
 export interface ControlSizingFacts {
   /** The layout is below the `md` breakpoint. */
   compactLayout: boolean;
-  /** The device has a touch screen; see `hasTouchScreen`. */
-  touchScreen: boolean;
+  /** Touch is the device's primary input; see `hasTouchPrimaryPointer`. */
+  touchPrimaryPointer: boolean;
 }
 
 /**
- * The one sizing gate: touch-sized in the compact layout or on any device with a touch screen,
- * pointer-sized otherwise. A touch screen keeps touch sizing when a mouse or keyboard is attached.
+ * The one sizing gate: touch-sized in the compact layout or where touch is the primary input,
+ * pointer-sized otherwise. An iPad keeps touch sizing with a trackpad attached; a laptop with a
+ * touch screen that its trackpad drives is pointer-sized.
  */
 export function resolveControlSizing({
   compactLayout,
-  touchScreen,
+  touchPrimaryPointer,
 }: ControlSizingFacts): ControlSizing {
-  if (compactLayout || touchScreen) return "touch";
+  if (compactLayout || touchPrimaryPointer) return "touch";
   return "pointer";
 }
 
 // Read once, so attaching a mouse or keyboard later never flips the sizing.
-const DEVICE_HAS_TOUCH_SCREEN = hasTouchScreen();
+const DEVICE_HAS_TOUCH_PRIMARY_POINTER = hasTouchPrimaryPointer();
 
 /** The sizing on this device for a layout, for code that sizes outside a stylesheet. */
 export function controlSizingForLayout(compactLayout: boolean): ControlSizing {
-  return resolveControlSizing({ compactLayout, touchScreen: DEVICE_HAS_TOUCH_SCREEN });
+  return resolveControlSizing({
+    compactLayout,
+    touchPrimaryPointer: DEVICE_HAS_TOUCH_PRIMARY_POINTER,
+  });
 }
 
 /** A Unistyles breakpoint value: one number in the compact layout, another from `md` up. */
@@ -51,11 +55,11 @@ export type SizingValue = Record<ControlSizing, number>;
  */
 export function bySizing(
   sizes: SizingValue,
-  touchScreen: boolean = DEVICE_HAS_TOUCH_SCREEN,
+  touchPrimaryPointer: boolean = DEVICE_HAS_TOUCH_PRIMARY_POINTER,
 ): LayoutValue {
   return {
-    xs: sizes[resolveControlSizing({ compactLayout: true, touchScreen })],
-    md: sizes[resolveControlSizing({ compactLayout: false, touchScreen })],
+    xs: sizes[resolveControlSizing({ compactLayout: true, touchPrimaryPointer })],
+    md: sizes[resolveControlSizing({ compactLayout: false, touchPrimaryPointer })],
   };
 }
 

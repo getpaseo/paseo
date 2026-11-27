@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
-import type { StreamRenderInput, StreamViewportHandle } from "./strategy";
+import type { DisclosureTriggerEdge, StreamRenderInput, StreamViewportHandle } from "./strategy";
 import { createWebStreamStrategy } from "./strategy-web";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -49,8 +49,21 @@ afterEach(() => {
   host.remove();
 });
 
-function mountTimeline(historyMounted: StreamItem[]) {
-  const strategy = createWebStreamStrategy({ isMobileBreakpoint: true });
+type OlderHistoryInput = Pick<
+  StreamRenderInput,
+  "onNearHistoryStart" | "hasOlderHistory" | "olderHistoryProgressKey"
+>;
+
+interface MountTimelineOptions {
+  olderHistory?: OlderHistoryInput;
+  isMobileBreakpoint?: boolean;
+}
+
+function mountTimeline(
+  historyMounted: StreamItem[],
+  { olderHistory, isMobileBreakpoint = true }: MountTimelineOptions = {},
+) {
+  const strategy = createWebStreamStrategy({ isMobileBreakpoint });
   const viewportRef = React.createRef<StreamViewportHandle>();
   const input: StreamRenderInput = {
     agentId: "agent",
@@ -67,7 +80,7 @@ function mountTimeline(historyMounted: StreamItem[]) {
     routeBottomAnchorRequest: null,
     isAuthoritativeHistoryReady: true,
     onNearBottomChange: () => {},
-    onNearHistoryStart: () => true,
+    onNearHistoryStart: async () => true,
     isLoadingOlderHistory: false,
     hasOlderHistory: false,
     olderHistoryProgressKey: null,
@@ -76,6 +89,7 @@ function mountTimeline(historyMounted: StreamItem[]) {
     baseListContentContainerStyle: null,
     forwardListContentContainerStyle: null,
     contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+    ...olderHistory,
   };
   const render = (segments: Partial<StreamRenderInput["segments"]>) =>
     root.render(strategy.render({ ...input, segments: { ...input.segments, ...segments } }));
@@ -91,12 +105,29 @@ function mountTimeline(historyMounted: StreamItem[]) {
 
   return {
     render: (segments: Partial<StreamRenderInput["segments"]>) => act(() => render(segments)),
-    hold: (rowId: string, apply: () => void) =>
-      act(() => viewportRef.current!.holdRow(rowId, apply)),
+    hold: (rowId: string, apply: () => void, triggerEdge: DisclosureTriggerEdge = "top") =>
+      act(() => viewportRef.current!.holdRow(rowId, apply, triggerEdge)),
     rowTop: (id: string) =>
       rowElement(id).getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top,
+    rowBottom: (id: string) =>
+      rowElement(id).getBoundingClientRect().bottom - scrollContainer.getBoundingClientRect().top,
+    scrollTo: (top: number) => {
+      scrollContainer.scrollTop = top;
+    },
+    // A wheel listener runs before the browser applies the scroll the wheel causes.
+    wheelUpTo: (top: number) => {
+      scrollContainer.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1000 }));
+      scrollContainer.scrollTop = top;
+    },
     distanceFromEnd: () =>
       scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop,
+    scrollTop: () => scrollContainer.scrollTop,
+    scrollUp: (distance: number) =>
+      act(() => {
+        scrollContainer.dispatchEvent(new WheelEvent("wheel", { deltaY: -distance }));
+        scrollContainer.scrollTop -= distance;
+        scrollContainer.dispatchEvent(new Event("scroll"));
+      }),
     // Resize observers and the hold's settle run on animation frames.
     settle: () =>
       act(async () => {
@@ -108,6 +139,53 @@ function mountTimeline(historyMounted: StreamItem[]) {
 }
 
 describe("web disclosure hold", () => {
+  it.each([{ isMobileBreakpoint: true }, { isMobileBreakpoint: false }])(
+    "keeps the reading position when mounted history becomes virtualized (compact: $isMobileBreakpoint)",
+    async (options) => {
+      const history = Array.from({ length: 80 }, (_, index) => row(index));
+      const timeline = mountTimeline(history, options);
+      await timeline.settle();
+      timeline.scrollUp(600);
+      await timeline.settle();
+      const offset = timeline.scrollTop();
+      const readingTop = timeline.rowTop("message-64");
+      expect(offset).toBeGreaterThan(0);
+
+      timeline.render({
+        historyVirtualized: history.slice(0, 60),
+        historyMounted: history.slice(60),
+      });
+      await timeline.settle();
+
+      expect(timeline.scrollTop()).toBe(offset);
+      expect(timeline.rowTop("message-64")).toBe(readingTop);
+    },
+  );
+
+  it.each([{ isMobileBreakpoint: true }, { isMobileBreakpoint: false }])(
+    "keeps following output when mounted history becomes virtualized at the end (compact: $isMobileBreakpoint)",
+    async (options) => {
+      const history = Array.from({ length: 80 }, (_, index) => row(index));
+      const timeline = mountTimeline(history, options);
+      await timeline.settle();
+
+      timeline.render({
+        historyVirtualized: history.slice(0, 60),
+        historyMounted: history.slice(60),
+      });
+      await timeline.settle();
+      expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+
+      timeline.render({
+        historyVirtualized: history.slice(0, 60),
+        historyMounted: history.slice(60),
+        liveHead: [row(80)],
+      });
+      await timeline.settle();
+      expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+    },
+  );
+
   it("keeps the trigger's top when an anchored toggle at the bottom opens rows below it, and stops following", async () => {
     const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
     const timeline = mountTimeline(history);
@@ -139,6 +217,53 @@ describe("web disclosure hold", () => {
     expect(timeline.rowTop("message-5")).toBe(triggerTop);
   });
 
+  // A long message's show more sits under the text it opens, on the bottom edge of its row.
+  it("keeps the bottom of a bottom-trigger row through show more and show less while following output", async () => {
+    const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    const triggerBottom = timeline.rowBottom("message-5");
+
+    timeline.hold(
+      "message-5",
+      () => timeline.render({ historyMounted: [...history.slice(0, 4), row(5, 240), history[5]!] }),
+      "bottom",
+    );
+    await timeline.settle();
+    expect(timeline.rowBottom("message-5")).toBe(triggerBottom);
+
+    timeline.hold("message-5", () => timeline.render({ historyMounted: history }), "bottom");
+    await timeline.settle();
+    expect(timeline.rowBottom("message-5")).toBe(triggerBottom);
+  });
+
+  it("keeps the bottom of a bottom-trigger row through show more and show less when scrolled up", async () => {
+    const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
+    const timeline = mountTimeline(history);
+    await timeline.settle();
+    timeline.scrollTo(60);
+    await timeline.settle();
+    // message-2 is cut off at the top; message-3 is fully in view.
+    for (const index of [2, 3]) {
+      const triggerBottom = timeline.rowBottom(`message-${index}`);
+      const grown = history.map((item, position) =>
+        position === index - 1 ? row(index, 240) : item,
+      );
+
+      timeline.hold(`message-${index}`, () => timeline.render({ historyMounted: grown }), "bottom");
+      await timeline.settle();
+      expect(timeline.rowBottom(`message-${index}`)).toBe(triggerBottom);
+
+      timeline.hold(
+        `message-${index}`,
+        () => timeline.render({ historyMounted: history }),
+        "bottom",
+      );
+      await timeline.settle();
+      expect(timeline.rowBottom(`message-${index}`)).toBe(triggerBottom);
+    }
+  });
+
   it("resumes following when collapsing an anchored row lands back at the end", async () => {
     const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
     const timeline = mountTimeline(history);
@@ -154,5 +279,34 @@ describe("web disclosure hold", () => {
     timeline.render({ liveHead: [row(8)] });
     await timeline.settle();
     expect(timeline.distanceFromEnd()).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("web history start", () => {
+  it("loads older history when an upward wheel lands at the start after the reader stopped following", async () => {
+    let olderHistoryLoads = 0;
+    const history = [1, 2, 3, 4, 5, 6].map((index) => row(index));
+    const timeline = mountTimeline(history, {
+      olderHistory: {
+        hasOlderHistory: true,
+        olderHistoryProgressKey: "epoch:1",
+        onNearHistoryStart: async () => {
+          olderHistoryLoads += 1;
+          return true;
+        },
+      },
+    });
+    await timeline.settle();
+    // Opening a row at the bottom stops following output without any scroll.
+    timeline.hold("message-5", () =>
+      timeline.render({ historyMounted: [...history.slice(0, 5), row(7, 200), history[5]!] }),
+    );
+    await timeline.settle();
+    expect(olderHistoryLoads).toBe(0);
+
+    timeline.wheelUpTo(0);
+    await timeline.settle();
+
+    expect(olderHistoryLoads).toBe(1);
   });
 });

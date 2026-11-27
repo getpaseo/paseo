@@ -1,18 +1,18 @@
-import { memo, useCallback, useMemo } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { memo, useCallback, useMemo, useState } from "react";
+import { Text, View } from "react-native";
 import { ExternalLink, Gift } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  SheetHeaderIconButton,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import {
-  iconButtonChromeGlyphSize,
-  iconButtonChromeStyle,
-} from "@/components/ui/icon-button-chrome";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolveAppVersion } from "@/utils/app-version";
@@ -28,12 +28,9 @@ import {
 const WEBSITE_CHANGELOG_URL = "https://paseo.sh/changelog";
 
 const ThemedGift = withUnistyles(Gift);
-const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const sheetLeadingIcon = <ThemedGift size={ICON_SIZE.md} uniProps={mutedColorMapping} />;
-const websiteButtonStyle = (state: PressableStateCallbackType & { hovered?: boolean }) =>
-  iconButtonChromeStyle({ size: "large", state });
 
 interface ChangelogSheetProps {
   visible: boolean;
@@ -54,19 +51,12 @@ export function ChangelogSheet({ visible, onClose }: ChangelogSheetProps) {
       title: t("changelog.title"),
       leading: sheetLeadingIcon,
       actions: (
-        <Pressable
+        <SheetHeaderIconButton
+          icon={ExternalLink}
+          label={t("changelog.openWebsite")}
           onPress={handleOpenWebsite}
-          hitSlop={8}
-          style={websiteButtonStyle}
-          accessibilityRole="button"
-          accessibilityLabel={t("changelog.openWebsite")}
           testID="changelog-open-website"
-        >
-          <ThemedExternalLink
-            size={iconButtonChromeGlyphSize("large")}
-            uniProps={mutedColorMapping}
-          />
-        </Pressable>
+        />
       ),
     }),
     [handleOpenWebsite, t],
@@ -156,9 +146,19 @@ interface ReleaseViewProps {
   isCurrent: boolean;
 }
 
+/**
+ * A release that has highlights shows only them until the reader asks for the
+ * sections, which are the full record. A release without highlights has nothing
+ * to stand in for its sections, so it shows them as it always did.
+ */
 const ReleaseView = memo(function ReleaseView({ release, isCurrent }: ReleaseViewProps) {
   const { t } = useTranslation();
   const date = formatChangelogDate(release.date);
+  const [showingAllChanges, setShowingAllChanges] = useState(false);
+  const toggleAllChanges = useCallback(() => setShowingAllChanges((value) => !value), []);
+  const allChangesState = useMemo(() => ({ expanded: showingAllChanges }), [showingAllChanges]);
+  const hasHighlights = release.highlights.length > 0;
+  const showsSections = !hasHighlights || showingAllChanges;
 
   return (
     <View style={styles.release} testID={`changelog-release-${release.version}`}>
@@ -168,15 +168,30 @@ const ReleaseView = memo(function ReleaseView({ release, isCurrent }: ReleaseVie
         <View style={styles.headingSpacer} />
         {date ? <Text style={styles.date}>{date}</Text> : null}
       </View>
-      {keyChangelogSections(release.sections).map(({ key, section }) => (
-        <View key={key} style={styles.section}>
-          {section.title ? <Text style={styles.sectionTitle}>{section.title}</Text> : null}
-          {section.body ? <MarkdownRenderer text={section.body} compact /> : null}
-        </View>
-      ))}
+      {hasHighlights ? <MarkdownRenderer text={release.highlights} compact /> : null}
+      {hasHighlights && release.sections.length > 0 ? (
+        <Button
+          variant="ghost"
+          style={styles.allChangesToggle}
+          accessibilityState={allChangesState}
+          onPress={toggleAllChanges}
+        >
+          {t(showingAllChanges ? "changelog.hideAllChanges" : "changelog.showAllChanges")}
+        </Button>
+      ) : null}
+      {showsSections ? <ReleaseSections sections={release.sections} /> : null}
     </View>
   );
 });
+
+function ReleaseSections({ sections }: { sections: readonly ChangelogSection[] }) {
+  return keyChangelogSections(sections).map(({ key, section }) => (
+    <View key={key} style={styles.section}>
+      {section.title ? <Text style={styles.sectionTitle}>{section.title}</Text> : null}
+      {section.body ? <MarkdownRenderer text={section.body} compact /> : null}
+    </View>
+  ));
+}
 
 /** A release can repeat a section title; the occurrence keeps the key stable. */
 function keyChangelogSections(
@@ -184,10 +199,9 @@ function keyChangelogSections(
 ): { key: string; section: ChangelogSection }[] {
   const seen = new Map<string, number>();
   return sections.map((section) => {
-    const title = section.title ?? "";
-    const occurrence = seen.get(title) ?? 0;
-    seen.set(title, occurrence + 1);
-    return { key: `${title}:${occurrence}`, section };
+    const occurrence = seen.get(section.title) ?? 0;
+    seen.set(section.title, occurrence + 1);
+    return { key: `${section.title}:${occurrence}`, section };
   });
 }
 
@@ -235,6 +249,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     textTransform: "uppercase",
     letterSpacing: 0.5,
+  },
+  // Flush with the highlights above it, so the label's ink sits on their rail.
+  allChangesToggle: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 0,
+    borderWidth: 0,
   },
   showMore: {
     alignSelf: "center",

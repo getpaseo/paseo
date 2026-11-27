@@ -99,8 +99,10 @@ Register the adapter in `defaultForgeRegistry` with:
 
 Current change-request lookup matches the branch and repository for both open and
 terminal requests. Prefer an open request, then a terminal request at the local
-HEAD, then the most recently updated terminal request. A reused branch can show
-its previous request until a new one opens. Auto-archive separately requires an
+HEAD, then the most recently updated terminal request. When the forge identifies
+the checkout's branch as the origin repository's default branch, only open
+requests are eligible. A reused feature branch can show its previous request
+until a new one opens. Auto-archive separately requires an
 observed open-to-merged transition and a fresh exact match between checkout HEAD
 and the PR head, along with the existing workspace safety checks.
 
@@ -112,6 +114,38 @@ allowlist. Self-hosted detection is a trust gate: Paseo only talks to a forge
 host that is either a known cloud host or one the CLI is already authenticated
 to. Adapter probes must not make anonymous HTTP requests to remote-derived
 hosts, and adapters must not route credentials to an unauthenticated host.
+
+### Web links: `forgeWeb`
+
+The daemon publishes `forgeWeb` on the workspace descriptor and on
+`checkout_status_response`. The app builds every forge URL from it instead of
+parsing `origin` itself.
+
+- `host` is the browsable host: an `ssh -G` alias such as `github.com-work` and
+  a cloud SSH host such as `ssh.github.com` resolve to the cloud host; self-hosted
+  hosts pass through.
+- `referenceRepository` is the repository that owns issue and change-request
+  numbers: the parent when `origin` is a fork. `#123` links there; `owner/repo#123`
+  keeps the repository you wrote.
+- Branch and file links stay on the `origin` repository. A feature branch usually
+  exists only on the fork.
+
+An adapter opts into `referenceRepository` with the optional
+`ForgeService.getReferenceRepository`. GitHub reads `parent` from `gh repo view`,
+GitLab reads `forked_from_project` from `glab api`, and the Gitea family reads
+`parent` from `tea api`. The lookup always names the `origin` repository
+explicitly, so it does not depend on `gh`'s default-repository choice, and it
+rejects on any CLI failure. `packages/server/src/server/forge-web.ts` keeps a
+successful answer for as long as the remote stays the same. The first snapshot
+publishes `{ host }` immediately and the reference repository follows in a later
+update, so a slow or signed-out forge CLI never holds back the checkout's git
+state or pull request status. A failed lookup (signed out, network down) leaves
+links on `origin` and is retried by the next refresh or pull request status poll
+once a minute has passed.
+
+Daemons older than v0.16.0 omit the field; the app then derives the host from the
+remote and links `#N` to `origin`. That fallback is tagged `COMPAT(forgeWeb)` in
+`packages/app/src/git/forge-url.ts`.
 
 ## App
 

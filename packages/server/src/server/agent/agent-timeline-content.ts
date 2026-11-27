@@ -1,5 +1,6 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import { PluginIdSchema } from "@getpaseo/protocol/plugin-config";
 
 export const PLUGIN_TIMELINE_DATA_MAX_BYTES = 64 * 1024;
 
@@ -13,6 +14,15 @@ const MARKER_COST = 32;
 // Ids, names, paths and queries stay whole, so an item keeps its identity across passes.
 const SHORT_STRING = 1024;
 const MAX_DEPTH = 64;
+
+// The app registers renderer kinds under the plugin ID rule, so stored kinds must use that format.
+export function assertPluginTimelineKind(kind: string): void {
+  if (!PluginIdSchema.safeParse(kind).success) {
+    throw new Error(
+      `Plugin timeline item kind must start with a lowercase letter and contain only lowercase letters, digits, and dashes: ${JSON.stringify(kind)}`,
+    );
+  }
+}
 
 export function assertPluginTimelineDataSize(data: JsonValue): void {
   const serializedBytes = Buffer.byteLength(JSON.stringify(data), "utf8");

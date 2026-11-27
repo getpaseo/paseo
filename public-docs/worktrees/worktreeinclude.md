@@ -36,6 +36,8 @@ config/*.local.json
 
 A pattern only selects files that Git already ignores. Adding a path here does not ignore it, so also configure `.gitignore` when needed. Tracked files and untracked files that Git does not ignore are excluded.
 
+Paseo does not search inside a directory that Git ignores as a whole, such as `node_modules/`, unless a pattern names that directory or a path inside it. A bare name like `.env` matches `.env` and `apps/web/.env`, but not `node_modules/pkg/.env`. To copy from inside an ignored directory, name it in the pattern, as in `node_modules/pkg/.env` or `.secrets/`. A pattern with a glob in its first directory name, such as `**/.env` or `*/.env`, searches every ignored directory, including `node_modules/`, so name the directory instead when it is large.
+
 ## When files are copied
 
 The built-in `worktree-include` plugin reads the file from the checkout you create the worktree from. That source can itself be another worktree. Keep the plugin enabled for copying to run.

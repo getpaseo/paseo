@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import pino from "pino";
 import { createPaseoDaemon } from "../bootstrap.js";
+import { BuiltinPluginLoader } from "./builtin/index.js";
 import { loadConfig } from "../config.js";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
@@ -218,6 +219,10 @@ test("password-protected config reload preserves startup auth and session constr
       staticDir: home,
     },
     pino({ level: "silent" }),
+    {
+      builtinPlugins: new BuiltinPluginLoader(undefined, []),
+      lazyTerminalWorker: true,
+    },
   );
   await daemon.start();
   const target = daemon.getListenTarget();

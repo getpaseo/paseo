@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runCreateCommandWithDeps } from "./create.js";
 import { buildCreateWorktreeRequest, type WorktreeCreateOptions } from "./create-input.js";
 
 const REPO = "/tmp/repo";
@@ -75,5 +76,54 @@ describe("buildCreateWorktreeRequest", () => {
       action: "checkout",
       githubPrNumber: 42,
     });
+  });
+});
+
+it("uses the explicit worktree creation RPC and returns the created worktree details", async () => {
+  const result = await runCreateCommandWithDeps(
+    {
+      daemonTarget: { kind: "endpoint", host: "example.test:12345" },
+      mode: "branch-off",
+      newBranch: "topic",
+      base: "main",
+      cwd: REPO,
+    },
+    {
+      connectToDaemon: async () => ({
+        createPaseoWorktree: async (input) => {
+          expect(input).toEqual({
+            cwd: REPO,
+            worktreeSlug: "topic",
+            action: "branch-off",
+            refName: "main",
+          });
+          return {
+            workspace: {
+              id: "wks_topic",
+              projectId: "project",
+              projectDisplayName: "Repo",
+              projectRootPath: REPO,
+              workspaceDirectory: `${REPO}/topic`,
+              projectKind: "git",
+              workspaceKind: "worktree",
+              name: "topic",
+              status: "idle",
+              statusEnteredAt: null,
+              activityAt: null,
+              archivingAt: null,
+              scripts: [],
+            },
+            error: null,
+            requestId: "worktree-create",
+          };
+        },
+        close: async () => {},
+      }),
+    },
+  );
+  expect(result.data).toEqual({
+    name: "topic",
+    branchName: "topic",
+    worktreePath: `${REPO}/topic`,
   });
 });

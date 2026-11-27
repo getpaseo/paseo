@@ -1,5 +1,6 @@
 import { useCallback, type ReactElement } from "react";
 import {
+  MenuCheckboxItem,
   MenuHint,
   MenuItem,
   MenuLabel,
@@ -23,11 +24,16 @@ import {
 export { MenuRoot as DropdownMenu };
 export { MenuTrigger as DropdownMenuTrigger };
 export { MenuItem as DropdownMenuItem };
+export { MenuCheckboxItem as DropdownMenuCheckboxItem };
 export { MenuLabel as DropdownMenuLabel };
 export { MenuSeparator as DropdownMenuSeparator };
 export { MenuHint as DropdownMenuHint };
 export type { MenuTriggerProps as DropdownMenuTriggerProps };
-export type { ActionStatus, MenuItemProps as DropdownMenuItemProps } from "@/components/ui/menu";
+export type {
+  ActionStatus,
+  MenuCheckboxItemProps as DropdownMenuCheckboxItemProps,
+  MenuItemProps as DropdownMenuItemProps,
+} from "@/components/ui/menu";
 export type { MenuPageDefinition } from "@/components/ui/menu";
 export { MenuSubTrigger as DropdownMenuSubTrigger } from "@/components/ui/menu";
 

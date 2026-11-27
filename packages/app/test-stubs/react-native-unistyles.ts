@@ -1,9 +1,13 @@
+import { createElement, type ElementType } from "react";
 import { lightHighlightColors } from "@getpaseo/highlight";
 import { lightTheme } from "../src/styles/theme";
 
-const testTheme = {
+const pinnedTheme = {
   colorScheme: "light",
+  // The light theme's colours, so a `withUnistyles` mapping finds every key it reads, with the
+  // values below pinned so a test can name the colour it expects.
   colors: {
+    ...lightTheme.colors,
     syntax: lightHighlightColors,
     foreground: "#111111",
     foregroundMuted: "#666666",
@@ -32,8 +36,10 @@ const testTheme = {
     borderAccent: "#a1a1aa",
     palette: {
       amber: { 500: "#f59e0b" },
-      blue: { 300: "#93c5fd" },
-      green: { 500: "#22c55e" },
+      blue: { 300: "#93c5fd", 400: "#60a5fa" },
+      green: { 400: "#4ade80", 500: "#22c55e" },
+      yellow: { 400: "#facc15" },
+      zinc: { 600: "#52525b" },
       red: { 300: "#fca5a5" },
       white: "#ffffff",
     },
@@ -81,6 +87,18 @@ const testTheme = {
       shadowRadius: 24,
       elevation: 8,
     },
+  },
+};
+
+// Tokens a test does not pin come from the real light theme, so a style or `uniProps` mapping
+// that reads one (the markdown renderer reads `colors.terminal`) gets a value instead of crashing.
+const testTheme = {
+  ...lightTheme,
+  ...pinnedTheme,
+  colors: {
+    ...lightTheme.colors,
+    ...pinnedTheme.colors,
+    palette: { ...lightTheme.colors.palette, ...pinnedTheme.colors.palette },
   },
 };
 
@@ -140,7 +158,23 @@ export const StyleSheet = {
     resolveStyles(isStyleFactory(styles) ? styles(testTheme) : styles),
 };
 
-export const withUnistyles = <T>(Component: T): T => Component;
+type UniPropsMapping = (theme: typeof testTheme, runtime: object) => Record<string, unknown>;
+
+/**
+ * Applies the theme mapping and `uniProps` with the test theme, the way Unistyles maps theme values
+ * onto props: mapped props first, then `uniProps`, then the props the caller passed.
+ */
+export const withUnistyles = <T>(Component: T, mapping?: UniPropsMapping): T => {
+  function ThemedComponent({ uniProps, ...props }: { uniProps?: UniPropsMapping }) {
+    // Explicit props win over mapped ones, as in Unistyles' `deepMergeObjects(mappings, uniProps, props)`.
+    return createElement(Component as ElementType, {
+      ...mapping?.(testTheme, {}),
+      ...uniProps?.(testTheme, {}),
+      ...props,
+    });
+  }
+  return ThemedComponent as T;
+};
 
 export const useUnistyles = () => ({
   theme: testTheme,

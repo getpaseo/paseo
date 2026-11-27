@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { CanUseTool, PermissionMode, Query } from "@anthropic-ai/claude-agent-sdk";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
-import type { AgentPermissionRequest } from "../../agent-sdk-types.js";
+import type { AgentPermissionRequest, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
 
 // The injected SDK adapter supplies requests through Claude's permission callback.
@@ -88,5 +88,114 @@ test.each([
     }
   } finally {
     await plan.session.close();
+  }
+});
+
+async function createBypassSession() {
+  let requestPermission: CanUseTool | undefined;
+  const query = Object.assign((async function* () {})(), {
+    async setPermissionMode(_mode: PermissionMode) {},
+    close() {},
+  });
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    queryFactory: ({ options }) => {
+      requestPermission = options.canUseTool;
+      return query as Query;
+    },
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    modeId: "bypassPermissions",
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  await session.setMode("bypassPermissions");
+  if (!requestPermission) throw new Error("SDK permission callback was not installed");
+  return { session, events, requestPermission };
+}
+
+test("bypass approves Claude's own checks without publishing permission events and follows live mode changes", async () => {
+  const { session, events, requestPermission } = await createBypassSession();
+  try {
+    const controller = new AbortController();
+    const input = { command: "rm -rf build" };
+    // Claude Code sends these fields, but this SDK version does not declare them on CanUseTool.
+    const ownCheck = {
+      signal: controller.signal,
+      toolUseID: "execution",
+      decisionReason: "Dangerous rm command",
+      decisionReasonType: "safetyCheck",
+    };
+    const result = requestPermission("Bash", input, ownCheck);
+    // Abort also settles a prompting callback, so this test never hangs.
+    controller.abort();
+    await expect(result).resolves.toMatchObject({ behavior: "allow", updatedInput: input });
+    expect(events.filter((event) => event.type.startsWith("permission_"))).toEqual([]);
+
+    for (const [mode, tool, toolInput] of [
+      ["bypassPermissions", "AskUserQuestion", { questions: [] }],
+      ["bypassPermissions", "ExitPlanMode", { plan: "Review this" }],
+      ["default", "Bash", input],
+      ["plan", "Bash", input],
+    ] as const) {
+      await session.setMode(mode);
+      const resolution = requestPermission(tool, toolInput, {
+        ...ownCheck,
+        signal: new AbortController().signal,
+        toolUseID: tool,
+      });
+      const requestEvent = events.at(-1);
+      expect(requestEvent?.type).toBe("permission_requested");
+      if (requestEvent?.type !== "permission_requested")
+        throw new Error("Missing permission request");
+      await session.respondToPermission(requestEvent.request.id, { behavior: "deny" });
+      await expect(resolution).resolves.toMatchObject({ behavior: "deny" });
+    }
+  } finally {
+    await session.close();
+  }
+});
+
+test.each([
+  ["an ask rule", { decisionReasonType: "rule" }],
+  ["a hook", { decisionReasonType: "hook", decisionReason: "Confirm before posting" }],
+  [
+    "an ask rule on Claude's own check",
+    {
+      decisionReasonType: "safetyCheck",
+      matchedAskRule: { source: "policySettings", toolName: "Bash", ruleContent: "rm *" },
+    },
+  ],
+  [
+    "a tool the user answers on the card",
+    { decisionReasonType: "other", requiresUserInteraction: true },
+  ],
+  ["a compound command with an ask rule in one part", { decisionReasonType: "subcommandResults" }],
+  [
+    "a read the user blocked outside the working directories",
+    { decisionReasonType: "safetyCheck", decisionReasonCode: "outside_reads_blocked" },
+  ],
+  [
+    "an organization's ask limit",
+    { decisionReasonType: "workingDir", decisionReasonCode: "org_ask_ceiling" },
+  ],
+  ["a sandbox override the user's read block raised", { decisionReasonType: "sandboxOverride" }],
+  ["a Claude Code that does not say why it asks", {}],
+])("bypass still asks the user about %s", async (_source, why) => {
+  const { session, events, requestPermission } = await createBypassSession();
+  try {
+    const ask = { signal: new AbortController().signal, toolUseID: "execution", ...why };
+    const resolution = requestPermission("Bash", { command: "gh pr comment 1" }, ask);
+    const requestEvent = events.at(-1);
+    expect(requestEvent?.type).toBe("permission_requested");
+    if (requestEvent?.type !== "permission_requested")
+      throw new Error("Missing permission request");
+    await session.respondToPermission(requestEvent.request.id, { behavior: "deny" });
+    await expect(resolution).resolves.toMatchObject({ behavior: "deny" });
+  } finally {
+    await session.close();
   }
 });

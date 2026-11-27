@@ -6,6 +6,41 @@ import {
 } from "./agent-state-bucket.js";
 
 describe("deriveAgentStateBucket", () => {
+  it("shows idle agents with background work as running while preserving attention precedence", () => {
+    const backgroundWork = { count: 1 };
+    expect(
+      deriveAgentStateBucket({
+        status: "idle",
+        backgroundWork,
+        requiresAttention: true,
+        attentionReason: "finished",
+      }),
+    ).toBe("running");
+    expect(
+      deriveAgentStateBucket({ status: "idle", backgroundWork, attentionReason: "permission" }),
+    ).toBe("needs_input");
+    expect(deriveAgentStateBucket({ status: "error", backgroundWork })).toBe("running");
+    expect(
+      deriveAgentStateBucket({
+        status: "error",
+        backgroundWork,
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
+    ).toBe("failed");
+    expect(deriveAgentStateBucket({ status: "idle", backgroundWork: { count: 0 } })).toBe("done");
+  });
+  it("keeps passive background work visible without changing agent status or priority", () => {
+    const passive = { status: "idle", backgroundWork: { count: 1, runningCount: 0 } } as const;
+    expect(deriveAgentStateBucket(passive)).toBe("done");
+    expect(deriveAgentStateBucket({ ...passive, requiresAttention: true })).toBe("attention");
+    expect(deriveAgentStateBucket({ ...passive, status: "running" })).toBe("running");
+    expect(getAgentStatusPriority(passive)).toBe(getAgentStatusPriority({ status: "idle" }));
+    expect(
+      deriveAgentStateBucket({ ...passive, backgroundWork: { count: 2, runningCount: 1 } }),
+    ).toBe("running");
+  });
+
   it("prioritizes pending permissions as needs_input", () => {
     expect(
       deriveAgentStateBucket({

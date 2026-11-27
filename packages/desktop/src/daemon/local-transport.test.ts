@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildSshArgs,
+  buildSshSpawnEnv,
   createLocalTransportManager,
   LOCAL_TRANSPORT_SETUP_TIMEOUT_MS,
   parseTransportTarget,
@@ -118,6 +119,32 @@ describe("Remote SSH desktop transport", () => {
     expect(resolveSshFailureDetail("ssh exited with code 255", "earlier stderr")).toBe(
       "ssh exited with code 255",
     );
+  });
+
+  it("strips AppImage runtime variables from the SSH child environment on Linux", () => {
+    const appDir = "/tmp/.mount_Paseo-ssh";
+    const callerEnv: NodeJS.ProcessEnv = {
+      APPIMAGE: "/home/user/app/Paseo-x86_64.AppImage",
+      APPDIR: appDir,
+      ARGV0: "/home/user/app/Paseo-x86_64.AppImage",
+      OWD: "/home/user",
+      APPIMAGE_LIBRARY_PATH: `${appDir}/usr/lib`,
+      PATH: `${appDir}:/usr/bin`,
+      LD_LIBRARY_PATH: `${appDir}/usr/lib:/opt/lib`,
+      HOME: "/home/user",
+    };
+
+    const sshEnv = buildSshSpawnEnv(callerEnv, "linux");
+
+    expect("APPIMAGE" in sshEnv).toBe(false);
+    expect("APPDIR" in sshEnv).toBe(false);
+    expect("ARGV0" in sshEnv).toBe(false);
+    expect("OWD" in sshEnv).toBe(false);
+    expect("APPIMAGE_LIBRARY_PATH" in sshEnv).toBe(false);
+    expect(sshEnv.PATH).toBe("/usr/bin");
+    expect(sshEnv.LD_LIBRARY_PATH).toBe("/opt/lib");
+    expect(sshEnv.HOME).toBe("/home/user");
+    expect(callerEnv.APPIMAGE).toBe("/home/user/app/Paseo-x86_64.AppImage");
   });
 });
 

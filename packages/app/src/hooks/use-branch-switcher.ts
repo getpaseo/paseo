@@ -22,6 +22,9 @@ interface UseBranchSwitcherInput {
 
 interface UseBranchSwitcherResult {
   branchOptions: ComboboxOption[];
+  isLoadingBranches: boolean;
+  isFetchingBranches: boolean;
+  branchError: Error | null;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
   handleBranchSelect: (branchId: string) => void;
@@ -185,5 +188,14 @@ export function useBranchSwitcher({
     ],
   );
 
-  return { branchOptions, isOpen, setIsOpen, handleBranchSelect, invalidateStashAndCheckout };
+  return {
+    branchOptions,
+    isLoadingBranches: branchSuggestionsQuery.isPending,
+    isFetchingBranches: branchSuggestionsQuery.isFetching,
+    branchError: branchSuggestionsQuery.error,
+    isOpen,
+    setIsOpen,
+    handleBranchSelect,
+    invalidateStashAndCheckout,
+  };
 }

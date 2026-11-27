@@ -198,17 +198,38 @@ function isLegacyProviderEntry(value: unknown): boolean {
   return typeof (command as Record<string, unknown>).mode === "string";
 }
 
+// Catalog providers that moved from `extends: "acp"` to a bundled plugin with the same ID.
+const BUNDLED_FORMER_ACP_PROVIDERS = [
+  // COMPAT(gooseProvider): added in v0.17.0, remove after 2027-05-20 once legacy configs have migrated.
+  "goose",
+  // COMPAT(hermesProvider): added in v0.17.4, remove after 2027-05-23 once legacy configs have migrated.
+  "hermes",
+] as const;
+
 function normalizeAgentProviders(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return value;
+  if (!isConfigRecord(value)) return value;
+
+  const rawProviders: Record<string, unknown> = { ...value };
+  for (const providerId of BUNDLED_FORMER_ACP_PROVIDERS) {
+    const entry = configRecord(rawProviders[providerId]);
+    if (entry?.extends !== "acp") continue;
+    const { extends: _base, description: _description, command, ...overrides } = entry;
+    const usesDefaultCommand =
+      Array.isArray(command) &&
+      command.length === 2 &&
+      command[0] === providerId &&
+      command[1] === "acp";
+    rawProviders[providerId] = {
+      ...overrides,
+      ...(command !== undefined && !usesDefaultCommand ? { command } : {}),
+    };
   }
 
-  const rawProviders = value as Record<string, unknown>;
   const hasLegacyEntries = Object.values(rawProviders).some((entry) =>
     isLegacyProviderEntry(entry),
   );
   if (!hasLegacyEntries) {
-    return value;
+    return rawProviders;
   }
 
   const legacyEntries: Record<string, unknown> = {};
@@ -224,7 +245,7 @@ function normalizeAgentProviders(value: unknown): unknown {
 
   const parsedLegacyEntries = AgentProviderRuntimeSettingsMapSchema.safeParse(legacyEntries);
   if (!parsedLegacyEntries.success) {
-    return value;
+    return rawProviders;
   }
 
   return {

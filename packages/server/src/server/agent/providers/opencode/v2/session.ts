@@ -1,3 +1,8 @@
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../../../option-controls.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../../provider-options.js";
+import { OpenCodeProviderOptionsSchema } from "../options.js";
+import { OpenCodeBackgroundInventory } from "./background-inventory.js";
 import { SessionChildren } from "./children.js";
 import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
@@ -31,11 +36,36 @@ import { type V2Connection } from "./runtime.js";
 import { modelRef, modesFromV2 } from "./mapping.js";
 
 import { V2_CAPABILITIES } from "./capabilities.js";
-import { features } from "./configuration.js";
+import { controls } from "./configuration.js";
 import { commands } from "./commands.js";
-import { messages } from "./history.js";
+import { messages, syncTailMessages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
 import { SessionUsage } from "./usage.js";
+import { createSessionMetricsReporter } from "../../metrics.js";
+import { replayedTurnMetrics, sessionMetrics } from "./metrics.js";
+import type { SessionMcp } from "./session-mcp.js";
+
+/** Exceeds 3x OpenCode's 15s SSE keepalive heartbeat so half-open sockets reconnect without thrashing idle streams. */
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 45_000;
+
+export interface OpenCodeV2SessionOptions {
+  connection: V2Connection;
+  info: SessionInfo;
+  config: AgentSessionConfig;
+  logger: Logger;
+  persist: boolean;
+  requiresPaseoPlugin: boolean;
+  /** The complete shell environment for this session and its descendants. */
+  environment?: Record<string, string>;
+  /** MCP servers Paseo hosts for this session; the session closes them. */
+  mcp?: SessionMcp;
+  unbind?: () => void;
+  bindChild?: (id: string) => void;
+  acquire?: () => Promise<V2Connection>;
+  moved?: (connection: V2Connection) => void;
+  historyOnly?: boolean;
+  streamIdleTimeoutMs?: number;
+}
 
 export class OpenCodeV2Session implements AgentSession {
   readonly provider = "opencode";
@@ -51,25 +81,58 @@ export class OpenCodeV2Session implements AgentSession {
   private streamAbort = new AbortController();
   private exited = false;
   private reconnecting: Promise<void> | null = null;
-  private launchEnv: Record<string, string> | undefined;
+  private connectionSync: Promise<void> | null = null;
+  private connectionDirty = false;
   private sync: Promise<void> = Promise.resolve();
   private dirty = false;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private history: SessionMessageInfo[] = [];
+  private readonly background: OpenCodeBackgroundInventory;
   private modes: AgentMode[] = [];
-  constructor(
-    private connection: V2Connection,
-    private info: SessionInfo,
-    private readonly config: AgentSessionConfig,
-    private readonly logger: Logger,
-    private readonly persist: boolean,
-    private readonly requiresPaseoPlugin: boolean,
-    private readonly unbind?: () => void,
-    bindChild?: (id: string) => void,
-    private readonly acquire?: () => Promise<V2Connection>,
-    private readonly moved?: (connection: V2Connection) => void,
-  ) {
+  // Reconciliation runs after nearly every event; report only what changed.
+  private readonly reportSessionMetrics = createSessionMetricsReporter((metrics) =>
+    this.emit({ type: "session_metrics_updated", provider: "opencode", metrics }),
+  );
+  private connection: V2Connection;
+  private info: SessionInfo;
+  private readonly config: AgentSessionConfig;
+  private readonly logger: Logger;
+  private readonly persist: boolean;
+  private readonly requiresPaseoPlugin: boolean;
+  // OpenCode replaces the whole local shell environment, rather than overlaying it.
+  private readonly environment: Record<string, string> | undefined;
+  private readonly mcp: SessionMcp | undefined;
+  private readonly unbind: (() => void) | undefined;
+  private readonly acquire: (() => Promise<V2Connection>) | undefined;
+  private readonly moved: ((connection: V2Connection) => void) | undefined;
+  private readonly historyOnly: boolean;
+  private readonly streamIdleTimeoutMs: number;
+  constructor(options: OpenCodeV2SessionOptions) {
+    const { info, config, bindChild } = options;
+    this.connection = options.connection;
+    this.info = info;
+    this.config = config;
+    this.logger = options.logger;
+    this.persist = options.persist;
+    this.requiresPaseoPlugin = options.requiresPaseoPlugin;
+    this.environment = options.environment;
+    this.mcp = options.mcp;
+    this.unbind = options.unbind;
+    this.acquire = options.acquire;
+    this.moved = options.moved;
+    this.historyOnly = options.historyOnly ?? false;
+    this.streamIdleTimeoutMs = options.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+    this.background = new OpenCodeBackgroundInventory({
+      id: info.id,
+      cwd: config.cwd,
+      emit: (event) => this.emit(event),
+      report: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode background inventory failed",
+        ),
+    });
     this.permissions = new SessionPermissions(
       () => this.client,
       info.id,
@@ -81,18 +144,32 @@ export class OpenCodeV2Session implements AgentSession {
       id: info.id,
       emit: (event) => this.emit(event),
       reconcilePermissions: (id) => this.permissions.reconcile(id),
-      bindChild,
+      adoptChild: async (id) => {
+        bindChild?.(id);
+        await this.adoptDescendant(id);
+      },
+      reportError: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode child reconciliation failed",
+        ),
     });
     this.turns = new SessionTurns({
       client: () => this.client,
       id: info.id,
       cwd: config.cwd,
       signal: this.abort.signal,
+      logger: this.logger,
+      sessionIdleTime: () => this.info.time.idle,
+      updateInfo: (next) => {
+        this.info = next;
+      },
       emit: (event) => this.emit(event),
       reconcile: async () => {
         await this.reconcile();
         return { info: this.info, history: this.history };
       },
+      scheduleReconcile: () => this.scheduleReconcile(),
       reportReconciliationError: (error) =>
         this.logger.warn(
           { error: toDiagnosticErrorMessage(error) },
@@ -122,20 +199,20 @@ export class OpenCodeV2Session implements AgentSession {
   get id() {
     return this.info.id;
   }
-  get features() {
-    return features(this.config);
+  get controls() {
+    return controls;
   }
   private get client() {
     return this.connection.client;
   }
-  async initialize(environment?: Record<string, string>) {
-    // OpenCode replaces the whole local shell environment, rather than overlaying it.
-    this.launchEnv = environment;
+  async initialize() {
     this.watchExit(this.connection);
     await this.configureConnection();
     const location = { directory: this.config.cwd };
     this.modes = modesFromV2((await this.client.agent.list({ location })).data);
-    await this.timeline.messages(await messages(this.client, this.id), () => {});
+    const initialHistory = await messages(this.client, this.id);
+    this.history = initialHistory;
+    await this.timeline.messages(initialHistory, () => {});
     await this.startStream();
     await this.children.reconcile(this.id);
   }
@@ -143,6 +220,7 @@ export class OpenCodeV2Session implements AgentSession {
     void connection.exited.then((error) => {
       if (this.closed || this.connection !== connection) return undefined;
       this.exited = true;
+      this.background.disconnect(true);
       this.streamAbort.abort(error);
       this.turns.fail(error);
       return undefined;
@@ -154,38 +232,29 @@ export class OpenCodeV2Session implements AgentSession {
     await waitForLocationReady({ client: this.client, location, signal: this.abort.signal });
     if (this.requiresPaseoPlugin)
       await awaitPaseoPlugin({ client: this.client, location, signal: this.abort.signal });
-    for (const [server, config] of Object.entries(this.config.mcpServers ?? {})) {
-      await this.client.mcp.add({
-        server,
-        location,
-        config:
-          config.type === "stdio"
-            ? {
-                type: "local",
-                command: [config.command, ...(config.args ?? [])],
-                environment: config.env,
-                codemode: false,
-              }
-            : {
-                type: "remote",
-                url: config.url,
-                headers: config.headers,
-                oauth: false,
-                codemode: false,
-              },
-      });
-      await this.awaitMcp(server);
-    }
+    if (this.historyOnly) return;
     const system = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
-    if (system)
+    if (system) {
       await this.client.session.instructions.entry.put({
         sessionID: this.id,
         key: "paseo",
         value: system,
       });
+    } else {
+      const entries = await this.client.session.instructions.entry.list({ sessionID: this.id });
+      if (entries.some((entry) => entry.key === "paseo")) {
+        await this.client.session.instructions.entry.remove({ sessionID: this.id, key: "paseo" });
+      }
+    }
+  }
+  /** Gives a descendant session the shell environment, which OpenCode does not inherit. */
+  async adoptDescendant(sessionID: string) {
+    if (this.closed || this.historyOnly || !this.environment) return;
+    await this.client.session.environment({ sessionID, variables: this.environment });
   }
   private async startStream() {
     let ready!: () => void;
@@ -211,6 +280,7 @@ export class OpenCodeV2Session implements AgentSession {
   private async reconnect() {
     if (!this.acquire) throw new Error("OpenCode helper server exited");
     await this.stream;
+    await this.connectionSync?.catch(() => undefined);
     await this.sync.catch(() => undefined);
     await this.connection
       .unbindSession(this.id, this.config.cwd)
@@ -242,6 +312,8 @@ export class OpenCodeV2Session implements AgentSession {
   }
   subscribe(callback: (event: AgentStreamEvent) => void) {
     this.listeners.add(callback);
+    const background = this.background.snapshot();
+    if (background) callback(background);
     // Reopening can adopt an execution during initialization, before its caller
     // can subscribe. Deliver that live turn so it remains visible and interruptible.
     if (this.turns.id)
@@ -250,35 +322,65 @@ export class OpenCodeV2Session implements AgentSession {
       this.listeners.delete(callback);
     };
   }
-  private async awaitMcp(server: string) {
-    const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(30_000)]);
-    while (true) {
-      const catalog = await this.client.mcp.list(
-        { location: { directory: this.config.cwd } },
-        { signal },
-      );
-      const entry = catalog.data.find((item) => item.name === server);
-      if (entry?.status.status === "connected") return;
-      if (entry && entry.status.status !== "pending") {
-        const reason = entry.status.status === "failed" ? entry.status.error : entry.status.status;
-        throw new Error(`OpenCode MCP server ${server} failed to connect: ${reason}`);
-      }
-      await delay(50, undefined, { signal });
-    }
-  }
+  private readonly toolCallTurnIds = new Map<string, string>();
+  private readonly messageTurnIds = new Map<string, string>();
   private emit(event: AgentStreamEvent) {
     for (const listener of this.listeners) listener(event);
   }
+  private resolveTimelineTurnId(event: AgentStreamEvent): string | undefined {
+    if (event.type === "timeline") {
+      if (event.item.type === "tool_call") {
+        const existing = this.toolCallTurnIds.get(event.item.callId);
+        if (existing) return existing;
+        if (this.turns.id) {
+          this.toolCallTurnIds.set(event.item.callId, this.turns.id);
+          return this.turns.id;
+        }
+        return undefined;
+      }
+      if (event.item.type === "assistant_message" && event.item.messageId) {
+        const existing = this.messageTurnIds.get(event.item.messageId);
+        if (existing) return existing;
+        if (this.turns.id) {
+          this.messageTurnIds.set(event.item.messageId, this.turns.id);
+          return this.turns.id;
+        }
+        return undefined;
+      }
+    }
+    return this.turns.id;
+  }
   private emitTimeline(event: AgentStreamEvent) {
-    this.emit({ ...event, ...(this.turns.id ? { turnId: this.turns.id } : {}) });
+    const turnId = this.resolveTimelineTurnId(event);
+    this.emit({ ...event, ...(turnId ? { turnId } : {}) });
   }
   async *streamHistory() {
     await this.reconnectIfExited();
     const history = new V2Timeline(false);
     const events: AgentStreamEvent[] = [];
-    await history.messages(await messages(this.client, this.id), (event) => {
-      events.push(event);
-    });
+    const [info, list] = await Promise.all([
+      // Session totals are extra; history replays without them.
+      this.client.session.get({ sessionID: this.id }).catch((error: unknown) => {
+        this.logger.debug({ err: error }, "OpenCode session info unavailable for history");
+        return null;
+      }),
+      messages(this.client, this.id),
+    ]);
+    const turnMetrics = replayedTurnMetrics(list);
+    await history.messages(
+      list,
+      (event) => {
+        events.push(event);
+      },
+      (message) => {
+        const metrics = turnMetrics.get(message.id);
+        if (metrics) events.push({ type: "turn_completed", provider: "opencode", metrics });
+      },
+    );
+    const metrics = info ? sessionMetrics(info, list) : [];
+    if (metrics.length > 0) {
+      events.push({ type: "session_metrics_updated", provider: "opencode", metrics });
+    }
     yield* events;
   }
   async getRuntimeInfo() {
@@ -352,6 +454,7 @@ export class OpenCodeV2Session implements AgentSession {
         thinkingOptionId: variant ?? null,
       },
     });
+    return { model: `${selected.providerID}/${selected.id}` };
   }
 
   async setThinkingOption(variant: string | null) {
@@ -366,14 +469,33 @@ export class OpenCodeV2Session implements AgentSession {
     this.info = await this.client.session.get({ sessionID: this.id });
     this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: variant });
   }
-  async setFeature(id: string, value: unknown) {
-    if (id !== "auto_accept" || typeof value !== "boolean")
-      throw new Error("Unknown OpenCode feature");
-    this.config.featureValues = { ...this.config.featureValues, [id]: value };
-    if (value && !this.config.toolPolicy)
-      for (const request of this.permissions.list())
-        if (request.kind !== "question")
-          await this.respondToPermission(request.id, { behavior: "allow" });
+  /** The agent manager sends one apply at a time, so a failed one restores exactly what it changed. */
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    assertChangesAreLive({
+      provider: "opencode",
+      patch: options,
+      current: this.config.providerOptions,
+      live: ["auto_accept"],
+    });
+    const next = validateProviderOptions(
+      "opencode",
+      OpenCodeProviderOptionsSchema,
+      applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
+    );
+    if (!("auto_accept" in options)) return;
+    const value = next?.auto_accept === true;
+    const previous = this.config.providerOptions;
+    this.config.providerOptions = { ...previous, auto_accept: value };
+    try {
+      if (value && !this.config.toolPolicy)
+        for (const request of this.permissions.list())
+          if (request.kind !== "question")
+            await this.respondToPermission(request.id, { behavior: "allow" });
+    } catch (error) {
+      // A rejected apply stores nothing, so the running session keeps asking as it did.
+      this.config.providerOptions = previous;
+      throw error;
+    }
   }
   async listCommands() {
     await this.reconnectIfExited();
@@ -406,6 +528,9 @@ export class OpenCodeV2Session implements AgentSession {
   steerActiveTurn(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult> {
     return this.turns.steerActiveTurn(prompt, options);
   }
+  stopBackgroundWork(id: string) {
+    return this.background.stopItem(id);
+  }
   interrupt() {
     return this.turns.interrupt();
   }
@@ -430,13 +555,16 @@ export class OpenCodeV2Session implements AgentSession {
     if (deniesOwnRequest) this.turns.requestDenied();
   }
   private async reconcileSnapshot() {
-    const [info, history] = await Promise.all([
+    const [info, synced] = await Promise.all([
       this.client.session.get({ sessionID: this.id }),
-      messages(this.client, this.id),
+      syncTailMessages(this.client, this.id, this.history, { signal: this.abort.signal }),
     ]);
     this.info = info;
-    this.history = history;
-    await this.timeline.messages(history, (event) => this.emitTimeline(event));
+    this.history = synced.history;
+    await this.timeline.messages(synced.history, (event) => this.emitTimeline(event), undefined, {
+      startIndex: synced.startIndex,
+    });
+    this.reportSessionMetrics(sessionMetrics(this.info, this.history));
     await this.permissions.reconcile(this.id);
   }
   private async reconcile() {
@@ -450,15 +578,44 @@ export class OpenCodeV2Session implements AgentSession {
       await this.reconcileSnapshot();
     }
   }
-  private async reconcileConnection() {
+  private async reconcileConnection(signal: AbortSignal) {
     await this.connection.bindSession(this.id, this.config.cwd);
+    if (this.closed || signal.aborted) return;
     // Session environments are process-local. Reapply this agent's snapshot before
     // reconciling a new connection, including event-stream reconnections.
-    if (this.launchEnv)
-      await this.client.session.environment({ sessionID: this.id, variables: this.launchEnv });
+    if (this.environment)
+      await this.client.session.environment({ sessionID: this.id, variables: this.environment });
+    if (this.closed || signal.aborted) return;
+    await this.children.restoreAdoptions();
+    if (this.closed || signal.aborted) return;
     await this.reconcile();
+    if (this.closed || signal.aborted) return;
     await this.children.reconcile(this.id);
+    if (this.closed || signal.aborted) return;
     await this.turns.reconcile();
+  }
+  private scheduleConnectionReconcile(signal: AbortSignal) {
+    this.connectionDirty = true;
+    if (this.connectionSync) return;
+    this.connectionSync = this.drainConnectionReconcile(signal).finally(() => {
+      this.connectionSync = null;
+    });
+  }
+  private async drainConnectionReconcile(signal: AbortSignal) {
+    while (this.connectionDirty && !this.closed && !signal.aborted) {
+      this.connectionDirty = false;
+      try {
+        await this.reconcileConnection(signal);
+        if (this.closed || signal.aborted) return;
+        this.background.start(this.client);
+      } catch (error) {
+        if (this.closed || signal.aborted) return;
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode reconnect reconciliation failed",
+        );
+      }
+    }
   }
   private scheduleReconcile() {
     if (this.refreshTimer || this.closed) return;
@@ -505,26 +662,78 @@ export class OpenCodeV2Session implements AgentSession {
     this.turns.observe(event);
     this.scheduleReconcile();
   }
+  private async consumeAttempt(
+    signal: AbortSignal,
+    state: { connected: boolean },
+    ready: () => void,
+  ) {
+    const attempt = new AbortController();
+    const attemptSignal = AbortSignal.any([signal, attempt.signal]);
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    let stalled = false;
+    let attemptConnected = state.connected;
+    const resetWatchdog = () => {
+      if (watchdog) clearTimeout(watchdog);
+      if (!attemptConnected || this.closed || attemptSignal.aborted) return;
+      watchdog = setTimeout(() => {
+        stalled = true;
+        attempt.abort(new Error("OpenCode event stream stalled"));
+      }, this.streamIdleTimeoutMs);
+      watchdog.unref();
+    };
+    if (attemptConnected) resetWatchdog();
+    try {
+      for await (const event of this.client.event.subscribe({
+        signal: attemptSignal,
+        onActivity: resetWatchdog,
+      })) {
+        if (this.closed || signal.aborted) return;
+        if (event.type === "server.connected") {
+          attemptConnected = true;
+          resetWatchdog();
+          await this.handleServerConnected(signal, state, ready);
+        } else {
+          resetWatchdog();
+        }
+        this.background.observe(event);
+        this.children.enqueue(event);
+        this.observeOwnEvent(event);
+      }
+      if (this.closed || signal.aborted) return;
+      if (stalled) throw new Error("OpenCode event stream stalled");
+      if (!state.connected) throw new Error("OpenCode event stream ended before connecting");
+    } finally {
+      if (watchdog) clearTimeout(watchdog);
+      attempt.abort();
+    }
+  }
+  private async handleServerConnected(
+    signal: AbortSignal,
+    state: { connected: boolean },
+    ready: () => void,
+  ) {
+    this.timeline.resetStreams();
+    if (!state.connected) {
+      await this.reconcileConnection(signal);
+      signal.throwIfAborted();
+      this.background.start(this.client);
+      state.connected = true;
+      ready();
+      return;
+    }
+    // Run reconnect reconciliation off the SSE reader loop so bursts of events
+    // never back up into @opencode/client's 4,096-event subscriber buffer.
+    this.scheduleConnectionReconcile(signal);
+  }
   private async consume(ready: () => void, fail: (error: unknown) => void) {
     const signal = AbortSignal.any([this.abort.signal, this.streamAbort.signal]);
-    let connected = false;
+    const state = { connected: false };
     while (!this.closed && !signal.aborted) {
       try {
-        for await (const event of this.client.event.subscribe({ signal })) {
-          if (this.closed || signal.aborted) return;
-          if (event.type === "server.connected") {
-            this.timeline.resetStreams();
-            await this.reconcileConnection();
-            connected = true;
-            ready();
-          }
-          await this.children.observe(event);
-          this.observeOwnEvent(event);
-        }
-        if (!connected) throw new Error("OpenCode event stream ended before connecting");
+        await this.consumeAttempt(signal, state, ready);
       } catch (error) {
         if (this.closed || signal.aborted) return;
-        if (!connected) {
+        if (!state.connected) {
           fail(error);
           return;
         }
@@ -533,6 +742,8 @@ export class OpenCodeV2Session implements AgentSession {
           "OpenCode event stream interrupted; reconciling on reconnect",
         );
       }
+      if (this.closed || signal.aborted) return;
+      this.background.disconnect();
       await delay(100, undefined, { signal }).catch(() => undefined);
     }
   }
@@ -571,9 +782,12 @@ export class OpenCodeV2Session implements AgentSession {
     this.closed = true;
     this.abort.abort();
     this.turns.close();
+    this.children.close();
     this.streamAbort.abort();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.background.disconnect();
     await this.stream;
+    await this.connectionSync?.catch(() => undefined);
     await this.reconnecting?.catch(() => undefined);
     await this.sync.catch(() => undefined);
     await this.connection
@@ -585,8 +799,11 @@ export class OpenCodeV2Session implements AgentSession {
     try {
       if (!this.persist) await this.client.session.remove({ sessionID: this.id });
     } finally {
+      await this.mcp?.close();
       await this.connection.release();
     }
+    this.toolCallTurnIds.clear();
+    this.messageTurnIds.clear();
     this.listeners.clear();
   }
 }

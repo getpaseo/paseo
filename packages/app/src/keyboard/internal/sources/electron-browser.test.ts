@@ -366,7 +366,13 @@ describe("Electron guest source through shared resolution", () => {
         },
         captureFocusRestore: (id) => restored.push(id),
       },
-      { keyDown: pipeline.keyDown, keyUp() {}, blur() {}, commandCenterOpen: () => false },
+      {
+        keyDown: pipeline.keyDown,
+        keyUp() {},
+        blur() {},
+        commandCenterOpen: () => false,
+        subscribeCommandCenter: () => () => {},
+      },
     );
     receive({
       browserId: "tab-1",

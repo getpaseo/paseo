@@ -1,6 +1,17 @@
 import type { PluginText } from "../text.js";
 import { PluginAttachmentSearchPayloadSchema } from "../attachments.js";
-export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
+export {
+  PluginClientStateProvider,
+  usePaseoSelector,
+  type PluginClientStateSource,
+  type PluginClientSnapshot,
+} from "./client-state.js";
+export {
+  PluginComposerProvider,
+  PluginComposersProvider,
+  type PluginComposersSource,
+} from "./composer.js";
+export { PluginNewWorkspaceProvider } from "./new-workspace.js";
 export {
   usePluginRuntimeContextBridge,
   type PluginRuntimeContextBridge,
@@ -31,3 +42,7 @@ export {
   isPluginMessage,
 } from "./translations.js";
 export type { PluginLocaleSource } from "./translations.js";
+
+export { createEntityRefs } from "./refs.js";
+
+export { createPluginReferenceApi } from "./reference-api.js";
