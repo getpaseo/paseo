@@ -558,6 +558,12 @@ export const zhCN: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "搜索文件",
+        clear: "清除搜索",
+        loading: "正在搜索文件...",
+        empty: "没有匹配的文件",
+      },
       sort: {
         name: "名称",
         modified: "修改时间",

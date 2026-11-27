@@ -2,13 +2,14 @@ import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { SPACING, type Theme } from "@/styles/theme";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 // Shared presentation primitives for the app's directory trees. Both the Files
 // explorer (server-loaded listings) and the Changes view (client-built from diff
 // paths) render different data, but their ROWS should look identical — same
-// indentation, density, name emphasis, and chevron. Keep those here so the two trees can't
+// indentation, guides, density, name emphasis, and chevron. Keep those here so the two trees can't
 // drift apart.
-export const TREE_INDENT_PER_LEVEL = 12;
+export const TREE_INDENT_PER_LEVEL = 16;
 export const WORKSPACE_FILE_ROW_VERTICAL_PADDING = SPACING[1.5];
 export const WORKSPACE_TREE_ICON_SIZE = 16;
 export const WORKSPACE_TREE_LOADING_ICON_SIZE = 14;
@@ -24,6 +25,29 @@ export const WORKSPACE_PANE_TRAILING_GLYPH_RAIL = SPACING[2];
 /** Left padding for a row in either workspace tree. */
 export function treeRowPaddingLeft(depth: number): number {
   return SPACING[3] + depth * TREE_INDENT_PER_LEVEL;
+}
+
+const INDENT_GUIDE_WIDTH = 1;
+
+/** Left edge of each guide on a row at `depth`: one per ancestor, centred under its chevron. */
+export function treeIndentGuideOffsets(depth: number): number[] {
+  const chevronCenter = (WORKSPACE_TREE_ICON_SIZE - INDENT_GUIDE_WIDTH) / 2;
+  return Array.from({ length: depth }, (_, level) => treeRowPaddingLeft(level) + chevronCenter);
+}
+
+/**
+ * The ancestor lines of a tree row. Render it first inside the element that paints the row's
+ * hover and selection fill, so the lines span the row and stay above the fill.
+ */
+export function TreeIndentGuides({ depth }: { depth: number }) {
+  return treeIndentGuideOffsets(depth).map((left) => (
+    <View
+      key={left}
+      pointerEvents="none"
+      style={[styles.indentGuide, inlineUnistylesStyle({ left })]}
+      testID="tree-indent-guide"
+    />
+  ));
 }
 
 const foregroundExtraMutedIconColorMapping = (theme: Theme) => ({
@@ -59,7 +83,16 @@ export const workspaceTreeRowStyles = StyleSheet.create((theme: Theme) => ({
   nameHovered: { opacity: 1 },
 }));
 
-const styles = StyleSheet.create((_theme: Theme) => ({
+const styles = StyleSheet.create((theme: Theme) => ({
+  indentGuide: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: INDENT_GUIDE_WIDTH,
+    // Translucent ink, not `border`: a solid line that colour disappears into a hovered row's fill.
+    backgroundColor: theme.colors.foregroundExtraMuted,
+    opacity: theme.opacity[50],
+  },
   chevron: {
     width: WORKSPACE_TREE_ICON_SIZE,
     height: WORKSPACE_TREE_ICON_SIZE,

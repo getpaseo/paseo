@@ -1,5 +1,10 @@
-import { useCallback, useRef, useState, type ReactElement } from "react";
-import { Pressable, View } from "react-native";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import {
+  Pressable,
+  View,
+  type NativeSyntheticEvent,
+  type TextInputKeyPressEventData,
+} from "react-native";
 import { Search, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -7,6 +12,7 @@ import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
+import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 
 const ThemedSearch = withUnistyles(Search);
 const ThemedX = withUnistyles(X);
@@ -27,6 +33,10 @@ export interface SearchFieldProps {
   clearAccessibilityLabel: string;
   /** Fill the container, for a search that heads one list. Defaults to the filter rail's width. */
   fullWidth?: boolean;
+  /** `sm` heads a list in tight chrome such as a sidebar pane. */
+  size?: "sm" | "md";
+  /** Escape empties the field. Off where Escape already closes the surface around it. */
+  clearOnEscape?: boolean;
   testID?: string;
   clearTestID?: string;
 }
@@ -45,6 +55,8 @@ export function SearchField({
   accessibilityLabel,
   clearAccessibilityLabel,
   fullWidth = false,
+  size = "md",
+  clearOnEscape = false,
   testID,
   clearTestID,
 }: SearchFieldProps): ReactElement {
@@ -56,10 +68,26 @@ export function SearchField({
     inputRef.current?.replaceText("");
     onChangeText("");
   }, [onChangeText]);
+  const handleKeyPress = useCallback(
+    (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+      if (event.nativeEvent.key === "Escape") handleClear();
+    },
+    [handleClear],
+  );
+  // The input owns its text, so an owner emptying `value` has to empty it too.
+  useEffect(() => {
+    if (value === "" && inputRef.current?.getText()) inputRef.current.replaceText("");
+  }, [value]);
+  const small = size === "sm";
 
   return (
     <View
-      style={[styles.field, fullWidth && styles.fieldFullWidth, isFocused && styles.fieldFocused]}
+      style={[
+        styles.field,
+        small && styles.fieldSmall,
+        fullWidth && styles.fieldFullWidth,
+        isFocused && styles.fieldFocused,
+      ]}
     >
       <ThemedSearch size={14} uniProps={mutedColorMapping} />
       <ThemedTextInput
@@ -74,7 +102,8 @@ export function SearchField({
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="search"
-        style={styles.input}
+        onKeyPress={clearOnEscape ? handleKeyPress : undefined}
+        style={[styles.input, small && styles.inputSmall]}
       />
       {value.length > 0 ? (
         <Pressable
@@ -108,6 +137,11 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
   },
+  fieldSmall: {
+    height: CONTROL_HEIGHTS.sm,
+    paddingVertical: 0,
+    paddingHorizontal: theme.spacing[1.5],
+  },
   fieldFullWidth: {
     maxWidth: "100%",
   },
@@ -126,5 +160,8 @@ const styles = StyleSheet.create((theme) => ({
     outlineWidth: 0,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  inputSmall: {
+    fontSize: theme.fontSize.sm,
   },
 }));

@@ -559,6 +559,12 @@ export const ko: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "파일 검색",
+        clear: "검색 지우기",
+        loading: "파일 검색 중...",
+        empty: "일치하는 파일 없음",
+      },
       sort: {
         name: "이름",
         modified: "수정일",

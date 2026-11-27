@@ -564,6 +564,12 @@ export const es: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Buscar archivos",
+        clear: "Borrar búsqueda",
+        loading: "Buscando archivos...",
+        empty: "No hay archivos coincidentes",
+      },
       sort: {
         name: "Nombre",
         modified: "Modificado",

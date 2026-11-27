@@ -557,6 +557,12 @@ export const en = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Search files",
+        clear: "Clear search",
+        loading: "Searching files...",
+        empty: "No matching files",
+      },
       sort: {
         name: "Name",
         modified: "Modified",

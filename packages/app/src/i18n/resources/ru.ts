@@ -564,6 +564,12 @@ export const ru: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Поиск файлов",
+        clear: "Очистить поиск",
+        loading: "Поиск файлов...",
+        empty: "Нет подходящих файлов",
+      },
       sort: {
         name: "Имя",
         modified: "Дата изменения",

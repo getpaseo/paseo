@@ -563,6 +563,12 @@ export const fr: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Rechercher des fichiers",
+        clear: "Effacer la recherche",
+        loading: "Recherche de fichiers...",
+        empty: "Aucun fichier correspondant",
+      },
       sort: {
         name: "Nom",
         modified: "Date de modification",

@@ -563,6 +563,12 @@ export const ptBR: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Buscar arquivos",
+        clear: "Limpar busca",
+        loading: "Buscando arquivos...",
+        empty: "Nenhum arquivo correspondente",
+      },
       sort: {
         name: "Nome",
         modified: "Modificado",

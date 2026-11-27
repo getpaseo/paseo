@@ -4,6 +4,7 @@ import { useSessionStore, type AgentFileExplorerState } from "@/stores/session-s
 import { usePanelStore } from "@/stores/panel-store";
 import { revealExplorerDirectory, revealExplorerEntry } from "@/file-explorer/tree";
 import { useExplorerRevealStore } from "@/file-explorer/reveal-request";
+import { clearFileFilter } from "@/file-explorer/filter";
 import {
   loadExplorerDirectory,
   type DirectoryListingResult,
@@ -139,6 +140,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         showHiddenFiles,
         expandPaths,
       });
+      clearFileFilter(workspaceStateKey);
     },
     [expandPaths, requestDirectoryListing, showHiddenFiles, workspaceStateKey],
   );
@@ -165,6 +167,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         expandPaths,
       });
       if (found) {
+        clearFileFilter(workspaceStateKey);
         selectExplorerEntry(entryPath);
         useExplorerRevealStore.getState().request(workspaceStateKey, entryPath);
       }

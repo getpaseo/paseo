@@ -558,6 +558,12 @@ export const ar: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "البحث في الملفات",
+        clear: "مسح البحث",
+        loading: "جارٍ البحث في الملفات...",
+        empty: "لا توجد ملفات مطابقة",
+      },
       sort: {
         name: "اسم",
         modified: "معدل",

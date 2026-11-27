@@ -564,6 +564,12 @@ export const ja: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "ファイルを検索",
+        clear: "検索をクリア",
+        loading: "ファイルを検索中...",
+        empty: "一致するファイルはありません",
+      },
       sort: {
         name: "名前",
         modified: "更新日時",
