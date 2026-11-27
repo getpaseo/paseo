@@ -12,6 +12,7 @@ import { spawnProcess, type SpawnProcessOptions } from "../../../../utils/spawn.
 import { terminateWithTreeKill, type ProcessTerminator } from "../../../../utils/tree-kill.js";
 import type { ManagedProcessRegistry } from "../../../managed-processes/managed-processes.js";
 import {
+  ProviderExecutableNotFoundError,
   createProviderEnv,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
@@ -670,7 +671,7 @@ async function waitForServerAcquisition<T>(
 async function resolveOpenCodeBinary(): Promise<string> {
   const found = await findExecutable("opencode");
   if (!found) {
-    throw new Error(
+    throw new ProviderExecutableNotFoundError(
       "OpenCode binary not found. Install OpenCode (https://github.com/opencode-ai/opencode) and ensure it is available in your shell PATH.",
     );
   }

@@ -51,6 +51,13 @@ export interface ProviderLaunchAvailability {
   resolvedPath: string | null;
 }
 
+export class ProviderExecutableNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderExecutableNotFoundError";
+  }
+}
+
 export interface ProviderLaunchDefault {
   command: string;
   resolvePath?: () => Promise<string | null>;
