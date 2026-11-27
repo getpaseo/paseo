@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { ToolFreeAgentError } from "./tool-free.js";
+import type { ProviderOverride } from "./provider-launch-config.js";
 import type {
   AgentClient,
   AgentDraftControls,
@@ -1848,5 +1850,73 @@ describe("fetchCatalog", () => {
     expect(injectedClient.fetchCatalog).toHaveBeenCalledTimes(1);
     expect(catalog.models.map((model) => model.id)).toEqual(["catalog-model"]);
     expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
+  });
+});
+
+describe("tool-free agents", () => {
+  const toolFree: ToolPolicy = { preapproved: [], toolFree: true };
+
+  function registryWith(providerOverrides: Record<string, ProviderOverride> = {}) {
+    return buildProviderRegistry(logger, {
+      providerOverrides,
+      pluginProviders: {
+        "plugin-agent": {
+          id: "plugin-agent",
+          label: "Plugin agent",
+          description: "Plugin provider",
+          defaultModeId: null,
+          modes: [],
+          supportsExactMcpPreapproval: true,
+          createClient: () => ({}) as never,
+        },
+      },
+    });
+  }
+
+  test("no provider advertises tool-free support", () => {
+    const registry = registryWith({
+      zai: { extends: "claude", label: "Z.AI", env: { ANTHROPIC_BASE_URL: "https://z.invalid" } },
+      "my-codex": { extends: "codex", label: "My Codex" },
+      "my-acp": { extends: "acp", label: "My ACP", command: ["my-acp"] },
+    });
+    expect(
+      Object.entries(registry)
+        .filter(([, definition]) => definition.supportsToolFree)
+        .map(([provider]) => provider),
+    ).toEqual([]);
+  });
+
+  test.each(["claude", "zai", "codex", "opencode", "copilot", "pi", "my-acp", "plugin-agent"])(
+    "%s refuses a tool-free agent before any session exists",
+    (provider) => {
+      const registry = registryWith({
+        zai: { extends: "claude", label: "Z.AI" },
+        "my-acp": { extends: "acp", label: "My ACP", command: ["my-acp"] },
+      });
+      expect(() =>
+        registry[provider]!.applyToolPolicy({ provider, cwd: "/tmp/tool-free" }, toolFree),
+      ).toThrow(ToolFreeAgentError);
+    },
+  );
+
+  test("Claude says why it refuses: managed hooks can change during a session", () => {
+    const registry = registryWith();
+    expect(() =>
+      registry.claude!.applyToolPolicy({ provider: "claude", cwd: "/tmp/tool-free" }, toolFree),
+    ).toThrow(/managed policy changes, including hooks/u);
+  });
+
+  test("an ordinary exact-grant policy is unaffected", () => {
+    const registry = registryWith();
+    const config = {
+      provider: "claude",
+      cwd: "/tmp/tool-free",
+      mcpServers: { hub: { type: "http" as const, url: "http://127.0.0.1/execution" } },
+    };
+    const grant = { preapproved: [{ kind: "mcp" as const, server: "hub", tool: "reply" }] };
+    expect(registry.claude!.applyToolPolicy(config, grant)).toEqual({
+      ...config,
+      toolPolicy: grant,
+    });
   });
 });

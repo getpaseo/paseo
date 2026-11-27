@@ -99,6 +99,43 @@ Exact MCP preapproval is a separate daemon-owned contract. A new provider must f
 closed for Hub unattended execution until it can approve one exact injected MCP
 server and tool identity without approving native tools.
 
+Tool-free agents (`toolPolicy: { preapproved: [], toolFree: true }`) are a third contract, and
+providers fail closed by default. A provider supports them only through
+`assertToolFreeLaunchable` on its `ProviderContract` in
+`packages/server/src/server/agent/provider-registry.ts`, and only when it can prove that nothing
+but the model sees a prompt, for as long as the model works on it. No built-in provider does
+today.
+
+The Claude adapter has the checks (`providers/claude/tool-free.ts`): it launches with no tool
+sources and only the composer flags, and before each prompt it asks Claude Code for its MCP
+servers, context usage and hook listing, refusing on any tool, MCP server or listed hook that can
+run (rows the policy marks disabled are ignored), on a managed hook count other than 0, on a
+policy that hides or cannot read managed hooks, or on a CLI that cannot answer. It refuses prompts
+whose last content block, as sent, starts with `/`, binds the prompt to the process it checked,
+and retires a process that fails. Claude stays unsupported anyway: Claude Code applies managed
+policy changes, hooks included, while a session runs, and its `ConfigChange` gate ignores a block
+for `policy_settings`. The listing is a snapshot, so no check can keep a managed hook that appears
+later from seeing the prompt. A system prompt, a permission mode, a deny hook, or cancelling a
+tool call after the model asked for it does not count either, because each leaves a tool or hook
+that can still reach the prompt. Codex and OpenCode keep their tool registries in a user-installed
+server Paseo cannot query that way.
+
+The daemon owns the rest of the contract in `tool-free.ts`: no Paseo MCP server or native tools;
+a launch refused when a plugin hook attaches MCP servers or tools; options patches judged by the
+provider contract before they apply; a create request that carries no prompt, attachments,
+images or output schema, since naming helpers read those before the agent runs; no tool-free
+first agent on workspace creation or Hub executions; and the mode fixed at creation across
+reloads and resumes.
+
+Clients gate on `server_info.features.toolFreeAgents` and never send the policy to a host without
+it, then send the prompt only after the created agent reports `toolFree: true`. A provider that
+can run them reports `supportsToolFree: true` in the provider snapshot, and the field is omitted
+otherwise; the daemon enforces support regardless, and no provider reports
+`supportsToolFree: true` today. `ToolPolicy` stays strict, so daemons from v0.3.1 on reject a
+request with an unknown policy field and skip a stored record that has one. Daemons up to v0.3.0
+predate `toolPolicy` and drop it, so downgrading a host that holds tool-free agents below v0.3.1
+is unsupported: those daemons reopen the agents with tools.
+
 ## Core adapter patterns
 
 ### ACP (Agent Client Protocol) -- recommended

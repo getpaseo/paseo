@@ -385,6 +385,33 @@ describe("AgentStorage", () => {
     expect(await cleared.get("agent-metrics")).not.toHaveProperty("sessionMetrics");
   });
 
+  test("a tool-free policy survives a reload and rebuilds the same session config", async () => {
+    const toolPolicy = { preapproved: [], toolFree: true as const };
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-tool-free", config: { toolPolicy } }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    const persisted = await reloaded.get("agent-tool-free");
+    expect(persisted?.config?.toolPolicy).toEqual(toolPolicy);
+    expect(buildSessionConfig(persisted!)?.toolPolicy).toEqual(toolPolicy);
+    expect(buildConfigOverrides(persisted!).toolPolicy).toEqual(toolPolicy);
+  });
+
+  // An older daemon reads a tool-free record with a policy schema that lacks the field. The policy
+  // is strict, so that daemon skips the record instead of reopening the agent with tools; this
+  // shows the same mechanism with a field the current schema lacks.
+  test("a record whose tool policy carries an unknown field is skipped", async () => {
+    await storage.applySnapshot(createManagedAgent({ id: "agent-future-policy" }));
+    const file = findRecordFile(storagePath, "agent-future-policy");
+    const stored = JSON.parse(await fs.readFile(file, "utf8"));
+    stored.config.toolPolicy = { preapproved: [], futureRestriction: true };
+    await fs.writeFile(file, JSON.stringify(stored));
+
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    expect(await reloaded.get("agent-future-policy")).toBeNull();
+  });
+
   test("a record stored with featureValues loads them in providerOptions", async () => {
     await storage.applySnapshot(createManagedAgent({ id: "agent-legacy" }));
     const file = findRecordFile(storagePath, "agent-legacy");

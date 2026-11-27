@@ -1384,6 +1384,30 @@ export function supportsUsageReports(features: ServerInfoStatusPayload["features
   return features?.usageSources === true || features?.providerUsageList === true;
 }
 
+export class ToolFreeAgentUnsupportedError extends Error {
+  readonly code = "TOOL_FREE_AGENTS_UNSUPPORTED";
+  readonly version: string | null;
+
+  constructor(message: string, version: string | null) {
+    super(message);
+    this.name = "ToolFreeAgentUnsupportedError";
+    this.version = version;
+  }
+}
+
+/**
+ * The host created the agent but did not report it as tool-free. Send it nothing; the caller
+ * owns archiving it.
+ */
+export class ToolFreeAgentUnverifiedError extends Error {
+  readonly code = "TOOL_FREE_AGENT_UNVERIFIED";
+
+  constructor(readonly agentId: string) {
+    super(`Agent ${agentId} was created without confirmed tool-free mode; do not prompt it`);
+    this.name = "ToolFreeAgentUnverifiedError";
+  }
+}
+
 export class TerminalKeepUnsupportedError extends Error {
   readonly code = "TERMINALS_KEEP_UNSUPPORTED";
   // Own fields reach the CLI's JSON error output, which desktop reads.
@@ -3517,6 +3541,35 @@ export class DaemonClient {
     }
   }
 
+  /** Whether the host runs tool-free agents (`toolPolicy.toolFree`). Check per provider too. */
+  supportsToolFreeAgents(): boolean {
+    return this.lastServerInfoMessage?.features?.toolFreeAgents === true;
+  }
+
+  /**
+   * A host without `toolFreeAgents` strips or rejects the policy, so the request is never sent to
+   * one. Content that must not meet a tool goes out only after the agent is proven tool-free, so a
+   * tool-free create carries no prompt of its own.
+   */
+  private requireToolFreeCreation(options: CreateAgentRequestOptions): void {
+    if (!this.supportsToolFreeAgents()) {
+      throw new ToolFreeAgentUnsupportedError(
+        "Update the host to run tool-free agents.",
+        this.lastServerInfoMessage?.version ?? null,
+      );
+    }
+    if (
+      options.initialPrompt !== undefined ||
+      (options.images?.length ?? 0) > 0 ||
+      (options.attachments?.length ?? 0) > 0 ||
+      options.outputSchema !== undefined
+    ) {
+      throw new Error(
+        "A tool-free agent takes its prompt after creation: create it, check `agent.toolFree`, then send the prompt.",
+      );
+    }
+  }
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
     if (options.git !== undefined || options.worktreeName !== undefined) {
       throw new Error(
@@ -3526,6 +3579,8 @@ export class DaemonClient {
     if (options.background !== undefined) this.requireBackgroundCreation(options);
     if (options.metadata !== undefined) this.requireEntityMetadata();
     const config = resolveAgentConfig(options);
+    const toolFree = config.toolPolicy?.toolFree === true;
+    if (toolFree) this.requireToolFreeCreation(options);
     const result = await this.creations.createAgent({
       ...options,
       config: this.carriesLegacyOptions(config)
@@ -3533,6 +3588,9 @@ export class DaemonClient {
         : config,
     });
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
+    if (toolFree && result.agent.toolFree !== true) {
+      throw new ToolFreeAgentUnverifiedError(result.agent.id);
+    }
     return result.agent;
   }
 
@@ -5547,6 +5605,7 @@ export class DaemonClient {
     if (input.metadata !== undefined || input.agent?.metadata !== undefined)
       this.requireEntityMetadata();
     let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+    rejectToolFreeWorkspaceAgent(agentConfig);
     if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
       agentConfig = await this.routeLegacyCreateConfig(agentConfig);
     }
@@ -8373,6 +8432,15 @@ export class DaemonClient {
     };
 
     return { promise, cancel };
+  }
+}
+
+// A workspace create carries its agent's prompt, which a tool-free agent takes only once verified.
+function rejectToolFreeWorkspaceAgent(config: AgentSessionConfig | undefined): void {
+  if (config?.toolPolicy?.toolFree === true) {
+    throw new Error(
+      "Create the workspace first, then create the tool-free agent with createAgent({ workspaceId }).",
+    );
   }
 }
 

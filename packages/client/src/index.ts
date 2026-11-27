@@ -431,6 +431,11 @@ export interface PaseoAgentHandle {
   readonly controls: NonNullable<PaseoAgent["controls"]> | null;
   /** Data plugins stored on the agent. Paseo never reads a key. */
   readonly metadata: NonNullable<PaseoAgent["metadata"]> | null;
+  /**
+   * True when the last snapshot reports the agent runs with no tools, false when it reports an
+   * ordinary agent, null before a snapshot. Fixed at creation.
+   */
+  readonly toolFree: boolean | null;
   readonly runtimeInfo: NonNullable<PaseoAgent["runtimeInfo"]> | null;
   readonly archivedAt: NonNullable<PaseoAgent["archivedAt"]> | null;
   readonly timeline: PaseoAgentTimelineHandle;
@@ -478,7 +483,18 @@ export interface PaseoAgentActions {
   >;
   list(options?: PaseoAgentListOptions): Promise<PaseoAgentListResult>;
   ref(agent: string | PaseoAgent): PaseoAgentHandle;
+  /**
+   * Creates an agent. A tool-free agent (`config.toolPolicy: { preapproved: [], toolFree: true }`)
+   * takes no `prompt` here: the call resolves only once this host reports the agent tool-free,
+   * and the prompt goes out after that with `run()`.
+   */
   create(options: PaseoAgentCreateOptions): Promise<PaseoAgentHandle>;
+  /**
+   * Whether this host runs tool-free agents, from the `server_info` it sent this connection.
+   * False before the connection is up and on hosts that predate the feature. A provider must
+   * also report `supportsToolFree` in the provider snapshot.
+   */
+  supportsToolFree(): boolean;
   /**
    * Local event subscription over the low-level driver's agent_update stream.
    * The returned function only removes this SDK listener.
@@ -868,6 +884,7 @@ export function createPaseoApi(
       list: listAgents,
       ref: (agent) => createAgentHandle(agent),
       create: (options) => createAgent(options),
+      supportsToolFree: () => daemonClient.supportsToolFreeAgents(),
       subscribe: listenAgents,
     },
     providers: {
@@ -1130,6 +1147,9 @@ function createAgentHandleFactory(
       },
       get metadata() {
         return current?.metadata ?? null;
+      },
+      get toolFree() {
+        return current ? current.toolFree === true : null;
       },
       get runtimeInfo() {
         return current?.runtimeInfo ?? null;

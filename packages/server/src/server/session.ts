@@ -162,6 +162,11 @@ import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
+  assertNotToolFree,
+  assertToolFreeCreateCarriesNoContent,
+  isToolFreeConfig,
+} from "./agent/tool-free.js";
+import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
   type AgentPermissionResponse,
@@ -4790,6 +4795,8 @@ export class Session {
     observer?: (snapshot: CreationSnapshot) => void,
   ): Promise<CreationSnapshot> {
     const { requestId, type: _type, subscribe: _subscribe, idempotencyKey, ...intent } = request;
+    assertToolFreeCreateCarriesNoContent(request);
+    if (isToolFreeConfig(request.config)) this.agentManager.assertToolFreeSupported(request.config);
     return this.creationService.create(
       {
         kind: "agent",
@@ -4879,6 +4886,7 @@ export class Session {
         throw new Error("Session is not authorized to create an agent");
       }
       const agentInput = request.agent;
+      assertNotToolFree({ config: agentInput?.config, surface: "Creating a workspace" });
       const creation = await this.creationService.create(
         {
           kind: "workspace",
@@ -5070,6 +5078,9 @@ export class Session {
     let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
     try {
+      assertToolFreeCreateCarriesNoContent(msg);
+      // Before the worktree, the workspace, or any plugin manager runs for a refused agent.
+      if (isToolFreeConfig(config)) this.agentManager.assertToolFreeSupported(config);
       const requestedCwd = resolve(config.cwd);
       const needsRequestedDirectory = Boolean(worktree) || (!msg.workspaceId && !msg.callerAgentId);
       if (needsRequestedDirectory && !(await this.filesystem.isDirectory(requestedCwd))) {

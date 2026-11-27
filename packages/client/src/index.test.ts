@@ -2196,3 +2196,52 @@ test("background stop rejects when the host does not advertise the operation", a
   ).rejects.toThrow("Update the host");
   await client.close();
 });
+
+test("agents report the host's tool-free support from its server_info", async () => {
+  const unsupported = await connectClient();
+  expect(unsupported.client.agents.supportsToolFree()).toBe(false);
+  await unsupported.client.close();
+  FakeWebSocket.instances.length = 0;
+
+  const { client } = await connectClient({ ownedSubscriptions: true, toolFreeAgents: true });
+  expect(client.agents.supportsToolFree()).toBe(true);
+  await client.close();
+});
+
+test("agents.create returns a tool-free handle only once the host reports the mode", async () => {
+  const { client, ws } = await connectClient({ ownedSubscriptions: true, toolFreeAgents: true });
+  const toolPolicy = { preapproved: [], toolFree: true as const };
+  await expect(
+    client.agents.create({
+      config: { provider: "claude/sonnet", toolPolicy },
+      cwd: "/repo/sdk",
+      prompt: "Translate: canary",
+    }),
+  ).rejects.toThrow(/takes its prompt after creation/u);
+
+  const creating = client.agents.create({
+    config: { provider: "claude/sonnet", toolPolicy },
+    cwd: "/repo/sdk",
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "create_agent_request",
+    config: { provider: "claude", model: "sonnet", toolPolicy },
+  });
+  expect(request).not.toHaveProperty("initialPrompt");
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: { ...createAgent(), toolFree: true },
+      },
+    }),
+  );
+  const agent = await creating;
+  expect(agent.toolFree).toBe(true);
+  expect(client.agents.ref("other").toolFree).toBeNull();
+  await client.close();
+});

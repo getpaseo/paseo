@@ -5,7 +5,7 @@ import {
   formatAgentMessage,
   formatSystemNotificationPrompt,
 } from "./agent-messages/index.js";
-import { expect, test, vi, onTestFinished } from "vitest";
+import { describe, expect, test, vi, onTestFinished } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +34,7 @@ import { FakePi } from "./providers/pi/test-utils/fake-pi.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js";
-import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createAgentMessageDelivery } from "./agent-messages/index.js";
@@ -72,6 +72,9 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { buildProviderRegistry } from "./provider-registry.js";
+import { ToolFreeAgentError, assertToolFreeRequest } from "./tool-free.js";
+import { assertClaudeToolFreeLaunchable } from "./providers/claude/tool-free.js";
 import { mergeProviderOptions } from "./provider-options.js";
 
 import { OpenCodeV2AgentClient } from "./providers/opencode/v2/agent.js";
@@ -16740,4 +16743,276 @@ test("a wrapped refresh passes a Windows script provider command to the wrapper 
     expect(launched.slice(0, 2)).toEqual(["C:\\codex\\codex.cmd", "app-server"]);
   expect(manager.getAgent(created.id)?.lifecycle).not.toBe("error");
   await manager.closeAgent(created.id);
+});
+
+describe("tool-free agents", () => {
+  const TOOL_FREE = { preapproved: [], toolFree: true as const };
+  // No built-in provider accepts a tool-free policy today, so these tests run the daemon's own
+  // guarantees against a provider definition that accepts one, with Claude's launch rules.
+  const registry = buildProviderRegistry(logger);
+  const acceptsToolFree = {
+    enabled: true,
+    applyToolPolicy: (config: AgentSessionConfig, toolPolicy: ToolPolicy | undefined) => {
+      const next = { ...config, toolPolicy };
+      assertToolFreeRequest(next);
+      assertClaudeToolFreeLaunchable({
+        provider: config.provider,
+        runtimeSettings: undefined,
+        providerOptions: config.providerOptions,
+      });
+      return next;
+    },
+  };
+
+  class McpCapableSession extends TestAgentSession {
+    override readonly capabilities = { ...TEST_CAPABILITIES, supportsMcpServers: true };
+    readonly appliedOptions: ProviderOptions[] = [];
+
+    // Takes any patch, so only the manager's own check can refuse one.
+    async applyOptions(options: ProviderOptions): Promise<ProviderOptions> {
+      this.appliedOptions.push(options);
+      return {};
+    }
+  }
+
+  class LaunchRecordingClient extends TestAgentClient {
+    readonly launches: Array<{ config: AgentSessionConfig; context?: AgentLaunchContext }> = [];
+
+    override async createSession(
+      config: AgentSessionConfig,
+      context?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.launches.push({ config, context });
+      return new McpCapableSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      context?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.launches.push({ config: config as AgentSessionConfig, context });
+      return super.resumeSession(handle, config, context);
+    }
+  }
+
+  type BeforeHook = (name: string, request: Record<string, unknown>) => Record<string, unknown>;
+
+  function setup(
+    input: { hooks?: BeforeHook[]; definitions?: "accepting" | "codex" | "claude" } = {},
+  ) {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-tool-free-"));
+    onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));
+    const client = new LaunchRecordingClient();
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const hooks = input.hooks ?? [];
+    const applyHooks = (name: string, request: Record<string, unknown>) =>
+      hooks.reduce((current, hook) => hook(name, current), request);
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      mcpBaseUrl: "http://127.0.0.1:6767/mcp",
+      providerDefinitions: {
+        codex: {
+          accepting: acceptsToolFree,
+          codex: registry.codex,
+          claude: registry.claude,
+        }[input.definitions ?? "accepting"],
+      },
+      // Each plugin's hook sees the request the previous one returned, as the lifecycle runs them.
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (name, request) =>
+          applyHooks(name, request as Record<string, unknown>) as typeof request,
+      },
+      pluginSessions: {
+        openSession: async (request) => {
+          const transformed = applyHooks("agent.open.before", request as Record<string, unknown>);
+          return {
+            ...request,
+            ...transformed,
+            tools: (transformed.tools as AttachedAgentTool[] | undefined) ?? [],
+            mcpServerOwners:
+              (transformed.mcpServerOwners as Record<string, string> | undefined) ?? {},
+          };
+        },
+        sessionLaunched: () => {},
+        sessionLaunchFailed: () => {},
+        refreshSession: async () => ({ stale: false }),
+        sessionTools: () => [],
+        closeSession: () => {},
+        callTool: async () => ({ isError: true, text: "No plugin tools" }),
+      },
+    });
+    return { client, manager, storage, workdir };
+  }
+
+  test("launches with no Paseo MCP server and reports the mode", async () => {
+    const { client, manager, storage, workdir } = setup();
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const launch = client.launches[0]!;
+    expect(launch.config.mcpServers ?? {}).toEqual({});
+    expect(launch.config.toolPolicy).toEqual(TOOL_FREE);
+    expect(launch.context?.paseoTools).toBeUndefined();
+    expect(toAgentPayload(manager.getAgent(agent.id)!).toolFree).toBe(true);
+    await manager.flush();
+    const record = await storage.get(agent.id);
+    expect(record?.config?.toolPolicy).toEqual(TOOL_FREE);
+    expect(buildStoredAgentPayload(record!, ["codex"], () => ({})).toolFree).toBe(true);
+    await manager.closeAgent(agent.id);
+  });
+
+  test("an ordinary agent keeps the Paseo MCP server and reports no mode", async () => {
+    const { client, manager, workdir } = setup();
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(Object.keys(client.launches[0]!.config.mcpServers ?? {})).toEqual(["paseo"]);
+    expect(toAgentPayload(manager.getAgent(agent.id)!)).not.toHaveProperty("toolFree");
+    await manager.closeAgent(agent.id);
+  });
+
+  test.each(["codex", "claude"] as const)(
+    "the built-in %s definition refuses before any session exists",
+    async (definitions) => {
+      const { client, manager, workdir } = setup({ definitions });
+      await expect(
+        manager.createAgent({ provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE }, undefined, {
+          workspaceId: undefined,
+        }),
+      ).rejects.toThrow(ToolFreeAgentError);
+      expect(client.launches).toHaveLength(0);
+    },
+  );
+
+  test("an MCP server a later plugin hook injects stops the launch", async () => {
+    const benign: BeforeHook = (name, request) =>
+      name === "agent.open.before" ? { ...request, appendSystemPrompt: ["Be brief."] } : request;
+    const injecting: BeforeHook = (name, request) =>
+      name === "agent.open.before"
+        ? {
+            ...request,
+            mcpServers: { late: { type: "stdio", command: "late-server" } },
+            mcpServerOwners: { late: "late-plugin" },
+          }
+        : request;
+    const { client, manager, workdir } = setup({ hooks: [benign, injecting] });
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow(/late \(late-plugin\)/u);
+    expect(client.launches).toHaveLength(0);
+  });
+
+  test("plugin tools attached at open stop the launch", async () => {
+    const attaching: BeforeHook = (name, request) =>
+      name === "agent.open.before"
+        ? { ...request, tools: [{ name: "lookup", description: "d", inputSchema: {} }] }
+        : request;
+    const { client, manager, workdir } = setup({ hooks: [attaching] });
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow(ToolFreeAgentError);
+    expect(client.launches).toHaveLength(0);
+  });
+
+  test.each([
+    [
+      "removes the policy",
+      (config: AgentSessionConfig) => ({ ...config, toolPolicy: undefined }),
+      /removed tool-free mode/u,
+    ],
+    [
+      "adds an MCP server",
+      (config: AgentSessionConfig) => ({
+        ...config,
+        mcpServers: { extra: { type: "stdio" as const, command: "extra" } },
+      }),
+      /MCP servers/u,
+    ],
+  ])("a create hook that %s is refused", async (_label, edit, message) => {
+    const editing: BeforeHook = (name, request) =>
+      name === "agent.create.before"
+        ? { ...request, config: edit(request.config as AgentSessionConfig) }
+        : request;
+    const { client, manager, workdir } = setup({ hooks: [editing] });
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE }, undefined, {
+        workspaceId: undefined,
+      }),
+    ).rejects.toThrow(message);
+    expect(client.launches).toHaveLength(0);
+  });
+
+  test("a reload cannot drop the mode, and an ordinary agent cannot gain it", async () => {
+    const { client, manager, workdir } = setup();
+    const toolFree = await manager.createAgent(
+      { provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const ordinary = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(
+      manager.reloadAgentSession(toolFree.id, { toolPolicy: undefined }),
+    ).rejects.toThrow(/cannot be reopened with tools/u);
+    await expect(
+      manager.reloadAgentSession(ordinary.id, { toolPolicy: TOOL_FREE }),
+    ).rejects.toThrow(/cannot become tool-free/u);
+    const launchesBefore = client.launches.length;
+    await manager.reloadAgentSession(toolFree.id, { model: "gpt-5.4-mini" });
+    expect(client.launches.slice(launchesBefore).map((launch) => launch.config.toolPolicy)).toEqual(
+      [TOOL_FREE],
+    );
+    await manager.closeAgent(toolFree.id);
+    await manager.closeAgent(ordinary.id);
+  });
+
+  test("an options patch that would widen a tool-free launch is refused and not stored", async () => {
+    const { manager, storage, workdir } = setup();
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await expect(
+      manager.setAgentOptions(agent.id, { extraArgs: { settings: "/tmp/hooks.json" } }),
+    ).rejects.toThrow(ToolFreeAgentError);
+    const session = manager.getAgent(agent.id)!.session as McpCapableSession;
+    expect(session.appliedOptions).toEqual([]);
+    await manager.flush();
+    expect((await storage.get(agent.id))?.config?.providerOptions ?? {}).toEqual({});
+    expect(manager.getAgent(agent.id)?.config.providerOptions ?? {}).toEqual({});
+    await manager.closeAgent(agent.id);
+  });
+
+  test("resuming a stored tool-free agent without its policy is refused", async () => {
+    const { client, manager, storage, workdir } = setup();
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, toolPolicy: TOOL_FREE },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.flush();
+    await manager.closeAgent(agent.id);
+    const launchesBefore = client.launches.length;
+    expect((await storage.get(agent.id))?.config?.toolPolicy).toEqual(TOOL_FREE);
+    await expect(
+      manager.resumeAgentFromPersistence(
+        { provider: "codex", sessionId: "s", metadata: { cwd: workdir } },
+        { cwd: workdir },
+        agent.id,
+      ),
+    ).rejects.toThrow(/cannot be reopened with tools/u);
+    expect(client.launches).toHaveLength(launchesBefore);
+  });
 });

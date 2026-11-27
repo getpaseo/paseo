@@ -1075,6 +1075,7 @@ export class ProviderSnapshotManager {
           docsUrl: definition.docsUrl,
           defaultModeId: definition.defaultModeId ?? null,
           ...(definition.supportsLaunchWrap ? { launchWrap: true } : {}),
+          ...(definition.supportsToolFree ? { supportsToolFree: true } : {}),
         }),
       });
     }

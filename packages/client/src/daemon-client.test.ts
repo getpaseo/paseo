@@ -10585,3 +10585,122 @@ test("disposing a route before its deferred close does not reopen it on origin r
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
 });
+
+describe("tool-free agent creation", () => {
+  const TOOL_FREE = { preapproved: [], toolFree: true as const };
+  const snapshot = {
+    id: "agent-tool-free",
+    provider: "claude",
+    cwd: "/repo",
+    model: null,
+    createdAt: "2026-11-21T00:00:00.000Z",
+    updatedAt: "2026-11-21T00:00:00.000Z",
+    lastUserMessageAt: null,
+    status: "idle",
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    labels: {},
+  };
+
+  async function connect(features: Record<string, boolean>) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "tool-free",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen({ features });
+    await connecting;
+    return { mock, client };
+  }
+
+  function answerCreate(mock: ReturnType<typeof createMockTransport>, agent: object) {
+    const request = parseSentFrame(mock.sent[mock.sent.length - 1]);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "status",
+        payload: { status: "agent_created", requestId: request.requestId, agentId: "a", agent },
+      } as never),
+    );
+    return request;
+  }
+
+  test("never sends a tool-free request to a host without the feature", async () => {
+    const { mock, client } = await connect({});
+    expect(client.supportsToolFreeAgents()).toBe(false);
+    await expect(
+      client.createAgent({ provider: "claude", cwd: "/repo", toolPolicy: TOOL_FREE }),
+    ).rejects.toMatchObject({ code: "TOOL_FREE_AGENTS_UNSUPPORTED" });
+    expect(mock.sent).toHaveLength(0);
+  });
+
+  test.each([
+    ["a prompt", { initialPrompt: "Translate: canary" }],
+    ["images", { images: [{ data: "aGVsbG8=", mimeType: "image/png" }] }],
+    ["an output schema", { outputSchema: { type: "object" } }],
+  ])("refuses a tool-free create that carries %s", async (_label, extra) => {
+    const { mock, client } = await connect({ toolFreeAgents: true });
+    await expect(
+      client.createAgent({
+        config: { provider: "claude", cwd: "/repo", toolPolicy: TOOL_FREE },
+        ...extra,
+      }),
+    ).rejects.toThrow(/takes its prompt after creation/u);
+    expect(mock.sent).toHaveLength(0);
+  });
+
+  test("returns the agent once the host confirms the mode", async () => {
+    const { mock, client } = await connect({ toolFreeAgents: true });
+    const creating = client.createAgent({
+      provider: "claude",
+      cwd: "/repo",
+      toolPolicy: TOOL_FREE,
+    });
+    const request = answerCreate(mock, { ...snapshot, toolFree: true });
+    expect(request).toMatchObject({
+      type: "create_agent_request",
+      config: { toolPolicy: TOOL_FREE },
+    });
+    expect(request).not.toHaveProperty("initialPrompt");
+    await expect(creating).resolves.toMatchObject({ id: "agent-tool-free", toolFree: true });
+  });
+
+  test("fails when the created agent does not report the mode", async () => {
+    const { mock, client } = await connect({ toolFreeAgents: true });
+    const creating = client.createAgent({
+      provider: "claude",
+      cwd: "/repo",
+      toolPolicy: TOOL_FREE,
+    });
+    answerCreate(mock, snapshot);
+    await expect(creating).rejects.toMatchObject({
+      code: "TOOL_FREE_AGENT_UNVERIFIED",
+      agentId: "agent-tool-free",
+    });
+  });
+
+  test("a workspace cannot start with a tool-free agent", async () => {
+    const { mock, client } = await connect({ toolFreeAgents: true });
+    await expect(
+      client.createWorkspace({
+        source: { kind: "directory", path: "/repo" },
+        agent: { provider: "claude", cwd: "/repo", toolPolicy: TOOL_FREE },
+      } as never),
+    ).rejects.toThrow(/Create the workspace first/u);
+    expect(mock.sent).toHaveLength(0);
+  });
+});

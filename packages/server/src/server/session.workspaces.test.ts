@@ -37,6 +37,7 @@ import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import { buildProviderRegistry } from "./agent/provider-registry.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -10373,5 +10374,220 @@ test("path archive of an archived exact child leaves its active parent untouched
     expect(existsSync(root)).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tool-free creates carry no content past the session boundary", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const createAgent = vi.fn(async () => {
+    throw new Error("createAgent must not run");
+  });
+  const generateWorkspaceName = vi.fn(async () => null);
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    agentManager: { createAgent },
+    generateWorkspaceName,
+  });
+  const toolFree = {
+    provider: "claude",
+    cwd: REPO_CWD,
+    toolPolicy: { preapproved: [], toolFree: true as const },
+  };
+
+  await session.handleMessage({
+    type: "create_agent_request",
+    requestId: "req-legacy",
+    config: toolFree,
+    initialPrompt: "Translate: canary-legacy",
+  });
+  await session.handleMessage({
+    type: "create_agent_request",
+    requestId: "req-legacy-attachment",
+    config: toolFree,
+    attachments: [{ type: "text", mimeType: "text/plain", text: "canary-attachment" }],
+  } as never);
+  await session.handleMessage({
+    type: "agent.create.request",
+    requestId: "req-receipt",
+    config: toolFree,
+    initialPrompt: "Translate: canary-receipt",
+  } as never);
+  await session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-workspace",
+    source: { kind: "directory", path: REPO_CWD },
+    agent: { config: toolFree },
+  } as never);
+  await flushWorkspaceUpdateBackgroundWork();
+
+  expect(createAgent).not.toHaveBeenCalled();
+  expect(generateWorkspaceName).not.toHaveBeenCalled();
+  const failures = emitted.flatMap((message) => {
+    if (message.type === "status" && message.payload.status === "agent_create_failed") {
+      return [message.payload.error];
+    }
+    if (message.type === "agent.create.response" || message.type === "workspace.create.response") {
+      return [String(message.payload.error ?? "")];
+    }
+    return [];
+  });
+  expect(failures).toEqual([
+    expect.stringContaining("takes its prompt after creation"),
+    expect.stringContaining("takes its prompt after creation"),
+    expect.stringContaining("takes its prompt after creation"),
+    expect.stringContaining("cannot create a tool-free agent"),
+  ]);
+});
+
+test("a tool-free create its provider refuses leaves no worktree and runs no worktree manager", async () => {
+  const workdir = mkdtempSync(path.join(tmpdir(), "paseo-create-agent-tool-free-worktree-"));
+  try {
+    const repo = path.join(workdir, "repo");
+    mkdirSync(repo, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "pipe" });
+    execFileSync("git", ["config", "user.email", "test@getpaseo.local"], {
+      cwd: repo,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["config", "user.name", "Paseo Test"], { cwd: repo, stdio: "pipe" });
+    writeFileSync(path.join(repo, "README.md"), "repo\n");
+    execFileSync("git", ["add", "."], { cwd: repo, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "initial"], { cwd: repo, stdio: "pipe" });
+
+    const logger = {
+      child: () => logger,
+      trace: vi.fn(),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const agentStorage = new AgentStorage(path.join(workdir, "agents"), asSessionLogger(logger));
+    const agentManager = new AgentManager({
+      clients: { codex: new CreateAgentTestClient() },
+      registry: agentStorage,
+      logger: asSessionLogger(logger),
+      // The real provider contract, which refuses tool-free agents.
+      providerDefinitions: { codex: buildProviderRegistry(asSessionLogger(logger)).codex },
+    });
+    const createAgent = vi.spyOn(agentManager, "createAgent");
+    const managerCreateWorktree = vi.fn(async () => null);
+    const workspaceGitService = createNoopWorkspaceGitService({
+      getCheckout: async (cwd: string) => ({
+        cwd,
+        isGit: true,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: repo,
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: null,
+      }),
+      resolveRepoRoot: async () => repo,
+      resolveDefaultBranch: async () => "main",
+    });
+    const workspaceRegistry = new FileBackedWorkspaceRegistry(
+      path.join(workdir, "workspaces.json"),
+      asSessionLogger(logger),
+    );
+    const emitted: SessionOutboundMessage[] = [];
+    const session = new Session({
+      workspaceRuntimeStore: createWorkspaceRuntimeStore(),
+      messageReceipts: createMessageReceiptsStub(),
+      agentMessages: createAgentMessageDeliveryStub(),
+      creationService: createTestCreationService(),
+      clientId: "test-client",
+      permissions: OWNER_PERMISSIONS,
+      appVersion: null,
+      onMessage: (message) => emitted.push(message),
+      logger: asSessionLogger(logger),
+      downloadTokenStore: asDownloadTokenStore(),
+      pushNotifications: asPushNotifications(),
+      paseoHome: path.join(workdir, "paseo-home"),
+      agentManager,
+      agentStorage,
+      projectRegistry: new FileBackedProjectRegistry(
+        path.join(workdir, "projects.json"),
+        asSessionLogger(logger),
+      ),
+      workspaceRegistry,
+      scheduleService: asScheduleService(),
+      checkoutDiffManager: asCheckoutDiffManager({
+        subscribe: async () => ({
+          initial: { cwd: repo, files: [], error: null },
+          unsubscribe: () => {},
+        }),
+        scheduleRefreshForCwd: () => {},
+        onWorkspaceStateMayHaveChanged: () => {},
+        getMetrics: () => ({
+          checkoutDiffTargetCount: 0,
+          checkoutDiffSubscriptionCount: 0,
+          checkoutDiffWatcherCount: 0,
+          checkoutDiffFallbackRefreshTargetCount: 0,
+        }),
+        dispose: () => {},
+      }),
+      workspaceGitService,
+      workspaceAutoName: new WorkspaceAutoName({
+        agentManager,
+        workspaceRegistry,
+        workspaceGitService,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
+        gitMutation: { notifyGitMutation: async () => {} },
+        emitWorkspaceUpdateForCwd: async () => {},
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        logger: asSessionLogger(logger),
+      }),
+      daemonConfigStore: asDaemonConfigStore({
+        get: () => ({ mcp: { injectIntoAgents: false }, providers: {} }),
+        onChange: () => () => {},
+      }),
+      // A plugin that manages worktrees for this repository.
+      pluginRuntime: {
+        wait: async () => {},
+        before: async (_name: string, request: unknown) => request,
+        emit: () => {},
+        hasWorktreeManager: () => true,
+        createWorktree: managerCreateWorktree,
+        removeWorktree: async () => null,
+        restoreWorktree: async () => null,
+      } as never,
+      mcpBaseUrl: null,
+      stt: null,
+      tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      terminalManager: null,
+    });
+
+    // Compared as a whole set: the requested branch name is normalized before it is created.
+    const localBranches = () =>
+      execFileSync("git", ["for-each-ref", "--format=%(refname)", "refs/heads"], { cwd: repo })
+        .toString()
+        .split("\n")
+        .filter(Boolean)
+        .sort();
+    const branchesBefore = localBranches();
+
+    await session.handleMessage({
+      type: "create_agent_request",
+      requestId: "req-tool-free-worktree",
+      config: { provider: "codex", cwd: repo, toolPolicy: { preapproved: [], toolFree: true } },
+      worktree: { mode: "branch-off", newBranch: "feature/tool-free" },
+    });
+
+    expect(findByType(emitted, "status")?.payload).toMatchObject({
+      status: "agent_create_failed",
+      error: expect.stringContaining("cannot run tool-free agents"),
+    });
+    expect(managerCreateWorktree).not.toHaveBeenCalled();
+    expect(createAgent).not.toHaveBeenCalled();
+    const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repo })
+      .toString()
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "));
+    expect(worktrees).toHaveLength(1);
+    expect(localBranches()).toEqual(branchesBefore);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
   }
 });

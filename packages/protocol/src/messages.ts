@@ -455,6 +455,8 @@ export const ProviderSnapshotEntrySchema = z.object({
   docsUrl: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
   launchWrap: z.boolean().optional(),
+  // COMPAT(toolFreeAgents): added in v0.17.0. True only when the provider enforces tool-free agents.
+  supportsToolFree: z.boolean().optional(),
 });
 
 export const CompactProviderSnapshotModelSchema = AgentModelDefinitionSchema.omit({
@@ -551,9 +553,13 @@ const McpToolRefSchema = z
   })
   .strict();
 
+// Strict on purpose: a daemon that does not know a ToolPolicy field rejects the request instead of
+// stripping it, so a tool-free request can never become an ordinary agent on an older daemon.
 const ToolPolicySchema = z
   .object({
     preapproved: z.array(McpToolRefSchema),
+    // COMPAT(toolFreeAgents): added in v0.17.0; gate on server_info.features.toolFreeAgents.
+    toolFree: z.literal(true).optional(),
   })
   .strict();
 
@@ -986,6 +992,9 @@ export const AgentSnapshotPayloadSchema = z.object({
   // Background agent: hidden from default discovery, tabs, tracks and notifications.
   // Fixed at creation. Effective background also includes the workspace's flag.
   background: z.boolean().optional(),
+  // COMPAT(toolFreeAgents): added in v0.17.0. Present only on agents the daemon runs with no
+  // tools; fixed at creation. Absent from older daemons, so callers must not infer it.
+  toolFree: z.literal(true).optional(),
 });
 
 export type AgentSnapshotPayload = z.infer<typeof AgentSnapshotPayloadSchema>;
@@ -4032,6 +4041,9 @@ export const ServerInfoStatusPayloadSchema = z
         hubAgentRpc: z.boolean().optional(),
         // COMPAT(internalAgents): added in v0.9.0; remove gate after 2027-03-17.
         internalAgents: z.boolean().optional(),
+        // COMPAT(toolFreeAgents): added in v0.17.0; remove gate after 2027-11-21.
+        // Daemons without it strip or reject toolPolicy.toolFree; never send it to them.
+        toolFreeAgents: z.boolean().optional(),
         // COMPAT(internalWorkspaces): added in v0.9.0; remove gate after 2027-03-17.
         internalWorkspaces: z.boolean().optional(),
         backgroundWorkspaces: z.boolean().optional(),
