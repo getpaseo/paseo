@@ -149,6 +149,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     timelineTransformers: [],
     timelineRenderers: [],
     notificationOpenHandlers: [],
+    timelineFooters: [],
   };
 }
 

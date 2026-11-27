@@ -118,17 +118,27 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { PluginTimelineFooters } from "@/plugins/timeline/footer";
+import { useInstalledPlugins } from "@/plugins/registry";
+import { activeTimelineCalls } from "@/plugins/timeline/projection";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
   turnFooter: ReactNode;
+  pluginFooters: ReactNode;
   bottomOverlayInset: number;
 }): ReactNode {
-  if (!input.pendingPermissions && !input.turnFooter && input.bottomOverlayInset === 0) {
+  if (
+    !input.pendingPermissions &&
+    !input.turnFooter &&
+    !input.pluginFooters &&
+    input.bottomOverlayInset === 0
+  ) {
     return null;
   }
   return (
     <>
+      {input.pluginFooters}
       {input.turnFooter}
       {input.pendingPermissions ? (
         <View style={stylesheet.contentWrapper}>
@@ -1101,6 +1111,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           viewportRef,
         }),
     );
+    const activeCalls = useMemo(
+      () =>
+        activeTimelineCalls({
+          tail: effectiveStreamItems,
+          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          active: isTurnActive,
+          turnId: effectiveTurnPresentation.turnId,
+        }),
+      [effectiveStreamItems, effectiveStreamHead, isTurnActive, effectiveTurnPresentation.turnId],
+    );
+    const hasPluginFooters = useInstalledPlugins().some(
+      (plugin) => plugin.serverId === resolvedServerId && plugin.timelineFooters.length > 0,
+    );
+    const pluginFooters = useMemo(
+      () =>
+        hasPluginFooters ? (
+          <PluginTimelineFooters
+            agentId={agentId}
+            serverId={resolvedServerId}
+            activeCalls={activeCalls}
+          />
+        ) : null,
+      [hasPluginFooters, agentId, resolvedServerId, activeCalls],
+    );
     const renderLiveAuxiliary = useCallback<StreamSegmentRenderers["renderLiveAuxiliary"]>(() => {
       const existingTailSpacing =
         auxiliary.turnFooter && !auxiliary.pendingPermissions ? TURN_FOOTER_BOTTOM_SPACING : 0;
@@ -1111,9 +1145,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return renderLiveAuxiliaryNode({
         pendingPermissions: auxiliary.pendingPermissions,
         turnFooter: auxiliary.turnFooter,
+        pluginFooters,
         bottomOverlayInset,
       });
-    }, [auxiliary.pendingPermissions, auxiliary.turnFooter, bottomOverlayTailClearance]);
+    }, [
+      auxiliary.pendingPermissions,
+      auxiliary.turnFooter,
+      bottomOverlayTailClearance,
+      pluginFooters,
+    ]);
 
     const renderers = useMemo<StreamSegmentRenderers>(
       () => ({

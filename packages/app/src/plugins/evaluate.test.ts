@@ -117,6 +117,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addComposerPill({ id: "pill", workspaceId: "workspace", agentId: "agent", button: { title: "Pill", icon: "Scan", behavior: { kind: "action", onPress() {} } } }).remove,
           plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
+          plugin.addTimelineFooter({ id: "footer", Component }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
           plugin.addTimelineRenderer({ kind: "card", version: 1, schema, Component }),
           plugin.onNotificationOpen(function handleOpen() {}),
@@ -149,6 +150,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.clientSlashCommands,
         plugin.attachmentSources,
         plugin.themes,
+        plugin.timelineFooters,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
         plugin.notificationOpenHandlers,
@@ -171,6 +173,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.clientSlashCommands,
         plugin.attachmentSources,
         plugin.themes,
+        plugin.timelineFooters,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
         plugin.notificationOpenHandlers,
@@ -1110,5 +1113,19 @@ describe("file panels", () => {
         bundle(`plugin.addFilePanel(${source}); plugin.addFilePanel(${source})`),
       ),
     ).toThrow("Duplicate file panel");
+  });
+
+  it("accepts wrapped memo and forwardRef timeline footer components", () => {
+    const plugin = evaluatePluginClientBundle(
+      "wrapped-footers",
+      bundle(`
+        const React = require("react");
+        const MemoFooter = React.memo(function MemoFooter() { return null; });
+        const RefFooter = React.forwardRef(function RefFooter() { return null; });
+        plugin.addTimelineFooter({ id: "memo", Component: MemoFooter });
+        plugin.addTimelineFooter({ id: "ref", Component: RefFooter });
+      `),
+    );
+    expect(plugin.timelineFooters.map((entry) => entry.id)).toEqual(["memo", "ref"]);
   });
 });

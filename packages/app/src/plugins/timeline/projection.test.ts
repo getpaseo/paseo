@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StreamItem } from "@/types/stream";
 import type { TimelineItemTransform } from "./model";
-import { projectPluginTimelineItems } from "./projection";
+import { activeTimelineCalls, projectPluginTimelineItems } from "./projection";
 
 function thought(text: string, status: "loading" | "ready" = "loading"): StreamItem {
   return {
@@ -240,5 +240,69 @@ describe("plugin timeline projection", () => {
       source,
       source,
     ]);
+  });
+});
+
+describe("timeline footer active calls", () => {
+  const call = (id: string, status: "running" | "completed", turnId = "new"): StreamItem => ({
+    kind: "tool_call",
+    id,
+    turnId,
+    timestamp: new Date(),
+    payload: {
+      source: "agent",
+      data: {
+        provider: "codex",
+        callId: id,
+        name: "Read",
+        status,
+        error: null,
+        detail: { type: "read", filePath: id },
+      },
+    },
+  });
+  it("supplies simultaneous current calls without relying on projected plugin rows", () => {
+    const calls = activeTimelineCalls({
+      tail: [call("old", "running", "old")],
+      head: [call("one", "running"), call("two", "running")],
+      active: true,
+      turnId: "new",
+    });
+    expect(calls.map((entry) => entry.callId)).toEqual(["one", "two"]);
+    expect(Object.isFrozen(calls)).toBe(true);
+    expect(Object.isFrozen(calls[0]?.detail)).toBe(true);
+    expect(
+      activeTimelineCalls({
+        tail: [],
+        head: [call("one", "running"), call("one", "completed")],
+        active: true,
+        turnId: "new",
+      }),
+    ).toEqual([]);
+    expect(
+      activeTimelineCalls({
+        tail: [],
+        head: [call("one", "running")],
+        active: false,
+        turnId: "new",
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps scanning past mid-turn steers sharing the active turnId", () => {
+    const steer = (turnId = "new"): StreamItem => ({
+      kind: "user_message",
+      id: "steer-1",
+      turnId,
+      text: "steer",
+      timestamp: new Date(),
+    });
+    const calls = activeTimelineCalls({
+      tail: [call("prev", "running", "old"), call("before-steer", "running", "new")],
+      head: [steer("new"), call("after-steer", "running", "new")],
+      active: true,
+      turnId: "new",
+    });
+    expect(calls.map((entry) => entry.callId)).toEqual(["before-steer", "after-steer"]);
   });
 });

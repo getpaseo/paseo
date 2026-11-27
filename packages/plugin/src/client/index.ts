@@ -35,6 +35,8 @@ export type {
   PluginScreenContribution,
   PluginScreenTitle,
   PluginSidebarContribution,
+  PluginTimelineFooterProps,
+  PluginTimelineFooterContribution,
   PluginTimelineTransformerContribution,
   PluginTimelineItemProps,
   PluginTimelineRendererContribution,
