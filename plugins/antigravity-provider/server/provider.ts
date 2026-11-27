@@ -181,6 +181,7 @@ export function createAntigravityProvider(): ProviderRegistration {
       perModelThinkingOptions: true,
       waitForInitialCommands: true,
       loadReplayQuietPeriodMs: 200,
+      steerActiveTurn: true,
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
       deferTurnOnRunningTools: {
         keepsTurnOpen(toolCall) {

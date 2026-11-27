@@ -77,6 +77,11 @@ export interface AcpOptions {
     /** Predicate deciding whether an open tool call keeps the turn open. Defaults to all running tools. */
     keepsTurnOpen?: (toolCall: AcpToolCallSnapshot) => boolean;
   };
+  /**
+   * Send `delivery: "steer"` prompts to the agent while a turn is already running by issuing
+   * another `session/prompt` request without cancelling the active turn.
+   */
+  steerActiveTurn?: boolean;
   /** An unattended mode that approves ACP allow-once requests in the specified native mode. */
   autoAcceptMode?: {
     mode: Omit<ProviderMode, "isUnattended">;

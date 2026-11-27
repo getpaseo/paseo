@@ -33,6 +33,7 @@ import type {
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
+import { toAcpContentBlock } from "./prompt-attachments.js";
 import { standardToolCallDetail } from "./tool-call-detail.js";
 import {
   PROVIDER_PROTOCOL_VERSION,
@@ -124,7 +125,7 @@ export async function createAcpProviderConnection(
   if (probe.agentCapabilities.loadSession) {
     supportedCapabilities.push("session.persistence");
   }
-  if (options.acpOptions?.deferTurnOnRunningTools) {
+  if (options.acpOptions?.deferTurnOnRunningTools || options.acpOptions?.steerActiveTurn) {
     supportedCapabilities.push("prompt.steer");
   }
   const capabilities = negotiateProviderCapabilities(request.capabilities, supportedCapabilities);
@@ -560,6 +561,8 @@ interface ActivePrompt {
   cancelling: boolean;
   wirePromptsInFlight: number;
   wirePromptLane: Promise<void>;
+  activeSteers: Set<Promise<void>>;
+  lastStopReason: string | null;
   lastPromptResponseWireSeq: number | null;
   crossedEndTurn: boolean;
   replyState: DeferredReplyState;
@@ -918,7 +921,7 @@ class AcpRuntime {
       throw new Error("ACP session is closed");
     }
     if (input.prompt.delivery === "steer") {
-      this.steerDeferredPrompt(input);
+      this.steerPrompt(input);
       return;
     }
     const active = this.activePrompt;
@@ -975,6 +978,8 @@ class AcpRuntime {
       cancelling: false,
       wirePromptsInFlight: 1,
       wirePromptLane: Promise.resolve(),
+      activeSteers: new Set(),
+      lastStopReason: null,
       lastPromptResponseWireSeq: null,
       crossedEndTurn: false,
       replyState: "idle",
@@ -1002,8 +1007,19 @@ class AcpRuntime {
             usage: this.lastUsage,
           });
         }
-        const state = response.stopReason === "cancelled" ? "canceled" : "completed";
-        if (response.stopReason === "end_turn" && this.shouldDeferTurn(activePrompt)) {
+        while (activePrompt.activeSteers.size > 0) {
+          await Promise.all(activePrompt.activeSteers);
+        }
+        if (this.processFailed) {
+          this.finishPromptTurn(turnId, "failed", {
+            message: this.processFailureMessage ?? "ACP process failed",
+          });
+          return undefined;
+        }
+        const stopReason = activePrompt.lastStopReason ?? response.stopReason;
+        const state =
+          activePrompt.cancelling || stopReason === "cancelled" ? "canceled" : "completed";
+        if (stopReason === "end_turn" && this.shouldDeferTurn(activePrompt)) {
           await this.settleDeferredPrompt(activePrompt);
           return undefined;
         }
@@ -1013,6 +1029,9 @@ class AcpRuntime {
       async (error): Promise<void> => {
         await this.drainNotifications();
         activePrompt.wirePromptsInFlight -= 1;
+        while (activePrompt.activeSteers.size > 0) {
+          await Promise.all(activePrompt.activeSteers);
+        }
         this.finishPromptTurn(turnId, "failed", { message: describeError(error) });
         return undefined;
       },
@@ -1531,6 +1550,7 @@ class AcpRuntime {
       record.result !== null &&
       typeof (record.result as Record<string, unknown>).stopReason === "string" &&
       this.activePrompt &&
+      (this.activePrompt.activeSteers.size === 0 || this.activePrompt.wirePromptsInFlight <= 1) &&
       this.activePrompt.lastPromptResponseWireSeq === null
     ) {
       this.activePrompt.lastPromptResponseWireSeq = ++this.incomingWireSeq;
@@ -1940,10 +1960,17 @@ class AcpRuntime {
     });
   }
 
-  private steerDeferredPrompt(input: Extract<ProviderInput, { type: "session.prompt" }>): void {
+  private steerPrompt(input: Extract<ProviderInput, { type: "session.prompt" }>): void {
     const active = this.activePrompt;
-    const deferred = active?.deferred;
-    if (!active || !deferred || active.cancelling || this.closing || this.processFailed) {
+    const deferred = active?.deferred ?? null;
+    const allowActiveSteer = this.options.options.acpOptions?.steerActiveTurn === true;
+    const canSteer =
+      active !== null &&
+      !active.cancelling &&
+      !this.closing &&
+      !this.processFailed &&
+      (deferred !== null || allowActiveSteer);
+    if (!canSteer) {
       this.emit({
         type: "session.prompt_result",
         sessionId: this.options.boundarySessionId,
@@ -1951,7 +1978,9 @@ class AcpRuntime {
         result: {
           type: "failed",
           error: {
-            message: "ACP session can only steer while waiting on deferred background tools",
+            message: allowActiveSteer
+              ? "ACP session can only steer while a turn is active"
+              : "ACP session can only steer while waiting on deferred background tools",
           },
         },
       });
@@ -1962,7 +1991,7 @@ class AcpRuntime {
     }
     const prompt = toAcpPrompt(input.prompt);
     active.wirePromptsInFlight += 1;
-    this.scheduleDeferredSettle();
+    if (deferred) this.scheduleDeferredSettle();
     this.replayWindow = null;
     this.fallbackChunkIds.clear();
     this.emit({
@@ -1984,6 +2013,10 @@ class AcpRuntime {
       clientMessageId: input.prompt.clientMessageId,
       result: { type: "steer", turnId: active.turnId },
     });
+    if (!deferred) {
+      this.runActiveSteer(active, input.prompt.clientMessageId, prompt);
+      return;
+    }
     const runSteer = async (): Promise<void> => {
       try {
         if (
@@ -2052,6 +2085,63 @@ class AcpRuntime {
       }
     };
     active.wirePromptLane = active.wirePromptLane.then(runSteer);
+  }
+
+  private runActiveSteer(
+    active: ActivePrompt,
+    clientMessageId: string,
+    prompt: ContentBlock[],
+  ): void {
+    const steer = this.executeActiveSteer(active, clientMessageId, prompt).finally(() => {
+      active.wirePromptsInFlight -= 1;
+      active.activeSteers.delete(steer);
+    });
+    active.activeSteers.add(steer);
+  }
+
+  private async executeActiveSteer(
+    active: ActivePrompt,
+    clientMessageId: string,
+    prompt: ContentBlock[],
+  ): Promise<void> {
+    try {
+      if (this.closing || this.processFailed || active.cancelling) return;
+      this.fallbackChunkIds.clear();
+      active.lastPromptResponseWireSeq = null;
+      const response = await this.call(
+        this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
+      );
+      await this.drainNotifications();
+      if (this.closing || this.deferredRetirement) return;
+      active.lastStopReason = response.stopReason;
+      if (response.usage) {
+        this.lastUsage = {
+          ...this.lastUsage,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          cachedInputTokens: response.usage.cachedReadTokens ?? undefined,
+        };
+        this.emit({
+          type: "session.usage",
+          sessionId: this.options.boundarySessionId,
+          turnId: active.turnId,
+          usage: this.lastUsage,
+        });
+      }
+    } catch (error) {
+      await this.drainNotifications();
+      if (this.closing || this.deferredRetirement || this.processFailed) return;
+      this.emit({
+        type: "session.notice",
+        sessionId: this.options.boundarySessionId,
+        notice: {
+          id: `acp:steer-error:${clientMessageId}`,
+          severity: "error",
+          title: "Follow-up prompt failed",
+          description: describeError(error),
+        },
+      });
+    }
   }
 
   private async settleDeferredPrompt(active: ActivePrompt): Promise<void> {
@@ -2438,10 +2528,7 @@ function toAcpPrompt(
     const suffix = prompt.input.arguments ? ` ${prompt.input.arguments}` : "";
     return [{ type: "text", text: `/${prompt.input.name}${suffix}` }];
   }
-  return prompt.input.content.map((content) => {
-    if (content.type === "text" || content.type === "image") return content;
-    return { type: "text", text: JSON.stringify(content) };
-  });
+  return prompt.input.content.map(toAcpContentBlock);
 }
 
 function nativePersistence(sessionId: string): ProviderPersistence {

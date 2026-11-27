@@ -1017,3 +1017,118 @@ child.on("exit", (code) => process.exit(code ?? 1));
     await connection.close();
   }
 });
+
+it("formats prompt attachments as readable text and steers an active turn without canceling it", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    const prompts = [];
+    let firstPromptId = null;
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const msg = JSON.parse(line);
+      const update = (u) => send({ method: "session/update", params: { sessionId: "agy-steer", update: u } });
+      if (msg.method === "initialize") send({ id: msg.id, result: { protocolVersion: 1 } });
+      else if (msg.method === "session/new") {
+        send({ id: msg.id, result: { sessionId: "agy-steer", modes: {
+          currentModeId: "default", availableModes: [{ id: "default", name: "Default" }],
+        } } });
+        update({ sessionUpdate: "available_commands_update", availableCommands: [] });
+      } else if (msg.method === "session/set_mode") {
+        send({ id: msg.id, result: {} });
+      } else if (msg.method === "session/prompt") {
+        prompts.push(msg.params.prompt);
+        if (prompts.length === 1) {
+          firstPromptId = msg.id;
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Starting..." } });
+        } else {
+          // Matches agy acp: receiving a steering prompt resolves the first prompt and continues on the second.
+          send({ id: firstPromptId, result: { stopReason: "end_turn" } });
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: " Steered: " + prompts[0].map((b) => b.text).join(" | ") } });
+          send({ id: msg.id, result: { stopReason: "end_turn" } });
+        }
+      } else if (msg.method === "session/close") {
+        send({ id: msg.id, result: {} });
+      }
+    });
+  `);
+  const connection = await createAntigravityProvider().connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message", "prompt.steer", "session.configure"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "test",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+    });
+    await expect.poll(() => events.find((event) => event.type === "session.ready")).toBeDefined();
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "first",
+        delivery: "auto",
+        input: {
+          type: "message",
+          content: [
+            { type: "text", text: "Check this PR" },
+            {
+              type: "github_pr",
+              mimeType: "application/github-pr",
+              number: 7,
+              title: "Fix stream",
+              url: "https://github.com/org/repo/pull/7",
+            },
+          ],
+        },
+      },
+    });
+    await expect
+      .poll(() =>
+        events.find(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "assistant_message" &&
+            event.item.text.includes("Starting..."),
+        ),
+      )
+      .toBeDefined();
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "steer-1",
+        delivery: "steer",
+        input: { type: "message", content: [{ type: "text", text: "Also summarize" }] },
+      },
+    });
+    await expect
+      .poll(() =>
+        events.find(
+          (event) => event.type === "session.prompt_result" && event.clientMessageId === "steer-1",
+        ),
+      )
+      .toMatchObject({ result: { type: "steer", turnId: "acp:first" } });
+    await expect
+      .poll(() =>
+        events.find((event) => event.type === "session.turn" && event.state === "completed"),
+      )
+      .toMatchObject({ turnId: "acp:first", state: "completed" });
+    const assistant = events.filter(
+      (event): event is Extract<ProviderEvent, { type: "timeline.item" }> =>
+        event.type === "timeline.item" && event.item.type === "assistant_message",
+    );
+    const finalText = assistant
+      .map((event) => (event.item.type === "assistant_message" ? event.item.text : ""))
+      .join("");
+    expect(finalText).toContain("GitHub PR #7: Fix stream");
+    expect(finalText).not.toContain('"mimeType":"application/github-pr"');
+  } finally {
+    await connection.close();
+  }
+});
