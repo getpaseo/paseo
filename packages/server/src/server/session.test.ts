@@ -914,6 +914,57 @@ describe("workspace label editing", () => {
 });
 
 describe("session authorization permissions", () => {
+  test("routes guarded archive through its dedicated operation", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const archiveStaleClosedAgent = vi.fn().mockResolvedValue(null);
+    const session = createSessionForTest({
+      messages,
+      permissions: ["workspace.write"],
+      agentManager: { archiveStaleClosedAgent },
+    });
+
+    await session.handleMessage({
+      type: "agent.archive_stale_closed.request",
+      agentId: "agent-id",
+      requestId: "archive-1",
+    });
+
+    expect(archiveStaleClosedAgent).toHaveBeenCalledExactlyOnceWith("agent-id");
+    expect(messages).toEqual([
+      {
+        type: "agent.archive_stale_closed.response",
+        payload: { requestId: "archive-1", archived: false },
+      },
+    ]);
+  });
+
+  test("requires workspace write permission for guarded archive", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const archiveStaleClosedAgent = vi.fn();
+    const session = createSessionForTest({
+      messages,
+      permissions: ["workspace.read", "hub.execute"],
+      agentManager: { archiveStaleClosedAgent },
+    });
+
+    await session.handleMessage({
+      type: "agent.archive_stale_closed.request",
+      agentId: "agent-id",
+      requestId: "archive-2",
+    });
+
+    expect(archiveStaleClosedAgent).not.toHaveBeenCalled();
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({
+          requestId: "archive-2",
+          code: "access_denied",
+        }),
+      }),
+    ]);
+  });
+
   test("routes named-agent validation through the session source", async () => {
     const messages: SessionOutboundMessage[] = [];
     const providers = createProviderSnapshotManagerStub();

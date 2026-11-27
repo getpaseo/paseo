@@ -97,6 +97,9 @@ export function toStoredAgentRecord(
     labels: agent.labels,
     metadata: agent.metadata,
     lastStatus: agent.lifecycle,
+    ...(agent.lifecycle === "closed" && agent.closedAt
+      ? { closedAt: agent.closedAt.toISOString() }
+      : {}),
     lastModeId: agent.currentModeId ?? config?.modeId ?? null,
     config: config ?? null,
     launchEnv: agent.launchEnv ? { ...agent.launchEnv } : undefined,

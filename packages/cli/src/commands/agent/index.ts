@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { runModeCommand } from "./mode.js";
 import { addArchiveOptions, runArchiveCommand } from "./archive.js";
+import { runSweepClosedCommand } from "./sweep-closed.js";
 import { addDeleteOptions, runDeleteCommand } from "./delete.js";
 import { addLsOptions, runLsCommand } from "./ls.js";
 import { addRunOptions, runRunCommand } from "./run.js";
@@ -19,6 +20,7 @@ import { withOutput } from "../../output/index.js";
 import {
   addDaemonHostOption,
   addJsonAndDaemonHostOptions,
+  addLocalDaemonOptions,
   collectMultiple,
   withGlobalOptions,
 } from "../../utils/command-options.js";
@@ -82,6 +84,10 @@ export function createAgentCommand(): Command {
   addJsonAndDaemonHostOptions(addArchiveOptions(agent.command("archive"))).action(
     withOutput(runArchiveCommand),
   );
+
+  addLocalDaemonOptions(
+    agent.command("sweep-closed").description("Archive local agents closed for more than 72 hours"),
+  ).action(withGlobalOptions(runSweepClosedCommand));
 
   addJsonAndDaemonHostOptions(addReloadOptions(agent.command("reload"))).action(
     withOutput(runReloadCommand),

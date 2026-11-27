@@ -6417,6 +6417,86 @@ test("detaches an agent through the namespaced detach RPC", async () => {
   await expect(promise).resolves.toBeUndefined();
 });
 
+test.each([true, false])("returns the daemon's guarded archive result (%s)", async (archived) => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { archiveStaleClosedAgent: true } });
+  await connectPromise;
+
+  const result = client.archiveStaleClosedAgent("agent-id");
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.archive_stale_closed.request",
+    agentId: "agent-id",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.archive_stale_closed.response",
+      payload: { requestId: request.requestId, archived },
+    }),
+  );
+
+  await expect(result).resolves.toBe(archived);
+});
+
+test("sends no archive request to a daemon without the archive capability", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(client.archiveStaleClosedAgent("agent-id")).rejects.toThrow("Update the host");
+  expect(mock.sent).toEqual([]);
+});
+
+test("lists stale closed agent IDs through the dedicated RPC", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { archiveStaleClosedAgent: true } });
+  await connectPromise;
+
+  const result = client.listStaleClosedAgentIds();
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request.type).toBe("agent.list_stale_closed.request");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.list_stale_closed.response",
+      payload: { requestId: request.requestId, agentIds: ["candidate-id"] },
+    }),
+  );
+
+  await expect(result).resolves.toEqual(["candidate-id"]);
+});
+
 test("sends active-scoped fetch_agents_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

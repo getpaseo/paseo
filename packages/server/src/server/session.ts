@@ -2782,7 +2782,7 @@ export class Session {
       this.connectedHostSession?.dispatch(msg) ??
       this.dispatchSubscriptionMessage(msg, source) ??
       this.dispatchVoiceAndControlMessage(msg) ??
-      this.dispatchAgentObservationMessage(msg, source) ??
+      this.dispatchAgentSessionMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchCreationMessage(msg, source) ??
       this.dispatchAgentLifecycleMessage(msg) ??
@@ -2800,13 +2800,13 @@ export class Session {
     if (promise) await promise;
   }
 
-  private dispatchAgentObservationMessage(
+  private dispatchAgentSessionMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
     return (
       this.dispatchAgentRewindMessage(msg, source) ??
-      this.dispatchAgentRelationshipMessage(msg) ??
+      this.dispatchAgentRecordMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source)
     );
   }
@@ -3244,10 +3244,14 @@ export class Session {
     }
   }
 
-  private dispatchAgentRelationshipMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+  private dispatchAgentRecordMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "agent.detach.request":
         return this.handleDetachAgentRequest(msg.agentId, msg.requestId);
+      case "agent.archive_stale_closed.request":
+        return this.handleArchiveStaleClosedAgentRequest(msg.agentId, msg.requestId);
+      case "agent.list_stale_closed.request":
+        return this.handleListStaleClosedAgentsRequest(msg.requestId);
       default:
         return undefined;
     }
@@ -3953,6 +3957,25 @@ export class Session {
     }
 
     return { agentId, archivedAt };
+  }
+
+  private async handleArchiveStaleClosedAgentRequest(
+    agentId: string,
+    requestId: string,
+  ): Promise<void> {
+    const archived = await this.agentManager.archiveStaleClosedAgent(agentId);
+    this.emit({
+      type: "agent.archive_stale_closed.response",
+      payload: { requestId, archived: archived !== null },
+    });
+  }
+
+  private async handleListStaleClosedAgentsRequest(requestId: string): Promise<void> {
+    const agentIds = await this.agentManager.listStaleClosedAgentIds();
+    this.emit({
+      type: "agent.list_stale_closed.response",
+      payload: { requestId, agentIds },
+    });
   }
 
   private async handleDetachAgentRequest(agentId: string, requestId: string): Promise<void> {

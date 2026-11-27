@@ -591,6 +591,7 @@ type ManagedAgentError = ManagedAgentWithSession & {
 
 type ManagedAgentClosed = ManagedAgentBase & {
   lifecycle: "closed";
+  closedAt?: Date;
   session: null;
   activeForegroundTurnId: null;
 };
@@ -741,6 +742,7 @@ interface SteerEventBarrier {
 }
 
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
+const STALE_AGENT_CLOSE_AGE_MS = 72 * 60 * 60 * 1000;
 const AgentIdSchema = z.guid();
 
 function isAgentBusy(status: AgentLifecycleStatus): boolean {
@@ -3073,6 +3075,10 @@ export class AgentManager {
   }
 
   async markAgentUnread(agentId: string): Promise<void> {
+    return this.runLifecycleMutation(agentId, () => this.markAgentUnreadUnlocked(agentId));
+  }
+
+  private async markAgentUnreadUnlocked(agentId: string): Promise<void> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       const attentionReason = unreadAttentionReason(liveAgent.lifecycle);
@@ -3116,6 +3122,33 @@ export class AgentManager {
     return this.runLifecycleMutation(agentId, () =>
       this.archiveSnapshotUnlocked(agentId, archivedAt),
     );
+  }
+
+  async listStaleClosedAgentIds(): Promise<string[]> {
+    const records = await this.requireRegistry().listClosedBefore(
+      Date.now() - STALE_AGENT_CLOSE_AGE_MS,
+    );
+    return records.filter((record) => !this.agents.has(record.id)).map((record) => record.id);
+  }
+
+  async archiveStaleClosedAgent(agentId: string): Promise<StoredAgentRecord | null> {
+    const selectedId = validateAgentId(agentId, "archiveStaleClosedAgent");
+    return this.runLifecycleMutation(selectedId, async () => {
+      // Resume and archive share this lane. A resume queued first can make an
+      // otherwise eligible snapshot live before this check.
+      if (this.agents.has(selectedId)) return null;
+
+      const now = new Date();
+      const nextRecord = await this.requireRegistry().archiveClosedBefore(
+        selectedId,
+        now.getTime() - STALE_AGENT_CLOSE_AGE_MS,
+        now.toISOString(),
+      );
+      // Publish the selected record without running native archive, hooks, or
+      // the normal archive's cascade.
+      if (nextRecord) this.dispatchStoredAgentState(nextRecord);
+      return nextRecord;
+    });
   }
 
   private async archiveSnapshotUnlocked(
@@ -3190,6 +3223,7 @@ export class AgentManager {
         ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
         ...(updates?.labels ? { labels: applyRecordPatch(record.labels, updates.labels) } : {}),
         archivedAt: null,
+        closedAt: undefined,
         updatedAt: new Date().toISOString(),
       };
       await registry.upsert(nextRecord);
@@ -5015,6 +5049,7 @@ export class AgentManager {
     return {
       ...agent,
       lifecycle: "closed",
+      closedAt: new Date(),
       session: null,
       activeForegroundTurnId: null,
       activeTurnId: null,

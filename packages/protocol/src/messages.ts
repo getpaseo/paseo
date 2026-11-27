@@ -1075,6 +1075,17 @@ export const ArchiveAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+const ArchiveStaleClosedAgentRequestSchema = z.object({
+  type: z.literal("agent.archive_stale_closed.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+const ListStaleClosedAgentsRequestSchema = z.object({
+  type: z.literal("agent.list_stale_closed.request"),
+  requestId: z.string(),
+});
+
 export const CloseItemsRequestMessageSchema = z.object({
   type: z.literal("close_items_request"),
   agentIds: z.array(z.string()).default([]),
@@ -3638,6 +3649,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FetchAgentRequestMessageSchema,
   DeleteAgentRequestMessageSchema,
   ArchiveAgentRequestMessageSchema,
+  ArchiveStaleClosedAgentRequestSchema,
+  ListStaleClosedAgentsRequestSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
   ProjectRenameRequestSchema,
@@ -4037,6 +4050,7 @@ export const ServerInfoStatusPayloadSchema = z
         backgroundWorkspaces: z.boolean().optional(),
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: z.boolean().optional(),
+        archiveStaleClosedAgent: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
@@ -5858,6 +5872,22 @@ export const AgentArchivedMessageSchema = z.object({
     agentId: z.string(),
     archivedAt: z.string(),
     requestId: z.string(),
+  }),
+});
+
+const ArchiveStaleClosedAgentResponseSchema = z.object({
+  type: z.literal("agent.archive_stale_closed.response"),
+  payload: z.object({
+    requestId: z.string(),
+    archived: z.boolean(),
+  }),
+});
+
+const ListStaleClosedAgentsResponseSchema = z.object({
+  type: z.literal("agent.list_stale_closed.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentIds: z.array(z.string()),
   }),
 });
 
@@ -7959,6 +7989,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentPermissionResolvedMessageSchema,
   AgentDeletedMessageSchema,
   AgentArchivedMessageSchema,
+  ArchiveStaleClosedAgentResponseSchema,
+  ListStaleClosedAgentsResponseSchema,
   CloseItemsResponseSchema,
   DiffSubscribeResponseSchema,
   CheckoutStatusResponseSchema,

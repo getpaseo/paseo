@@ -10665,6 +10665,175 @@ test("archiveAgent persists archivedAt and updatedAt before emitting closed stat
   expect(lifecycles.slice(-2)).toEqual(["idle", "closed"]);
 });
 
+test("archiveStaleClosedAgent waits more than 72 hours and changes only the selected record", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-archive-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new (class extends NativeArchiveRecordingClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SteeringTestSession(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const archived = vi.fn();
+  manager.setAgentArchivedCallback(archived);
+  let running: Promise<void> | undefined;
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-11-24T00:00:00Z"));
+    const config = { provider: "codex", cwd: workdir };
+    const parent = await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const childOptions = {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    };
+    const closedChild = await manager.createAgent(config, undefined, childOptions);
+    const idleChild = await manager.createAgent(config, undefined, childOptions);
+    const runningChild = await manager.createAgent(config, undefined, childOptions);
+    const recentlyClosed = await manager.createAgent(config, undefined, { workspaceId: undefined });
+    const recentUpdatedAt = (await storage.get(recentlyClosed.id))?.updatedAt;
+    await manager.closeAgent(parent.id);
+    await manager.closeAgent(closedChild.id);
+    const reopenedStorage = new AgentStorage(storagePath, logger);
+    expect((await reopenedStorage.get(parent.id))?.closedAt).toBe("2026-11-24T00:00:00.000Z");
+    const closedChildRecord = await storage.get(closedChild.id);
+    const idleChildRecord = await storage.get(idleChild.id);
+
+    vi.setSystemTime(new Date("2026-11-27T00:00:00Z"));
+    await manager.closeAgent(recentlyClosed.id);
+    expect((await storage.get(recentlyClosed.id))?.updatedAt).toBe(recentUpdatedAt);
+    expect(await manager.listStaleClosedAgentIds()).toEqual([]);
+    await expect(manager.archiveStaleClosedAgent(parent.id)).resolves.toBeNull();
+    vi.setSystemTime(new Date("2026-11-27T00:00:00.001Z"));
+    running = drainAsyncGenerator(manager.streamAgent(runningChild.id, "keep running"));
+    await manager.waitForAgentRunStart(runningChild.id);
+
+    expect(await manager.listStaleClosedAgentIds()).toEqual([parent.id, closedChild.id]);
+    await expect(manager.archiveStaleClosedAgent(recentlyClosed.id)).resolves.toBeNull();
+    await expect(manager.archiveStaleClosedAgent(idleChild.id)).resolves.toBeNull();
+    await expect(manager.archiveStaleClosedAgent(runningChild.id)).resolves.toBeNull();
+    const attempt = manager.archiveStaleClosedAgent(parent.id);
+    const unread = expect(manager.markAgentUnread(parent.id)).rejects.toThrow(
+      "Agent is no longer settled and read",
+    );
+    const result = await attempt;
+    await unread;
+    expect(result).toMatchObject({ id: parent.id, archivedAt: "2026-11-27T00:00:00.001Z" });
+    expect(await storage.get(parent.id)).toEqual(result);
+    await expect(manager.archiveStaleClosedAgent(parent.id)).resolves.toBeNull();
+    expect(await storage.get(closedChild.id)).toEqual(closedChildRecord);
+    expect(await storage.get(idleChild.id)).toEqual(idleChildRecord);
+    expect(manager.getAgent(idleChild.id)?.lifecycle).toBe("idle");
+    expect(manager.getAgent(runningChild.id)?.lifecycle).toBe("running");
+    expect(await manager.listStaleClosedAgentIds()).toEqual([closedChild.id]);
+    expect(archived).not.toHaveBeenCalled();
+    expect(client.archivedHandles).toEqual([]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await running;
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each([undefined, "1", "not a date"])(
+  "archiveStaleClosedAgent skips unknown closure time %s",
+  async (closedAt) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unknown-close-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({ clients: {}, registry: storage, logger });
+    const record = parseStoredAgentRecord({
+      id: randomUUID(),
+      provider: "codex",
+      cwd: workdir,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastStatus: "closed",
+      closedAt,
+    });
+    try {
+      await storage.upsert(record);
+      await expect(manager.archiveStaleClosedAgent(record.id)).resolves.toBeNull();
+      expect(await storage.get(record.id)).toEqual(record);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("archiveStaleClosedAgent skips a target after a queued resume", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-archive-resume-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const resumeEntered = deferred<void>();
+  const releaseResume = deferred<void>();
+  const client = new (class extends TestAgentClient {
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumeEntered.resolve();
+      await releaseResume.promise;
+      return super.resumeSession(handle, config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-11-23T00:00:00Z"));
+    const config = { provider: "codex", cwd: workdir };
+    const agent = await manager.createAgent(config, undefined, { workspaceId: undefined });
+    await manager.closeAgent(agent.id);
+    vi.setSystemTime(new Date("2026-11-27T00:00:00Z"));
+    const resumed = manager.resumeAgentFromPersistence(agent.persistence!, config, agent.id);
+    await resumeEntered.promise;
+    const attempted = manager.archiveStaleClosedAgent(agent.id);
+    releaseResume.resolve();
+    await resumed;
+    await expect(attempted).resolves.toBeNull();
+    expect((await storage.get(agent.id))?.closedAt).toBeUndefined();
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    await manager.closeAgent(agent.id);
+    expect((await storage.get(agent.id))?.closedAt).toBe("2026-11-27T00:00:00.000Z");
+    await expect(manager.archiveStaleClosedAgent(agent.id)).resolves.toBeNull();
+  } finally {
+    releaseResume.resolve();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("archiveStaleClosedAgent leaves interrupted work for startup recovery", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-archive-recovery-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-11-23T00:00:00Z"));
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await storage.upsert({ ...(await storage.get(agent.id))!, resumeOnStartup: true });
+    await manager.closeAgent(agent.id);
+    const closed = (await storage.get(agent.id))!;
+    expect(closed).toMatchObject({ lastStatus: "closed", resumeOnStartup: true });
+    expect(closed.closedAt).toBeUndefined();
+
+    vi.setSystemTime(new Date("2026-11-27T00:00:00Z"));
+    await storage.upsert({ ...closed, resumeOnStartup: false });
+    await expect(manager.archiveStaleClosedAgent(agent.id)).resolves.toBeNull();
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("fires onAgentArchived for archived parent and cascaded children", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-hook-cascade-"));
   const storagePath = join(workdir, "agents");

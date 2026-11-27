@@ -11,6 +11,7 @@ import {
   AgentOptionControlSchema,
   AgentStatusSchema,
 } from "../messages.js";
+import { buildArchivedAgentRecord } from "./agent-archive.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -64,6 +65,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   labels: z.record(z.string(), z.string()).default({}),
   metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
   lastStatus: AgentStatusSchema.default("closed"),
+  closedAt: z.string().optional().catch(undefined),
   resumeOnStartup: z.boolean().optional(),
   lastModeId: z.string().nullable().optional(),
   config: SERIALIZABLE_CONFIG_SCHEMA,
@@ -128,11 +130,31 @@ export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
 
+function isClosedBefore(record: StoredAgentRecord, closedBefore: number): boolean {
+  if (
+    record.internal ||
+    record.archivedAt ||
+    record.lastStatus !== "closed" ||
+    record.resumeOnStartup ||
+    !record.closedAt
+  ) {
+    return false;
+  }
+  // The daemon writes a canonical ISO timestamp after a successful close.
+  // Legacy records and malformed timestamps do not establish a closure time.
+  const closedAt = Date.parse(record.closedAt);
+  return (
+    Number.isFinite(closedAt) &&
+    new Date(closedAt).toISOString() === record.closedAt &&
+    closedAt < closedBefore
+  );
+}
+
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
   private pathById: Map<string, string> = new Map();
   private pathsById: Map<string, Set<string>> = new Map();
-  private pendingWrites: Map<string, Promise<void>> = new Map();
+  private pendingWrites: Map<string, Promise<StoredAgentRecord | null>> = new Map();
   private deleting: Set<string> = new Set();
   private daemonAgentIdsByExecution: Map<string, string> = new Map();
   private daemonExecutionKeysByAgentId: Map<string, string> = new Map();
@@ -166,6 +188,10 @@ export class AgentStorage {
       options?.includeArchived ? this.cache.keys() : this.activeIds,
       (id) => this.cache.get(id)!,
     );
+  }
+
+  async listClosedBefore(closedBefore: number): Promise<StoredAgentRecord[]> {
+    return (await this.listActive()).filter((record) => isClosedBefore(record, closedBefore));
   }
 
   async listByWorkspaces(
@@ -298,26 +324,31 @@ export class AgentStorage {
 
   async upsert(record: StoredAgentRecord): Promise<void> {
     await this.load();
-    await this.queueRecordWrite(record);
+    await this.queueRecordMutation(record.id, () => record);
   }
 
-  private queueRecordWrite(record: StoredAgentRecord): Promise<void> {
-    return this.queueRecordMutation(record.id, () => record);
+  async archiveClosedBefore(
+    agentId: string,
+    closedBefore: number,
+    archivedAt: string,
+  ): Promise<StoredAgentRecord | null> {
+    await this.load();
+    return this.queueRecordMutation(agentId, (record) => {
+      if (!record || !isClosedBefore(record, closedBefore)) return null;
+      return buildArchivedAgentRecord(record, { archivedAt, updatedAt: archivedAt });
+    });
   }
 
   private queueRecordMutation(
     agentId: string,
-    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
-  ): Promise<void> {
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord | null,
+  ): Promise<StoredAgentRecord | null> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
-      if (this.deleting.has(agentId)) {
-        return undefined;
-      }
-
+      if (this.deleting.has(agentId)) return null;
       const record = mutate(this.cache.get(agentId) ?? null);
-      await this.writeRecord(record);
-      return undefined;
+      if (record) await this.writeRecord(record);
+      return record;
     });
 
     const tracked = next.finally(() => {
@@ -425,18 +456,20 @@ export class AgentStorage {
       if (existing?.background) record.background = true;
       record.resumeOnStartup =
         existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+      // A graceful shutdown can close a runtime with interrupted work pending.
+      // Startup recovery clears its marker before it attempts to resume.
+      if (record.resumeOnStartup) record.closedAt = undefined;
       return record;
     });
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
     await this.load();
-    await this.waitForPendingWrite(agentId);
-    const record = await this.get(agentId);
-    if (!record) {
-      throw new Error(`Agent ${agentId} not found`);
-    }
-    await this.upsert({ ...record, title });
+    await this.pendingWrites.get(agentId)?.catch(() => undefined);
+    await this.queueRecordMutation(agentId, (record) => {
+      if (!record) throw new Error(`Agent ${agentId} not found`);
+      return { ...record, title };
+    });
   }
 
   async flush(): Promise<void> {
@@ -581,10 +614,6 @@ export class AgentStorage {
       this.daemonAgentIdsByExecution.delete(key);
     }
     this.daemonExecutionKeysByAgentId.delete(agentId);
-  }
-
-  private async waitForPendingWrite(agentId: string): Promise<void> {
-    await (this.pendingWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined);
   }
 }
 

@@ -3679,6 +3679,32 @@ export class DaemonClient {
     }
   }
 
+  private requireStaleClosedAgentArchive(): void {
+    const serverInfo = this.lastServerInfoMessage;
+    if (!serverInfo) throw this.unavailableError();
+    if (serverInfo.features?.archiveStaleClosedAgent !== true) {
+      throw new Error("Update the host to archive stale closed agents.");
+    }
+  }
+
+  async listStaleClosedAgentIds(): Promise<string[]> {
+    this.requireStaleClosedAgentArchive();
+    const { agentIds } =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.list_stale_closed.response">({
+        message: { type: "agent.list_stale_closed.request" },
+      });
+    return agentIds;
+  }
+
+  async archiveStaleClosedAgent(agentId: string): Promise<boolean> {
+    this.requireStaleClosedAgentArchive();
+    const { archived } =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.archive_stale_closed.response">({
+        message: { type: "agent.archive_stale_closed.request", agentId },
+      });
+    return archived;
+  }
+
   async updateAgent(
     agentId: string,
     updates: { name?: string; labels?: Record<string, string> },
