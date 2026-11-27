@@ -6,6 +6,7 @@ import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager, type AgentManagerEvent } from "../agent-manager.js";
+import { createAgentMessageDelivery } from "../agent-messages/index.js";
 import { toAgentPayload } from "../agent-projections.js";
 import { cancelAgentRunCommand } from "../lifecycle-command.js";
 import type {
@@ -1268,6 +1269,15 @@ test("the public Stop command can retry a failed startup retirement after its ru
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
+  const dispatch = vi.fn(async () => "turn_started" as const);
+  const delivery = createAgentMessageDelivery({
+    isRunning: (agentId) => manager.hasInFlightRun(agentId),
+    onStop: (listener) => manager.onStop(listener),
+    dispatch,
+    onError: (error) => {
+      throw error;
+    },
+  });
   try {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const run = manager.runAgent(agent.id, "possibly started");
@@ -1283,13 +1293,38 @@ test("the public Stop command can retry a failed startup retirement after its ru
     await refused;
     expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(true);
 
+    const queued = delivery.enqueue({
+      recipientId: agent.id,
+      messageId: "queued-finish",
+      source: { kind: "agent-notification", agentId: "worker", event: "finished" },
+      prompt: "Worker finished",
+    });
+    expect(delivery.hasPending(agent.id)).toBe(true);
+
     old.child.exitCode = 0;
     old.child.emit("exit", 0, null);
     await expect(
       cancelAgentRunCommand({ agentManager: manager, logger }, agent.id),
     ).resolves.toMatchObject({ cancelled: true });
     expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(delivery.hasPending(agent.id)).toBe(false);
+
+    const next = delivery.enqueue({
+      recipientId: agent.id,
+      messageId: "follow-up",
+      source: { kind: "agent-message", agentId: "worker" },
+      prompt: "Follow up",
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(queued.dispatched).resolves.toBe("turn_started");
+    await expect(next.dispatched).resolves.toBe("turn_started");
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ messageIds: ["queued-finish", "follow-up"] }),
+    );
   } finally {
+    await delivery.close();
     vi.useRealTimers();
     old.child.exitCode = 0;
     await manager.closeAgent(agent.id);

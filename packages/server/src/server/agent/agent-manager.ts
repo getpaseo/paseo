@@ -4085,15 +4085,13 @@ export class AgentManager {
     const run =
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
-    if (!run) {
-      if (agent.session.hasPendingInterruptRecovery?.()) {
-        return this.retryInterruptRecovery(agent);
-      }
+    if (!run && !agent.session.hasPendingInterruptRecovery?.()) {
       return { status: "not_running" };
     }
     if (cause === "stop") {
       for (const listener of this.stopListeners) listener(agentId);
     }
+    if (!run) return this.retryInterruptRecovery(agent);
 
     const interruptedPermissions = new Map(agent.pendingPermissions);
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
