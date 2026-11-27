@@ -17,6 +17,8 @@ import {
   getWorktreeTeardownTimeoutMs,
 } from "./worktree.js";
 import {
+  ProjectConfigOwner,
+  ProjectConfigUnavailableError,
   readPaseoConfigForEdit,
   statPaseoConfigPath,
   writePaseoConfigForEdit,
@@ -433,5 +435,46 @@ describe("paseo config file substrate", () => {
       config: { scripts: { dev: { command: "npm run dev" } } },
       revision: await statPaseoConfigPath(join(tempDir, "nested")),
     });
+  });
+
+  it("skips queued filesystem loads once all waiting callers have timed out", async () => {
+    const started: string[] = [];
+    const gates = new Map<string, () => void>();
+    const emptySnapshot = {
+      fingerprint: "missing",
+      edit: { ok: true as const, config: null, revision: null },
+      runtime: { ok: true as const, config: null },
+    };
+
+    const owner = new ProjectConfigOwner({
+      readBudgetMs: 25,
+      loadRoot: (root) => {
+        started.push(root);
+        if (root.endsWith("/slow-1") || root.endsWith("/slow-2")) {
+          return new Promise((resolve) => {
+            gates.set(root, () => resolve(emptySnapshot));
+          });
+        }
+        return Promise.resolve(emptySnapshot);
+      },
+    });
+
+    const slow1 = join(tempDir, "slow-1");
+    const slow2 = join(tempDir, "slow-2");
+    const queued = join(tempDir, "queued-abandoned");
+
+    const p1 = owner.readOrLastKnown(slow1).catch((error) => error);
+    const p2 = owner.readOrLastKnown(slow2).catch((error) => error);
+    const p3 = owner.readOrLastKnown(queued).catch((error) => error);
+
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+    expect(r1).toBeInstanceOf(ProjectConfigUnavailableError);
+    expect(r2).toBeInstanceOf(ProjectConfigUnavailableError);
+    expect(r3).toBeInstanceOf(ProjectConfigUnavailableError);
+
+    for (const release of gates.values()) release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(started).toEqual([slow1, slow2]);
   });
 });

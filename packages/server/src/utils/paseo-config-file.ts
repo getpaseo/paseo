@@ -114,6 +114,13 @@ interface Snapshot {
   runtime: ReadPaseoConfigResult;
 }
 
+export class ProjectConfigUnavailableError extends Error {
+  constructor() {
+    super("Project config unavailable");
+    this.name = "ProjectConfigUnavailableError";
+  }
+}
+
 // How long a caller waits for the filesystem, including time queued behind other roots.
 const READ_BUDGET_MS = 5_000;
 // Above the roots a busy daemon lists: a listing that visits more roots than this evicts the next one it needs.
@@ -121,15 +128,22 @@ const MAX_SNAPSHOTS = 1_024;
 const UNAVAILABLE = Symbol("project config unavailable");
 
 /** Owns config admission, snapshots and daemon read/modify/write ordering for every consumer. */
-class ProjectConfigOwner {
+export class ProjectConfigOwner {
   // A stalled mount retains its slot until the OS returns; never consume the whole fs pool.
   private readonly filesystemOperations = pLimit(2);
   private readonly pendingAliases = new Map<string, Promise<string>>();
   private readonly snapshots = new Map<string, Snapshot>();
   private readonly pending = new Map<
     string,
-    { kind: "read" | "write"; promise: Promise<unknown> }
+    { kind: "read" | "write"; promise: Promise<unknown>; waiters: number }
   >();
+  private readonly readBudgetMs: number;
+  private readonly loadRoot: (root: string) => Promise<Snapshot>;
+
+  constructor(options?: { readBudgetMs?: number; loadRoot?: (root: string) => Promise<Snapshot> }) {
+    this.readBudgetMs = options?.readBudgetMs ?? READ_BUDGET_MS;
+    this.loadRoot = options?.loadRoot ?? ((root) => this.load(root));
+  }
 
   async resolveRoot(repoRoot: string, activeRoots: Set<string>): Promise<string | null> {
     const root = resolve(repoRoot);
@@ -149,18 +163,70 @@ class ProjectConfigOwner {
     }
   }
 
+  private acquireRead(root: string): {
+    promise: Promise<Snapshot | typeof UNAVAILABLE>;
+    releaseWaiter: () => void;
+  } {
+    const previous = this.pending.get(root);
+    if (previous?.kind === "read") {
+      previous.waiters += 1;
+      let released = false;
+      return {
+        promise: previous.promise as Promise<Snapshot | typeof UNAVAILABLE>,
+        releaseWaiter: () => {
+          if (released) return;
+          released = true;
+          previous.waiters = Math.max(0, previous.waiters - 1);
+        },
+      };
+    }
+    const entry: { kind: "read" | "write"; promise: Promise<unknown>; waiters: number } = {
+      kind: "read",
+      promise: Promise.resolve(),
+      waiters: 1,
+    };
+    const next = (async (): Promise<Snapshot | typeof UNAVAILABLE> => {
+      await previous?.promise.catch(() => undefined);
+      return this.filesystemOperations(async (): Promise<Snapshot | typeof UNAVAILABLE> => {
+        if (entry.waiters === 0) return UNAVAILABLE;
+        return this.loadRoot(root);
+      });
+    })();
+    entry.promise = next;
+    this.pending.set(root, entry);
+    void next
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.pending.get(root)?.promise === next) this.pending.delete(root);
+      });
+    let released = false;
+    return {
+      promise: next,
+      releaseWaiter: () => {
+        if (released) return;
+        released = true;
+        entry.waiters = Math.max(0, entry.waiters - 1);
+      },
+    };
+  }
+
   private async serialized<T>(
     root: string,
     kind: "read" | "write",
     operation: () => Promise<T>,
   ): Promise<T> {
     const previous = this.pending.get(root);
-    if (kind === "read" && previous?.kind === "read") return previous.promise as Promise<T>;
+    const entry: { kind: "read" | "write"; promise: Promise<unknown>; waiters: number } = {
+      kind,
+      promise: Promise.resolve(),
+      waiters: 1,
+    };
     const next = (async () => {
       await previous?.promise.catch(() => undefined);
       return this.filesystemOperations(operation);
     })();
-    this.pending.set(root, { kind, promise: next });
+    entry.promise = next;
+    this.pending.set(root, entry);
     try {
       return await next;
     } finally {
@@ -179,7 +245,7 @@ class ProjectConfigOwner {
 
   async read(repoRoot: string): Promise<Snapshot> {
     const checked = await this.check(resolve(repoRoot));
-    if (checked === UNAVAILABLE) throw new Error("Project config unavailable");
+    if (checked === UNAVAILABLE) throw new ProjectConfigUnavailableError();
     return checked;
   }
 
@@ -189,21 +255,23 @@ class ProjectConfigOwner {
     const checked = await this.check(root);
     if (checked !== UNAVAILABLE) return checked;
     const known = this.snapshots.get(root);
-    if (!known) throw new Error("Project config unavailable");
+    if (!known) throw new ProjectConfigUnavailableError();
     return known;
   }
 
   private async check(root: string): Promise<Snapshot | typeof UNAVAILABLE> {
+    const { promise, releaseWaiter } = this.acquireRead(root);
     let budget: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        this.serialized(root, "read", () => this.load(root)),
+        promise,
         new Promise<typeof UNAVAILABLE>((settle) => {
-          budget = setTimeout(settle, READ_BUDGET_MS, UNAVAILABLE);
+          budget = setTimeout(settle, this.readBudgetMs, UNAVAILABLE);
         }),
       ]);
     } finally {
       clearTimeout(budget);
+      releaseWaiter();
     }
   }
 

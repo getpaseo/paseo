@@ -13,7 +13,11 @@ import { WorkspaceScriptPayloadSchema } from "@getpaseo/protocol/messages";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { readPaseoConfig } from "../utils/worktree.js";
-import { readPaseoConfigForEdit, writePaseoConfigForEdit } from "../utils/paseo-config-file.js";
+import {
+  ProjectConfigUnavailableError,
+  readPaseoConfigForEdit,
+  writePaseoConfigForEdit,
+} from "../utils/paseo-config-file.js";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { createTestLogger } from "../test-utils/test-logger.js";
 
@@ -702,5 +706,25 @@ describe("script-status-projection", () => {
     } finally {
       workspace.cleanup();
     }
+  });
+
+  it("logs transient config read timeouts at debug instead of warning as parse failures", async () => {
+    const logger = createTestLogger();
+    const warnSpy = vi.spyOn(logger, "warn");
+    const debugSpy = vi.spyOn(logger, "debug");
+
+    const result = await readPaseoConfigForProjection(
+      "/tmp/unavailable-workspace",
+      logger,
+      async (dir) => ({
+        ok: false,
+        configPath: path.join(dir, "paseo.json"),
+        error: new ProjectConfigUnavailableError(),
+      }),
+    );
+
+    expect(result).toBeNull();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(debugSpy).toHaveBeenCalledTimes(1);
   });
 });

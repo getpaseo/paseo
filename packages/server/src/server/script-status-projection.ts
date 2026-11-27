@@ -5,7 +5,10 @@ import type {
   WorkspaceScriptPayload,
 } from "@getpaseo/protocol/messages";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
-import { readPaseoConfigOrLastKnown } from "../utils/paseo-config-file.js";
+import {
+  ProjectConfigUnavailableError,
+  readPaseoConfigOrLastKnown,
+} from "../utils/paseo-config-file.js";
 import { getScriptConfigs, isServiceScript } from "../utils/worktree.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monitor.js";
@@ -37,10 +40,18 @@ interface BuildWorkspaceScriptPayloadsOptions {
 export async function readPaseoConfigForProjection(
   workspaceDirectory: string,
   logger: Logger,
+  readConfig: typeof readPaseoConfigOrLastKnown = readPaseoConfigOrLastKnown,
 ): Promise<PaseoConfig | null> {
-  const result = await readPaseoConfigOrLastKnown(workspaceDirectory);
+  const result = await readConfig(workspaceDirectory);
   if (result.ok) {
     return result.config;
+  }
+  if (result.error instanceof ProjectConfigUnavailableError) {
+    logger.debug(
+      { configPath: result.configPath, workspaceDirectory },
+      "Timed out reading paseo.json; treating workspace as having no scripts",
+    );
+    return null;
   }
   logger.warn(
     { configPath: result.configPath, workspaceDirectory, err: result.error },
