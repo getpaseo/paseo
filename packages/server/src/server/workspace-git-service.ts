@@ -921,15 +921,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         ? { runGitCommand: createRunGitCommand("checkout-read", { priority: options.priority }) }
         : {}),
     });
-    const cached = this.getCachedSnapshot(normalizedCwd);
-    if (cached && cached.git.isGit !== identity.isGit) {
-      // A fresh checkout read discovered a repository transition. Keep the
-      // shared snapshot current before exposing the new project capability.
-      await this.getSnapshot(normalizedCwd, {
-        force: true,
-        includeForge: false,
-        reason: "checkout-classification-changed",
-      });
+    const target = this.workspaceTargets.get(normalizedCwd);
+    const cached = target?.latestSnapshot;
+    if (target && cached && cached.git.isGit !== identity.isGit) {
+      // Do not expose a stale classification to the next status consumer.
+      // Local placement must not wait for the replacement working-tree scan.
+      target.latestSnapshot = null;
+      if (!options?.placementOnly) {
+        await this.getSnapshot(normalizedCwd, {
+          force: true,
+          includeForge: false,
+          reason: "checkout-classification-changed",
+        });
+      }
     }
     if (!identity.isGit) {
       return checkoutLiteFromGitSnapshot(normalizedCwd, {
@@ -949,11 +953,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       isPaseoOwnedWorktree: identity.isPaseoOwnedWorktree,
       mainRepoRoot: identity.mainRepoRoot,
     });
-  }
-
-  private getCachedSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
-    cwd = resolve(cwd);
-    return this.workspaceTargets.get(cwd)?.latestSnapshot ?? null;
   }
 
   async getCheckoutDiff(

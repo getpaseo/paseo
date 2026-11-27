@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vitest";
 import { createGitHubService } from "../services/github-service.js";
 import type { CurrentPullRequestStatus, ForgeService } from "../services/forge-service.js";
 import { defaultForgeRegistry } from "../services/forge-registry.js";
@@ -322,6 +322,7 @@ function createGitHubServiceStub(): ForgeService {
 interface CreateServiceOptions {
   subscribe?: ReturnType<typeof vi.fn>;
   getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
+  getCheckoutIdentity?: Mock;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getCheckoutWorktreeState?: ReturnType<typeof vi.fn>;
@@ -438,6 +439,54 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     service.dispose();
   });
+
+  test.each([
+    {
+      transition: "initialized repository",
+      initialFacts: { isGit: false } as const,
+      initialStatus: { isGit: false } as const,
+      nextFacts: createCheckoutFacts(REPO_CWD),
+      nextStatus: createCheckoutStatus(REPO_CWD),
+    },
+    {
+      transition: "removed repository",
+      initialFacts: createCheckoutFacts(REPO_CWD),
+      initialStatus: createCheckoutStatus(REPO_CWD),
+      nextFacts: { isGit: false } as const,
+      nextStatus: { isGit: false } as const,
+    },
+  ])("placement-only reads invalidate $transition without waiting for status", async ({
+    initialFacts,
+    initialStatus,
+    nextFacts,
+    nextStatus,
+  }) => {
+    const refresh = createDeferred<CheckoutSnapshotFacts>();
+    const getCheckoutSnapshotFacts = vi.fn().mockResolvedValue(initialFacts);
+    const getCheckoutStatus = vi.fn().mockResolvedValue(initialStatus);
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      getCheckoutIdentity: vi.fn().mockResolvedValue(nextStatus),
+    });
+    try {
+      expect(await service.getSnapshot(REPO_CWD)).toMatchObject({
+        git: { isGit: initialStatus.isGit },
+      });
+      getCheckoutSnapshotFacts.mockImplementation(() => refresh.promise);
+      getCheckoutStatus.mockResolvedValue(nextStatus);
+
+      expect(await service.getCheckout(REPO_CWD, { placementOnly: true })).toMatchObject({
+        isGit: nextStatus.isGit,
+      });
+      const updated = service.getSnapshot(REPO_CWD);
+      refresh.resolve(nextFacts);
+      expect(await updated).toMatchObject({ git: { isGit: nextStatus.isGit } });
+    } finally {
+      refresh.resolve(nextFacts);
+      service.dispose();
+    }
+  }, 2_000);
 
   test("getSnapshot returns the current snapshot without shelling out", async () => {
     let nowMs = Date.parse("2026-04-12T00:00:00.000Z");

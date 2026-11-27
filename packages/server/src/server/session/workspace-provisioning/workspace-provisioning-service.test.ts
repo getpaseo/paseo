@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } 
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { getCheckoutPlacement, getCheckoutStatus } from "../../../utils/checkout-git.js";
+import { getCheckoutIdentity, getCheckoutStatus } from "../../../utils/checkout-git.js";
 import {
   setPaseoWorktreeBaseRef,
   writePaseoWorktreeMetadata,
@@ -165,7 +165,7 @@ test.each([null, ARCHIVED_AT])(
           checkoutLiteFromGitSnapshot(
             directory,
             await (options?.placementOnly
-              ? getCheckoutPlacement(directory, { logger })
+              ? getCheckoutIdentity(directory, { logger })
               : getCheckoutStatus(directory, { logger })),
           ),
       }),
