@@ -2406,3 +2406,184 @@ it("retains agent-message provenance through live delivery and repeated history"
   expect(replay).toHaveLength(1);
   expect(replay[0]).toMatchObject({ payload: { data: { agentMessage } } });
 });
+
+describe("batched tool-call history hydration", () => {
+  function tool(turnId: string, callId: string, status: "running" | "completed") {
+    return {
+      type: "timeline",
+      provider: "claude",
+      turnId,
+      item: {
+        type: "tool_call",
+        callId,
+        name: "shell",
+        status,
+        error: null,
+        detail: { type: "shell", command: `echo ${callId}` },
+      },
+    } satisfies AgentStreamEventPayload;
+  }
+
+  it("matches immutable reduction across updates, reused IDs and non-tool boundaries", () => {
+    const events: AgentStreamEventPayload[] = [
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "turn-a",
+        item: { type: "reasoning", text: "Planning" },
+      },
+      tool("turn-a", "same-call", "running"),
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "turn-a",
+        item: {
+          type: "assistant_message",
+          text: "Starting",
+          messageId: "agent_tool_turn:turn-a/same-call",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "turn-b",
+        item: {
+          type: "assistant_message",
+          text: " again",
+          messageId: "agent_tool_turn:turn-a/same-call",
+        },
+      },
+      tool("turn-a", "same-call", "completed"),
+      tool("turn-b", "same-call", "running"),
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "turn-b",
+        item: { type: "user_message", text: "Continue", clientMessageId: "client-1" },
+      },
+      tool("turn-a", "same-call", "completed"),
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "turn-b",
+        item: {
+          type: "tool_call",
+          callId: "todo",
+          name: "TodoWrite",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "unknown",
+            input: { todos: [{ content: "Test", status: "pending" }] },
+            output: null,
+          },
+        },
+      },
+      tool("turn-b", "same-call", "completed"),
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "turn-b",
+        item: { type: "reasoning", text: "Done" },
+      },
+    ];
+    const updates = events.map((event, index) => ({
+      event,
+      timestamp: new Date(1700000000000 + index),
+      timelineCursor: { epoch: "epoch", seq: index + 1 },
+    }));
+    const original = structuredClone(updates);
+    const expected = updates.reduce<StreamItem[]>(
+      (state, update) =>
+        reduceStreamUpdate(state, update.event, update.timestamp, {
+          source: "canonical",
+          timelineCursor: update.timelineCursor,
+        }),
+      [],
+    );
+    for (const item of expected) {
+      if (item.kind === "thought") item.status = "ready";
+    }
+    expect(hydrateStreamState(updates, { source: "canonical" })).toEqual(expected);
+    expect(updates).toEqual(original);
+  });
+
+  it("matches text replay across user inserts, collisions and interrupted replies", () => {
+    const events: AgentStreamEventPayload[] = [
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "a",
+        item: { type: "reasoning", text: "thinking" },
+      },
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "a",
+        item: { type: "assistant_message", messageId: "reply", text: "one" },
+      },
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "b",
+        item: {
+          type: "user_message",
+          messageId: "occupied",
+          clientMessageId: "client",
+          text: "two",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "a",
+        item: { type: "assistant_message", messageId: "reply", text: " continued" },
+      },
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "b",
+        item: { type: "assistant_message", messageId: "occupied", text: "three" },
+      },
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "b",
+        item: {
+          type: "user_message",
+          messageId: "occupied",
+          clientMessageId: "client",
+          text: "two",
+        },
+      },
+    ];
+    const updates = events.map((event, i) => ({ event, timestamp: new Date(1000 + i) }));
+    for (const source of ["live", "canonical"] as const) {
+      const expected = updates.reduce<StreamItem[]>(
+        (items, { event, timestamp }) => reduceStreamUpdate(items, event, timestamp, { source }),
+        [],
+      );
+      expect(hydrateStreamState(updates, { source })).toEqual(expected);
+    }
+  });
+
+  it("keeps separate hydration results independent and preserves immutable live updates", () => {
+    const updates = Array.from({ length: 2_000 }, (_, i) => ({
+      event: tool("turn-a", `call-${i}`, "running"),
+      timestamp: new Date(i),
+    }));
+    const first = hydrateStreamState(updates);
+    const second = hydrateStreamState([
+      ...updates,
+      { event: tool("turn-a", "call-0", "completed"), timestamp: new Date(3000) },
+    ]);
+    expect(first).toHaveLength(2_000);
+    expect(second).toHaveLength(2_000);
+    expect((first[0] as AgentToolCallItem).payload.data.status).toBe("running");
+    expect((second[0] as AgentToolCallItem).payload.data.status).toBe("completed");
+    const live = reduceStreamUpdate(first, tool("turn-a", "call-0", "completed"), new Date(4000));
+    expect(live).not.toBe(first);
+    expect((first[0] as AgentToolCallItem).payload.data.status).toBe("running");
+    expect(live[1]).toBe(first[1]);
+  });
+});

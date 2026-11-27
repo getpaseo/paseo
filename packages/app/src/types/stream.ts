@@ -58,13 +58,15 @@ function createAssistantItemId(
   text: string,
   timestamp: Date,
   reservedItemIds?: ReadonlySet<string>,
+  hydratedIds?: ReadonlySet<string>,
 ): string {
   if (!messageId) {
     return createUniqueTimelineId(state, "assistant", text, timestamp);
   }
 
   const isOccupied = (id: string) =>
-    reservedItemIds?.has(id) === true || state.some((item) => item.id === id);
+    reservedItemIds?.has(id) === true ||
+    (hydratedIds?.has(id) ?? state.some((item) => item.id === id));
   if (!isOccupied(messageId)) {
     return messageId;
   }
@@ -250,7 +252,10 @@ function produceUserMessage(
       return { items, index: -1, message: incoming, matched: false };
     }
     return {
-      items: [...items.slice(0, insertAt), incoming, ...items.slice(insertAt)],
+      items:
+        insertAt === items.length
+          ? [...items, incoming]
+          : [...items.slice(0, insertAt), incoming, ...items.slice(insertAt)],
       index: insertAt,
       message: incoming,
       matched: false,
@@ -967,6 +972,7 @@ function appendAssistantMessage(
   messageId?: string,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
+  hydration?: { ids: Set<string>; turnId?: string },
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
@@ -974,36 +980,24 @@ function appendAssistantMessage(
   }
 
   const last = state[state.length - 1];
-  const shouldAppendToLast =
-    last &&
-    last.kind === "assistant_message" &&
-    (messageId === undefined || last.messageId === messageId);
-  if (shouldAppendToLast) {
-    const updated: AssistantMessageItem = {
-      ...last,
-      text: `${last.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
-    return [...state.slice(0, -1), updated];
-  }
-
   // A submitted user row can follow the streaming assistant during interrupt.
-  // In that case, look one row further back for the assistant to extend.
-  const secondLast = state[state.length - 2];
+  const index =
+    source === "live" && last?.kind === "user_message" ? state.length - 2 : state.length - 1;
+  const previous = state[index];
+  const turnId = hydration?.turnId;
   if (
-    source === "live" &&
-    last?.kind === "user_message" &&
-    secondLast?.kind === "assistant_message" &&
-    (messageId === undefined || secondLast.messageId === messageId)
+    previous?.kind === "assistant_message" &&
+    (messageId === undefined || previous.messageId === messageId)
   ) {
-    const updated: AssistantMessageItem = {
-      ...secondLast,
-      text: `${secondLast.text}${chunk}`,
+    const next = hydration ? state : [...state];
+    next[index] = {
+      ...previous,
+      text: previous.text + chunk,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
+      ...(turnId ? { turnId } : {}),
     };
-    return [...state.slice(0, -2), updated, last];
+    return next;
   }
 
   if (!hasContent) {
@@ -1011,7 +1005,14 @@ function appendAssistantMessage(
   }
 
   const idSeed = chunk.trim() || chunk;
-  const entryId = createAssistantItemId(state, messageId, idSeed, timestamp, reservedItemIds);
+  const entryId = createAssistantItemId(
+    state,
+    messageId,
+    idSeed,
+    timestamp,
+    reservedItemIds,
+    hydration?.ids,
+  );
   const item: AssistantMessageItem = {
     kind: "assistant_message",
     id: entryId,
@@ -1019,7 +1020,13 @@ function appendAssistantMessage(
     ...(timelineCursor ? { timelineCursor } : {}),
     text: chunk,
     timestamp,
+    ...(turnId ? { turnId } : {}),
   };
+  if (hydration) {
+    hydration.ids.add(item.id);
+    state.push(item);
+    return state;
+  }
   return [...state, item];
 }
 
@@ -1064,16 +1071,15 @@ function appendThought(
 }
 
 function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
-  let mutated = false;
-  const nextState = state.map((entry) => {
+  let next = state;
+  for (let i = 0; i < state.length; i++) {
+    const entry = state[i]!;
     if (entry.kind === "thought" && entry.status !== "ready") {
-      mutated = true;
-      return markThoughtReady(entry);
+      if (next === state) next = [...state];
+      next[i] = markThoughtReady(entry);
     }
-    return entry;
-  });
-
-  return mutated ? nextState : state;
+  }
+  return next;
 }
 
 export function streamTimelineItemIdentity(item: StreamItem): string | null {
@@ -1235,8 +1241,14 @@ export function mergeAgentToolCallItem(
   };
 }
 
+interface HistoryIndex {
+  toolPositions: Map<string, number>;
+  ids?: Set<string>;
+}
+
 interface AppendAgentToolCallInput {
   state: StreamItem[];
+  hydrationIndex?: HistoryIndex;
   data: AgentToolCallData;
   timestamp: Date;
   turnId?: string;
@@ -1244,9 +1256,11 @@ interface AppendAgentToolCallInput {
 }
 
 function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
-  const { state, data, timestamp, turnId, timelineCursor } = input;
+  const { state, data, timestamp, turnId, timelineCursor, hydrationIndex } = input;
   const identity = agentToolCallIdentity({ callId: data.callId, turnId });
-  const existingIndex = findExistingTimelineIdentityIndex(state, identity);
+  const existingIndex = hydrationIndex
+    ? (hydrationIndex.toolPositions.get(identity) ?? -1)
+    : findExistingTimelineIdentityIndex(state, identity);
 
   if (existingIndex >= 0) {
     const existing = state[existingIndex];
@@ -1268,7 +1282,7 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
       return state;
     }
 
-    const next = [...state];
+    const next = hydrationIndex ? state : [...state];
     next[existingIndex] = merged;
     return next;
   }
@@ -1288,6 +1302,12 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
     },
   };
 
+  if (hydrationIndex) {
+    hydrationIndex.toolPositions.set(identity, state.length);
+    hydrationIndex.ids?.add(item.id);
+    state.push(item);
+    return state;
+  }
   return [...state, item];
 }
 
@@ -1445,6 +1465,7 @@ function reduceTimelineToolCall(
   >,
   timestamp: Date,
   timelineCursor?: TimelinePosition,
+  hydrationIndex?: HistoryIndex,
 ): StreamItem[] {
   const normalizedToolName = item.name
     .trim()
@@ -1489,6 +1510,7 @@ function reduceTimelineToolCall(
 
   return appendAgentToolCall({
     state,
+    hydrationIndex,
     data: {
       provider: event.provider,
       callId: item.callId,
@@ -1718,9 +1740,62 @@ export function hydrateStreamState(
   }>,
   options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds">,
 ): StreamItem[] {
-  const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp, timelineCursor }) => {
-    return reduceStreamUpdate(state, event, timestamp, { ...options, timelineCursor });
-  }, []);
+  let hydrated: StreamItem[] = [];
+  let index: HistoryIndex | null = null;
+  for (const { event, timestamp, timelineCursor } of events) {
+    if (
+      event.type !== "timeline" ||
+      (event.item.type !== "tool_call" && event.item.type !== "assistant_message")
+    ) {
+      const next = reduceStreamUpdate(hydrated, event, timestamp, { ...options, timelineCursor });
+      // A newly appended user row preserves every indexed position. A reconciled row may change ID.
+      if (
+        index &&
+        event.type === "timeline" &&
+        event.item.type === "user_message" &&
+        next.length === hydrated.length + 1
+      ) {
+        index.ids?.add(next[next.length - 1]!.id);
+      } else {
+        index = null;
+      }
+      hydrated = next;
+      continue;
+    }
+
+    // Hydration owns this array. Consecutive tool and text events can append in place.
+    if (!index) {
+      hydrated = finalizeActiveThoughts(hydrated);
+      index = { toolPositions: new Map() };
+      for (const [position, item] of hydrated.entries()) {
+        const identity = streamTimelineItemIdentity(item);
+        if (identity !== null && !index.toolPositions.has(identity))
+          index.toolPositions.set(identity, position);
+      }
+    }
+    if (event.item.type === "assistant_message") {
+      index.ids ??= new Set(hydrated.map((item) => item.id));
+      hydrated = appendAssistantMessage(
+        hydrated,
+        event.item.text,
+        timestamp,
+        options?.source ?? "live",
+        event.item.messageId,
+        options?.reservedItemIds,
+        timelineCursor,
+        { ids: index.ids, turnId: event.turnId },
+      );
+      continue;
+    }
+    const next = applyTimelineTurnId(
+      hydrated,
+      reduceTimelineToolCall(hydrated, event, event.item, timestamp, timelineCursor, index),
+      event,
+    );
+    // Todo tools can write other row kinds through the ordinary immutable reducer.
+    if (next !== hydrated) index = null;
+    hydrated = next;
+  }
 
   return finalizeActiveThoughts(hydrated);
 }
