@@ -673,16 +673,12 @@ describe("createTerminal", () => {
     );
 
     // Poll the parsed buffer until the final line lands, so the exit summary
-    // (which reads the headless buffer) can't race the async xterm parse.
-    const finalLineParsed = (): boolean =>
-      session.captureLines({ start: -12 }).lines.some((line) => line.includes("line-2999"));
-    const deadline = Date.now() + 10000;
-    while (!finalLineParsed()) {
-      if (Date.now() > deadline) {
-        throw new Error("Timed out waiting for the final line to be parsed");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
+    // (which reads the headless buffer) can't race the async xterm parse. On a
+    // loaded Windows runner these 3000 writes take from under 1s to over 10s.
+    // A failure here prints the last rows, which shows how far the output got.
+    await expect
+      .poll(() => session.captureLines({ start: -12 }).lines, { timeout: 25_000, interval: 20 })
+      .toContainEqual("line-2999");
 
     const exitInfo = await new Promise<NonNullable<ReturnType<TerminalSession["getExitInfo"]>>>(
       (resolve) => {
