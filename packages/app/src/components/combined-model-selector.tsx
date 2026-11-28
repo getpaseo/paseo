@@ -11,7 +11,7 @@ import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usesCompactBottomSheet } from "@/constants/presentation";
-import { usesMobileResourceBudget } from "@/constants/resource-budget";
+import { deferModelSelectorMount } from "@/constants/resource-budget";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
@@ -108,7 +108,7 @@ export function CombinedModelSelector({
   });
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [isContentReady, setIsContentReady] = useState(!usesMobileResourceBudget);
+  const [isContentReady, setIsContentReady] = useState(!deferModelSelectorMount);
   const browser = useModelBrowser({
     providers,
     selectedProvider,
@@ -142,7 +142,7 @@ export function CombinedModelSelector({
   );
 
   useEffect(() => {
-    if (!usesMobileResourceBudget) return () => {};
+    if (!deferModelSelectorMount) return () => {};
     if (!isOpen) {
       setIsContentReady(false);
       return () => {};

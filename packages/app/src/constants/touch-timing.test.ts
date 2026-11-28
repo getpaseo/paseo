@@ -5,7 +5,7 @@ describe("touch timing per target", () => {
   it("enables touch timing and haptics only on mobile touch platforms, not on web, Electron, or GPUI", async () => {
     const baseTiming = (await import(
       new URL("./touch-timing.ts", import.meta.url).href
-    )) as typeof gpuiTouchTiming;
+    )) as typeof import("./touch-timing");
 
     expect(baseTiming.resolveTouchTiming({ isNative: true })).toEqual({
       supportsTouchHaptics: true,
@@ -22,5 +22,6 @@ describe("touch timing per target", () => {
       supportsTouchHaptics: false,
       usesTouchLongPressHold: false,
     });
+    expect("resolveTouchTiming" in gpuiTouchTiming).toBe(false);
   });
 });

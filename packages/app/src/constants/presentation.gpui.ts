@@ -1,16 +1,9 @@
-import type { PresentationCapabilities } from "./presentation";
-
-export function resolvePresentationCapabilities(_input: {
-  isNative: boolean;
-  isWeb: boolean;
-}): PresentationCapabilities {
-  return {
-    allowsInlineWorkspaceRename: true,
-    usesCompactBottomSheet: false,
-    usesDesktopPopoverSpacing: true,
-  };
-}
+import { FONT_SIZE } from "@/styles/theme";
 
 export const allowsInlineWorkspaceRename = true;
 export const usesCompactBottomSheet = false;
 export const usesDesktopPopoverSpacing = true;
+export const initialUiBaseFontSize = FONT_SIZE.base;
+export const initialContentFontSize = FONT_SIZE.content;
+export const usesMobileContentFontMigration = false;
+export const composerMinInputHeight = 46;

@@ -1,12 +1,35 @@
 import { isNative } from "./platform";
 
-/**
- * Answers whether this target runs under constrained mobile memory and layout budgets
- * (single mounted workspace, 1 MiB source highlight cap, deferred selector mount, 15/16 pt fonts,
- * and 30 pt composer minimum height) rather than desktop budgets.
- */
-export function resolveUsesMobileResourceBudget(input: { isNative: boolean }): boolean {
-  return input.isNative;
+export interface SourceFileBudgets {
+  readonly highlighted: number;
+  readonly plain: number;
 }
 
-export const usesMobileResourceBudget = resolveUsesMobileResourceBudget({ isNative });
+export interface PlatformResourceBudgets {
+  readonly workspaceDeckRetentionLimit: number;
+  readonly sourceFileBudgets: SourceFileBudgets;
+  readonly deferModelSelectorMount: boolean;
+}
+
+const MOBILE_RESOURCE_BUDGETS: PlatformResourceBudgets = {
+  workspaceDeckRetentionLimit: 1,
+  sourceFileBudgets: { highlighted: 1024 * 1024, plain: 10 * 1024 * 1024 },
+  deferModelSelectorMount: true,
+};
+
+const WEB_RESOURCE_BUDGETS: PlatformResourceBudgets = {
+  workspaceDeckRetentionLimit: 10,
+  sourceFileBudgets: { highlighted: 10 * 1024 * 1024, plain: 50 * 1024 * 1024 },
+  deferModelSelectorMount: false,
+};
+
+/** Shipping-target resolver: native phones use mobile memory budgets; web and Electron use desktop budgets. */
+export function resolveResourceBudgets(input: { isNative: boolean }): PlatformResourceBudgets {
+  return input.isNative ? MOBILE_RESOURCE_BUDGETS : WEB_RESOURCE_BUDGETS;
+}
+
+const RESOURCE_BUDGETS = resolveResourceBudgets({ isNative });
+
+export const workspaceDeckRetentionLimit = RESOURCE_BUDGETS.workspaceDeckRetentionLimit;
+export const sourceFileBudgets = RESOURCE_BUDGETS.sourceFileBudgets;
+export const deferModelSelectorMount = RESOURCE_BUDGETS.deferModelSelectorMount;

@@ -11,4 +11,11 @@ describe("selectSourcePresentation", () => {
       expect(selectSourcePresentation({ platform, size: budgets.plain + 1 })).toBe("unsupported");
     });
   }
+
+  it("defaults to the target resource budget limits when no platform override is passed", () => {
+    const webBudgets = SOURCE_PRESENTATION_BUDGETS.web;
+    expect(selectSourcePresentation({ size: webBudgets.highlighted })).toBe("highlighted");
+    expect(selectSourcePresentation({ size: webBudgets.highlighted + 1 })).toBe("plain");
+    expect(selectSourcePresentation({ size: webBudgets.plain + 1 })).toBe("unsupported");
+  });
 });

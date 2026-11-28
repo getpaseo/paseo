@@ -19,7 +19,6 @@ import { useTranslation } from "react-i18next";
 import { RetainedPanel } from "@/components/retained-panel";
 import { Button } from "@/components/ui/button";
 import { isWeb } from "@/constants/platform";
-import { usesMobileResourceBudget } from "@/constants/resource-budget";
 import { useAppSettings } from "@/hooks/use-settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatFileSize } from "@/utils/format-file-size";
@@ -77,10 +76,7 @@ type TextFilePanelProps = PluginFilePanelProps & {
  */
 export function TextFilePanel(props: TextFilePanelProps) {
   const size = props.file.size;
-  const presentation = selectSourcePresentation({
-    size,
-    platform: usesMobileResourceBudget ? "native" : "web",
-  });
+  const presentation = selectSourcePresentation({ size });
   if (presentation === "unsupported") return <TooLargeTextFile size={size} />;
   if (isWeb && size <= MAX_EDITABLE_BYTES) return <EditableTextFile {...props} />;
   return <ReadonlyTextFile {...props} presentation={presentation} />;

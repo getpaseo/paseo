@@ -1,4 +1,3 @@
-import { usesMobileResourceBudget as defaultUsesMobileResourceBudget } from "@/constants/resource-budget";
 import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 
 export const WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES = 10;
@@ -7,13 +6,6 @@ export const WORKSPACE_DECK_INACTIVE_TTL_MS = 10 * 60 * 1000;
 export interface RetainedWorkspaceSelection {
   selection: ActiveWorkspaceSelection;
   inactiveSince: number | null;
-}
-
-export function resolveWorkspaceDeckRetentionLimit(input?: {
-  usesMobileResourceBudget?: boolean;
-}): number {
-  const usesMobile = input?.usesMobileResourceBudget ?? defaultUsesMobileResourceBudget;
-  return usesMobile ? 1 : WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES;
 }
 
 interface ReconcileRetainedWorkspaceSelectionsInput {

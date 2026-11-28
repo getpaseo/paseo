@@ -4,7 +4,6 @@ import {
   getNextWorkspaceDeckExpirationDelay,
   orderWorkspaceSelectionsForStableRender,
   reconcileRetainedWorkspaceSelections,
-  resolveWorkspaceDeckRetentionLimit,
   resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
   WORKSPACE_DECK_INACTIVE_TTL_MS,
@@ -30,21 +29,26 @@ function retainedWorkspaceIds(
 }
 
 describe("reconcileRetainedWorkspaceSelections", () => {
-  it("retains only the active workspace on mobile resource budgets", () => {
+  it("retains only the active workspace when limited to one mounted workspace", () => {
     const entries = reconcileRetainedWorkspaceSelections({
       currentEntries: [retained("A", null)],
       activeSelection: workspace("B"),
       now: 2,
-      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ usesMobileResourceBudget: true }),
+      maxMountedWorkspaces: 1,
     });
 
     expect(retainedWorkspaceIds(entries)).toEqual(["B"]);
   });
 
-  it("retains the desktop deck limit on desktop resource budgets", () => {
-    expect(resolveWorkspaceDeckRetentionLimit({ usesMobileResourceBudget: false })).toBe(
-      WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
-    );
+  it("retains up to the configured limit when higher", () => {
+    const entries = reconcileRetainedWorkspaceSelections({
+      currentEntries: [retained("A", null)],
+      activeSelection: workspace("B"),
+      now: 2,
+      maxMountedWorkspaces: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+    });
+
+    expect(retainedWorkspaceIds(entries)).toEqual(["B", "A"]);
   });
 
   it("retains inactive workspaces for ten minutes across app-wide routes", () => {

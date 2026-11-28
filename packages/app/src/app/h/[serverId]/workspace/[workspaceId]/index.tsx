@@ -20,11 +20,11 @@ import {
   getWorkspaceSelectionKey,
   orderWorkspaceSelectionsForStableRender,
   reconcileRetainedWorkspaceSelections,
-  resolveWorkspaceDeckRetentionLimit,
   type RetainedWorkspaceSelection,
   resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
 } from "@/screens/workspace/workspace-deck-retention";
+import { workspaceDeckRetentionLimit } from "@/constants/resource-budget";
 import {
   decodeWorkspaceIdFromPathSegment,
   parseWorkspaceOpenIntent,
@@ -164,7 +164,7 @@ function WorkspaceDeck() {
         currentEntries: retainedSelections,
         activeSelection,
         now: reconciliationNow,
-        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit(),
+        maxMountedWorkspaces: workspaceDeckRetentionLimit,
       }),
     [activeSelection, reconciliationNow, retainedSelections],
   );
@@ -201,7 +201,7 @@ function WorkspaceDeck() {
           currentEntries: current,
           activeSelection,
           now: Date.now(),
-          maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit(),
+          maxMountedWorkspaces: workspaceDeckRetentionLimit,
         }),
       );
     }, expirationDelay + 1);
