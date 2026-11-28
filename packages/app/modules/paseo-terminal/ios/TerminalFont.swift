@@ -2,6 +2,7 @@ import CoreText
 import UIKit
 
 private let measureText = "mmmmmmmmmm"
+private let nerdFontSymbolsFamily = "Symbols Nerd Font Mono"
 
 /// The terminal font at one size: a CTFont per face (regular, bold, italic, bold italic) and the
 /// cell those faces are laid out on. Cells are whole device pixels so every column origin is
@@ -60,7 +61,12 @@ final class TerminalFont {
   }
 
   private static func makeFont(family: String, size: CGFloat, traits: UIFontDescriptor.SymbolicTraits) -> CTFont {
-    let base = UIFontDescriptor(fontAttributes: [.family: family])
+    // CoreText's default cascade skips app-bundled fonts, so Nerd Font private-use icons need
+    // the bundled symbols font (registered by the expo-font plugin in app.config.js) named here.
+    let base = UIFontDescriptor(fontAttributes: [
+      .family: family,
+      .cascadeList: [UIFontDescriptor(fontAttributes: [.family: nerdFontSymbolsFamily])],
+    ])
     let descriptor = traits.isEmpty ? base : (base.withSymbolicTraits(traits) ?? base)
     return UIFont(descriptor: descriptor, size: size) as CTFont
   }
