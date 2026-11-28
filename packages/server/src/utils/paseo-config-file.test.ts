@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { writeFile, truncate, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { build } from "esbuild";
 import { isPlatform } from "../test-utils/platform.js";
 import {
@@ -243,6 +243,19 @@ describe("paseo config file substrate", () => {
     const result = await readPaseoConfigForEdit(tempDir);
 
     expect(result).toEqual({ ok: true, config: null, revision: null });
+  });
+
+  it("reports a timed out edit read and opens the same valid file on retry", async () => {
+    await writeFile(join(tempDir, "paseo.json"), "{}");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const read = readPaseoConfigForEdit(tempDir);
+      vi.advanceTimersByTime(5_000);
+      await expect(read).rejects.toThrow("Timed out reading paseo.json. Reload to try again.");
+    } finally {
+      vi.useRealTimers();
+    }
+    await expect(readPaseoConfigForEdit(tempDir)).resolves.toMatchObject({ ok: true, config: {} });
   });
 
   it("returns invalid_project_config for invalid JSON", async () => {

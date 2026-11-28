@@ -120,6 +120,8 @@ const READ_BUDGET_MS = 5_000;
 const MAX_SNAPSHOTS = 1_024;
 const UNAVAILABLE = Symbol("project config unavailable");
 
+class ProjectConfigReadTimeoutError extends Error {}
+
 /** Owns config admission, snapshots and daemon read/modify/write ordering for every consumer. */
 class ProjectConfigOwner {
   // A stalled mount retains its slot until the OS returns; never consume the whole fs pool.
@@ -179,7 +181,9 @@ class ProjectConfigOwner {
 
   async read(repoRoot: string): Promise<Snapshot> {
     const checked = await this.check(resolve(repoRoot));
-    if (checked === UNAVAILABLE) throw new Error("Project config unavailable");
+    if (checked === UNAVAILABLE) {
+      throw new ProjectConfigReadTimeoutError("Timed out reading paseo.json. Reload to try again.");
+    }
     return checked;
   }
 
@@ -341,7 +345,9 @@ export async function readPaseoConfigForEdit(
 ): Promise<ReadPaseoConfigForEditResult> {
   try {
     return (await projectConfig.read(repoRoot)).edit;
-  } catch {
+  } catch (error) {
+    // The session dispatcher correlates failed reads with the client's retryable RPC error.
+    if (error instanceof ProjectConfigReadTimeoutError) throw error;
     return { ok: false, error: { code: "invalid_project_config" } };
   }
 }
