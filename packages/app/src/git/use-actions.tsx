@@ -423,6 +423,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const prCreateStatus = useCheckoutGitActionsStore((s) =>
     s.getStatus({ serverId, cwd, actionId: "create-pr" }),
   );
+  const setPrReadyStatus = useCheckoutGitActionsStore((s) =>
+    s.getStatus({ serverId, cwd, actionId: "set-pr-ready" }),
+  );
   const mergePrStatuses: Record<CheckoutPrMergeMethod, CheckoutGitActionStatus> = {
     squash: useCheckoutGitActionsStore((s) =>
       s.getStatus({ serverId, cwd, actionId: "merge-pr-squash" }),
@@ -460,6 +463,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const runPush = useCheckoutGitActionsStore((s) => s.push);
   const runPullAndPush = useCheckoutGitActionsStore((s) => s.pullAndPush);
   const runCreatePr = useCheckoutGitActionsStore((s) => s.createPr);
+  const runSetPrReady = useCheckoutGitActionsStore((s) => s.setPrReady);
   const runMergePr = useCheckoutGitActionsStore((s) => s.mergePr);
   const runEnablePrAutoMerge = useCheckoutGitActionsStore((s) => s.enablePrAutoMerge);
   const runDisablePrAutoMerge = useCheckoutGitActionsStore((s) => s.disablePrAutoMerge);
@@ -469,6 +473,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     (s) =>
       s.sessions[serverId]?.serverInfo?.features?.checkoutForgeSetAutoMerge === true ||
       s.sessions[serverId]?.serverInfo?.features?.checkoutGithubSetAutoMerge === true,
+  );
+  const prSetReadyActionEnabled = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutForgeSetReady === true,
   );
 
   const toastActionError = useCallback(
@@ -551,6 +558,17 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     toastActionError,
     toastActionSuccess,
   ]);
+
+  const handleSetPrReady = useCallback(() => {
+    void runSetPrReady({ serverId, cwd })
+      .then(() => {
+        toastActionSuccess(t("workspace.git.actions.setPrReady.success", forgeVocabulary(forge)));
+        return;
+      })
+      .catch((err) => {
+        toastActionError(err, t("workspace.git.actions.toasts.failedSetPrReady"));
+      });
+  }, [cwd, forge, runSetPrReady, serverId, t, toastActionError, toastActionSuccess]);
 
   const handleMergePr = useCallback(
     (method: CheckoutPrMergeMethod) => {
@@ -700,6 +718,8 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       forgeBrandLabel: presentation.brandLabel,
       forgeChangeRequestNoun: presentation.changeRequestAbbrev,
       githubAutoMergeActionsEnabled,
+      prSetReadyActionEnabled,
+      forgeSupportsPrSetReady: presentation.supportsPrSetReady,
       hasPullRequest,
       pullRequestUrl: prStatus?.url ?? null,
       pullRequestState: narrowPullRequestState(prStatus?.state),
@@ -752,6 +772,12 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
           status: hasPullRequest ? "idle" : prCreateStatus,
           icon: prIcon,
           handler: handlePrAction,
+        },
+        "set-pr-ready": {
+          disabled: isActionDisabled(actionsDisabled, setPrReadyStatus),
+          status: setPrReadyStatus,
+          icon: prIcon,
+          handler: handleSetPrReady,
         },
         "merge-pr-squash": {
           disabled: isActionDisabled(actionsDisabled, mergePrStatuses.squash),
@@ -836,6 +862,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     githubFeaturesEnabled,
     forge,
     githubAutoMergeActionsEnabled,
+    prSetReadyActionEnabled,
     hasUncommittedChanges,
     aheadOfOrigin,
     behindOfOrigin,
@@ -848,6 +875,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     pushStatus,
     pullAndPushStatus,
     prCreateStatus,
+    setPrReadyStatus,
     mergePrStatuses.squash,
     mergePrStatuses.merge,
     mergePrStatuses.rebase,
@@ -864,6 +892,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     handlePush,
     handlePullAndPush,
     handlePrAction,
+    handleSetPrReady,
     handleMergePr,
     handleEnablePrAutoMerge,
     handleDisablePrAutoMerge,
@@ -986,6 +1015,12 @@ function getTranslatedGitActionLabels(
             pendingLabel: t("workspace.git.actions.createPr.pending", forgeVocabulary(forge)),
             successLabel: t("workspace.git.actions.createPr.success", forgeVocabulary(forge)),
           };
+    case "set-pr-ready":
+      return {
+        label: t("workspace.git.actions.setPrReady.label", forgeVocabulary(forge)),
+        pendingLabel: t("workspace.git.actions.setPrReady.pending", forgeVocabulary(forge)),
+        successLabel: t("workspace.git.actions.setPrReady.success", forgeVocabulary(forge)),
+      };
     case "merge-pr-squash":
       return {
         label: t("workspace.git.actions.mergePr.squash", forgeVocabulary(forge)),

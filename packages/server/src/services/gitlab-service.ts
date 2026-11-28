@@ -26,6 +26,7 @@ import type {
   CurrentPullRequestStatus,
   DisablePullRequestAutoMergeOptions,
   EnablePullRequestAutoMergeOptions,
+  MarkPullRequestReadyOptions,
   ForgeReadOptions,
   ForgeService,
   GetCheckDetailsOptions,
@@ -46,6 +47,7 @@ import type {
   PullRequestCreateResult,
   PullRequestMergeable,
   PullRequestMergeResult,
+  PullRequestReadyResult,
   PullRequestSummary,
   PullRequestTimeline,
   PullRequestTimelineCommentLocation,
@@ -1587,6 +1589,12 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       return { success: true };
     },
 
+    async markPullRequestReady(
+      input: MarkPullRequestReadyOptions,
+    ): Promise<PullRequestReadyResult> {
+      await run(["mr", "update", String(input.prNumber), "--ready"], { cwd: input.cwd });
+      return { success: true };
+    },
     changeRequests,
 
     invalidate(_input: { cwd: string }): void {},

@@ -79,6 +79,8 @@ export interface ForgePresentation {
   issueNumberPrefix: string;
   /** Auth CLI binary for the install hint, or null for a forge with no Paseo-driven sign-in. */
   signInCli: string | null;
+  /** Whether this forge's adapter can take a draft change request out of draft. */
+  supportsPrSetReady: boolean;
   /**
    * i18next context selecting the change-request vocabulary family for any key
    * that carries an `_mr` variant: `t(key, { context: changeRequestContext })`
@@ -103,6 +105,7 @@ export function getForgePresentation(forge: string): ForgePresentation {
     numberPrefix: definition.changeRequestNumberPrefix,
     issueNumberPrefix: definition.issueNumberPrefix,
     signInCli: definition.signIn?.cli ?? null,
+    supportsPrSetReady: definition.supportsPrSetReady,
     changeRequestContext: isMergeRequest ? "mr" : undefined,
     buildBlobUrl: hasWebUrls ? (input) => buildForgeBlobUrl(definition.id, input) : null,
     buildBranchTreeUrl: hasWebUrls
