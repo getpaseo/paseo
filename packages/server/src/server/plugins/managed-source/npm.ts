@@ -57,6 +57,7 @@ export async function acquireNpm(source: string, installRoot: string, target?: N
     [
       "install",
       "--ignore-scripts",
+      "--allow-remote=root",
       "--legacy-peer-deps",
       "--no-audit",
       "--no-fund",
