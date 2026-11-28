@@ -808,8 +808,11 @@ export class PluginService {
     const registered: string[] = [];
     try {
       for (const source of metadata) {
+        const isBuiltinProviderSource =
+          source.provider !== undefined && BUILTIN_PROVIDER_ID_SET.has(source.provider);
         if (
           source.provider &&
+          !isBuiltinProviderSource &&
           !this.runtime
             .getProviderRegistrations?.(pluginId)
             .some((provider) => provider.id === source.provider)

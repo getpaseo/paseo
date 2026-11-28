@@ -2517,11 +2517,38 @@ describe("Codex app-server provider", () => {
     expect(session.usageSession()).toMatchObject({
       provider: "codex",
       env: { CODEX_HOME: "/fixture/profile" },
+      launch: { command: "codex", args: [], env: { CODEX_HOME: "/fixture/profile" } },
       sessionKey: expect.any(String),
     });
     expect(spawns).toBe(0);
     await session.close();
     expect(session.usageSession()).toBeNull();
+  });
+
+  test("exposes replacement wrapper launch on usageSession", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+      {
+        environment: { HOME: "/fixture/codex" },
+        runtimeSettings: {
+          command: { mode: "replace", argv: ["/opt/homebrew/bin/teamcodex", "run", "--"] },
+        },
+      },
+    );
+
+    expect(session.usageSession()).toMatchObject({
+      provider: "codex",
+      launch: {
+        command: "/opt/homebrew/bin/teamcodex",
+        args: ["run", "--"],
+        env: { HOME: "/fixture/codex" },
+      },
+    });
+    await session.close();
   });
 
   test("loads archived Codex history without resuming the native thread", async () => {

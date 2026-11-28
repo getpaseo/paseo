@@ -86,7 +86,8 @@ export async function discover(
       env: scope.env,
       home: scope.env.HOME || scope.env.USERPROFILE || homedir(),
     };
-  const candidates = scope.kind === "global" ? globalRoutes(lookup) : sessionRoutes(scope, lookup);
+  const candidates =
+    scope.kind === "global" ? globalRoutes(scope, lookup) : sessionRoutes(scope, lookup);
   const present: UsageAccount[] = [];
   for (const input of candidates) {
     const auth = await readAuth(input, lookup);
@@ -101,16 +102,24 @@ export async function discover(
   return present;
 }
 
-function globalRoutes(lookup: StoreLookup): CodexUsageInput[] {
+function globalRoutes(
+  scope: Extract<UsageScope, { kind: "global" }>,
+  lookup: StoreLookup,
+): CodexUsageInput[] {
   const env = lookup.env ?? process.env;
   const home = lookup.home ?? homedir();
-  const paths = [
-    ...(env.CODEX_HOME ? [join(env.CODEX_HOME, "auth.json")] : []),
-    join(home, ".codex", "auth.json"),
-  ];
-  const candidates: CodexUsageInput[] = [...new Set(paths)].map((path) => ({
-    route: { store: "codex", path },
-  }));
+  const codexEnv = scope.launch ? { ...lookup.env, ...scope.launch.env } : env;
+  const codexHome = scope.launch ? codexEnv.HOME || codexEnv.USERPROFILE || home : home;
+  const candidates: CodexUsageInput[] = [];
+  if (!shouldSuppressLocalCodexAuth(codexEnv, scope.launch)) {
+    const paths = [
+      ...(codexEnv.CODEX_HOME ? [join(codexEnv.CODEX_HOME, "auth.json")] : []),
+      join(codexHome, ".codex", "auth.json"),
+    ];
+    for (const path of new Set(paths)) {
+      candidates.push({ route: { store: "codex", path } });
+    }
+  }
   candidates.push(...opencodeRoutes(env, home, lookup));
   candidates.push(
     { route: { store: "pi", path: piAuthPath(lookup) } },
@@ -145,7 +154,7 @@ function sessionRoutes(
   const env = scope.env;
   const home = lookup.home ?? homedir();
   if (scope.provider === "codex") {
-    if (env.OPENAI_BASE_URL) return [];
+    if (shouldSuppressLocalCodexAuth(env, scope.launch)) return [];
     return [
       {
         route: { store: "codex", path: join(env.CODEX_HOME || join(home, ".codex"), "auth.json") },
@@ -158,6 +167,43 @@ function sessionRoutes(
   if (scope.provider === "opencode")
     return opencodeRoutes(scope.env, lookup.home ?? homedir(), lookup);
   return [];
+}
+
+function hasNonEmpty(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isWrapperLaunch(
+  launch: UsageScope["launch"] | undefined,
+  expectedBinary: string,
+): boolean {
+  if (!launch) return false;
+  if (launch.args.length > 0) return true;
+  const command = launch.command.trim();
+  if (!command) return false;
+  const base = command.replaceAll("\\", "/").split("/").pop()?.toLowerCase() ?? "";
+  const stem = base.replace(/\.(?:exe|cmd|bat|ps1)$/, "");
+  return stem !== expectedBinary;
+}
+
+/**
+ * Suppresses reading default local `~/.codex/auth.json` credentials when the provider or session
+ * authenticates through `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN`, a custom `OPENAI_BASE_URL`, or a
+ * wrapper command. Plain `OPENAI_API_KEY` is intentionally ignored because Codex login does not
+ * select an account from `OPENAI_API_KEY` (custom OpenAI-compatible providers only opt into it
+ * alongside `OPENAI_BASE_URL`), so exporting `OPENAI_API_KEY` in a shell must not hide a ChatGPT
+ * login in `auth.json`. Custom `CODEX_HOME` profiles on the default CLI binary are unaffected.
+ */
+function shouldSuppressLocalCodexAuth(
+  env: NodeJS.ProcessEnv,
+  launch: UsageScope["launch"] | undefined,
+): boolean {
+  if (isWrapperLaunch(launch, "codex")) return true;
+  return (
+    hasNonEmpty(env.CODEX_API_KEY) ||
+    hasNonEmpty(env.CODEX_ACCESS_TOKEN) ||
+    hasNonEmpty(env.OPENAI_BASE_URL)
+  );
 }
 
 export async function readAuth(

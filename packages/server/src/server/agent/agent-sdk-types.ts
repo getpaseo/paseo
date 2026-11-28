@@ -746,6 +746,8 @@ export interface ProviderUsageEnvironment {
   env: Record<string, string>;
   /** Keys explicitly configured in the provider's own `env` override, when known. */
   configuredEnvKeys?: readonly string[];
+  /** Resolved command/args for the provider, used daemon-side to suppress wrapper disk fallback. */
+  launch?: Pick<import("@getpaseo/plugin/server/provider").ProviderLaunch, "command" | "args">;
 }
 
 export interface AgentSession {

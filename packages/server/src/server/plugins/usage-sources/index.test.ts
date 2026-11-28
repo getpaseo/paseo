@@ -1371,8 +1371,8 @@ test("#3589: configured provider discovery dispatches ONLY to sources whose prov
   expect(seenBySource.get("third-party-other")).toEqual([{ kind: "global" }]);
 });
 
-test("#3589: configured provider discovery strips secret and arbitrary env vars and skips secret-only providers", async () => {
-  const receivedEnvs: Array<Record<string, string>> = [];
+test("#3589: configured provider discovery strips secret and arbitrary env vars and skips secret-only, token-override, and wrapper providers", async () => {
+  const receivedEnvs: Array<{ source: string; env: Record<string, string> }> = [];
   const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
     hasAgent: () => false,
     usageSession: () => null,
@@ -1388,12 +1388,22 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
           XDG_DATA_HOME: "/home/alice/.local/share",
           OPENCODE_CONFIG_DIR: "/opencode-cfg",
           OPENCODE_DB: "/opencode-data/opencode.db",
-          ANTHROPIC_API_KEY: "sk-ant-secret",
-          ANTHROPIC_AUTH_TOKEN: "auth-token-secret",
-          CLAUDE_CODE_OAUTH_TOKEN: "oauth-token-secret",
+          OPENAI_API_KEY: "sk-openai-secret",
+          GITHUB_TOKEN: "ghp-secret",
+          MY_SECRET: "arbitrary-secret",
+        },
+        launch: { command: "/opt/claude-nightly/claude", args: [] },
+      },
+      {
+        provider: "codex",
+        label: "Codex (work with OPENAI_API_KEY in shell)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-work",
           OPENAI_API_KEY: "sk-openai-secret",
           MY_SECRET: "arbitrary-secret",
         },
+        launch: { command: "codex", args: [] },
       },
       {
         provider: "claude",
@@ -1404,6 +1414,46 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
           MY_SECRET: "only-secret",
         },
         configuredEnvKeys: ["ANTHROPIC_API_KEY", "MY_SECRET"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (oauth-token)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-oauth",
+          CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-token",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (api-key)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-apikey",
+          ANTHROPIC_API_KEY: "sk-ant-api03-key",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (auth-token)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-authtoken",
+          ANTHROPIC_AUTH_TOKEN: "auth-token-secret",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_AUTH_TOKEN"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (wrapper)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-wrapper",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR"],
+        launch: { command: "/opt/homebrew/bin/teamclaude", args: ["run", "--"] },
       },
       {
         provider: "claude",
@@ -1425,6 +1475,46 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
         },
         configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_BEDROCK"],
       },
+      {
+        provider: "claude",
+        label: "Claude (foundry)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-foundry",
+          CLAUDE_CODE_USE_FOUNDRY: "true",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_FOUNDRY"],
+      },
+      {
+        provider: "codex",
+        label: "Codex (api-key)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-apikey",
+          CODEX_API_KEY: "sk-codex-key",
+        },
+        configuredEnvKeys: ["CODEX_HOME", "CODEX_API_KEY"],
+      },
+      {
+        provider: "codex",
+        label: "Codex (access-token)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-token",
+          CODEX_ACCESS_TOKEN: "at-codex-token",
+        },
+        configuredEnvKeys: ["CODEX_HOME", "CODEX_ACCESS_TOKEN"],
+      },
+      {
+        provider: "codex",
+        label: "Codex (wrapper)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-wrapper",
+        },
+        configuredEnvKeys: ["CODEX_HOME"],
+        launch: { command: "/opt/homebrew/bin/teamcodex", args: ["run", "--"] },
+      },
     ],
   });
   registry.register({
@@ -1432,7 +1522,17 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
     label: "Claude",
     providers: ["claude"],
     discover: async (scope) => {
-      if (scope.kind === "session") receivedEnvs.push(scope.env);
+      if (scope.kind === "session") receivedEnvs.push({ source: "claude", env: scope.env });
+      return [];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    providers: ["codex"],
+    discover: async (scope) => {
+      if (scope.kind === "session") receivedEnvs.push({ source: "codex", env: scope.env });
       return [];
     },
     fetch: async () => ({ status: "available", windows: [] }),
@@ -1442,13 +1542,23 @@ test("#3589: configured provider discovery strips secret and arbitrary env vars 
 
   expect(receivedEnvs).toEqual([
     {
-      HOME: "/home/alice",
-      CLAUDE_CONFIG_DIR: "/claude-work",
-      CLAUDE_SECURESTORAGE_CONFIG_DIR: "/claude-secure",
-      XDG_CONFIG_HOME: "/home/alice/.config",
-      XDG_DATA_HOME: "/home/alice/.local/share",
-      OPENCODE_CONFIG_DIR: "/opencode-cfg",
-      OPENCODE_DB: "/opencode-data/opencode.db",
+      source: "claude",
+      env: {
+        HOME: "/home/alice",
+        CLAUDE_CONFIG_DIR: "/claude-work",
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: "/claude-secure",
+        XDG_CONFIG_HOME: "/home/alice/.config",
+        XDG_DATA_HOME: "/home/alice/.local/share",
+        OPENCODE_CONFIG_DIR: "/opencode-cfg",
+        OPENCODE_DB: "/opencode-data/opencode.db",
+      },
+    },
+    {
+      source: "codex",
+      env: {
+        HOME: "/home/alice",
+        CODEX_HOME: "/codex-work",
+      },
     },
   ]);
 });

@@ -170,8 +170,9 @@ export class UsageSourceRegistry {
       label,
       env,
       configuredEnvKeys,
+      launch,
     } of this.agents.providerEnvironments?.() ?? []) {
-      const sanitizedEnv = selectProviderUsageEnv({ provider, env, configuredEnvKeys });
+      const sanitizedEnv = selectProviderUsageEnv({ provider, env, configuredEnvKeys, launch });
       if (!sanitizedEnv) continue;
       scopes.push({
         scope: { kind: "session", provider, env: sanitizedEnv },

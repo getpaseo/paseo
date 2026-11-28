@@ -614,3 +614,144 @@ test("OpenCode v2 database login reports usage while the v1 file login expired a
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("suppresses local Codex credentials for env-token overrides and wrapper commands while keeping custom CODEX_HOME profiles", async () => {
+  const home = await mkdtemp(join(tmpdir(), "codex-wrapper-guard-"));
+  const defaultDir = join(home, ".codex");
+  const customDir = join(home, "work-codex");
+  try {
+    await mkdir(defaultDir, { recursive: true });
+    await mkdir(customDir, { recursive: true });
+    await writeFile(
+      join(defaultDir, "auth.json"),
+      JSON.stringify({ tokens: { access_token: "default-token", account_id: "default-acct" } }),
+    );
+    await writeFile(
+      join(customDir, "auth.json"),
+      JSON.stringify({ tokens: { access_token: "work-token", account_id: "work-acct" } }),
+    );
+    const lookup = { home, env: { HOME: home }, platform: "linux" as const };
+
+    // Legitimate custom CODEX_HOME with custom binary path still works.
+    expect(
+      await discover(
+        {
+          kind: "session",
+          provider: "codex",
+          env: { HOME: home, CODEX_HOME: customDir },
+          launch: {
+            command: "/opt/codex-nightly/codex",
+            args: [],
+            env: { HOME: home, CODEX_HOME: customDir },
+          },
+        },
+        lookup,
+      ),
+    ).toEqual([expect.objectContaining({ key: "work-acct" })]);
+
+    // Exporting OPENAI_API_KEY alone does not override Codex ChatGPT login in auth.json.
+    expect(
+      await discover(
+        {
+          kind: "session",
+          provider: "codex",
+          env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" },
+          launch: {
+            command: "codex",
+            args: [],
+            env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" },
+          },
+        },
+        lookup,
+      ),
+    ).toEqual([expect.objectContaining({ key: "default-acct" })]);
+    expect(
+      await discover(
+        {
+          kind: "global",
+          launch: {
+            command: "codex",
+            args: [],
+            env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" },
+          },
+        },
+        { ...lookup, env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" } },
+      ),
+    ).toEqual([expect.objectContaining({ key: "default-acct" })]);
+
+    // Session scope suppresses local disk fallback for Codex login env overrides and wrappers.
+    for (const override of [
+      { env: { CODEX_API_KEY: "sk-codex-key" } },
+      { env: { CODEX_ACCESS_TOKEN: "at-codex-token" } },
+      { env: { OPENAI_BASE_URL: "https://proxy.example.test/v1" } },
+      {
+        env: { OPENAI_BASE_URL: "https://proxy.example.test/v1", OPENAI_API_KEY: "sk-openai-key" },
+      },
+      {
+        launch: {
+          command: "/opt/homebrew/bin/teamcodex",
+          args: ["run", "--"],
+          env: { HOME: home },
+        },
+      },
+      {
+        launch: {
+          command: "/usr/local/bin/codex-proxy-wrapper",
+          args: [],
+          env: { HOME: home, CODEX_HOME: customDir },
+        },
+      },
+    ]) {
+      expect(
+        await discover(
+          {
+            kind: "session",
+            provider: "codex",
+            env: { HOME: home, ...override.env },
+            ...(override.launch ? { launch: override.launch } : {}),
+          },
+          lookup,
+        ),
+      ).toEqual([]);
+    }
+
+    // Global scope suppresses local Codex credentials for wrapper commands and Codex login env overrides.
+    expect(
+      await discover(
+        {
+          kind: "global",
+          launch: {
+            command: "/opt/homebrew/bin/teamcodex",
+            args: ["run", "--"],
+            env: { HOME: home },
+          },
+        },
+        lookup,
+      ),
+    ).toEqual([]);
+    for (const envOverride of [
+      { CODEX_API_KEY: "sk-codex-key" },
+      { CODEX_ACCESS_TOKEN: "at-codex-token" },
+      { OPENAI_BASE_URL: "https://proxy.example.test/v1" },
+    ]) {
+      expect(
+        await discover(
+          {
+            kind: "global",
+            launch: {
+              command: "codex",
+              args: [],
+              env: { HOME: home, ...envOverride },
+            },
+          },
+          lookup,
+        ),
+      ).toEqual([]);
+      expect(
+        await discover({ kind: "global" }, { ...lookup, env: { HOME: home, ...envOverride } }),
+      ).toEqual([]);
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

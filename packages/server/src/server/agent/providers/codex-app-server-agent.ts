@@ -70,6 +70,7 @@ import {
 } from "./codex/tool-call-mapper.js";
 import { normalizeCodexFilePath } from "./codex/tool-call-detail-parser.js";
 import {
+  buildProviderUsageLaunch,
   checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
@@ -341,6 +342,7 @@ interface CodexAppServerProcessPort {
 interface CodexAppServerAgentDeps {
   appServerProcess?: CodexAppServerProcessPort;
   environment?: Record<string, string>;
+  runtimeSettings?: ProviderRuntimeSettings;
   /** Where update checks learn the newest release; defaults to Codex's own release sources. */
   lookupLatestRelease?: LatestReleaseLookup;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
@@ -3926,6 +3928,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       provider: "codex",
       model: this.config.model,
       env: this.harnessEnvironment,
+      launch: buildProviderUsageLaunch("codex", this.deps.runtimeSettings, this.harnessEnvironment),
       sessionKey: this.usageSessionKey,
     };
   }
@@ -8217,9 +8220,18 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
+  async resolveUsageLaunch() {
+    return buildProviderUsageLaunch(
+      "codex",
+      this.runtimeSettings,
+      buildCodexAppServerEnv(this.runtimeSettings),
+    );
+  }
+
   private sessionDeps(launchEnv: Record<string, string> | undefined): CodexAppServerAgentDeps {
     return {
       ...this.deps,
+      runtimeSettings: this.runtimeSettings,
       codexHome: resolveCodexHomeDir(buildCodexAppServerEnv(this.runtimeSettings, launchEnv)),
       customCodexConfig: this.customProviderConfig(),
     };

@@ -32,6 +32,7 @@ import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type { OpenCodeBridge } from "./providers/opencode/bridge.js";
 import {
+  buildProviderUsageLaunch,
   createProviderEnv,
   type AgentProviderRuntimeSettingsMap,
   type ProviderOverride,
@@ -449,12 +450,16 @@ export class ProviderSnapshotManager {
       const definition = this.generation.definitions[provider];
       const runtimeSettings = definition?.configuration?.runtimeSettings;
       if (!definition?.enabled || !runtimeSettings?.env) return [];
+      const baseProvider = definition.derivedFromProviderId ?? provider;
+      const env = createProviderEnv({ baseEnv: process.env, runtimeSettings });
+      const { command, args } = buildProviderUsageLaunch(baseProvider, runtimeSettings, env);
       return [
         {
-          provider: definition.derivedFromProviderId ?? provider,
+          provider: baseProvider,
           label: definition.label,
-          env: createProviderEnv({ baseEnv: process.env, runtimeSettings }),
+          env,
           configuredEnvKeys: Object.keys(runtimeSettings.env),
+          launch: { command, args },
         },
       ];
     });
