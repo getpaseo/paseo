@@ -105,8 +105,11 @@ const activitySchema = z.object({
   url: z.string().url(),
   updatedAt: z.string().optional(),
 });
-const reviewSchema = activitySchema.extend({ submittedAt: z.string().nullable() });
-const inlineSchema = activitySchema.extend({ publishedAt: z.string().nullable() });
+const editableActivitySchema = activitySchema.omit({ updatedAt: true }).extend({
+  lastEditedAt: z.string().nullable(),
+});
+const reviewSchema = editableActivitySchema.extend({ submittedAt: z.string().nullable() });
+const inlineSchema = editableActivitySchema.extend({ publishedAt: z.string().nullable() });
 const prStates = { OPEN: "open", CLOSED: "closed", MERGED: "merged" } as const;
 const prSchema = z.object({
   state: z.enum(["OPEN", "CLOSED", "MERGED"]),
@@ -167,8 +170,8 @@ const pullRequestResult = z
   .object({ pullRequest: z.unknown() })
   .transform((result) => result.pullRequest);
 const threadResult = z.object({ comments: pageSchema });
-const reviewFields = "id url submittedAt updatedAt";
-const inlineFields = "id url publishedAt updatedAt";
+const reviewFields = "id url submittedAt lastEditedAt";
+const inlineFields = "id url publishedAt lastEditedAt";
 const threadFields = `id ${connection("comments", inlineFields, undefined, 10)}`;
 
 export async function readGitHubChangeRequests(
@@ -293,8 +296,13 @@ export async function readGitHubChangeRequests(
             z.object({ comments: pageSchema }).parse(pullRequestResult.parse(value)).comments,
         );
         schedulePullRequestPages(url, "reviews", reviewFields, pr.reviews, (nodes) => {
-          for (const { submittedAt, ...item } of z.array(reviewSchema).parse(nodes)) {
-            if (submittedAt) snapshot.activity.push({ ...item, kind: "review" });
+          for (const { submittedAt, lastEditedAt, ...item } of z.array(reviewSchema).parse(nodes)) {
+            if (submittedAt)
+              snapshot.activity.push({
+                ...item,
+                updatedAt: lastEditedAt ?? submittedAt,
+                kind: "review",
+              });
           }
         });
         schedulePullRequestPages(
@@ -313,8 +321,15 @@ export async function readGitHubChangeRequests(
                 url,
                 comments,
                 (inlineNodes) => {
-                  for (const { publishedAt, ...item } of z.array(inlineSchema).parse(inlineNodes)) {
-                    if (publishedAt) snapshot.activity.push({ ...item, kind: "inline comment" });
+                  for (const { publishedAt, lastEditedAt, ...item } of z
+                    .array(inlineSchema)
+                    .parse(inlineNodes)) {
+                    if (publishedAt)
+                      snapshot.activity.push({
+                        ...item,
+                        updatedAt: lastEditedAt ?? publishedAt,
+                        kind: "inline comment",
+                      });
                   }
                 },
                 select,

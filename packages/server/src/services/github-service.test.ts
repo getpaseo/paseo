@@ -5270,7 +5270,12 @@ describe("exact GitHub pull request observations", () => {
       resetAt: new Date(Date.now() + 100_000).toISOString(),
     };
     const responses: string[] = [];
-    for (const updatedAt of ["2026-11-27T09:00:00Z", "2026-11-27T11:00:00Z"]) {
+    const submittedAt = "2026-11-27T09:00:00Z";
+    for (const [updatedAt, lastEditedAt] of [
+      [submittedAt, null],
+      ["2026-11-27T09:00:01Z", null],
+      ["2026-11-27T11:00:00Z", "2026-11-27T11:00:00Z"],
+    ]) {
       responses.push(
         JSON.stringify({
           data: {
@@ -5291,8 +5296,9 @@ describe("exact GitHub pull request observations", () => {
                     {
                       id: "review",
                       url: `${address}#pullrequestreview-1`,
-                      submittedAt: updatedAt,
+                      submittedAt,
                       updatedAt,
+                      lastEditedAt,
                     },
                   ],
                 },
@@ -5307,8 +5313,9 @@ describe("exact GitHub pull request observations", () => {
                           {
                             id: "inline",
                             url: `${address}#discussion_r1`,
-                            publishedAt: updatedAt,
+                            publishedAt: submittedAt,
                             updatedAt,
+                            lastEditedAt,
                           },
                         ],
                       },
@@ -5350,6 +5357,23 @@ describe("exact GitHub pull request observations", () => {
       await vi.advanceTimersByTimeAsync(20_000);
       expect(errors).toEqual([]);
       expect(received[1]?.activity).toEqual(
+        expect.arrayContaining([
+          {
+            id: "review",
+            url: `${address}#pullrequestreview-1`,
+            updatedAt: submittedAt,
+            kind: "review",
+          },
+          {
+            id: "inline",
+            url: `${address}#discussion_r1`,
+            updatedAt: submittedAt,
+            kind: "inline comment",
+          },
+        ]),
+      );
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(received[2]?.activity).toEqual(
         expect.arrayContaining([
           { ...old, updatedAt: "2026-11-27T11:00:00Z", kind: "comment" },
           {
