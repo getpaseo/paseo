@@ -34,9 +34,10 @@ import {
 } from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
+import { ensureDirectory } from "./ensure-directory.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { v4 as uuidv4 } from "uuid";
-import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { lstat, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, join, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -256,6 +257,7 @@ import {
 import {
   createRealpathAwarePathMatcher,
   expandTilde,
+  isPathInsideRoot,
   isRealpathInsideRoot,
   normalizePathForIdentity,
 } from "../utils/path.js";
@@ -1300,7 +1302,7 @@ export class Session {
       hasBinaryChannel: () => this.onBinaryMessage !== null,
       supportsChunkedReplay: (source) =>
         this.supportsForSource(CLIENT_CAPS.terminalChunkedReplay, source),
-      isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
+      isPathWithinRoot: isPathInsideRoot,
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
       isScriptTerminal: (terminal) =>
@@ -5663,15 +5665,6 @@ export class Session {
     }
   }
 
-  private isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
-    const resolvedRoot = resolve(rootPath);
-    const resolvedCandidate = resolve(candidatePath);
-    if (resolvedCandidate === resolvedRoot) {
-      return true;
-    }
-    return resolvedCandidate.startsWith(resolvedRoot + sep);
-  }
-
   /**
    * Handle clearing agent attention flag
    */
@@ -8287,11 +8280,11 @@ export class Session {
       normalizedRepo = repo.displayName;
       const targetParent = resolve(expandTilde(request.targetDirectory.trim()));
       checkoutPath = resolve(targetParent, repo.name);
-      if (!this.isPathWithinRoot(targetParent, checkoutPath)) {
+      if (!isPathInsideRoot(targetParent, checkoutPath)) {
         throw new Error("Resolved checkout path must stay inside the target directory");
       }
 
-      await mkdir(targetParent, { recursive: true });
+      await ensureDirectory(targetParent);
       try {
         await lstat(checkoutPath);
         throw new Error(`Checkout path already exists: ${checkoutPath}`);

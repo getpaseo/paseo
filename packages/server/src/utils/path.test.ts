@@ -43,6 +43,16 @@ describe("path equivalence", () => {
     );
   });
 
+  test("accepts filesystem roots as parents", () => {
+    expect(isPathInsideRoot("/", "/")).toBe(true);
+    expect(isPathInsideRoot("/", "/repo")).toBe(true);
+    expect(isPathInsideRoot("/", "/repo/nested")).toBe(true);
+    expect(isPathInsideRoot("C:\\", "C:\\")).toBe(true);
+    expect(isPathInsideRoot("C:\\", "C:\\repo")).toBe(true);
+    expect(isPathInsideRoot("C:\\", "c:/repo/nested")).toBe(true);
+    expect(isPathInsideRoot("C:\\", "D:\\repo")).toBe(false);
+  });
+
   test.each([
     { root: "/repo", candidate: "/repo/..notes.txt", inside: true },
     { root: "/repo", candidate: "/repo/..drafts/notes.md", inside: true },
