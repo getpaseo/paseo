@@ -192,7 +192,12 @@ export const toolArgsSchema = z.object({
   url: z.string().default(""),
 });
 export const tokenUsageSchema = z.object({
-  cumulative: z.object({ promptTokens: z.number(), outputTokens: z.number() }),
+  cumulative: z.object({
+    promptTokens: z.number(),
+    outputTokens: z.number(),
+    cacheReadTokens: z.number().optional(),
+    cost: z.object({ usd: z.number().nonnegative(), partial: z.boolean() }).optional(),
+  }),
   usage: z.object({ cachedTokens: z.number().optional() }).optional(),
 });
 export const contextUsageSchema = z.object({
