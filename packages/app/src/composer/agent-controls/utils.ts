@@ -130,6 +130,21 @@ function resolveEffectiveThinking(
   return selectedThinking ?? thinkingOptions?.[0] ?? null;
 }
 
+// The agent runs on its level even when the model's list leaves it out. The level joins the
+// list, so the controls show and check it and none of them falls back to the first option.
+function includeResolvedThinkingOption(
+  thinkingOptions: ThinkingOption[] | null,
+  resolvedThinkingId: string | null,
+): ThinkingOption[] | null {
+  if (!thinkingOptions || thinkingOptions.length === 0 || !resolvedThinkingId) {
+    return thinkingOptions;
+  }
+  if (thinkingOptions.some((option) => option.id === resolvedThinkingId)) {
+    return thinkingOptions;
+  }
+  return [...thinkingOptions, { id: resolvedThinkingId, label: resolvedThinkingId }];
+}
+
 function resolveModelDisplay(
   selectedModel: AgentModelDefinition | null,
   preferredModelId: string | null,
@@ -192,11 +207,14 @@ export function resolveAgentModelSelection(input: {
     i18n.t("agentControls.model.unknown"),
   );
 
-  const thinkingOptions = selectedModel?.thinkingOptions ?? null;
   const resolvedThinkingId = resolveThinkingId(
     runtimeThinkingOptionId,
     explicitThinkingOptionId,
     selectedModel,
+  );
+  const thinkingOptions = includeResolvedThinkingOption(
+    selectedModel?.thinkingOptions ?? null,
+    resolvedThinkingId,
   );
   const effectiveThinking = resolveEffectiveThinking(thinkingOptions, resolvedThinkingId);
   const selectedThinkingId = effectiveThinking?.id ?? resolvedThinkingId;
