@@ -4,12 +4,12 @@ const COMMANDS = ["goland", "goland64"] as const;
 
 export const golandTarget: EditorTarget = {
   id: "goland",
-  async describe() {
+  async describe(runtime) {
     return {
       id: this.id,
       label: "GoLand",
       kind: "editor",
-      icon: { kind: "symbol", name: "terminal" },
+      icon: await runtime.loadIcon("goland.png"),
     };
   },
   async isInstalled(runtime) {
