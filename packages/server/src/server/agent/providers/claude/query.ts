@@ -105,6 +105,12 @@ function applyRuntimeSettingsToClaudeOptions(
       // or the user overrides the command via runtime settings, use that directly.
       const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
       const providerEnvSpec = createClaudeSpawnEnvSpec(spawnOptions.env, context);
+      // Keep the SDK's own version marker. Without it and without an entrypoint, Claude Code
+      // labels the process a bare `claude -p` run (`sdk-cli`) and never writes the automatic
+      // chat title (`ai-title`) to the transcript. The SDK sets this to its own version on
+      // every query, so the value never comes from a parent Claude Code session.
+      providerEnvSpec.envOverlay.CLAUDE_AGENT_SDK_VERSION =
+        spawnOptions.env.CLAUDE_AGENT_SDK_VERSION;
       const providerEnv = createExternalProcessEnv(spawnOptions.env, providerEnvSpec.envOverlay);
       const selfNodeCommand = isDefaultRuntime
         ? buildSelfNodeCommand(resolved.args, providerEnv)
