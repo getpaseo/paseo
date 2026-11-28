@@ -1,17 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { extractNodeText } from '../utils';
 import type { RendererProps, RendererMap, ASTNode, NodeType } from '../types';
 import { listItemStyle, checkedTaskTextStyle } from '../styles';
+import { resolveNodeDirection } from '../direction';
 
 const NESTED_LIST_TYPES: Set<NodeType> = new Set([
   'UnorderedList',
   'OrderedList',
 ]);
 
+const ISOLATE_STYLE: CSSProperties = { unicodeBidi: 'isolate' };
+
 function ListRenderer({
   node,
   styles,
   parentType,
+  capabilities,
   renderChildren,
   listTag: ListTag,
 }: RendererProps & { listTag: 'ul' | 'ol' }) {
@@ -25,8 +29,10 @@ function ListRenderer({
     : hasTaskChild
       ? styles.listTask
       : styles.list;
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   return (
     <ListTag
+      dir={dir}
       start={ListTag === 'ol' ? Number(node.attributes?.start ?? 1) : undefined}
       style={resolvedStyle}
     >
@@ -95,6 +101,11 @@ function ListItemRenderer({
     ? { ...node, children: node.children?.filter(isNestedList) }
     : null;
 
+  const itemDir = capabilities.autoDir
+    ? resolveNodeDirection(inlineNode)
+    : undefined;
+  const inlineContent = renderChildren(inlineNode);
+
   return (
     <li style={listItemStyle(style, isTask, (index ?? 0) === 0)}>
       <span style={checkedStyle}>
@@ -115,7 +126,13 @@ function ListItemRenderer({
             aria-label={`Task: ${taskText}`}
           />
         )}
-        {renderChildren(inlineNode)}
+        {itemDir ? (
+          <span dir={itemDir} style={ISOLATE_STYLE}>
+            {inlineContent}
+          </span>
+        ) : (
+          inlineContent
+        )}
       </span>
       {nestedNode && renderChildren(nestedNode)}
     </li>

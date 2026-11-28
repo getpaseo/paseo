@@ -11,8 +11,8 @@ const normalizeTextAlign = value => value === 'auto' ? undefined : value;
 
 // 'default' is an AST sentinel for "unspecified column alignment".
 function resolveColumnAlign(align) {
-  if (align === 'center' || align === 'right') return align;
-  return 'left';
+  if (align === 'left' || align === 'center' || align === 'right') return align;
+  return 'start';
 }
 export function zeroTrailingMargins(style) {
   return {
@@ -281,7 +281,7 @@ function codeStyle(style) {
     borderRadius: 3,
     padding: '1px 4px',
     direction: 'ltr',
-    unicodeBidi: 'embed'
+    unicodeBidi: 'isolate'
   };
 }
 function linkStyle(style) {

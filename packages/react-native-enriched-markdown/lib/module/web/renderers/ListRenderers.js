@@ -3,19 +3,26 @@
 import { useState, useEffect } from 'react';
 import { extractNodeText } from "../utils.js";
 import { listItemStyle, checkedTaskTextStyle } from "../styles.js";
+import { resolveNodeDirection } from "../direction.js";
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 const NESTED_LIST_TYPES = new Set(['UnorderedList', 'OrderedList']);
+const ISOLATE_STYLE = {
+  unicodeBidi: 'isolate'
+};
 function ListRenderer({
   node,
   styles,
   parentType,
+  capabilities,
   renderChildren,
   listTag: ListTag
 }) {
   const isNested = parentType === 'ListItem';
   const hasTaskChild = !isNested && node.children?.some(child => child.attributes?.isTask === 'true');
   const resolvedStyle = isNested ? styles.listNested : hasTaskChild ? styles.listTask : styles.list;
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   return /*#__PURE__*/_jsx(ListTag, {
+    dir,
     start: ListTag === 'ol' ? Number(node.attributes?.start ?? 1) : undefined,
     style: resolvedStyle,
     children: renderChildren(node)
@@ -74,6 +81,8 @@ function ListItemRenderer({
     ...node,
     children: node.children?.filter(isNestedList)
   } : null;
+  const itemDir = capabilities.autoDir ? resolveNodeDirection(inlineNode) : undefined;
+  const inlineContent = renderChildren(inlineNode);
   return /*#__PURE__*/_jsxs("li", {
     style: listItemStyle(style, isTask, (index ?? 0) === 0),
     children: [/*#__PURE__*/_jsxs("span", {
@@ -86,7 +95,11 @@ function ListItemRenderer({
         "aria-disabled": capabilities.enableTaskListItemToggle ? undefined : true,
         style: capabilities.enableTaskListItemToggle ? styles.taskCheckbox : styles.taskCheckboxDisabled,
         "aria-label": `Task: ${taskText}`
-      }), renderChildren(inlineNode)]
+      }), itemDir ? /*#__PURE__*/_jsx("span", {
+        dir: itemDir,
+        style: ISOLATE_STYLE,
+        children: inlineContent
+      }) : inlineContent]
     }), nestedNode && renderChildren(nestedNode)]
   });
 }

@@ -3,6 +3,7 @@
 import { extractNodeText } from "../utils.js";
 import { KaTeXRenderer } from "./KaTeXRenderer.js";
 import { linkStyleForUrl } from "../styles.js";
+import { isTechnicalLink } from "../direction.js";
 import { Fragment as _Fragment, jsx as _jsx } from "react/jsx-runtime";
 function TextRenderer({
   node
@@ -96,6 +97,7 @@ function CodeRenderer({
   renderChildren
 }) {
   return /*#__PURE__*/_jsx("code", {
+    dir: "ltr",
     style: parentType === 'Link' ? { ...styles.code, color: 'inherit' } : styles.code,
     children: node.content ?? renderChildren(node)
   });
@@ -132,10 +134,13 @@ function LinkRenderer({
       });
     }
   };
+  const technical = isTechnicalLink(node);
+  const baseStyle = linkStyleForUrl(style, url);
   const anchorProps = {
     href: url,
     title: node.attributes?.title,
-    style: linkStyleForUrl(style, url),
+    dir: technical ? 'ltr' : undefined,
+    style: technical ? { ...baseStyle, unicodeBidi: 'isolate' } : baseStyle,
     target: '_blank',
     rel: 'noopener noreferrer',
     onClick: handleClick,

@@ -168,7 +168,8 @@ const WEB_SELECTABLE: TextStyle = isWeb ? ({ userSelect: "text" } as TextStyle) 
 
 function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): SplitStyles {
   const { fontFamily, fontSize, color, ...box } = textStyle;
-  const textOnly: TextStyle = { ...WEB_SELECTABLE };
+  // Code blocks stay LTR even when the first line is an RTL comment.
+  const textOnly: TextStyle = { ...WEB_SELECTABLE, writingDirection: "ltr" };
   if (fontFamily !== undefined) textOnly.fontFamily = fontFamily;
   if (fontSize !== undefined) textOnly.fontSize = fontSize;
   if (fontSize !== undefined) textOnly.lineHeight = Math.round(fontSize * 1.45);

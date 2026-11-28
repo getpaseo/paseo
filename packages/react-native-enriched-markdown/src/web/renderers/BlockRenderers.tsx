@@ -10,31 +10,53 @@ import {
 } from './admonitionIcons';
 import type { AdmonitionType } from '../../admonitionDefaults';
 import { ENRM_ADMONITION_CLASS } from '../globalStyles';
+import { resolveNodeDirection } from '../direction';
 
 function ParagraphRenderer({
   node,
   styles,
   parentType,
+  capabilities,
   renderChildren,
 }: RendererProps) {
   const isImageOnly =
     node.children?.length === 1 && node.children[0]?.type === 'Image';
   if (isImageOnly) return <>{renderChildren(node)}</>;
 
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
+
   if (parentType === 'Blockquote' || parentType === 'Admonition') {
-    return <p style={styles.paragraphInBlockquote}>{renderChildren(node)}</p>;
+    return (
+      <p dir={dir} style={styles.paragraphInBlockquote}>
+        {renderChildren(node)}
+      </p>
+    );
   }
 
   if (parentType === 'ListItem') {
     return <span>{renderChildren(node)}</span>;
   }
 
-  return <p style={styles.paragraph}>{renderChildren(node)}</p>;
+  return (
+    <p dir={dir} style={styles.paragraph}>
+      {renderChildren(node)}
+    </p>
+  );
 }
 
-function HeadingRenderer({ node, styles, renderChildren }: RendererProps) {
+function HeadingRenderer({
+  node,
+  styles,
+  capabilities,
+  renderChildren,
+}: RendererProps) {
   const Tag = toHeadingLevel(node.attributes?.level ?? '1');
-  return <Tag style={styles[Tag]}>{renderChildren(node)}</Tag>;
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
+  return (
+    <Tag dir={dir} style={styles[Tag]}>
+      {renderChildren(node)}
+    </Tag>
+  );
 }
 
 function BlockquoteRenderer({
@@ -43,16 +65,19 @@ function BlockquoteRenderer({
   renderChildren,
   capabilities,
 }: RendererProps) {
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   const CustomBlockquote = capabilities.renderers?.blockquote;
   if (CustomBlockquote) {
     return (
-      <CustomBlockquote blockquoteProps={{ style: styles.blockquote }}>
+      <CustomBlockquote blockquoteProps={{ dir, style: styles.blockquote }}>
         {renderChildren(node)}
       </CustomBlockquote>
     );
   }
   return (
-    <blockquote style={styles.blockquote}>{renderChildren(node)}</blockquote>
+    <blockquote dir={dir} style={styles.blockquote}>
+      {renderChildren(node)}
+    </blockquote>
   );
 }
 
@@ -60,9 +85,11 @@ function AdmonitionRenderer({
   node,
   style,
   styles,
+  capabilities,
   renderChildren,
 }: RendererProps) {
   const type = (node.attributes?.admonitionType ?? 'note') as AdmonitionType;
+  const dir = capabilities.autoDir ? resolveNodeDirection(node) : undefined;
   const blockquote = style.blockquote;
   const colors = blockquote.admonitions[type] ?? blockquote.admonitions.note;
   const tint = colors.color;
@@ -85,7 +112,12 @@ function AdmonitionRenderer({
   };
   // The data attributes let a copy serializer write `> [!TYPE]` instead of the title.
   return (
-    <div className={ENRM_ADMONITION_CLASS} style={boxStyle} data-enrm-admonition-type={type}>
+    <div
+      className={ENRM_ADMONITION_CLASS}
+      dir={dir}
+      style={boxStyle}
+      data-enrm-admonition-type={type}
+    >
       <div style={headerStyle} data-enrm-admonition-title="">
         <svg
           width={iconSize}
@@ -117,6 +149,7 @@ function CodeBlockRenderer({
     // including the zeroed trailing margin of the last block.
     return (
       <div
+        dir="ltr"
         style={{
           marginTop: styles.codeBlock.marginTop,
           marginBottom: styles.codeBlock.marginBottom,
@@ -130,7 +163,7 @@ function CodeBlockRenderer({
 
   if (callbacks.onCodeBlockPress == null) {
     return (
-      <pre style={styles.codeBlock} aria-label={label}>
+      <pre dir="ltr" style={styles.codeBlock} aria-label={label}>
         <code style={styles.codeBlockFont}>{renderChildren(node)}</code>
       </pre>
     );
@@ -160,6 +193,7 @@ function CodeBlockRenderer({
 
   return (
     <pre
+      dir="ltr"
       style={{ ...styles.codeBlock, cursor: 'pointer' }}
       aria-label={label}
       role="button"

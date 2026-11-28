@@ -3,6 +3,7 @@ import type { RendererProps, RendererMap } from '../types';
 import { extractNodeText } from '../utils';
 import { KaTeXRenderer } from './KaTeXRenderer';
 import { linkStyleForUrl } from '../styles';
+import { isTechnicalLink } from '../direction';
 
 function TextRenderer({ node }: RendererProps) {
   return <>{node.content ?? ''}</>;
@@ -50,7 +51,12 @@ function HighlightRenderer({ node, styles, renderChildren }: RendererProps) {
 
 function CodeRenderer({ node, styles, parentType, renderChildren }: RendererProps) {
   return (
-    <code style={parentType === 'Link' ? { ...styles.code, color: 'inherit' } : styles.code}>{node.content ?? renderChildren(node)}</code>
+    <code
+      dir="ltr"
+      style={parentType === 'Link' ? { ...styles.code, color: 'inherit' } : styles.code}
+    >
+      {node.content ?? renderChildren(node)}
+    </code>
   );
 }
 
@@ -87,10 +93,15 @@ function LinkRenderer({
     }
   };
 
+  const technical = isTechnicalLink(node);
+  const baseStyle = linkStyleForUrl(style, url);
   const anchorProps = {
     href: url,
     title: node.attributes?.title,
-    style: linkStyleForUrl(style, url),
+    dir: technical ? ('ltr' as const) : undefined,
+    style: technical
+      ? { ...baseStyle, unicodeBidi: 'isolate' as const }
+      : baseStyle,
     target: '_blank',
     rel: 'noopener noreferrer',
     onClick: handleClick,

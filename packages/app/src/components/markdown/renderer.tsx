@@ -165,6 +165,7 @@ const MarkdownPart = memo(function MarkdownPart({
               markdown={segment.source}
               uniProps={pickMarkdownStyle(compact, muted)}
               flavor="github"
+              dir={isWeb ? "auto" : undefined}
               selectable={selectable}
               md4cFlags={external ? EXTERNAL_MD4C_FLAGS : MD4C_FLAGS}
               linkRecognition={linkRecognition}
