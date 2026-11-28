@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createReadingAnchor } from "./reading-anchor";
+import { createReadingAnchor, resolveNativeReadingRow } from "./reading-anchor";
 
 describe("reading anchor", () => {
   it("pins the folded turn host when a prepend replaces the row being read", () => {
@@ -165,5 +165,75 @@ describe("reading anchor", () => {
         rows.map((row) => ({ id: row.id, height: row.height, top: row.top + 2000 })),
       ),
     ).toBe(0);
+  });
+});
+
+describe("native reading row", () => {
+  // Content runs oldest-first from the top: older to newer cells, then the live head at the end.
+  const frames = new Map([
+    ["oldest", { y: 0, height: 300 }],
+    ["middle", { y: 300, height: 400 }],
+    ["newest", { y: 700, height: 200 }],
+  ]);
+
+  function readAt(offsetY: number, topInset = 0) {
+    return resolveNativeReadingRow({ frames, offsetY, viewportHeight: 500, topInset });
+  }
+
+  it("reads the cell under the visual top of the viewport", () => {
+    expect(readAt(0)).toEqual({ kind: "row", id: "oldest" });
+    expect(readAt(300)).toEqual({ kind: "row", id: "middle" });
+  });
+
+  it("moves the reading line below an overlay floating over the top", () => {
+    expect(readAt(200, 0)).toEqual({ kind: "row", id: "oldest" });
+    expect(readAt(200, 120)).toEqual({ kind: "row", id: "middle" });
+  });
+
+  it("hands ownership to the next row only once the reading row clears the line", () => {
+    // The reading line sits at content 300: "oldest" ends at 300, so it has just cleared.
+    expect(readAt(291)).toEqual({ kind: "row", id: "oldest" });
+    expect(readAt(292)).toEqual({ kind: "row", id: "middle" });
+  });
+
+  it("reads a row whose top landed on the reading line despite sub-point rounding", () => {
+    // "middle" starts at 300; a landing at offsetY 291.6 puts the reading line at 299.6.
+    expect(readAt(290.5)).toEqual({ kind: "row", id: "oldest" });
+    expect(readAt(291.6)).toEqual({ kind: "row", id: "middle" });
+  });
+
+  it("reads the live head when every history cell is above the reading line", () => {
+    expect(
+      resolveNativeReadingRow({ frames, offsetY: 900, viewportHeight: 500, topInset: 0 }),
+    ).toEqual({ kind: "live-head" });
+  });
+
+  it("reads the nearest newer rendered cell over an unrendered gap", () => {
+    const sparse = new Map([
+      ["old", { y: 100, height: 200 }],
+      ["newest", { y: 2000, height: 200 }],
+    ]);
+    expect(
+      resolveNativeReadingRow({ frames: sparse, offsetY: 0, viewportHeight: 500, topInset: 0 }),
+    ).toEqual({ kind: "row", id: "old" });
+    expect(
+      resolveNativeReadingRow({
+        frames: sparse,
+        offsetY: 500,
+        viewportHeight: 500,
+        topInset: 0,
+      }),
+    ).toEqual({ kind: "row", id: "newest" });
+  });
+
+  it("reads nothing before any cell has laid out", () => {
+    expect(
+      resolveNativeReadingRow({
+        frames: new Map(),
+        offsetY: 0,
+        viewportHeight: 500,
+        topInset: 0,
+      }),
+    ).toBeNull();
   });
 });

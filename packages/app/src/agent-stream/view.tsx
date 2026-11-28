@@ -82,6 +82,7 @@ import { renderStreamRow, type RenderStreamItem } from "./stream-row";
 import { type NearBottom, useIsNearBottom, useNearBottom } from "./near-bottom";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
+import { resolveReadingPosition } from "@/agent-stream/chat-outline/model";
 import { CHAT_COLUMN_RAIL_DATASET, useChatOutlineRail } from "@/chat-rail";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
@@ -112,7 +113,7 @@ import {
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useForkAgent } from "@/hooks/use-fork-agent";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -140,6 +141,26 @@ function renderLiveAuxiliaryNode(input: {
       ) : null}
     </>
   );
+}
+
+function resolveOutlineState(
+  rail: { enabled: boolean; inset: number },
+  supportsChatOutline: boolean,
+  chatOutlineEnabled: boolean,
+) {
+  const nativeOutlineEnabled = isNative && supportsChatOutline && chatOutlineEnabled;
+  return {
+    outlineEnabled: rail.enabled || nativeOutlineEnabled,
+    nativeOutlineEnabled,
+  };
+}
+
+function canShowChatOutline(
+  outlineInset: number,
+  nativeOutlineEnabled: boolean,
+  promptCount: number,
+): boolean {
+  return (outlineInset > 0 || nativeOutlineEnabled) && promptCount >= 2;
 }
 
 function BottomOverlayInset({ height }: { height: number }) {
@@ -367,6 +388,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const { t } = useTranslation();
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
     const chatDisplay = useSettings((settings) => settings.chatDisplay);
+    const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const pendingClientMessageIds = useMemo(
@@ -404,6 +426,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const supportsAgentForkContextCursor = useSessionStore(
       (state) =>
         state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
+    );
+    const supportsChatOutline = useSessionStore(
+      (state) =>
+        state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
     );
     const timelineEpoch = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
@@ -616,13 +642,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [baseRenderModel.segments.liveHead, mountedHistoryMessageIds]);
     const outlineRail = useChatOutlineRail();
     const outlineInset = outlineRail.inset;
+    const { outlineEnabled, nativeOutlineEnabled } = resolveOutlineState(
+      outlineRail,
+      supportsChatOutline,
+      chatOutlineEnabled,
+    );
     const chatOutline = useChatOutline({
       agentId,
       serverId: resolvedServerId,
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: outlineRail.enabled,
+      enabled: outlineEnabled,
+      supportsPromptIndex: supportsChatOutline,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
       mountedHistoryMessageIds,
@@ -1071,12 +1103,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return itemById;
     }, [streamLayout.liveHead]);
 
+    const getLayoutRow = useStableEvent(
+      (rowId: string) => layoutHistoryItemById.get(rowId) ?? layoutLiveHeadItemById.get(rowId),
+    );
     const handleReadingPositionChange = useStableEvent((rowId: string | null) => {
-      const row =
-        rowId === null
-          ? undefined
-          : (layoutHistoryItemById.get(rowId) ?? layoutLiveHeadItemById.get(rowId));
-      chatOutline.reportReadingPosition(row?.item.timelineCursor?.seq ?? null);
+      chatOutline.reportReadingPosition(resolveReadingPosition(rowId, getLayoutRow));
     });
 
     const renderHistoryRow = useCallback(
@@ -1201,6 +1232,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     revealInitialHistory,
                     onNearBottomChange: nearBottom.set,
                     onReadingPositionChange: handleReadingPositionChange,
+                    onUserScrollStart: chatOutline.cancelSelection,
                     onNearHistoryStart: loadOlder,
                     isLoadingOlderHistory: isLoadingOlder,
                     hasOlderHistory: hasOlder,
@@ -1215,11 +1247,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 </UserMessageExpansionContext.Provider>
               </ToolCallExpansionContext.Provider>
             </MessageOuterSpacingProvider>
-            {outlineInset > 0 && chatOutline.prompts.length >= 2 ? (
+            {canShowChatOutline(outlineInset, nativeOutlineEnabled, chatOutline.prompts.length) ? (
               <ChatOutlineRail
                 prompts={chatOutline.prompts}
                 activePrompt={chatOutline.activePrompt}
                 onJumpToPrompt={chatOutline.jumpToPrompt}
+                onStepToPrompt={chatOutline.stepToPrompt}
+                onScrubStart={chatOutline.cancelSelection}
               />
             ) : null}
             <ScrollToBottomButton
