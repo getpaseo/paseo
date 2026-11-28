@@ -124,6 +124,16 @@ test.skipIf(!endpoint || appearanceFixture)(
 );
 
 test.skipIf(!endpoint || appearanceFixture)(
+  "real Paseo sizes controls for a pointer, not for touch",
+  async () => {
+    // Regression: GPUI took the native touch answer, so a 28 pt pointer control rendered at 44.
+    const settings = await nodeWithId("sidebar-settings");
+    expect(settings.frame?.[3]).toBe(28);
+  },
+  20_000,
+);
+
+test.skipIf(!endpoint || appearanceFixture)(
   "real Paseo opens History",
   async () => {
     // Regression: the agent list's RefreshControl was undefined on GPUI, so History rendered

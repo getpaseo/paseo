@@ -130,6 +130,14 @@ const CASES = [
     native: path.join(APP_DIR, "modules/paseo-press-feedback/src/ui/feedback.native.tsx"),
     web: path.join(APP_DIR, "modules/paseo-press-feedback/src/ui/feedback.tsx"),
   },
+  {
+    label: "pointer capabilities",
+    origin: path.join(APP_DIR, "src/components/ui/control-sizing.ts"),
+    specifier: "@/hooks/pointer-capabilities",
+    gpui: path.join(APP_DIR, "src/hooks/pointer-capabilities.gpui.ts"),
+    native: path.join(APP_DIR, "src/hooks/pointer-capabilities.ts"),
+    web: path.join(APP_DIR, "src/hooks/pointer-capabilities.ts"),
+  },
 ];
 
 afterEach(() => {
