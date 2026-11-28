@@ -242,6 +242,9 @@ export const en = {
       searchPlaceholder: "Search modes...",
       selectWithValue: "Select agent mode ({{value}})",
     },
+    sheet: {
+      title: "Agent settings",
+    },
     hints: {
       thinking: "Thinking mode",
       model: "Change model",
@@ -1903,6 +1906,9 @@ export const en = {
     allModels: "All models ({{count}})",
     olderTag: "Older",
     allModelsTag: "All models",
+    searchProfilesPlaceholder: "Search profiles...",
+    profilesSaved: "{{count}} saved",
+    noProfiles: "No profiles",
   },
   providerCatalog: {
     title: "Add provider",

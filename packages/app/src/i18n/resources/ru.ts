@@ -246,6 +246,9 @@ export const ru: TranslationResources = {
       searchPlaceholder: "Поиск режимов...",
       selectWithValue: "Выбрать режим агента ({{value}})",
     },
+    sheet: {
+      title: "Настройки агента",
+    },
     hints: {
       thinking: "Режим рассуждений",
       model: "Изменить модель",
@@ -1908,6 +1911,9 @@ export const ru: TranslationResources = {
     allModels: "Все модели ({{count}})",
     olderTag: "Старая",
     allModelsTag: "Все модели",
+    searchProfilesPlaceholder: "Поиск профилей...",
+    profilesSaved: "Сохранено: {{count}}",
+    noProfiles: "Нет профилей",
   },
   providerCatalog: {
     title: "Добавить провайдера",

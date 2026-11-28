@@ -306,14 +306,15 @@ test.describe("Cross-provider model search", () => {
         await expect(trigger).toContainText("Ten second stream");
       });
 
-      await test.step("folded compact sheet also supports Enter on the active profile row", async () => {
+      await test.step("the compact drawer applies a profile from its Profiles page", async () => {
         await page.setViewportSize({ width: 390, height: 800 });
         await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
+        await page.getByTestId("agent-controls-profiles").click();
         const sheetProfileRow = page.getByTestId("model-profile-row-agent_profile_e2e_arrows");
         await expect(sheetProfileRow).toBeVisible();
-        await expect(sheetProfileRow).toHaveAttribute("data-active", "true");
-        await page.keyboard.press("Enter");
+        await sheetProfileRow.click();
         await expect(sheetProfileRow).toHaveCount(0);
+        await expect(page.getByTestId("agent-controls-model-sheet")).not.toBeInViewport();
       });
     } finally {
       await workspace.cleanup();

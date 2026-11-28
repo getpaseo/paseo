@@ -244,6 +244,9 @@ export const ar: TranslationResources = {
       searchPlaceholder: "أوضاع البحث...",
       selectWithValue: "حدد وضع الوكيل ({{value}})",
     },
+    sheet: {
+      title: "إعدادات الوكيل",
+    },
     hints: {
       thinking: "وضع التفكير",
       model: "تغيير النموذج",
@@ -1874,6 +1877,9 @@ export const ar: TranslationResources = {
     allModels: "كل النماذج ({{count}})",
     olderTag: "أقدم",
     allModelsTag: "كل النماذج",
+    searchProfilesPlaceholder: "ابحث في الملفات الشخصية...",
+    profilesSaved: "{{count}} محفوظة",
+    noProfiles: "لا توجد ملفات شخصية",
   },
   providerCatalog: {
     title: "إضافة مزود",

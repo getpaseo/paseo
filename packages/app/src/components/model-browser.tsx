@@ -1392,7 +1392,7 @@ function GroupedProviderRows({
   );
 }
 
-function IndependentScrollBoundary({ children }: { children: React.ReactElement }) {
+export function IndependentScrollBoundary({ children }: { children: React.ReactElement }) {
   // Prevent the parent sheet from cancelling Android's native scroll when the
   // finger crosses this viewport; receiving ACTION_UP is what preserves fling.
   const nativeScrollGesture = useMemo(
@@ -1663,6 +1663,16 @@ export function ModelBrowserLoadingState() {
         <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
       </View>
       <Text style={styles.emptyStateText}>{t("modelSelector.loadingShort")}</Text>
+    </View>
+  );
+}
+
+export function ModelBrowserNoProviders() {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyState} testID="model-browser-no-providers">
+      <ThemedAlertTriangle size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
+      <Text style={styles.emptyStateText}>{t("providerSelection.readiness.noProviders")}</Text>
     </View>
   );
 }

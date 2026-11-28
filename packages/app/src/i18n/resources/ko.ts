@@ -244,6 +244,9 @@ export const ko: TranslationResources = {
       searchPlaceholder: "모드 검색...",
       selectWithValue: "에이전트 모드 선택 ({{value}})",
     },
+    sheet: {
+      title: "에이전트 설정",
+    },
     hints: {
       thinking: "사고 모드",
       model: "모델 변경",
@@ -1886,6 +1889,9 @@ export const ko: TranslationResources = {
     allModels: "모든 모델 ({{count}})",
     olderTag: "이전",
     allModelsTag: "모든 모델",
+    searchProfilesPlaceholder: "프로필 검색...",
+    profilesSaved: "{{count}}개 저장됨",
+    noProfiles: "프로필 없음",
   },
   providerCatalog: {
     title: "프로바이더 추가",

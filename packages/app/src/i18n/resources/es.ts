@@ -246,6 +246,9 @@ export const es: TranslationResources = {
       searchPlaceholder: "Modos de búsqueda...",
       selectWithValue: "Seleccione el modo de agente ({{value}})",
     },
+    sheet: {
+      title: "Ajustes del agente",
+    },
     hints: {
       thinking: "Modo de pensamiento",
       model: "Cambiar modelo",
@@ -1924,6 +1927,9 @@ export const es: TranslationResources = {
     allModels: "Todos los modelos ({{count}})",
     olderTag: "Anterior",
     allModelsTag: "Todos los modelos",
+    searchProfilesPlaceholder: "Buscar perfiles...",
+    profilesSaved: "{{count}} guardados",
+    noProfiles: "No hay perfiles",
   },
   providerCatalog: {
     title: "Agregar proveedor",

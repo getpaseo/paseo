@@ -1,24 +1,26 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { useCallback, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Keyboard, Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
+import type { ComboboxProps } from "@/components/ui/combobox";
 import {
-  ModelBrowser,
-  ModelProviderGlyph,
-  useModelBrowser,
-  useSelectedModelLabels,
-} from "@/components/model-browser";
-import { DesktopModelPicker } from "@/components/model-browser-panes";
-import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
+  AdaptiveModalSheet,
+  type SheetHeader,
+  type SheetKeyboard,
+} from "@/components/adaptive-modal-sheet";
+import { ModelProviderGlyph, useSelectedModelLabels } from "@/components/model-browser";
+import { DesktopModelPicker, type ModelPickerActions } from "@/components/model-browser-panes";
+import {
+  MobileModelPageView,
+  SheetSearchDock,
+  useMobileModelPage,
+} from "@/components/mobile-model-page";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
-import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ICON_SIZE } from "@/styles/theme";
 import {
   TOOLBAR_GLYPH_SIZES,
   toolbarContentSlot,
@@ -27,15 +29,9 @@ import {
 
 import { useKeyboardToggle, type KeyboardToggleAction } from "@/hooks/use-keyboard-toggle";
 
-const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 const DEFAULT_TRIGGER_DECORATION = { showCaret: true, tooltip: undefined };
-const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-
-const foregroundMutedMapping = (theme: Theme) => ({
-  color: theme.colors.foregroundMuted,
-});
-
-function noop() {}
+const SHEET_SNAP_POINTS = ["80%", "90%"];
+const ESCAPE_KEYS = ["Escape"] as const;
 
 interface CombinedModelSelectorProps {
   providers: ProviderSelectorProvider[];
@@ -201,51 +197,30 @@ function CompactCombinedModelSelector({
   isRetryingProvider = false,
   disabled = false,
   serverId = null,
-  desktopPlacement,
   triggerFill = false,
   toolbar,
 }: CombinedModelSelectorProps) {
   const { t } = useTranslation();
-  const modelBrowserScrolling = resolveModelBrowserScrolling({ isNative, isCompact: true });
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [isContentReady, setIsContentReady] = useState(isWeb);
-  const browser = useModelBrowser({
-    providers,
-    selectedProvider,
-    selectedModel,
-    isLoading,
-    profiles,
-    serverId,
-  });
-  const { prepareToOpen, reset } = browser;
+  const labels = useSelectedModelLabels({ providers, selectedProvider, selectedModel, isLoading });
+  const page = useMobileModelPage({ providers, selectedProvider, selectedModel });
+  const { reset, clearQuery } = page;
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
       setIsOpen(open);
       if (open) {
-        prepareToOpen();
+        reset();
         onOpen?.();
         return;
       }
-      reset();
+      Keyboard.dismiss();
       onClose?.();
     },
-    [onClose, onOpen, prepareToOpen, reset],
+    [onClose, onOpen, reset],
   );
-
-  useEffect(() => {
-    if (isWeb) return () => {};
-    if (!isOpen) {
-      setIsContentReady(false);
-      return () => {};
-    }
-    const frame = requestAnimationFrame(() => {
-      setIsContentReady(true);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [isOpen]);
-
+  const handleClose = useCallback(() => handleOpenChange(false), [handleOpenChange]);
   const handleTriggerPress = useCallback(() => {
     handleOpenChange(!isOpen);
   }, [handleOpenChange, isOpen]);
@@ -254,7 +229,7 @@ function CompactCombinedModelSelector({
     action: toggleAction,
     disabled,
     open: isOpen,
-    searchFocused: browser.isSearchFocused,
+    searchFocused: false,
     onToggle: handleTriggerPress,
   });
 
@@ -266,24 +241,48 @@ function CompactCombinedModelSelector({
     onCreateProfile,
     onEditProfile,
   });
+  const pickerActions = useMemo<ModelPickerActions>(
+    () => ({
+      onSelect: actions.handleSelect,
+      onApplyProfile: actions.handleApplyProfile,
+      onEditProfiles: onEditProfiles ? actions.handleEditProfiles : undefined,
+      onCreateProfile: onCreateProfile ? actions.handleCreateProfile : undefined,
+      onEditProfile: onEditProfile ? actions.handleEditProfile : undefined,
+      onRetryProvider,
+      isRetryingProvider,
+    }),
+    [actions, isRetryingProvider, onCreateProfile, onEditProfile, onEditProfiles, onRetryProvider],
+  );
 
-  const selectorBody = isContentReady ? (
-    <ModelBrowser
-      state={browser}
-      onSelect={actions.handleSelect}
-      onApplyProfile={actions.handleApplyProfile}
-      onEditProfiles={onEditProfiles ? actions.handleEditProfiles : undefined}
-      onCreateProfile={onCreateProfile ? actions.handleCreateProfile : undefined}
-      onEditProfile={onEditProfile ? actions.handleEditProfile : undefined}
-      onRetryProvider={onRetryProvider}
-      isRetryingProvider={isRetryingProvider}
-      scrolling={modelBrowserScrolling}
-    />
-  ) : (
-    <View style={styles.sheetLoadingState}>
-      <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
-      <Text style={styles.sheetLoadingText}>{t("modelSelector.loadingSelector")}</Text>
-    </View>
+  // Escape clears the search first, then closes the sheet.
+  const query = page.query;
+  const keyboard = useMemo<SheetKeyboard>(
+    () => ({
+      keys: ESCAPE_KEYS,
+      onKeyDown: (event) => {
+        if (event.key !== "Escape" || query.trim().length === 0) return false;
+        clearQuery();
+        return true;
+      },
+    }),
+    [clearQuery, query],
+  );
+  const header = useMemo<SheetHeader>(() => ({ title: t("modelSelector.selectModel") }), [t]);
+  const footer = useMemo(
+    () => (
+      <SheetSearchDock
+        query={page.query}
+        searchKey={page.searchKey}
+        onChangeText={page.setQuery}
+        placeholder={
+          providers.length > 1
+            ? t("modelSelector.searchAllPlaceholder")
+            : t("modelSelector.searchPlaceholder")
+        }
+        testID="model-search-all-input"
+      />
+    ),
+    [page.query, page.searchKey, page.setQuery, providers.length, t],
   );
 
   return (
@@ -293,31 +292,33 @@ function CompactCombinedModelSelector({
         isOpen={isOpen}
         disabled={disabled}
         onPress={handleTriggerPress}
-        labels={browser}
+        labels={labels}
         selectedProvider={selectedProvider}
         serverId={serverId}
         renderTrigger={renderTrigger}
         triggerFill={triggerFill}
         toolbar={toolbar}
       />
-      <Combobox
-        options={EMPTY_COMBOBOX_OPTIONS}
-        value=""
-        onSelect={noop}
-        open={isOpen}
-        onOpenChange={handleOpenChange}
-        anchorRef={anchorRef}
-        desktopPlacement={desktopPlacement}
-        desktopLockWidth
-        desktopFixedHeight={browser.desktopFixedHeight}
-        desktopChildrenScrollEnabled={false}
-        header={browser.header}
-        keyboard={browser.keyboard}
-        mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
-        mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
+      <AdaptiveModalSheet
+        header={header}
+        visible={isOpen}
+        onClose={handleClose}
+        snapPoints={SHEET_SNAP_POINTS}
+        scrollable={false}
+        footer={footer}
+        keyboard={keyboard}
+        contentStyle={styles.sheetBody}
+        testID="model-selector-sheet"
       >
-        {selectorBody}
-      </Combobox>
+        <MobileModelPageView
+          page={page}
+          selectedProvider={selectedProvider}
+          selectedModel={selectedModel}
+          serverId={serverId}
+          profiles={profiles?.rows ?? null}
+          actions={pickerActions}
+        />
+      </AdaptiveModalSheet>
     </>
   );
 }
@@ -487,8 +488,11 @@ function ModelSelectorTrigger({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  mobileBrowserContent: {
+  sheetBody: {
     paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    gap: 0,
   },
   trigger: {
     minWidth: 0,
@@ -539,15 +543,5 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "stretch",
     backgroundColor: "transparent",
     borderRadius: 0,
-  },
-  sheetLoadingState: {
-    minHeight: 160,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  sheetLoadingText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.base,
   },
 }));

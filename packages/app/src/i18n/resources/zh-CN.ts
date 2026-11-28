@@ -244,6 +244,9 @@ export const zhCN: TranslationResources = {
       searchPlaceholder: "搜索 modes...",
       selectWithValue: "选择 Agent mode（{{value}}）",
     },
+    sheet: {
+      title: "智能体设置",
+    },
     hints: {
       thinking: "Thinking mode",
       model: "切换 Model",
@@ -1856,6 +1859,9 @@ export const zhCN: TranslationResources = {
     allModels: "所有模型 ({{count}})",
     olderTag: "旧版",
     allModelsTag: "所有模型",
+    searchProfilesPlaceholder: "搜索配置文件...",
+    profilesSaved: "已保存 {{count}} 个",
+    noProfiles: "没有配置文件",
   },
   providerCatalog: {
     title: "添加 provider",

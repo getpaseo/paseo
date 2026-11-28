@@ -81,7 +81,7 @@ function noop() {}
 
 type KeyboardHandler = (event: KeyboardInputEvent) => boolean;
 
-interface ModelPickerActions {
+export interface ModelPickerActions {
   onSelect: (provider: string, modelId: string) => void;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
@@ -533,7 +533,7 @@ function ListPane({
       if (entry.kind === "heading") return <ModelBrowserSectionHeading title={entry.title} />;
       const { item } = entry;
       return (
-        <ListItem
+        <ModelPickerItemRow
           item={item}
           active={item.key === activeKey}
           selected={
@@ -642,7 +642,7 @@ function ListPaneHeader({
   );
 }
 
-function CustomizeProviderButton({
+export function CustomizeProviderButton({
   serverId,
   providerId,
   providerLabel,
@@ -701,7 +701,8 @@ function useFoldTag(tag: ModelFoldKind): string | undefined {
   return undefined;
 }
 
-function ListItem({
+/** One row of a picker list: a model, a fold, a profile, or the create-profile entry. */
+export function ModelPickerItemRow({
   item,
   active,
   selected,

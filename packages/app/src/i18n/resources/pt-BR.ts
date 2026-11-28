@@ -245,6 +245,9 @@ export const ptBR: TranslationResources = {
       searchPlaceholder: "Buscar modos...",
       selectWithValue: "Selecionar modo do agente ({{value}})",
     },
+    sheet: {
+      title: "Configurações do agente",
+    },
     hints: {
       thinking: "Modo de raciocínio",
       model: "Alterar modelo",
@@ -1908,6 +1911,9 @@ export const ptBR: TranslationResources = {
     allModels: "Todos os modelos ({{count}})",
     olderTag: "Anterior",
     allModelsTag: "Todos os modelos",
+    searchProfilesPlaceholder: "Buscar perfis...",
+    profilesSaved: "{{count}} salvos",
+    noProfiles: "Nenhum perfil",
   },
   providerCatalog: {
     title: "Adicionar provedor",

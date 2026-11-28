@@ -17,14 +17,11 @@ import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { TailEllipsisText } from "@/components/ui/tail-ellipsis-text";
 import { useProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
-import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
-import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { resolveModelTriggerLabels } from "@/composer/agent-controls/layout";
-import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import {
   toolbarContentSlot,
@@ -35,10 +32,15 @@ import { getAgentControlHintKey, shortModelLabel } from "./utils";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ControlTooltipHint } from "./composer-control";
+import { ComposerControls, ControlTooltipHint } from "./composer-control";
 import { useModelPickerShortcut } from "./control-items";
+import { AgentSettingsDrawer } from "./agent-settings-drawer";
+import { AgentModeControl } from "./mode-control";
+import type { AgentSheetControls } from "./sheet-home";
 
 const SNAP_POINTS = ["80%", "90%"];
+// The dialog's model list scrolls inside its fixed viewport, apart from the controls below it.
+const NARROW_PANE_SCROLLING = "independent";
 const MODEL_LIST_TOP_INSET = 4;
 const MODEL_ROW_STRIDE = 44;
 const MODEL_VIEWPORT_VISIBLE_ROWS = 4.5;
@@ -70,7 +72,12 @@ interface CompactModelSheetProps {
   canSwitchProvider: boolean;
   /** Carries the composer's contexts into the sheets, which draw away from it. */
   contextBridge?: ContextBridge | null;
-  children: ReactNode;
+  controls: AgentSheetControls;
+  /** Plugin controls, drawn after the agent's own. */
+  pluginItems: ReactNode;
+  /** The control whose list is open, in the narrow-pane dialog. */
+  openControlId: string | null;
+  onOpenControlIdChange: (id: string | null) => void;
 }
 
 function resolveModelSheetProfileActions(
@@ -161,16 +168,14 @@ export function CompactModelSheet({
   showLabels,
   canSwitchProvider,
   contextBridge = null,
-  children,
+  controls,
+  pluginItems,
+  openControlId,
+  onOpenControlIdChange,
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
   const usesBottomSheet = useIsCompactFormFactor();
-  const modelBrowserScrolling = resolveModelBrowserScrolling({
-    isNative,
-    isCompact: usesBottomSheet,
-  });
   const [isOpen, setIsOpen] = useState(false);
-  const [isModelBrowserOpen, setIsModelBrowserOpen] = useState(false);
   const availableProviders = useMemo(() => {
     if (canSwitchProvider) return providers;
     const fixedProvider =
@@ -186,31 +191,8 @@ export function CompactModelSheet({
     profiles,
     serverId,
   });
-  const modelBrowser = useModelBrowser({
-    providers: availableProviders,
-    selectedProvider,
-    selectedModel,
-    isLoading,
-    autoFocusSearch: isWeb && !usesBottomSheet,
-    profiles,
-    serverId,
-  });
   const ModelIcon = useProviderIcon(selectedProvider, serverId);
   const hasSelectedProvider = selectedProvider.trim().length > 0;
-  const rootHeader = useMemo(
-    () => ({
-      ...rootBrowser.header,
-      title: t("modelSelector.selectModel"),
-      search:
-        rootBrowser.header.search && !canSwitchProvider
-          ? {
-              ...rootBrowser.header.search,
-              placeholder: t("modelSelector.searchPlaceholder"),
-            }
-          : rootBrowser.header.search,
-    }),
-    [canSwitchProvider, rootBrowser.header, t],
-  );
 
   const open = useCallback(() => {
     Keyboard.dismiss();
@@ -220,77 +202,10 @@ export function CompactModelSheet({
   }, [onOpen, rootBrowser]);
 
   const close = useCallback(() => {
-    setIsModelBrowserOpen(false);
     setIsOpen(false);
     rootBrowser.reset();
-    modelBrowser.reset();
     onClose?.();
-  }, [modelBrowser, onClose, rootBrowser]);
-
-  const handleSearchSelect = useCallback(
-    (provider: string, modelId: string) => {
-      onSelect(provider, modelId);
-      Keyboard.dismiss();
-      rootBrowser.showAll();
-    },
-    [onSelect, rootBrowser],
-  );
-
-  const openModelBrowser = useCallback(() => {
-    Keyboard.dismiss();
-    const destination = resolveModelSheetOpening({
-      canSwitchProvider,
-      providers: availableProviders,
-      selectedProvider,
-    });
-    if (destination.kind === "all") {
-      modelBrowser.showAll();
-    } else {
-      modelBrowser.drillDown(destination.providerId, destination.providerLabel);
-    }
-    setIsModelBrowserOpen(true);
-  }, [availableProviders, canSwitchProvider, modelBrowser, selectedProvider]);
-
-  const closeModelBrowser = useCallback(() => {
-    setIsModelBrowserOpen(false);
-    modelBrowser.reset();
-  }, [modelBrowser]);
-
-  const handleBrowserSelect = useCallback(
-    (provider: string, modelId: string) => {
-      onSelect(provider, modelId);
-      closeModelBrowser();
-    },
-    [closeModelBrowser, onSelect],
-  );
-
-  const handleDesktopSelect = useCallback(
-    (provider: string, modelId: string) => {
-      onSelect(provider, modelId);
-      close();
-    },
-    [close, onSelect],
-  );
-
-  const handleApplyProfile = useCallback(
-    (profileId: string) => {
-      onApplyProfile?.(profileId);
-      close();
-    },
-    [close, onApplyProfile],
-  );
-
-  const handleEditProfiles = useCallback(() => {
-    close();
-    onEditProfiles?.();
-  }, [close, onEditProfiles]);
-
-  const profileActions = resolveModelSheetProfileActions(
-    onCreateProfile,
-    onEditProfile,
-    onSelect,
-    close,
-  );
+  }, [onClose, rootBrowser]);
 
   const toggle = useCallback(() => {
     if (isOpen) {
@@ -299,29 +214,6 @@ export function CompactModelSheet({
     }
     open();
   }, [close, isOpen, open]);
-
-  const mobileRootContent = useMemo(
-    () => (
-      <View style={styles.mobileRootContent} testID="agent-controls-settings-list">
-        <View style={styles.controlsContent}>
-          <AgentControlTrigger
-            icon={ModelIcon}
-            surface="sheet"
-            label={t("modelSelector.model")}
-            value={rootBrowser.selectedModelLabel}
-            disabled={disabled}
-            onPress={openModelBrowser}
-            accessibilityLabel={t("modelSelector.selectedModel", {
-              model: rootBrowser.selectedModelLabel,
-            })}
-            testID="agent-controls-model"
-          />
-          {children}
-        </View>
-      </View>
-    ),
-    [ModelIcon, children, disabled, openModelBrowser, rootBrowser.selectedModelLabel, t],
-  );
 
   return (
     <>
@@ -332,7 +224,7 @@ export function CompactModelSheet({
         glyphs={glyphs}
         iconOnly={!showLabels && hasSelectedProvider}
         isOpen={isOpen}
-        searchFocused={rootBrowser.isSearchFocused || modelBrowser.isSearchFocused}
+        searchFocused={rootBrowser.isSearchFocused}
         disabled={disabled}
         onPress={toggle}
         accessibilityLabel={t("modelSelector.selectedModel", {
@@ -341,87 +233,194 @@ export function CompactModelSheet({
         effortKeys={effortKeys}
       />
 
-      <AdaptiveModalSheet
-        header={rootHeader}
-        visible={isOpen}
-        onClose={close}
-        snapPoints={SNAP_POINTS}
-        scrollable={false}
-        keyboard={rootBrowser.keyboard}
-        contentStyle={styles.sheetBody}
-        contextBridge={contextBridge}
-        testID="agent-controls-model-sheet"
-      >
-        <View
-          style={[
-            styles.modelViewport,
-            usesBottomSheet ? styles.flexibleModelViewport : styles.fixedModelViewport,
-          ]}
-          testID="agent-controls-model-viewport"
-        >
-          <ModelBrowser
-            state={rootBrowser}
-            onSelect={usesBottomSheet ? handleSearchSelect : handleDesktopSelect}
-            onApplyProfile={handleApplyProfile}
-            onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-            onCreateProfile={profileActions.create}
-            onEditProfile={profileActions.edit}
-            onRetryProvider={onRetryProvider}
-            isRetryingProvider={isRetryingProvider}
-            scrolling={modelBrowserScrolling}
-            searchAllOnFocus={usesBottomSheet}
-            rootBrowseContent={usesBottomSheet ? mobileRootContent : undefined}
-          />
-        </View>
-        {!usesBottomSheet ? (
-          <>
-            <View style={styles.modelViewportDivider} />
-            <ScrollView
-              style={styles.controlsScroll}
-              contentContainerStyle={styles.controlsContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              testID="agent-controls-settings-list"
-            >
-              {children}
-            </ScrollView>
-          </>
-        ) : null}
-      </AdaptiveModalSheet>
-
       {usesBottomSheet ? (
-        <AdaptiveModalSheet
-          header={modelBrowser.header}
-          visible={isModelBrowserOpen}
-          onClose={closeModelBrowser}
-          snapPoints={SNAP_POINTS}
-          scrollable={false}
-          presentation="push"
-          keyboard={modelBrowser.keyboard}
-          contentStyle={styles.sheetBody}
+        <AgentSettingsDrawer
+          visible={isOpen}
+          onClose={close}
           contextBridge={contextBridge}
-          testID="agent-controls-model-browser-sheet"
-        >
-          <View
-            style={[styles.modelViewport, styles.flexibleModelViewport]}
-            testID="agent-controls-model-browser-viewport"
-          >
-            <ModelBrowser
-              state={modelBrowser}
-              onSelect={handleBrowserSelect}
-              onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-              onCreateProfile={profileActions.create}
-              onEditProfile={profileActions.edit}
-              onRetryProvider={onRetryProvider}
-              isRetryingProvider={isRetryingProvider}
-              scrolling={modelBrowserScrolling}
-              searchAllOnFocus
-              showProfilesSection={false}
-            />
-          </View>
-        </AdaptiveModalSheet>
-      ) : null}
+          providers={availableProviders}
+          selectedProvider={selectedProvider}
+          selectedModel={selectedModel}
+          selectedModelLabel={rootBrowser.selectedModelLabel}
+          canSwitchProvider={canSwitchProvider}
+          serverId={serverId}
+          disabled={disabled}
+          controls={controls}
+          pluginItems={pluginItems}
+          profiles={profiles}
+          onSelect={onSelect}
+          onApplyProfile={onApplyProfile}
+          onEditProfiles={onEditProfiles}
+          onCreateProfile={onCreateProfile}
+          onEditProfile={onEditProfile}
+          onRetryProvider={onRetryProvider}
+          isRetryingProvider={isRetryingProvider}
+        />
+      ) : (
+        <NarrowPaneModelDialog
+          visible={isOpen}
+          onClose={close}
+          contextBridge={contextBridge}
+          browser={rootBrowser}
+          canSwitchProvider={canSwitchProvider}
+          disabled={disabled}
+          controls={controls}
+          pluginItems={pluginItems}
+          openControlId={openControlId}
+          onOpenControlIdChange={onOpenControlIdChange}
+          onSelect={onSelect}
+          onApplyProfile={onApplyProfile}
+          onEditProfiles={onEditProfiles}
+          onCreateProfile={onCreateProfile}
+          onEditProfile={onEditProfile}
+          onRetryProvider={onRetryProvider}
+          isRetryingProvider={isRetryingProvider}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * A narrow composer pane in a wide window: the model browser above the agent's controls, in one
+ * dialog.
+ */
+function NarrowPaneModelDialog({
+  visible,
+  onClose,
+  contextBridge,
+  browser,
+  canSwitchProvider,
+  disabled,
+  controls,
+  pluginItems,
+  openControlId,
+  onOpenControlIdChange,
+  onSelect,
+  onApplyProfile,
+  onEditProfiles,
+  onCreateProfile,
+  onEditProfile,
+  onRetryProvider,
+  isRetryingProvider,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  contextBridge: ContextBridge | null;
+  browser: ReturnType<typeof useModelBrowser>;
+  canSwitchProvider: boolean;
+  disabled: boolean;
+  controls: AgentSheetControls;
+  pluginItems: ReactNode;
+  openControlId: string | null;
+  onOpenControlIdChange: (id: string | null) => void;
+  onSelect: (provider: string, modelId: string) => void;
+  onApplyProfile?: (profileId: string) => void;
+  onEditProfiles?: () => void;
+  onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
+  onEditProfile?: (profileId: string) => void;
+  onRetryProvider?: (provider: AgentProvider) => void;
+  isRetryingProvider: boolean;
+}) {
+  const { t } = useTranslation();
+  const header = useMemo(
+    () => ({
+      ...browser.header,
+      title: t("modelSelector.selectModel"),
+      search:
+        browser.header.search && !canSwitchProvider
+          ? {
+              ...browser.header.search,
+              placeholder: t("modelSelector.searchPlaceholder"),
+            }
+          : browser.header.search,
+    }),
+    [canSwitchProvider, browser.header, t],
+  );
+  const handleSelect = useCallback(
+    (provider: string, modelId: string) => {
+      onSelect(provider, modelId);
+      onClose();
+    },
+    [onClose, onSelect],
+  );
+  const handleApplyProfile = useCallback(
+    (profileId: string) => {
+      onApplyProfile?.(profileId);
+      onClose();
+    },
+    [onClose, onApplyProfile],
+  );
+  const handleEditProfiles = useCallback(() => {
+    onClose();
+    onEditProfiles?.();
+  }, [onClose, onEditProfiles]);
+  const profileActions = resolveModelSheetProfileActions(
+    onCreateProfile,
+    onEditProfile,
+    onSelect,
+    onClose,
+  );
+
+  return (
+    <AdaptiveModalSheet
+      header={header}
+      visible={visible}
+      onClose={onClose}
+      snapPoints={SNAP_POINTS}
+      scrollable={false}
+      keyboard={browser.keyboard}
+      contentStyle={styles.sheetBody}
+      contextBridge={contextBridge}
+      testID="agent-controls-model-sheet"
+    >
+      <View
+        style={[styles.modelViewport, styles.fixedModelViewport]}
+        testID="agent-controls-model-viewport"
+      >
+        <ModelBrowser
+          state={browser}
+          onSelect={handleSelect}
+          onApplyProfile={handleApplyProfile}
+          onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
+          onCreateProfile={profileActions.create}
+          onEditProfile={profileActions.edit}
+          onRetryProvider={onRetryProvider}
+          isRetryingProvider={isRetryingProvider}
+          scrolling={NARROW_PANE_SCROLLING}
+          searchAllOnFocus={false}
+        />
+      </View>
+      <View style={styles.modelViewportDivider} />
+      <ScrollView
+        style={styles.controlsScroll}
+        contentContainerStyle={styles.controlsContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        testID="agent-controls-settings-list"
+      >
+        <View style={styles.combinedControls} testID="agent-controls-combined-sheet-controls">
+          <ComposerControls
+            items={controls.thinkingItems}
+            surface="sheet"
+            disabled={disabled}
+            openId={openControlId}
+            onOpenIdChange={onOpenControlIdChange}
+          />
+          {controls.modeControl ? (
+            <AgentModeControl {...controls.modeControl} surface="sheet" />
+          ) : null}
+          <ComposerControls
+            items={controls.featureItems}
+            surface="sheet"
+            disabled={disabled}
+            openId={openControlId}
+            onOpenIdChange={onOpenControlIdChange}
+          />
+          {pluginItems}
+        </View>
+      </ScrollView>
+    </AdaptiveModalSheet>
   );
 }
 
@@ -660,10 +659,6 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
     backgroundColor: theme.colors.surfaceSidebar,
   },
-  flexibleModelViewport: {
-    flex: 1,
-    minHeight: 0,
-  },
   fixedModelViewport: {
     height: FIXED_MODEL_VIEWPORT_HEIGHT,
     minHeight: FIXED_MODEL_VIEWPORT_HEIGHT,
@@ -677,15 +672,13 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
-  mobileRootContent: {
-    backgroundColor: theme.colors.surfaceSidebar,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
   controlsContent: {
     paddingHorizontal: theme.spacing[2],
     paddingTop: theme.spacing[3],
     paddingBottom: theme.spacing[3],
+    gap: theme.spacing[1],
+  },
+  combinedControls: {
     gap: theme.spacing[1],
   },
 }));

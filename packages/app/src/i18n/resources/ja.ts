@@ -246,6 +246,9 @@ export const ja: TranslationResources = {
       searchPlaceholder: "モードを検索...",
       selectWithValue: "エージェントモードを選択（{{value}}）",
     },
+    sheet: {
+      title: "エージェント設定",
+    },
     hints: {
       thinking: "思考モード",
       model: "モデルを変更",
@@ -1895,6 +1898,9 @@ export const ja: TranslationResources = {
     allModels: "すべてのモデル ({{count}})",
     olderTag: "以前",
     allModelsTag: "すべてのモデル",
+    searchProfilesPlaceholder: "プロファイルを検索...",
+    profilesSaved: "{{count}} 件保存済み",
+    noProfiles: "プロファイルはありません",
   },
   providerCatalog: {
     title: "プロバイダーを追加",
