@@ -256,6 +256,7 @@ import {
 import {
   createRealpathAwarePathMatcher,
   expandTilde,
+  isPathInsideRoot,
   isRealpathInsideRoot,
   normalizePathForIdentity,
 } from "../utils/path.js";
@@ -1300,7 +1301,7 @@ export class Session {
       hasBinaryChannel: () => this.onBinaryMessage !== null,
       supportsChunkedReplay: (source) =>
         this.supportsForSource(CLIENT_CAPS.terminalChunkedReplay, source),
-      isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
+      isPathWithinRoot: isPathInsideRoot,
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
       isScriptTerminal: (terminal) =>
@@ -5663,15 +5664,6 @@ export class Session {
     }
   }
 
-  private isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
-    const resolvedRoot = resolve(rootPath);
-    const resolvedCandidate = resolve(candidatePath);
-    if (resolvedCandidate === resolvedRoot) {
-      return true;
-    }
-    return resolvedCandidate.startsWith(resolvedRoot + sep);
-  }
-
   /**
    * Handle clearing agent attention flag
    */
@@ -8287,11 +8279,14 @@ export class Session {
       normalizedRepo = repo.displayName;
       const targetParent = resolve(expandTilde(request.targetDirectory.trim()));
       checkoutPath = resolve(targetParent, repo.name);
-      if (!this.isPathWithinRoot(targetParent, checkoutPath)) {
+      if (!isPathInsideRoot(targetParent, checkoutPath)) {
         throw new Error("Resolved checkout path must stay inside the target directory");
       }
 
-      await mkdir(targetParent, { recursive: true });
+      // `mkdir` cannot create an existing filesystem root (`D:\`), so only create a missing parent.
+      if (!(await stat(targetParent).catch(() => null))) {
+        await mkdir(targetParent, { recursive: true });
+      }
       try {
         await lstat(checkoutPath);
         throw new Error(`Checkout path already exists: ${checkoutPath}`);
