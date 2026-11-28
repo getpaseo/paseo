@@ -13,5 +13,10 @@ module.exports = {
     }),
   ),
   project: { desktop: {} },
+  dependencies: {
+    "react-native-enriched-markdown": {
+      root: path.resolve(__dirname, "../../react-native-enriched-markdown"),
+    },
+  },
   reactNativePath: path.dirname(require.resolve("react-native/package.json")),
 };

@@ -5727,9 +5727,21 @@ name = "rn-gpui-autolink"
 version = "0.1.0"
 dependencies = [
  "react-native-gpui",
+ "rn-gpui-enriched-markdown",
  "rn-gpui-fs",
  "rn-gpui-screens",
  "rn-gpui-svg",
+]
+
+[[package]]
+name = "rn-gpui-enriched-markdown"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "log",
+ "react-native-gpui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
