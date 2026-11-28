@@ -123,6 +123,15 @@ it("accepts terminalId and token reports through the route into the tracker", as
   expect(env.url).toBe("http://127.0.0.1:6767/api/terminal-activity");
   expect(response.statusCode).toBe(204);
   expect(session.getActivity()?.state).toBe("working");
+
+  const idleResponse = createMockResponse();
+  await handler(
+    createMockRequest({ body: { terminalId: env.terminalId, token: env.token, state: "idle" } }),
+    idleResponse as unknown as express.Response,
+    () => undefined,
+  );
+  expect(idleResponse.statusCode).toBe(204);
+  expect(session.getActivity()).toMatchObject({ state: "idle", attentionReason: "finished" });
 });
 
 it("rejects non-loopback activity reports before token handling", async () => {

@@ -65,6 +65,8 @@ Codex hook mapping:
 - `PermissionRequest` → `needs-input`
 - `Stop` → `idle`
 
+Copilot CLI maps `userPromptSubmitted` to `running` and `agentStop` to `idle`.
+
 OpenCode uses a server plugin instead of command hooks. Both generations discover the same global plugin file. Their loaders select separate entrypoints: OpenCode 1 calls `server()` with `{ type, properties }` bus events; OpenCode 2 calls `setup()` and subscribes to decoded `{ type, data }` events. Do not share their status mapping: V1 publishes `session.status` snapshots, while V2 publishes `session.execution.*` transitions.
 
 | OpenCode event                                              | Generation | Activity    |
@@ -100,6 +102,7 @@ When enabled, Paseo installs provider hooks globally:
 
 - Claude hooks are written to `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR/settings.json` when that override is set).
 - Codex hooks are written to `~/.codex/hooks.json` (or `CODEX_HOME/hooks.json` when that override is set). Codex supports a native `commandWindows`, so each Paseo hook includes both POSIX and Windows commands. Non-managed Codex hooks are trust-gated by Codex; users may see Codex's hook review prompt before the hook runs.
+- Copilot CLI hooks are written to `~/.copilot/hooks/paseo-terminal-activity.json` (or `COPILOT_HOME/hooks/paseo-terminal-activity.json` when set), separate from other personal hook files. Restart Copilot CLI after installing hooks; it loads them at startup.
 - OpenCode gets a self-contained plugin at `$XDG_CONFIG_HOME/opencode/plugins/paseo-terminal-activity.js` (or `~/.config/opencode/plugins/paseo-terminal-activity.js` when XDG is unset; `OPENCODE_CONFIG_DIR` still wins when set).
 
 Installation is marker-based/idempotent for config hooks and exact-file/idempotent for the OpenCode plugin. Paseo preserves user hooks, removes only its own marker-matched command hooks, and leaves hooks installed across daemon shutdown. Outside a Paseo terminal they are inert because the command or plugin is gated on `PASEO_TERMINAL_ID`.
