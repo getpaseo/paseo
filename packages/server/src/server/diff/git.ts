@@ -221,11 +221,12 @@ async function readComparisonList(
       ...(privateIndex ? { GIT_INDEX_FILE: privateIndex.indexFile } : {}),
     },
   };
-  const tracked = await readTrackedFiles(compare, args, options);
+  const pathFilter = compare.paths ? new Set(compare.paths) : null;
+  const tracked = await readTrackedFiles(compare, args, options, pathFilter);
   const files = tracked.files;
   const worktreeInputs = tracked.worktreeInputs;
   if (compare.head.kind === "worktree") {
-    const untracked = await listUntrackedFiles(options);
+    const untracked = await listUntrackedFiles(options, pathFilter);
     files.push(...untracked.files);
     for (const [path, input] of untracked.worktreeInputs) worktreeInputs.set(path, input);
   }
@@ -350,10 +351,21 @@ async function readComparisonList(
   };
 }
 
+function resolveTrackedChangeKind(
+  code: string | undefined,
+  oldPath: string | null,
+): DiffEntry["change"] {
+  if (code === "A") return "added";
+  if (code === "D") return "deleted";
+  if (oldPath !== null) return "renamed";
+  return "modified";
+}
+
 async function readTrackedFiles(
   compare: Compare,
   args: string[],
   options: GitCommandOptions,
+  pathFilter: ReadonlySet<string> | null = null,
 ): Promise<{
   files: ListedFile[];
   worktreeInputs: Map<string, WorktreeInput>;
@@ -379,16 +391,14 @@ async function readTrackedFiles(
       oldPath = path;
       path = fields[++index];
     }
+    if (pathFilter && !pathFilter.has(path)) continue;
     interpretationPaths.add(path);
     if (oldPath !== null) interpretationPaths.add(oldPath);
     const counts = stats.get(path);
     // With -w, a raw metadata entry need not have a numstat record.
     if (!counts && compare.ignoreWhitespace) continue;
     if (!counts) throw new Error(`Missing diff statistics for ${path}`);
-    let change: DiffEntry["change"] = "modified";
-    if (code === "A") change = "added";
-    else if (code === "D") change = "deleted";
-    else if (oldPath !== null) change = "renamed";
+    const change = resolveTrackedChangeKind(code, oldPath);
     let identity = header.join(" ");
     if (compare.head.kind === "worktree") {
       const input: WorktreeInput = {
@@ -496,6 +506,7 @@ async function readUntrackedText(
 
 async function listUntrackedFiles(
   options: GitCommandOptions,
+  pathFilter: ReadonlySet<string> | null = null,
 ): Promise<{ files: ListedFile[]; worktreeInputs: Map<string, WorktreeInput> }> {
   const cwd = options.cwd;
   const files: ListedFile[] = [];
@@ -505,6 +516,7 @@ async function listUntrackedFiles(
     options,
   );
   for (const path of untracked.stdout.split("\0").filter(Boolean)) {
+    if (pathFilter && !pathFilter.has(path)) continue;
     const value = await lstat(resolve(cwd, path), { bigint: true });
     if (!value.isFile() && !value.isSymbolicLink()) continue;
     const symlink = value.isSymbolicLink();

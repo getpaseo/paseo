@@ -12,6 +12,11 @@ test("accepts explicit endpoints without changing legacy schemas", () => {
     highlight: false,
   };
   expect(DiffSubscribeRequestSchema.parse(request)).toEqual(request);
+  expect(DiffSubscribeRequestSchema.parse({ ...request, paths: ["src/a.ts"] })).toEqual({
+    ...request,
+    paths: ["src/a.ts"],
+  });
+  expect(DiffSubscribeRequestSchema.safeParse({ ...request, paths: [123] }).success).toBe(false);
   expect(
     DiffSubscribeRequestSchema.safeParse({ ...request, base: { kind: "unknown" } }).success,
   ).toBe(false);

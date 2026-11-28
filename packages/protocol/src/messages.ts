@@ -2563,6 +2563,7 @@ export const DiffSubscribeRequestSchema = z.object({
   mergeBase: z.boolean().optional(),
   ignoreWhitespace: z.boolean().optional(),
   highlight: z.boolean().optional(),
+  paths: z.array(z.string()).optional(),
 });
 // Unsubscribe is fire-and-forget; release has no correlated response.
 export const DiffUnsubscribeRequestSchema = z.object({

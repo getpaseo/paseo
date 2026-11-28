@@ -32,7 +32,7 @@ import {
   RotateCw,
   WrapText,
 } from "lucide-react-native";
-import { type ParsedDiffFile } from "@/git/use-diff-query";
+import { type ParsedDiffFile, useCheckoutDiffQuery } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
 import { ReviewCommentSheet, ReviewFeedbackAction } from "@/review";
@@ -1483,6 +1483,68 @@ function useDiffTabNavigation({
   };
 }
 
+function useFocusedTooLargeDiff(input: {
+  serverId: string;
+  cwd: string;
+  mode: "uncommitted" | "base" | "all";
+  baseRef?: string;
+  ignoreWhitespace: boolean;
+  enabled: boolean | undefined;
+  presentation: ChangesPresentation;
+  isGit: boolean;
+  files: ParsedDiffFile[];
+  focusPath?: string;
+  focusRequestId?: number;
+}) {
+  const [localFocusRequest, setLocalFocusRequest] = useState<{
+    path: string;
+    revision: number;
+  } | null>(null);
+  const externalFocusRequest = useMemo(
+    () => (input.focusPath ? { path: input.focusPath, revision: input.focusRequestId ?? 0 } : null),
+    [input.focusPath, input.focusRequestId],
+  );
+  const documentFocusRequest =
+    localFocusRequest &&
+    (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
+      ? localFocusRequest
+      : externalFocusRequest;
+  const focusedPath = documentFocusRequest?.path;
+  const focusedFile = focusedPath
+    ? input.files.find((file) => file.path === focusedPath)
+    : undefined;
+  const focusedPaths = useMemo(() => (focusedPath ? [focusedPath] : undefined), [focusedPath]);
+  const focusedDiffQuery = useCheckoutDiffQuery({
+    serverId: input.serverId,
+    cwd: input.cwd,
+    mode: input.mode,
+    baseRef: input.baseRef,
+    ignoreWhitespace: input.ignoreWhitespace,
+    paths: focusedPaths,
+    enabled:
+      input.enabled !== false &&
+      input.presentation !== "tree" &&
+      input.isGit &&
+      Boolean(focusedPath) &&
+      focusedFile?.status === "too_large",
+  });
+  const effectiveFiles = useMemo(() => {
+    if (!focusedPath || focusedFile?.status !== "too_large") {
+      return input.files;
+    }
+    const scopedMatch = focusedDiffQuery.files.find((file) => file.path === focusedPath);
+    if (!scopedMatch || scopedMatch.status === "too_large") {
+      return input.files;
+    }
+    return input.files.map((file) => (file.path === focusedPath ? scopedMatch : file));
+  }, [focusedDiffQuery.files, focusedFile?.status, focusedPath, input.files]);
+  return {
+    documentFocusRequest,
+    setLocalFocusRequest,
+    effectiveFiles,
+  };
+}
+
 export function ChangesSurface({
   serverId,
   workspaceId,
@@ -1676,19 +1738,19 @@ export function ChangesSurface({
     [client, cwd, t, toast],
   );
   const onRevertPath = useDiscardChangesAction({ serverId, cwd, diffMode });
-  const [localFocusRequest, setLocalFocusRequest] = useState<{
-    path: string;
-    revision: number;
-  } | null>(null);
-  const externalFocusRequest = useMemo(
-    () => (focusPath ? { path: focusPath, revision: focusRequestId ?? 0 } : null),
-    [focusPath, focusRequestId],
-  );
-  const documentFocusRequest =
-    localFocusRequest &&
-    (!externalFocusRequest || localFocusRequest.revision >= externalFocusRequest.revision)
-      ? localFocusRequest
-      : externalFocusRequest;
+  const { documentFocusRequest, setLocalFocusRequest, effectiveFiles } = useFocusedTooLargeDiff({
+    serverId,
+    cwd,
+    mode: diffMode,
+    baseRef,
+    ignoreWhitespace: preferences.hideWhitespace,
+    enabled,
+    presentation,
+    isGit,
+    files,
+    focusPath,
+    focusRequestId,
+  });
   const handleSelectTreeFile = useCallback(
     (path: string) => {
       if (presentation === "tree" && onSelectDiffFile) {
@@ -1700,7 +1762,7 @@ export function ChangesSurface({
         revision: Math.max(Date.now(), (current?.revision ?? 0) + 1),
       }));
     },
-    [onSelectDiffFile, presentation],
+    [onSelectDiffFile, presentation, setLocalFocusRequest],
   );
   const workingMode = useMemo(
     () => ({
@@ -1737,7 +1799,7 @@ export function ChangesSurface({
   );
 
   const { bottom: bottomInset } = useSafeAreaInsets();
-  const hasChanges = files.length > 0;
+  const hasChanges = effectiveFiles.length > 0;
   const jumpToFileInset = jumpToFileClearance({
     isCompact: isMobile,
     presentation,
@@ -1746,14 +1808,14 @@ export function ChangesSurface({
   });
   const showJumpToFile = jumpToFileInset > 0;
   const selectedDiffStat = useMemo(
-    () => computeSelectedDiffStat(files, isDiffLoading),
-    [files, isDiffLoading],
+    () => computeSelectedDiffStat(effectiveFiles, isDiffLoading),
+    [effectiveFiles, isDiffLoading],
   );
   const allFilesCollapsed =
-    hasChanges && files.every((file) => collapsedFilePaths.includes(file.path));
+    hasChanges && effectiveFiles.every((file) => collapsedFilePaths.includes(file.path));
   const handleCollapseAllFiles = useCallback(
-    () => updateCollapsedFilePaths(files.map((file) => file.path)),
-    [files, updateCollapsedFilePaths],
+    () => updateCollapsedFilePaths(effectiveFiles.map((file) => file.path)),
+    [effectiveFiles, updateCollapsedFilePaths],
   );
   const handleExpandAllFiles = useCallback(
     () => updateCollapsedFilePaths([]),
@@ -1802,7 +1864,7 @@ export function ChangesSurface({
         notRepositoryLabel={t("workspace.git.diff.notRepository")}
       >
         <DiffDocument
-          files={files}
+          files={effectiveFiles}
           contentInsetBottom={floatingActionsClearance(
             [jumpToFileInset, reviewFeedback.clearance],
             bottomInset,
@@ -1959,7 +2021,11 @@ export function ChangesSurface({
       <View style={styles.diffContainer}>
         {bodyContent}
         {showJumpToFile ? (
-          <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
+          <JumpToFile
+            files={effectiveFiles}
+            mode={workingMode}
+            onSelectFile={handleSelectTreeFile}
+          />
         ) : null}
       </View>
 

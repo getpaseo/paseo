@@ -123,12 +123,14 @@ export class DiffSubscriptions {
   }
   async subscribe(compare: Compare, emit: Listener["emit"]): Promise<DiffSubscription> {
     validateCompare(compare);
+    const paths = compare.paths ? [...new Set(compare.paths)].sort() : undefined;
     compare = {
       ...compare,
       cwd: await worktreeRoot(expandTilde(compare.cwd)),
       mergeBase: compare.mergeBase === true,
       ignoreWhitespace: compare.ignoreWhitespace === true,
       highlight: compare.highlight !== false,
+      ...(paths ? { paths } : {}),
     };
     const key = JSON.stringify([
       compare.cwd,
@@ -139,6 +141,7 @@ export class DiffSubscriptions {
       compare.mergeBase,
       compare.ignoreWhitespace,
       compare.highlight,
+      ...(paths ? [paths] : []),
     ]);
     let target = this.targets.get(key);
     if (!target) {

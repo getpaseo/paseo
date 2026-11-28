@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile, rm, mkdir, rename } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
@@ -1556,3 +1556,147 @@ test.skipIf(process.platform !== "linux")(
   },
   35000,
 );
+
+test("scopes diff subscriptions by paths so small files are never evicted by repo budget", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "diff-scoped-paths-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const observer = createFileObserver();
+  const subscriptions = new DiffSubscriptions({
+    async requestWorkingTreeWatch(root, onChange) {
+      const watch = await observer.subscribe(root, () => onChange(), {
+        ignore: [join(root, ".git")],
+      });
+      return {
+        repoRoot: root,
+        unsubscribe: async () => {
+          await watch.unsubscribe();
+        },
+      };
+    },
+  });
+  const collectUntilReady = async (
+    compare: Parameters<typeof subscriptions.subscribe>[0],
+  ): Promise<{
+    frames: DiffFrame[];
+    release: () => Promise<void>;
+    waitForRevision: (revision: number) => Promise<void>;
+  }> => {
+    const frames: DiffFrame[] = [];
+    const sub = await subscriptions.subscribe(compare, async (frame) => {
+      frames.push(frame);
+    });
+    await sub.start();
+    const waitForRevision = async (revision: number) => {
+      await expect
+        .poll(
+          () =>
+            frames.some((frame) => frame.opcode === DiffOpcode.End && frame.revision === revision),
+          { timeout: 10_000 },
+        )
+        .toBe(true);
+    };
+    return { frames, release: () => sub.release(), waitForRevision };
+  };
+  try {
+    git("init", "-b", "main");
+    git("config", "user.email", "test@example.com");
+    git("config", "user.name", "Test");
+    await writeFile(join(cwd, "r-before.ts"), "export const renamed = 1;\n");
+    await writeFile(join(cwd, "z-target.md"), "line 1\nline 2\n");
+    git("add", ".");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "base");
+
+    // Exceed the 2 MiB TOTAL_DIFF_MAX_BYTES budget with earlier files alphabetically.
+    const bigBlock = ("x".repeat(124) + "\n").repeat(7200);
+    await writeFile(join(cwd, "a-1.txt"), bigBlock);
+    await writeFile(join(cwd, "a-2.txt"), bigBlock);
+    await writeFile(join(cwd, "a-3.txt"), ("x".repeat(124) + "\n").repeat(2000));
+    const medBlock = ("y".repeat(99) + "\n").repeat(40);
+    for (let i = 0; i < 16; i++)
+      await writeFile(join(cwd, `b-${String(i).padStart(2, "0")}.txt`), medBlock);
+    const smallBlock = ("z".repeat(99) + "\n").repeat(4);
+    for (let i = 0; i < 20; i++)
+      await writeFile(join(cwd, `c-${String(i).padStart(2, "0")}.txt`), smallBlock);
+    git("mv", "r-before.ts", "r-after.ts");
+    await writeFile(join(cwd, "u-note.md"), "untracked note\n");
+    await writeFile(
+      join(cwd, "z-target.md"),
+      "line 1\nline 2 updated\n" +
+        Array.from({ length: 20 }, (_, i) => `added line ${i} ${"m".repeat(70)}`).join("\n") +
+        "\n",
+    );
+
+    const unscoped = await collectUntilReady({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+      highlight: false,
+    });
+    const unscopedEnd = unscoped.frames.findLast((f) => f.opcode === DiffOpcode.End);
+    expect(unscopedEnd).toMatchObject({ diffTooLarge: true });
+    if (!unscopedEnd || unscopedEnd.opcode !== DiffOpcode.End) throw new Error("Missing end");
+    expect(unscopedEnd.omitted).toContain("z-target.md");
+
+    const beforeHighlightCalls = subscriptions.getMetrics().highlightCalls;
+    const scoped = await collectUntilReady({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+      highlight: true,
+      paths: ["z-target.md"],
+    });
+    const scopedBegin = scoped.frames.find((f) => f.opcode === DiffOpcode.Begin);
+    const scopedBodies = scoped.frames.filter((f) => f.opcode === DiffOpcode.Bodies);
+    const scopedEnd = scoped.frames.find((f) => f.opcode === DiffOpcode.End);
+    expect(scopedBegin).toMatchObject({
+      entries: [
+        { path: "z-target.md", oldPath: null, change: "modified", content: "text", body: true },
+      ],
+    });
+    expect(scopedBodies).toHaveLength(1);
+    expect(scopedEnd).toMatchObject({ diffTooLarge: false, omitted: [], error: null });
+    expect(subscriptions.getMetrics().highlightCalls).toBe(beforeHighlightCalls + 1);
+
+    const renamed = await collectUntilReady({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+      highlight: false,
+      paths: ["r-after.ts"],
+    });
+    const renamedBegin = renamed.frames.find((f) => f.opcode === DiffOpcode.Begin);
+    expect(renamedBegin).toMatchObject({
+      entries: [{ path: "r-after.ts", oldPath: "r-before.ts", change: "renamed", body: true }],
+    });
+
+    const untracked = await collectUntilReady({
+      cwd,
+      base: { kind: "rev", rev: "HEAD" },
+      head: { kind: "worktree" },
+      highlight: false,
+      paths: ["u-note.md"],
+    });
+    const untrackedBegin = untracked.frames.find((f) => f.opcode === DiffOpcode.Begin);
+    expect(untrackedBegin).toMatchObject({
+      entries: [{ path: "u-note.md", oldPath: null, change: "added", body: true }],
+    });
+
+    // Live edit and commit clear the scoped untracked entry cleanly.
+    await writeFile(join(cwd, "u-note.md"), "untracked note\nsecond line\n");
+    await untracked.waitForRevision(2);
+    git("add", "u-note.md");
+    git("-c", "commit.gpgsign=false", "commit", "-m", "commit note");
+    await untracked.waitForRevision(3);
+    const clearedBegin = untracked.frames.findLast((f) => f.opcode === DiffOpcode.Begin);
+    expect(clearedBegin).toMatchObject({ revision: 3, entries: [] });
+
+    await unscoped.release();
+    await scoped.release();
+    await renamed.release();
+    await untracked.release();
+  } finally {
+    await subscriptions.close();
+    await observer.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+}, 30_000);

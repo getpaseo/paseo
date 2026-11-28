@@ -37,6 +37,7 @@ interface CheckoutDiffCompare {
   mode: "uncommitted" | "base" | "all";
   baseRef?: string;
   ignoreWhitespace?: boolean;
+  paths?: readonly string[];
 }
 
 interface CheckoutDiffRoute {
@@ -353,7 +354,7 @@ function reconcileCheckoutDiffSubscriptions(input: {
   }
   for (const [key, desired] of input.desired) {
     if (input.active.has(key)) continue;
-    const { mode, baseRef, ignoreWhitespace } = desired.compare;
+    const { mode, baseRef, ignoreWhitespace, paths } = desired.compare;
     const revision = mode === "uncommitted" ? "HEAD" : baseRef;
     if (!revision) continue;
     const subscription = input.client.observeDiff({
@@ -362,6 +363,7 @@ function reconcileCheckoutDiffSubscriptions(input: {
       head: mode === "base" ? { kind: "rev", rev: "HEAD" } : { kind: "worktree" },
       mergeBase: mode !== "uncommitted",
       ignoreWhitespace,
+      ...(paths ? { paths: [...paths] } : {}),
     });
     const registration = { ...desired, subscription };
     input.active.set(key, registration);
@@ -671,6 +673,7 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
   const mode = value.mode;
   const baseRef = value.baseRef;
   const ignoreWhitespace = value.ignoreWhitespace;
+  const paths = value.paths;
   if (mode !== "uncommitted" && mode !== "base" && mode !== "all") {
     return null;
   }
@@ -680,10 +683,17 @@ function readCheckoutDiffCompare(value: unknown): CheckoutDiffCompare | null {
   if (ignoreWhitespace !== undefined && typeof ignoreWhitespace !== "boolean") {
     return null;
   }
+  if (
+    paths !== undefined &&
+    (!Array.isArray(paths) || paths.some((item) => typeof item !== "string"))
+  ) {
+    return null;
+  }
   return {
     mode,
     ...(baseRef ? { baseRef } : {}),
     ...(ignoreWhitespace !== undefined ? { ignoreWhitespace } : {}),
+    ...(paths ? { paths: [...paths] } : {}),
   };
 }
 
@@ -697,7 +707,8 @@ function areCheckoutDiffRoutesEqual(
     left.cwd === right.cwd &&
     left.compare.mode === right.compare.mode &&
     left.compare.baseRef === right.compare.baseRef &&
-    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace
+    left.compare.ignoreWhitespace === right.compare.ignoreWhitespace &&
+    JSON.stringify(left.compare.paths ?? null) === JSON.stringify(right.compare.paths ?? null)
   );
 }
 
@@ -708,7 +719,9 @@ function isCheckoutDiffQueryKeyForRoute(queryKey: QueryKey, route: CheckoutDiffR
     queryKey[2] === route.cwd &&
     queryKey[3] === route.compare.mode &&
     queryKey[4] === (route.compare.baseRef ?? "") &&
-    queryKey[5] === (route.compare.ignoreWhitespace === true)
+    queryKey[5] === (route.compare.ignoreWhitespace === true) &&
+    (route.compare.paths ? JSON.stringify(route.compare.paths) : "") ===
+      (queryKey[6] === "paths" && typeof queryKey[7] === "string" ? queryKey[7] : "")
   );
 }
 

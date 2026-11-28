@@ -20,6 +20,7 @@ interface UseWorkingDiffOptions {
   workspaceId?: string;
   cwd: string;
   ignoreWhitespace: boolean;
+  paths?: readonly string[];
   enabled: boolean;
   queryScope?: string;
   presentation?: string;
@@ -30,6 +31,7 @@ export function useWorkingDiff({
   workspaceId,
   cwd,
   ignoreWhitespace,
+  paths,
   enabled,
   queryScope,
   presentation,
@@ -75,6 +77,7 @@ export function useWorkingDiff({
     mode: diffMode,
     baseRef,
     ignoreWhitespace,
+    paths,
     enabled: enabled && isGit,
     queryScope,
   });
