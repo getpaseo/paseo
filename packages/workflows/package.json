@@ -1,0 +1,60 @@
+{
+  "name": "@getpaseo/workflows",
+  "version": "0.1.0",
+  "description": "Durable, subject-keyed workflow state machine, IR, DSL, and YAML compiler for Paseo",
+  "license": "Apache-2.0",
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./ir": {
+      "types": "./dist/ir.d.ts",
+      "source": "./src/ir.ts",
+      "default": "./dist/ir.js"
+    },
+    "./dsl": {
+      "types": "./dist/dsl.d.ts",
+      "source": "./src/dsl.ts",
+      "default": "./dist/dsl.js"
+    },
+    "./yaml": {
+      "types": "./dist/yaml.d.ts",
+      "source": "./src/yaml.ts",
+      "default": "./dist/yaml.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "source": "./src/testing.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "node ../../scripts/clean-package-dist.mjs",
+    "build": "tsc -p tsconfig.json --incremental false",
+    "build:clean": "npm run clean && npm run build",
+    "prepack": "npm run build:clean",
+    "typecheck": "tsgo --noEmit && tsgo -p tsconfig.typecheck.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "ajv": "^8.11.0",
+    "js-yaml": "^4.1.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6"
+  }
+}

@@ -60,6 +60,7 @@ sdk:
   - "packages/client/**"
   - "packages/highlight/**"
   - "packages/protocol/**"
+  - "packages/workflows/**"
 
 browser:
   - "packages/server/src/server/agent/provider-snapshot-manager.ts"

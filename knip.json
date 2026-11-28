@@ -67,6 +67,17 @@
       "entry": ["src/index.ts", "src/**/*.test.ts"],
       "project": ["src/**/*.ts"]
     },
+    "packages/workflows": {
+      "entry": [
+        "src/index.ts",
+        "src/ir.ts",
+        "src/dsl.ts",
+        "src/yaml.ts",
+        "src/testing.ts",
+        "test/**/*.test.ts"
+      ],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
     "packages/expo-two-way-audio": {
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts"]
