@@ -1998,7 +1998,7 @@ export class ACPAgentClient implements AgentClient {
 
 export class ACPAgentSession implements AgentSession, ACPClient {
   readonly provider: string;
-  readonly capabilities: AgentCapabilityFlags;
+  private readonly baseCapabilities: AgentCapabilityFlags;
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -2083,7 +2083,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
-    this.capabilities = options.capabilities;
+    this.baseCapabilities = { ...options.capabilities };
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
@@ -2119,6 +2119,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+  }
+
+  get capabilities(): AgentCapabilityFlags {
+    return {
+      ...this.baseCapabilities,
+      supportsMcpServers:
+        this.baseCapabilities.supportsMcpServers &&
+        this.agentCapabilities?.mcpCapabilities?.http !== false,
+    };
   }
 
   get id(): string | null {
@@ -3387,7 +3396,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private acpMcpServers(): McpServer[] {
-    return this.capabilities.supportsMcpServers ? normalizeMcpServers(this.config.mcpServers) : [];
+    if (!this.baseCapabilities.supportsMcpServers) {
+      return [];
+    }
+    const servers = normalizeMcpServers(this.config.mcpServers);
+    if (this.agentCapabilities?.mcpCapabilities?.http === false) {
+      return servers.filter((server) => !("type" in server && server.type === "http"));
+    }
+    return servers;
   }
 
   private applySessionState(response: SessionStateResponse): void {

@@ -125,6 +125,7 @@ export interface VoiceSessionHost {
   reloadAgentSession(
     agentId: string,
     overrides: Partial<AgentSessionConfig>,
+    options?: { requireVoiceSpeak?: boolean },
   ): Promise<ManagedAgent>;
   sendSpokenInput(agentId: string, text: string): Promise<void>;
   interruptAgentIfRunning(agentId: string): Promise<void>;
@@ -513,7 +514,9 @@ export class VoiceSession {
         { agentId, elapsedMs: Date.now() - startedAt },
         "enableVoiceModeForAgent.reloadAgentSession.start",
       );
-      const refreshed = await this.host.reloadAgentSession(agentId, refreshOverrides);
+      const refreshed = await this.host.reloadAgentSession(agentId, refreshOverrides, {
+        requireVoiceSpeak: true,
+      });
       this.sessionLogger.info(
         { agentId, refreshedAgentId: refreshed.id, elapsedMs: Date.now() - startedAt },
         "enableVoiceModeForAgent.reloadAgentSession.done",
@@ -536,6 +539,9 @@ export class VoiceSession {
       return;
     }
 
+    this.unregisterVoiceSpeakHandler?.(agentId);
+    this.unregisterVoiceCallerContext?.(agentId);
+
     if (restoreAgentConfig && this.voiceModeBaseConfig) {
       const baseConfig = this.voiceModeBaseConfig;
       try {
@@ -550,8 +556,6 @@ export class VoiceSession {
       }
     }
 
-    this.unregisterVoiceSpeakHandler?.(agentId);
-    this.unregisterVoiceCallerContext?.(agentId);
     this.voiceModeBaseConfig = null;
     this.voiceModeAgentId = null;
   }

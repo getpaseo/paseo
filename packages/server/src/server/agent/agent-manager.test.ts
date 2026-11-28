@@ -4577,6 +4577,233 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test("voice-only delivery injects internal paseo MCP and native voiceOnly catalog even when Paseo tools are disabled", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const voiceActiveAgents = new Set<string>();
+
+  class VoiceMcpSession extends McpCapableTestAgentSession {
+    override readonly provider: AgentProvider;
+
+    constructor(config: AgentSessionConfig) {
+      super(config);
+      this.provider = config.provider;
+    }
+
+    override describePersistence(): AgentPersistenceHandle {
+      return {
+        provider: this.provider,
+        sessionId: this.id,
+        metadata: { cwd: workdir },
+      };
+    }
+  }
+
+  class VoiceMcpClient extends TestAgentClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+    };
+    readonly configs: AgentSessionConfig[] = [];
+    readonly launchContexts: Array<AgentLaunchContext | undefined> = [];
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.configs.push(config);
+      this.launchContexts.push(launchContext);
+      return new VoiceMcpSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      overrides?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      const config = {
+        provider: handle.provider,
+        cwd: workdir,
+        ...overrides,
+      } as AgentSessionConfig;
+      this.configs.push(config);
+      this.launchContexts.push(launchContext);
+      return new VoiceMcpSession(config);
+    }
+  }
+
+  class VoiceNativeClient extends VoiceMcpClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+      supportsNativePaseoTools: true,
+    };
+  }
+
+  const speakCatalog: PaseoToolCatalog = {
+    tools: new Map([
+      [
+        "speak",
+        {
+          name: "speak",
+          description: "Speak text",
+          handler: async () => ({ content: [], structuredContent: { ok: true } }),
+        },
+      ],
+    ]),
+    getTool: (name) => (name === "speak" ? speakCatalog.tools.get("speak") : undefined),
+    executeTool: async () => ({ content: [], structuredContent: { ok: true } }),
+  };
+
+  const mcpClient = new VoiceMcpClient("claude");
+  const nativeClient = new VoiceNativeClient("opencode");
+  const catalogCalls: Array<{
+    callerAgentId?: string;
+    paseoToolPolicy?: unknown;
+    voiceOnly?: boolean;
+  }> = [];
+
+  const manager = new AgentManager({
+    clients: { claude: mcpClient, opencode: nativeClient },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpAuthToken: "voice-token",
+    paseoToolsEnabled: false,
+    hasActiveVoiceTools: (agentId) => voiceActiveAgents.has(agentId),
+    paseoToolCatalogFactory: (context) => {
+      catalogCalls.push(context);
+      return speakCatalog;
+    },
+  });
+
+  try {
+    const claudeAgent = await manager.createAgent(
+      { provider: "claude", cwd: workdir },
+      "00000000-0000-4000-8000-000000000201",
+      { workspaceId: undefined },
+    );
+    const opencodeAgent = await manager.createAgent(
+      { provider: "opencode", cwd: workdir },
+      "00000000-0000-4000-8000-000000000202",
+      { workspaceId: undefined },
+    );
+
+    // Non-voice sessions receive zero Paseo MCP servers and zero native Paseo tools.
+    expect(mcpClient.configs.at(-1)?.mcpServers).toBeUndefined();
+    expect(mcpClient.launchContexts.at(-1)?.voiceToolsEnabled).toBeUndefined();
+    expect(nativeClient.configs.at(-1)?.mcpServers).toBeUndefined();
+    expect(nativeClient.launchContexts.at(-1)?.paseoTools).toBeUndefined();
+    expect(catalogCalls).toEqual([]);
+
+    // Enabling voice mode on MCP provider injects loopback paseo MCP and marks voiceToolsEnabled.
+    voiceActiveAgents.add(claudeAgent.id);
+    await manager.reloadAgentSession(
+      claudeAgent.id,
+      { systemPrompt: "voice prompt" },
+      { requireVoiceSpeak: true },
+    );
+    expect(mcpClient.configs.at(-1)?.mcpServers?.paseo).toEqual({
+      type: "http",
+      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${claudeAgent.id}`,
+      headers: { Authorization: "Bearer voice-token" },
+    });
+    expect(mcpClient.launchContexts.at(-1)?.voiceToolsEnabled).toBe(true);
+
+    // Enabling voice mode on native-tools provider builds a voiceOnly catalog with speak only.
+    voiceActiveAgents.add(opencodeAgent.id);
+    await manager.reloadAgentSession(
+      opencodeAgent.id,
+      { systemPrompt: "voice prompt" },
+      { requireVoiceSpeak: true },
+    );
+    expect(catalogCalls).toEqual([
+      {
+        callerAgentId: opencodeAgent.id,
+        paseoToolPolicy: { enabled: false },
+        voiceOnly: true,
+      },
+    ]);
+    expect(nativeClient.launchContexts.at(-1)?.paseoTools).toBe(speakCatalog);
+    expect(nativeClient.configs.at(-1)?.mcpServers?.paseo).toBeUndefined();
+
+    // Disabling voice mode removes paseo MCP and voiceToolsEnabled again.
+    voiceActiveAgents.delete(claudeAgent.id);
+    await manager.reloadAgentSession(claudeAgent.id, { systemPrompt: "normal prompt" });
+    expect(mcpClient.configs.at(-1)?.mcpServers).toBeUndefined();
+    expect(mcpClient.launchContexts.at(-1)?.voiceToolsEnabled).toBeUndefined();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reloadAgentSession rejects voice mode when the reopened session cannot mount speak", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PiNoMcpSession extends CloseRecordingTestAgentSession {
+    override readonly provider = "pi" as const;
+
+    override describePersistence(): AgentPersistenceHandle {
+      return {
+        provider: "pi",
+        sessionId: this.id,
+        metadata: { cwd: workdir },
+      };
+    }
+  }
+  const original = new PiNoMcpSession({ provider: "pi", cwd: workdir });
+  const reopened = new PiNoMcpSession({ provider: "pi", cwd: workdir });
+  let voiceActive = false;
+
+  class NoMcpPiClient extends TestAgentClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: false,
+      supportsNativePaseoTools: false,
+    };
+
+    override async createSession(): Promise<AgentSession> {
+      return original;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return reopened;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { pi: new NoMcpPiClient("pi") },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    paseoToolsEnabled: false,
+    hasActiveVoiceTools: () => voiceActive,
+  });
+
+  try {
+    const created = await manager.createAgent(
+      { provider: "pi", cwd: workdir, systemPrompt: "base prompt" },
+      "00000000-0000-4000-8000-000000000203",
+      { workspaceId: undefined },
+    );
+    voiceActive = true;
+
+    await expect(
+      manager.reloadAgentSession(
+        created.id,
+        { systemPrompt: "voice prompt" },
+        { requireVoiceSpeak: true },
+      ),
+    ).rejects.toThrow(/speak/i);
+
+    expect(reopened.closed).toBe(true);
+    const stored = await storage.get(created.id);
+    expect(stored?.config?.systemPrompt).toBe("base prompt");
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("resumeAgentFromPersistence replaces stored internal paseo MCP with current runtime URL", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

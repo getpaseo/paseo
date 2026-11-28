@@ -325,4 +325,94 @@ describe("VoiceSession streaming transcription", () => {
 
     await voiceSession.cleanup();
   });
+
+  test("rejects set_voice_mode and cleans up voice bridge when speak capability check fails", async () => {
+    const events: string[] = [];
+    const host = createFakeHost();
+    const reloadOptions: Array<unknown> = [];
+    host.reloadAgentSession = async (_agentId, _overrides, options) => {
+      reloadOptions.push(options);
+      throw new Error(
+        "Voice mode is unavailable for provider 'pi': the session does not expose Paseo's 'speak' tool",
+      );
+    };
+    const voiceSession = new VoiceSession({
+      host,
+      logger: pino({ level: "silent" }),
+      sessionId: "voice-capability-reject-test",
+      sttLanguage: "en",
+      tts: null,
+      stt: { id: "local", createSession: vi.fn(() => new FakeVoiceSttSession()) },
+      voice: {
+        turnDetection: {
+          id: "local",
+          createSession: vi.fn(() => new FakeVoiceTurnDetectionSession()),
+        },
+      },
+      voiceBridge: {
+        registerVoiceSpeakHandler: (id) => events.push(`register-speak:${id}`),
+        unregisterVoiceSpeakHandler: (id) => events.push(`unregister-speak:${id}`),
+        registerVoiceCallerContext: (id) => events.push(`register-ctx:${id}`),
+        unregisterVoiceCallerContext: (id) => events.push(`unregister-ctx:${id}`),
+      },
+    });
+
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "req-voice-1");
+
+    expect(reloadOptions).toEqual([{ requireVoiceSpeak: true }]);
+    expect(events).toEqual([
+      `register-speak:${VOICE_AGENT_ID}`,
+      `register-ctx:${VOICE_AGENT_ID}`,
+      `unregister-speak:${VOICE_AGENT_ID}`,
+      `unregister-ctx:${VOICE_AGENT_ID}`,
+    ]);
+    expect(voiceSession.isActiveForAgent(VOICE_AGENT_ID)).toBe(false);
+    expect(host.emitted).toContainEqual({
+      type: "set_voice_mode_response",
+      payload: {
+        requestId: "req-voice-1",
+        enabled: false,
+        agentId: null,
+        accepted: false,
+        error:
+          "Voice mode is unavailable for provider 'pi': the session does not expose Paseo's 'speak' tool",
+      },
+    });
+  });
+
+  test("unregisters voice bridge before reloading when disabling voice mode", async () => {
+    const order: string[] = [];
+    const host = createFakeHost();
+    host.reloadAgentSession = async (agentId) => {
+      order.push(`reload:${agentId}`);
+      return { id: agentId } as unknown as ManagedAgent;
+    };
+    const voiceSession = new VoiceSession({
+      host,
+      logger: pino({ level: "silent" }),
+      sessionId: "voice-disable-order-test",
+      sttLanguage: "en",
+      tts: null,
+      stt: { id: "local", createSession: vi.fn(() => new FakeVoiceSttSession()) },
+      voice: {
+        turnDetection: {
+          id: "local",
+          createSession: vi.fn(() => new FakeVoiceTurnDetectionSession()),
+        },
+      },
+      voiceBridge: {
+        registerVoiceSpeakHandler: () => order.push("register-speak"),
+        unregisterVoiceSpeakHandler: () => order.push("unregister-speak"),
+        registerVoiceCallerContext: () => order.push("register-ctx"),
+        unregisterVoiceCallerContext: () => order.push("unregister-ctx"),
+      },
+    });
+
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "req-on");
+    order.length = 0;
+
+    await voiceSession.handleSetVoiceMode(false, VOICE_AGENT_ID, "req-off");
+
+    expect(order).toEqual(["unregister-speak", "unregister-ctx", `reload:${VOICE_AGENT_ID}`]);
+  });
 });

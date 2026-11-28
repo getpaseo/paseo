@@ -142,10 +142,12 @@ import {
 } from "../provider-notices.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
 import {
+  applyCodexMcpToolApproval,
   applyCodexToolPolicy,
   CodexProviderOptionsSchema,
   type CodexProviderOptions,
 } from "./codex/options.js";
+import { PASEO_MCP_SERVER_NAME } from "../runtime-mcp-config.js";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -350,6 +352,7 @@ interface CodexAppServerAgentDeps {
     extends: string;
   };
   customCodexConfig?: CodexCustomProviderConfig | null;
+  voiceToolsEnabled?: boolean;
   // The CODEX_HOME the session's app-server runs with; prompts and skills are read from it.
   codexHome?: string;
   _createCodexClient?: (
@@ -6142,7 +6145,10 @@ export class CodexAppServerAgentSession implements AgentSession {
         }
       }
     }
-    const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+    let configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
+    if (this.deps.voiceToolsEnabled && this.config.mcpServers?.[PASEO_MCP_SERVER_NAME]) {
+      configured = applyCodexMcpToolApproval(configured, PASEO_MCP_SERVER_NAME, "speak");
+    }
     return Object.keys(configured).length > 0 ? configured : null;
   }
 
@@ -8363,7 +8369,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       null,
       this.logger,
       async () => spawn(),
-      { ...this.sessionDeps(launchContext?.env), environment },
+      {
+        ...this.sessionDeps(launchContext?.env),
+        environment,
+        ...(launchContext?.voiceToolsEnabled ? { voiceToolsEnabled: true } : {}),
+      },
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
@@ -8401,7 +8411,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       handle,
       this.logger,
       async () => spawn(),
-      { ...this.sessionDeps(launchContext?.env), environment },
+      {
+        ...this.sessionDeps(launchContext?.env),
+        environment,
+        ...(launchContext?.voiceToolsEnabled ? { voiceToolsEnabled: true } : {}),
+      },
       false,
       goalsEnabled,
       autoReviewEnabled,

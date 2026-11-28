@@ -694,6 +694,8 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  /** True while Paseo voice mode is active for this session launch (never persisted). */
+  voiceToolsEnabled?: boolean;
 }
 
 export interface AgentCreateSessionOptions {
