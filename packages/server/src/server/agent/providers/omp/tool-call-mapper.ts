@@ -77,6 +77,7 @@ function mapOmpExtendedToolDetail(
       query: firstString(args.query) ?? "Web search",
       toolName: "web_search",
       content: extractTextFromToolResult(result),
+      ...webSearchResults(result),
     };
   }
   if (toolCall.toolName === "ask" || toolCall.toolName === "ask_user") {
@@ -96,6 +97,22 @@ function mapOmpExtendedToolDetail(
     return { type: "plain_text", label: "Thinking", text: firstString(args.thoughts) };
   }
   return mapOmpOpaqueToolDetail(toolCall, result);
+}
+
+function webSearchResults(result: OmpToolResult): {
+  webResults?: Array<{ title: string; url: string }>;
+} {
+  const response = resultDetails(result)?.response;
+  const sources = isRecord(response) && Array.isArray(response.sources) ? response.sources : [];
+  const seen = new Set<string>();
+  const webResults = sources.flatMap((source) => {
+    if (!isRecord(source)) return [];
+    const url = firstString(source.url)?.trim();
+    if (!url || seen.has(url)) return [];
+    seen.add(url);
+    return [{ title: firstString(source.title)?.trim() || url, url }];
+  });
+  return webResults.length > 0 ? { webResults } : {};
 }
 
 function mapOmpWaitDetail(result: OmpToolResult): ToolCallDetail {

@@ -153,6 +153,48 @@ describe("OMP history mapper", () => {
     });
   });
 
+  test("replays web search sources as web results", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "web-2", name: "web_search", arguments: { query: "View" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "web-2",
+        toolName: "web_search",
+        content: [
+          { type: "text", text: "[1] View · React Native\n    https://reactnative.dev/docs/view" },
+        ],
+        details: {
+          response: {
+            provider: "exa",
+            sources: [
+              {
+                title: "View · React Native",
+                url: "https://reactnative.dev/docs/view",
+                author: "N/A",
+              },
+            ],
+          },
+        },
+        isError: false,
+      },
+    ]);
+    expect(events.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      status: "completed",
+      detail: {
+        type: "search",
+        query: "View",
+        toolName: "web_search",
+        webResults: [{ title: "View · React Native", url: "https://reactnative.dev/docs/view" }],
+      },
+    });
+  });
+
   test("replays a Paseo browser tool result whose details error is an object", async () => {
     const events = await collectHistory([
       {
