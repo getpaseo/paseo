@@ -25,20 +25,23 @@ Because you share the browser with the agent, you can watch it work — and step
 
 Browser tools are off by default. Turn them on per host:
 
-- **In the app:** open **Settings → Host → Tools & prompts** and turn on **Browser tools**.
+- **In the app:** open **Settings → Host → Tools & prompts**. Turn on **Enable tools**, expand it, and turn on **Browser**.
 - **In `config.json`** (`~/.paseo/config.json`):
 
 ```json
 {
   "daemon": {
-    "browserTools": {
-      "enabled": true
+    "tools": {
+      "enabled": true,
+      "groups": {
+        "browser": true
+      }
     }
   }
 }
 ```
 
-The tools are part of the [Paseo MCP toolset](/docs/mcp), so **Enable Paseo tools** on the same page must also be on for agents to receive them. Existing agents may need a reload to pick up new tools.
+The tools are part of the [Paseo toolset](/docs/mcp). Start a new agent or reload an existing one to pick up new tools.
 
 > Browser tools let agents access and control Paseo browser tabs, including logged-in browser state. Only enable this for agents you trust.
 

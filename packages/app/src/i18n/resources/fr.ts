@@ -2665,6 +2665,10 @@ export const fr: TranslationResources = {
         info: "Le mode vocal transcrit ce que vous dites et lit à voix haute les réponses de l'agent.",
         enabled: "Mode vocal",
         enabledHint: "Parlez à vos agents sans les mains",
+        toolsRequiredTitle: "Le mode vocal nécessite les outils des agents",
+        toolsRequiredDescription:
+          "Activez Activer les outils pour que l'agent puisse lire ses réponses à voix haute.",
+        enablingTools: "Activation...",
       },
       openai: {
         apiKey: "Clé d'API",
@@ -3169,15 +3173,35 @@ export const fr: TranslationResources = {
       tools: {
         instructionsTitle: "Instructions",
         toolsTitle: "Outils des agents",
+        pluginNote: "Les outils ajoutés par les plugins suivent aussi Activer les outils",
+        updateHostForGroups: "Mettez à jour cet hôte pour configurer chaque groupe d'outils",
+        groups: {
+          orchestration: {
+            title: "Orchestration",
+            hint: "Gérer les workspaces, les agents, les terminaux et les scripts",
+          },
+          schedules: {
+            title: "Planifications",
+            hint: "Créer et gérer des planifications et des heartbeats",
+          },
+          changeRequests: {
+            title: "Suivi des PR",
+            hint: "Surveiller les pull requests et merge requests",
+          },
+          browser: {
+            title: "Navigateur",
+            hint: "Contrôler les onglets du navigateur Paseo, y compris les sessions connectées. Activez uniquement pour des agents de confiance.",
+          },
+        },
       },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connectez-vous à cet hôte pour gérer l’orchestration",
         enableTools: {
-          title: "Activer les outils Paseo",
-          hint: "Les agents pourront gérer les worktrees, les agents et les planifications",
-          accessibilityLabel: "Injecter les outils Paseo",
-          updateFailed: "Impossible de mettre à jour les outils Paseo.",
+          title: "Activer les outils",
+          hint: "Autorise Paseo et les plugins à fournir des outils aux agents. Requis pour le mode vocal.",
+          accessibilityLabel: "Activer les outils",
+          updateFailed: "Impossible de mettre à jour les outils.",
         },
         systemPrompt: {
           title: "Prompt système",

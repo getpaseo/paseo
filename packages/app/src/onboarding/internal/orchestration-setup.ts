@@ -9,6 +9,11 @@ import {
 import { useToast } from "@/contexts/toast-context";
 import { useCliInstall } from "@/desktop/hooks/use-install-status";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useHostFeature } from "@/runtime/host-features";
+import {
+  createOnboardingAgentToolsPatch,
+  isHostAgentToolsEnabled,
+} from "@/screens/settings/agent-tools-config";
 
 export type OrchestrationChoice = "tools" | "skills" | "cli";
 type Choices = Record<OrchestrationChoice, boolean>;
@@ -39,6 +44,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   const toast = useToast();
   const skills = useAgentSkills(serverId);
   const cli = useCliInstall();
+  const supportsToolsConfig = useHostFeature(serverId, "daemonToolsConfig");
   const { config, patchConfig } = useDaemonConfig(serverId);
   const [chosen, setChosen] = useState<Choices>(ALL_ON);
   // With nothing picked there is nothing to install, so skills read as off, as they do in Settings.
@@ -60,7 +66,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
 
   // What the host and this computer have now, or null while it is still being read. A choice is
   // skipped only when it is known to match; an unknown state is always written.
-  const toolsOn = config ? config.mcp.injectIntoAgents !== false : null;
+  const toolsEnabled = config ? isHostAgentToolsEnabled(config) : null;
   const skillsInstalled = skills.status ? areSkillsInstalled(skills.status) : null;
   const cliInstalled = cli.status ? cli.status.installed : null;
   const { reconcile, uninstall } = skills;
@@ -68,16 +74,21 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
   const offersSkills = offered.skills;
   const offersCli = offered.cli;
 
-  const setTools = useCallback(
-    (on: boolean) =>
-      patchConfig({ mcp: { injectIntoAgents: on } })
-        .then(Boolean, () => false)
-        .then((done) => {
-          if (!done) toast.error(t("settings.host.orchestration.enableTools.updateFailed"));
-          return done;
-        }),
-    [patchConfig, t, toast],
-  );
+  const applyTools = useCallback(() => {
+    const patch = createOnboardingAgentToolsPatch({
+      enabled: choices.tools,
+      currentEnabled: toolsEnabled,
+      supportsToolsConfig,
+    });
+    if (!patch) return Promise.resolve(true);
+    return patchConfig(patch)
+      .then(Boolean, () => false)
+      .then((done) => {
+        if (!done) toast.error(t("settings.host.orchestration.enableTools.updateFailed"));
+        return done;
+      });
+  }, [choices.tools, toolsEnabled, patchConfig, supportsToolsConfig, t, toast]);
+
   const setSkillsInstalled = useCallback(
     (on: boolean) => (on ? reconcile() : uninstall()),
     [reconcile, uninstall],
@@ -87,7 +98,7 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
     setIsApplying(true);
     try {
       const results = await Promise.all([
-        choices.tools === toolsOn ? true : setTools(choices.tools),
+        applyTools(),
         !offersSkills || choices.skills === skillsInstalled
           ? true
           : setSkillsInstalled(choices.skills),
@@ -98,16 +109,23 @@ export function useOrchestrationSetup(serverId: string): OrchestrationSetupContr
       setIsApplying(false);
     }
   }, [
-    choices,
-    toolsOn,
-    setTools,
-    offersSkills,
+    applyTools,
+    choices.cli,
+    choices.skills,
     skillsInstalled,
     setSkillsInstalled,
+    offersSkills,
     offersCli,
     cliInstalled,
     setCliInstalled,
   ]);
 
-  return { choices, setChoice, offered, skills, isApplying, apply };
+  return {
+    choices,
+    setChoice,
+    offered,
+    skills,
+    isApplying,
+    apply,
+  };
 }

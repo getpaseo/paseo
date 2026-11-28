@@ -61,8 +61,7 @@ import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons
 import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
 import { useProviderIcon } from "@/components/provider-icons";
-import { BrowserToolsRow } from "./browser-tools-card";
-import { HostPaseoToolsRow } from "./paseo-tools-card";
+import { HostAgentToolsRow } from "./agent-tools-row";
 import { RestartRecoveryRow } from "./restart-recovery-card";
 import { IdleRuntimeCleanupRow } from "./idle-runtime-cleanup-card";
 import { restartDaemonFromSettings, updateDaemonFromSettings } from "./daemon-lifecycle";
@@ -261,8 +260,7 @@ export function HostToolsPage({ serverId }: { serverId: string }) {
           </SettingsSection>
           <SettingsSection title={t("settings.host.tools.toolsTitle")}>
             <SettingsCard testID="host-page-inject-mcp-card">
-              <HostPaseoToolsRow serverId={serverId} />
-              <BrowserToolsRow serverId={serverId} />
+              <HostAgentToolsRow serverId={serverId} />
             </SettingsCard>
           </SettingsSection>
         </>

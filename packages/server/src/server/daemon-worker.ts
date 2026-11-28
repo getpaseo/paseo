@@ -111,11 +111,13 @@ function applyCliFlagOverrides(config: ReturnType<typeof loadConfig>): void {
   }
   if (process.argv.includes("--no-mcp")) {
     config.mcpEnabled = false;
+    if (config.tools) config.tools = { ...config.tools, enabled: false };
     cli.mcpEnabled = false;
     override("daemon.mcp.enabled");
   }
   if (process.argv.includes("--no-inject-mcp")) {
     config.mcpInjectIntoAgents = false;
+    if (config.tools) config.tools = { ...config.tools, enabled: false };
     cli.mcpInjectIntoAgents = false;
     override("daemon.mcp.injectIntoAgents");
   }

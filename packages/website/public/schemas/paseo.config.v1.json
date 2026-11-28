@@ -70,6 +70,33 @@
           },
           "additionalProperties": {}
         },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "groups": {
+              "type": "object",
+              "properties": {
+                "orchestration": {
+                  "type": "boolean"
+                },
+                "schedules": {
+                  "type": "boolean"
+                },
+                "changeRequests": {
+                  "type": "boolean"
+                },
+                "browser": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "usage": {
           "type": "object",
           "properties": {

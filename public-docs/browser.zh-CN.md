@@ -23,20 +23,23 @@ Paseo 中的 Agent 可以操作真实的浏览器标签页，也就是你在 Pas
 
 浏览器工具默认关闭。按主机开启：
 
-- **在应用中**：打开 **设置 → 主机 → 工具与提示词**，开启 **Browser tools**。
+- **在应用中**：打开 **设置 → 主机 → 工具与提示词**。开启 **启用工具**，展开它，然后开启 **浏览器**。
 - **在 `config.json` 中**（`~/.paseo/config.json`）：
 
 ```json
 {
   "daemon": {
-    "browserTools": {
-      "enabled": true
+    "tools": {
+      "enabled": true,
+      "groups": {
+        "browser": true
+      }
     }
   }
 }
 ```
 
-这些工具属于 [Paseo MCP 工具集](/docs/mcp)，因此同一页面上的 **启用 Paseo tools** 也必须开启，Agent 才能获得它们。已有的 Agent 可能需要重新加载才能获得新工具。
+这些工具属于 [Paseo 工具集](/docs/mcp)。启动新的 Agent 或重新加载已有的 Agent 以获得新工具。
 
 > 浏览器工具允许 Agent 访问和控制 Paseo 浏览器标签页，包括已登录的浏览器状态。只为你信任的 Agent 启用。
 

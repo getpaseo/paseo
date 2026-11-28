@@ -152,6 +152,7 @@ function createServer(
     })),
   };
   const daemonConfigStore = {
+    get: () => ({ tools: { enabled: true }, mcp: { injectIntoAgents: true } }),
     onApply: vi.fn(() => () => {}),
     onChange: vi.fn(() => () => {}),
   };

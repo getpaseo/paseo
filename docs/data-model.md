@@ -209,7 +209,8 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     listen: "127.0.0.1:6767",
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
     trustedProxies: true | string[], // defaults to ["loopback"]; Express proxy names/CIDRs
-    mcp: { enabled: boolean, injectIntoAgents: boolean },
+    tools: { enabled: boolean, groups: { orchestration, schedules, changeRequests, browser: boolean } },
+    mcp: { enabled: boolean, injectIntoAgents: boolean }, // legacy, read only when `tools` is absent
     git: { maxProcessesPerSecond: number, maxProcessConcurrency: number },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     terminalProfiles: TerminalProfile[],  // named shell commands; omitted means DEFAULT_TERMINAL_PROFILES
@@ -311,12 +312,14 @@ Each entry may include a Paseo-tool policy:
 Absent `paseoTools`, or absent fields within it, means Paseo tools are enabled and all tools are
 allowed. `enabled: false` disables the provider's Paseo catalog; `disabledTools` lists exact tool
 IDs to omit. The policy covers the core and browser catalog, not the voice-only `speak` tool.
-Browser tools also require `daemon.browserTools.enabled` and a connected browser host.
+Browser tools also require `daemon.tools.groups.browser` and a connected browser host.
 This policy controls the catalog presented to an agent. It is not an authorization boundary for
 agents that can access the host through a shell.
 
-`daemon.mcp.injectIntoAgents` is the global override. When it is `false`, no provider receives
-Paseo tools; otherwise the provider policy applies. Provider and global policy are resolved when a
+`daemon.tools` is the global override. When `enabled` is `false`, no provider receives Paseo or
+plugin tools; otherwise each group in `daemon.tools.groups` and then the provider policy applies.
+When `daemon.tools` is absent, the daemon reads the legacy `daemon.mcp.injectIntoAgents` and
+`daemon.browserTools.enabled` fields. Provider and global policy are resolved when a
 session is created, resumed, imported, or reloaded, so configuration changes affect the next
 session rather than an already-running one.
 

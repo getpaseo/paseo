@@ -2643,6 +2643,9 @@ export const ar: TranslationResources = {
         info: "يحوّل وضع الصوت كلامك إلى نص ويقرأ ردود الوكيل بصوت عالٍ.",
         enabled: "وضع الصوت",
         enabledHint: "تحدّث مع وكلائك دون استخدام يديك",
+        toolsRequiredTitle: "يتطلب وضع الصوت أدوات الوكلاء",
+        toolsRequiredDescription: "فعّل «تمكين الأدوات» حتى يتمكن الوكيل من نطق الردود.",
+        enablingTools: "جارٍ التمكين...",
       },
       openai: {
         apiKey: "مفتاح API",
@@ -3134,15 +3137,35 @@ export const ar: TranslationResources = {
       tools: {
         instructionsTitle: "التعليمات",
         toolsTitle: "أدوات الوكلاء",
+        pluginNote: "الأدوات التي تضيفها الإضافات تتبع أيضًا خيار تمكين الأدوات",
+        updateHostForGroups: "حدّث هذا المضيف لضبط مجموعات الأدوات الفردية",
+        groups: {
+          orchestration: {
+            title: "التنسيق",
+            hint: "إدارة مساحات العمل والوكلاء والطرفيات والسكربتات",
+          },
+          schedules: {
+            title: "الجداول الزمنية",
+            hint: "إنشاء وإدارة الجداول الزمنية ونبضات المتابعة",
+          },
+          changeRequests: {
+            title: "مراقبة طلبات السحب",
+            hint: "مراقبة تحديثات طلبات السحب والدمج",
+          },
+          browser: {
+            title: "المتصفح",
+            hint: "التحكم في علامات تبويب متصفح Paseo بما في ذلك الجلسات المسجّل الدخول إليها. فعّل هذا الخيار فقط للوكلاء الموثوقين.",
+          },
+        },
       },
       orchestration: {
         title: "التنسيق",
         unavailable: "اتصل بهذا المضيف لإدارة التنسيق",
         enableTools: {
-          title: "تمكين أدوات Paseo",
-          hint: "سيتمكن الوكلاء من إدارة أشجار العمل والوكلاء والجداول الزمنية",
-          accessibilityLabel: "حقن أدوات Paseo",
-          updateFailed: "تعذر تحديث أدوات Paseo.",
+          title: "تمكين الأدوات",
+          hint: "يسمح لـ Paseo والإضافات بتوفير الأدوات للوكلاء. مطلوب لوضع الصوت.",
+          accessibilityLabel: "تمكين الأدوات",
+          updateFailed: "تعذر تحديث الأدوات.",
         },
         systemPrompt: {
           title: "موجه النظام",

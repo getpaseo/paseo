@@ -2665,6 +2665,10 @@ export const es: TranslationResources = {
         info: "El modo de voz transcribe lo que dices y lee en voz alta las respuestas del agente.",
         enabled: "Modo de voz",
         enabledHint: "Habla con tus agentes sin usar las manos",
+        toolsRequiredTitle: "El modo de voz requiere herramientas de agentes",
+        toolsRequiredDescription:
+          "Activa Habilitar herramientas para que el agente pueda hablar sus respuestas.",
+        enablingTools: "Activando...",
       },
       openai: {
         apiKey: "Clave de API",
@@ -3167,15 +3171,35 @@ export const es: TranslationResources = {
       tools: {
         instructionsTitle: "Instrucciones",
         toolsTitle: "Herramientas de agentes",
+        pluginNote: "Las herramientas de los plugins también siguen Habilitar herramientas",
+        updateHostForGroups: "Actualiza este host para configurar grupos de herramientas",
+        groups: {
+          orchestration: {
+            title: "Orquestación",
+            hint: "Gestiona workspaces, agentes, terminales y scripts",
+          },
+          schedules: {
+            title: "Programaciones",
+            hint: "Crea y gestiona programaciones y heartbeats",
+          },
+          changeRequests: {
+            title: "Seguimiento de PR",
+            hint: "Supervisa pull requests y merge requests para ver actualizaciones",
+          },
+          browser: {
+            title: "Navegador",
+            hint: "Controla las pestañas del navegador de Paseo, incluido el estado con sesión iniciada. Actívalo solo para agentes de confianza.",
+          },
+        },
       },
       orchestration: {
         title: "Orquestación",
         unavailable: "Conéctese a este host para administrar la orquestación",
         enableTools: {
-          title: "Habilitar herramientasPaseo",
-          hint: "Los agentes podrán gestionar árboles de trabajo, agentes y horarios.",
-          accessibilityLabel: "Inyectar herramientasPaseo",
-          updateFailed: "No se pudieron actualizar las herramientas de Paseo.",
+          title: "Habilitar herramientas",
+          hint: "Permite que Paseo y los plugins proporcionen herramientas a los agentes. Necesario para el modo de voz.",
+          accessibilityLabel: "Habilitar herramientas",
+          updateFailed: "No se pudieron actualizar las herramientas.",
         },
         systemPrompt: {
           title: "Aviso del sistema",

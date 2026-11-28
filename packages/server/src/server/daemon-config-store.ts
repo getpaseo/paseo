@@ -21,6 +21,7 @@ import {
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 import type { SpeechSettingsPatch } from "@getpaseo/protocol/speech/rpc-schemas";
 import { mergeSpeechSettingsPatch, type SpeechSettingsOwner } from "./speech/speech-settings.js";
+import { resolveDaemonToolsFromMutableConfig } from "./tools-config.js";
 
 export type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
 
@@ -30,8 +31,19 @@ type ProviderOverride = import("./agent/provider-launch-config.js").ProviderOver
 
 interface SupportedMutableConfigPatch {
   relay?: { enabled?: boolean; requireProtectedSecurity?: boolean };
+  // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
   mcp?: { injectIntoAgents?: boolean };
+  tools?: {
+    enabled?: boolean;
+    groups?: {
+      orchestration?: boolean;
+      schedules?: boolean;
+      changeRequests?: boolean;
+      browser?: boolean;
+    };
+  };
   usage?: { enabled: boolean };
+  // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
@@ -289,6 +301,11 @@ const RELOADABLE_PATHS = [
   "daemon.relay.requireProtectedSecurity",
   "daemon.mcp.enabled",
   "daemon.mcp.injectIntoAgents",
+  "daemon.tools.enabled",
+  "daemon.tools.groups.orchestration",
+  "daemon.tools.groups.schedules",
+  "daemon.tools.groups.changeRequests",
+  "daemon.tools.groups.browser",
   "daemon.usage.enabled",
   "daemon.browserTools.enabled",
   "daemon.hostnames",
@@ -317,6 +334,11 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.relay.requireProtectedSecurity", "relay.requireProtectedSecurity"],
   ["daemon.mcp.enabled", "mcp.enabled"],
   ["daemon.mcp.injectIntoAgents", "mcp.injectIntoAgents"],
+  ["daemon.tools.enabled", "tools.enabled"],
+  ["daemon.tools.groups.orchestration", "tools.groups.orchestration"],
+  ["daemon.tools.groups.schedules", "tools.groups.schedules"],
+  ["daemon.tools.groups.changeRequests", "tools.groups.changeRequests"],
+  ["daemon.tools.groups.browser", "tools.groups.browser"],
   ["daemon.usage.enabled", "usage.enabled"],
   ["daemon.browserTools.enabled", "browserTools.enabled"],
   ["daemon.hostnames", "hostnames"],
@@ -338,6 +360,17 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["agents.metadataGeneration", "metadataGeneration"],
   ["agents.skills.selection", "skills.selection"],
   ["pluginsEnabled", "pluginsEnabled"],
+]);
+
+// COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
+// Legacy mcp/browserTools paths mirror into daemon.tools on the mutable snapshot;
+// only report the persisted leaf that actually changed on disk during reload.
+const ALIASED_TOOL_RELOAD_PATHS = new Set<string>([
+  "daemon.mcp.enabled",
+  "daemon.mcp.injectIntoAgents",
+  "daemon.browserTools.enabled",
+  "daemon.tools.enabled",
+  "daemon.tools.groups.browser",
 ]);
 
 function pathBelongsTo(path: string, owner: string): boolean {
@@ -401,9 +434,95 @@ function pickMetadataGenerationPatch(
   return Object.keys(picked).length > 0 ? { metadataGeneration: picked } : {};
 }
 
+function mergePatchedToolGroups(
+  currentGroups: ReturnType<typeof resolveDaemonToolsFromMutableConfig>["groups"],
+  patch: Pick<SupportedMutableConfigPatch, "tools" | "browserTools">,
+) {
+  const patchGroups = patch.tools?.groups;
+  return {
+    orchestration: patchGroups?.orchestration ?? currentGroups.orchestration,
+    schedules: patchGroups?.schedules ?? currentGroups.schedules,
+    changeRequests: patchGroups?.changeRequests ?? currentGroups.changeRequests,
+    browser: patchGroups?.browser ?? patch.browserTools?.enabled ?? currentGroups.browser,
+  };
+}
+
+function syncToolsConfigOnMerged(
+  merged: MutableDaemonConfig,
+  current: MutableDaemonConfig,
+  patch: Pick<SupportedMutableConfigPatch, "tools" | "mcp" | "browserTools">,
+): void {
+  const hasToolsChange =
+    patch.tools !== undefined ||
+    patch.mcp?.injectIntoAgents !== undefined ||
+    patch.browserTools?.enabled !== undefined;
+  if (!hasToolsChange) return;
+  const currentTools = resolveDaemonToolsFromMutableConfig(current);
+  const nextTools = {
+    enabled: patch.tools?.enabled ?? patch.mcp?.injectIntoAgents ?? currentTools.enabled,
+    groups: mergePatchedToolGroups(currentTools.groups, patch),
+  };
+  merged.tools = nextTools;
+  // COMPAT(legacyToolsConfig): added in v0.18.2, keep legacy wire fields synced for older clients.
+  merged.mcp = { ...merged.mcp, injectIntoAgents: nextTools.enabled };
+  merged.browserTools = { ...merged.browserTools, enabled: nextTools.groups.browser };
+}
+
+function mergeToolsDaemonPatch(
+  next: NonNullable<PersistedConfig["daemon"]>,
+  patch: Pick<SupportedMutableConfigPatch, "tools" | "mcp" | "browserTools">,
+): void {
+  if (patch.tools !== undefined) {
+    next.tools = {
+      ...next.tools,
+      ...(patch.tools.enabled !== undefined ? { enabled: patch.tools.enabled } : {}),
+      ...(patch.tools.groups ? { groups: { ...next.tools?.groups, ...patch.tools.groups } } : {}),
+    };
+  }
+  // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
+  if (patch.mcp?.injectIntoAgents !== undefined) {
+    next.mcp = { ...next.mcp, injectIntoAgents: patch.mcp.injectIntoAgents };
+    if (patch.tools?.enabled === undefined && next.tools !== undefined) {
+      next.tools = { ...next.tools, enabled: patch.mcp.injectIntoAgents };
+    }
+  }
+  // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
+  if (patch.browserTools?.enabled !== undefined) {
+    next.browserTools = { ...next.browserTools, enabled: patch.browserTools.enabled };
+    if (patch.tools?.groups?.browser === undefined && next.tools?.groups?.browser !== undefined) {
+      next.tools = {
+        ...next.tools,
+        groups: { ...next.tools.groups, browser: patch.browserTools.enabled },
+      };
+    }
+  }
+}
+
+function pickToolsPatch(
+  tools: MutableDaemonConfigPatch["tools"],
+): Pick<SupportedMutableConfigPatch, "tools"> {
+  if (!tools) return {};
+  const groups: NonNullable<NonNullable<SupportedMutableConfigPatch["tools"]>["groups"]> = {
+    ...(tools.groups?.orchestration !== undefined
+      ? { orchestration: tools.groups.orchestration }
+      : {}),
+    ...(tools.groups?.schedules !== undefined ? { schedules: tools.groups.schedules } : {}),
+    ...(tools.groups?.changeRequests !== undefined
+      ? { changeRequests: tools.groups.changeRequests }
+      : {}),
+    ...(tools.groups?.browser !== undefined ? { browser: tools.groups.browser } : {}),
+  };
+  const picked: NonNullable<SupportedMutableConfigPatch["tools"]> = {
+    ...(tools.enabled !== undefined ? { enabled: tools.enabled } : {}),
+    ...(Object.keys(groups).length > 0 ? { groups } : {}),
+  };
+  return Object.keys(picked).length > 0 ? { tools: picked } : {};
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
     ...pickRelayPatch(patch.relay),
+    ...pickToolsPatch(patch.tools),
     usage: patch.usage,
     ...(patch.mcp?.injectIntoAgents !== undefined
       ? { mcp: { injectIntoAgents: patch.mcp.injectIntoAgents } }
@@ -574,6 +693,7 @@ export class DaemonConfigStore {
     const removedProviders = Array.from(new Set(removeProviders));
     const merged = deepMerge(this.current, configPatch);
     merged.providers = withNormalizedProvidersShownModels(merged.providers);
+    syncToolsConfigOnMerged(merged, this.current, patch);
     if (speechPatch !== undefined) Object.assign(merged, this.readPatchedSpeech(speechPatch));
     if (parsedPatch.skills?.selection !== undefined) {
       merged.skills = { selection: parsedPatch.skills.selection };
@@ -710,6 +830,12 @@ export class DaemonConfigStore {
     );
     const appliedPaths: string[] = RELOADABLE_PATHS.filter((persistedPath) => {
       if (resolved.overrideControlledPaths.some((owner) => pathBelongsTo(persistedPath, owner))) {
+        return false;
+      }
+      if (
+        ALIASED_TOOL_RELOAD_PATHS.has(persistedPath) &&
+        !changedSinceLastApply.some((path) => pathBelongsTo(path, persistedPath))
+      ) {
         return false;
       }
       const mutablePath = PERSISTED_TO_MUTABLE_PATH.get(persistedPath);
@@ -975,13 +1101,8 @@ function mergeMutableDaemonPatch(
   if (patch.relay?.requireProtectedSecurity !== undefined) {
     next.relay = { ...next.relay, requireProtectedSecurity: patch.relay.requireProtectedSecurity };
   }
-  if (patch.mcp?.injectIntoAgents !== undefined) {
-    next.mcp = { ...next.mcp, injectIntoAgents: patch.mcp.injectIntoAgents };
-  }
+  mergeToolsDaemonPatch(next, patch);
   if (patch.usage) next.usage = patch.usage;
-  if (patch.browserTools?.enabled !== undefined) {
-    next.browserTools = { ...next.browserTools, enabled: patch.browserTools.enabled };
-  }
   if (patch.autoArchiveAfterMerge !== undefined) {
     next.autoArchiveAfterMerge = patch.autoArchiveAfterMerge;
   }

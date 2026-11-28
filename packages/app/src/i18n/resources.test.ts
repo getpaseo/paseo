@@ -385,7 +385,7 @@ describe("translation resources", () => {
     expect(en.settings.host.notFound).toBe("Host not found");
     expect(en.settings.host.connections.title).toBe("Connections");
     expect(en.settings.host.daemon.restart.title).toBe("Restart daemon");
-    expect(en.settings.host.orchestration.enableTools.title).toBe("Enable Paseo tools");
+    expect(en.settings.host.orchestration.enableTools.title).toBe("Enable tools");
     expect(en.settings.providers.title).toBe("Providers");
     expect(en.settings.providers.models.addModel).toBe("Add model");
     expect(en.settings.providers.diagnostic.title).toBe("Diagnostic");

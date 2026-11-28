@@ -2,12 +2,19 @@ import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { isWeb } from "@/constants/platform";
 import { SettingsRowChildren } from "./row-children";
-import { SettingsRowHeader } from "./row-header";
+import { SettingsRowHeader, type SettingsRowHintStatus } from "./row-header";
 
 interface SettingsCollapsibleRowProps {
   label: string;
+  /** A line under the label explaining the group. */
+  hint?: string;
+  hintStatus?: SettingsRowHintStatus;
   /** A short status shown before the chevron, so the row says something while collapsed. */
   summary?: string;
+  /** A control acting on the row's subject in place, such as a switch, before the chevron. */
+  control?: ReactNode;
+  /** Names the expand/collapse button for assistive tech when the label alone is not enough. */
+  accessibilityLabel?: string;
   defaultExpanded?: boolean;
   testID?: string;
   /** The rows revealed underneath, separated like the rows of a `SettingsCard` and laid out as nested rows. */
@@ -21,7 +28,11 @@ interface SettingsCollapsibleRowProps {
  */
 export function SettingsCollapsibleRow({
   label,
+  hint,
+  hintStatus,
   summary,
+  control,
+  accessibilityLabel,
   defaultExpanded = false,
   testID,
   children,
@@ -39,7 +50,11 @@ export function SettingsCollapsibleRow({
     <View testID={testID}>
       <SettingsRowHeader
         label={label}
+        hint={hint}
+        hintStatus={hintStatus}
         summary={summary}
+        control={control}
+        accessibilityLabel={accessibilityLabel}
         onPress={toggle}
         expanded={expanded}
         accessibilityState={accessibilityState}

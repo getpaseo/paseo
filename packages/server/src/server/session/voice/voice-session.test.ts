@@ -82,7 +82,10 @@ function createFakeHost(): FakeVoiceHost {
   };
 }
 
-function createVoiceSession(tts: TextToSpeechProvider | null = null) {
+function createVoiceSession(
+  tts: TextToSpeechProvider | null = null,
+  options: { isAgentToolsEnabled?: () => boolean } = {},
+) {
   let speakHandler: VoiceSpeakHandler | undefined;
   const detector = new FakeVoiceTurnDetectionSession();
   const sttSession = new FakeVoiceSttSession();
@@ -101,6 +104,7 @@ function createVoiceSession(tts: TextToSpeechProvider | null = null) {
     sessionId: "voice-session-test",
     sttLanguage: "en",
     tts,
+    isAgentToolsEnabled: options.isAgentToolsEnabled,
     voiceBridge: {
       registerVoiceSpeakHandler: (_id, handler) => {
         speakHandler = handler;
@@ -324,5 +328,33 @@ describe("VoiceSession streaming transcription", () => {
     );
 
     await voiceSession.cleanup();
+  });
+
+  test("refuses voice mode with an actionable error when agent tools are disabled", async () => {
+    const reloadAgentSession = vi.fn(
+      async (agentId: string) => ({ id: agentId }) as unknown as ManagedAgent,
+    );
+    const { voiceSession, host } = createVoiceSession(null, {
+      isAgentToolsEnabled: () => false,
+    });
+    host.reloadAgentSession = reloadAgentSession;
+
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "req-tools-off");
+
+    expect(reloadAgentSession).not.toHaveBeenCalled();
+    expect(voiceSession.isActiveForAgent(VOICE_AGENT_ID)).toBe(false);
+    expect(host.emitted).toContainEqual({
+      type: "set_voice_mode_response",
+      payload: {
+        requestId: "req-tools-off",
+        enabled: false,
+        agentId: null,
+        accepted: false,
+        error: "Voice mode requires agent tools. Turn on Enable tools in Settings > Tools.",
+        reasonCode: "tools_disabled",
+        retryable: false,
+        missingModelIds: [],
+      },
+    });
   });
 });

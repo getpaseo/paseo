@@ -21,6 +21,10 @@ import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { LocalSpeechModelId } from "../../speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../../speech/speech-runtime.js";
+import {
+  VOICE_REQUIRES_TOOLS_MESSAGE,
+  VOICE_REQUIRES_TOOLS_REASON_CODE,
+} from "../../tools-config.js";
 
 const PCM_SAMPLE_RATE = 16000;
 const PCM_CHANNELS = 1;
@@ -57,21 +61,25 @@ interface VoiceTranscriptionResultPayload {
   debugRecordingPath?: string;
 }
 
+type VoiceFeatureUnavailableReasonCode =
+  | SpeechReadinessSnapshot["voiceFeature"]["reasonCode"]
+  | typeof VOICE_REQUIRES_TOOLS_REASON_CODE;
+
 interface VoiceFeatureUnavailableContext {
-  reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
+  reasonCode: VoiceFeatureUnavailableReasonCode;
   message: string;
   retryable: boolean;
   missingModelIds: LocalSpeechModelId[];
 }
 
 interface VoiceFeatureUnavailableResponseMetadata {
-  reasonCode?: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
+  reasonCode?: VoiceFeatureUnavailableReasonCode;
   retryable?: boolean;
   missingModelIds?: LocalSpeechModelId[];
 }
 
 class VoiceFeatureUnavailableError extends Error {
-  readonly reasonCode: SpeechReadinessSnapshot["voiceFeature"]["reasonCode"];
+  readonly reasonCode: VoiceFeatureUnavailableReasonCode;
   readonly retryable: boolean;
   readonly missingModelIds: LocalSpeechModelId[];
 
@@ -142,6 +150,7 @@ export interface VoiceSessionOptions {
   voice?: {
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
   };
+  isAgentToolsEnabled?: () => boolean;
   voiceBridge?: {
     registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
     unregisterVoiceSpeakHandler?: (agentId: string) => void;
@@ -206,13 +215,24 @@ export class VoiceSession {
   ) => void;
   private readonly unregisterVoiceCallerContext?: (agentId: string) => void;
   private readonly getSpeechReadiness?: () => SpeechReadinessSnapshot;
+  private readonly isAgentToolsEnabled?: () => boolean;
 
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
   constructor(options: VoiceSessionOptions) {
-    const { host, logger, sessionId, sttLanguage, tts, stt, voice, voiceBridge, dictation } =
-      options;
+    const {
+      host,
+      logger,
+      sessionId,
+      sttLanguage,
+      tts,
+      stt,
+      voice,
+      isAgentToolsEnabled,
+      voiceBridge,
+      dictation,
+    } = options;
     this.host = host;
     this.onIdle = options.onIdle;
     this.sessionLogger = logger;
@@ -221,6 +241,7 @@ export class VoiceSession {
     this.abortController = new AbortController();
 
     this.resolveVoiceTurnDetection = toResolver(voice?.turnDetection ?? null);
+    this.isAgentToolsEnabled = isAgentToolsEnabled;
     this.registerVoiceSpeakHandler = voiceBridge?.registerVoiceSpeakHandler;
     this.unregisterVoiceSpeakHandler = voiceBridge?.unregisterVoiceSpeakHandler;
     this.registerVoiceCallerContext = voiceBridge?.registerVoiceCallerContext;
@@ -331,13 +352,20 @@ export class VoiceSession {
     mode: "voice_mode" | "dictation",
   ): VoiceFeatureUnavailableContext | null {
     const readiness = this.getSpeechReadiness?.();
-    if (!readiness) {
-      return null;
-    }
-
-    const modeReadiness = this.resolveModeReadinessState(readiness, mode);
-    if (!modeReadiness.enabled) {
+    const modeReadiness = readiness ? this.resolveModeReadinessState(readiness, mode) : null;
+    if (modeReadiness && !modeReadiness.enabled) {
       return this.toVoiceFeatureUnavailableContext(modeReadiness);
+    }
+    if (mode === "voice_mode" && this.isAgentToolsEnabled && !this.isAgentToolsEnabled()) {
+      return {
+        reasonCode: VOICE_REQUIRES_TOOLS_REASON_CODE,
+        message: VOICE_REQUIRES_TOOLS_MESSAGE,
+        retryable: false,
+        missingModelIds: [],
+      };
+    }
+    if (!readiness || !modeReadiness) {
+      return null;
     }
     if (!readiness.voiceFeature.available) {
       return this.toVoiceFeatureUnavailableContext(readiness.voiceFeature);

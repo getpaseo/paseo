@@ -10,6 +10,7 @@ import {
   finishSetup,
   goToSetupStep,
   hostGivesAgentsPaseoTools,
+  hostToolGroups,
   openAppAsNewUser,
   openRelayPairingFromSetup,
   closeRelayPairing,
@@ -24,6 +25,7 @@ import {
   recordFirstLaunch,
   setupModal,
   setupPrimaryButton,
+  setHostTools,
   setupSheet,
   showSetupAgainFromSettings,
   skipSetup,
@@ -426,6 +428,30 @@ test("setup choices carry over to Settings and the phone step pairs over relay",
   }
 });
 
+test("setup offers only Enable tools and keeps the host's tool groups", async ({ page }) => {
+  const host = await startSetupHost("tool-groups");
+
+  try {
+    await setHostTools(host, { groups: { schedules: false, browser: true } });
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+    await goToSetupStep(page, "Orchestration");
+    await expectSetupStep(page, "Let agents use Paseo");
+    await expect(paseoToolsSwitch(setupModal(page))).toBeChecked();
+    // Setup offers only the main switch; tool groups live in Settings.
+    await expect(
+      setupModal(page).getByRole("switch", { name: "Browser", exact: true }),
+    ).toHaveCount(0);
+    await continueSetup(page);
+    await expectSetupStep(page, "Take your agents with you");
+
+    await expect.poll(() => hostGivesAgentsPaseoTools(host), { timeout: 30_000 }).toBe(true);
+    expect(await hostToolGroups(host)).toMatchObject({ schedules: false, browser: true });
+  } finally {
+    await host.close();
+  }
+});
+
 test("with no skills picked, skills read as off and Continue moves on", async ({ page }) => {
   const host = await startSetupHost("no-skills");
 
@@ -463,6 +489,7 @@ test("in the compact layout, Finish on Orchestration applies its switches", asyn
   const primary = (label: string) => page.getByRole("button", { name: label, exact: true });
 
   try {
+    await setHostTools(host, { enabled: false });
     await openAppAsNewUser(page, host);
     await step("Welcome to Paseo");
     await primary("Continue").click();
@@ -471,7 +498,7 @@ test("in the compact layout, Finish on Orchestration applies its switches", asyn
     await step("Add your projects");
     await primary("Continue").click();
 
-    // The setup host starts with Paseo tools off; the switch starts on.
+    // The host has tools off; the setup switch still starts on.
     expect(await hostGivesAgentsPaseoTools(host)).toBe(false);
     await step("Let agents use Paseo");
     await expect(paseoToolsSwitch(page)).toBeChecked();

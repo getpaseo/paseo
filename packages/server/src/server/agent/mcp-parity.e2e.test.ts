@@ -27,6 +27,7 @@ interface McpToolResult {
 
 interface McpClient {
   callTool: (input: { name: string; args?: StructuredContent }) => Promise<McpToolResult>;
+  listTools: () => Promise<{ tools: Array<{ name: string }> }>;
   close: () => Promise<void>;
 }
 
@@ -86,7 +87,10 @@ async function createMcpClient(url: string): Promise<McpClient> {
   const transport = new StreamableHTTPClientTransport(new URL(url));
   const rawClient = await experimental_createMCPClient({ transport });
   const boundCallTool: McpClient["callTool"] = Reflect.get(rawClient, "callTool").bind(rawClient);
-  return { callTool: boundCallTool, close: () => rawClient.close() };
+  const boundListTools: McpClient["listTools"] = Reflect.get(rawClient, "listTools").bind(
+    rawClient,
+  );
+  return { callTool: boundCallTool, listTools: boundListTools, close: () => rawClient.close() };
 }
 
 async function callToolStructured(
@@ -1108,16 +1112,18 @@ describe("Suite C: Schedule Tools", () => {
     }
   });
 
-  test("create_heartbeat without callerAgentId throws", async () => {
-    await expectToolError(
-      topLevelClient,
-      "create_heartbeat",
-      {
-        prompt: "say hello",
-        cron: "*/5 * * * *",
-      },
-      /requires an agent-scoped session/i,
-    );
+  test("create_heartbeat is omitted without callerAgentId", async () => {
+    const listed = await topLevelClient.listTools();
+    expect(listed.tools.some((tool) => tool.name === "create_heartbeat")).toBe(false);
+    await expect(
+      topLevelClient.callTool({
+        name: "create_heartbeat",
+        args: {
+          prompt: "say hello",
+          cron: "*/5 * * * *",
+        },
+      }),
+    ).rejects.toThrow(/create_heartbeat/i);
   });
 });
 

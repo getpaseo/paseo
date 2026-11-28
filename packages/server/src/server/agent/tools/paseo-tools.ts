@@ -24,8 +24,16 @@ import {
   ActiveTurnBehaviorSchema,
   AgentActiveTurnBehaviorSchema,
   AgentProfileSchema,
+  type DaemonPermission,
 } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
+import { normalizeDaemonToolGroups, type ResolvedDaemonToolsConfig } from "../../tools-config.js";
+import {
+  BUILTIN_TOOL_METADATA,
+  isBuiltInToolGroup,
+  isToolAllowedInScope,
+  type BuiltInToolName,
+} from "./tool-metadata.js";
 import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
   AgentFeatureSchema,
@@ -175,6 +183,9 @@ export interface PaseoToolHostDependencies {
     firstAgentContext?: FirstAgentContext,
     context?: { background?: boolean; callerWorkspaceId?: string },
   ) => Promise<string>;
+  toolsConfig?: ResolvedDaemonToolsConfig;
+  allowedPermissions?: ReadonlySet<DaemonPermission>;
+  // COMPAT(legacyBrowserToolsOption): added in v0.18.2, prefer toolsConfig.groups.browser.
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
@@ -791,13 +802,30 @@ function createToolCatalog(
       listAgents: (args, context) => localHostOperations.get("list_agents")!(args, context),
     },
   });
+  const toolsConfig: ResolvedDaemonToolsConfig = options.toolsConfig ?? {
+    enabled: true,
+    groups: normalizeDaemonToolGroups(undefined, options.browserToolsEnabled),
+  };
   const registerTool = (
-    name: string,
+    name: BuiltInToolName,
     config: PaseoToolConfig,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
     builtinNames.add(name);
+    const metadata = BUILTIN_TOOL_METADATA[name];
+    if (!isToolAllowedInScope(metadata.scope, scope)) {
+      return;
+    }
+    if (scope === "agent" && !toolsConfig.enabled) {
+      return;
+    }
+    if (isBuiltInToolGroup(metadata.group) && !toolsConfig.groups[metadata.group]) {
+      return;
+    }
+    if (options.allowedPermissions && !options.allowedPermissions.has(metadata.permission)) {
+      return;
+    }
     if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
       return;
     }
@@ -861,6 +889,9 @@ function createToolCatalog(
       name,
       title: config.title,
       description: config.description ?? name,
+      group: metadata.group,
+      scope: metadata.scope,
+      permission: metadata.permission,
       inputSchema: config.inputSchema,
       outputSchema: config.outputSchema,
       handler: handler as PaseoToolDefinition["handler"],
@@ -1450,7 +1481,7 @@ function createToolCatalog(
     return toCatalog();
   }
 
-  if (options.browserToolsEnabled && options.browserToolsBroker) {
+  if (options.browserToolsBroker) {
     registerBrowserTools({
       registerTool,
       broker: options.browserToolsBroker,
@@ -3557,6 +3588,8 @@ function createToolCatalog(
     agentManager,
     callerAgentId,
     scope,
+    toolsEnabled: toolsConfig.enabled,
+    allowedPermissions: options.allowedPermissions,
     tools,
     builtinNames,
     policy: options.paseoToolPolicy,

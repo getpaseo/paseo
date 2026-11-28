@@ -33,6 +33,10 @@ import { randomUUID } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
+import {
+  resolveDaemonToolsFromMutableConfig,
+  VOICE_REQUIRES_TOOLS_MESSAGE,
+} from "./tools-config.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
@@ -427,11 +431,14 @@ function resolveCapabilityReason(params: {
 
 function buildServerCapabilities(params: {
   readiness: SpeechReadinessSnapshot | null;
+  agentToolsEnabled?: boolean;
 }): ServerCapabilities | undefined {
   const readiness = params.readiness;
   if (!readiness) {
     return undefined;
   }
+  const voiceToolsUnavailable =
+    readiness.realtimeVoice.enabled && params.agentToolsEnabled === false;
   return {
     voice: {
       dictation: toServerCapabilityState({
@@ -441,13 +448,18 @@ function buildServerCapabilities(params: {
           readiness,
         }),
       }),
-      voice: toServerCapabilityState({
-        state: readiness.realtimeVoice,
-        reason: resolveCapabilityReason({
-          state: readiness.realtimeVoice,
-          readiness,
-        }),
-      }),
+      voice: voiceToolsUnavailable
+        ? {
+            enabled: true,
+            reason: VOICE_REQUIRES_TOOLS_MESSAGE,
+          }
+        : toServerCapabilityState({
+            state: readiness.realtimeVoice,
+            reason: resolveCapabilityReason({
+              state: readiness.realtimeVoice,
+              readiness,
+            }),
+          }),
     },
   };
 }
@@ -871,6 +883,7 @@ export class VoiceAssistantWebSocketServer {
     this.providerSnapshotManager = providerSnapshotManager;
     this.serverCapabilities = buildServerCapabilities({
       readiness: this.speech?.getReadiness() ?? null,
+      agentToolsEnabled: this.isAgentToolsEnabled(),
     });
     this.unsubscribeSpeechReadiness =
       this.speech?.onReadinessChange((snapshot) => {
@@ -883,6 +896,7 @@ export class VoiceAssistantWebSocketServer {
     });
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
+      this.publishSpeechReadiness(this.speech?.getReadiness() ?? null);
     });
     this.unsubscribeDaemonConfigChange = () => {
       unsubscribeProviderConfig();
@@ -1156,8 +1170,17 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  private isAgentToolsEnabled(): boolean {
+    return resolveDaemonToolsFromMutableConfig(this.daemonConfigStore.get()).enabled;
+  }
+
   public publishSpeechReadiness(readiness: SpeechReadinessSnapshot | null): void {
-    this.updateServerCapabilities(buildServerCapabilities({ readiness }));
+    this.updateServerCapabilities(
+      buildServerCapabilities({
+        readiness,
+        agentToolsEnabled: this.isAgentToolsEnabled(),
+      }),
+    );
   }
 
   public updateServerCapabilities(capabilities: ServerCapabilities | null | undefined): void {
@@ -2129,6 +2152,8 @@ export class VoiceAssistantWebSocketServer {
         relayProtectedSecurity: true,
         usageSetting: true,
         usageSources: true,
+        // COMPAT(daemonToolsConfig): added in v0.18.2, remove gate after 2027-06-01.
+        daemonToolsConfig: true,
         providerInstallation: true,
         ownedSubscriptions: true,
         providerOptionControls: true,

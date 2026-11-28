@@ -31,7 +31,7 @@ Paseo 让你的编程 Agent 协调其他 Agent，把工作分配到不同的 Pro
 启用 Paseo 工具后，在 Paseo 中运行的 Agent 可以直接管理其主机上的 Agent 和工作区。
 
 1. 打开 **设置 → 主机 → 工具与提示词**。
-2. 打开 **启用 Paseo tools**。工具注入默认关闭。
+2. 确认 **启用工具** 已开启。它默认开启。
 3. 启动一个新的 Agent，或重新加载已有的 Agent，让它获得这些工具。
 4. 提出要求：
 
@@ -43,7 +43,7 @@ Paseo 让你的编程 Agent 协调其他 Agent，把工作分配到不同的 Pro
 
 ### CLI {#cli}
 
-有 shell 访问权限的 Agent 也可以使用 Paseo CLI。这种方式不需要启用工具注入。在已安装 Paseo、主机正在运行并且配置了 Codex 的情况下：
+有 shell 访问权限的 Agent 也可以使用 Paseo CLI。这种方式不需要开启 **启用工具**。在已安装 Paseo、主机正在运行并且配置了 Codex 的情况下：
 
 ```bash
 paseo run --provider codex --no-wait \

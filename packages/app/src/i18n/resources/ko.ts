@@ -2619,6 +2619,9 @@ export const ko: TranslationResources = {
         info: "음성 모드는 말한 내용을 텍스트로 옮기고 에이전트의 답변을 소리 내어 읽어 줍니다.",
         enabled: "음성 모드",
         enabledHint: "손을 쓰지 않고 에이전트와 대화하세요",
+        toolsRequiredTitle: "음성 모드에는 에이전트 도구가 필요합니다",
+        toolsRequiredDescription: "에이전트가 음성으로 답할 수 있도록 도구 활성화를 켜세요.",
+        enablingTools: "활성화 중...",
       },
       openai: {
         apiKey: "API 키",
@@ -3113,15 +3116,35 @@ export const ko: TranslationResources = {
       tools: {
         instructionsTitle: "지침",
         toolsTitle: "에이전트 도구",
+        pluginNote: "플러그인이 추가한 도구도 도구 활성화 스위치를 따릅니다",
+        updateHostForGroups: "개별 도구 그룹을 설정하려면 이 호스트를 업데이트하세요",
+        groups: {
+          orchestration: {
+            title: "오케스트레이션",
+            hint: "워크스페이스, 에이전트, 터미널, 스크립트 관리",
+          },
+          schedules: {
+            title: "일정",
+            hint: "일정 및 하트비트 생성과 관리",
+          },
+          changeRequests: {
+            title: "PR 감시",
+            hint: "풀 리퀘스트와 머지 리퀘스트 업데이트 감시",
+          },
+          browser: {
+            title: "브라우저",
+            hint: "로그인된 상태를 포함해 Paseo 브라우저 탭을 제어합니다. 신뢰하는 에이전트에만 활성화하세요.",
+          },
+        },
       },
       orchestration: {
         title: "오케스트레이션",
         unavailable: "오케스트레이션을 관리하려면 이 호스트에 연결하세요",
         enableTools: {
-          title: "Paseo 도구 활성화",
-          hint: "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
-          accessibilityLabel: "Paseo 도구 주입",
-          updateFailed: "Paseo 도구를 업데이트할 수 없습니다.",
+          title: "도구 활성화",
+          hint: "Paseo와 플러그인이 에이전트에 도구를 제공할 수 있게 합니다. 음성 모드에 필요합니다.",
+          accessibilityLabel: "도구 활성화",
+          updateFailed: "도구를 업데이트할 수 없습니다.",
         },
         systemPrompt: {
           title: "시스템 프롬프트",

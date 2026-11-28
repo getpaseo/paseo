@@ -11,12 +11,14 @@ import {
   SettingsSection,
 } from "@/components/settings";
 import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/contexts/toast-api-context";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { createAgentToolsMasterPatch, isHostAgentToolsEnabled } from "../agent-tools-config";
 import { SpeechProviderSheet } from "./speech-provider-sheet";
 import { useLocalSpeechModels } from "./use-local-speech-models";
 import {
@@ -45,10 +47,25 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
   const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "speechSettings");
+  const supportsToolsConfig = useHostFeature(serverId, "daemonToolsConfig");
   const { config, patchConfig } = useDaemonConfig(serverId);
   const localModels = useLocalSpeechModels(serverId);
   const { refresh: refreshModels } = localModels;
   const [sheet, setSheet] = useState<OpenSheet | null>(null);
+  const [enablingTools, setEnablingTools] = useState(false);
+
+  const enableHostTools = useCallback(() => {
+    setEnablingTools(true);
+    patchConfig(createAgentToolsMasterPatch({ enabled: true, supportsToolsConfig }))
+      .catch((error: unknown) => {
+        toast.error(
+          `${t("settings.host.orchestration.enableTools.updateFailed")} ${errorMessage(error)}`,
+        );
+      })
+      .finally(() => {
+        setEnablingTools(false);
+      });
+  }, [patchConfig, supportsToolsConfig, t, toast]);
 
   // Selecting a model changes which models are in use, so the catalog is re-read after a save.
   const save = useCallback<SavePatch>(
@@ -135,6 +152,28 @@ export function HostVoicePage({ serverId }: { serverId: string }) {
         info={t("settings.voice.voiceMode.info")}
         testID="voice-voice-mode"
       >
+        {!isHostAgentToolsEnabled(config) ? (
+          <View style={styles.alertSpacing}>
+            <Alert
+              size="md"
+              variant="warning"
+              title={t("settings.voice.voiceMode.toolsRequiredTitle")}
+              description={t("settings.voice.voiceMode.toolsRequiredDescription")}
+              testID="voice-tools-required-alert"
+            >
+              <Button
+                variant="outline"
+                onPress={enableHostTools}
+                disabled={enablingTools}
+                testID="voice-enable-tools-button"
+              >
+                {enablingTools
+                  ? t("settings.voice.voiceMode.enablingTools")
+                  : t("settings.host.orchestration.enableTools.title")}
+              </Button>
+            </Alert>
+          </View>
+        ) : null}
         <SettingsCard>
           <FeatureSwitchRow
             label={t("settings.voice.voiceMode.enabled")}
@@ -242,6 +281,9 @@ function summaryLabel(t: TFunction, summary: SpeechSiteSummary): string {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  alertSpacing: {
+    marginBottom: theme.spacing[3],
+  },
   loading: {
     paddingVertical: theme.spacing[8],
     alignItems: "center",

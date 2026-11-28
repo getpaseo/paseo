@@ -6614,7 +6614,7 @@ describe("create_heartbeat MCP tool", () => {
     );
   });
 
-  it("requires an agent-scoped session", async () => {
+  it("is omitted outside an agent-scoped session", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
@@ -6624,15 +6624,9 @@ describe("create_heartbeat MCP tool", () => {
       scheduleService: { createOrReplace } as unknown as ScheduleService,
       logger,
     });
-    const tool = registeredTool(server, "create_heartbeat");
 
-    await expect(
-      tool.handler({
-        prompt: "check status",
-        cron: "*/15 * * * *",
-      }),
-    ).rejects.toThrow("create_heartbeat requires an agent-scoped session");
-
+    expect(lookupTool(server, "create_heartbeat")).toBeUndefined();
+    expect(lookupTool(server, "delete_heartbeat")).toBeUndefined();
     expect(createOrReplace).not.toHaveBeenCalled();
   });
 });

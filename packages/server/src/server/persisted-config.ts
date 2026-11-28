@@ -274,6 +274,7 @@ export const PersistedConfigSchema = z
           .describe(
             'Express trusted proxy setting for X-Forwarded-* headers. Defaults to ["loopback"]. Use true only when the final trusted proxy overwrites client-supplied forwarded headers.',
           ),
+        // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
         mcp: z
           .object({
             enabled: z.boolean().optional(),
@@ -281,7 +282,23 @@ export const PersistedConfigSchema = z
           })
           .passthrough()
           .optional(),
+        tools: z
+          .object({
+            enabled: z.boolean().optional(),
+            groups: z
+              .object({
+                orchestration: z.boolean().optional(),
+                schedules: z.boolean().optional(),
+                changeRequests: z.boolean().optional(),
+                browser: z.boolean().optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
         usage: z.object({ enabled: z.boolean().optional() }).optional(),
+        // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
         browserTools: z
           .object({
             enabled: z.boolean().optional(),

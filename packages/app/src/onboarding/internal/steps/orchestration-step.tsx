@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { AgentSkillsRow } from "@/agent-skills";
 import { SettingsCard } from "@/components/settings";
 import { CommandLineRow } from "@/desktop/components/integrations-section";
-import { PaseoToolsRow } from "@/screens/settings/paseo-tools-card";
+import { EnableToolsSwitchRow } from "@/screens/settings/agent-tools-row";
 import type { OrchestrationSetupController } from "../orchestration-setup";
 
 /** Three switches, all on to start; Continue applies them. */
@@ -13,7 +13,7 @@ export function OrchestrationStep({ setup }: { setup: OrchestrationSetupControll
   const setCli = useCallback((on: boolean) => setChoice("cli", on), [setChoice]);
   return (
     <SettingsCard>
-      <PaseoToolsRow value={choices.tools} onValueChange={setTools} disabled={isApplying} />
+      <EnableToolsSwitchRow value={choices.tools} onValueChange={setTools} disabled={isApplying} />
       {offered.skills ? (
         <AgentSkillsRow
           skills={setup.skills}

@@ -203,6 +203,7 @@ import {
   setProjectCustomIcon,
 } from "../utils/project-custom-icon.js";
 import { VoiceSessions } from "./session/voice/index.js";
+import { resolveDaemonToolsFromMutableConfig } from "./tools-config.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
   createWorkspaceGitObserverService,
@@ -1467,6 +1468,10 @@ export class Session {
         tts,
         stt,
         voice,
+        isAgentToolsEnabled: () =>
+          this.daemonConfigStore && typeof this.daemonConfigStore.get === "function"
+            ? resolveDaemonToolsFromMutableConfig(this.daemonConfigStore.get()).enabled
+            : true,
         voiceBridge,
         dictation,
       },

@@ -12,26 +12,32 @@ category: Orchestration
 
 ## Configuration
 
-| Setting                       | Default | Purpose                                            |
-| ----------------------------- | ------- | -------------------------------------------------- |
-| `daemon.mcp.enabled`          | `true`  | Run the MCP server.                                |
-| `daemon.mcp.injectIntoAgents` | `false` | Give agents launched by Paseo access to its tools. |
+| Setting                              | Default | Purpose                                                                        |
+| ------------------------------------ | ------- | ------------------------------------------------------------------------------ |
+| `daemon.tools.enabled`               | `true`  | Give agents launched by Paseo access to its tools. Voice mode also needs this. |
+| `daemon.tools.groups.orchestration`  | `true`  | Hosts, workspaces, agents, providers, scripts, and terminals.                  |
+| `daemon.tools.groups.schedules`      | `true`  | Schedules and heartbeats.                                                      |
+| `daemon.tools.groups.changeRequests` | `true`  | Watching pull requests and merge requests.                                     |
+| `daemon.tools.groups.browser`        | `false` | [Browser automation](/docs/browser).                                           |
 
-Depending on the provider, Paseo delivers tools through its native tool interface or MCP. The capabilities are the same. Start a new agent or reload an existing one after changing injection settings.
+In the app, open **Settings → Host → Tools & prompts**. Turn on **Enable tools**, then expand it to turn each group on or off. Tools added by plugins follow **Enable tools**.
+
+Depending on the provider, Paseo delivers tools through its native tool interface or MCP. The capabilities are the same. Start a new agent or reload an existing one after changing tool settings.
+
+If `daemon.tools` is absent, Paseo reads the older `daemon.mcp.injectIntoAgents` and `daemon.browserTools.enabled` settings.
 
 ## Limit Paseo tools by provider
 
-Use provider policies when different agent profiles should receive different Paseo tools. Enable
-tool injection globally, then add `paseoTools` to the exact provider IDs you launch:
+Use provider policies when different agent profiles should receive different Paseo tools. Keep
+`daemon.tools.enabled` on, then add `paseoTools` to the exact provider IDs you launch:
 
 ```json
 {
   "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
   "version": 1,
   "daemon": {
-    "mcp": {
-      "enabled": true,
-      "injectIntoAgents": true
+    "tools": {
+      "enabled": true
     }
   },
   "agents": {
@@ -66,7 +72,7 @@ Omitting `paseoTools` enables the complete catalog. Set `enabled` to `false` to 
 or list exact tool IDs in `disabledTools` to remove selected tools. Custom profiles do not inherit
 this policy from `extends`; configure each custom provider ID separately.
 
-Browser tools still require browser tools to be enabled and a connected browser host. The
+Browser tools still require the `browser` tool group and a connected browser host. The
 voice-only `speak` tool is separate from this policy.
 
 This setting limits the catalog presented to an agent. It is not a security boundary for an agent
