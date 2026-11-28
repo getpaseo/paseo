@@ -384,7 +384,13 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
     })
     .passthrough(),
   z
-    .object({ type: z.literal("agent_end"), messages: z.array(OmpAgentMessageSchema).optional() })
+    .object({
+      type: z.literal("agent_end"),
+      messages: z.array(OmpAgentMessageSchema).optional(),
+      // OMP marks an end that still has a queued continuation or async delivery
+      // as non-terminal. The final end is the one that owns the idle wait.
+      isTerminal: z.boolean().optional(),
+    })
     .passthrough(),
 ]);
 

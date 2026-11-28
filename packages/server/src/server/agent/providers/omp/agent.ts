@@ -721,6 +721,8 @@ export class OmpAgentSession implements AgentSession {
   );
   private closed = false;
   private live: boolean;
+  private lastProviderActivityAt = Date.now();
+  private readonly extensionUiWaiters = new Set<() => void>();
   private readonly emittedUserMessageIds = new Set<string>();
 
   private readonly usageSessionKey = randomUUID();
@@ -891,6 +893,7 @@ export class OmpAgentSession implements AgentSession {
       throw new Error("An OMP turn is already active");
     }
 
+    this.lastProviderActivityAt = Date.now();
     const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
@@ -978,6 +981,7 @@ export class OmpAgentSession implements AgentSession {
       return { status: "unavailable" };
     if (this.parseSlashCommandInput(payload.text)) return { status: "unavailable" };
     const submission = this.rememberClientMessage(options.clientMessageId ?? null, payload.text);
+    this.lastProviderActivityAt = Date.now();
     try {
       await this.runtimeSession.steer(payload.text, payload.images);
     } catch (error) {
@@ -1150,6 +1154,8 @@ export class OmpAgentSession implements AgentSession {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
     this.pendingExtensionUiRequests.delete(requestId);
+    this.lastProviderActivityAt = Date.now();
+    this.notifyExtensionUiWaiters();
 
     const approvalResponse = buildOmpRpcUiPermissionResponse(request, response);
     if (approvalResponse) {
@@ -1188,6 +1194,7 @@ export class OmpAgentSession implements AgentSession {
   async interrupt(): Promise<void> {
     const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
+    this.clearPendingExtensionUiRequests();
     if (turnId && this.activeTurnId === turnId) {
       this.usagePoller.stopTurn();
       this.resetActiveTurn({ terminalizeWork: true });
@@ -1242,6 +1249,7 @@ export class OmpAgentSession implements AgentSession {
     this.unsubscribeRuntime?.();
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
+    this.clearPendingExtensionUiRequests();
     try {
       await this.runtimeSession.close();
     } finally {
@@ -1289,6 +1297,7 @@ export class OmpAgentSession implements AgentSession {
     this.pendingClientMessages.length = 0;
     this.turnMeter.reset();
     this.clearNoTurnBuffers();
+    this.wakeExtensionUiWaiters();
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
@@ -1671,6 +1680,8 @@ export class OmpAgentSession implements AgentSession {
   /** OMP aborted or timed out a dialog: close its card without a reply OMP would reject. */
   private closeExtensionUiRequest(requestId: string): void {
     if (!this.pendingExtensionUiRequests.delete(requestId)) return;
+    this.lastProviderActivityAt = Date.now();
+    this.notifyExtensionUiWaiters();
     this.questionUi.forget(requestId);
     this.emit({
       type: "permission_resolved",
@@ -1679,6 +1690,29 @@ export class OmpAgentSession implements AgentSession {
       resolution: { behavior: "deny", message: "OMP closed the question." },
       turnId: this.currentTurnIdForEvent(),
     });
+  }
+
+  private waitForExtensionUiRequestsToClear(): Promise<void> {
+    if (this.pendingExtensionUiRequests.size === 0) return Promise.resolve();
+    return new Promise((resolve) => this.extensionUiWaiters.add(resolve));
+  }
+
+  private notifyExtensionUiWaiters(): void {
+    if (this.pendingExtensionUiRequests.size > 0) return;
+    this.wakeExtensionUiWaiters();
+  }
+
+  private wakeExtensionUiWaiters(): void {
+    for (const resolve of this.extensionUiWaiters) resolve();
+    this.extensionUiWaiters.clear();
+  }
+
+  private clearPendingExtensionUiRequests(): void {
+    for (const requestId of this.pendingExtensionUiRequests.keys()) {
+      this.questionUi.forget(requestId);
+    }
+    this.pendingExtensionUiRequests.clear();
+    this.wakeExtensionUiWaiters();
   }
 
   private mapExtensionUiSideEffect(
@@ -1851,6 +1885,9 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: OmpRuntimeEvent): void {
+    // The idle deadline measures provider silence. Any event, including a
+    // non-terminal agent_end or a subagent update, proves OMP is still alive.
+    this.lastProviderActivityAt = Date.now();
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -1989,6 +2026,12 @@ export class OmpAgentSession implements AgentSession {
         this.handleCompactionEvent(event, turnId);
         return;
       case "agent_end": {
+        // OMP reports a turn that has a queued continuation or async delivery
+        // as non-terminal. The final end owns the idle wait; starting the
+        // failure clock here would fail a turn that is still running.
+        if (event.isTerminal === false) {
+          return;
+        }
         const messages = event.messages ?? [];
         let terminalMessages: OmpAgentMessage[] | null = null;
         if (messages.some((message) => message.role === "assistant")) {
@@ -2321,17 +2364,16 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
     messages: OmpAgentMessage[],
   ): Promise<void> {
-    const deadline = Date.now() + this.providerIdleDeadlineMs;
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
-      if (Date.now() >= deadline) {
+      // A question or approval waiting for the user is not a hung provider.
+      // Wait for the card to settle instead of counting the wait as silence.
+      if (this.pendingExtensionUiRequests.size > 0) {
+        await this.waitForExtensionUiRequestsToClear();
+        continue;
+      }
+      if (Date.now() - this.lastProviderActivityAt >= this.providerIdleDeadlineMs) {
         this.usagePoller.stopTurn();
-        this.resetActiveTurn({ terminalizeWork: true });
-        this.emit({
-          type: "turn_failed",
-          provider: this.provider,
-          turnId,
-          error: "OMP provider idle deadline exceeded",
-        });
+        await this.failProviderIdleTurn(turnId);
         return;
       }
       try {
@@ -2350,6 +2392,34 @@ export class OmpAgentSession implements AgentSession {
       }
       await this.providerIdleScheduler.waitForRetry();
     }
+  }
+
+  /**
+   * The provider still owns the turn after the idle deadline. Abort it before
+   * failing so the next prompt is not rejected with "Agent is already
+   * processing"; if the abort fails, replace the runtime on the next prompt.
+   */
+  private async failProviderIdleTurn(turnId: string | undefined): Promise<void> {
+    try {
+      await this.runtimeSession.abort();
+    } catch (error) {
+      this.logger.warn(
+        { err: error },
+        "OMP idle deadline abort failed; the next prompt will replace the runtime",
+      );
+      this.runtimeDead = true;
+    }
+    this.clearPendingExtensionUiRequests();
+    if (this.closed || this.currentTurnIdForEvent() !== turnId) {
+      return;
+    }
+    this.resetActiveTurn({ terminalizeWork: true });
+    this.emit({
+      type: "turn_failed",
+      provider: this.provider,
+      turnId,
+      error: "OMP provider idle deadline exceeded",
+    });
   }
 
   private async refreshState(): Promise<void> {
