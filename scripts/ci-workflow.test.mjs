@@ -13,6 +13,7 @@ const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
+const desktopPackagesWorkflowPath = new URL(".github/workflows/desktop-packages.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
@@ -94,6 +95,20 @@ function filesUnder(relativeDirectory, predicate) {
     .sort();
 }
 
+// Evaluates a workflow's own cancel-in-progress expression for a given trigger.
+function cancelsInProgress(workflowPath, { ref, event = "push", inputs = {} }) {
+  const source = readFileSync(workflowPath, "utf8");
+  const expression = /^concurrency:\n  group: .+\n  cancel-in-progress: \$\{\{ (.+) \}\}$/m.exec(
+    source,
+  );
+  assert.ok(expression, `${workflowPath.pathname} decides cancellation per run`);
+  return runInNewContext(expression[1], {
+    github: { ref, event_name: event },
+    inputs,
+    startsWith: (value, prefix) => value.startsWith(prefix),
+  });
+}
+
 test("gated checks are statically named jobs with real job-level gating", () => {
   const workflowSource = readFileSync(ciWorkflowPath, "utf8");
   const jobs = jobBlocks(workflowSource);
@@ -115,11 +130,7 @@ test("gated checks are statically named jobs with real job-level gating", () => 
 });
 
 test("pull-request checks run for every base branch, including stacked PRs", () => {
-  for (const workflowPath of [
-    ciWorkflowPath,
-    nixWorkflowPath,
-    new URL(".github/workflows/desktop-packages.yml", repoRoot),
-  ]) {
+  for (const workflowPath of [ciWorkflowPath, nixWorkflowPath, desktopPackagesWorkflowPath]) {
     const trigger = readFileSync(workflowPath, "utf8").split("jobs:", 1)[0];
     const pullRequest = trigger.match(/^  pull_request:\n((?:    .*\n)*)/m);
     assert.ok(pullRequest, `${workflowPath.pathname} runs on pull requests`);
@@ -127,18 +138,19 @@ test("pull-request checks run for every base branch, including stacked PRs", () 
   }
 });
 
-test("superseded CI runs cancel everywhere except main", () => {
-  const ci = readFileSync(ciWorkflowPath, "utf8");
-  const concurrency =
-    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: \$\{\{ (.+) \}\}$/m.exec(
-      ci,
-    );
-  assert.ok(concurrency, "CI groups runs by ref and decides cancellation per ref");
-  const cancels = (ref) => runInNewContext(concurrency[1], { github: { ref } });
-  // A run cancelled mid-flight leaves CANCELLED checks, which paint the main commit red.
-  assert.equal(cancels("refs/heads/main"), false);
-  assert.equal(cancels("refs/pull/1/merge"), true);
-  assert.equal(cancels("refs/heads/release/1.0"), true);
+test("superseded CI and packaging runs cancel everywhere except main", () => {
+  assert.match(
+    readFileSync(ciWorkflowPath, "utf8"),
+    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}$/m,
+    "CI groups runs by ref",
+  );
+  for (const workflowPath of [ciWorkflowPath, dockerWorkflowPath, desktopPackagesWorkflowPath]) {
+    const cancels = (ref) => cancelsInProgress(workflowPath, { ref });
+    // A run cancelled mid-flight leaves CANCELLED checks, which paint the main commit red.
+    assert.equal(cancels("refs/heads/main"), false, workflowPath.pathname);
+    assert.equal(cancels("refs/pull/1/merge"), true, workflowPath.pathname);
+    assert.equal(cancels("refs/heads/release/1.0"), true, workflowPath.pathname);
+  }
   for (const workflowPath of [ciWorkflowPath, dockerWorkflowPath, nixWorkflowPath]) {
     const source = readFileSync(workflowPath, "utf8");
     assert.doesNotMatch(
@@ -392,11 +404,19 @@ test("Docker packaging runs on main while Nix verifies packaging PRs on Linux", 
     /group: docker-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true' && format\('publish-\{0\}', inputs\.paseo_version \|\| github\.run_id\) \|\| github\.ref \}\}/,
     "manual Docker release retries use their own concurrency group so main pushes never cancel them",
   );
-  assert.match(
-    docker,
-    /cancel-in-progress: \$\{\{ !startsWith\(github\.ref, 'refs\/tags\/'\) && !\(github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true'\) \}\}/,
-    "Docker cancels superseded non-tag main checks while preserving tag and manual publish runs",
+  assert.equal(
+    cancelsInProgress(dockerWorkflowPath, { ref: "refs/tags/v1.0.0" }),
+    false,
+    "tag publishes finish",
   );
+  const dispatch = (publish) =>
+    cancelsInProgress(dockerWorkflowPath, {
+      ref: "refs/heads/release/1.0",
+      event: "workflow_dispatch",
+      inputs: { publish },
+    });
+  assert.equal(dispatch("true"), false, "manual publishes finish");
+  assert.equal(dispatch("false"), true, "a newer manual check supersedes the running one");
 
   const nix = readFileSync(nixWorkflowPath, "utf8");
   const nixTrigger = nix.split("jobs:", 1)[0];
@@ -431,13 +451,12 @@ test("CI and desktop packaging verify release branches isolated from main traffi
   const ciTrigger = readFileSync(ciWorkflowPath, "utf8").split("jobs:", 1)[0];
   assert.match(ciTrigger, /push:\s*\n\s+branches: \[main, "release\/\*\*"\]/);
 
-  const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
+  const source = readFileSync(desktopPackagesWorkflowPath, "utf8");
   const trigger = source.split("jobs:", 1)[0];
   assert.match(trigger, /push:\s*\n\s+branches: \[main, "release\/\*\*"\]/);
   assert.match(trigger, /^\s+workflow_dispatch:/m);
   assert.match(trigger, /pull_request:\s*\n\s+paths:/);
   assert.match(trigger, /- "packages\/desktop\/\*\*"/);
-  assert.match(trigger, /^\s+cancel-in-progress: true$/m);
   assert.doesNotMatch(source, /dorny\/paths-filter/);
   for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
     assert.match(source, new RegExp(`${action}@[0-9a-f]{40} # v\\d+\\.\\d+\\.\\d+`));
