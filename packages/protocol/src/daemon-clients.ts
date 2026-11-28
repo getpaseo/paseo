@@ -56,18 +56,14 @@ export type ConnectedClientTransport = z.infer<typeof ConnectedClientTransportSc
 
 export const ConnectedClientSummarySchema = z.object({
   sessionId: z.string(),
-  clientId: z.string(),
   isCurrentSession: z.boolean(),
-  principalId: z.string(),
   kind: ConnectedClientKindSchema,
   name: z.string().nullable(),
   platform: z.string().nullable(),
   appVersion: z.string().nullable(),
   transport: ConnectedClientTransportSchema,
-  securityMode: z.enum(["protected", "legacy"]).optional(),
   hubOrigin: z.string().nullable().optional(),
   permissions: z.array(DaemonPermissionSchema),
-  attenuated: z.boolean(),
   connectedAt: z.string(),
   socketCount: z.number().int().nonnegative(),
 });
@@ -75,13 +71,9 @@ export type ConnectedClientSummary = z.infer<typeof ConnectedClientSummarySchema
 
 export const RoutedClientSummarySchema = z.object({
   sessionId: z.string(),
-  sourceId: z.string(),
   name: z.string().nullable(),
   kind: ConnectedClientKindSchema,
-  appVersion: z.string().nullable(),
   permissions: z.array(DaemonPermissionSchema),
-  attenuated: z.boolean(),
-  connectedAt: z.string(),
 });
 export type RoutedClientSummary = z.infer<typeof RoutedClientSummarySchema>;
 
@@ -90,9 +82,7 @@ export const InboundDaemonSummarySchema = z.object({
   peerServerId: z.string().nullable(),
   name: z.string().nullable(),
   appVersion: z.string().nullable(),
-  principalId: z.string(),
   transport: ConnectedClientTransportSchema,
-  securityMode: z.enum(["protected", "legacy"]).optional(),
   permissions: z.array(DaemonPermissionSchema),
   connectedAt: z.string(),
   socketCount: z.number().int().nonnegative(),

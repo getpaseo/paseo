@@ -97,11 +97,7 @@ function formatDurationLabel(isoTimestamp: string | null | undefined, t: TFuncti
   return t("devices.time.daysAgo", { count: duration.count });
 }
 
-function formatTransportLabel(
-  transport: ConnectedClientTransport,
-  securityMode: "protected" | "legacy" | undefined,
-  t: TFunction,
-): string {
+function formatTransportLabel(transport: ConnectedClientTransport, t: TFunction): string {
   switch (transport) {
     case "local_ipc":
     case "local":
@@ -109,9 +105,7 @@ function formatTransportLabel(
     case "tailscale":
       return t("devices.transport.tailscale");
     case "relay":
-      return securityMode === "protected"
-        ? t("devices.transport.relay")
-        : t("devices.transport.relay");
+      return t("devices.transport.relay");
     case "hub":
       return t("devices.transport.hub");
     case "direct":
@@ -152,7 +146,7 @@ function formatHubHost(hubOrigin: string | null | undefined): string | null {
 }
 
 function formatClientHint(client: ConnectedClientSummary, t: TFunction): string {
-  const parts: string[] = [formatTransportLabel(client.transport, client.securityMode, t)];
+  const parts: string[] = [formatTransportLabel(client.transport, t)];
   if (client.kind === "hub") {
     const host = formatHubHost(client.hubOrigin);
     if (host) parts.push(host);
@@ -199,7 +193,7 @@ function InboundDaemonRow({ daemon }: { daemon: InboundDaemonSummary }) {
   const { t } = useTranslation();
   const tone: StatusDotTone = daemon.socketCount > 0 ? "online" : "warning";
   const label = daemon.name ?? daemon.peerServerId ?? t("devices.hosts.unnamed");
-  const transport = formatTransportLabel(daemon.transport, daemon.securityMode, t);
+  const transport = formatTransportLabel(daemon.transport, t);
   const hintParts = [t("devices.hosts.inbound"), transport];
   if (daemon.routedSessions.length > 0) {
     hintParts.push(t("devices.hosts.routedCount", { count: daemon.routedSessions.length }));
@@ -228,6 +222,11 @@ function InboundDaemonRow({ daemon }: { daemon: InboundDaemonSummary }) {
           <ScopePill permissions={routed.permissions} t={t} />
         </SettingsRow>
       ))}
+      {daemon.appVersion ? (
+        <SettingsRow label={t("devices.details.version")}>
+          <Text style={styles.nestedValue}>{daemon.appVersion}</Text>
+        </SettingsRow>
+      ) : null}
       {connectedLabel ? (
         <SettingsRow label={t("devices.details.connected")}>
           <Text style={styles.nestedValue}>{connectedLabel}</Text>

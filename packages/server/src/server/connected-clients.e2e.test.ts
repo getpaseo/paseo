@@ -19,9 +19,9 @@ async function startDaemon(): Promise<TestPaseoDaemon> {
 
 function findClientSocketCount(
   snapshots: readonly DaemonClientsSnapshot[],
-  clientId: string,
+  name: string,
 ): number | undefined {
-  return snapshots.at(-1)?.clients.find((entry) => entry.clientId === clientId)?.socketCount;
+  return snapshots.at(-1)?.clients.find((entry) => entry.name === name)?.socketCount;
 }
 
 describe("daemon.clients.list", () => {
@@ -61,14 +61,12 @@ describe("daemon.clients.list", () => {
     const initial = await subscription.ready;
     expect(initial.clients).toHaveLength(1);
     expect(initial.clients[0]).toMatchObject({
-      clientId: "cid_desktop_owner",
       isCurrentSession: true,
       name: "Mo's MacBook Pro",
       kind: "desktop",
       platform: "macos",
       appVersion: "0.18.1",
       transport: "local",
-      attenuated: false,
       socketCount: 1,
     });
 
@@ -87,14 +85,13 @@ describe("daemon.clients.list", () => {
     await expect.poll(() => observed.at(-1)?.clients.length ?? 0, { timeout: 5000 }).toBe(2);
 
     const latest = observed.at(-1)!;
-    const phone = latest.clients.find((entry) => entry.clientId === "cid_phone_viewer");
+    const phone = latest.clients.find((entry) => entry.name === "Mo's iPhone");
     expect(phone).toMatchObject({
       isCurrentSession: false,
       name: "Mo's iPhone",
       kind: "mobile",
       platform: "ios",
       permissions: ["daemon.read", "workspace.read"],
-      attenuated: true,
       socketCount: 1,
     });
 
@@ -104,7 +101,7 @@ describe("daemon.clients.list", () => {
     // Closing the second client drops its live socketCount to 0 (reconnect grace) and notifies observers.
     await viewer.close();
     await expect
-      .poll(() => findClientSocketCount(observed, "cid_phone_viewer"), { timeout: 5000 })
+      .poll(() => findClientSocketCount(observed, "Mo's iPhone"), { timeout: 5000 })
       .toBe(0);
   });
 

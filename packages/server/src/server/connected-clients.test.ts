@@ -6,13 +6,10 @@ function makeRecord(overrides: Partial<ConnectedClientRecord> = {}): ConnectedCl
   return {
     sessionId: "sess_1",
     clientId: "cid_1",
-    principalId: "owner",
-    sourceId: "owner",
     clientType: "mobile",
     clientInfo: { name: "Mo's MacBook Pro", platform: "macos", kind: "desktop" },
     appVersion: "0.18.1",
     permissions: OWNER_PERMISSIONS,
-    principalPermissions: OWNER_PERMISSIONS,
     connectedAt: "2026-11-28T10:00:00.000Z",
     socketCount: 1,
     isCurrentSession: false,
@@ -28,18 +25,16 @@ function makeRecord(overrides: Partial<ConnectedClientRecord> = {}): ConnectedCl
 }
 
 describe("buildConnectedClientsSnapshot", () => {
-  it("sorts current session first, classifies transports, and tracks attenuated scopes", () => {
+  it("sorts current session first, classifies transports, and reports granted permissions", () => {
     const snapshot = buildConnectedClientsSnapshot(
       [
         makeRecord({
           sessionId: "sess_hub",
           clientId: "hub:dmn_1",
-          principalId: "hub:dmn_1",
           clientType: "hub",
           clientInfo: null,
           appVersion: null,
           permissions: ["hub.execute", "workspace.read"],
-          principalPermissions: ["hub.execute", "workspace.read"],
           identity: { transport: "hub", peer: "external", hubDaemonId: "dmn_1" },
           hubOrigin: "https://hub.paseo.sh",
           connectedAt: "2026-11-25T10:00:00.000Z",
@@ -49,7 +44,6 @@ describe("buildConnectedClientsSnapshot", () => {
           clientId: "cid_phone",
           clientInfo: { name: "Mo's iPhone", platform: "ios", kind: "mobile" },
           permissions: ["daemon.read", "workspace.read"],
-          principalPermissions: OWNER_PERMISSIONS,
           identity: {
             transport: "direct",
             peer: "external",
@@ -78,7 +72,6 @@ describe("buildConnectedClientsSnapshot", () => {
       isCurrentSession: true,
       kind: "desktop",
       transport: "local_ipc",
-      attenuated: false,
     });
     expect(snapshot.clients[1]).toMatchObject({
       kind: "hub",
@@ -86,14 +79,12 @@ describe("buildConnectedClientsSnapshot", () => {
       transport: "hub",
       hubOrigin: "https://hub.paseo.sh",
       permissions: ["hub.execute", "workspace.read"],
-      attenuated: false,
     });
     expect(snapshot.clients[2]).toMatchObject({
       kind: "mobile",
       name: "Mo's iPhone",
       transport: "tailscale",
       permissions: ["daemon.read", "workspace.read"],
-      attenuated: true,
     });
   });
 
@@ -130,10 +121,8 @@ describe("buildConnectedClientsSnapshot", () => {
     const routedChild = makeRecord({
       sessionId: "sess_routed",
       clientId: "link-abc",
-      sourceId: "route:owner:srv_peer:owner",
       clientInfo: { name: "Mo's iPhone", platform: "ios", kind: "mobile" },
       permissions: ["daemon.read", "workspace.read"],
-      principalPermissions: ["daemon.read", "workspace.read", "workspace.write"],
       isRouted: true,
     });
 
@@ -143,8 +132,7 @@ describe("buildConnectedClientsSnapshot", () => {
       clientType: "cli",
       clientInfo: { name: "mac-studio", kind: "daemon", peerServerId: "srv_peer" },
       permissions: ["daemon.read", "workspace.read", "workspace.write"],
-      principalPermissions: ["daemon.read", "workspace.read", "workspace.write"],
-      identity: { transport: "relay", peer: "external", securityMode: "protected" },
+      identity: { transport: "relay", peer: "external" },
       hasHostLink: true,
       routedChildren: [routedChild],
     });
@@ -157,22 +145,16 @@ describe("buildConnectedClientsSnapshot", () => {
         peerServerId: "srv_peer",
         name: "mac-studio",
         appVersion: "0.18.1",
-        principalId: "owner",
         transport: "relay",
-        securityMode: "protected",
         permissions: ["daemon.read", "workspace.read", "workspace.write"],
         connectedAt: "2026-11-28T10:00:00.000Z",
         socketCount: 1,
         routedSessions: [
           {
             sessionId: "sess_routed",
-            sourceId: "route:owner:srv_peer:owner",
             name: "Mo's iPhone",
             kind: "mobile",
-            appVersion: "0.18.1",
             permissions: ["daemon.read", "workspace.read"],
-            attenuated: true,
-            connectedAt: "2026-11-28T10:00:00.000Z",
           },
         ],
       },

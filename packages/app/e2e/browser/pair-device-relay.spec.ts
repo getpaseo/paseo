@@ -1,3 +1,5 @@
+import { createHostClient } from "@getpaseo/client/node";
+import { expect } from "@playwright/test";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
   addDirectHostFromSettings,
@@ -24,10 +26,50 @@ import {
   slowConnectionToHost,
   expectTailscaleUpdateRequired,
   expectCompletePairingQr,
+  expectConnectedClientRow,
   expectRelayConsent,
+  expandConnectedClientRow,
+  openDevicesPage,
   openPairDeviceModal,
   preparePairingHost,
+  returnFromRelayToWaysToConnect,
 } from "../support/helpers/pair-device";
+
+test("lists connected clients with scopes and navigates Pair a device → Relay → Back", async ({
+  page,
+}) => {
+  const daemon = await startIsolatedHostDaemon("pair-device-connected-clients", {
+    mutableRelay: { enabled: true },
+  });
+  const viewer = createHostClient(`127.0.0.1:${daemon.port}`, {
+    clientId: "cid_e2e_phone_viewer",
+    clientType: "mobile",
+    appVersion: "0.18.1",
+    clientInfo: { name: "Test Phone", platform: "ios", kind: "mobile" },
+    sessionPermissions: ["daemon.read", "workspace.read"],
+    reconnect: { enabled: false },
+  });
+  try {
+    await openDevicesPage(page, daemon);
+    await expectConnectedClientRow(page, "This device", "Full access");
+    await expandConnectedClientRow(page, "This device");
+    await expect(
+      page
+        .getByTestId("devices-connected-clients-card")
+        .getByText("access.manage", { exact: true }),
+    ).toBeVisible();
+
+    await viewer.connect();
+    await expectConnectedClientRow(page, "Test Phone", "Read-only");
+
+    await openPairDeviceModal(page);
+    await expectPairingOffer(page);
+    await returnFromRelayToWaysToConnect(page);
+  } finally {
+    await viewer.close();
+    await daemon.close();
+  }
+});
 
 test("opens relay consent in browser web", async ({ page }) => {
   const daemon = await startIsolatedHostDaemon("pair-device-browser-relay-off", {
@@ -81,7 +123,7 @@ test("turns Tailscale on and off from Devices, asking first over Tailscale", asy
 }, testInfo) => {
   test.skip(process.platform !== "linux", "Uses a second IPv4 loopback address");
   // The journey opens Devices or the setup six times, two of them over a slowed connection.
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   if (!baseURL) throw new Error("Expected the app base URL");
   const daemon = await startTailscaleTestDaemon(baseURL);
   try {

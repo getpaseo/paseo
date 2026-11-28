@@ -13,7 +13,6 @@ import type {
 export interface ConnectedClientIdentity {
   transport: "direct" | "relay" | "hub";
   peer: "loopback" | "local_ipc" | "external";
-  securityMode?: "protected" | "legacy";
   userAgent?: string;
   localEndpoint?: string;
   hubDaemonId?: string;
@@ -22,13 +21,10 @@ export interface ConnectedClientIdentity {
 export interface ConnectedClientRecord {
   sessionId: string;
   clientId: string;
-  principalId: string;
-  sourceId: string;
   clientType: WSHelloMessage["clientType"];
   clientInfo: HelloClientInfo | null;
   appVersion: string | null;
   permissions: readonly DaemonPermission[];
-  principalPermissions: readonly DaemonPermission[];
   connectedAt: string;
   socketCount: number;
   isCurrentSession: boolean;
@@ -120,15 +116,6 @@ function resolveTransport(
   return "direct";
 }
 
-function isAttenuated(
-  effective: readonly DaemonPermission[],
-  ceiling: readonly DaemonPermission[],
-): boolean {
-  if (ceiling.length === 0) return false;
-  const effectiveSet = new Set(effective);
-  return ceiling.some((permission) => !effectiveSet.has(permission));
-}
-
 function isInternalClient(record: ConnectedClientRecord, kind: ConnectedClientKind): boolean {
   if (record.isEphemeralPlugin || kind === "plugin") return true;
   return kind === "cli" || kind === "mcp";
@@ -138,13 +125,9 @@ function toRoutedSummary(record: ConnectedClientRecord): RoutedClientSummary {
   const kind = resolveClientKind(record);
   return {
     sessionId: record.sessionId,
-    sourceId: record.sourceId,
     name: resolveClientName(record, kind),
     kind,
-    appVersion: record.appVersion,
     permissions: [...record.permissions],
-    attenuated: isAttenuated(record.permissions, record.principalPermissions),
-    connectedAt: record.connectedAt,
   };
 }
 
@@ -157,19 +140,15 @@ function toInboundDaemonSummary(
     record.clientInfo?.peerServerId?.trim() ||
     parsePeerServerIdFromClientId(record.clientId) ||
     null;
-  const routedSessions = record.routedChildren
-    .map(toRoutedSummary)
-    .sort((a, b) => a.connectedAt.localeCompare(b.connectedAt));
+  const routedSessions = [...record.routedChildren]
+    .sort((a, b) => a.connectedAt.localeCompare(b.connectedAt))
+    .map(toRoutedSummary);
   return {
     sessionId: record.sessionId,
     peerServerId,
     name: record.clientInfo?.name?.trim() || null,
     appVersion: record.appVersion,
-    principalId: record.principalId,
     transport,
-    ...(transport === "relay" && record.identity?.securityMode
-      ? { securityMode: record.identity.securityMode }
-      : {}),
     permissions: [...record.permissions],
     connectedAt: record.connectedAt,
     socketCount: record.socketCount,
@@ -185,20 +164,14 @@ function toConnectedClientSummary(
   const transport = resolveTransport(record.identity, isTailscaleEndpoint);
   return {
     sessionId: record.sessionId,
-    clientId: record.clientId,
     isCurrentSession: record.isCurrentSession,
-    principalId: record.principalId,
     kind,
     name: resolveClientName(record, kind),
     platform: record.clientInfo?.platform ?? null,
     appVersion: record.appVersion,
     transport,
-    ...(transport === "relay" && record.identity?.securityMode
-      ? { securityMode: record.identity.securityMode }
-      : {}),
     ...(transport === "hub" && record.hubOrigin ? { hubOrigin: record.hubOrigin } : {}),
     permissions: [...record.permissions],
-    attenuated: isAttenuated(record.permissions, record.principalPermissions),
     connectedAt: record.connectedAt,
     socketCount: record.socketCount,
   };

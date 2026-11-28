@@ -66,10 +66,54 @@ type PairingHost =
   | Pick<IsolatedHostDaemon, "serverId" | "port">
   | Pick<OutdatedDaemon, "serverId" | "endpoint">;
 
+export async function openDevicesPage(page: Page, daemon: PairingHost): Promise<void> {
+  await openAppOnPairingHost(page, daemon);
+  await openSettings(page);
+  await openSettingsHost(page, daemon.serverId);
+  await openSettingsHostSection(page, daemon.serverId, "devices");
+  await expect(page.getByTestId("devices-connected-clients-card")).toBeVisible();
+}
+
+export async function expectConnectedClientRow(
+  page: Page,
+  title: string,
+  scopeLabel: string,
+): Promise<void> {
+  const card = page.getByTestId("devices-connected-clients-card");
+  const row = card.getByRole("button", { name: title, exact: true });
+  await expect(row).toBeVisible();
+  await expect(card.getByText(scopeLabel, { exact: true }).first()).toBeVisible();
+}
+
+export async function expandConnectedClientRow(page: Page, title: string): Promise<void> {
+  const card = page.getByTestId("devices-connected-clients-card");
+  await card.getByRole("button", { name: title, exact: true }).click();
+  await expect(card.getByText("Permissions", { exact: true })).toBeVisible();
+}
+
+export async function returnFromRelayToWaysToConnect(page: Page): Promise<void> {
+  await page
+    .getByTestId("devices-relay-pairing")
+    .getByRole("button", { name: "Back", exact: true })
+    .click();
+  await expect(page.getByTestId("devices-relay")).toBeVisible();
+  await expect(page.getByRole("switch", { name: "Tailscale", exact: true })).toBeVisible();
+}
+
 export async function openPairDeviceWaysSheet(page: Page): Promise<void> {
   await expect(page.getByTestId("devices-pair-button")).toBeVisible();
   await page.getByTestId("devices-pair-button").click();
   await expect(page.getByTestId("devices-relay")).toBeVisible();
+}
+
+async function ensurePairDeviceWaysSheetOpen(page: Page): Promise<void> {
+  const relayRow = page.getByTestId("devices-relay");
+  const pairButton = page.getByTestId("devices-pair-button");
+  await relayRow.or(pairButton).first().waitFor({ state: "visible" });
+  if (!(await relayRow.isVisible())) {
+    await pairButton.click();
+    await expect(relayRow).toBeVisible();
+  }
 }
 
 export async function preparePairingHost(
@@ -191,10 +235,12 @@ export async function cancelTailscaleTurnOff(page: Page, address: string): Promi
  */
 export async function confirmTailscaleTurnOff(page: Page, address: string): Promise<void> {
   const question = answerNextDialog(page, "accept");
-  await page.getByRole("switch", { name: "Tailscale", exact: true }).click();
+  const sheet = page.getByTestId("devices-pair-sheet");
+  const scope = (await sheet.isVisible()) ? sheet : page;
+  await scope.getByRole("switch", { name: "Tailscale", exact: true }).click();
   expect(await question).toBe(TURN_OFF_QUESTION);
-  await expect(page.getByText("Host is not connected", { exact: true })).toBeVisible();
-  await expect(page.getByRole("switch", { name: "Tailscale", exact: true })).toHaveCount(0);
+  await expect(scope.getByText("Host is not connected", { exact: true })).toBeVisible();
+  await expect(scope.getByRole("switch", { name: "Tailscale", exact: true })).toHaveCount(0);
   await expectHostUnreachableAt(address);
 }
 
@@ -378,15 +424,12 @@ function deliverInOrderAfter(delay: () => number, deliver: (message: string | Bu
 }
 
 export async function expectTailscaleUpdateRequired(page: Page): Promise<void> {
-  if (
-    (await page.getByTestId("devices-pair-button").count()) > 0 &&
-    (await page.getByTestId("devices-relay").count()) === 0
-  ) {
-    await openPairDeviceWaysSheet(page);
-  }
-  await expect(page.getByRole("switch", { name: "Tailscale", exact: true })).toBeDisabled();
-  await expect(page.getByText("Update this host to use Tailscale", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "How to update", exact: true })).toBeVisible();
+  await ensurePairDeviceWaysSheetOpen(page);
+  const sheet = page.getByTestId("devices-pair-sheet");
+  const scope = (await sheet.isVisible()) ? sheet : page;
+  await expect(scope.getByRole("switch", { name: "Tailscale", exact: true })).toBeDisabled();
+  await expect(scope.getByText("Update this host to use Tailscale", { exact: true })).toBeVisible();
+  await expect(scope.getByRole("link", { name: "How to update", exact: true })).toBeVisible();
 }
 
 export async function expectTailscaleUnavailable(page: Page): Promise<void> {
@@ -472,11 +515,7 @@ export function observeDaemonStatusPolling(page: Page, port: number) {
 }
 
 export async function openPairDeviceModal(page: Page): Promise<void> {
-  const pairButton = page.getByTestId("devices-pair-button");
-  if ((await pairButton.count()) > 0 && (await page.getByTestId("devices-relay").count()) === 0) {
-    await pairButton.click();
-    await expect(page.getByTestId("devices-relay")).toBeVisible();
-  }
+  await ensurePairDeviceWaysSheetOpen(page);
   await page.getByRole("button", { name: "Relay", exact: true }).click();
   await expect(page.getByTestId("devices-relay-pairing")).toBeVisible();
 }

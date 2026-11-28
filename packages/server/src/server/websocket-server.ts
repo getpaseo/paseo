@@ -494,7 +494,6 @@ export interface WebSocketLike {
 interface SessionConnectionBase {
   hubExecutionAgents?: HubExecutionAgents;
   permissionCeiling?: readonly DaemonPermission[];
-  principalPermissions: readonly DaemonPermission[];
   session: Session;
   principalId: string;
   sessionKey: string;
@@ -1242,7 +1241,6 @@ export class VoiceAssistantWebSocketServer {
     }
     for (const connection of new Set(this.externalSessionsByKey.values())) {
       if (connection.principalId === principalId) {
-        connection.principalPermissions = [...permissions];
         connection.session.setPermissions(
           connection.permissionCeiling
             ? permissions.filter((permission) => connection.permissionCeiling!.includes(permission))
@@ -1667,7 +1665,6 @@ export class VoiceAssistantWebSocketServer {
     connectionLogger: pino.Logger;
     lifecycle: { kind: "reconnectable" } | { kind: "ephemeral-plugin"; pluginId: string };
     admission: SessionAdmission;
-    principalPermissions: readonly DaemonPermission[];
     identity: WebSocketConnectionIdentity;
   }): SessionConnection {
     const {
@@ -1680,7 +1677,6 @@ export class VoiceAssistantWebSocketServer {
       connectionLogger,
       lifecycle,
       admission,
-      principalPermissions,
       identity,
     } = params;
     let connection: SessionConnection | null = null;
@@ -1749,7 +1745,6 @@ export class VoiceAssistantWebSocketServer {
     const base: SessionConnectionBase = {
       session,
       principalId: admission.principalId,
-      principalPermissions: [...principalPermissions],
       hubExecutionAgents: admission.hubExecutionAgents,
       sessionKey: sessionConnectionKey(admission.principalId, clientId),
       clientId,
@@ -1900,7 +1895,6 @@ export class VoiceAssistantWebSocketServer {
     return {
       transport: identity.transport,
       peer: identity.peer,
-      ...(identity.securityMode ? { securityMode: identity.securityMode } : {}),
       ...(identity.userAgent ? { userAgent: identity.userAgent } : {}),
       ...(localEndpoint ? { localEndpoint } : {}),
       ...(identity.hubDaemonId ? { hubDaemonId: identity.hubDaemonId } : {}),
@@ -1933,13 +1927,10 @@ export class VoiceAssistantWebSocketServer {
       return {
         sessionId: connection.session.getSessionId(),
         clientId: connection.clientId,
-        principalId: connection.principalId,
-        sourceId: connection.session.getHostSourceId(),
         clientType: connection.clientType,
         clientInfo: connection.clientInfo,
         appVersion: connection.appVersion,
         permissions: connection.session.getPermissions(),
-        principalPermissions: connection.principalPermissions,
         connectedAt: connection.connectedAt,
         socketCount: connection.sockets.size,
         isCurrentSession: callerSession !== null && connection.session === callerSession,
@@ -2038,10 +2029,7 @@ export class VoiceAssistantWebSocketServer {
     }
 
     this.clearPendingConnection(ws);
-    const { admitted, principalPermissions } = applySessionPermissionCeiling(
-      pending.admission,
-      message.sessionPermissions,
-    );
+    const admitted = applySessionPermissionCeiling(pending.admission, message.sessionPermissions);
     pending.admission = admitted;
     pending.identity.clientId = clientId;
     if (message.appVersion) {
@@ -2050,7 +2038,7 @@ export class VoiceAssistantWebSocketServer {
     const sessionKey = sessionConnectionKey(admitted.principalId, clientId);
     const existing = pluginId ? undefined : this.externalSessionsByKey.get(sessionKey);
     if (existing) {
-      this.resumeSession({ ws, message, pending, existing, principalPermissions });
+      this.resumeSession({ ws, message, pending, existing });
       return;
     }
 
@@ -2066,7 +2054,6 @@ export class VoiceAssistantWebSocketServer {
       connectionLogger,
       lifecycle: pluginId ? { kind: "ephemeral-plugin", pluginId } : { kind: "reconnectable" },
       admission: admitted,
-      principalPermissions,
       identity: pending.identity,
     });
     connection.permissionCeiling = message.sessionPermissions;
@@ -2180,9 +2167,8 @@ export class VoiceAssistantWebSocketServer {
     message: WSHelloMessage;
     pending: PendingConnection;
     existing: ReconnectableSessionConnection;
-    principalPermissions: readonly DaemonPermission[];
   }): void {
-    const { ws, message, pending, existing, principalPermissions } = params;
+    const { ws, message, pending, existing } = params;
     this.incrementRuntimeCounter("helloResumed");
     if (existing.externalDisconnectCleanupTimeout) {
       clearTimeout(existing.externalDisconnectCleanupTimeout);
@@ -2193,7 +2179,6 @@ export class VoiceAssistantWebSocketServer {
       this.hostLinks.delete(socket);
     }
     existing.permissionCeiling = message.sessionPermissions;
-    existing.principalPermissions = [...principalPermissions];
     existing.clientType = message.clientType;
     if (message.clientInfo) existing.clientInfo = message.clientInfo;
     existing.lastIdentity = this.toConnectedClientIdentity(ws, pending.identity);
@@ -3602,18 +3587,14 @@ function isHandshakeMessage(message: WSInboundMessage): boolean {
 function applySessionPermissionCeiling(
   admission: SessionAdmission | null,
   sessionPermissions: readonly DaemonPermission[] | undefined,
-): { admitted: SessionAdmission; principalPermissions: DaemonPermission[] } {
+): SessionAdmission {
   if (!admission) throw new Error("Admitted hello has no session admission");
-  const principalPermissions = [...admission.permissions];
-  if (!sessionPermissions) return { admitted: admission, principalPermissions };
+  if (!sessionPermissions) return admission;
   return {
-    admitted: {
-      ...admission,
-      permissions: admission.permissions.filter((permission) =>
-        sessionPermissions.includes(permission),
-      ),
-    },
-    principalPermissions,
+    ...admission,
+    permissions: admission.permissions.filter((permission) =>
+      sessionPermissions.includes(permission),
+    ),
   };
 }
 

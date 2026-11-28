@@ -66,6 +66,7 @@ export function PairDeviceHeaderAction({ serverId }: { serverId: string }) {
         onClose={handleClose}
         snapPoints={SNAP_POINTS}
         desktopMaxWidth={480}
+        desktopHeight={520}
         testID={step === "relay" ? "devices-relay-pairing" : "devices-pair-sheet"}
       >
         {step === "relay" ? (
