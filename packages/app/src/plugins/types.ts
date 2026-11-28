@@ -55,6 +55,9 @@ export interface EvaluatedPlugin {
   cleanup: PluginCleanup;
   surfaces: PluginScreenContribution[];
   settingsScreens: PluginSettingsScreenContribution[];
+  updateIndicators: import("react").ComponentType<
+    import("@getpaseo/plugin/client").PluginUpdateIndicatorProps
+  >[];
   sidebarViews: PluginSidebarViewContribution<PluginText>[];
   sidebarItems: Record<PluginSidebarSection, PluginSidebarItemContribution[]>;
   // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29

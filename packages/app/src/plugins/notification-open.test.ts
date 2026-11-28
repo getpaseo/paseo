@@ -77,6 +77,7 @@ function makeInstalledPlugin(input: {
     clientBundle: "",
     queryClient: new QueryClient(),
     cleanup: () => {},
+    updateIndicators: [],
     surfaces: (input.screens ?? ["main"]).map((id) => ({
       id,
       title: id,

@@ -25,7 +25,7 @@ type SettingsClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>
 const TABBED_PLUGIN_ID = "settings-tabs";
 const TABBED_PLUGIN_NAME = "Tabbed settings";
 /** Two settings screens, so the settings page shows a tab per screen. */
-const TABBED_SOURCE = `import React from "react";
+const TABBED_SOURCE = `import React, { useEffect } from "react";
 import { Text, View } from "react-native";
 import { defineTranslations, useTranslation } from "@getpaseo/plugin/client";
 
@@ -49,7 +49,13 @@ function BrokenIcon() {
   throw new Error("Settings tab icon exploded");
 }
 
+function UpdateIndicator({ onChange }) {
+  useEffect(() => { onChange(true); }, [onChange]);
+  return null;
+}
+
 export default function contribute(client) {
+  client.addUpdateIndicator(UpdateIndicator);
   client.addSettingsScreen({ id: "general", title: "General", icon: BrokenIcon, Component: General });
   client.addSettingsScreen({ id: "advanced", title: "Advanced", icon: TranslatedIcon, Component: Advanced });
   return () => {};
@@ -149,7 +155,16 @@ export async function expectNamedPluginRow(page: Page) {
   await expect(
     page.getByRole("switch", { name: `${TABBED_PLUGIN_NAME}: Disable`, exact: true }),
   ).toBeVisible();
-  await expect(row).toHaveAccessibleName(TABBED_PLUGIN_NAME);
+  await expect(row).toHaveAccessibleName(`${TABBED_PLUGIN_NAME}, Update available`);
+}
+
+export async function expectUpdateIndicator(page: Page) {
+  await expect(page.getByTestId(`plugin-update-indicator-${TABBED_PLUGIN_ID}`)).toBeVisible();
+  await expectNamedPluginRow(page);
+}
+
+export async function expectUpdateIndicatorHidden(page: Page) {
+  await expect(page.getByTestId(`plugin-update-indicator-${TABBED_PLUGIN_ID}`)).toHaveCount(0);
 }
 /** The page names the plugin by its manifest name, with the ID beneath it. */
 export async function openTabbedSettings(page: Page) {
