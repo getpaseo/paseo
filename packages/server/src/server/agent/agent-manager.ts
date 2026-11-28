@@ -2718,11 +2718,10 @@ export class AgentManager {
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
-    return this.runLifecycleMutation(agentId, () =>
+    const normalizedModelId =
+      typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    const applyModel = () =>
       this.withLiveInteractiveSessionUnlocked(agentId, async (agent) => {
-        const normalizedModelId =
-          typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
-
         const selection = await agent.session.setModel?.(normalizedModelId);
         await this.drainSessionEvents(agentId);
 
@@ -2737,8 +2736,30 @@ export class AgentManager {
         this.refreshSessionPersistence(agent);
         this.touchUpdatedAt(agent);
         this.emitState(agent);
-      }),
-    );
+      });
+
+    return this.runLifecycleMutation(agentId, async () => {
+      try {
+        await applyModel();
+      } catch (error) {
+        if (this.getAgent(agentId)) {
+          throw error;
+        }
+        const registry = this.requireRegistry();
+        const record = await registry.get(agentId);
+        if (!record || record.config?.model === (normalizedModelId ?? undefined)) {
+          throw error;
+        }
+        await registry.upsert({
+          ...record,
+          config: {
+            ...record.config,
+            model: normalizedModelId ?? undefined,
+          },
+        });
+        await applyModel();
+      }
+    });
   }
 
   async setAgentThinkingOption(
