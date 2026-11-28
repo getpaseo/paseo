@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["99ZMJMKU9Y.sh.paseo"],
+        "components": [
+          {
+            "/": "/h/*/agent/*",
+            "comment": "Agent links open the Paseo iOS app"
+          }
+        ]
+      }
+    ]
+  }
+}
