@@ -3,6 +3,7 @@ import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { startResizeHandleDrag, type ResizeHandleDrag } from "@/components/resize-handle-drag";
+import { WINDOW_NO_DRAG_DATASET } from "@/components/desktop/titlebar-drag-region";
 import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
@@ -271,6 +272,10 @@ export function ResizeHandle({
           onPointerDown={handlePointerDown}
           onPointerEnter={handlePointerEnter}
           onPointerLeave={handlePointerLeave}
+          // A handle can run the full height of a pane whose top band is a drag
+          // strip while mounted outside the drag host; subtract it from the drag
+          // region (see WINDOW_NO_DRAG_DATASET).
+          dataSet={WINDOW_NO_DRAG_DATASET}
         />
       ) : (
         <GestureDetector gesture={touchGesture}>
@@ -279,6 +284,7 @@ export function ResizeHandle({
             aria-orientation={direction === "horizontal" ? "vertical" : "horizontal"}
             collapsable={false}
             style={touchHitAreaStyle}
+            dataSet={WINDOW_NO_DRAG_DATASET}
           >
             <View pointerEvents="none" style={touchGripStyle} />
           </View>

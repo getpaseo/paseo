@@ -51,23 +51,35 @@
       }
     </style>
     <style>
-      button,
-      a,
-      input,
-      textarea,
-      select,
-      [role="button"],
-      [role="link"],
-      [role="textbox"],
-      [role="combobox"],
-      [role="tab"],
-      [role="switch"],
-      [role="checkbox"],
-      [role="slider"],
-      [role="menuitem"],
-      [tabindex],
-      [data-window-no-drag],
-      [contenteditable="true"] {
+      /* Interactive controls must never claim window drag: Electron's draggable
+         region is geometric (drag rects minus no-drag rects), so a control that
+         overlaps a drag surface has to subtract itself. The backstop is scoped
+         to drag surfaces (hosts marked by TitlebarDragRegion) and to overlay
+         portals, which can float above a drag surface without being inside one.
+         This template also ships to browser web, where the rule is inert (a
+         browser tab has no window drag region) but still parsed, so it stays
+         scoped: a document-wide rule puts thousands of elements into the
+         per-frame draggable-region collection, which showed up as ~3 ms of
+         Blink.Paint.UpdateTime per frame in the Electron renderer.
+         :where() keeps specificity at the unscoped level so the
+         [data-window-content] rule below still wins inside content viewports. */
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) button,
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) a,
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) input,
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) textarea,
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) select,
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="button"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="link"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="textbox"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="combobox"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="tab"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="switch"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="checkbox"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="slider"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [role="menuitem"],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [tabindex],
+      :where([data-window-drag], #overlay-root, body > div:not(#root)) [contenteditable="true"],
+      [data-window-no-drag] {
         -webkit-app-region: no-drag !important;
       }
 

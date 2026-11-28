@@ -3,6 +3,7 @@ import { Pressable, View } from "react-native";
 import Svg, { Line, Rect } from "react-native-svg";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { WINDOW_NO_DRAG_DATASET } from "@/components/desktop/titlebar-drag-region";
 import {
   closeDesktopWindow,
   minimizeDesktopWindow,
@@ -12,8 +13,8 @@ import {
   getDesktopWindowControlsPresentation,
   type DesktopWindowControlsPresentation,
 } from "@/desktop/window-chrome-presentation";
-import { useCustomDesktopWindowControls } from "@/utils/desktop-window";
 import type { Theme } from "@/styles/theme";
+import { useCustomDesktopWindowControls } from "@/utils/desktop-window";
 
 type WindowControlKind = "minimize" | "maximize" | "restore" | "close";
 
@@ -145,6 +146,10 @@ export function DesktopWindowControls() {
     <View
       style={[styles.controls, { height: presentation.controlHeight }]}
       testID="desktop-window-controls"
+      // Custom window controls float over the header's drag strip without being
+      // inside a drag host, so they subtract themselves from the drag region
+      // (see WINDOW_NO_DRAG_DATASET).
+      dataSet={WINDOW_NO_DRAG_DATASET}
     >
       <WindowControl
         kind="minimize"
