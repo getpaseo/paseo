@@ -189,6 +189,30 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+test.each([
+  ["ws://127.0.0.1:6767/ws", true],
+  ["wss://test.example/ws", true],
+  ["ws://test.example/ws", false],
+  ["paseo+desktop://ssh?host=test.example", true],
+] as const)(
+  "requires a live protected connection to send sensitive files via %s",
+  async (url, safe) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url,
+      clientId: "file_transfer_transport_test",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    expect(client.canSendSensitiveFiles).toBe(false);
+    const connecting = client.connect();
+    mock.triggerOpen();
+    await connecting;
+    expect(client.canSendSensitiveFiles).toBe(safe);
+  },
+);
+
 test("traces WebSocket frames, message types, and JSON parse duration", async () => {
   const mock = createMockTransport();
   const recorder = createTraceRecorder();
@@ -9448,6 +9472,7 @@ test("connects in legacy mode to a daemon that only speaks the legacy constructi
   await client.connect();
   expect(client.getConnectionState().status).toBe("connected");
   expect(modes).toEqual(["legacy"]);
+  expect(client.canSendSensitiveFiles).toBe(false);
 });
 
 test("refuses legacy endpoint security on reconnect once the daemon negotiated protected", async () => {
@@ -9484,6 +9509,7 @@ test("refuses legacy endpoint security on reconnect once the daemon negotiated p
   await client.connect();
   expect(client.getConnectionState().status).toBe("connected");
   expect(modes).toEqual(["protected"]);
+  expect(client.canSendSensitiveFiles).toBe(true);
 
   // The relay drops the session; the client reconnects to a legacy-only daemon.
   links[0].wire.close(1012, "Server disconnected");

@@ -2055,6 +2055,22 @@ export class DaemonClient {
     return this.relaySecurityFloorValue;
   }
 
+  /** Whether this live connection can carry explicitly selected sensitive files. */
+  get canSendSensitiveFiles(): boolean {
+    if (!this.isConnected) return false;
+    if (isRelayClientWebSocketUrl(this.config.url)) {
+      return this.config.e2ee?.enabled === true && this.relaySecurityFloor === "protected";
+    }
+    const { protocol, hostname } = new URL(this.config.url);
+    if (protocol === "wss:") return true;
+    if (protocol === "ws:") return ["localhost", "127.0.0.1", "[::1]"].includes(hostname);
+    return (
+      protocol === "paseo+desktop:" &&
+      this.config.transportFactory !== undefined &&
+      ["socket", "pipe", "ssh"].includes(hostname)
+    );
+  }
+
   get lastError(): string | null {
     return this.lastErrorValue;
   }

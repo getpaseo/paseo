@@ -3050,6 +3050,15 @@ render's callback, so an inline function does not resubscribe. `client.subscribe
 
 ### Bytes
 
+**Unreleased API.** For user-selected files, `usePluginFileTransfer()` on a plugin surface offers `pick()` and
+`send(file, rpc, header?)`. The system picker returns the filename, size, and an opaque handle.
+Paseo reads the bytes only on `send`, delivers them to that installation's binary RPC handler
+over a protected connection, and returns the validated RPC result. An optional binary header
+up to 4 KiB precedes the file bytes. The plugin defines the header format and the destination.
+Files are limited to 1 MiB. Handles expire after five minutes and are consumed by sending.
+The API returns `null` when the surface has no file transfer capability. See the
+[Local Files example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/local-files).
+
 A top-level `Uint8Array` crosses the wire as binary, without JSON or base64. Everything else is
 JSON. The rule applies to subscription events, RPC outputs, and RPC inputs. A Node `Buffer` is a
 `Uint8Array`.

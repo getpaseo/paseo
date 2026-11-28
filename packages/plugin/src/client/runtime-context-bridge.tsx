@@ -53,7 +53,11 @@ export function usePluginRuntimeContextBridge(): PluginRuntimeContextBridge {
       );
       return (
         <PaseoApiProvider paseo={paseo}>
-          <PluginRpcProvider invoke={rpc.invoke} subscribe={rpc.subscribe}>
+          <PluginRpcProvider
+            invoke={rpc.invoke}
+            subscribe={rpc.subscribe}
+            fileTransfer={rpc.fileTransfer}
+          >
             <PluginTranslationProvider runtime={translations}>{content}</PluginTranslationProvider>
           </PluginRpcProvider>
         </PaseoApiProvider>

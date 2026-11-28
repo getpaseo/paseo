@@ -83,6 +83,7 @@ export interface InstalledPlugin extends EvaluatedPlugin {
   paseo: PaseoApi;
   /** Calls one of the plugin's server RPC methods on its host. */
   invoke(method: string, input: unknown): Promise<unknown>;
+  fileTransfer?: import("@getpaseo/plugin/client").PluginFileTransfer;
   /** Subscribes to one of the plugin's server subscriptions; released with the lifetime. */
   subscribe: import("@getpaseo/plugin/client/host").PluginSubscribe;
   serverId: string;

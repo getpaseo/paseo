@@ -1,0 +1,6 @@
+{
+  "id": "local-files",
+  "name": "Local Files",
+  "description": "Copy an ignored project file from this device to a Paseo host.",
+  "requirements": { "paseo": ">=0.16.1" }
+}

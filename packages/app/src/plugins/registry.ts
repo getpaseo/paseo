@@ -8,6 +8,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
+import { createPluginFileTransfer } from "./file-transfer";
 import { createPluginSubscribe } from "./subscriptions";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
@@ -109,6 +110,7 @@ export class PluginRegistry {
           i18n: new PluginTranslationRuntime(this.dependencies.localeSource),
           paseo: createPaseoApi(client),
           invoke: (method, input) => client.invokePluginRpc(entry.id, method, input),
+          fileTransfer: createPluginFileTransfer(client, entry.id, lifetime.signal),
           subscribe: createPluginSubscribe({
             client,
             pluginId: entry.id,
