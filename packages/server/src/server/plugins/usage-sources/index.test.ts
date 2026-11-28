@@ -9,6 +9,7 @@ import {
 } from "../../../../../../plugins/claude-usage-source/server/usage.js";
 import { inputSchema as claudeInputSchema } from "../../../../../../plugins/claude-usage-source/shared/input.js";
 import {
+  discover as discoverCursor,
   discoverSession as discoverCursorSession,
   fetchUsage as fetchCursorUsage,
 } from "../../../../../../plugins/cursor-usage-source/server/usage.js";
@@ -1056,4 +1057,181 @@ test("streams unrelated usage reports without waiting on a slow provider check a
   expect(
     reports.find((entry) => entry.id === "fast-source:default")?.defaultEnabled,
   ).toBeUndefined();
+});
+
+test("Cursor multi-candidate discovery recovers from a 401 via fetchWithFallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cursor-fallback-"));
+  const { createRequire } = await import("node:module");
+  const testRequire = createRequire(import.meta.url);
+  try {
+    const appData = join(root, "AppData", "Roaming");
+    const dbDir = join(appData, "Cursor", "User", "globalStorage");
+    await mkdir(dbDir, { recursive: true });
+    const staleToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-same", nonce: "stale" })).toString("base64url")}.sig`;
+    const freshToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-same", nonce: "fresh" })).toString("base64url")}.sig`;
+
+    const { DatabaseSync } = testRequire("node:sqlite") as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...params: unknown[]): void };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(join(dbDir, "state.vscdb"));
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)",
+    );
+    db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)").run(
+      "cursorAuth/accessToken",
+      staleToken,
+    );
+    db.close();
+
+    await writeFile(
+      join(appData, "Cursor", "auth.json"),
+      JSON.stringify({ accessToken: freshToken }),
+    );
+
+    const seenAuth: string[] = [];
+    const fetchApi: typeof fetch = async (_url, init) => {
+      const auth = new Headers(init?.headers).get("Authorization") ?? "";
+      seenAuth.push(auth);
+      if (auth === `Bearer ${staleToken}`) {
+        return new Response(null, { status: 401 });
+      }
+      if (auth === `Bearer ${freshToken}`) {
+        return Response.json({
+          planUsage: {
+            totalPercentUsed: 31.18,
+            autoPercentUsed: 18.5,
+            apiPercentUsed: 44.2,
+          },
+          billingCycleStart: "2026-11-01T00:00:00.000Z",
+          billingCycleEnd: "2026-12-01T00:00:00.000Z",
+        });
+      }
+      throw new Error("Unexpected token");
+    };
+
+    const discoveredStores: string[] = [];
+    const registry = new UsageSourceRegistry();
+    registry.register({
+      id: "cursor",
+      label: "Cursor",
+      discover: async (scope) => {
+        if (scope.kind !== "global") return [];
+        const accounts = await discoverCursor({
+          platform: "win32",
+          home: root,
+          env: { APPDATA: appData },
+          readKeychain: async () => null,
+        });
+        discoveredStores.push(
+          ...accounts.map((account) => cursorInputSchema.parse(account.input).store),
+        );
+        return accounts;
+      },
+      fetch: (input) => fetchCursorUsage(cursorInputSchema.parse(input), fetchApi),
+    });
+
+    const reports = await registry.listReports();
+    expect(discoveredStores).toEqual(["sqlite", "file"]);
+    expect(reports).toHaveLength(1);
+    expect(new Set(seenAuth)).toEqual(new Set([`Bearer ${staleToken}`, `Bearer ${freshToken}`]));
+    expect(reports[0]?.report).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "plan_usage", usedPct: 31.18 }),
+        expect.objectContaining({ id: "cursor_usage", usedPct: 18.5 }),
+        expect.objectContaining({ id: "third_party_usage", usedPct: 44.2 }),
+      ],
+    });
+    expect(reports[0]?.loginErrors).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Cursor macOS discovery recovers from a stale desktop 401 via Keychain fallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cursor-mac-fallback-"));
+  const { createRequire } = await import("node:module");
+  const testRequire = createRequire(import.meta.url);
+  try {
+    const dbDir = join(root, "Library", "Application Support", "Cursor", "User", "globalStorage");
+    await mkdir(dbDir, { recursive: true });
+    const staleToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-mac", nonce: "stale" })).toString("base64url")}.sig`;
+    const keychainToken = `e30.${Buffer.from(JSON.stringify({ sub: "user-mac", nonce: "keychain" })).toString("base64url")}.sig`;
+
+    const { DatabaseSync } = testRequire("node:sqlite") as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...params: unknown[]): void };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(join(dbDir, "state.vscdb"));
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)",
+    );
+    db.prepare("INSERT INTO ItemTable (key, value) VALUES (?, ?)").run(
+      "cursorAuth/accessToken",
+      staleToken,
+    );
+    db.close();
+
+    const readKeychain = async () => keychainToken;
+    const seenAuth: string[] = [];
+    const fetchApi: typeof fetch = async (_url, init) => {
+      const auth = new Headers(init?.headers).get("Authorization") ?? "";
+      seenAuth.push(auth);
+      if (auth === `Bearer ${staleToken}`) return new Response(null, { status: 401 });
+      if (auth === `Bearer ${keychainToken}`) {
+        return Response.json({
+          planUsage: { totalPercentUsed: 19.7, autoPercentUsed: 18.9, apiPercentUsed: 42.2 },
+        });
+      }
+      throw new Error("Unexpected token");
+    };
+
+    const discoveredStores: string[] = [];
+    const registry = new UsageSourceRegistry();
+    registry.register({
+      id: "cursor",
+      label: "Cursor",
+      discover: async (scope) => {
+        if (scope.kind !== "global") return [];
+        const accounts = await discoverCursor({
+          platform: "darwin",
+          home: root,
+          env: {},
+          readKeychain,
+        });
+        discoveredStores.push(
+          ...accounts.map((account) => cursorInputSchema.parse(account.input).store),
+        );
+        return accounts;
+      },
+      fetch: (input) =>
+        fetchCursorUsage(cursorInputSchema.parse(input), fetchApi, {
+          platform: "darwin",
+          readKeychain,
+        }),
+    });
+
+    const reports = await registry.listReports();
+    expect(discoveredStores).toEqual(["sqlite", "keychain"]);
+    expect(reports).toHaveLength(1);
+    expect(new Set(seenAuth)).toEqual(new Set([`Bearer ${staleToken}`, `Bearer ${keychainToken}`]));
+    expect(reports[0]?.report).toMatchObject({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "plan_usage", usedPct: 19.7 }),
+        expect.objectContaining({ id: "cursor_usage", usedPct: 18.9 }),
+        expect.objectContaining({ id: "third_party_usage", usedPct: 42.2 }),
+      ],
+    });
+    expect(reports[0]?.loginErrors).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
