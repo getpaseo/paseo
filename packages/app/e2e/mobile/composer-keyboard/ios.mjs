@@ -1,6 +1,5 @@
-// Composer autocomplete placement on iOS with the software keyboard: chat, workspace
-// draft tab, and New workspace. Run where agent-device reaches the simulator, with the
-// development app connected to the fixture host. See docs/mobile-testing.md.
+// Composer overlays on iOS with the software keyboard. Run where agent-device reaches the
+// simulator and the development app is connected to the fixture host. See docs/mobile-testing.md.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,14 +14,18 @@ const serverId = env("SERVER_ID");
 const agentId = env("AGENT_ID");
 const workspaceId = env("WORKSPACE_ID");
 const scenario = env("SCENARIO", "all");
-if (!serverId || !workspaceId || (scenario === "all" && !agentId)) {
+if (
+  !serverId ||
+  (scenario !== "wide-model-picker" && !workspaceId) ||
+  (scenario === "all" && !agentId)
+) {
   throw new Error(
     "Set PASEO_COMPOSER_KEYBOARD_SERVER_ID, _AGENT_ID (an idle chat) and _WORKSPACE_ID (its workspace)",
   );
 }
 const draftId = env("DRAFT_ID", "composer-keyboard");
 const session = env("SESSION", "composer-keyboard-ios");
-const device = env("DEVICE", "iPhone 16 Pro");
+const device = env("DEVICE", scenario === "wide-model-picker" ? "iPhone Duo" : "iPhone 16 Pro");
 const udid = env("UDID");
 const deviceArgs = udid ? ["--udid", udid] : ["--device", device];
 const artifactsDir = env(
@@ -315,6 +318,81 @@ async function runBoundedPreview() {
     selectionKeyboard: "shown",
   });
   await runCase("preview", "files", fileCase);
+}
+
+function visiblePickerModels(snap) {
+  const list = nodeById(snap, "compact-model-list")?.rect;
+  const keyboard = snap.data.nodes.find((node) => node.type === "Keyboard" && node.rect)?.rect;
+  if (!list || !keyboard) return [];
+  const bottom = Math.min(list.y + list.height, keyboard.y);
+  return snap.data.nodes.filter(
+    (node) =>
+      node.identifier?.startsWith("model-row-codex-") &&
+      node.rect?.y >= list.y &&
+      node.rect.y + node.rect.height <= bottom + 1,
+  );
+}
+
+async function runWideModelPicker() {
+  ad("open", `paseo://new?serverId=${serverId}`, "--platform", "ios", ...deviceArgs);
+  const form = await waitFor(
+    "wide-new-workspace",
+    (snap) => nodeById(snap, "wide-shell") && nodeById(snap, "new-workspace-ref-picker-row"),
+    60_000,
+  );
+  const trigger = nodeById(form, "combined-model-selector");
+  if (!trigger) throw new Error("Missing New workspace model selector");
+  focusAtEnd(form);
+  await waitFor("wide-composer-keyboard", keyboardShown);
+  ad("press", 'id="combined-model-selector"');
+  const opened = await waitFor(
+    "wide-picker-open",
+    (snap) =>
+      !keyboardShown(snap) &&
+      (nodeById(snap, "compact-provider-list") || nodeById(snap, "compact-model-list")),
+  );
+  if (nodeById(opened, "sheet-header-back")) ad("press", 'id="sheet-header-back"');
+  await waitFor("wide-picker-providers", (snap) => nodeById(snap, "model-provider-codex"));
+  ad("press", 'id="model-provider-codex"');
+  await waitFor("wide-picker-search", (snap) => nodeById(snap, "model-search-input"));
+  ad("press", 'id="model-search-input"');
+  let previousListHeight;
+  const before = await waitFor("wide-picker-keyboard", (snap) => {
+    const listHeight = nodeById(snap, "compact-model-list")?.rect.height;
+    const stable = listHeight === previousListHeight;
+    previousListHeight = listHeight;
+    return stable && visiblePickerModels(snap).length > 0;
+  });
+  const initialRows = visiblePickerModels(before);
+  const initialIds = new Set(initialRows.map((row) => row.identifier));
+  const { x, y, width, height } = initialRows.at(-1).rect;
+  ad(
+    "gesture",
+    "pan",
+    String(Math.round(x + width / 2)),
+    String(Math.round(y + height / 2)),
+    "0",
+    String(-Math.round(height * 2)),
+    "500",
+  );
+  const newRow = (snap) => visiblePickerModels(snap).find((row) => !initialIds.has(row.identifier));
+  const scrolled = await waitFor("wide-picker-scrolled", newRow);
+  const row = newRow(scrolled).rect;
+  ad(
+    "press",
+    String(Math.round(row.x + row.width / 2)),
+    String(Math.round(row.y + row.height / 2)),
+  );
+  await waitFor("wide-picker-selected", (snap) => {
+    const updated = nodeById(snap, "combined-model-selector");
+    return updated && updated.label !== trigger.label && !nodeById(snap, "compact-model-list");
+  });
+}
+
+if (scenario === "wide-model-picker") {
+  await runWideModelPicker();
+  process.stdout.write(`Wide iOS model picker regression passed. Artifacts: ${artifactsDir}\n`);
+  process.exit(0);
 }
 
 if (scenario !== "all") {
