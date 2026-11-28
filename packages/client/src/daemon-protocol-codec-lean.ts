@@ -5,6 +5,12 @@ import type {
   SessionInboundMessage,
   WSOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import {
+  HELLO_REJECTED_REASONS,
+  applyAgentSnapshotDefaults,
+  applySessionInboundDefaults,
+  applySessionOutboundDefaults,
+} from "@getpaseo/protocol/validation/message-defaults";
 import type {
   AgentCreateFailedStatusPayload,
   AgentCreatedStatusPayload,
@@ -15,6 +21,8 @@ import type {
   RestartRequestedStatusPayload,
   ShutdownRequestedStatusPayload,
 } from "./daemon-protocol-codec.js";
+
+const HELLO_REJECTED_REASON_SET = new Set<string>(HELLO_REJECTED_REASONS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -60,11 +68,7 @@ function validateOutbound(input: unknown): OutboundValidationResult {
     return { success: true, data: input as unknown as WSOutboundMessage };
   }
   if (input.type === "hello.rejected") {
-    if (
-      input.reason !== "password_required" &&
-      input.reason !== "incorrect_password" &&
-      input.reason !== "incompatible_protocol"
-    ) {
+    if (typeof input.reason !== "string" || !HELLO_REJECTED_REASON_SET.has(input.reason)) {
       return { success: false, error: { message: "Invalid hello.rejected reason" } };
     }
     return { success: true, data: input as unknown as WSOutboundMessage };
@@ -73,7 +77,10 @@ function validateOutbound(input: unknown): OutboundValidationResult {
     if (!isRecord(input.message) || typeof input.message.type !== "string") {
       return { success: false, error: { message: "Invalid session outbound message" } };
     }
-    return { success: true, data: input as unknown as WSOutboundMessage };
+    const normalizedMessage = applySessionOutboundDefaults(input.message);
+    const data =
+      normalizedMessage === input.message ? input : { ...input, message: normalizedMessage };
+    return { success: true, data: data as unknown as WSOutboundMessage };
   }
   return { success: false, error: { message: `Unknown envelope type: ${input.type}` } };
 }
@@ -125,7 +132,9 @@ function parseAgentCreatedStatus(payload: unknown): AgentCreatedStatusPayload | 
   ) {
     return null;
   }
-  return payload as unknown as AgentCreatedStatusPayload;
+  const agent = applyAgentSnapshotDefaults(payload.agent);
+  const result = agent === payload.agent ? payload : { ...payload, agent };
+  return result as unknown as AgentCreatedStatusPayload;
 }
 
 function parseAgentCreateFailedStatus(payload: unknown): AgentCreateFailedStatusPayload | null {
@@ -150,7 +159,9 @@ function parseAgentResumedStatus(payload: unknown): AgentResumedStatusPayload | 
   ) {
     return null;
   }
-  return payload as unknown as AgentResumedStatusPayload;
+  const agent = applyAgentSnapshotDefaults(payload.agent);
+  const result = agent === payload.agent ? payload : { ...payload, agent };
+  return result as unknown as AgentResumedStatusPayload;
 }
 
 function parseAgentRefreshedStatus(payload: unknown): AgentRefreshedStatusPayload | null {
@@ -209,7 +220,7 @@ function parseAgentSnapshot(value: unknown): AgentSnapshotPayload {
   if (!isRecord(value) || typeof value.id !== "string") {
     throw new Error("Invalid agent snapshot payload");
   }
-  return value as unknown as AgentSnapshotPayload;
+  return applyAgentSnapshotDefaults(value) as unknown as AgentSnapshotPayload;
 }
 
 function matchesBrowserRegistration(
@@ -237,13 +248,7 @@ function parseInbound(message: unknown): SessionInboundMessage {
   if (!isRecord(message) || typeof message.type !== "string") {
     throw new Error("Invalid session inbound message");
   }
-  if (message.type === "create_agent_request" && message.labels === undefined) {
-    return { ...message, labels: {} } as unknown as SessionInboundMessage;
-  }
-  if (message.type === "capture_terminal_request" && message.stripAnsi === undefined) {
-    return { ...message, stripAnsi: true } as unknown as SessionInboundMessage;
-  }
-  return message as unknown as SessionInboundMessage;
+  return applySessionInboundDefaults(message) as unknown as SessionInboundMessage;
 }
 
 export const leanProtocolCodec: DaemonProtocolCodec = {

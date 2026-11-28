@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { generateMessageDefaultsModule } from "./extract-message-defaults.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const envelopeSource = resolve(packageRoot, "src/validation/ws-outbound-envelope.ts");
@@ -11,6 +12,7 @@ const runtimeSchemaMetadata = resolve(
   "src/generated/validation/ws-outbound-schema-metadata.ts",
 );
 const output = resolve(packageRoot, "src/generated/validation/ws-outbound.aot.ts");
+const defaultsOutput = resolve(packageRoot, "src/generated/validation/message-defaults.ts");
 
 const require = createRequire(import.meta.url);
 const zodAotEntry = require.resolve("zod-aot");
@@ -90,7 +92,13 @@ const [
 
 // One compiled validator per session message plus a tag-only envelope. zod-aot emits one function
 // per compiled schema, so this keeps every generated function small enough for V8 to optimize cheaply.
-const { sessionOutboundMessageOptions } = await loadSourceFile(envelopeSource, { cacheBust: true });
+const {
+  sessionOutboundMessageOptions,
+  sessionInboundMessageOptions,
+  helloRejectedReasons,
+  agentSnapshotPayloadSchema,
+  legacySchemaTransformDefaults,
+} = await loadSourceFile(envelopeSource, { cacheBust: true });
 const sessionTags = sessionOutboundMessageOptions.map((option) => option.shape.type.value);
 function sessionExport(index) {
   return `SessionOutboundMessage${index}`;
@@ -162,6 +170,15 @@ const sessionMessageValidators = [
 await mkdir(dirname(output), { recursive: true });
 await writeFile(output, `${content}\n${sessionMessageValidators}`);
 
+const generatedDefaults = generateMessageDefaultsModule({
+  sessionOutboundMessageOptions,
+  sessionInboundMessageOptions,
+  helloRejectedReasons,
+  agentSnapshotPayloadSchema,
+  legacySchemaTransformDefaults,
+});
+await writeFile(defaultsOutput, generatedDefaults.content);
+
 console.info(
-  `generated ${relative(packageRoot, output)}: envelope + ${sessionTags.length} session message validators`,
+  `generated ${relative(packageRoot, output)}: envelope + ${sessionTags.length} session message validators; ${relative(packageRoot, defaultsOutput)}: ${generatedDefaults.outboundCount} outbound + ${generatedDefaults.inboundCount} inbound default tables`,
 );

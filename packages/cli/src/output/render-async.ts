@@ -1,5 +1,5 @@
 /**
- * Lazy output renderer for CLI runtime execution.
+ * Shared output dispatch and lazy renderer for CLI runtime execution.
  *
  * Keeps `yaml` and `chalk` out of the hot `--json` and `--quiet` paths by loading
  * format-specific renderers only when that format is actually rendered.
@@ -50,11 +50,15 @@ function isCommandError(error: unknown): error is CommandError {
   );
 }
 
-/** Render command result asynchronously, lazy-loading table/yaml formatters on demand */
-export async function renderAsync<T>(
+/** Shared format switch used by both sync `render` and lazy `renderAsync` */
+export function dispatchRender<T, R>(
   result: AnyCommandResult<T>,
-  options: Partial<OutputOptions> = {},
-): Promise<string> {
+  options: Partial<OutputOptions>,
+  handlers: {
+    yaml: (result: AnyCommandResult<T>, opts: OutputOptions) => R;
+    table: (result: AnyCommandResult<T>, opts: OutputOptions) => R;
+  },
+): string | R {
   const opts: OutputOptions = { ...defaultOutputOptions, ...options };
 
   if (opts.quiet) {
@@ -64,26 +68,33 @@ export async function renderAsync<T>(
   switch (opts.format) {
     case "json":
       return renderJson(result, opts);
-    case "yaml": {
-      const { renderYaml } = await import("./yaml.js");
-      return renderYaml(result, opts);
-    }
+    case "yaml":
+      return handlers.yaml(result, opts);
     case "table":
-    default: {
+    default:
       if (result.schema.renderHuman) {
         return result.schema.renderHuman(result, opts);
       }
-      const { renderTable } = await import("./table.js");
-      return renderTable(result, opts);
-    }
+      return handlers.table(result, opts);
   }
 }
 
-/** Render an error asynchronously, lazy-loading yaml/chalk only when needed */
-export async function renderErrorAsync(
+export function formatHumanError(prefix: string, error: CommandError): string {
+  if (error.details && typeof error.details === "string") {
+    return `${prefix}${error.message}\n${error.details}`;
+  }
+  return `${prefix}${error.message}`;
+}
+
+/** Shared error format switch used by both sync `renderError` and lazy `renderErrorAsync` */
+export function dispatchRenderError<R>(
   error: CommandError,
-  options: Partial<OutputOptions> = {},
-): Promise<string> {
+  options: Partial<OutputOptions>,
+  handlers: {
+    yaml: (error: CommandError) => R;
+    redPrefix: () => R;
+  },
+): string | R {
   const opts: OutputOptions = { ...defaultOutputOptions, ...options };
 
   if (opts.format === "json") {
@@ -91,16 +102,46 @@ export async function renderErrorAsync(
   }
 
   if (opts.format === "yaml") {
-    const { default: YAML } = await import("yaml");
-    return YAML.stringify({ error });
+    return handlers.yaml(error);
   }
 
-  const prefix = opts.noColor ? "Error: " : (await import("chalk")).default.red("Error: ");
-  const message = error.message;
-
-  if (error.details && typeof error.details === "string") {
-    return `${prefix}${message}\n${error.details}`;
+  if (opts.noColor) {
+    return formatHumanError("Error: ", error);
   }
 
-  return `${prefix}${message}`;
+  return handlers.redPrefix();
+}
+
+/** Render command result asynchronously, lazy-loading table/yaml formatters on demand */
+export async function renderAsync<T>(
+  result: AnyCommandResult<T>,
+  options: Partial<OutputOptions> = {},
+): Promise<string> {
+  return await dispatchRender(result, options, {
+    yaml: async (res, opts) => {
+      const { renderYaml } = await import("./yaml.js");
+      return renderYaml(res, opts);
+    },
+    table: async (res, opts) => {
+      const { renderTable } = await import("./table.js");
+      return renderTable(res, opts);
+    },
+  });
+}
+
+/** Render an error asynchronously, lazy-loading yaml/chalk only when needed */
+export async function renderErrorAsync(
+  error: CommandError,
+  options: Partial<OutputOptions> = {},
+): Promise<string> {
+  return await dispatchRenderError(error, options, {
+    yaml: async (err) => {
+      const { default: YAML } = await import("yaml");
+      return YAML.stringify({ error: err });
+    },
+    redPrefix: async () => {
+      const { default: chalk } = await import("chalk");
+      return formatHumanError(chalk.red("Error: "), error);
+    },
+  });
 }

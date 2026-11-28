@@ -108,32 +108,44 @@ describe("CLI startup import boundary", () => {
     30_000,
   );
 
-  it("bundled dist/index.js serves --version without loading heavy modules at runtime", () => {
-    const distEntry = path.join(packageRoot, "dist/index.js");
-    if (!existsSync(distEntry)) return;
+  const distEntry = path.join(packageRoot, "dist/index.js");
 
-    const hookCode =
-      'export async function load(url, context, nextLoad) { process.stderr.write("LOAD:" + url + "\\n"); return nextLoad(url, context); }';
-    const script = `
-      import { register } from "node:module";
-      register("data:text/javascript," + encodeURIComponent(${JSON.stringify(hookCode)}));
-      process.argv = ["node", "paseo", "--version"];
-      await import(${JSON.stringify(distEntry)});
-    `;
-    const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-      encoding: "utf8",
-    });
+  it.skipIf(!existsSync(distEntry))(
+    "bundled dist/index.js serves --version without loading heavy modules at runtime",
+    () => {
+      const script = `
+        import { writeSync } from "node:fs";
+        import { registerHooks } from "node:module";
+        const loaded = [];
+        registerHooks({
+          load(url, context, nextLoad) {
+            loaded.push(url);
+            return nextLoad(url, context);
+          },
+        });
+        process.on("exit", () => {
+          if (loaded.length > 0) {
+            writeSync(2, loaded.map((url) => "LOAD:" + url + "\\n").join(""));
+          }
+        });
+        process.argv = ["node", "paseo", "--version"];
+        await import(${JSON.stringify(distEntry)});
+      `;
+      const run = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        encoding: "utf8",
+      });
 
-    expect(run.status).toBe(0);
-    expect(run.stdout.trim()).toBe(pkg.version);
-    const loadedFileUrls = run.stderr
-      .split("\n")
-      .filter((line) => line.startsWith("LOAD:"))
-      .map((line) => line.slice("LOAD:".length))
-      .filter((url) => url.startsWith("file://"));
-    expect(loadedFileUrls.length).toBeGreaterThan(0);
-    expect(loadedFileUrls.length).toBeLessThan(12);
-    const forbiddenLoaded = loadedFileUrls.filter(isForbiddenImport);
-    expect(forbiddenLoaded).toEqual([]);
-  });
+      expect(run.status).toBe(0);
+      expect(run.stdout.trim()).toBe(pkg.version);
+      const loadedFileUrls = run.stderr
+        .split("\n")
+        .filter((line) => line.startsWith("LOAD:"))
+        .map((line) => line.slice("LOAD:".length))
+        .filter((url) => url.startsWith("file://"));
+      expect(loadedFileUrls.length).toBeGreaterThan(0);
+      expect(loadedFileUrls.length).toBeLessThan(12);
+      const forbiddenLoaded = loadedFileUrls.filter(isForbiddenImport);
+      expect(forbiddenLoaded).toEqual([]);
+    },
+  );
 });
