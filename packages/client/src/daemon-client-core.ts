@@ -4377,8 +4377,8 @@ export class DaemonClientCore {
   ): AgentActiveTurnBehavior | undefined {
     const requested = options.activeTurnBehavior;
     if (!options.sourceAgentId) {
-      // COMPAT(nonAgentMessageQueue): added in v0.18.0, remove after 2027-06-01 once daemon
-      // floor >= v0.18.0. Older hosts reject activeTurnBehavior "queue" without sourceAgentId.
+      // COMPAT(nonAgentMessageQueue): added in v0.18.2, remove after 2027-06-01 once daemon
+      // floor >= v0.18.2. Older hosts reject activeTurnBehavior "queue" without sourceAgentId.
       if (
         requested === "queue" &&
         this.lastServerInfoMessage?.features?.nonAgentMessageQueue !== true

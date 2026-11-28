@@ -4298,7 +4298,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentMessageBatching: z.boolean().optional(),
         // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
         agentActiveTurnBehaviors: z.boolean().optional(),
-        // COMPAT(nonAgentMessageQueue): added in v0.18.0, remove gate after 2027-06-01.
+        // COMPAT(nonAgentMessageQueue): added in v0.18.2, remove gate after 2027-06-01.
         nonAgentMessageQueue: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
