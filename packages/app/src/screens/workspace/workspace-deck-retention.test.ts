@@ -47,7 +47,7 @@ describe("reconcileRetainedWorkspaceSelections", () => {
     );
   });
 
-  it("retains inactive workspaces for ten minutes across app-wide routes", () => {
+  it("retains inactive workspaces for one minute across app-wide routes", () => {
     const retainedEntries = [retained("A", 1_000), retained("B", 2_000)];
 
     expect(
@@ -59,7 +59,7 @@ describe("reconcileRetainedWorkspaceSelections", () => {
     ).toEqual([retained("B", 2_000)]);
   });
 
-  it("keeps the active workspace and nine most recently activated inactive workspaces", () => {
+  it("keeps the active workspace and two most recently activated inactive workspaces", () => {
     let retainedEntries = Array.from(
       { length: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES },
       (_, index) => retained(String(index + 1), index + 1),
@@ -67,22 +67,11 @@ describe("reconcileRetainedWorkspaceSelections", () => {
 
     retainedEntries = reconcileRetainedWorkspaceSelections({
       currentEntries: retainedEntries,
-      activeSelection: workspace("11"),
-      now: 11,
+      activeSelection: workspace("4"),
+      now: 4,
     });
 
-    expect(retainedWorkspaceIds(retainedEntries)).toEqual([
-      "11",
-      "10",
-      "9",
-      "8",
-      "7",
-      "6",
-      "5",
-      "4",
-      "3",
-      "2",
-    ]);
+    expect(retainedWorkspaceIds(retainedEntries)).toEqual(["4", "3", "2"]);
   });
 
   it("starts the TTL when the active workspace becomes inactive", () => {

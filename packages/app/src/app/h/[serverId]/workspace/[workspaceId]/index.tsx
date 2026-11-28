@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { useNavigation } from "expo-router/react-navigation";
+import { useIsFocused, useNavigation } from "expo-router/react-navigation";
 import { StyleSheet, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
@@ -24,6 +24,7 @@ import {
   type RetainedWorkspaceSelection,
   resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
+  WORKSPACE_DECK_INACTIVE_TTL_MS,
 } from "@/screens/workspace/workspace-deck-retention";
 import {
   decodeWorkspaceIdFromPathSegment,
@@ -91,6 +92,18 @@ function clearConsumedOpenIntent(input: {
 }
 
 export default function HostWorkspaceIndexRoute() {
+  const isFocused = useIsFocused();
+  const [retained, setRetained] = useState(isFocused);
+  useEffect(() => {
+    if (isFocused) {
+      setRetained(true);
+      return;
+    }
+    const timeout = setTimeout(() => setRetained(false), WORKSPACE_DECK_INACTIVE_TTL_MS);
+    return () => clearTimeout(timeout);
+  }, [isFocused]);
+  if (!isFocused && !retained) return null;
+
   return (
     <HostRouteBootstrapBoundary>
       <HostWorkspaceRouteContent />
@@ -147,6 +160,9 @@ function HostWorkspaceRouteContent() {
 }
 
 function WorkspaceDeck() {
+  // The retention clock must advance on render; compiler memoization freezes Date.now().
+  "use no memo";
+
   const activeSelection = useActiveWorkspaceSelection();
   const [retainedSelections, setRetainedSelections] = useState<RetainedWorkspaceSelection[]>(() =>
     activeSelection ? [{ selection: activeSelection, inactiveSince: null }] : [],

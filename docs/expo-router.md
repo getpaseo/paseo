@@ -89,6 +89,13 @@ against the wrong deck and disappear offscreen. Follow the
 [retained panel measurement rules](coding-standards.md#retained-panel-measurements)
 for components that intentionally remain mounted while hidden.
 
+An unfocused workspace route releases its deck after one minute, including its
+chats and composers. Brief visits to Settings keep the existing pane mounted;
+navigation history must not retain old decks indefinitely.
+Within the focused desktop deck, keep at most three workspaces and expire inactive
+entries after one minute. Keep the retention clock outside compiler memoization;
+a cached `Date.now()` stamps new inactive entries with an old mount time.
+
 Hidden host routes may keep their local params while an app-wide route is
 foregrounded. Active-workspace observers must prefer the current pathname and
 only use local param fallback during cold mount (`/` or empty pathname), or a
