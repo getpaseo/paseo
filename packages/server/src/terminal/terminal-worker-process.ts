@@ -263,11 +263,13 @@ function runWorker(argv: string[]): void {
   }
 
   function terminalMetadata(session: LocalTerminalSession) {
+    const defaultColors = session.getDefaultColors?.();
     return {
       ...session.getSize(),
       createdAt: session.createdAt,
       hasOutput: session.hasOutput(),
       title: session.getTitle(),
+      ...(defaultColors ? { defaultColors } : {}),
     };
   }
 

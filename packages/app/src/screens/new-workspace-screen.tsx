@@ -36,6 +36,7 @@ import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
+import { getActiveTerminalDefaultColors } from "@/utils/terminal-default-colors";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
 import {
   useHostRuntimeClient,
@@ -1492,7 +1493,12 @@ export function NewWorkspaceScreen({
             input.workspaceDirectory,
             input.name,
             undefined,
-            { command: input.command, args: input.args, workspaceId: input.workspaceId },
+            {
+              command: input.command,
+              args: input.args,
+              workspaceId: input.workspaceId,
+              defaultColors: getActiveTerminalDefaultColors(),
+            },
           );
           const terminal = createdTerminal.terminal;
           if (!terminal) {

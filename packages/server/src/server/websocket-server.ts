@@ -2228,6 +2228,8 @@ export class VoiceAssistantWebSocketServer {
         "terminal-input-mode-replay": true,
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": true,
+        // COMPAT(terminalPaletteOwnership): added in v0.18.0, remove gate after 2027-06-01.
+        "terminal-palette-ownership": true,
         // COMPAT(terminalGraphemeWidths): added in v0.15.0, remove gate after 2027-05-01.
         "terminal-grapheme-widths": true,
         workspaceTerminals: true,

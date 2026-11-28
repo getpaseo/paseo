@@ -16,6 +16,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 export interface TerminalWorkerConnection {
   readonly connected: boolean;
   readonly workerPid: number;
+  readonly protocolVersion?: number;
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
   /** Closes the socket. The worker keeps running and keeps its terminals. */
   disconnect(): void;
@@ -32,13 +33,15 @@ export class TerminalWorkerConnectError extends Error {
 
 class SocketTerminalWorkerConnection extends EventEmitter implements TerminalWorkerConnection {
   readonly workerPid: number;
+  readonly protocolVersion: number;
   private readonly framed: FramedSocket;
   private closed = false;
 
-  constructor(framed: FramedSocket, workerPid: number) {
+  constructor(framed: FramedSocket, workerPid: number, protocolVersion: number) {
     super();
     this.framed = framed;
     this.workerPid = workerPid;
+    this.protocolVersion = protocolVersion;
     framed.socket.once("close", () => {
       this.closed = true;
       this.emit("close");
@@ -110,7 +113,7 @@ export function connectTerminalWorker(input: {
       }
       settled = true;
       clearTimeout(timer);
-      connection = new SocketTerminalWorkerConnection(framed, message.pid);
+      connection = new SocketTerminalWorkerConnection(framed, message.pid, message.protocolVersion);
       resolve(connection);
     });
     // `on`, not `once`: an error after authentication must not go unhandled. `close`

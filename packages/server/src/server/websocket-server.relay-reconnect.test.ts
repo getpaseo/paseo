@@ -1160,6 +1160,7 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.workspaceMarkUnread).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
+    expect(serverInfo.features?.["terminal-palette-ownership"]).toBe(true);
     expect(serverInfo.features?.["terminal-grapheme-widths"]).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
     expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);

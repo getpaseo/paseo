@@ -2,6 +2,7 @@ import type { PluginMessage } from "@getpaseo/plugin/client";
 import { isPluginMessage } from "@getpaseo/plugin/client/host";
 import { useMemo } from "react";
 import { z } from "zod";
+import { HexColorSchema } from "@getpaseo/protocol/messages";
 import type { PluginThemeContribution } from "../types";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import {
@@ -26,29 +27,25 @@ import {
 import { useInstalledPlugins } from "../registry";
 import type { InstalledPlugin } from "../types";
 
-const hexColorSchema = z
-  .string()
-  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
-
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
   id: z.string(),
   name: z.union([z.string().trim().min(1).max(60), z.custom<PluginMessage>(isPluginMessage)]),
   appearance: z.enum(["light", "dark"]),
   colors: z.strictObject({
-    background: hexColorSchema,
-    foreground: hexColorSchema,
-    raised: hexColorSchema,
-    control: hexColorSchema,
-    border: hexColorSchema,
-    accent: hexColorSchema.optional(),
-    mutedForeground: hexColorSchema,
-    ring: hexColorSchema,
-    sidebar: hexColorSchema.optional(),
-    sidebarHover: hexColorSchema.optional(),
-    sidebarSelected: hexColorSchema.optional(),
-    surface3: hexColorSchema.optional(),
-    surface4: hexColorSchema.optional(),
-    foregroundExtraMuted: hexColorSchema.optional(),
+    background: HexColorSchema,
+    foreground: HexColorSchema,
+    raised: HexColorSchema,
+    control: HexColorSchema,
+    border: HexColorSchema,
+    accent: HexColorSchema.optional(),
+    mutedForeground: HexColorSchema,
+    ring: HexColorSchema,
+    sidebar: HexColorSchema.optional(),
+    sidebarHover: HexColorSchema.optional(),
+    sidebarSelected: HexColorSchema.optional(),
+    surface3: HexColorSchema.optional(),
+    surface4: HexColorSchema.optional(),
+    foregroundExtraMuted: HexColorSchema.optional(),
   }),
 });
 

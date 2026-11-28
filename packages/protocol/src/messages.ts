@@ -188,6 +188,10 @@ export const DAEMON_PERMISSIONS = [
 export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
 export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
 
+export const HexColorSchema = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
+
 const MutableDaemonProviderModelSchema = z
   .object({
     id: z.string().min(1),
@@ -3381,6 +3385,14 @@ export const UnsubscribeTerminalsRequestSchema = z.object({
   workspaceId: z.string().optional(),
 });
 
+export const TerminalDefaultColorsSchema = z.object({
+  foreground: HexColorSchema,
+  background: HexColorSchema,
+  cursor: HexColorSchema.optional(),
+});
+
+export type TerminalDefaultColors = z.infer<typeof TerminalDefaultColorsSchema>;
+
 export const CreateTerminalRequestSchema = z.object({
   type: z.literal("create_terminal_request"),
   cwd: z.string(),
@@ -3389,6 +3401,10 @@ export const CreateTerminalRequestSchema = z.object({
   agentId: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
+  // Initial active palette sent by the client when this terminal is created so
+  // OSC 10/11/12 queries, DSR 996/997, and COLORFGBG match the active theme from
+  // the first byte. Omitted by CLI/MCP/older clients, which retain dark defaults.
+  defaultColors: TerminalDefaultColorsSchema.optional(),
   // Initial PTY size. Added in v0.1.107; the app no longer sends it (the estimate cache that fed
   // it was removed — the pane-focus resize claim sizes the PTY instead). Kept and honored
   // permanently: released v0.1.107 clients still send it, and programmatic callers may pass an
@@ -3473,6 +3489,11 @@ const TerminalClientMessageSchema = z.discriminatedUnion("type", [
     col: z.number(),
     button: z.number(),
     action: z.enum(["down", "up", "move"]),
+  }),
+  z.object({
+    type: z.literal("palette"),
+    defaultColors: TerminalDefaultColorsSchema,
+    intent: z.enum(["claim", "update"]).optional(),
   }),
 ]);
 
@@ -4162,6 +4183,8 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": z.boolean().optional(),
+        // COMPAT(terminalPaletteOwnership): added in v0.18.0, remove gate after 2027-06-01.
+        "terminal-palette-ownership": z.boolean().optional(),
         // COMPAT(terminalGraphemeWidths): added in v0.15.0, remove gate after 2027-05-01.
         "terminal-grapheme-widths": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
