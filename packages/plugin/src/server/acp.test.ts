@@ -330,6 +330,73 @@ describe("runAcpProvider", () => {
     },
   );
 
+  it.each(["replay", "skip"] as const)(
+    "keeps same-batch live updates separate from %s history at the load response",
+    async (history) => {
+      const sessionId = "connector-session";
+      const { connector } = connectorHarness({
+        handleRequest(runtime, request) {
+          if (request.method === "initialize") {
+            runtime.respond(request, {
+              protocolVersion: PROTOCOL_VERSION,
+              agentInfo: { name: "Test ACP", version: "2.0.0" },
+              agentCapabilities: { loadSession: true },
+            });
+            return true;
+          }
+          if (request.method !== "session/load") return false;
+          runtime.notify("session/update", { sessionId, update: textChunk("Historical") });
+          runtime.respond(request, { configOptions: [] });
+          runtime.notify("session/update", { sessionId, update: textChunk("Live ") });
+          runtime.notify("session/update", { sessionId, update: textChunk("reply") });
+          runtime.notify("session/update", {
+            sessionId,
+            update: textChunk("Explicit", "agent_message_chunk", "live-id"),
+          });
+          return true;
+        },
+      });
+      const connection = await runAcpProvider({
+        id: "ordered-load",
+        label: "Ordered Load",
+        connector,
+        acpOptions: {
+          loadReplayQuietPeriodMs: 100,
+          loadReplayEndsAtResponse: (agentInfo) => agentInfo?.version === "2.0.0",
+        },
+      }).connect({ versions: [1], capabilities: ["session.persistence"] });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send({
+          ...openInput(),
+          history,
+          persistence: { version: 1, data: { sessionId } },
+        });
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "timeline.item" && event.item.id === '["agent_message_chunk","live-id"]',
+        );
+        const opened = events.findIndex((event) => event.type === "session.opened");
+        expect(timelineProjection(events.slice(0, opened))).toEqual(
+          history === "skip"
+            ? []
+            : [{ type: "assistant_message", id: "agent_message_chunk:1", text: "Historical" }],
+        );
+        const liveId = history === "skip" ? "agent_message_chunk:1" : "agent_message_chunk:2";
+        expect(timelineProjection(events.slice(opened))).toEqual([
+          { type: "assistant_message", id: liveId, text: "Live " },
+          { type: "assistant_message", id: liveId, text: "Live reply" },
+          { type: "assistant_message", id: '["agent_message_chunk","live-id"]', text: "Explicit" },
+        ]);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
   it("keeps history that streams after session/load for longer than five quiet periods", async () => {
     const sessionId = "connector-session";
     const historyLength = 40;

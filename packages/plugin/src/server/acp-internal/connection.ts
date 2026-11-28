@@ -30,6 +30,7 @@ import type {
   AcpConfigChange,
   AcpConfigureContext,
   AcpRequest,
+  AcpStreamMessage,
   AcpToolCallSnapshot,
   AcpTransformer,
   AcpVendorUpdate,
@@ -591,6 +592,22 @@ interface AcpToolCallState {
   presentation: AcpToolCallSnapshot;
 }
 
+interface OrderedLoad {
+  requestId?: string | number;
+  responseSequence?: number;
+  historyLane: Promise<void>;
+  liveReady: Promise<boolean>;
+  releaseLive(ready: boolean): void;
+}
+
+function beginOrderedLoad(historyLane: Promise<void>): OrderedLoad {
+  let releaseLive!: OrderedLoad["releaseLive"];
+  const liveReady = new Promise<boolean>((resolve) => {
+    releaseLive = resolve;
+  });
+  return { historyLane, liveReady, releaseLive };
+}
+
 class AcpRuntime {
   readonly connection: ClientSideConnection;
   agentCapabilities: AgentCapabilities = {};
@@ -628,6 +645,8 @@ class AcpRuntime {
    * Once ready, suppress late replay rows until the first prompt.
    */
   private replayWindow: "replay" | "skip" | null = null;
+  private loadReplayEndsAtResponse = false;
+  private orderedLoad: OrderedLoad | null = null;
   private lastLoadHistoryAt = 0;
   private lastPartialWireAt = 0;
   private closing = false;
@@ -712,6 +731,8 @@ class AcpRuntime {
         : await initialize;
       options.signal?.throwIfAborted();
       runtime.agentCapabilities = initialized.agentCapabilities ?? {};
+      runtime.loadReplayEndsAtResponse =
+        options.options.acpOptions?.loadReplayEndsAtResponse?.(initialized.agentInfo) ?? false;
       return runtime;
     } catch (error) {
       await runtime.close();
@@ -739,7 +760,15 @@ class AcpRuntime {
       createElicitation: (request) => this.createElicitation(request),
       sessionUpdate: (notification) => {
         const wireSeq = this.sessionUpdateWireSeqs.shift() ?? ++this.incomingWireSeq;
-        return this.enqueueNotification(() => this.sessionUpdate(notification, wireSeq));
+        const load = this.orderedLoad;
+        if (load?.responseSequence !== undefined && wireSeq > load.responseSequence) {
+          return this.enqueueNotification(async () => {
+            if (await load.liveReady) this.sessionUpdate(notification, wireSeq);
+          });
+        }
+        const result = this.enqueueNotification(() => this.sessionUpdate(notification, wireSeq));
+        if (load) load.historyLane = this.notificationLane;
+        return result;
       },
     };
     this.connection = new ClientSideConnection(
@@ -748,6 +777,20 @@ class AcpRuntime {
         stream,
         (method, params) => this.vendorNotification(method, params),
         (message) => this.observeWireMessage(message),
+        options.options.acpOptions?.loadReplayEndsAtResponse
+          ? (message) => {
+              const load = this.orderedLoad;
+              if (
+                load &&
+                "method" in message &&
+                message.method === "session/load" &&
+                "id" in message &&
+                message.id !== null
+              ) {
+                load.requestId = message.id;
+              }
+            }
+          : undefined,
       ),
     );
     if (!child) void this.connection.closed.then(() => this.handleUnexpectedTransportClose());
@@ -817,6 +860,8 @@ class AcpRuntime {
       // so the native id must be registered first for them to pass the session filter.
       this.nativeSessionId = nativeSessionId;
       this.replayWindow = input.history === "replay" ? "replay" : "skip";
+      const load = this.loadReplayEndsAtResponse ? beginOrderedLoad(this.notificationLane) : null;
+      this.orderedLoad = load;
       response = await this.call(
         this.connection.loadSession({
           sessionId: nativeSessionId,
@@ -825,8 +870,16 @@ class AcpRuntime {
           ...(meta ? { _meta: meta } : {}),
         }),
       );
-      await this.drainNotifications();
-      if (!this.options.options.acpOptions?.loadReplayQuietPeriodMs) this.replayWindow = null;
+      if (load) {
+        // The SDK dispatches pre-response notifications before resolving loadSession.
+        // Wait only for those handlers. Later notifications wait for session.opened.
+        await load.historyLane;
+        this.replayWindow = null;
+        this.fallbackChunkIds.clear();
+      } else {
+        await this.drainNotifications();
+        if (!this.options.options.acpOptions?.loadReplayQuietPeriodMs) this.replayWindow = null;
+      }
     } else {
       const newSession = await this.call(
         this.connection.newSession({
@@ -860,6 +913,8 @@ class AcpRuntime {
       cwd: input.config.cwd,
     });
     this.emitConfig();
+    this.orderedLoad?.releaseLive(true);
+    this.orderedLoad = null;
     await this.finishSessionOpen(isConnectionClosed);
     return sessionCapabilities;
   }
@@ -1282,6 +1337,8 @@ class AcpRuntime {
   }
 
   private async closeInternal(options?: { force?: boolean; timeoutMs?: number }): Promise<void> {
+    this.orderedLoad?.releaseLive(false);
+    this.orderedLoad = null;
     this.settlePendingWork();
     await this.closeConnector(options);
     const child = this.child;
@@ -1618,6 +1675,11 @@ class AcpRuntime {
       this.sessionUpdateWireSeqs.push(++this.incomingWireSeq);
       return;
     }
+    const load = this.orderedLoad;
+    if (load?.requestId !== undefined && !("method" in record) && record.id === load.requestId) {
+      load.responseSequence = ++this.incomingWireSeq;
+      return;
+    }
     if (
       !("method" in record) &&
       "id" in record &&
@@ -1637,7 +1699,7 @@ class AcpRuntime {
 
   private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
     if (notification.sessionId !== this.nativeSessionId) return;
-    if (this.replayWindow && isReplayHistoryUpdate(notification.update)) {
+    if (this.replayWindow && !this.orderedLoad && isReplayHistoryUpdate(notification.update)) {
       this.lastLoadHistoryAt = performance.now();
     }
     if (this.replayWindow === "skip") {
@@ -2305,7 +2367,7 @@ class AcpRuntime {
   }
 
   private notePartialWireRead(): void {
-    if (this.replayWindow) this.lastPartialWireAt = performance.now();
+    if (this.replayWindow && !this.orderedLoad) this.lastPartialWireAt = performance.now();
   }
 
   // An agent that streams history after its session/load response sends no end marker,
@@ -2388,10 +2450,23 @@ function routeIncomingMessages(
   stream: Stream,
   receiveVendor: (method: string, params: unknown) => void,
   observeWire: (message: unknown) => void,
+  observeOutgoing?: (message: AcpStreamMessage) => void,
 ): Stream {
   const clientMethods = new Set<string>(Object.values(CLIENT_METHODS));
   return {
-    writable: stream.writable,
+    writable: observeOutgoing
+      ? new WritableStream({
+          async write(message) {
+            observeOutgoing(message);
+            const writer = stream.writable.getWriter();
+            try {
+              await writer.write(message);
+            } finally {
+              writer.releaseLock();
+            }
+          },
+        })
+      : stream.writable,
     readable: stream.readable.pipeThrough(
       new TransformStream({
         transform(message, controller) {

@@ -180,7 +180,15 @@ export function createAntigravityProvider(): ProviderRegistration {
       // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
       perModelThinkingOptions: true,
       waitForInitialCommands: true,
+      // COMPAT(antigravityLateLoadReplay): added in v0.18.0, remove once agy >=1.5.15 is required.
       loadReplayQuietPeriodMs: 200,
+      loadReplayEndsAtResponse(agentInfo) {
+        if (agentInfo?.name !== "Antigravity ACP Server") return false;
+        const version = /^(\d+)\.(\d+)\.(\d+)$/.exec(agentInfo.version);
+        if (!version) return false;
+        const [, major, minor, patch] = version.map(Number);
+        return major > 1 || (major === 1 && (minor > 5 || (minor === 5 && patch >= 15)));
+      },
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
       deferTurnOnRunningTools: {
         keepsTurnOpen(toolCall) {
