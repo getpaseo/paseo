@@ -334,6 +334,10 @@ export default defineConfig({
         find: /^expo-linking$/,
         replacement: path.resolve(__dirname, "test-stubs/expo-linking.ts"),
       },
+      {
+        find: /^expo-image-picker$/,
+        replacement: path.resolve(__dirname, "test-stubs/expo-image-picker.ts"),
+      },
       // No Node implementation: every call on the real module rejects, so a test
       // touching a persisted store drowns in unhandled rejections.
       {
