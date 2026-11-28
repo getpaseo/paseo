@@ -53,6 +53,12 @@ interface FakePiUserEntry {
   text: string;
 }
 
+interface HeldPrompt {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
 export class FakePi implements PiRuntime {
   readonly recordedLaunches: PiRuntimeLaunch[] = [];
   private readonly sessions: FakePiSession[] = [];
@@ -183,9 +189,8 @@ export class FakePiSession implements PiRuntimeSession {
 
   private readonly subscribers = new Set<(event: PiRuntimeEvent) => void>();
   private readonly subagentMessageResults = new Map<string, FakePiSubagentMessagesResult[]>();
-  private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
-  private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
-    null;
+  private nextHeldPrompt: HeldPrompt | null = null;
+  private activeHeldPrompt: HeldPrompt | null = null;
 
   constructor(
     launch: PiRuntimeLaunch,
@@ -238,11 +243,23 @@ export class FakePiSession implements PiRuntimeSession {
     if (this.nextHeldPrompt || this.activeHeldPrompt) {
       throw new Error("FakePi already has a held prompt");
     }
+    let resolve!: () => void;
     let reject!: (error: Error) => void;
-    const promise = new Promise<void>((_resolve, rejectPromise) => {
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
       reject = rejectPromise;
     });
-    this.nextHeldPrompt = { promise, reject };
+    this.nextHeldPrompt = { promise, resolve, reject };
+  }
+
+  /** Pi answers a prompt only after extension preflight; this ends that wait. */
+  async answerHeldPrompt(): Promise<void> {
+    const heldPrompt = this.activeHeldPrompt ?? this.nextHeldPrompt;
+    if (!heldPrompt) {
+      throw new Error("FakePi has no held prompt");
+    }
+    heldPrompt.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
 
   async failHeldPrompt(error: Error): Promise<void> {

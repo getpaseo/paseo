@@ -1432,6 +1432,87 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("keeps the turn open when an extension sends context before Pi answers the prompt", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    // Pi answers `prompt` after before_agent_start, where extensions inject hidden context.
+    fakeSession.holdNextPrompt();
+    const { turnId } = await session.startTurn("hello", { clientMessageId: "client-hello" });
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType: "project-context",
+        content: [{ type: "text", text: "Hidden context" }],
+        display: false,
+      },
+    });
+    // Pi writes its answer and agent_start back to back.
+    const answered = fakeSession.answerHeldPrompt();
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    await answered;
+    fakeSession.finishSubmittedUserMessage({ id: "entry-hello", parentId: null, text: "hello" });
+
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "hello",
+        messageId: "entry-hello",
+        clientMessageId: "client-hello",
+      },
+    ]);
+
+    fakeSession.finishTurn();
+    expect(await events.nextTurnCompletion()).toMatchObject({ type: "turn_completed", turnId });
+    expect(events.turnCompletedEvents()).toHaveLength(1);
+    await session.close();
+  });
+
+  test("keeps the turn open when Pi has answered the prompt and is still starting the run", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.holdNextPrompt();
+    const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "Hidden context" }],
+        display: false,
+      },
+    });
+    fakeSession.state = { ...fakeSession.state, isStreaming: true };
+    await fakeSession.answerHeldPrompt();
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.finishTurn();
+    expect(await events.nextTurnCompletion()).toMatchObject({ type: "turn_completed", turnId });
+    await session.close();
+  });
+
+  test("completes a prompt an extension handled with a custom message once Pi answers it", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.holdNextPrompt();
+    const { turnId } = await session.startTurn("show status");
+    fakeSession.emit({
+      type: "message_end",
+      message: { role: "custom", content: [{ type: "text", text: "Extension output" }] },
+    });
+    expect(events.turnCompletedEvents()).toHaveLength(0);
+
+    await fakeSession.answerHeldPrompt();
+    expect(await events.nextTurnCompletion()).toMatchObject({ type: "turn_completed", turnId });
+    await session.close();
+  });
+
   test("settles an autonomous turn triggered by a Pi extension custom message", async () => {
     const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();

@@ -1206,6 +1206,9 @@ export class PiRpcAgentSession implements AgentSession {
   private activeNoTurnPromptText: string | null = null;
   private readonly pendingNoTurnOutputs: Array<{ turnId: string; message: string }> = [];
   private activePromptRequestId: string | null = null;
+  // Pi answers `prompt` only after extension preflight (input handlers, the compaction check and
+  // before_agent_start), so events can arrive for a turn whose prompt is still unanswered.
+  private promptPreflight: { turnId: string; sawCustomMessage: boolean } | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
@@ -1349,7 +1352,11 @@ export class PiRpcAgentSession implements AgentSession {
             return;
           }
         }
-        const ack = await this.runtimeSession.prompt(payload.text, payload.images);
+        const preflight = { turnId, sawCustomMessage: false };
+        this.promptPreflight = preflight;
+        const ack = await this.runtimeSession.prompt(payload.text, payload.images).finally(() => {
+          if (this.promptPreflight === preflight) this.promptPreflight = null;
+        });
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
           ? this.pendingPromptResults.get(ack.requestId)
@@ -1362,7 +1369,10 @@ export class PiRpcAgentSession implements AgentSession {
           await this.completeNoTurnPrompt(turnId);
           return;
         }
-        if (agentInvoked === undefined && shouldProbeForNoTurnPrompt) {
+        if (
+          agentInvoked === undefined &&
+          (shouldProbeForNoTurnPrompt || preflight.sawCustomMessage)
+        ) {
           await this.completePromptIfHandledWithoutTurn(turnId);
         }
       } catch (error) {
@@ -2578,7 +2588,12 @@ export class PiRpcAgentSession implements AgentSession {
           ),
         });
       }
-      if (!this.activeTurnStarted) {
+      // An extension can send context from preflight, before Pi answers the prompt. Whether a run
+      // follows is known once Pi answers; startTurn checks then.
+      const preflight = this.promptPreflight;
+      if (preflight && preflight.turnId === turnId) {
+        preflight.sawCustomMessage = true;
+      } else if (!this.activeTurnStarted) {
         this.completeTurn(turnId, []);
       }
       return;
