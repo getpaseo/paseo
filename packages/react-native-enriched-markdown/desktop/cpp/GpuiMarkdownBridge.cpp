@@ -794,19 +794,24 @@ template <typename PropsT>
 facebook::react::Size measureMarkdownImpl(
     const PropsT& props,
     bool isMarkdownContainer,
-    float maxWidth,
-    float maxHeight) {
-  auto json = buildSnapshotJson(props, isMarkdownContainer);
+    const facebook::react::LayoutConstraints& layoutConstraints) {
   auto fn = gMeasureFn.load(std::memory_order_acquire);
   if (!fn) {
-    return {0.0f, 0.0f};
+    return layoutConstraints.clamp({0.0f, 0.0f});
   }
-  float width = std::isfinite(maxWidth) ? maxWidth : std::numeric_limits<float>::infinity();
-  float height = std::isfinite(maxHeight) ? maxHeight : std::numeric_limits<float>::infinity();
+  auto json = buildSnapshotJson(props, isMarkdownContainer);
+  float minW = layoutConstraints.minimumSize.width;
+  float minH = layoutConstraints.minimumSize.height;
+  float maxW = std::isfinite(layoutConstraints.maximumSize.width)
+      ? layoutConstraints.maximumSize.width
+      : std::numeric_limits<float>::infinity();
+  float maxH = std::isfinite(layoutConstraints.maximumSize.height)
+      ? layoutConstraints.maximumSize.height
+      : std::numeric_limits<float>::infinity();
   float outW = 0.0f;
   float outH = 0.0f;
-  fn(json->c_str(), width, height, &outW, &outH);
-  return {outW, outH};
+  fn(json->c_str(), minW, minH, maxW, maxH, &outW, &outH);
+  return layoutConstraints.clamp({outW, outH});
 }
 
 } // namespace
@@ -903,17 +908,15 @@ std::string serializePropsJson(
 facebook::react::Size measureMarkdown(
     const facebook::react::EnrichedMarkdownProps& props,
     bool isMarkdownContainer,
-    float maxWidth,
-    float maxHeight) {
-  return measureMarkdownImpl(props, isMarkdownContainer, maxWidth, maxHeight);
+    const facebook::react::LayoutConstraints& layoutConstraints) {
+  return measureMarkdownImpl(props, isMarkdownContainer, layoutConstraints);
 }
 
 facebook::react::Size measureMarkdown(
     const facebook::react::EnrichedMarkdownTextProps& props,
     bool isMarkdownContainer,
-    float maxWidth,
-    float maxHeight) {
-  return measureMarkdownImpl(props, isMarkdownContainer, maxWidth, maxHeight);
+    const facebook::react::LayoutConstraints& layoutConstraints) {
+  return measureMarkdownImpl(props, isMarkdownContainer, layoutConstraints);
 }
 
 } // namespace rngpui::markdown

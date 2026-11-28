@@ -29,10 +29,8 @@ public:
   Size measureContent(
       const LayoutContext& /*layoutContext*/,
       const LayoutConstraints& layoutConstraints) const override {
-    float maxWidth = layoutConstraints.maximumSize.width;
-    float maxHeight = layoutConstraints.maximumSize.height;
     return rngpui::markdown::measureMarkdown(
-        this->getConcreteProps(), IsContainer, maxWidth, maxHeight);
+        this->getConcreteProps(), IsContainer, layoutConstraints);
   }
 
 protected:

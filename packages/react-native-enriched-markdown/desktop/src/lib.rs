@@ -19,7 +19,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(not(test))]
-type MeasureFn = extern "C" fn(*const c_char, f32, f32, *mut f32, *mut f32);
+type MeasureFn = extern "C" fn(*const c_char, f32, f32, f32, f32, *mut f32, *mut f32);
 
 #[cfg(not(test))]
 extern "C" {
@@ -110,38 +110,67 @@ fn layout_cached(snapshot: &MarkdownSnapshot, max_width: Option<f32>) -> Arc<Lai
     laid_out
 }
 
+fn clamp_axis(value: f32, min: f32, max: f32) -> f32 {
+    let safe_value = if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    };
+    let min_bound = if min.is_finite() { min.max(0.0) } else { 0.0 };
+    let capped = if max.is_finite() {
+        safe_value.min(max.max(0.0))
+    } else {
+        safe_value
+    };
+    capped.max(min_bound)
+}
+
+pub fn measure_snapshot(
+    snapshot: &MarkdownSnapshot,
+    min_width: f32,
+    min_height: f32,
+    max_width: f32,
+    max_height: f32,
+) -> (f32, f32) {
+    let width_constraint = if max_width.is_finite() && max_width > 0.0 {
+        Some(max_width)
+    } else {
+        None
+    };
+    let doc = layout_cached(snapshot, width_constraint);
+    (
+        clamp_axis(doc.width, min_width, max_width),
+        clamp_axis(doc.height, min_height, max_height),
+    )
+}
+
 #[cfg(not(test))]
 extern "C" fn markdown_measure_cb(
     snapshot_json: *const c_char,
+    min_width: f32,
+    min_height: f32,
     max_width: f32,
-    _max_height: f32,
+    max_height: f32,
     out_width: *mut f32,
     out_height: *mut f32,
 ) {
+    let fallback = (
+        clamp_axis(0.0, min_width, max_width),
+        clamp_axis(0.0, min_height, max_height),
+    );
     let result = std::panic::catch_unwind(|| {
         if snapshot_json.is_null() {
-            return (0.0f32, 0.0f32);
+            return fallback;
         }
         let json = unsafe { CStr::from_ptr(snapshot_json) }
             .to_str()
             .unwrap_or("");
         let Some(snapshot) = snapshot_from_str(json) else {
-            return (0.0f32, 0.0f32);
+            return fallback;
         };
-        let width_constraint = if max_width.is_finite() && max_width > 0.0 {
-            Some(max_width)
-        } else {
-            None
-        };
-        let doc = layout_cached(&snapshot, width_constraint);
-        let measured_w = if let Some(mw) = width_constraint {
-            doc.width.min(mw)
-        } else {
-            doc.width
-        };
-        (measured_w.max(0.0), doc.height.max(0.0))
+        measure_snapshot(&snapshot, min_width, min_height, max_width, max_height)
     })
-    .unwrap_or((0.0, 0.0));
+    .unwrap_or(fallback);
 
     unsafe {
         if !out_width.is_null() {
@@ -273,4 +302,67 @@ pub fn rn_gpui_register() {
     });
     register_component_renderer("EnrichedMarkdown", renderer.clone());
     register_component_renderer("EnrichedMarkdownText", renderer);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{AstNode, BlockStyle, MarkdownStyle};
+    use std::collections::HashMap;
+
+    fn sample_paragraph_snapshot(text: &str) -> MarkdownSnapshot {
+        let mut text_node = AstNode {
+            node_type: "Text".to_string(),
+            content: Some(text.to_string()),
+            ..Default::default()
+        };
+        if text.is_empty() {
+            text_node.content = None;
+        }
+        let para = AstNode {
+            node_type: "Paragraph".to_string(),
+            children: if text.is_empty() {
+                None
+            } else {
+                Some(vec![text_node])
+            },
+            ..Default::default()
+        };
+        MarkdownSnapshot {
+            content_hash: if text.is_empty() { 1 } else { 2 },
+            ast: AstNode {
+                node_type: "Document".to_string(),
+                children: Some(vec![para]),
+                attributes: Some(HashMap::new()),
+                ..Default::default()
+            },
+            style: MarkdownStyle {
+                paragraph: BlockStyle {
+                    font_size: 15.0,
+                    line_height: 21.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn measure_snapshot_clamps_to_minimum_and_maximum_constraints() {
+        let short = sample_paragraph_snapshot("Short reply");
+        let (w, h) = measure_snapshot(&short, 804.0, 0.0, 804.0, f32::INFINITY);
+        assert!((w - 804.0).abs() < 0.01, "expected 804.0 width, got {w}");
+        assert!(h > 0.0);
+
+        let empty = sample_paragraph_snapshot("");
+        let (ew, eh) = measure_snapshot(&empty, 804.0, 22.0, 804.0, f32::INFINITY);
+        assert!((ew - 804.0).abs() < 0.01);
+        assert!((eh - 22.0).abs() < 0.01);
+
+        let tall = sample_paragraph_snapshot("Word ".repeat(80).trim());
+        let (cw, ch) = measure_snapshot(&tall, 0.0, 0.0, 120.0, 40.0);
+        assert!(cw <= 120.0);
+        assert!(ch <= 40.0);
+    }
 }

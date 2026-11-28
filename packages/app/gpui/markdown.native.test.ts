@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import sharp from "sharp";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const endpoint = process.env.PASEO_GPUI_TEST_URL;
 const token = process.env.PASEO_GPUI_TEST_TOKEN;
 const markdownFixture = process.env.PASEO_GPUI_TEST_SCENE === "markdown";
+const driverLogPath = process.env.PASEO_GPUI_DRIVER_LOG;
 
 interface Node {
   tag: number;
@@ -328,6 +329,13 @@ test.skipIf(!endpoint || !markdownFixture)(
         );
       })
       .toBeGreaterThan(80);
+
+    if (driverLogPath) {
+      const invalidLines = readFileSync(driverLogPath, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("returned an invalid measurement"));
+      expect(invalidLines).toEqual([]);
+    }
   },
   30_000,
 );
