@@ -503,6 +503,8 @@ interface ACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  /** Skip `clientInfo` in `initialize`, for agents that pick a different engine when it is set. */
+  omitClientInfo?: boolean;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -537,6 +539,8 @@ interface ACPAgentSessionOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  /** Skip `clientInfo` in `initialize`, for agents that pick a different engine when it is set. */
+  omitClientInfo?: boolean;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -1092,6 +1096,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
+  private readonly omitClientInfo: boolean;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -1133,6 +1138,7 @@ export class ACPAgentClient implements AgentClient {
     this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
+    this.omitClientInfo = options.omitClientInfo ?? false;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -1168,6 +1174,7 @@ export class ACPAgentClient implements AgentClient {
         configFeatureOptions: this.configFeatureOptions,
         clientCapabilities: providerOptions.clientCapabilities ?? this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
+        omitClientInfo: this.omitClientInfo,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
         providerModeWriter: this.providerModeWriter,
@@ -1230,6 +1237,7 @@ export class ACPAgentClient implements AgentClient {
       configFeatureOptions: this.configFeatureOptions,
       clientCapabilities: providerOptions.clientCapabilities ?? this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
+      omitClientInfo: this.omitClientInfo,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
       providerModeWriter: this.providerModeWriter,
@@ -1793,7 +1801,7 @@ export class ACPAgentClient implements AgentClient {
               this.clientCapabilityMeta,
               clientCapabilities ?? this.clientCapabilities,
             ),
-            clientInfo: resolveAcpClientInfo(),
+            ...(this.omitClientInfo ? {} : { clientInfo: resolveAcpClientInfo() }),
           }),
           transport.processError,
           ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
@@ -2031,6 +2039,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly configuredModelIds: ReadonlySet<string>;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
+  private readonly omitClientInfo: boolean;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -2123,6 +2132,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configuredModelIds = new Set(options.configuredModelIds);
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
+    this.omitClientInfo = options.omitClientInfo ?? false;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -3540,7 +3550,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             this.clientCapabilityMeta,
             this.clientCapabilities,
           ),
-          clientInfo: resolveAcpClientInfo(),
+          ...(this.omitClientInfo ? {} : { clientInfo: resolveAcpClientInfo() }),
         }),
         processError,
       ]),

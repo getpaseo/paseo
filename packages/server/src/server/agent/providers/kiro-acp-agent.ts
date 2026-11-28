@@ -94,6 +94,10 @@ export class KiroACPAgentClient extends GenericACPAgentClient {
       waitForInitialCommands: true,
       initialCommandsWaitTimeoutMs: KIRO_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       extensionCommandsParser: parseKiroExtensionCommands,
+      // Kiro CLI 3.x runs a minimal agent when `clientInfo` names an unknown client: no
+      // `session/list`, and it cannot load sessions the full agent stores. Leaving
+      // `clientInfo` out selects the full agent, which is what makes session import work.
+      omitClientInfo: true,
     });
   }
 }
