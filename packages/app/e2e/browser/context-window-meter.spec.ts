@@ -26,6 +26,7 @@ import {
   reloadAgent,
   scriptAgentUsage,
   seedAgentWithContextWindow,
+  tapContextWindowMeter,
   usageCard,
 } from "../support/helpers/context-window";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -507,6 +508,24 @@ test("context details stay open while the chat streams", async ({ page }) => {
   } finally {
     await session.cleanup();
   }
+});
+
+test.describe("on a wide touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("tapping the meter opens context details that stay open", async ({ page, agent }) => {
+    const usage = await scriptAgentUsage(page);
+    await page.setViewportSize(DESKTOP);
+    await openAgent(page, agent);
+    const [claude] = claudeAndCodexReports();
+    // A tap can request the agent's usage more than once.
+    usage.answerNext([onPersonalLogin(claude!)]);
+    usage.answerNext([onPersonalLogin(claude!)]);
+    const details = await tapContextWindowMeter(page);
+    // Past the card's close grace. A touch sends no pointer movement after the tap.
+    await page.waitForTimeout(500);
+    await expect(details).toBeVisible();
+  });
 });
 
 test("pointer hovering context details preserves composer focus", async ({ page, agent }) => {
