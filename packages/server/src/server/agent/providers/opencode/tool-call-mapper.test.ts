@@ -303,6 +303,55 @@ describe("opencode tool-call mapper", () => {
     });
   });
 
+  it("maps OpenCode websearch hits to web results and keeps the result text", () => {
+    // OpenCode 2.x websearch text (packages/core/src/tool/plugin/websearch.ts): one
+    // `## [title](url)` heading per hit, an optional `Published:` line, then the page text.
+    const output = [
+      "## [Effect Documentation](https://effect.website/docs)\nPublished: 2026-07-25T00:00:00.000Z\n\nEffect is a TypeScript library.\n\n## [Not a hit](https://example.com/inline) inside a paragraph",
+      "## [Effect Duplicate](https://effect.website/docs)",
+      "## [https://example.com/untitled](https://example.com/untitled)",
+    ].join("\n\n");
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "websearch",
+        callId: "opencode-websearch-1",
+        status: "completed",
+        input: { query: "effect typescript" },
+        output,
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "search",
+      query: "effect typescript",
+      toolName: "web_search",
+      content: output,
+      webResults: [
+        { title: "Effect Documentation", url: "https://effect.website/docs" },
+        { title: "https://example.com/untitled", url: "https://example.com/untitled" },
+      ],
+    });
+  });
+
+  it("keeps OpenCode websearch text without headings as content only", () => {
+    const item = expectMapped(
+      mapOpencodeToolCall({
+        toolName: "websearch",
+        callId: "opencode-websearch-empty",
+        status: "completed",
+        input: { query: "nothing" },
+        output: "No search results found. Please try a different query.",
+      }),
+    );
+
+    expect(item.detail).toEqual({
+      type: "search",
+      query: "nothing",
+      toolName: "web_search",
+      content: "No search results found. Please try a different query.",
+    });
+  });
+
   it("maps completed write calls with OpenCode success text into canonical detail", () => {
     const item = expectMapped(
       mapOpencodeToolCall({

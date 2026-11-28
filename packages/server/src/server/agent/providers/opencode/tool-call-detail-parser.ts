@@ -154,6 +154,47 @@ const OpencodeGrepOutputSchema = z
   ])
   .nullable();
 
+// OpenCode v2's `websearch` tool prints every hit as a `## [title](url)` heading, followed by an
+// optional `Published:` line and the page text, and separates hits with a blank line. OpenCode
+// substitutes the URL when a hit has no title. Only this text reaches clients; the structured hits
+// stay inside OpenCode. OpenCode v1 passes the search service's own text through instead.
+const OPENCODE_WEB_SEARCH_HIT = /^## \[(.*)\]\((https?:\/\/\S+)\)$/;
+
+function parseOpencodeWebSearchHits(text: string): Array<{ title: string; url: string }> {
+  const webResults: Array<{ title: string; url: string }> = [];
+  const seen = new Set<string>();
+  const lines = text.split("\n");
+  lines.forEach((line, index) => {
+    if (index > 0 && lines[index - 1] !== "") {
+      return;
+    }
+    const match = OPENCODE_WEB_SEARCH_HIT.exec(line);
+    const url = match?.[2];
+    if (!url || seen.has(url)) {
+      return;
+    }
+    seen.add(url);
+    webResults.push({ title: match[1]?.trim() || url, url });
+  });
+  return webResults;
+}
+
+function toOpencodeWebSearchDetail(
+  input: z.infer<typeof ToolSearchInputSchema> | null,
+  output: unknown,
+): ToolCallDetail | undefined {
+  const detail = toSearchToolDetail({ input, toolName: "web_search" });
+  if (detail?.type !== "search" || !detail.query || typeof output !== "string" || !output) {
+    return detail;
+  }
+  const webResults = parseOpencodeWebSearchHits(output);
+  return {
+    ...detail,
+    content: output,
+    ...(webResults.length > 0 ? { webResults } : {}),
+  };
+}
+
 function extractOpenCodeTaskSessionId(value: unknown): string | undefined {
   const text = readOutputText(value);
   if (text) {
@@ -324,8 +365,18 @@ const OpencodeKnownToolDetailSchema = z.union([
       toolName: "glob",
     });
   }),
-  toolDetailBranchByToolName("web_search", ToolSearchInputSchema, z.unknown(), (input) =>
-    toSearchToolDetail({ input, toolName: "web_search" }),
+  // OpenCode names its web search tool `websearch`.
+  toolDetailBranchByToolName(
+    "websearch",
+    ToolSearchInputSchema,
+    z.unknown(),
+    toOpencodeWebSearchDetail,
+  ),
+  toolDetailBranchByToolName(
+    "web_search",
+    ToolSearchInputSchema,
+    z.unknown(),
+    toOpencodeWebSearchDetail,
   ),
   toolDetailBranchByToolName(
     "skill",
