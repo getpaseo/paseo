@@ -1764,7 +1764,9 @@ const provider: ProviderRegistration = runAcpProvider({
   id: ${JSON.stringify(providerId)},
   label: "Streaming replay ACP",
   command: [${JSON.stringify(process.execPath)}, ${JSON.stringify(agentScriptPath)}],
-  acpOptions: { loadReplayQuietPeriodMs: 100 },
+  // Replay must still be streaming when the daemon stops. The agent sends a chunk every 20 ms, so
+  // only a runner stall longer than this period can end replay first and let the reopen finish.
+  acpOptions: { loadReplayQuietPeriodMs: 1_000 },
 });
 
 export default function contribute(server: { registerProvider(p: ProviderRegistration): void }) {
