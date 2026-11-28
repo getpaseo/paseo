@@ -196,6 +196,27 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("skips placeholder-only narration when replaying history", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        responseId: "resp-dot",
+        content: [
+          { type: "thinking", thinking: "Considering the request" },
+          { type: "text", text: ".\n\n" },
+          { type: "toolCall", id: "count-1", name: "bash", arguments: { command: "wc -l f" } },
+        ],
+      },
+      { role: "assistant", responseId: "resp-real", content: [{ type: "text", text: "2 lines." }] },
+    ]);
+
+    expect(events.map((event) => event.item)).toEqual([
+      expect.objectContaining({ type: "reasoning", text: "Considering the request" }),
+      expect.objectContaining({ type: "tool_call", callId: "count-1", status: "running" }),
+      { type: "assistant_message", text: "2 lines.", messageId: "resp-real" },
+    ]);
+  });
+
   test("reports a failed tool's structured details error by its message", async () => {
     const events = await collectHistory([
       {
