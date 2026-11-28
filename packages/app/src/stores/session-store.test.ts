@@ -557,6 +557,26 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(blank.workspaceDirectory).toBe("");
   });
 
+  it("keeps a Windows drive-root workspace directory absolute", () => {
+    const driveRoot = normalizeWorkspaceDescriptor({
+      id: "1",
+      projectId: "1",
+      projectDisplayName: "E:\\",
+      projectRootPath: "E:\\",
+      workspaceDirectory: "E:\\",
+      projectKind: "non_git",
+      workspaceKind: "directory",
+      name: "E:",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    });
+    expect(driveRoot.workspaceDirectory).toBe("E:/");
+  });
+
   it("preserves informational workspace parentage", () => {
     const payload = {
       id: "child",
