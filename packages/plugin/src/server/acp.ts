@@ -51,6 +51,8 @@ export type AcpConnector = () => AcpStream | Promise<AcpStream>;
 export interface AcpOptions {
   protocol?: "auto" | "v1";
   startupTimeoutMs?: number;
+  /** Retire the ACP runtime if an interrupted prompt has not ended within this time. */
+  promptCancelTimeoutMs?: number;
   /** Global discovery returns an empty catalog without spawning a process or opening a session. */
   workspaceOnlyCatalog?: boolean;
   /**

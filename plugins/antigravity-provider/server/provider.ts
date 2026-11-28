@@ -180,6 +180,7 @@ export function createAntigravityProvider(): ProviderRegistration {
       // agy 1.5.14 lists thinking options for the selected model only, and none for Orchestrator.
       perModelThinkingOptions: true,
       waitForInitialCommands: true,
+      promptCancelTimeoutMs: 3_000,
       loadReplayQuietPeriodMs: 200,
       // COMPAT(antigravityAcpV1DeferredTurn): added in v0.18.0, remove once Antigravity CLI supports ACP v2 state_update.
       deferTurnOnRunningTools: {
