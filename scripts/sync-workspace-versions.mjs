@@ -27,6 +27,10 @@ const dependencySections = [
   "optionalDependencies",
 ];
 
+// Packages with independent semver lifecycles stay on their own version until
+// folded into the main Paseo release train.
+const INDEPENDENT_VERSION_WORKSPACES = new Set(["@getpaseo/workflows"]);
+
 const touched = [];
 
 for (const workspacePath of workspacePaths) {
@@ -36,6 +40,9 @@ for (const workspacePath of workspacePaths) {
   }
 
   const pkg = JSON.parse(readFileSync(packagePath, "utf8"));
+  if (INDEPENDENT_VERSION_WORKSPACES.has(pkg.name)) {
+    continue;
+  }
   let changed = false;
 
   if (pkg.version !== rootVersion) {

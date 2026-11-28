@@ -269,6 +269,7 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/client/**",
       "packages/highlight/**",
       "packages/protocol/**",
+      "packages/workflows/**",
     ],
     browser: [
       "packages/server/src/server/agent/provider-snapshot-manager.ts",
@@ -548,6 +549,8 @@ test("quality preserves commands and routes each domain independently after fail
       "npm run test --workspace=@getpaseo/protocol",
       "npm run test --workspace=@getpaseo/client",
       "npm run test --workspace=@getpaseo/highlight",
+      "npm run build:workflows",
+      "npm run test --workspace=@getpaseo/workflows",
       "npm run typecheck:examples --workspace=@getpaseo/client",
     ],
   };
