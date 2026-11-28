@@ -8796,51 +8796,58 @@ export class Session {
         this.supportsTimelineItem(entry.item, source),
       );
 
-      this.emitForSource(
-        {
-          type: "fetch_agent_timeline_response",
-          payload: {
-            requestId: msg.requestId,
-            agentId: msg.agentId,
-            agent: agentPayload,
-            direction,
-            projection,
-            epoch: selectedTimeline.timeline.epoch,
-            reset: fetchedControlTimeline.reset,
-            staleCursor: fetchedControlTimeline.staleCursor,
-            gap: fetchedControlTimeline.gap,
-            window: selectedTimeline.timeline.window,
-            startCursor,
-            endCursor,
-            hasOlder: selectedTimeline.hasOlder,
-            hasNewer: selectedTimeline.hasNewer,
-            ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
-            entries: entries.map((entry) => {
-              const payloadEntry = {
-                provider: snapshot.provider,
-                item: entry.item,
-                timestamp: entry.timestamp,
-                seqStart: entry.seqStart,
-                seqEnd: entry.seqEnd,
-                sourceSeqRanges: entry.sourceSeqRanges,
-                turnMetrics: entry.turnMetrics,
-                turnId: undefined as string | undefined,
-                collapsed: (
-                  source
-                    ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
-                    : this.supports(CLIENT_CAPS.reasoningMergeEnum)
-                )
-                  ? entry.collapsed
-                  : entry.collapsed.filter((value) => value !== "reasoning_merge"),
-              };
-              payloadEntry.turnId = entry.turnId;
-              return payloadEntry;
-            }),
-            error: null,
-          },
+      const response: SessionOutboundMessage = {
+        type: "fetch_agent_timeline_response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          agent: agentPayload,
+          direction,
+          projection,
+          epoch: selectedTimeline.timeline.epoch,
+          reset: fetchedControlTimeline.reset,
+          staleCursor: fetchedControlTimeline.staleCursor,
+          gap: fetchedControlTimeline.gap,
+          window: selectedTimeline.timeline.window,
+          startCursor,
+          endCursor,
+          hasOlder: selectedTimeline.hasOlder,
+          hasNewer: selectedTimeline.hasNewer,
+          ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
+          entries: entries.map((entry) => {
+            const payloadEntry = {
+              provider: snapshot.provider,
+              item: entry.item,
+              timestamp: entry.timestamp,
+              seqStart: entry.seqStart,
+              seqEnd: entry.seqEnd,
+              sourceSeqRanges: entry.sourceSeqRanges,
+              turnMetrics: entry.turnMetrics,
+              turnId: undefined as string | undefined,
+              collapsed: (
+                source
+                  ? this.supportsForSource(CLIENT_CAPS.reasoningMergeEnum, source)
+                  : this.supports(CLIENT_CAPS.reasoningMergeEnum)
+              )
+                ? entry.collapsed
+                : entry.collapsed.filter((value) => value !== "reasoning_merge"),
+            };
+            payloadEntry.turnId = entry.turnId;
+            return payloadEntry;
+          }),
+          error: null,
         },
-        source,
-      );
+      };
+      if (source && this.onMessageToSource) {
+        try {
+          await this.onMessageToSource(source, this.delivery.authorizeReply(response, source));
+        } catch (error) {
+          if (error instanceof Error && error.message === "Logical message too large") throw error;
+          return;
+        }
+      } else {
+        this.emit(response);
+      }
     } catch (error) {
       this.sessionLogger.error(
         { err: error, agentId: msg.agentId },

@@ -1,10 +1,146 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type {
+  DaemonClient,
+  FetchAgentTimelinePayload,
+} from "@getpaseo/client/internal/daemon-client";
 import {
   createFollowJsonWriter,
   createFollowTranscriptWriter,
   formatAgentActivityTranscript,
+  fetchOneShotTimelineItems,
 } from "./logs.js";
+
+function page(seq: number, hasOlder: boolean): FetchAgentTimelinePayload {
+  return {
+    requestId: "request",
+    agentId: "agent",
+    agent: null,
+    direction: "tail",
+    projection: "projected",
+    epoch: "epoch",
+    reset: false,
+    staleCursor: false,
+    gap: false,
+    window: { minSeq: 1, maxSeq: 4, nextSeq: 5 },
+    startCursor: { epoch: "epoch", seq },
+    endCursor: { epoch: "epoch", seq },
+    hasOlder,
+    hasNewer: false,
+    error: null,
+    entries: [
+      {
+        provider: "codex",
+        item: { type: "user_message", text: `row ${seq}` },
+        timestamp: "2026-01-01T00:00:00Z",
+        seqStart: seq,
+        seqEnd: seq,
+        sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+        collapsed: [],
+      },
+    ],
+  };
+}
+
+describe("one-shot timeline paging", () => {
+  it("retries only oversized pages at the same cursor with a smaller limit", async () => {
+    const requests: Array<Parameters<DaemonClient["fetchAgentTimeline"]>[1]> = [];
+    const client = {
+      async fetchAgentTimeline(
+        _agentId: string,
+        options?: Parameters<DaemonClient["fetchAgentTimeline"]>[1],
+      ) {
+        requests.push(options);
+        if (requests.length === 1) return page(3, true);
+        if (requests.length === 2) throw new Error("Logical message too large");
+        return page(1, false);
+      },
+    };
+    expect(await fetchOneShotTimelineItems(client, "agent", undefined, undefined)).toEqual([
+      { type: "user_message", text: "row 1" },
+      { type: "user_message", text: "row 3" },
+    ]);
+    expect(
+      requests.map((request) => [request?.direction, request?.limit, request?.cursor]),
+    ).toEqual([
+      ["tail", 200, undefined],
+      ["before", 200, { epoch: "epoch", seq: 3 }],
+      ["before", 100, { epoch: "epoch", seq: 3 }],
+    ]);
+  });
+
+  it("fails promptly if a single-row page is still oversized", async () => {
+    let calls = 0;
+    const client = {
+      async fetchAgentTimeline() {
+        calls++;
+        throw new Error("Logical message too large");
+      },
+    };
+    await expect(fetchOneShotTimelineItems(client, "agent", undefined, 1)).rejects.toThrow(
+      "even at limit 1",
+    );
+    expect(calls).toBe(1);
+  });
+
+  it("does not retry other errors", async () => {
+    let calls = 0;
+    const client = {
+      async fetchAgentTimeline() {
+        calls++;
+        throw new Error("disconnected");
+      },
+    };
+    await expect(fetchOneShotTimelineItems(client, "agent", undefined, undefined)).rejects.toThrow(
+      "disconnected",
+    );
+    expect(calls).toBe(1);
+  });
+  it.each([
+    ["zero", { ...page(2, true), startCursor: { epoch: "epoch", seq: 0 } }],
+    [
+      "unsafe",
+      { ...page(2, true), startCursor: { epoch: "epoch", seq: Number.MAX_SAFE_INTEGER + 1 } },
+    ],
+    ["wrong epoch", { ...page(2, true), startCursor: { epoch: "other", seq: 2 } }],
+    ["past first row", { ...page(2, true), startCursor: { epoch: "epoch", seq: 3 } }],
+    ["missing", { ...page(2, true), startCursor: null }],
+    ["reset", { ...page(2, true), reset: true }],
+    ["stale", { ...page(2, true), staleCursor: true }],
+    ["gap", { ...page(2, true), gap: true }],
+  ])("rejects %s on the first page", async (_name, response) => {
+    const client = { fetchAgentTimeline: async () => response };
+    await expect(
+      fetchOneShotTimelineItems(client, "agent", undefined, undefined),
+    ).rejects.toThrow();
+  });
+
+  it("rejects a repeated cursor and an epoch change", async () => {
+    for (const next of [page(2, true), { ...page(1, false), epoch: "other" }]) {
+      const pages = [page(2, true), next];
+      const client = { fetchAgentTimeline: async () => pages.shift()! };
+      await expect(
+        fetchOneShotTimelineItems(client, "agent", undefined, undefined),
+      ).rejects.toThrow();
+    }
+  });
+
+  it("keeps older matches when timestamps are not monotonic", async () => {
+    const newer = {
+      ...page(3, true),
+      entries: [{ ...page(3, true).entries[0], timestamp: "2000-01-01T00:00:00Z" }],
+    };
+    const older = {
+      ...page(1, false),
+      entries: [{ ...page(1, false).entries[0], timestamp: "2100-01-01T00:00:00Z" }],
+    };
+    const pages = [newer, older];
+    const client = { fetchAgentTimeline: async () => pages.shift()! };
+    expect(
+      await fetchOneShotTimelineItems(client, "agent", Date.parse("2050-01-01"), undefined),
+    ).toEqual([{ type: "user_message", text: "row 1" }]);
+  });
+});
 
 function collect(items: readonly AgentTimelineItem[], turnId?: string): string {
   let output = "";

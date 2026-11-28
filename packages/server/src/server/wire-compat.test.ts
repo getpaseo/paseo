@@ -340,6 +340,46 @@ async function emitTimelineResponse(options?: {
   return response;
 }
 
+test("oversized timeline replies return a correlated error to the requesting source", async () => {
+  const source = {};
+  const replies: SessionOutboundMessage[] = [];
+  let session!: Session;
+  session = createSessionForWireCompatTest({
+    onMessageToSource: async (target, message) => {
+      expect(target).toBe(source);
+      expect(session.delivery.permits(target, message)).toBe(true);
+      replies.push(message);
+      if (replies.length === 1) throw new Error("Logical message too large");
+    },
+  });
+  session.updateClientCapabilities({ owned_subscriptions: true }, source);
+  try {
+    await session.handleMessage(
+      {
+        type: "fetch_agent_timeline_request",
+        requestId: "oversized-request",
+        agentId: "agent-1",
+        direction: "tail",
+        limit: 200,
+        projection: "projected",
+      },
+      source,
+    );
+    expect(replies).toHaveLength(2);
+    expect(replies[1]).toMatchObject({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId: "oversized-request",
+        agentId: "agent-1",
+        entries: [],
+        error: "Logical message too large",
+      },
+    });
+  } finally {
+    await session.cleanup();
+  }
+});
+
 describe("wire compatibility", () => {
   test("sends project updates only to clients that declare support", async () => {
     const project = createPersistedProjectRecord({
