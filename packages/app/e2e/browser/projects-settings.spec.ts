@@ -32,6 +32,7 @@ import {
   expectUncommittedSetupWarning,
   fillProjectIconUrl,
   fillProjectName,
+  holdProjectConfigRead,
   installDaemonConnectionGate,
   installReadTransportFailure,
   navigateToProjectSettings,
@@ -190,10 +191,35 @@ async function openProjectSettingsFromSidebar(page: Page, projectId: string): Pr
 
   const openSettingsItem = page.getByTestId(`sidebar-project-menu-open-settings-${projectId}`);
   await expect(openSettingsItem).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId(`sidebar-project-menu-project-links-${projectId}`)).toHaveCount(0);
   await openSettingsItem.click();
 }
 
 test.describe("Projects settings", () => {
+  test("keeps the project links dialog open when the configuration finishes loading", async ({
+    page,
+    editableProject,
+  }) => {
+    const releaseRead = await holdProjectConfigRead(page);
+    try {
+      await openProjects(page);
+      await navigateToProjectSettings(page, editableProject.name);
+      await expectProjectSettingsFormHidden(page);
+
+      await page.getByRole("button", { name: "Link projects", exact: true }).click();
+      const sheet = page.getByTestId("project-links-sheet");
+      await expect(sheet).toBeVisible();
+
+      releaseRead();
+      await expectProjectSettingsFormVisible(page);
+      await expect(sheet).toBeVisible();
+      await sheet.getByTestId("project-links-close").click();
+      await expect(sheet).toBeHidden();
+    } finally {
+      releaseRead();
+    }
+  });
+
   test("freshly-added project with no workspace is editable from the sidebar without a reload", async ({
     page,
   }) => {
@@ -209,6 +235,24 @@ test.describe("Projects settings", () => {
 
       await expectProjectSettingsFormVisible(page);
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
+      const linksGroup = page.getByTestId("project-links-group");
+      await expect(linksGroup.getByText("Projects across hosts", { exact: true })).toBeVisible();
+      expect(
+        await page
+          .getByRole("main")
+          .locator(
+            '[data-testid="scripts-group"], [data-testid="project-links-group"], [data-testid="metadata-group"], [data-testid="save-button"]',
+          )
+          .evaluateAll((elements) => {
+            const ids = [];
+            for (const element of elements) ids.push(element.getAttribute("data-testid"));
+            return ids;
+          }),
+      ).toEqual(["scripts-group", "project-links-group", "metadata-group", "save-button"]);
+      await linksGroup.getByRole("button", { name: "Link projects", exact: true }).click();
+      await expect(page.getByTestId("project-links-no-matches")).toBeVisible();
+      await page.getByTestId("project-links-close").click();
+      await expectProjectSettingsFormVisible(page);
     } finally {
       if (projectViewKey) {
         const project = (await client.listProjects()).projects.find(
@@ -389,6 +433,7 @@ test.describe("Projects settings — error UX", () => {
 
     await expectProjectSettingsError(page, "invalid");
     await expectProjectSettingsFormHidden(page);
+    await expect(page.getByRole("button", { name: "Link projects", exact: true })).toBeVisible();
 
     // Restore a valid config so the reload succeeds.
     await restorePaseoConfig(editableProject.path, initialPaseoConfig);

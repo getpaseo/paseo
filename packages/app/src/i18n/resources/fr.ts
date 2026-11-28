@@ -2486,6 +2486,46 @@ export const fr: TranslationResources = {
       hostLoadFailed: "Impossible de charger les projets depuis l’hôte {{hostName}} : {{message}}",
       editProject: "Modifier {{projectName}}",
     },
+    projectLinks: {
+      entry: {
+        sectionTitle: "Projets sur plusieurs hôtes",
+        linkProjects: "Associer des projets",
+        matches: "{{count}} correspondances vérifiées à examiner",
+        matches_one: "{{count}} correspondance vérifiée à examiner",
+        matches_other: "{{count}} correspondances vérifiées à examiner",
+        savedLinks: "Liens enregistrés sur cet appareil",
+        linkAction: "Associer des projets…",
+        manageAction: "Liens entre projets…",
+        hint: "Regroupez les copies du même dépôt Git dans la barre latérale.",
+      },
+      sheet: {
+        title: "Associer des projets entre hôtes",
+        deviceOnly:
+          "L’association regroupe les projets dans la barre latérale sur cet appareil. Les espaces de travail, les paramètres et les fichiers restent sur leurs hôtes.",
+        matchesTitle: "Correspondances vérifiées",
+        matchesDescription:
+          "Ces entrées ont le même dépôt distant Git et le même sous-répertoire de projet, mais restent séparées.",
+        linkedTitle: "Projets liés",
+        noMatchesTitle: "Aucun lien de projet à examiner",
+        noMatchesDescription:
+          "Ouvrez un espace de travail dans le même dépôt sur deux hôtes. Les projets correspondants qui sont encore séparés apparaissent ici.",
+        linkProjects: "Lier {{count}} projets",
+        remote: "Dépôt distant Git",
+        subdirectory: "Sous-répertoire du projet",
+        path: "Chemin",
+        needsReviewTitle: "À examiner",
+        needsReviewDescription:
+          "Les dernières informations Git ne confirment plus ce lien ; Paseo garde donc ces projets séparés.",
+        projectUnavailable: "Ce projet n'est pas disponible actuellement.",
+        saving: "Enregistrement du lien du projet…",
+        saveFailed: "Impossible d’enregistrer le lien du projet. Réessayez.",
+        unlink: "Délier",
+      },
+      toasts: {
+        linked: "Projets liés sur cet appareil",
+        unlinked: "Lien de projet supprimé",
+      },
+    },
     groupInfo: "À propos de {{title}}",
     sections: {
       general: "Général",

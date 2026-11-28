@@ -2456,6 +2456,46 @@ export const ja: TranslationResources = {
       hostLoadFailed: "ホスト{{hostName}}からプロジェクトを読み込めませんでした: {{message}}",
       editProject: "{{projectName}}を編集",
     },
+    projectLinks: {
+      entry: {
+        sectionTitle: "ホスト間のプロジェクト",
+        linkProjects: "プロジェクトをリンク",
+        matches: "確認済みの候補 {{count}} 件",
+        matches_one: "確認済みの候補 {{count}} 件",
+        matches_other: "確認済みの候補 {{count}} 件",
+        savedLinks: "このデバイスに保存済みのリンク",
+        linkAction: "プロジェクトをリンク…",
+        manageAction: "プロジェクトのリンク…",
+        hint: "同じ Git リポジトリのコピーをサイドバーでまとめます。",
+      },
+      sheet: {
+        title: "ホスト間でプロジェクトをリンク",
+        deviceOnly:
+          "リンクすると、このデバイスのサイドバーでプロジェクトがまとまります。ワークスペース、設定、ファイルは各ホストに残ります。",
+        matchesTitle: "確認済みの一致",
+        matchesDescription:
+          "これらのエントリは同じ Git リモートとプロジェクトサブディレクトリを持ちますが、まだ別々です。",
+        linkedTitle: "リンク済みプロジェクト",
+        noMatchesTitle: "確認するプロジェクトリンクはありません",
+        noMatchesDescription:
+          "2 台のホストで同じリポジトリのワークスペースを開きます。一致していて、まだ別々に表示されているプロジェクトがここに表示されます。",
+        linkProjects: "{{count}} 個のプロジェクトをリンク",
+        remote: "Git リモート",
+        subdirectory: "プロジェクトサブディレクトリ",
+        path: "パス",
+        needsReviewTitle: "確認が必要",
+        needsReviewDescription:
+          "最新の Git 情報ではこのリンクを確認できないため、Paseo はこれらのプロジェクトを別々に保持します。",
+        projectUnavailable: "このプロジェクトは現在利用できません。",
+        saving: "プロジェクトリンクを保存しています…",
+        saveFailed: "プロジェクトリンクを保存できませんでした。もう一度お試しください。",
+        unlink: "リンクを解除",
+      },
+      toasts: {
+        linked: "このデバイスでプロジェクトをリンクしました",
+        unlinked: "プロジェクトリンクを削除しました",
+      },
+    },
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",

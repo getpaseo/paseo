@@ -897,9 +897,13 @@ function useNewWorkspaceInitialContext({
   const lastActiveProject = useMemo(
     () =>
       lastWorkspaceServerId
-        ? hostProjectFromWorkspace({ serverId: lastWorkspaceServerId, workspace: lastWorkspace })
+        ? hostProjectFromWorkspace({
+            serverId: lastWorkspaceServerId,
+            workspace: lastWorkspace,
+            projects,
+          })
         : null,
-    [lastWorkspace, lastWorkspaceServerId],
+    [lastWorkspace, lastWorkspaceServerId, projects],
   );
   const hostConnectionStatusByServerId = useHostRuntimeConnectionStatuses(allServerIds);
   const workspaceMultiplicityByServerId = useHostFeatureMap(allServerIds, "workspaceMultiplicity");

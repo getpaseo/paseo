@@ -7,7 +7,9 @@ import {
   getWorktreeSupportForHostProject,
   hostProjectFromRoute,
   hostProjectFromWorkspace,
+  resolveExactHostProjectCandidate,
   resolveEquivalentHostProjectCandidate,
+  resolveInitialWorkspaceProject,
 } from "./host-project-model";
 import { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 
@@ -60,6 +62,81 @@ describe("host project lookups", () => {
     } finally {
       if (descriptor) Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
     }
+  });
+
+  test("resolves a remembered placement through a linked group on another host", () => {
+    const linkedProject = project();
+    linkedProject.viewKey = "local-project-link:app";
+    linkedProject.projectKey = null;
+    linkedProject.hosts.push({
+      serverId: "host-c",
+      projectId: "prj_c",
+      iconWorkingDir: "/repo/c",
+      worktreeSupport: "supported",
+    });
+    const rememberedProject: HostProjectListItem = {
+      ...linkedProject,
+      viewKey: JSON.stringify(["host-b", "prj_b"]),
+      projectKey: "remote:github.com/acme/app",
+      hosts: [linkedProject.hosts[1]!],
+    };
+    const unrelatedProject: HostProjectListItem = {
+      ...project(),
+      viewKey: "view:unrelated",
+      projectKey: "remote:github.com/acme/other",
+      projectName: "Other",
+      hosts: [
+        {
+          serverId: "host-c",
+          projectId: "prj_other",
+          iconWorkingDir: "/repo/other",
+          worktreeSupport: "supported",
+        },
+      ],
+    };
+
+    expect(
+      resolveInitialWorkspaceProject({
+        routeProject: null,
+        lastActiveProject: rememberedProject,
+        projects: [unrelatedProject, linkedProject],
+        serverId: "host-c",
+        allowAllProjects: false,
+      }),
+    ).toBe(linkedProject);
+  });
+
+  test("prefers an exact selected-host placement over a regrouped source placement", () => {
+    const selected = project();
+    selected.projectKey = null;
+    const regrouped = {
+      ...project(),
+      viewKey: "local-project-link:a-b2",
+      projectKey: null,
+      hosts: [
+        selected.hosts[0]!,
+        {
+          serverId: "host-b",
+          projectId: "prj_b2",
+          iconWorkingDir: "/repo/b2",
+          worktreeSupport: "supported" as const,
+        },
+      ],
+    };
+    const exactPlacement = {
+      ...project(),
+      viewKey: "view:host-b:prj_b",
+      projectKey: null,
+      hosts: [selected.hosts[1]!],
+    };
+
+    expect(
+      resolveExactHostProjectCandidate({
+        candidate: selected,
+        projects: [regrouped, exactPlacement],
+        serverId: "host-b",
+      }),
+    ).toBe(exactPlacement);
   });
 
   test("returns host-local ids and roots without falling back to the grouping key", () => {
@@ -124,10 +201,10 @@ describe("host project lookups", () => {
     });
   });
 
-  test("keeps canonical equivalence identity separate from host placement identity", () => {
+  test("keeps the remembered project host-local until its placement is projected", () => {
     const workspace = normalizeWorkspaceDescriptor({
       id: "workspace-a",
-      projectId: "project-a",
+      projectId: "prj_a",
       projectDisplayName: "App",
       projectRootPath: "/repo/app",
       workspaceDirectory: "/repo/app",
@@ -155,10 +232,20 @@ describe("host project lookups", () => {
       },
     });
 
-    expect(hostProjectFromWorkspace({ serverId: "host-a", workspace })).toMatchObject({
-      viewKey: JSON.stringify(["host-a", "project-a"]),
-      projectKey: "remote:github.com/acme/app",
-      hosts: [{ serverId: "host-a", projectId: "project-a" }],
+    expect(hostProjectFromWorkspace({ serverId: "host-a", workspace, projects: [] })).toMatchObject(
+      {
+        viewKey: JSON.stringify(["host-a", "prj_a"]),
+        projectKey: null,
+        hosts: [{ serverId: "host-a", projectId: "prj_a" }],
+      },
+    );
+    const projected = project();
+    expect(
+      hostProjectFromWorkspace({ serverId: "host-a", workspace, projects: [projected] }),
+    ).toMatchObject({
+      viewKey: projected.viewKey,
+      projectKey: projected.projectKey,
+      hosts: [projected.hosts[0]],
     });
   });
 });

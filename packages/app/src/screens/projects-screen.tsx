@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { ProjectLinksEntry } from "@/components/project-links-entry";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
 import { useProjectIcons } from "@/projects/icons";
@@ -23,7 +24,8 @@ interface HostProject {
 
 export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
   const { t } = useTranslation();
-  const { projects, hostErrors, isLoading } = useProjects();
+  const { projects, hostErrors, isLoading, projectLinkPlacements, projectLinkSuggestions } =
+    useProjects();
   const hostProjects = useMemo<HostProject[]>(
     () =>
       projects.flatMap((project) =>
@@ -49,36 +51,36 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
     projects: iconTargets,
   });
 
-  if (isLoading && hostProjects.length === 0) {
-    return (
-      <View style={styles.centered} testID="projects-list">
-        <LoadingSpinner size="large" color={styles.spinnerColor.color} />
-      </View>
-    );
-  }
-
-  if (hostProjects.length === 0) {
-    return (
-      <View style={styles.centered} testID="projects-list">
-        <Text style={styles.emptyText}>{t("sidebar.project.empty.title")}</Text>
-      </View>
-    );
-  }
-
   return (
-    <View testID="projects-list">
+    <View style={styles.list} testID="projects-list">
       {scopedErrors.length > 0 ? <HostErrorsBanner errors={scopedErrors} /> : null}
-      <View style={settingsStyles.card}>
-        {hostProjects.map(({ project, host }, index) => (
-          <ProjectRow
-            key={host.projectId}
-            project={project}
-            host={host}
-            isFirst={index === 0}
-            iconDataUri={iconDataByProjectViewKey.get(project.viewKey) ?? null}
-          />
-        ))}
-      </View>
+      <ProjectLinksEntry
+        key={serverId}
+        serverId={serverId}
+        placements={projectLinkPlacements}
+        suggestions={projectLinkSuggestions}
+      />
+      {hostProjects.length > 0 ? (
+        <View style={settingsStyles.card}>
+          {hostProjects.map(({ project, host }, index) => (
+            <ProjectRow
+              key={host.projectId}
+              project={project}
+              host={host}
+              isFirst={index === 0}
+              iconDataUri={iconDataByProjectViewKey.get(project.viewKey) ?? null}
+            />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.centered}>
+          {isLoading ? (
+            <LoadingSpinner size="large" color={styles.spinnerColor.color} />
+          ) : (
+            <Text style={styles.emptyText}>{t("sidebar.project.empty.title")}</Text>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -173,6 +175,9 @@ function ProjectRowIcon({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  list: {
+    gap: theme.spacing[3],
+  },
   centered: {
     flex: 1,
     alignItems: "center",
@@ -188,7 +193,6 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing[3],
-    marginBottom: theme.spacing[3],
     gap: theme.spacing[1],
   },
   errorsBannerText: {

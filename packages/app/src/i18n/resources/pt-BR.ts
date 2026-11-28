@@ -2471,6 +2471,46 @@ export const ptBR: TranslationResources = {
       hostLoadFailed: "Não foi possível carregar projetos do host {{hostName}}: {{message}}",
       editProject: "Editar {{projectName}}",
     },
+    projectLinks: {
+      entry: {
+        sectionTitle: "Projetos em vários hosts",
+        linkProjects: "Vincular projetos",
+        matches: "{{count}} correspondências verificadas para revisar",
+        matches_one: "{{count}} correspondência verificada para revisar",
+        matches_other: "{{count}} correspondências verificadas para revisar",
+        savedLinks: "Vínculos salvos neste dispositivo",
+        linkAction: "Vincular projetos…",
+        manageAction: "Vínculos de projetos…",
+        hint: "Agrupe cópias do mesmo repositório Git na barra lateral.",
+      },
+      sheet: {
+        title: "Vincular projetos entre hosts",
+        deviceOnly:
+          "O vínculo agrupa os projetos na barra lateral deste dispositivo. Espaços de trabalho, configurações e arquivos permanecem em seus hosts.",
+        matchesTitle: "Correspondências verificadas",
+        matchesDescription:
+          "Estas entradas têm o mesmo remoto do Git e subdiretório do projeto, mas ainda estão separadas.",
+        linkedTitle: "Projetos vinculados",
+        noMatchesTitle: "Não há vínculos de projeto para revisar",
+        noMatchesDescription:
+          "Abra um espaço de trabalho no mesmo repositório em dois hosts. Projetos correspondentes que ainda estão separados aparecem aqui.",
+        linkProjects: "Vincular {{count}} projetos",
+        remote: "Remoto do Git",
+        subdirectory: "Subdiretório do projeto",
+        path: "Caminho",
+        needsReviewTitle: "Precisa de revisão",
+        needsReviewDescription:
+          "Os dados mais recentes do Git não confirmam mais este vínculo, então o Paseo mantém estes projetos separados.",
+        projectUnavailable: "Este projeto não está disponível no momento.",
+        saving: "Salvando o vínculo do projeto…",
+        saveFailed: "Não foi possível salvar o vínculo do projeto. Tente novamente.",
+        unlink: "Desvincular",
+      },
+      toasts: {
+        linked: "Projetos vinculados neste dispositivo",
+        unlinked: "Vínculo de projeto removido",
+      },
+    },
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",

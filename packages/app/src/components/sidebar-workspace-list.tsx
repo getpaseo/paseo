@@ -39,7 +39,7 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { useSidebarWorkspaceRename } from "@/workspace-rename";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import { ExternalLink, Link2, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -88,6 +88,12 @@ import {
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
 import { SidebarToastClearance } from "@/components/sidebar/sidebar-toast-region";
+import {
+  SidebarProjectLinksProvider,
+  useOpenSidebarProjectLinks,
+  useSidebarProjectLinks,
+} from "@/components/sidebar/sidebar-project-links";
+import type { ProjectLinkPlacementRef } from "@/projects/local-project-links";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -418,7 +424,8 @@ function ProjectRowTrailingActions({
   projectViewKey,
   displayName,
   worktreeTarget,
-  settingsTarget,
+  projectHosts,
+  onOpenProjectLinks,
   projectPath,
   isHovered,
   isMobileBreakpoint,
@@ -430,7 +437,8 @@ function ProjectRowTrailingActions({
   projectViewKey: string;
   displayName: string;
   worktreeTarget: SidebarProjectHostTarget | null;
-  settingsTarget: { serverId: string; projectId: string } | null;
+  projectHosts: readonly ProjectLinkPlacementRef[];
+  onOpenProjectLinks: () => void;
   projectPath: string;
   isHovered: boolean;
   isMobileBreakpoint: boolean;
@@ -458,7 +466,8 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectViewKey={projectViewKey}
-            settingsTarget={settingsTarget}
+            projectHosts={projectHosts}
+            onOpenProjectLinks={onOpenProjectLinks}
             projectPath={projectPath}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
@@ -471,6 +480,8 @@ function ProjectRowTrailingActions({
 
 const trash2LeadingIcon = <ThemedTrash2 size={14} uniProps={foregroundMutedColorMapping} />;
 const settingsLeadingIcon = <ThemedSettings size={14} uniProps={foregroundMutedColorMapping} />;
+const ThemedLink2 = withUnistyles(Link2);
+const projectLinksLeadingIcon = <ThemedLink2 size={14} uniProps={foregroundMutedColorMapping} />;
 const openInNewWindowLeadingIcon = (
   <ThemedExternalLink size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -486,13 +497,15 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 function ProjectKebabMenu({
   projectViewKey,
-  settingsTarget,
+  projectHosts,
+  onOpenProjectLinks,
   projectPath,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectViewKey: string;
-  settingsTarget: { serverId: string; projectId: string } | null;
+  projectHosts: readonly ProjectLinkPlacementRef[];
+  onOpenProjectLinks: () => void;
   projectPath: string;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
@@ -513,7 +526,8 @@ function ProjectKebabMenu({
         <ProjectMenuItems
           surface="dropdown"
           projectViewKey={projectViewKey}
-          settingsTarget={settingsTarget}
+          projectHosts={projectHosts}
+          onOpenProjectLinks={onOpenProjectLinks}
           projectPath={projectPath}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
@@ -541,20 +555,25 @@ function ProjectMenuItem({
 function ProjectMenuItems({
   surface,
   projectViewKey,
-  settingsTarget,
+  projectHosts,
+  onOpenProjectLinks,
   projectPath,
   onRemoveProject,
   removeProjectStatus,
 }: {
   surface: ProjectMenuSurface;
   projectViewKey: string;
-  settingsTarget: { serverId: string; projectId: string } | null;
+  projectHosts: readonly ProjectLinkPlacementRef[];
+  onOpenProjectLinks: () => void;
   projectPath: string;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const settingsTarget = projectHosts[0];
+  const { suggestions, links } = useSidebarProjectLinks(projectHosts);
+  const hasMatch = suggestions.length > 0;
   const handleOpenProjectSettings = useCallback(() => {
     if (!settingsTarget) return;
     router.navigate(buildProjectSettingsRoute(settingsTarget.serverId, settingsTarget.projectId));
@@ -581,6 +600,20 @@ function ProjectMenuItems({
           onSelect={handleOpenProjectSettings}
         >
           {t("sidebar.project.actions.openSettings")}
+        </ProjectMenuItem>
+      ) : null}
+      {hasMatch || links.length > 0 ? (
+        <ProjectMenuItem
+          surface={surface}
+          testID={`sidebar-project-menu-project-links-${projectViewKey}`}
+          leading={projectLinksLeadingIcon}
+          onSelect={onOpenProjectLinks}
+        >
+          {t(
+            hasMatch
+              ? "settings.projectLinks.entry.linkAction"
+              : "settings.projectLinks.entry.manageAction",
+          )}
         </ProjectMenuItem>
       ) : null}
       {canOpenInNewWindow ? (
@@ -902,7 +935,10 @@ function ProjectHeaderRow({
   const isMobileBreakpoint = useIsCompactFormFactor();
   const localDaemonServerId = useLocalDaemonServerId();
   const projectPath = resolveSidebarProjectLocalPath(project, localDaemonServerId);
-  const settingsTarget = project.hosts[0] ?? null;
+  const openProjectLinks = useOpenSidebarProjectLinks();
+  const handleOpenProjectLinks = useCallback(() => {
+    openProjectLinks?.(project.hosts);
+  }, [openProjectLinks, project.hosts]);
   const handleBeginWorkspaceSetup = useCallback(() => {
     if (!worktreeTarget) {
       return;
@@ -979,7 +1015,8 @@ function ProjectHeaderRow({
         projectViewKey={project.viewKey}
         displayName={displayName}
         worktreeTarget={worktreeTarget}
-        settingsTarget={settingsTarget}
+        projectHosts={project.hosts}
+        onOpenProjectLinks={handleOpenProjectLinks}
         projectPath={projectPath}
         isHovered={isHovered}
         isMobileBreakpoint={isMobileBreakpoint}
@@ -1054,7 +1091,8 @@ function ProjectHeaderRow({
         <ProjectMenuItems
           surface="context"
           projectViewKey={project.viewKey}
-          settingsTarget={settingsTarget}
+          projectHosts={project.hosts}
+          onOpenProjectLinks={handleOpenProjectLinks}
           projectPath={projectPath}
           onRemoveProject={onRemoveProject}
           removeProjectStatus={removeProjectStatus}
@@ -2090,7 +2128,7 @@ export function SidebarWorkspaceList({
       />
     );
 
-  return content;
+  return <SidebarProjectLinksProvider>{content}</SidebarProjectLinksProvider>;
 }
 
 /**

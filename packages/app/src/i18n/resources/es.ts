@@ -2487,6 +2487,46 @@ export const es: TranslationResources = {
       hostLoadFailed: "No se pudieron cargar proyectos desde el host{{hostName}}:{{message}}",
       editProject: "Editar{{projectName}}",
     },
+    projectLinks: {
+      entry: {
+        sectionTitle: "Proyectos en varios hosts",
+        linkProjects: "Vincular proyectos",
+        matches: "{{count}} coincidencias verificadas para revisar",
+        matches_one: "{{count}} coincidencia verificada para revisar",
+        matches_other: "{{count}} coincidencias verificadas para revisar",
+        savedLinks: "Vínculos guardados en este dispositivo",
+        linkAction: "Vincular proyectos…",
+        manageAction: "Vínculos de proyectos…",
+        hint: "Agrupa copias del mismo repositorio Git en la barra lateral.",
+      },
+      sheet: {
+        title: "Vincular proyectos entre hosts",
+        deviceOnly:
+          "La vinculación agrupa los proyectos en la barra lateral de este dispositivo. Los espacios de trabajo, la configuración y los archivos permanecen en sus hosts.",
+        matchesTitle: "Coincidencias verificadas",
+        matchesDescription:
+          "Estas entradas tienen el mismo remoto de Git y subdirectorio del proyecto, pero aún están separadas.",
+        linkedTitle: "Proyectos enlazados",
+        noMatchesTitle: "No hay enlaces de proyectos para revisar",
+        noMatchesDescription:
+          "Abre un espacio de trabajo en el mismo repositorio en dos hosts. Aquí aparecen los proyectos coincidentes que siguen separados.",
+        linkProjects: "Enlazar {{count}} proyectos",
+        remote: "Remoto de Git",
+        subdirectory: "Subdirectorio del proyecto",
+        path: "Ruta",
+        needsReviewTitle: "Requiere revisión",
+        needsReviewDescription:
+          "Los datos de Git más recientes ya no confirman este enlace, así que Paseo mantiene estos proyectos separados.",
+        projectUnavailable: "Este proyecto no está disponible actualmente.",
+        saving: "Guardando el enlace del proyecto…",
+        saveFailed: "No se pudo guardar el enlace del proyecto. Inténtalo de nuevo.",
+        unlink: "Desenlazar",
+      },
+      toasts: {
+        linked: "Proyectos enlazados en este dispositivo",
+        unlinked: "Enlace de proyecto eliminado",
+      },
+    },
     groupInfo: "Acerca de{{title}}",
     sections: {
       general: "General",

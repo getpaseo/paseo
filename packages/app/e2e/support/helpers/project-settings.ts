@@ -280,6 +280,20 @@ export async function unblockPaseoConfigWrites(repoPath: string): Promise<void> 
 
 // --- WebSocket helpers ---
 
+export async function holdProjectConfigRead(page: Page): Promise<() => void> {
+  const { promise: released, resolve: release } = Promise.withResolvers<void>();
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage(async (message) => {
+      if (getSessionMessage(message)?.type === "read_project_config_request") {
+        await released;
+      }
+      server.send(message);
+    });
+  });
+  return release;
+}
+
 // Proxies all daemon WS traffic transparently, but rejects paseo.json reads
 // until the test explicitly allows recovery. Closing the transport leaves the
 // client-side RPC pending across reconnects, so this injects the same correlated

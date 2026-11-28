@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createProjectViewKey } from "@/projects/workspace-structure";
+import { deriveProjectsFromReplica } from "@/hooks/use-projects";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
@@ -132,6 +133,103 @@ afterEach(() => {
 });
 
 describe("workspace replica authority", () => {
+  it("honors a saved link as soon as an offline host's cached directory is accepted", () => {
+    const serverIds = ["host-a", "host-b", "host-c"];
+    const remoteUrl = "https://github.com/acme/app.git";
+    const hosts = serverIds.map((serverId) => {
+      const root = `/repos/${serverId}`;
+      const workspace = {
+        ...createWorkspace({
+          id: "workspace",
+          projectId: "project",
+          projectRootPath: root,
+          workspaceDirectory: root,
+        }),
+        gitRuntime: { remoteUrl },
+        project: {
+          projectKey: "project",
+          projectName: "App",
+          checkout: {
+            cwd: root,
+            isGit: true as const,
+            currentBranch: "main",
+            remoteUrl,
+            worktreeRoot: root,
+            isPaseoOwnedWorktree: false as const,
+            mainRepoRoot: null,
+          },
+        },
+      };
+      const project = {
+        ...projectDescriptorFromTestWorkspace(workspace),
+        projectKey: serverId === "host-b" ? "other-daemon-key" : "remote:github.com/acme/app",
+      };
+      return {
+        serverId,
+        serverName: serverId,
+        hasHydratedWorkspaces: serverId !== "host-b",
+        workspace,
+        project,
+      };
+    });
+    const localProjectLinks = [
+      {
+        id: "link-ab",
+        members: [
+          { serverId: "host-a", projectId: "project" },
+          { serverId: "host-b", projectId: "project" },
+        ],
+        identity: { repository: "github.com/acme/app", subdirectory: "" },
+      },
+    ];
+    const sessions = Object.fromEntries(
+      hosts.map(({ serverId, hasHydratedWorkspaces, workspace, project }) => [
+        serverId,
+        {
+          hasHydratedWorkspaces,
+          hasWorkspaceDirectorySnapshot: false,
+          workspaces: new Map([[workspace.id, workspace]]),
+          projects: new Map([[project.projectId, project]]),
+        },
+      ]),
+    );
+    const selectProjects = createWorkspaceStructureProjectsSelector(
+      serverIds,
+      undefined,
+      localProjectLinks,
+    );
+    expect(selectProjects({ sessions }).map((project) => project.workspaceKeys)).toContainEqual([
+      "host-a:workspace",
+      "host-c:workspace",
+    ]);
+
+    sessions["host-b"]!.hasWorkspaceDirectorySnapshot = true;
+
+    expect(selectProjects({ sessions }).map((project) => project.workspaceKeys)).toContainEqual([
+      "host-a:workspace",
+      "host-b:workspace",
+    ]);
+    const settingsProjects = deriveProjectsFromReplica({
+      replicas: hosts.map(
+        ({ serverId, serverName, hasHydratedWorkspaces, project, workspace }) => ({
+          serverId,
+          serverName,
+          hasHydratedWorkspaces,
+          hasWorkspaceDirectorySnapshot: serverId === "host-b",
+          projects: [project],
+          workspaces: [workspace],
+        }),
+      ),
+      runtimeStates: [],
+      localProjectLinks,
+    }).projects;
+    const settingsGroups = [];
+    for (const project of settingsProjects) {
+      settingsGroups.push(project.hosts.map((host) => host.serverId));
+    }
+    expect(settingsGroups).toEqual([["host-a", "host-b"], ["host-c"]]);
+  });
+
   it("publishes a restored directory while keeping remote hydration false", () => {
     const cachedWorkspace = createWorkspace({ id: "cached-workspace" });
     const store = useSessionStore.getState();
@@ -227,6 +325,52 @@ describe("workspace replica authority", () => {
     expect(directoryProjects.map((project) => project.workspaceKeys)).toEqual([
       [`${hydratedServerId}:${hydratedWorkspace.id}`],
     ]);
+  });
+  it("keeps automatic grouping when a linked host is excluded while hydrating", () => {
+    const primaryServerId = "primary-server";
+    const loadingServerId = "loading-server";
+    const projectKey = "remote:github.com/acme/app";
+    const primaryWorkspace = createWorkspace({
+      id: "primary-workspace",
+      projectId: "primary-project",
+      projectRootPath: "/repos/app",
+    });
+    const primaryProject = {
+      ...projectDescriptorFromTestWorkspace(primaryWorkspace),
+      projectKey,
+    };
+    const state = {
+      sessions: {
+        [primaryServerId]: {
+          hasHydratedWorkspaces: true,
+          projects: new Map([[primaryProject.projectId, primaryProject]]),
+          workspaces: new Map([[primaryWorkspace.id, primaryWorkspace]]),
+        },
+        [loadingServerId]: {
+          hasHydratedWorkspaces: false,
+          projects: new Map(),
+          workspaces: new Map(),
+        },
+      },
+    };
+
+    const directoryServerIds = selectWorkspaceDirectoryServerIds(state, [
+      primaryServerId,
+      loadingServerId,
+    ]);
+    const projects = selectWorkspaceStructureProjects(state, directoryServerIds, undefined, [
+      {
+        id: "local-link",
+        members: [
+          { serverId: primaryServerId, projectId: primaryProject.projectId },
+          { serverId: loadingServerId, projectId: "loading-project" },
+        ],
+        identity: { repository: "github.com/acme/app", subdirectory: "" },
+      },
+    ]);
+
+    expect(directoryServerIds).toEqual([primaryServerId]);
+    expect(projects).toMatchObject([{ viewKey: projectKey, projectKey }]);
   });
 });
 

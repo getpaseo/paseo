@@ -2461,6 +2461,46 @@ export const en = {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
       editProject: "Edit {{projectName}}",
     },
+    projectLinks: {
+      entry: {
+        sectionTitle: "Projects across hosts",
+        linkProjects: "Link projects",
+        matches: "{{count}} verified matches to review",
+        matches_one: "{{count}} verified match to review",
+        matches_other: "{{count}} verified matches to review",
+        savedLinks: "Links saved on this device",
+        linkAction: "Link projects…",
+        manageAction: "Project links…",
+        hint: "Group copies of the same Git repository in your sidebar.",
+      },
+      sheet: {
+        title: "Link projects across hosts",
+        deviceOnly:
+          "Linking groups projects in the sidebar on this device. Workspaces, settings, and files stay on their hosts.",
+        matchesTitle: "Verified matches",
+        matchesDescription:
+          "These entries have the same Git remote and project subdirectory, but are still separate.",
+        linkedTitle: "Linked projects",
+        noMatchesTitle: "No project links to review",
+        noMatchesDescription:
+          "Open a workspace in the same repository on two hosts. Matching projects that are still separate appear here.",
+        linkProjects: "Link {{count}} projects",
+        remote: "Git remote",
+        subdirectory: "Project subdirectory",
+        path: "Path",
+        needsReviewTitle: "Needs review",
+        needsReviewDescription:
+          "The latest Git facts no longer confirm this link, so Paseo keeps these projects separate.",
+        projectUnavailable: "This project is not currently available.",
+        saving: "Saving project link…",
+        saveFailed: "Couldn't save the project link. Try again.",
+        unlink: "Unlink",
+      },
+      toasts: {
+        linked: "Projects linked on this device",
+        unlinked: "Project link removed",
+      },
+    },
     groupInfo: "About {{title}}",
     sections: {
       general: "General",

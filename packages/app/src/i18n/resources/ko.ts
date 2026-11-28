@@ -2443,6 +2443,46 @@ export const ko: TranslationResources = {
       hostLoadFailed: "{{hostName}} 호스트에서 프로젝트를 불러올 수 없습니다: {{message}}",
       editProject: "{{projectName}} 편집",
     },
+    projectLinks: {
+      entry: {
+        sectionTitle: "여러 호스트의 프로젝트",
+        linkProjects: "프로젝트 연결",
+        matches: "검토할 확인된 일치 항목 {{count}}개",
+        matches_one: "검토할 확인된 일치 항목 {{count}}개",
+        matches_other: "검토할 확인된 일치 항목 {{count}}개",
+        savedLinks: "이 기기에 저장된 링크",
+        linkAction: "프로젝트 연결…",
+        manageAction: "프로젝트 링크…",
+        hint: "같은 Git 저장소의 복사본을 사이드바에서 그룹으로 묶습니다.",
+      },
+      sheet: {
+        title: "호스트 간 프로젝트 연결",
+        deviceOnly:
+          "연결하면 이 기기의 사이드바에서 프로젝트가 그룹으로 묶입니다. 작업 공간, 설정, 파일은 각 호스트에 그대로 남습니다.",
+        matchesTitle: "확인된 일치 항목",
+        matchesDescription:
+          "이 항목들은 같은 Git 원격 저장소와 프로젝트 하위 디렉터리를 가지지만 아직 분리되어 있습니다.",
+        linkedTitle: "연결된 프로젝트",
+        noMatchesTitle: "검토할 프로젝트 연결이 없습니다",
+        noMatchesDescription:
+          "두 호스트에서 같은 저장소의 작업 공간을 여세요. 일치하지만 아직 별도로 표시되는 프로젝트가 여기에 나타납니다.",
+        linkProjects: "프로젝트 {{count}}개 연결",
+        remote: "Git 원격 저장소",
+        subdirectory: "프로젝트 하위 디렉터리",
+        path: "경로",
+        needsReviewTitle: "검토 필요",
+        needsReviewDescription:
+          "최신 Git 정보가 더 이상 이 연결을 확인하지 못하므로 Paseo는 이 프로젝트들을 분리된 상태로 유지합니다.",
+        projectUnavailable: "이 프로젝트는 현재 사용할 수 없습니다.",
+        saving: "프로젝트 링크를 저장하는 중…",
+        saveFailed: "프로젝트 링크를 저장하지 못했습니다. 다시 시도하세요.",
+        unlink: "연결 해제",
+      },
+      toasts: {
+        linked: "이 기기에서 프로젝트를 연결했습니다",
+        unlinked: "프로젝트 연결을 제거했습니다",
+      },
+    },
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",

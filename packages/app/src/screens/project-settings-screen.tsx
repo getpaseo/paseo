@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
@@ -7,6 +7,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { ProjectLinksEntry } from "@/components/project-links-entry";
 import type {
   PaseoConfigRaw,
   PaseoConfigRevision,
@@ -33,7 +34,7 @@ import type { PageTitleParent } from "@/components/page-layout";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { SettingsDetailHeader } from "@/components/settings";
 import { settingsStyles } from "@/styles/settings";
-import { useProjects } from "@/hooks/use-projects";
+import { useProjects, type UseProjectsResult } from "@/hooks/use-projects";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
 import { useProjectIcons } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
@@ -104,7 +105,7 @@ export default function ProjectSettingsScreen({
   projectId,
   onBackToProjects,
 }: ProjectSettingsScreenProps) {
-  const { projects } = useProjects();
+  const { projects, projectLinkPlacements, projectLinkSuggestions } = useProjects();
   const project = useMemo(
     () => getProjectSummaryForHostProject(projects, serverId, projectId),
     [projectId, projects, serverId],
@@ -133,6 +134,8 @@ export default function ProjectSettingsScreen({
       client={client}
       isHostGone={isHostGone}
       onBackToProjects={onBackToProjects}
+      projectLinkPlacements={projectLinkPlacements}
+      projectLinkSuggestions={projectLinkSuggestions}
     />
   );
 }
@@ -182,7 +185,10 @@ function useProjectsParent(onPress: () => void): PageTitleParent {
   );
 }
 
-interface ProjectSettingsBodyProps {
+interface ProjectSettingsBodyProps extends Pick<
+  UseProjectsResult,
+  "projectLinkPlacements" | "projectLinkSuggestions"
+> {
   project: ProjectSummary;
   selectedHost: ProjectHostEntry;
   client: DaemonClient;
@@ -196,6 +202,8 @@ function ProjectSettingsBody({
   client,
   isHostGone,
   onBackToProjects,
+  projectLinkPlacements,
+  projectLinkSuggestions,
 }: ProjectSettingsBodyProps) {
   const { t } = useTranslation();
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
@@ -284,6 +292,29 @@ function ProjectSettingsBody({
     [openEditSheet, t],
   );
 
+  const renderProjectSettings = (entry: ReactNode) =>
+    renderContent({
+      readQuery,
+      loadedConfig,
+      loadedRevision,
+      hasUncommittedWorktreeSetupChanges,
+      readError,
+      selectedHost,
+      queryKey,
+      client,
+      onReload: handleReload,
+      isHostGone,
+      onBackToProjects,
+      projectLinks: (
+        <SettingsGroup
+          title={t("settings.projectLinks.entry.sectionTitle")}
+          testID="project-links-group"
+        >
+          {entry}
+        </SettingsGroup>
+      ),
+    });
+
   return (
     <View role="main">
       <SettingsDetailHeader
@@ -306,19 +337,16 @@ function ProjectSettingsBody({
         snapshot={editSnapshot}
       />
 
-      {renderContent({
-        readQuery,
-        loadedConfig,
-        loadedRevision,
-        hasUncommittedWorktreeSetupChanges,
-        readError,
-        selectedHost,
-        queryKey,
-        client,
-        onReload: handleReload,
-        isHostGone,
-        onBackToProjects,
-      })}
+      {/* The entry can move as config loads without remounting the dialog or its pending save. */}
+      <ProjectLinksEntry
+        key={JSON.stringify([selectedHost.serverId, selectedHost.projectId])}
+        serverId={selectedHost.serverId}
+        projectId={selectedHost.projectId}
+        placements={projectLinkPlacements}
+        suggestions={projectLinkSuggestions}
+      >
+        {renderProjectSettings}
+      </ProjectLinksEntry>
     </View>
   );
 }
@@ -335,6 +363,7 @@ interface RenderContentInput {
   onReload: () => void;
   isHostGone: boolean;
   onBackToProjects: () => void;
+  projectLinks: ReactNode;
 }
 
 function renderContent({
@@ -349,32 +378,44 @@ function renderContent({
   onReload,
   isHostGone,
   onBackToProjects,
+  projectLinks,
 }: RenderContentInput) {
+  const withProjectLinks = (status: ReactNode) => (
+    <>
+      {status}
+      {projectLinks}
+    </>
+  );
+
   if (readQuery.isLoading) {
-    return (
+    return withProjectLinks(
       <View style={styles.centered}>
         <LoadingSpinner color={ResolveSpinnerColor()} />
-      </View>
+      </View>,
     );
   }
 
   if (readQuery.isError) {
-    return <ReadFailureCallout kind="transport" error={readQuery.error} onReload={onReload} />;
+    return withProjectLinks(
+      <ReadFailureCallout kind="transport" error={readQuery.error} onReload={onReload} />,
+    );
   }
 
   if (readError) {
-    return <ReadFailureCallout kind={readError.code} error={null} onReload={onReload} />;
+    return withProjectLinks(
+      <ReadFailureCallout kind={readError.code} error={null} onReload={onReload} />,
+    );
   }
 
   if (isHostGone) {
-    return <NoEditableTarget onBackToProjects={onBackToProjects} />;
+    return withProjectLinks(<NoEditableTarget onBackToProjects={onBackToProjects} />);
   }
 
   if (!loadedConfig) {
-    return (
+    return withProjectLinks(
       <View style={styles.centered}>
         <LoadingSpinner color={ResolveSpinnerColor()} />
-      </View>
+      </View>,
     );
   }
 
@@ -389,7 +430,9 @@ function renderContent({
       queryKey={queryKey}
       client={client}
       onReload={onReload}
-    />
+    >
+      {projectLinks}
+    </ProjectConfigForm>
   );
 }
 
@@ -463,6 +506,7 @@ function errorToDetail(error: unknown): string | null {
 }
 
 interface ProjectConfigFormProps {
+  children: ReactNode;
   baseConfig: PaseoConfigRaw;
   revision: PaseoConfigRevision | null;
   hasUncommittedWorktreeSetupChanges: boolean;
@@ -473,6 +517,7 @@ interface ProjectConfigFormProps {
 }
 
 function ProjectConfigForm({
+  children,
   baseConfig,
   revision,
   hasUncommittedWorktreeSetupChanges,
@@ -747,6 +792,8 @@ function ProjectConfigForm({
           )}
         </View>
       </SettingsGroup>
+
+      {children}
 
       <SettingsGroup
         title={t("settings.project.metadata.title")}

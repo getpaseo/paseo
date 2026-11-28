@@ -27,6 +27,8 @@ import {
 } from "@/components/ui/bottom-sheet-scope";
 import { SheetBackdrop } from "./sheet-backdrop";
 
+const ALWAYS_CAN_CLOSE = () => true;
+
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
 
 /**
@@ -164,17 +166,22 @@ export function useIsolatedBottomSheetVisibility({
   isEnabled,
   onClose,
   onBack,
+  canClose = ALWAYS_CAN_CLOSE,
 }: {
   visible: boolean;
   isEnabled?: boolean;
   onClose: () => void;
   /** Offered Android Back before it closes the sheet; returns true when it handled the press. */
   onBack?: () => boolean;
+  /** Return false to prevent user-driven dismissal while the owner has a pending operation. */
+  canClose?: () => boolean;
 }) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
+  const canCloseRef = useRef(canClose);
+  canCloseRef.current = canClose;
 
   const tracker = useMemo(
     () =>
@@ -182,6 +189,7 @@ export function useIsolatedBottomSheetVisibility({
         onClose: () => onCloseRef.current(),
         backPress: systemBackPress,
         onBack: () => onBackRef.current?.() ?? false,
+        canClose: () => canCloseRef.current(),
       }),
     [],
   );

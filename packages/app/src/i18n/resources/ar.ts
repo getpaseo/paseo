@@ -2467,6 +2467,48 @@ export const ar: TranslationResources = {
       hostLoadFailed: "تعذر تحميل المشاريع من المضيف{{hostName}}:{{message}}",
       editProject: "تحرير{{projectName}}",
     },
+    projectLinks: {
+      entry: {
+        sectionTitle: "المشاريع عبر المضيفين",
+        linkProjects: "ربط المشاريع",
+        matches: "{{count}} تطابق مؤكّد للمراجعة",
+        matches_one: "{{count}} تطابق مؤكّد للمراجعة",
+        matches_other: "{{count}} تطابق مؤكّد للمراجعة",
+        savedLinks: "روابط محفوظة على هذا الجهاز",
+        linkAction: "ربط المشاريع…",
+        manageAction: "روابط المشاريع…",
+        matches_two: "{{count}} من التطابقات المؤكّدة للمراجعة",
+        matches_few: "{{count}} تطابقات مؤكّدة للمراجعة",
+        hint: "اجمع نُسخ مستودع Git نفسه في الشريط الجانبي.",
+      },
+      sheet: {
+        title: "ربط المشاريع عبر المضيفين",
+        deviceOnly:
+          "يجمع الربط المشاريع في الشريط الجانبي على هذا الجهاز. تبقى مساحات العمل والإعدادات والملفات على مضيفيها.",
+        matchesTitle: "تطابقات تم التحقق منها",
+        matchesDescription:
+          "تمتلك هذه الإدخالات نفس مستودع Git البعيد والدليل الفرعي للمشروع، لكنها ما زالت منفصلة.",
+        linkedTitle: "المشاريع المرتبطة",
+        noMatchesTitle: "لا توجد روابط مشاريع لمراجعتها",
+        noMatchesDescription:
+          "افتح مساحة عمل في المستودع نفسه على مضيفين. تظهر هنا المشاريع المطابقة التي لا تزال منفصلة.",
+        linkProjects: "ربط {{count}} مشاريع",
+        remote: "مستودع Git البعيد",
+        subdirectory: "الدليل الفرعي للمشروع",
+        path: "المسار",
+        needsReviewTitle: "تحتاج إلى مراجعة",
+        needsReviewDescription:
+          "لم تعد أحدث معلومات Git تؤكد هذا الرابط، لذلك يبقي Paseo هذه المشاريع منفصلة.",
+        projectUnavailable: "هذا المشروع غير متاح حاليًا.",
+        saving: "جارٍ حفظ رابط المشروع…",
+        saveFailed: "تعذر حفظ رابط المشروع. حاول مرة أخرى.",
+        unlink: "إلغاء الربط",
+      },
+      toasts: {
+        linked: "تم ربط المشاريع على هذا الجهاز",
+        unlinked: "تمت إزالة رابط المشروع",
+      },
+    },
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",
