@@ -464,6 +464,10 @@ In the ACP shim, use `command(entry, context)` to return a rewritten entry for e
 slash command. For example, a plugin with a vendor skill registry can set the kind with
 `return { ...entry, kind: skills.has(entry.name) ? "skill" : "command" }`.
 
+Use `contextWindow` only when the agent exposes an effective context limit separately from ACP's
+reported size. The reader is scoped to one native session. Return `undefined` to use ACP's size;
+call `refresh()` after a delayed native write to re-read the limit without changing tokens used.
+
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
 It must resolve inside that directory to a regular file that follows the
 [SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string

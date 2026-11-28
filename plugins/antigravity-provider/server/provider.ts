@@ -8,6 +8,7 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 import { mapToolCall } from "./tool-calls.js";
+import { createContextWindow } from "./context-window.js";
 
 const legacySession = z.object({
   version: z.literal(1),
@@ -67,6 +68,7 @@ const antigravity: AcpTransformer = {
     }
     return "pass";
   },
+  contextWindow: createContextWindow,
 };
 
 const MIN_AGY_VERSION = [1, 5, 1] as const;
