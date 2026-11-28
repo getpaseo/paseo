@@ -551,15 +551,17 @@ function ControlledAgentControls({
     [controlPresence, minimumDensity, toolbarGeometry],
   );
 
-  const handleLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      const availableWidth = readMeasuredWidth(event);
-      if (availableWidth === null) return;
-      availableWidthRef.current = availableWidth;
-      updateDensityForWidth(availableWidth);
-    },
-    [updateDensityForWidth],
-  );
+  // Web delivers a layout event to the handler it read when the resize was observed, after an
+  // async measure. A resize that also flips `minimumDensity` (a desktop window narrowed to phone
+  // width) can land that event after the flip, so the handler goes through the latest update.
+  const updateDensityForWidthRef = useRef(updateDensityForWidth);
+  updateDensityForWidthRef.current = updateDensityForWidth;
+  const handleLayout = useCallback((event: LayoutChangeEvent) => {
+    const availableWidth = readMeasuredWidth(event);
+    if (availableWidth === null) return;
+    availableWidthRef.current = availableWidth;
+    updateDensityForWidthRef.current(availableWidth);
+  }, []);
 
   useEffect(() => {
     if (availableWidthRef.current > 0) {
