@@ -115,6 +115,26 @@ Alibaba's coding plan routes Claude Code to Qwen models via an Anthropic-compati
 }
 ```
 
+## Wally
+
+[Wally](https://www.runwally.com) serves open-weight models through an OpenAI-compatible API. OpenCode includes it as the `wally` provider and reads the key from `WALLY_API_KEY`. Create a key in the [RunAnywhere console](https://console.runanywhere.ai), set it on `opencode`, then pick a `wally/` model such as `wally/deepseek-v4.1-flash` in the OpenCode model list.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode": {
+        "env": { "WALLY_API_KEY": "<your-wally-api-key>" }
+      }
+    }
+  }
+}
+```
+
+With OpenCode 1.x, `paseo reload` does not pass a new key to OpenCode, because Paseo keeps the OpenCode settings it started with. Restart the daemon after adding or changing the key: run `paseo daemon restart`, or use **Restart daemon** under **Settings → your host → Overview**.
+
+If Paseo reuses a running OpenCode v2 server, leave `WALLY_API_KEY` out of Paseo's `env` and set it in that server's environment.
+
 ## Multiple profiles
 
 Create as many entries as you want against the same first-class provider. Each one shows up as a separate option in the app with its own credentials and models.

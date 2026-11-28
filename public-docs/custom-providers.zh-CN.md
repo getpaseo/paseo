@@ -108,6 +108,26 @@ Z.AI 通过兼容 Anthropic 的端点提供 GLM 模型。把 `ANTHROPIC_BASE_URL
 }
 ```
 
+## Wally {#wally}
+
+[Wally](https://www.runwally.com) 通过兼容 OpenAI 的 API 提供开放权重模型。OpenCode 内置了 `wally` Provider，并从 `WALLY_API_KEY` 读取密钥。在 [RunAnywhere 控制台](https://console.runanywhere.ai) 创建密钥，把它设置在 `opencode` 上，然后在 OpenCode 的模型列表中选择 `wally/` 模型，例如 `wally/deepseek-v4.1-flash`。
+
+```json
+{
+  "agents": {
+    "providers": {
+      "opencode": {
+        "env": { "WALLY_API_KEY": "<your-wally-api-key>" }
+      }
+    }
+  }
+}
+```
+
+使用 OpenCode 1.x 时，`paseo reload` 不会把新的密钥传给 OpenCode，因为 Paseo 会保留启动时的 OpenCode 设置。添加或修改密钥后需要重启 daemon：运行 `paseo daemon restart`，或在应用中打开 **设置 → 你的主机 → 概览** 并使用 **重启 Daemon**。
+
+如果 Paseo 复用正在运行的 OpenCode v2 服务器，请不要在 Paseo 的 `env` 中设置 `WALLY_API_KEY`，而是把它设置在该服务器的环境变量中。
+
 ## 多个配置 {#multiple-profiles}
 
 针对同一个一等 Provider，你想创建多少条目都可以。每个条目都会作为单独的选项出现在应用中，有自己的凭据和模型。
