@@ -115,6 +115,7 @@ export const ko: TranslationResources = {
       home: "홈",
       groupByProject: "프로젝트별 그룹화",
       groupByStatus: "상태별 그룹화",
+      groupByDay: "활동 일자별로 그룹화",
       copyBrowserHostName: "브라우저 호스트 이름 복사",
       profileGroupLabel: "프로필",
       profileSearchKeywords: "프로필 프로필 적용 에이전트 프로필 프리셋",
@@ -1268,6 +1269,11 @@ export const ko: TranslationResources = {
       working: "실행 중",
       done: "완료",
     },
+    dayBucket: {
+      today: "오늘",
+      yesterday: "어제",
+      older: "이전",
+    },
     display: {
       showBackground: "백그라운드 표시",
       trigger: "표시 설정",
@@ -1283,6 +1289,7 @@ export const ko: TranslationResources = {
         label: "그룹화",
         project: "프로젝트",
         status: "상태",
+        day: "활동 일자",
         labels: "레이블",
       },
       titleSource: {

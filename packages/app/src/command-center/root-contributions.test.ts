@@ -23,6 +23,7 @@ function source(groupMode: SidebarGroupMode): {
         section: "Actions",
         groupByProject: "Group by project",
         groupByStatus: "Group by status",
+        groupByDay: "Group by activity day",
       },
       icons: { project: ProjectIcon, status: StatusIcon },
       setGroupMode: (mode) => applied.push(mode),
@@ -45,8 +46,20 @@ describe("grouping command center contribution", () => {
     expect(fixture.applied).toEqual(["status"]);
   });
 
-  it("offers project while grouped by status", () => {
+  it("offers day while grouped by status", () => {
     const fixture = source("status");
+    const contribution = buildGroupingContribution(fixture.value);
+
+    expect(contribution.presentation).toMatchObject({
+      title: "Group by activity day",
+    });
+
+    contribution.run();
+    expect(fixture.applied).toEqual(["day"]);
+  });
+
+  it("offers project while grouped by day", () => {
+    const fixture = source("day");
     const contribution = buildGroupingContribution(fixture.value);
 
     expect(contribution.presentation).toMatchObject({
@@ -58,10 +71,11 @@ describe("grouping command center contribution", () => {
     expect(fixture.applied).toEqual(["project"]);
   });
 
-  it("keeps a stable id across both modes so the registry tiebreak never moves", () => {
-    expect(buildGroupingContribution(source("project").value).id).toBe(
-      buildGroupingContribution(source("status").value).id,
+  it("keeps a stable id across all modes so the registry tiebreak never moves", () => {
+    const ids = ["project", "status", "day"].map(
+      (mode) => buildGroupingContribution(source(mode as SidebarGroupMode).value).id,
     );
+    expect(new Set(ids).size).toBe(1);
   });
 
   it("stays out of the default empty-query list", () => {

@@ -2,12 +2,13 @@ import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { SIDEBAR_UNLABELLED_LABEL_KEY, type SidebarLabelFilter } from "@/stores/sidebar-view-store";
 import type { StatusBucket, StatusGroup } from "@/hooks/sidebar-status-view-model";
+import type { DayGroup } from "@/hooks/sidebar-day-view-model";
 
 export interface SidebarWorkspaceGroup {
   key: string;
   label: string;
   rows: SidebarWorkspaceEntry[];
-  leading: { kind: "status"; bucket: StatusBucket };
+  leading: { kind: "status"; bucket: StatusBucket } | { kind: "day" };
 }
 
 export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWorkspaceGroup[] {
@@ -16,6 +17,15 @@ export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWo
     label: group.label,
     rows: group.rows,
     leading: { kind: "status", bucket: group.bucket },
+  }));
+}
+
+export function dayWorkspaceGroups(groups: readonly DayGroup[]): SidebarWorkspaceGroup[] {
+  return groups.map((group) => ({
+    key: group.key,
+    label: group.label,
+    rows: group.rows,
+    leading: { kind: "day" },
   }));
 }
 

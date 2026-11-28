@@ -116,6 +116,7 @@ export const ptBR: TranslationResources = {
       home: "Início",
       groupByProject: "Agrupar por projeto",
       groupByStatus: "Agrupar por status",
+      groupByDay: "Agrupar por dia de atividade",
       copyBrowserHostName: "Copiar o nome do host do navegador",
       profileGroupLabel: "Perfil",
       profileSearchKeywords: "perfil aplicar perfil perfil do agente predefinição",
@@ -1288,6 +1289,11 @@ export const ptBR: TranslationResources = {
       working: "Em execução",
       done: "Concluído",
     },
+    dayBucket: {
+      today: "Hoje",
+      yesterday: "Ontem",
+      older: "Anterior",
+    },
     display: {
       showBackground: "Mostrar espaços em segundo plano",
       trigger: "Preferências de exibição",
@@ -1303,6 +1309,7 @@ export const ptBR: TranslationResources = {
         label: "Agrupamento",
         project: "Projeto",
         status: "Status",
+        day: "Dia de atividade",
         labels: "Etiquetas",
       },
       titleSource: {

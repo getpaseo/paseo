@@ -115,6 +115,7 @@ export const zhCN: TranslationResources = {
       home: "首页",
       groupByProject: "按项目分组",
       groupByStatus: "按状态分组",
+      groupByDay: "Group by activity day",
       copyBrowserHostName: "复制浏览器宿主名称",
       profileGroupLabel: "配置文件",
       profileSearchKeywords: "配置文件 应用配置文件 代理配置文件 预设",
@@ -1253,6 +1254,11 @@ export const zhCN: TranslationResources = {
       working: "运行中",
       done: "已完成",
     },
+    dayBucket: {
+      today: "Today",
+      yesterday: "Yesterday",
+      older: "Older",
+    },
     display: {
       showBackground: "显示后台工作区",
       trigger: "显示偏好",
@@ -1268,6 +1274,7 @@ export const zhCN: TranslationResources = {
         label: "分组",
         project: "项目",
         status: "状态",
+        day: "Activity day",
         labels: "标签",
       },
       titleSource: {

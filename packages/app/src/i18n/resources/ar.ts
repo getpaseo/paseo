@@ -115,6 +115,7 @@ export const ar: TranslationResources = {
       home: "بيت",
       groupByProject: "تجميع حسب المشروع",
       groupByStatus: "تجميع حسب الحالة",
+      groupByDay: "التجميع حسب يوم النشاط",
       copyBrowserHostName: "نسخ اسم مضيف المتصفح",
       profileGroupLabel: "الملف الشخصي",
       profileSearchKeywords: "ملف شخصي تطبيق ملف شخصي ملف الوكيل إعداد مسبق",
@@ -1261,6 +1262,11 @@ export const ar: TranslationResources = {
       working: "قيد العمل",
       done: "تم",
     },
+    dayBucket: {
+      today: "اليوم",
+      yesterday: "أمس",
+      older: "أقدم",
+    },
     display: {
       showBackground: "إظهار مساحات العمل في الخلفية",
       trigger: "تفضيلات العرض",
@@ -1276,6 +1282,7 @@ export const ar: TranslationResources = {
         label: "التجميع",
         project: "المشروع",
         status: "الحالة",
+        day: "يوم النشاط",
         labels: "التسميات",
       },
       titleSource: {
