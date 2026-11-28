@@ -190,6 +190,7 @@ const MutableDaemonProviderConfigSchema = z
     paseoTools: ProviderPaseoToolsPolicySchema.optional(),
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
+    shownModels: z.array(z.string()).optional(),
   })
   .passthrough();
 
@@ -438,6 +439,7 @@ const AgentModelDefinitionSchema = z.object({
   contextWindowMaxTokens: z.number().optional(),
   thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
   defaultThinkingOptionId: z.string().optional(),
+  legacy: z.boolean().optional(),
 }) satisfies z.ZodType<AgentModelDefinition>;
 
 export const ProviderSnapshotEntrySchema = z.object({
@@ -455,6 +457,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   docsUrl: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
   launchWrap: z.boolean().optional(),
+  shownModels: z.array(z.string()).optional(),
 });
 
 export const CompactProviderSnapshotModelSchema = AgentModelDefinitionSchema.omit({
@@ -4271,6 +4274,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentConfigApply: z.boolean().optional(),
         // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
         networkTunnel: z.boolean().optional(),
+        // COMPAT(providerShownModels): added in v0.18.1, remove gate after 2027-05-28.
+        providerShownModels: z.boolean().optional(),
       })
       .optional(),
   })

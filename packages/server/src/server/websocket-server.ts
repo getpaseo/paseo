@@ -2341,6 +2341,8 @@ export class VoiceAssistantWebSocketServer {
         agentConfigApply: true,
         // COMPAT(networkTunnel): added in v0.17.6, remove gate after 2027-05-26.
         networkTunnel: true,
+        // COMPAT(providerShownModels): added in v0.18.1, remove gate after 2027-05-28.
+        providerShownModels: true,
       },
     };
   }

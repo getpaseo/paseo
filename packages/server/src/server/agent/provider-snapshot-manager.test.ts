@@ -1885,6 +1885,67 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     }
   });
 
+  test("shown models reach the snapshot without rediscovering or trimming the catalog", async () => {
+    let fetches = 0;
+    const models = [
+      {
+        provider: "codex",
+        id: "gpt-5",
+        label: "GPT-5",
+        thinkingOptions: [{ id: "high", label: "High" }],
+      },
+      { provider: "codex", id: "gpt-5-mini", label: "GPT-5 mini" },
+      { provider: "codex", id: "o3", label: "o3" },
+    ];
+    const config = {
+      claude: { enabled: false },
+      codex: { enabled: true },
+      copilot: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+      omp: { enabled: false },
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: config,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog() {
+            fetches++;
+            return { models, modes: [] };
+          },
+        }),
+      },
+    });
+    const cwd = resolve("/tmp/catalog-shown-models");
+    const getCodexEntry = () =>
+      manager.getSnapshot(cwd).records.find(({ entry }) => entry.provider === "codex")?.entry;
+    try {
+      await manager.warmUpSnapshotForCwd({ cwd });
+      const listener = vi.fn();
+      manager.on("change", listener);
+
+      manager.applyMutableProviderConfig({ codex: { shownModels: ["o3", "gpt-5"] } });
+      await manager.warmUpSnapshotForCwd({ cwd });
+
+      expect(getCodexEntry()?.shownModels).toEqual(["o3", "gpt-5"]);
+      expect(getCodexEntry()?.models).toEqual(models);
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      manager.applyMutableProviderConfig({ codex: { shownModels: [] } });
+      await manager.warmUpSnapshotForCwd({ cwd });
+
+      expect(getCodexEntry()).not.toHaveProperty("shownModels");
+      expect(getCodexEntry()?.models).toEqual(models);
+      expect(fetches).toBe(1);
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("reload preserves an unchanged lookup in flight through commit and discarded preparation", async () => {
     let finish!: () => void;
     const gate = new Promise<void>((complete) => {

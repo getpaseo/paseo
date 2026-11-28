@@ -1163,6 +1163,39 @@ describe("DaemonConfigStore", () => {
     });
   });
 
+  test("patch persists shown models in order without repeats, and an empty list clears them", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: { pi: { enabled: true } },
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const shown = await store.patch({
+      providers: { pi: { shownModels: ["gpt-5", "sonnet", "gpt-5", "haiku"] } },
+    });
+    expect(shown.providers.pi?.shownModels).toEqual(["gpt-5", "sonnet", "haiku"]);
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.pi?.shownModels).toEqual([
+      "gpt-5",
+      "sonnet",
+      "haiku",
+    ]);
+
+    const cleared = await store.patch({ providers: { pi: { shownModels: [] } } });
+    expect(cleared.providers.pi).toEqual({ enabled: true });
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.pi).not.toHaveProperty("shownModels");
+  });
+
   test("patch persists daemon append system prompt into config.json", async () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

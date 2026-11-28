@@ -255,6 +255,11 @@ interface RegistryGeneration {
     AgentProvider,
     { initial: ProviderSnapshotRecord; discoveryLimit: LimitFunction }
   >;
+  /**
+   * User-picked models per provider. Published over every record, so editing them never
+   * invalidates a client or rediscovers a catalogue.
+   */
+  shownModels: ReadonlyMap<AgentProvider, readonly string[]>;
 }
 
 interface Target {
@@ -290,6 +295,10 @@ export class ProviderSnapshotManager {
   private providerOverrides: Record<string, ProviderOverride> | undefined;
   private baseProviderOverrides: Record<string, ProviderOverride> | undefined;
   private generation: RegistryGeneration;
+  private readonly shownModelRecords = new WeakMap<
+    ProviderSnapshotRecord,
+    ProviderSnapshotRecord
+  >();
   private providerClients: Record<AgentProvider, AgentClient>;
   private readonly ownedClients = new Set<AgentClient>();
   private readonly pluginProviders: PluginAgentClientRegistry;
@@ -1078,7 +1087,21 @@ export class ProviderSnapshotManager {
         }),
       });
     }
-    return { definitions, order, providerStates };
+    return { definitions, order, providerStates, shownModels: collectShownModels(overrides) };
+  }
+
+  /** The record a snapshot publishes: the provider's result with the current shown models. */
+  private publishedRecord(record: ProviderSnapshotRecord): ProviderSnapshotRecord {
+    const shownModels = this.generation.shownModels.get(record.entry.provider);
+    if (isDeepStrictEqual(record.entry.shownModels, shownModels)) return record;
+    const cached = this.shownModelRecords.get(record);
+    if (cached && isDeepStrictEqual(cached.entry.shownModels, shownModels)) return cached;
+    const { shownModels: _previous, ...entry } = record.entry;
+    const published = identifyEntry(
+      shownModels ? { ...entry, shownModels: [...shownModels] } : entry,
+    );
+    this.shownModelRecords.set(record, published);
+    return published;
   }
 
   private async warmUp(target: ProviderSnapshotTarget, providers?: AgentProvider[]): Promise<void> {
@@ -1471,7 +1494,9 @@ export class ProviderSnapshotManager {
         const result = binding?.key
           ? this.catalogs.get(binding.key)?.get(provider)?.result
           : undefined;
-        return binding?.failure ?? result ?? this.generation.providerStates.get(provider)!.initial;
+        return this.publishedRecord(
+          binding?.failure ?? result ?? this.generation.providerStates.get(provider)!.initial,
+        );
       });
       const previous = target.snapshot;
       if (sameSnapshotRecords(previous.records, records)) continue;
@@ -1500,8 +1525,8 @@ export class ProviderSnapshotManager {
         bindings: new Map(),
         snapshot: {
           cwd,
-          records: this.generation.order.map(
-            (provider) => this.generation.providerStates.get(provider)!.initial,
+          records: this.generation.order.map((provider) =>
+            this.publishedRecord(this.generation.providerStates.get(provider)!.initial),
           ),
         },
       };
@@ -1609,6 +1634,17 @@ function createFetchCatalogOptions(
 
 export function isGlobalProviderSnapshotKey(cwd: string): boolean {
   return cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY;
+}
+
+function collectShownModels(
+  overrides: Record<string, ProviderOverride> | undefined,
+): Map<AgentProvider, readonly string[]> {
+  const shownModels = new Map<AgentProvider, readonly string[]>();
+  for (const [provider, override] of Object.entries(overrides ?? {})) {
+    const unique = [...new Set(override.shownModels ?? [])];
+    if (unique.length > 0) shownModels.set(provider, unique);
+  }
+  return shownModels;
 }
 
 function identifyEntry(entry: ProviderSnapshotEntry): ProviderSnapshotRecord {
