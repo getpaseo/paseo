@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from "react";
+import { useFollowOutputScroll } from "@/components/ui/follow-output-scroll";
 import {
   View,
   Text,
@@ -57,6 +58,8 @@ interface ToolCallDetailsContentProps {
   maxHeight?: number;
   fillAvailableHeight?: boolean;
   showLoadingSkeleton?: boolean;
+  followOutput?: boolean;
+  followOutputPersistKey?: string;
 }
 
 interface DetailStyles {
@@ -554,12 +557,19 @@ export function ToolCallDetailsContent({
   maxHeight,
   fillAvailableHeight = false,
   showLoadingSkeleton = false,
+  followOutput = false,
+  followOutputPersistKey,
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
-  // The allowance belongs to the whole disclosure, rather than each section.
+  // The allowance belongs to the whole disclosure, rather than each section, so the capped
+  // case below owns the single scroll view and the follow-output behavior along with it.
   const ds = useDetailStyles(detail, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
+  const { scrollRef, onContentSizeChange, onScroll } = useFollowOutputScroll(
+    followOutput,
+    followOutputPersistKey,
+  );
 
   const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t);
 
@@ -577,9 +587,13 @@ export function ToolCallDetailsContent({
   if (resolvedMaxHeight !== undefined) {
     return (
       <ScrollView
+        ref={scrollRef}
         style={inlineUnistylesStyle({ maxHeight: resolvedMaxHeight })}
         contentContainerStyle={ds.fullBleedContainerStyle}
         nestedScrollEnabled
+        scrollEventThrottle={16}
+        onContentSizeChange={onContentSizeChange}
+        onScroll={onScroll}
       >
         {sections}
       </ScrollView>
