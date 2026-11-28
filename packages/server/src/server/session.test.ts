@@ -36,6 +36,8 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { createAgentMessageDelivery } from "./agent/agent-messages/index.js";
+import { MessageReceipts } from "./message-receipts/index.js";
 import {
   terminalCleanupRecordPath,
   terminalWorkerDirectory,
@@ -355,6 +357,8 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  agentMessages?: SessionOptions["agentMessages"];
+  messageReceipts?: SessionOptions["messageReceipts"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -391,8 +395,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     workspaceRuntimeStore: options.workspaceRuntimeStore ?? createWorkspaceRuntimeStore(),
-    messageReceipts: createMessageReceiptsStub(),
-    agentMessages: createAgentMessageDeliveryStub(),
+    messageReceipts: options.messageReceipts ?? createMessageReceiptsStub(),
+    agentMessages: options.agentMessages ?? createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
@@ -6782,5 +6786,132 @@ test("deduplicates repeated command names in list_commands_response for live age
       error: null,
       commands: expected,
     },
+  });
+});
+
+describe("non-agent activeTurnBehavior queue in Session", () => {
+  test("queues behind a running turn, preserves title/mode/attachments/dedup, and dispatches unwrapped", async () => {
+    const receiptDir = mkdtempSync(join(tmpdir(), "paseo-session-queue-"));
+    let running = true;
+    const listeners = new Set<(id: string) => void>();
+    const dispatched: Array<{
+      prompt: unknown;
+      sessionMode?: string;
+      clearPendingPermissions: boolean;
+      idleOnly: boolean;
+    }> = [];
+    const setTitles: Array<[string, string]> = [];
+    const agentMessages = createAgentMessageDelivery({
+      isRunning: () => running,
+      canSteer: () => true,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      dispatch: async (request) => {
+        dispatched.push({
+          prompt: request.prompt,
+          sessionMode: request.sessionMode,
+          clearPendingPermissions: request.clearPendingPermissions,
+          idleOnly: request.idleOnly,
+        });
+        return "turn_started";
+      },
+      onError: (error) => {
+        throw error;
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentMessages,
+      messageReceipts: new MessageReceipts(receiptDir),
+      agentManager: {
+        waitForAgentClose: async () => undefined,
+        getAgent: (id: string) =>
+          id === "agent-1"
+            ? ({
+                id: "agent-1",
+                status: running ? "running" : "idle",
+                config: { title: null },
+              } as never)
+            : undefined,
+        setTitle: async (id: string, title: string) => {
+          setTitles.push([id, title]);
+        },
+      },
+      agentStorage: {
+        get: async (id: string) =>
+          id === "agent-1"
+            ? ({ id: "agent-1", title: null, lastUserMessageAt: null } as never)
+            : null,
+      },
+    });
+
+    try {
+      await session.handleMessage({
+        type: "send_agent_message_request",
+        requestId: "req-1",
+        agentId: "agent-1",
+        text: "Approve decision D4",
+        messageId: "msg-d4",
+        sessionMode: "plan",
+        activeTurnBehavior: "queue",
+        images: [{ data: "aW1n", mimeType: "image/png" }],
+      });
+
+      expect(findByType(messages, "send_agent_message_response")).toMatchObject({
+        payload: {
+          requestId: "req-1",
+          agentId: "agent-1",
+          accepted: true,
+          deliveryStatus: "queued",
+          activeTurnBehavior: "queue",
+          error: null,
+        },
+      });
+      expect(dispatched).toEqual([]);
+      expect(setTitles).toEqual([["agent-1", "Approve decision D4"]]);
+
+      // Finish the active turn so the queued non-agent message dispatches.
+      running = false;
+      for (const listener of listeners) listener("agent-1");
+      await expect.poll(() => dispatched.length).toBe(1);
+
+      expect(dispatched[0]).toEqual({
+        prompt: [
+          { type: "text", text: "Approve decision D4" },
+          { type: "image", data: "aW1n", mimeType: "image/png" },
+        ],
+        sessionMode: "plan",
+        clearPendingPermissions: false,
+        idleOnly: true,
+      });
+
+      // Replaying the same messageId deduplicates without dispatching a second turn.
+      messages.length = 0;
+      await session.handleMessage({
+        type: "send_agent_message_request",
+        requestId: "req-2",
+        agentId: "agent-1",
+        text: "Approve decision D4",
+        messageId: "msg-d4",
+        sessionMode: "plan",
+        activeTurnBehavior: "queue",
+        images: [{ data: "aW1n", mimeType: "image/png" }],
+      });
+      expect(findByType(messages, "send_agent_message_response")).toMatchObject({
+        payload: {
+          requestId: "req-2",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+        },
+      });
+      expect(dispatched).toHaveLength(1);
+    } finally {
+      await agentMessages.close();
+      rmSync(receiptDir, { recursive: true, force: true });
+    }
   });
 });

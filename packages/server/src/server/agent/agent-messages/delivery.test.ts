@@ -1924,3 +1924,263 @@ test("held messages stay held when the message that reopened the queue is withdr
   expect((await recipient.person("continue", "person-1")).ids).toEqual(["older", "person-1"]);
   await recipient.delivery.close();
 });
+
+test("a non-agent queued message starts immediately on an idle recipient as a raw user prompt", async () => {
+  const clock = createClock();
+  const sent: Array<{
+    prompt: AgentPromptInput;
+    idleOnly: boolean;
+    clearPendingPermissions: boolean;
+  }> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => false,
+    dispatch: async (request) => {
+      sent.push({
+        prompt: request.prompt,
+        idleOnly: request.idleOnly,
+        clearPendingPermissions: request.clearPendingPermissions,
+      });
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+
+  const receipt = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "user-1",
+    prompt: "Approve decision D4",
+    activeTurnBehavior: "queue",
+    clearPendingPermissions: false,
+  });
+
+  expect(receipt.status).toBe("queued");
+  expect(receipt.activeTurnBehavior).toBe("queue");
+  expect(receipt.guidance).toBe("The agent is idle, so your message starts a turn now.");
+  // Dispatches without waiting for the 2-second agent quiet window.
+  await expect(receipt.dispatched).resolves.toBe("turn_started");
+  expect(sent).toEqual([
+    {
+      prompt: "Approve decision D4",
+      idleOnly: true,
+      clearPendingPermissions: false,
+    },
+  ]);
+  await delivery.close();
+});
+
+test("a non-agent queued message waits behind a running turn and delivers unwrapped when the turn ends", async () => {
+  const clock = createClock();
+  let running = true;
+  const listeners = new Set<(id: string) => void>();
+  const sent: Array<{
+    prompt: AgentPromptInput;
+    idleOnly: boolean;
+    clearPendingPermissions: boolean;
+  }> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    canSteer: () => true,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    dispatch: async (request) => {
+      sent.push({
+        prompt: request.prompt,
+        idleOnly: request.idleOnly,
+        clearPendingPermissions: request.clearPendingPermissions,
+      });
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+
+  const receipt = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "user-1",
+    prompt: "Approve decision D4",
+    activeTurnBehavior: "queue",
+    clearPendingPermissions: false,
+  });
+
+  expect(receipt.guidance).toContain("Queued, not delivered yet.");
+  clock.advance(10_000);
+  await Promise.resolve();
+  expect(sent).toEqual([]);
+
+  running = false;
+  for (const listener of listeners) listener("agent-1");
+  await expect(receipt.dispatched).resolves.toBe("turn_started");
+  expect(sent).toEqual([
+    {
+      prompt: "Approve decision D4",
+      idleOnly: true,
+      clearPendingPermissions: false,
+    },
+  ]);
+  expect(String(sent[0]?.prompt)).not.toContain("<paseo-system");
+  await delivery.close();
+});
+
+test("multiple queued non-agent and agent messages preserve FIFO order and user provenance", async () => {
+  const clock = createClock();
+  let running = true;
+  const listeners = new Set<(id: string) => void>();
+  const sent: AgentPromptInput[] = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    dispatch: async (request) => {
+      sent.push(request.prompt);
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+
+  const first = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "user-1",
+    prompt: "First user decision",
+    activeTurnBehavior: "queue",
+  });
+  const second = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "agent-1-msg",
+    source: { kind: "agent-message", agentId: "helper" },
+    prompt: "Helper report",
+    activeTurnBehavior: "queue",
+  });
+  const third = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "user-2",
+    prompt: "Second user decision",
+    activeTurnBehavior: "queue",
+  });
+
+  // withdrawPending only matches sourced agent messages and leaves non-agent messages queued.
+  expect(delivery.withdrawPending("agent-1", () => true)).toBe(1);
+  await expect(second.dispatched).rejects.toMatchObject({ name: "AbortError" });
+
+  running = false;
+  for (const listener of listeners) listener("agent-1");
+  await Promise.all([first.dispatched, third.dispatched]);
+
+  expect(sent).toHaveLength(1);
+  expect(String(sent[0])).not.toContain('kind="agent-message"');
+  expect(parseAgentMessages(String(sent[0]))).toEqual([
+    { id: "user-1", source: null, text: "First user decision" },
+    { id: "user-2", source: null, text: "Second user decision" },
+  ]);
+  await delivery.close();
+});
+
+test("a follow-up direct steer or interrupt carries queued non-agent messages in FIFO order without XML leaks", async () => {
+  const recipient = createRecipient();
+  const queued = recipient.delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "queued-user",
+    prompt: "First queued user message",
+    activeTurnBehavior: "queue",
+  });
+
+  const direct = await recipient.person("Urgent follow-up", "direct-user");
+  await expect(queued.dispatched).resolves.toBe("turn_started");
+  expect(direct.ids).toEqual(["queued-user", "direct-user"]);
+  expect(String(direct.prompt)).not.toContain('kind="agent-message"');
+  expect(parseAgentMessages(String(direct.prompt))).toEqual([
+    { id: "queued-user", source: null, text: "First queued user message" },
+    { id: "direct-user", source: null, text: "Urgent follow-up" },
+  ]);
+  await recipient.delivery.close();
+});
+
+test("Stop holds a queued non-agent message and delivers it ahead of the next prompt", async () => {
+  const recipient = createRecipient();
+  const queued = recipient.delivery.enqueue({
+    recipientId: "recipient",
+    messageId: "queued-user",
+    prompt: "Queued before stop",
+    activeTurnBehavior: "queue",
+  });
+
+  await recipient.stop();
+  await recipient.endTurn();
+  await recipient.tick(10_000);
+  expect(recipient.sent).toEqual([]);
+  expect(recipient.delivery.hasPending("recipient")).toBe(false);
+
+  const next = await recipient.person("Resume now", "person-after-stop");
+  await expect(queued.dispatched).resolves.toBe("turn_started");
+  expect(next.ids).toEqual(["queued-user", "person-after-stop"]);
+  await recipient.delivery.close();
+});
+
+test("a queued non-agent slash command dispatches raw and alone in FIFO order", async () => {
+  const clock = createClock();
+  let running = true;
+  const listeners = new Set<(id: string) => void>();
+  const sent: AgentPromptInput[] = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    dispatch: async (request) => {
+      sent.push(request.prompt);
+      running = true;
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+
+  const first = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "u1",
+    prompt: "First note",
+    activeTurnBehavior: "queue",
+  });
+  const command = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "u2",
+    prompt: "/review",
+    activeTurnBehavior: "queue",
+  });
+  const third = delivery.enqueue({
+    recipientId: "agent-1",
+    messageId: "u3",
+    prompt: "Third note",
+    activeTurnBehavior: "queue",
+  });
+
+  running = false;
+  for (const listener of listeners) listener("agent-1");
+  await first.dispatched;
+  expect(sent).toEqual(["First note"]);
+
+  running = false;
+  for (const listener of listeners) listener("agent-1");
+  await command.dispatched;
+  expect(sent).toEqual(["First note", "/review"]);
+
+  running = false;
+  for (const listener of listeners) listener("agent-1");
+  await third.dispatched;
+  expect(sent).toEqual(["First note", "/review", "Third note"]);
+  await delivery.close();
+});

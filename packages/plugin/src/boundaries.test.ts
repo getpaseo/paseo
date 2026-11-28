@@ -518,6 +518,7 @@ describe("agent session reload SDK boundary", () => {
         const agent = paseo.agents.ref("chosen-agent");
         const read: PaseoAgentRefetchResult | null = await agent.refresh("read-snapshot");
         const reopened: PaseoAgentRefetchResult | null = await agent.reload({ requestId: "reload-session" });
+        await agent.send("Answer decision", { activeTurnBehavior: "queue" });
         await agent.reload();
         // @ts-expect-error reload options can grow without a positional signature change
         await agent.reload("reload-session");

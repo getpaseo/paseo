@@ -515,8 +515,8 @@ export interface SendMessageOptions {
   sessionMode?: string;
   messageId?: string;
   /**
-   * Agent sources default to queue: wait for the running turn to end. Human sources default to
-   * interrupt and cannot queue.
+   * Agent sources default to queue: wait for the running turn to end. Non-agent sources default to
+   * interrupt and may also pass steer or queue.
    */
   activeTurnBehavior?: AgentActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
@@ -4377,8 +4377,16 @@ export class DaemonClientCore {
   ): AgentActiveTurnBehavior | undefined {
     const requested = options.activeTurnBehavior;
     if (!options.sourceAgentId) {
-      if (requested === "queue")
-        throw new Error('activeTurnBehavior "queue" needs an agent sender (sourceAgentId).');
+      // COMPAT(nonAgentMessageQueue): added in v0.18.0, remove after 2027-06-01 once daemon
+      // floor >= v0.18.0. Older hosts reject activeTurnBehavior "queue" without sourceAgentId.
+      if (
+        requested === "queue" &&
+        this.lastServerInfoMessage?.features?.nonAgentMessageQueue !== true
+      ) {
+        throw new Error(
+          "Update the Paseo host to queue a message behind a running turn without an agent sender.",
+        );
+      }
       return requested;
     }
     if (this.lastServerInfoMessage?.features?.agentActiveTurnBehaviors === true) return requested;

@@ -10,6 +10,8 @@ interface Admission {
   running: boolean;
   /** The recipient's provider can take a message into a running turn. */
   canSteer: boolean;
+  /** True when a queued message skips the coalescing quiet window on an idle recipient. */
+  immediateWhenIdle?: boolean;
 }
 
 const DO_NOT_REPEAT =
@@ -20,10 +22,12 @@ const DO_NOT_REPEAT =
  * facts known now, not from the outcome: a provider that can steer may still refuse one steer.
  */
 export function describeAgentMessage(admission: Admission): string {
-  const { activeTurnBehavior, running, canSteer } = admission;
+  const { activeTurnBehavior, running, canSteer, immediateWhenIdle } = admission;
   if (activeTurnBehavior === "queue") {
     if (!running)
-      return "Queued. The agent is idle, so your message starts a turn in about 2 seconds.";
+      return immediateWhenIdle
+        ? "The agent is idle, so your message starts a turn now."
+        : "Queued. The agent is idle, so your message starts a turn in about 2 seconds.";
     const waiting =
       "Queued, not delivered yet. The agent is working and reads your message when its current turn ends.";
     const followUp = canSteer

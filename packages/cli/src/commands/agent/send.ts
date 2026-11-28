@@ -50,7 +50,7 @@ export function addSendOptions(cmd: Command): Command {
     .addOption(
       new Option(
         "--behavior <behavior>",
-        "Leave out unless the message cannot wait. From an agent (PASEO_AGENT_ID set): queue (default) waits for the running turn to end, steer joins it, interrupt replaces it. From a person: interrupt (default) or steer",
+        "Leave out unless the message cannot wait. From an agent (PASEO_AGENT_ID set): queue (default) waits for the running turn to end, steer joins it, interrupt replaces it. From a person: interrupt (default), steer, or queue",
       ).choices(["queue", "steer", "interrupt"]),
     )
     .option("--no-wait", "Return immediately without waiting for completion");
