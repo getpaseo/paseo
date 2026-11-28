@@ -1352,6 +1352,8 @@ export default function contribute(client: PluginClientContext) {
 
 渲染器接收 `agentId`、`item`、`timestamp`、`theme`、`host` 和 `layout`。Paseo 在渲染之前用注册的 schema 校验 `item.data`。请让转换器保持同步且确定。Paseo 按来源条目的引用缓存结果，并从来源行推导替换项的标识，因此对某个流式条目的更新不会重新挂载它的渲染器。要让纯文本像 Paseo 的助手行那样逐步显示，请渲染 `@getpaseo/plugin/client/ui` 中的 `<StreamedText text={item.data.text} phase={item.data.phase} />`。它接受 React Native `Text` 的属性（包括 `style`），默认使用助手消息的字体排版和前景色。完成后会立即显示全文；流式输出期间由宿主控制显示节奏。需要 Paseo 0.13 或更高版本。
 
+在支持此功能的应用客户端上，渲染器还会收到可选的 `openFile(location: PluginOpenFileLocation)`。`location` 为 `{ path, lineStart?, lineEnd? }`。文件面板会通过 `params`（`PluginFilePanelParams`）接收同一个位置参数；当打开方再次发送这些参数时，其 `revision` 属性会递增。`openFile` 会像原生回复中的文件路径一样，从展示该时间线的窗格在相同宿主和工作区中打开文件。`path` 可以是绝对路径，或相对于 Agent 工作目录的路径；工作区内的文件夹会在文件浏览器中打开。行号从 1 开始。提供该操作前请检查 `openFile` 是否存在；仅更新 daemon 或插件不会为旧版应用添加此能力。
+
 当查询同时匹配原始消息时，聊天查找（Ctrl 或 Cmd+F）会在替换行中查找并高亮文本。宿主会在原始提示词文本或去掉 Markdown 语法的助手回复中搜索，然后由应用在你的渲染器绘制的文本中统计匹配。只由你的渲染器添加的文本不会被单独索引。匹配不会跨越渲染出的块，查找会跳过按钮、图标以及任何带有 `aria-hidden="true"` 的内容。查找只在 Web 和桌面应用中可用。
 
 ### 从 daemon 追加时间线行 {#append-a-timeline-row-from-the-daemon}
