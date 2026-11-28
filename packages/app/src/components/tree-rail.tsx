@@ -1,15 +1,26 @@
 import type { ReactNode } from "react";
-import { Children, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Children, useCallback, useEffect, useMemo, useState } from "react";
 import { View, useWindowDimensions } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
+import {
+  beginSidebarResize,
+  endSidebarResize,
+  resolveSidebarResizePreviewOffset,
+} from "@/components/sidebar-resize-activity";
+import {
+  hideSidebarResizeShift,
+  SidebarResizeCommittedEdge,
+  SidebarResizeShift,
+  useSidebarResizePreviewValues,
+} from "@/components/sidebar-resize-preview";
+import { isNative } from "@/constants/platform";
 import {
   acceptTreeRailContainerMeasurement,
   resolveVisibleTreeRailWidth,
@@ -30,10 +41,24 @@ export interface TreeRailProps {
   width?: number;
   onWidthChange?: (width: number) => void;
   minimumWidth?: number;
+  borderColor?: string;
+  leadingFill?: string;
+  trailingFill?: string;
+  gripColor?: string;
 }
 
 /** Content-left/tree-right master-detail geometry with one app-wide tree width. */
-export function TreeRail({ children, testID, width, onWidthChange, minimumWidth }: TreeRailProps) {
+function TreeRailBase({
+  children,
+  testID,
+  width,
+  onWidthChange,
+  minimumWidth,
+  borderColor,
+  leadingFill,
+  trailingFill,
+  gripColor,
+}: TreeRailProps) {
   const [content, tree] = Children.toArray(children);
   const sharedWidth = usePanelStore((state) => state.treeRailWidth);
   const setSharedWidth = usePanelStore((state) => state.setTreeRailWidth);
@@ -41,11 +66,15 @@ export function TreeRail({ children, testID, width, onWidthChange, minimumWidth 
   const { width: viewportWidth } = useWindowDimensions();
   const [containerWidth, setContainerWidth] = useState(viewportWidth);
   const visibleWidth = resolveVisibleTreeRailWidth(requestedWidth, containerWidth, minimumWidth);
-  const startWidthRef = useRef(visibleWidth);
+  // A shared value: a ref written in `onStart` is a copy that `onUpdate` never sees.
+  const startWidth = useSharedValue(visibleWidth);
   const resizeWidth = useSharedValue(visibleWidth);
-  const [resizePressed, setResizePressed] = useState(false);
-  const showResizeGrip = useCallback(() => setResizePressed(true), []);
-  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
+  const targetWidth = useSharedValue(visibleWidth);
+  const resizePressed = useSharedValue(false);
+  const preview = useSidebarResizePreviewValues();
+  // On native the drag holds the committed width and shifts the rail, so the content beside it
+  // lays out once, when the drag ends. Web follows the drag live.
+  const heldPreview = isNative ? preview : null;
 
   useEffect(() => {
     resizeWidth.value = visibleWidth;
@@ -55,30 +84,59 @@ export function TreeRail({ children, testID, width, onWidthChange, minimumWidth 
     () =>
       Gesture.Pan()
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
-        .onBegin(() => scheduleOnRN(showResizeGrip))
+        .onBegin(() => {
+          resizePressed.value = true;
+        })
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
-          startWidthRef.current = visibleWidth + event.translationX;
+          runOnJS(beginSidebarResize)();
+          startWidth.value = visibleWidth + event.translationX;
           resizeWidth.value = visibleWidth;
+          targetWidth.value = visibleWidth;
+          if (heldPreview) {
+            heldPreview.offset.value = 0;
+            heldPreview.visible.value = true;
+          }
         })
         .onUpdate((event) => {
-          resizeWidth.value = resolveVisibleTreeRailWidth(
-            startWidthRef.current - event.translationX,
+          targetWidth.value = resolveVisibleTreeRailWidth(
+            startWidth.value - event.translationX,
             containerWidth,
             minimumWidth,
           );
+          if (heldPreview) {
+            heldPreview.offset.value = resolveSidebarResizePreviewOffset({
+              grows: "left",
+              committedWidth: visibleWidth,
+              targetWidth: targetWidth.value,
+            });
+          } else {
+            resizeWidth.value = targetWidth.value;
+          }
         })
-        .onEnd(() => runOnJS(onWidthChange ?? setSharedWidth)(resizeWidth.value))
-        .onFinalize(() => scheduleOnRN(hideResizeGrip)),
+        .onEnd((_event, success) => {
+          // The width lands in the frame that returns the shift to 0, before React acknowledges it.
+          if (success) resizeWidth.value = targetWidth.value;
+          if (heldPreview) hideSidebarResizeShift(heldPreview);
+          if (success) runOnJS(onWidthChange ?? setSharedWidth)(targetWidth.value);
+          runOnJS(endSidebarResize)();
+        })
+        .onFinalize((_event, success) => {
+          if (!success) resizeWidth.value = visibleWidth;
+          if (heldPreview) hideSidebarResizeShift(heldPreview);
+          resizePressed.value = false;
+        }),
     [
       containerWidth,
-      hideResizeGrip,
+      heldPreview,
       onWidthChange,
       minimumWidth,
+      resizePressed,
       resizeWidth,
       setSharedWidth,
-      showResizeGrip,
+      startWidth,
+      targetWidth,
       visibleWidth,
     ],
   );
@@ -91,6 +149,16 @@ export function TreeRail({ children, testID, width, onWidthChange, minimumWidth 
     [],
   );
 
+  const handle = (
+    <SidebarResizeHandle
+      edge="left"
+      gesture={resizeGesture}
+      pressed={resizePressed}
+      held={heldPreview?.visible}
+      testID={testID ? `${testID}-resize-handle` : "tree-rail-resize-handle"}
+    />
+  );
+  const canShift = heldPreview !== null && leadingFill && trailingFill && borderColor && gripColor;
   return (
     <View style={styles.container} testID={testID} onLayout={handleLayout}>
       <View style={styles.content} testID={testID ? `${testID}-content` : undefined}>
@@ -100,19 +168,40 @@ export function TreeRail({ children, testID, width, onWidthChange, minimumWidth 
         style={[styles.rail, railWidthStyle]}
         testID={testID ? `${testID}-tree` : undefined}
       >
-        <SidebarResizeHandle
-          edge="left"
-          gesture={resizeGesture}
-          pressed={resizePressed}
-          testID={testID ? `${testID}-resize-handle` : "tree-rail-resize-handle"}
-        />
-        {tree}
+        {borderColor ? (
+          <SidebarResizeCommittedEdge preview={heldPreview} color={borderColor} edge="left" />
+        ) : null}
+        {canShift ? (
+          <SidebarResizeShift
+            preview={heldPreview}
+            leadingFill={leadingFill}
+            trailingFill={trailingFill}
+            borderColor={borderColor}
+            gripColor={gripColor}
+            layout="fill"
+          >
+            {handle}
+            {tree}
+          </SidebarResizeShift>
+        ) : (
+          <>
+            {handle}
+            {tree}
+          </>
+        )}
       </Animated.View>
     </View>
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+export const TreeRail = withUnistyles(TreeRailBase, (theme) => ({
+  borderColor: theme.colors.border,
+  leadingFill: theme.colors.background,
+  trailingFill: theme.colors.surfaceSidebar,
+  gripColor: theme.colors.accent,
+}));
+
+const styles = StyleSheet.create({
   container: {
     flex: 1,
     minHeight: 0,
@@ -122,10 +211,10 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
+  // The width node below is already shared by Unistyles and Reanimated. Its border lives on a
+  // separate node so the drag does not add another animated style to that pair.
   rail: {
     position: "relative",
     flexShrink: 0,
-    borderLeftWidth: 1,
-    borderLeftColor: theme.colors.border,
   },
-}));
+});

@@ -6,4 +6,7 @@ export interface ExplorerFrameProps {
   isOpen: boolean;
   isWorkspaceActive: boolean;
   surfaceColor?: string;
+  workspaceFill?: string;
+  borderColor?: string;
+  gripColor?: string;
 }

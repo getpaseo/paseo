@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent } from "react-native";
-import { selectWorkspaceChrome } from "./workspace-tab-layout";
+import { useSidebarResizeGate } from "@/components/sidebar-resize-activity";
+import { retainWorkspaceChromeWidth, selectWorkspaceChrome } from "./workspace-tab-layout";
 import { WorkspaceTabMeasurementScope } from "./workspace-desktop-tabs-row";
 import type { WorkspaceTabDescriptor } from "./workspace-tabs-types";
 
@@ -16,10 +17,24 @@ export function AdaptiveWorkspaceChrome({
   children: ReactNode;
 }) {
   const [width, setWidth] = useState<number | null>(null);
-  const measure = useCallback((event: LayoutChangeEvent) => {
-    const measured = event.nativeEvent.layout.width;
-    if (measured > 0) setWidth(measured);
+  // Only the compact decision reads the width; keeping it until that flips stops a sidebar drag
+  // from re-rendering the header and tab rail on every layout pass. A drag across the threshold
+  // switches the chrome once, where it ends.
+  const applyWidth = useCallback((measured: number) => {
+    setWidth((current) => retainWorkspaceChromeWidth(current, measured));
   }, []);
+  const offerWidth = useSidebarResizeGate(applyWidth);
+  const measure = useCallback(
+    (event: LayoutChangeEvent) => {
+      const measured = event.nativeEvent.layout.width;
+      // The first width always lands, so the chrome never waits for a drag to end to appear.
+      setWidth((current) =>
+        current === null ? retainWorkspaceChromeWidth(null, measured) : current,
+      );
+      offerWidth(measured);
+    },
+    [offerWidth],
+  );
   return (
     <WorkspaceTabMeasurementScope>
       <View onLayout={measure}>

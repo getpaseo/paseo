@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -34,7 +35,6 @@ import {
   ScrollView as GHScrollView,
 } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
@@ -76,6 +76,17 @@ import {
   mapLayout,
   TOOLBAR_CONTROL_SIZES,
 } from "@/components/ui/control-geometry";
+import {
+  beginSidebarResize,
+  endSidebarResize,
+  resolveSidebarResizePreviewOffset,
+  useSidebarResizeGate,
+} from "@/components/sidebar-resize-activity";
+import {
+  AppSidebarResizePreviewContext,
+  hideSidebarResizeShift,
+  SidebarResizeCommittedEdge,
+} from "@/components/sidebar-resize-preview";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
@@ -460,18 +471,36 @@ function SidebarFooter({
   const settingsKeys = useShortcutKeys("toggle-settings");
   const isCompactLayout = useIsCompactFormFactor();
   const [rowWidth, setRowWidth] = useState(0);
-  const handleRowLayout = useCallback((event: LayoutChangeEvent) => {
-    setRowWidth(event.nativeEvent.layout.width);
-  }, []);
+  const controlSize = TOOLBAR_CONTROL_SIZES[controlSizingForLayout(isCompactLayout)];
+  // The layout reads the width only through its slot count. While a drag runs, even slot changes
+  // wait for the end: each commit stalls the drag's UI-thread updates.
+  const applyRowWidth = useCallback(
+    (measured: number) => {
+      const slotsFor = (width: number) =>
+        resolveSidebarFooterLayout({
+          rowWidth: width,
+          controlSize,
+          rowPadding: FOOTER_ROW_PADDING,
+          actions: SIDEBAR_FOOTER_ACTIONS,
+        }).inline.length;
+      setRowWidth((current) => (slotsFor(current) === slotsFor(measured) ? current : measured));
+    },
+    [controlSize],
+  );
+  const offerRowWidth = useSidebarResizeGate(applyRowWidth);
+  const handleRowLayout = useCallback(
+    (event: LayoutChangeEvent) => offerRowWidth(event.nativeEvent.layout.width),
+    [offerRowWidth],
+  );
   const { inline, overflow } = useMemo(
     () =>
       resolveSidebarFooterLayout({
         rowWidth,
-        controlSize: TOOLBAR_CONTROL_SIZES[controlSizingForLayout(isCompactLayout)],
+        controlSize,
         rowPadding: FOOTER_ROW_PADDING,
         actions: SIDEBAR_FOOTER_ACTIONS,
       }),
-    [rowWidth, isCompactLayout],
+    [rowWidth, controlSize],
   );
   const isInline = (action: SidebarFooterAction) => inline.includes(action);
 
@@ -737,6 +766,113 @@ function SidebarNavScroll({ closeGestureRef, windowContent, children }: SidebarN
   );
 }
 
+function useDesktopSidebarResize({
+  divisionLayout,
+  overlay,
+  setSidebarWidth,
+  viewportWidth,
+  visibleSidebarWidth,
+}: {
+  divisionLayout: ReturnType<typeof resolveDesktopDivisionLayout>;
+  overlay: boolean;
+  setSidebarWidth: (width: number) => void;
+  viewportWidth: number;
+  visibleSidebarWidth: number;
+}) {
+  const startWidth = useSharedValue(visibleSidebarWidth);
+  const resizeWidth = useSharedValue(visibleSidebarWidth);
+  // The width the finger asks for. Under a held drag it reaches the layout only when the drag ends.
+  const targetWidth = useSharedValue(visibleSidebarWidth);
+  // A shared value so pressing and releasing the grip does not re-render the sidebar.
+  const resizePressed = useSharedValue(false);
+  // On native a drag holds the committed width and shifts the workspace column with the finger.
+  // Animating the width re-laid out the whole workspace column and re-measured its text each frame.
+  const appPreview = useContext(AppSidebarResizePreviewContext);
+  const heldPreview = platformIsNative ? appPreview : null;
+
+  useEffect(() => {
+    resizeWidth.value = visibleSidebarWidth;
+  }, [resizeWidth, visibleSidebarWidth]);
+
+  const resizeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(divisionLayout === null)
+        .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
+        .onBegin(() => {
+          resizePressed.value = true;
+        })
+        // Horizontal intent only, so a finger dragging down the touch grip scrolls
+        // the workspace list instead of resizing. Anchoring the start width to the
+        // activation translation keeps the extra threshold from jumping the edge.
+        .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
+        .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
+        .onStart((event) => {
+          runOnJS(beginSidebarResize)();
+          startWidth.value = visibleSidebarWidth - event.translationX;
+          resizeWidth.value = visibleSidebarWidth;
+          targetWidth.value = visibleSidebarWidth;
+          if (heldPreview) {
+            heldPreview.offset.value = 0;
+            heldPreview.visible.value = true;
+          }
+        })
+        .onUpdate((event) => {
+          // Dragging right (positive translationX) increases width
+          const newWidth = startWidth.value + event.translationX;
+          targetWidth.value = resolveDesktopSidebarWidth({
+            requestedWidth: newWidth,
+            viewportWidth,
+          });
+          if (heldPreview) {
+            heldPreview.offset.value = resolveSidebarResizePreviewOffset({
+              grows: "right",
+              committedWidth: visibleSidebarWidth,
+              targetWidth: targetWidth.value,
+            });
+          } else {
+            resizeWidth.value = targetWidth.value;
+          }
+        })
+        .onEnd((_event, success) => {
+          // The held width lands in the same UI frame that returns the shift to 0, before React
+          // acknowledges it, so the edge never jumps back to the committed width.
+          if (success) resizeWidth.value = targetWidth.value;
+          if (heldPreview) hideSidebarResizeShift(heldPreview);
+          if (success) runOnJS(setSidebarWidth)(targetWidth.value);
+          runOnJS(endSidebarResize)();
+        })
+        .onFinalize(() => {
+          if (heldPreview) hideSidebarResizeShift(heldPreview);
+          resizePressed.value = false;
+        }),
+    [
+      divisionLayout,
+      heldPreview,
+      resizePressed,
+      resizeWidth,
+      setSidebarWidth,
+      startWidth,
+      targetWidth,
+      viewportWidth,
+      visibleSidebarWidth,
+    ],
+  );
+
+  return {
+    // The content keeps the committed width until React acknowledges a new one. A held native drag
+    // lands the outer width on the UI thread first; without this the rows (the list is not
+    // virtualized) would lay out at that width and again at React's. Browsers reflow the rows cheaply
+    // and follow the drag live.
+    freezeContentWidth: platformIsNative && !overlay && divisionLayout === null,
+    heldPreview,
+    resizeGesture,
+    resizePressed,
+    resizeWidth,
+    showsHeldEdge: platformIsNative && divisionLayout === null,
+  };
+}
+
 function DesktopSidebar({
   theme,
   workspaceGroups,
@@ -781,59 +917,20 @@ function DesktopSidebar({
 
   const closeSidebar = usePanelStore((state) => state.showMobileAgent);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture(overlay);
-
-  const startWidth = useSharedValue(visibleSidebarWidth);
-  const resizeWidth = useSharedValue(visibleSidebarWidth);
-  const [resizePressed, setResizePressed] = useState(false);
-  const showResizeGrip = useCallback(() => setResizePressed(true), []);
-  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
-
-  useEffect(() => {
-    resizeWidth.value = visibleSidebarWidth;
-  }, [resizeWidth, visibleSidebarWidth]);
-
-  const resizeGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .enabled(divisionLayout === null)
-        .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
-        .onBegin(() => {
-          scheduleOnRN(showResizeGrip);
-        })
-        // Horizontal intent only, so a finger dragging down the touch grip scrolls
-        // the workspace list instead of resizing. Anchoring the start width to the
-        // activation translation keeps the extra threshold from jumping the edge.
-        .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
-        .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
-        .onStart((event) => {
-          startWidth.value = visibleSidebarWidth - event.translationX;
-          resizeWidth.value = visibleSidebarWidth;
-        })
-        .onUpdate((event) => {
-          // Dragging right (positive translationX) increases width
-          const newWidth = startWidth.value + event.translationX;
-          resizeWidth.value = resolveDesktopSidebarWidth({
-            requestedWidth: newWidth,
-            viewportWidth,
-          });
-        })
-        .onEnd((_event, success) => {
-          if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
-        })
-        .onFinalize(() => {
-          scheduleOnRN(hideResizeGrip);
-        }),
-    [
-      divisionLayout,
-      hideResizeGrip,
-      resizeWidth,
-      setSidebarWidth,
-      showResizeGrip,
-      startWidth,
-      viewportWidth,
-      visibleSidebarWidth,
-    ],
-  );
+  const {
+    freezeContentWidth,
+    heldPreview,
+    resizeGesture,
+    resizePressed,
+    resizeWidth,
+    showsHeldEdge,
+  } = useDesktopSidebarResize({
+    divisionLayout,
+    overlay,
+    setSidebarWidth,
+    viewportWidth,
+    visibleSidebarWidth,
+  });
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
     width: divisionLayout?.sidebarWidth ?? resizeWidth.value,
@@ -847,15 +944,15 @@ function DesktopSidebar({
   );
   const desktopSidebarBorderStyle = useMemo(
     () => [
-      styles.desktopSidebarBorder(divisionLayout !== null),
       {
         flex: 1,
+        width: freezeContentWidth ? visibleSidebarWidth : undefined,
         paddingTop: insetsTop,
         paddingBottom: insets.bottom,
         paddingLeft: resolveDesktopSidebarInsetLeft({ overlay, safeAreaLeft: insets.left }),
       },
     ],
-    [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
+    [insetsTop, insets.bottom, insets.left, overlay, freezeContentWidth, visibleSidebarWidth],
   );
   const inTopBand = useTopBand() !== null;
   // Windows and Linux draw their window controls top-right, so the sidebar has no chrome
@@ -873,6 +970,17 @@ function DesktopSidebar({
       closeGesture={closeGesture}
     >
       <Animated.View style={desktopSidebarStyle}>
+        <View
+          pointerEvents="none"
+          style={styles.desktopSidebarBackdrop(divisionLayout !== null || platformIsNative)}
+        />
+        {showsHeldEdge ? (
+          <SidebarResizeCommittedEdge
+            preview={heldPreview}
+            color={theme.colors.border}
+            edge="right"
+          />
+        ) : null}
         <View style={desktopSidebarBorderStyle}>
           <View style={styles.sidebarDragArea}>
             {showsChromeRow ? (
@@ -955,6 +1063,7 @@ function DesktopSidebar({
               edge="right"
               gesture={resizeGesture}
               pressed={resizePressed}
+              held={heldPreview?.visible}
               testID="left-sidebar-resize-handle"
             />
           ) : null}
@@ -1024,8 +1133,16 @@ const styles = StyleSheet.create((theme) => ({
   mobileCloseButton: (rightInset: number) => ({
     marginRight: theme.spacing[2] + rightInset,
   }),
-  desktopSidebarBorder: (hasDivision: boolean) => ({
-    borderRightWidth: hasDivision ? 0 : 1,
+  // Fills the animated sidebar edge to edge, so a drag that widens past the frozen content still
+  // shows the sidebar surface. Native draws the border on its own node and hides it while the
+  // column's edge is moving.
+  desktopSidebarBackdrop: (hideBorder: boolean) => ({
+    position: "absolute" as const,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRightWidth: hideBorder ? 0 : 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
   }),

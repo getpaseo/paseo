@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { GestureDetector, type GestureType } from "react-native-gesture-handler";
+import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import {
   resolveSidebarResizeHandleGeometry,
@@ -12,7 +13,13 @@ import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 interface SidebarResizeHandleProps {
   edge: SidebarResizeEdge;
   gesture: GestureType;
-  pressed: boolean;
+  /** Written by the gesture on the UI thread; drives the touch grip without a React render. */
+  pressed: SharedValue<boolean>;
+  /**
+   * True while a held drag shows the edge on the neighboring pane. The grip stays at the committed
+   * edge until the width lands, so it hides rather than mark a stale position.
+   */
+  held?: SharedValue<boolean>;
   testID: string;
 }
 
@@ -28,13 +35,27 @@ function edgeOffsetStyle(edge: SidebarResizeEdge, edgeOffset: number) {
   return edge === "left" ? { left: edgeOffset } : { right: edgeOffset };
 }
 
-export function SidebarResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
+export function SidebarResizeHandle({
+  edge,
+  gesture,
+  pressed,
+  held,
+  testID,
+}: SidebarResizeHandleProps) {
   const { finePointer } = usePointerCapabilities();
 
   if (finePointer) {
     return <PointerResizeHandle edge={edge} gesture={gesture} pressed={pressed} testID={testID} />;
   }
-  return <TouchResizeHandle edge={edge} gesture={gesture} pressed={pressed} testID={testID} />;
+  return (
+    <TouchResizeHandle
+      edge={edge}
+      gesture={gesture}
+      pressed={pressed}
+      held={held}
+      testID={testID}
+    />
+  );
 }
 
 function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps) {
@@ -85,7 +106,7 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
   );
 }
 
-function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
+function TouchResizeHandle({ edge, gesture, pressed, held, testID }: SidebarResizeHandleProps) {
   const geometry = resolveSidebarResizeHandleGeometry(false);
   // `box-none` keeps the full-height column out of hit-testing so only the
   // grab target steals taps from the rows behind it.
@@ -98,11 +119,11 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
     styles.touchTarget,
     { width: geometry.width, height: geometry.height ?? undefined },
   ];
-  const gripStyle = [
-    styles.grip,
-    edge === "left" ? styles.leftEdgeGrip : styles.rightEdgeGrip,
-    pressed ? styles.visibleGrip : styles.hiddenGrip,
-  ];
+  const gripStyle = [styles.grip, edge === "left" ? styles.leftEdgeGrip : styles.rightEdgeGrip];
+  const gripOpacityStyle = useAnimatedStyle(() => {
+    if (held?.value) return { opacity: 0 };
+    return { opacity: pressed.value ? 0.3 : 0 };
+  });
 
   return (
     <View pointerEvents="box-none" style={layerStyle}>
@@ -114,7 +135,9 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
           collapsable={false}
           style={targetStyle}
         >
-          <View pointerEvents="none" testID={`${testID}-grip`} style={gripStyle} />
+          <Animated.View pointerEvents="none" style={gripOpacityStyle}>
+            <View pointerEvents="none" testID={`${testID}-grip`} style={gripStyle} />
+          </Animated.View>
         </View>
       </GestureDetector>
     </View>
@@ -154,12 +177,6 @@ const styles = StyleSheet.create((theme) => ({
     height: 36,
     borderRadius: 2,
     backgroundColor: theme.colors.foreground,
-  },
-  hiddenGrip: {
-    opacity: 0,
-  },
-  visibleGrip: {
-    opacity: 0.3,
   },
   leftEdgeGrip: {
     alignSelf: "flex-start",
