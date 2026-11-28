@@ -591,6 +591,14 @@ interface TerminalKeyTokenInput {
   preamble: string;
 }
 
+function createAgentGuidance(notifyOnFinish: boolean | "every"): string {
+  if (notifyOnFinish === "every")
+    return "You will get notified each time the created agent finishes a run, errors, or needs permission, until it is archived or detached. Do not poll for status; continue with other work until a notification arrives.";
+  if (notifyOnFinish)
+    return "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
+  return "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
+}
+
 function resolveTerminalKeyToken({ key, literal, preamble }: TerminalKeyTokenInput): string {
   if (literal) {
     return key;
@@ -785,6 +793,10 @@ function createToolCatalog(
         const destination = serverId ?? options.serverId;
         const remoteNotification = await prepareRemoteNotification(name, destination, input);
         try {
+          if (destination !== options.serverId && input.notifyOnFinish === "every")
+            throw new PaseoToolInputError(
+              'notifyOnFinish "every" is only available for agents on this host.',
+            );
           const response = await hostResolver.use(serverId, (host) =>
             host[operation](input, context),
           );
@@ -1267,11 +1279,11 @@ function createToolCatalog(
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
     notifyOnFinish: z
-      .boolean()
+      .union([z.boolean(), z.literal("every")])
       .optional()
       .default(true)
       .describe(
-        "Get notified when the created agent finishes, errors, or needs permission. Set false for explicit reporting or no completion callback.",
+        'Get notified when the created agent finishes, errors, or needs permission. Set "every" to also hear about each later run, including runs others start, until the agent is archived or detached. Set false for explicit reporting or no completion callback.',
       ),
   };
   const canonicalTopLevelInputSchema = {
@@ -1664,7 +1676,7 @@ function createToolCatalog(
     async (args: unknown) => {
       const resolvedArgs = await resolveCreateAgentToolArgs(args);
       const { parsedArgs } = resolvedArgs;
-      let notifyOnFinish: boolean;
+      let notifyOnFinish: boolean | "every";
       if (resolvedArgs.kind === "agent-scoped") {
         notifyOnFinish = parsedArgs.notifyOnFinish;
       } else {
@@ -1718,10 +1730,9 @@ function createToolCatalog(
 
       // Return immediately for async creation.
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
-      const guidance =
-        callerAgentId && notifyOnFinish && initialPromptStarted
-          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
-          : "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
+      const guidance = createAgentGuidance(
+        callerAgentId && initialPromptStarted ? notifyOnFinish : false,
+      );
       const response = {
         content: [],
         structuredContent: ensureValidJson({
@@ -1784,6 +1795,10 @@ function createToolCatalog(
         // COMPAT(nestedCreateAgentPlacement): accept the old relationship/workspace shape without
         // advertising it to models. Added in v0.2.0; remove after 2027-01-17.
         const parsed = parseToolArguments(legacyAgentToAgentCreateAgentArgsSchema, args);
+        if (parsed.relationship.kind === "detached" && parsed.notifyOnFinish === "every")
+          throw new PaseoToolInputError(
+            'notifyOnFinish "every" reports to the parent agent; a detached agent has none.',
+          );
         const { cwd, workspaceId } = await resolveCreateAgentWorkspace(parsed.workspace, {
           prompt: parsed.initialPrompt,
         });

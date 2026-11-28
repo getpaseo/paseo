@@ -12,6 +12,8 @@ const recordsSchema = z.array(
     serverId: z.string().min(1).optional(),
     requireParentOwnership: z.boolean().optional(),
     followingSince: z.iso.datetime().optional(),
+    standing: z.boolean().optional(),
+    reported: z.boolean().optional(),
   }),
 );
 

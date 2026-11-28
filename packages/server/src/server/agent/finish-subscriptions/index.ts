@@ -3,7 +3,7 @@ import { HostObservationError } from "../host-operations/index.js";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import type { WaitForFinishResult } from "@getpaseo/client/internal/daemon-client";
-import type { FinishObservationResult } from "./internal/observation-buffer.js";
+import type { FinishObservationResult, FinishRunStarted } from "./internal/observation-buffer.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
@@ -32,6 +32,10 @@ export interface FinishSubscription {
    * The subscription then follows the child until it settles or the follow limit passes.
    */
   followingSince?: string;
+  /** Reports every settled run, not just the next one, until the child is archived or removed. */
+  standing?: boolean;
+  /** Standing only: the caller has the child's latest outcome. */
+  reported?: boolean;
 }
 /**
  * Work that will start the child's next turn without a new prompt from the caller.
@@ -44,7 +48,7 @@ export interface FinishSubscriptionStore {
   remove(id: string): Promise<void>;
 }
 export interface FinishObservationSession {
-  next(): Promise<FinishObservationResult>;
+  next(): Promise<FinishObservationResult | FinishRunStarted>;
   close(): Promise<void>;
 }
 export interface FinishObservation {
@@ -84,6 +88,8 @@ interface Watch {
   decision: Promise<boolean>;
   decide(accepted: boolean): void;
   pending: boolean;
+  /** A standing watch between runs. Its caller is free to be collected. */
+  dormant?: boolean;
   task?: Promise<void>;
   /** Decides a followed child's state again; see `createFollowing`. */
   recheck?(): void;
@@ -92,6 +98,17 @@ function key(record: FinishSubscription): string {
   return JSON.stringify([record.callerAgentId, record.childAgentId, record.serverId]);
 }
 const DEFAULT_FOLLOW_LIMIT_MS = 24 * 60 * 60_000;
+function coalesce(records: FinishSubscription[]): FinishSubscription {
+  return {
+    ...records[0]!,
+    requireParentOwnership: records.every((intent) => intent.requireParentOwnership === true),
+    standing: records.some((intent) => intent.standing === true),
+    reported: records.every((intent) => intent.standing === true && intent.reported === true),
+  };
+}
+function childEnded(result: FinishObservationResult): boolean {
+  return !result.final || Boolean(result.final.archivedAt);
+}
 
 /** Owns durable intent, live observation, supersession, and dispatch acknowledgment. */
 export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptions {
@@ -148,6 +165,24 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   async function remove(watch: Watch): Promise<void> {
     // Only IDs captured by this observer are eligible; newer registrations survive.
     for (const record of watch.records) await deps.store.remove(record.id);
+  }
+  /** An outcome consumes one-shot intent; standing intent stays and records whether it was reported. */
+  async function settle(watch: Watch, reported: boolean): Promise<FinishSubscription> {
+    const records: FinishSubscription[] = [];
+    for (const record of watch.records) {
+      // A superseded watch hands its standing records to the replacement; it must not write them.
+      watch.controller.signal.throwIfAborted();
+      if (record.standing) {
+        const next = { ...record, reported };
+        // A reported outcome ends the run it followed.
+        if (reported) delete next.followingSince;
+        await deps.store.put(next);
+        records.push(next);
+      } else if (reported) await deps.store.remove(record.id);
+      else records.push(record);
+    }
+    watch.records = records;
+    return coalesce(records);
   }
   async function delay(signal: AbortSignal, attempt: number): Promise<void> {
     try {
@@ -253,7 +288,9 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     const records: FinishSubscription[] = [];
     for (const group of watches.values())
       for (const watch of group)
-        if (watch.records[0]!.callerAgentId === agentId) records.push(watch.records[0]!);
+        // A standing watch between runs has nothing on the way to its caller.
+        if (watch.records[0]!.callerAgentId === agentId && !watch.dormant)
+          records.push(watch.records[0]!);
     return records;
   }
   function delegates(agentId: string): boolean {
@@ -288,30 +325,33 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   async function run(watch: Watch, group: Set<Watch>): Promise<void> {
     const signal = watch.controller.signal;
     if (!(await watch.decision) || signal.aborted) return;
-    const record = {
-      ...watch.records[0]!,
-      requireParentOwnership: watch.records.every(
-        (intent) => intent.requireParentOwnership === true,
-      ),
-    };
-    const following = createFollowing({
-      records: watch.records,
-      store: deps.store,
-      limitMs: deps.followLimitMs ?? DEFAULT_FOLLOW_LIMIT_MS,
-      pendingWork: () => pendingWork(record),
-      reasonFor,
-    });
-    watch.recheck = following.recheck;
+    let record = coalesce(watch.records);
+    watch.dormant = record.reported;
+    let following: ReturnType<typeof createFollowing>;
+    /** Follows the watch's current records. A settled run starts the next one unfollowed. */
+    function track(): void {
+      following = createFollowing({
+        records: watch.records,
+        store: deps.store,
+        limitMs: deps.followLimitMs ?? DEFAULT_FOLLOW_LIMIT_MS,
+        pendingWork: () => pendingWork(record),
+        reasonFor,
+      });
+    }
+    track();
+    watch.recheck = () => following.recheck();
     const permissions = new Set<string>();
     let observation: FinishObservationSession | undefined;
     /** One outcome and how far it got. Retries resume it: nothing is lost or sent twice. */
     let current:
       | { outcome: FollowOutcome; decided: boolean; notice?: Notice; sent: boolean }
       | undefined;
+    /** A standing watch saw a run start and has not recorded that its caller is owed the outcome. */
+    let waking = false;
     let remoteFailures = 0;
     let retries = 0;
     let warned = false;
-    async function observeNext(): Promise<FollowOutcome | undefined> {
+    async function observeNext(): Promise<FollowOutcome | FinishRunStarted | undefined> {
       try {
         observation ??= await deps.open(record, signal);
         const result = await following.next(abortable(observation.next(), signal), signal);
@@ -340,12 +380,18 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       if (!notified) recheckCallerOf(watch);
       return true;
     }
+    /** Standing intent outlives a reported run unless the child is gone or the follow limit passed. */
+    function keepsWatching(notice: Notice): boolean {
+      if (!record.standing || notice.reason === "is still working") return false;
+      return notice.result !== null && !childEnded(notice.result);
+    }
     async function decide(outcome: FollowOutcome): Promise<Notice | undefined | "suppressed"> {
       // A queued follow-up cannot start until the current permission is answered.
       // Its pending registration must not hold the running turn's checkpoint.
       if (outcome === FOLLOW_LIMIT || outcome.status !== "permission" || watch.pending)
         await decisions(group);
       signal.throwIfAborted();
+      if (outcome !== FOLLOW_LIMIT && outcome.noRun && record.reported) return "suppressed";
       if (await suppressed(record, outcome === FOLLOW_LIMIT ? undefined : outcome))
         return "suppressed";
       return following.decide(outcome);
@@ -353,13 +399,24 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
     /** Handles one outcome. Returns true once the subscription has ended. */
     async function step(): Promise<boolean> {
       if (await suppressed(record)) return end(false);
-      if (!current) {
+      if (!current && !waking) {
         const outcome = await observeNext();
         if (!outcome) {
           await delay(signal, retries++);
           return false;
         }
-        current = { outcome, decided: false, sent: false };
+        if (outcome !== FOLLOW_LIMIT && "runStarted" in outcome) waking = true;
+        else current = { outcome, decided: false, sent: false };
+      }
+      if (!current) {
+        watch.dormant = false;
+        // The caller no longer has the latest outcome; intent restored after a restart owes it.
+        if (record.reported) {
+          record = await settle(watch, false);
+          track();
+        }
+        waking = false;
+        return false;
       }
       signal.throwIfAborted();
       if (!current.decided) {
@@ -374,7 +431,12 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
         current.sent = true;
       }
       // A removal failure retries only the commit, never the already accepted callback.
-      if (notice && endsSubscription(notice.reason)) return end(true);
+      if (notice && endsSubscription(notice.reason)) {
+        if (!keepsWatching(notice)) return end(true);
+        record = await settle(watch, true);
+        track();
+        watch.dormant = true;
+      }
       current = undefined;
       retries = 0;
       warned = false;
@@ -436,10 +498,17 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
           accept() {
             if (!watch.pending || closed) return;
             watch.pending = false;
+            // Standing intent outlives the outcome this registration asked for.
+            for (const prior of predecessors)
+              for (const intent of prior.records)
+                if (intent.standing && !watch.records.some((own) => own.id === intent.id))
+                  watch.records.push(intent);
             for (const prior of predecessors) stop(prior, actualGroup);
             watch.decide(true);
             void serialize(async () => {
-              for (const prior of predecessors) await remove(prior);
+              for (const prior of predecessors)
+                for (const intent of prior.records)
+                  if (!intent.standing) await deps.store.remove(intent.id);
             }).catch((error) =>
               deps.logger.error({ err: error }, "Failed to remove superseded finish subscriptions"),
             );

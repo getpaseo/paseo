@@ -1,6 +1,6 @@
 import { setTimeout as pause } from "node:timers/promises";
 import type { FinishSubscription, FinishSubscriptionStore, PendingWork } from "../index.js";
-import type { FinishObservationResult } from "./observation-buffer.js";
+import type { FinishObservationResult, FinishRunStarted } from "./observation-buffer.js";
 import type { FinishNotificationReason } from "./notification.js";
 
 /** The followed child is still working when the follow limit passes. */
@@ -56,7 +56,7 @@ export function createFollowing(options: Options) {
 
   return {
     /** The observed outcome, or the follow limit once a followed child runs out of time. */
-    async next(observed: Promise<FinishObservationResult>, signal: AbortSignal) {
+    async next(observed: Promise<FinishObservationResult | FinishRunStarted>, signal: AbortSignal) {
       if (!since) return observed;
       // The losing side settles when the observation closes.
       observed.catch(() => undefined);
@@ -76,7 +76,7 @@ export function createFollowing(options: Options) {
         };
       });
       try {
-        return await Promise.race<FollowOutcome>([observed, limit, recheck]);
+        return await Promise.race<FollowOutcome | FinishRunStarted>([observed, limit, recheck]);
       } finally {
         wake = undefined;
         timer.abort();
