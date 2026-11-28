@@ -543,6 +543,35 @@ test("image turn sends a native image and the subsequent text turn succeeds", as
   });
   expect(turns[1].params.input).toEqual([{ type: "text", text: "hello" }]);
 });
+test.each(["complete", "partial"])(
+  "keeps context and token usage together with %s Muse pricing",
+  async (pricing) => {
+    const h = await harness("text-reasoning", { MUSE_TEST_PRICED_USAGE: pricing });
+    await h.open();
+    await h.prompt();
+    await h.wait((event) => event.type === "session.turn" && event.state === "completed");
+    const snapshots = h.events.flatMap((event) =>
+      event.type === "session.usage" ? [event.usage] : [],
+    );
+    const tokens = { inputTokens: 38169, outputTokens: 663, cachedInputTokens: 12000 };
+    expect(snapshots.slice(-3)).toEqual([
+      { contextWindowUsedTokens: 5000, contextWindowMaxTokens: 100000 },
+      {
+        ...tokens,
+        totalCostUsd: pricing === "complete" ? 0.25 : undefined,
+        contextWindowUsedTokens: 5000,
+        contextWindowMaxTokens: 100000,
+      },
+      {
+        ...tokens,
+        totalCostUsd: pricing === "complete" ? 0.25 : undefined,
+        contextWindowUsedTokens: 7000,
+        contextWindowMaxTokens: 100000,
+      },
+    ]);
+  },
+);
+
 for (const source of ["live", "history", "backfill"]) {
   test(`reminder housekeeping emits no timeline items or child sessions from ${source}`, async () => {
     const scenario = source === "history" ? "resume-without-cursor" : "text-reasoning";

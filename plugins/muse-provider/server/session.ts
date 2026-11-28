@@ -10,6 +10,7 @@ import type {
   ProviderMcpServerConfig,
   ProviderCatalog,
   ProviderToolCallDetail,
+  ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
 import type { z } from "zod";
 import { MspConnection, commandId, type Notification } from "./connection.js";
@@ -45,6 +46,16 @@ import { Recovery } from "./recovery.js";
 import { Questions } from "./questions.js";
 import { Commands } from "./commands.js";
 
+function tokenUsage(input: unknown): ProviderUsage {
+  const { cumulative, usage } = tokenUsageSchema.parse(input);
+  return {
+    inputTokens: cumulative.promptTokens,
+    outputTokens: cumulative.outputTokens,
+    cachedInputTokens: cumulative.cacheReadTokens ?? usage?.cachedTokens,
+    totalCostUsd: cumulative.cost?.partial === false ? cumulative.cost.usd : undefined,
+  };
+}
+
 interface SessionOptions {
   serveArgs: string[];
   id: string;
@@ -77,6 +88,7 @@ export class Session {
   private opening = true;
   private closing = false;
   private firstTurn = true;
+  private lastUsage: ProviderUsage = {};
   private interruptCompletion: {
     turnId: string;
     resolve(): void;
@@ -465,32 +477,22 @@ export class Session {
       case "turn/completed":
         this.completeTurn(notification.params);
         break;
-      case "session/tokenUsage": {
-        const params = tokenUsageSchema.parse(notification.params);
-        this.options.emit({
-          type: "session.usage",
-          sessionId: this.options.id,
-          usage: {
-            inputTokens: params.cumulative.promptTokens,
-            outputTokens: params.cumulative.outputTokens,
-            cachedInputTokens: params.usage?.cachedTokens,
-          },
-        });
+      case "session/tokenUsage":
+        this.updateUsage(tokenUsage(notification.params));
         break;
-      }
       case "session/contextUsage": {
         const params = contextUsageSchema.parse(notification.params);
-        this.options.emit({
-          type: "session.usage",
-          sessionId: this.options.id,
-          usage: {
-            contextWindowUsedTokens: params.usedTokens,
-            contextWindowMaxTokens: params.windowTokens,
-          },
+        this.updateUsage({
+          contextWindowUsedTokens: params.usedTokens,
+          contextWindowMaxTokens: params.windowTokens,
         });
         break;
       }
     }
+  }
+  private updateUsage(update: ProviderUsage): void {
+    this.lastUsage = { ...this.lastUsage, ...update };
+    this.options.emit({ type: "session.usage", sessionId: this.options.id, usage: this.lastUsage });
   }
   private startTurn(input: unknown): void {
     const params = turnSchema.parse(input);

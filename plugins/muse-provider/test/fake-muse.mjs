@@ -343,6 +343,22 @@ function applyWireVariants(message) {
   }
 }
 function parityDelivery(message) {
+  if (message.method === "session/tokenUsage" && process.env.MUSE_TEST_PRICED_USAGE) {
+    const context = (usedTokens) => ({
+      jsonrpc: "2.0",
+      method: "session/contextUsage",
+      params: { sessionId: message.params.sessionId, usedTokens, windowTokens: 100000 },
+    });
+    message.params.cumulative.cacheReadTokens = 12000;
+    message.params.cumulative.cost = {
+      usd: 0.25,
+      partial: process.env.MUSE_TEST_PRICED_USAGE === "partial",
+    };
+    send(context(5000));
+    send(message);
+    send(context(7000));
+    return true;
+  }
   if (process.env.MUSE_TEST_WORKFLOW && message.method === "turn/completed")
     send({
       jsonrpc: "2.0",
