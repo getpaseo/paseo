@@ -473,3 +473,74 @@ test.describe("macOS", () => {
     await closeFind(page);
   });
 });
+
+test("finds rendered text in the Markdown preview and scrolls each match clear of the widget", async ({
+  page,
+  withWorkspace,
+}, testInfo) => {
+  const workspace = await withWorkspace({ prefix: "pane-find-markdown-" });
+  const filler = Array.from({ length: 80 }, (_, index) => `Filler paragraph ${index}.`).join(
+    "\n\n",
+  );
+  await writeFile(
+    path.join(workspace.repoPath, "notes.md"),
+    `---\ntitle: Needle notes\n---\n\n# Notes\n\nA **needle** in *the* haystack.\n\n${filler}\n\n- last needle\n`,
+  );
+  await workspace.navigateTo();
+  await openFileExplorer(page);
+  await openFileFromExplorer(page, "notes.md");
+  const preview = page.getByTestId("markdown-preview-frame").filter({ visible: true });
+  await expect(preview.getByText("last needle")).toBeAttached();
+
+  await preview.getByRole("heading", { name: "Notes" }).click();
+  await page.keyboard.press("ControlOrMeta+f");
+  await expect(query(page)).toBeFocused();
+  await query(page).fill("needle");
+  await expect(status(page)).toHaveText("1 of 3");
+  await query(page).fill("needle in the");
+  await expect(status(page)).toHaveText("1 of 1");
+  await query(page).fill("needle");
+
+  const widget = page.getByLabel("Find", { exact: true }).filter({ visible: true });
+  const activeMatch = () =>
+    page.evaluate(() => {
+      const highlight = [...CSS.highlights.entries()].find(([name]) =>
+        name.startsWith("paseo-markdown-find-current-"),
+      )?.[1];
+      const range = highlight ? ([...highlight][0] as Range) : undefined;
+      if (!range) return null;
+      const box = range.getBoundingClientRect();
+      return {
+        text: range.toString(),
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        bottom: box.bottom,
+      };
+    });
+  async function expectActiveMatchShown(text: string) {
+    await expect.poll(async () => (await activeMatch())?.text).toBe(text);
+    const match = (await activeMatch())!;
+    const box = (await widget.boundingBox())!;
+    const covered =
+      match.left < box.x + box.width &&
+      match.right > box.x &&
+      match.top < box.y + box.height &&
+      match.bottom > box.y;
+    expect(covered).toBe(false);
+    expect(match.bottom).toBeLessThanOrEqual(page.viewportSize()!.height);
+  }
+
+  await query(page).press("Enter");
+  await query(page).press("Enter");
+  await expect(status(page)).toHaveText("3 of 3");
+  await expectActiveMatchShown("needle");
+  await page.screenshot({ path: testInfo.outputPath("markdown-preview-find.png") });
+  await query(page).press("Enter");
+  await expect(status(page)).toHaveText("1 of 3");
+  await expectActiveMatchShown("Needle");
+
+  await query(page).press("Escape");
+  await expect(query(page)).toBeHidden();
+  expect(await activeMatch()).toBeNull();
+});
