@@ -18,6 +18,10 @@
       "types": "./dist/daemon-client.d.ts",
       "default": "./dist/daemon-client.js"
     },
+    "./internal/daemon-client-core": {
+      "types": "./dist/daemon-client-core.d.ts",
+      "default": "./dist/daemon-client-core.js"
+    },
     "./internal/daemon-client-transport-types": {
       "types": "./dist/daemon-client-transport-types.d.ts",
       "default": "./dist/daemon-client-transport-types.js"
@@ -29,6 +33,10 @@
     "./node": {
       "types": "./dist/node/index.d.ts",
       "default": "./dist/node/index.js"
+    },
+    "./node/lean": {
+      "types": "./dist/node/lean.d.ts",
+      "default": "./dist/node/lean.js"
     },
     "./internal/hosts": {
       "types": "./dist/hosts/index.d.ts",

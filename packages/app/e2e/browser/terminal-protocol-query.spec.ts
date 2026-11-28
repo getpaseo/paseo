@@ -4,7 +4,9 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { holdFileUploadResponse } from "../support/helpers/file-upload-gate";
+import { clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import { installLocalDesktopHost } from "../support/helpers/local-desktop-host";
+import { clickSettingsBackToWorkspace, openSettingsSection } from "../support/helpers/settings";
 import { TerminalE2EHarness } from "../support/helpers/terminal-dsl";
 import { getTerminalBufferText, waitForTerminalContent } from "../support/helpers/terminal-perf";
 
@@ -23,12 +25,133 @@ if (process.stdin.isTTY) {
 process.stdin.resume();
 process.stdin.on("data", (chunk) => {
   captured = Buffer.concat([captured, chunk]);
-  if (captured.includes(Buffer.from("rgb:"))) {
-    finish();
-  }
 });
 setTimeout(finish, 700);
 `;
+
+const TERMINAL_PALETTE_PROBE_SCRIPT = `
+process.stdin.setRawMode(true);
+process.stdin.resume();
+const mode = process.argv[2];
+let buf = "";
+const timer = setTimeout(() => {
+  process.stdout.write("PROBE_TIMEOUT:" + mode + ":" + buf.replace(/\\x1b/g, "ESC") + "\\n");
+  process.exit(2);
+}, 5000);
+
+if (mode === "osc") {
+  const code = process.argv[3];
+  process.stdin.on("data", (chunk) => {
+    buf += chunk.toString("binary");
+    const match = buf.match(new RegExp("\\\\x1b\\\\]" + code + ";rgb:[0-9a-f/]+\\\\x1b\\\\\\\\"));
+    if (!match) return;
+    clearTimeout(timer);
+    process.stdout.write("OSC_COLOR_OK:" + code + ":" + match[0].replace(/\\x1b/g, "ESC") + "\\n");
+    process.exit(0);
+  });
+  process.stdout.write("\\x1b]" + code + ";?\\x07");
+} else if (mode === "dsr996") {
+  process.stdin.on("data", (chunk) => {
+    buf += chunk.toString("binary");
+    const match = buf.match(/\\x1b\\[\\?997;([12])n/);
+    if (!match) return;
+    clearTimeout(timer);
+    process.stdout.write("DSR996_OK:" + match[1] + "\\n");
+    process.exit(0);
+  });
+  process.stdout.write("\\x1b[?996n");
+} else if (mode === "watch2031") {
+  clearTimeout(timer);
+  process.stdin.on("data", (chunk) => {
+    buf += chunk.toString("binary");
+    if (buf.includes("Q")) {
+      process.stdout.write("\\x1b[?2031lWATCH2031_DONE\\n");
+      process.exit(0);
+    }
+    let match;
+    while ((match = buf.match(/\\x1b\\[\\?997;([12])n/))) {
+      process.stdout.write("WATCH2031_EVENT:" + match[1] + "\\n");
+      buf = buf.slice(match.index + match[0].length);
+    }
+  });
+  process.stdout.write("\\x1b[?2031hWATCH2031_READY\\n");
+}
+`;
+
+const TERMINAL_PALETTE_SCENARIOS = {
+  light: {
+    label: "Light",
+    colorFgBg: "0;15",
+    schemeCode: "2",
+    colors: {
+      10: "rgb:1a1a/1a1a/1e1e",
+      11: "rgb:ffff/ffff/ffff",
+      12: "rgb:1a1a/1a1a/1e1e",
+    },
+  },
+  dark: {
+    label: "Dark",
+    colorFgBg: "15;0",
+    schemeCode: "1",
+    colors: {
+      10: "rgb:fafa/fafa/fafa",
+      11: "rgb:1818/1b1b/1a1a",
+      12: "rgb:fafa/fafa/fafa",
+    },
+  },
+} as const;
+
+type TerminalPaletteScenario =
+  (typeof TERMINAL_PALETTE_SCENARIOS)[keyof typeof TERMINAL_PALETTE_SCENARIOS];
+
+async function selectAppThemeInApp(
+  page: Page,
+  label: TerminalPaletteScenario["label"],
+): Promise<void> {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+  await openSettingsSection(page, "appearance");
+
+  const themeRadio = page.getByRole("radio", { name: label, exact: true });
+  await themeRadio.click();
+  await expect(themeRadio).toBeChecked();
+  await clickSettingsBackToWorkspace(page);
+}
+
+function collectBrowserOsc11Replies(page: Page): string[] {
+  const replies: string[] = [];
+  page.on("websocket", (ws) => {
+    ws.on("framesent", ({ payload }) => {
+      const text = typeof payload === "string" ? payload : payload.toString("latin1");
+      if (text.includes("]11;rgb:")) {
+        replies.push(text);
+      }
+    });
+  });
+  return replies;
+}
+
+async function waitForCreatedTerminal(
+  harness: TerminalE2EHarness,
+  knownTerminalIds: Set<string>,
+): Promise<string> {
+  let createdTerminalId: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        const result = await harness.client.listTerminals(harness.tempRepo.path, undefined, {
+          workspaceId: harness.workspaceId,
+        });
+        createdTerminalId = result.terminals.find(
+          (terminal) => !knownTerminalIds.has(terminal.id),
+        )?.id;
+        return createdTerminalId;
+      },
+      { timeout: 10_000 },
+    )
+    .toBeTruthy();
+  return createdTerminalId!;
+}
 
 // A TUI stand-in: turns on bracketed paste, reads every quoted path in each
 // bracketed paste, and echoes typed lines, so the PTY output proves what reached
@@ -158,6 +281,10 @@ test.describe("Terminal protocol queries", () => {
   test.beforeAll(async () => {
     harness = await TerminalE2EHarness.create({ tempPrefix: "terminal-protocol-query-" });
     await writeFile(path.join(harness.tempRepo.path, "osc11-capture.cjs"), OSC11_CAPTURE_SCRIPT);
+    await writeFile(
+      path.join(harness.tempRepo.path, "palette-probe.cjs"),
+      TERMINAL_PALETTE_PROBE_SCRIPT,
+    );
     await writeFile(path.join(harness.tempRepo.path, "file-receiver.cjs"), FILE_RECEIVER_SCRIPT);
   });
 
@@ -166,6 +293,8 @@ test.describe("Terminal protocol queries", () => {
   });
 
   test("does not send browser OSC 11 color-query replies back to the PTY", async ({ page }) => {
+    const browserOscReplies = collectBrowserOsc11Replies(page);
+
     const terminalInstance = await harness.createTerminal({ name: "osc11-query" });
     try {
       await harness.openTerminal(page, { terminalId: terminalInstance.id });
@@ -178,11 +307,107 @@ test.describe("Terminal protocol queries", () => {
       await page.waitForTimeout(500);
 
       const text = await getTerminalBufferText(page);
+      const captureLine =
+        text.split("\n").find((line) => line.includes("PASEO_OSC11_CAPTURE:")) ?? "";
+      const capturedMatches = captureLine.match(/\]11;rgb:[0-9a-f/]+/g) ?? [];
 
-      expect(text).toContain("rgb:0b0b/0b0b/0b0b");
-      expect(text).not.toContain("rgb:ffff/ffff/ffff");
+      expect(capturedMatches).toHaveLength(1);
+      expect(browserOscReplies).toEqual([]);
+      const afterCapture = text.slice(text.indexOf("PASEO_OSC11_CAPTURE:") + captureLine.length);
+      expect(afterCapture).not.toContain("rgb:");
     } finally {
       await harness.killTerminal(terminalInstance.id);
+    }
+  });
+
+  test("reports Light and Dark palettes through OSC 10/11/12, COLORFGBG, DSR 996/997, and live DEC 2031 toggles", async ({
+    page,
+  }) => {
+    const createAppTerminal = async (): Promise<string> => {
+      const existing = await harness.client.listTerminals(harness.tempRepo.path, undefined, {
+        workspaceId: harness.workspaceId,
+      });
+      const knownIds = new Set(existing.terminals.map((entry) => entry.id));
+      await clickNewTerminal(page);
+      const terminalId = await waitForCreatedTerminal(harness, knownIds);
+      const surface = terminalSurface(page);
+      await expect(surface).toBeVisible({ timeout: 20_000 });
+      await surface.click();
+      const readyTag = `READY_${Date.now()}`;
+      await surface.pressSequentially(`echo ${readyTag}\n`, { delay: 0 });
+      await expectTerminalOutput(terminalId, readyTag);
+      return terminalId;
+    };
+
+    const runPaletteChecks = async (
+      terminalId: string,
+      scenario: TerminalPaletteScenario,
+      options: { checkColorFgBg: boolean },
+    ): Promise<void> => {
+      const surface = terminalSurface(page);
+      await surface.click();
+      if (options.checkColorFgBg) {
+        await surface.pressSequentially('echo "CFGBG=$COLORFGBG"\n', { delay: 0 });
+        await expectTerminalOutput(terminalId, `CFGBG=${scenario.colorFgBg}`);
+      }
+      for (const code of [10, 11, 12] as const) {
+        await surface.pressSequentially(`${process.execPath} palette-probe.cjs osc ${code}\n`, {
+          delay: 0,
+        });
+        await expectTerminalOutput(
+          terminalId,
+          `OSC_COLOR_OK:${code}:ESC]${code};${scenario.colors[code]}ESC\\`,
+        );
+      }
+      await surface.pressSequentially(`${process.execPath} palette-probe.cjs dsr996\n`, {
+        delay: 0,
+      });
+      await expectTerminalOutput(terminalId, `DSR996_OK:${scenario.schemeCode}`);
+    };
+
+    // 1. Open workspace once, switch to Light in-app, and create a fresh Light terminal.
+    await gotoWorkspace(page, harness.workspaceId);
+    await selectAppThemeInApp(page, "Light");
+    const lightTerminalId = await createAppTerminal();
+    let darkTerminalId: string | null = null;
+    try {
+      await runPaletteChecks(lightTerminalId, TERMINAL_PALETTE_SCENARIOS.light, {
+        checkColorFgBg: true,
+      });
+
+      // 2. Start DEC 2031 watcher in that running Light terminal, then toggle Light -> Dark -> Light.
+      await terminalSurface(page).pressSequentially(
+        `${process.execPath} palette-probe.cjs watch2031\n`,
+        { delay: 0 },
+      );
+      await expectTerminalOutput(lightTerminalId, "WATCH2031_READY");
+
+      await selectAppThemeInApp(page, "Dark");
+      await expectTerminalOutput(lightTerminalId, "WATCH2031_EVENT:1");
+
+      await selectAppThemeInApp(page, "Light");
+      await expectTerminalOutput(lightTerminalId, "WATCH2031_EVENT:2");
+
+      // Stop watcher, toggle to Dark, and verify live OSC 10/11/12 + DSR 996 update on the same PTY.
+      await terminalSurface(page).click();
+      await terminalSurface(page).pressSequentially("Q", { delay: 0 });
+      await expectTerminalOutput(lightTerminalId, "WATCH2031_DONE");
+
+      await selectAppThemeInApp(page, "Dark");
+      await runPaletteChecks(lightTerminalId, TERMINAL_PALETTE_SCENARIOS.dark, {
+        checkColorFgBg: false,
+      });
+
+      // 3. Fresh Dark terminal reports Dark OSC 10/11/12, COLORFGBG=15;0, and DSR 996 -> dark (1).
+      darkTerminalId = await createAppTerminal();
+      await runPaletteChecks(darkTerminalId, TERMINAL_PALETTE_SCENARIOS.dark, {
+        checkColorFgBg: true,
+      });
+    } finally {
+      await harness.killTerminal(lightTerminalId);
+      if (darkTerminalId) {
+        await harness.killTerminal(darkTerminalId);
+      }
     }
   });
 

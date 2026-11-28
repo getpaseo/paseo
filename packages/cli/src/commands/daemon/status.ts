@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
+import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client-core";
 import {
   readDaemonInstance,
   daemonLogPath,

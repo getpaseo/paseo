@@ -1778,6 +1778,7 @@ const [state, setState] = useTabState(tab, schema, { view: "preview" });
 | `archivingAt`        | ISO 时间戳或 `null`                                               |
 | `diffStat`           | `{ additions: number; deletions: number } \| null`                |
 | `parentWorkspace`    | `WorkspaceRef \| null`                                            |
+| `metadata`           | `Readonly<Record<string, JsonValue>>`                             |
 
 Agent 快照字段：
 
@@ -1801,6 +1802,7 @@ Agent 快照字段：
 | `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
+| `metadata`          | `Readonly<Record<string, JsonValue>>`                          |
 
 `backgroundWork.count` 是 Agent 在回合结束后仍在运行的 shell 和监视器数量，没有时为 `0`。Agent 可能处于 `idle` 且 `attentionReason: "finished"`，同时这些工作仍在运行，因此请按插件的需要组合这些字段：
 

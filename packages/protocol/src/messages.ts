@@ -188,6 +188,10 @@ export const DAEMON_PERMISSIONS = [
 export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
 export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
 
+export const HexColorSchema = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
+
 const MutableDaemonProviderModelSchema = z
   .object({
     id: z.string().min(1),
@@ -1402,7 +1406,7 @@ const ImageAttachmentSchema = z.object({
 
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
-/** An agent sender may also queue: wait until the recipient's running turn ends. */
+/** Any sender may also queue: wait until the recipient's running turn ends. */
 export const AgentActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "queue"]);
 export type AgentActiveTurnBehavior = z.infer<typeof AgentActiveTurnBehaviorSchema>;
 
@@ -1582,7 +1586,7 @@ export const SendAgentMessageRequestSchema = z.object({
   sourceAgentServerId: z.string().min(1).optional(),
   sessionMode: z.string().optional(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
-  /** queue needs an agent sender. */
+  /** Non-agent senders default to interrupt; agent senders default to queue. */
   activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
@@ -3381,6 +3385,14 @@ export const UnsubscribeTerminalsRequestSchema = z.object({
   workspaceId: z.string().optional(),
 });
 
+export const TerminalDefaultColorsSchema = z.object({
+  foreground: HexColorSchema,
+  background: HexColorSchema,
+  cursor: HexColorSchema.optional(),
+});
+
+export type TerminalDefaultColors = z.infer<typeof TerminalDefaultColorsSchema>;
+
 export const CreateTerminalRequestSchema = z.object({
   type: z.literal("create_terminal_request"),
   cwd: z.string(),
@@ -3389,6 +3401,10 @@ export const CreateTerminalRequestSchema = z.object({
   agentId: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
+  // Initial active palette sent by the client when this terminal is created so
+  // OSC 10/11/12 queries, DSR 996/997, and COLORFGBG match the active theme from
+  // the first byte. Omitted by CLI/MCP/older clients, which retain dark defaults.
+  defaultColors: TerminalDefaultColorsSchema.optional(),
   // Initial PTY size. Added in v0.1.107; the app no longer sends it (the estimate cache that fed
   // it was removed — the pane-focus resize claim sizes the PTY instead). Kept and honored
   // permanently: released v0.1.107 clients still send it, and programmatic callers may pass an
@@ -3473,6 +3489,11 @@ const TerminalClientMessageSchema = z.discriminatedUnion("type", [
     col: z.number(),
     button: z.number(),
     action: z.enum(["down", "up", "move"]),
+  }),
+  z.object({
+    type: z.literal("palette"),
+    defaultColors: TerminalDefaultColorsSchema,
+    intent: z.enum(["claim", "update"]).optional(),
   }),
 ]);
 
@@ -3590,6 +3611,8 @@ export const SessionEventSubscriptionSchema = z.enum([
   "status.daemon_config_changed",
   "status.plugin_catalog_changed",
   "status.plugin_settings_changed",
+  // COMPAT(usageReportUpdates): subscribe only when server_info.features.usageReportUpdates.
+  "status.usage_report_changed",
   "activity_log",
   "hub.execution.agent.update",
   "hub.execution.agent.stream",
@@ -4148,6 +4171,9 @@ export const ServerInfoStatusPayloadSchema = z
         pluginNotifications: z.boolean().optional(),
         // COMPAT(tunnelProviders): added in v0.18.0, remove gate after 2027-06-01.
         tunnelProviders: z.boolean().optional(),
+        // COMPAT(usageReportUpdates): added in v0.18.2, remove gate after 2027-05-27.
+        // Older hosts reject the `status.usage_report_changed` subscription, so subscribe only here.
+        usageReportUpdates: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -4162,6 +4188,8 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-size-ownership": z.boolean().optional(),
+        // COMPAT(terminalPaletteOwnership): added in v0.18.0, remove gate after 2027-06-01.
+        "terminal-palette-ownership": z.boolean().optional(),
         // COMPAT(terminalGraphemeWidths): added in v0.15.0, remove gate after 2027-05-01.
         "terminal-grapheme-widths": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -4275,6 +4303,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentMessageBatching: z.boolean().optional(),
         // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
         agentActiveTurnBehaviors: z.boolean().optional(),
+        // COMPAT(nonAgentMessageQueue): added in v0.18.2, remove gate after 2027-06-01.
+        nonAgentMessageQueue: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -7255,6 +7285,16 @@ export const UsageReportEntrySchema = z.object({
     )
     .optional(),
 });
+/**
+ * Sent in the `status` envelope when the daemon updates a cached report on its own, e.g. from a
+ * Claude or Codex turn's rate-limit event. Only to sources subscribed to
+ * `status.usage_report_changed`.
+ */
+export const UsageReportChangedStatusPayloadSchema = z.object({
+  status: z.literal("usage_report_changed"),
+  report: UsageReportEntrySchema,
+});
+export type UsageReportChangedStatusPayload = z.infer<typeof UsageReportChangedStatusPayloadSchema>;
 export const UsageListReportsUpdateMessageSchema = z.object({
   type: z.literal("usage.list_reports.update"),
   payload: z.object({ requestId: z.string(), report: UsageReportEntrySchema }),

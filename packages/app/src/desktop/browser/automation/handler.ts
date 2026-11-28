@@ -12,6 +12,7 @@ import {
   prepareHostBrowserPartition as prepareHostBrowserPartitionDefault,
   readHostBrowserRouting as readHostBrowserRoutingDefault,
 } from "@/desktop/browser/proxy";
+import { installBrowserFocusGuardBridge } from "./focus-guard";
 import {
   createFixedBrowserViewport,
   createWorkspaceBrowser,
@@ -57,6 +58,7 @@ export function mountBrowserAutomationHandler(
   options: BrowserAutomationHandlerOptions,
 ): () => void {
   installBrowserProxyRendererBridge();
+  installBrowserFocusGuardBridge();
   const getHost = options.getHost ?? getDesktopHost;
   const unsubscribe = options.client.on("browser.automation.execute.request", (request) => {
     void handleBrowserAutomationRequest({

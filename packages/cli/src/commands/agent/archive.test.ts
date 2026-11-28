@@ -22,6 +22,7 @@ class FakeAgentClient implements AgentArchiveClient, AgentReloadClient, AgentDet
   readonly refreshed: string[] = [];
   readonly detached: string[] = [];
   readonly fetchAgentCalls: string[] = [];
+  fetchAgentsCallCount = 0;
   fetchAgentError: Error | null = null;
   closed = false;
 
@@ -31,6 +32,7 @@ class FakeAgentClient implements AgentArchiveClient, AgentReloadClient, AgentDet
   ) {}
 
   async fetchAgents() {
+    this.fetchAgentsCallCount += 1;
     return { entries: this.listed.map((agent) => ({ agent })), pageInfo: { nextCursor: null } };
   }
 
@@ -118,6 +120,21 @@ describe("unlisted agent resolution", () => {
       code: "AGENT_NOT_FOUND",
     });
     expect(client.archived).toEqual([]);
+  });
+
+  it("fast-paths full UUIDs via fetchAgent without paginating archived agents", async () => {
+    const listed = makeAgent(unlistedId, { title: "existing agent" });
+    const client = new FakeAgentClient([listed], [listed]);
+
+    const result = await archiveAgent(unlistedId.toUpperCase(), {}, async () => client);
+
+    expect(result.data).toEqual({
+      agentId: unlistedId,
+      status: "archived",
+      archivedAt: "2026-11-15T00:00:00.000Z",
+    });
+    expect(client.fetchAgentCalls).toEqual([unlistedId]);
+    expect(client.fetchAgentsCallCount).toBe(0);
   });
 
   it("throws AGENT_NOT_FOUND when missing and propagates lookup errors", async () => {

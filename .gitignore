@@ -86,6 +86,7 @@ packages/server/src/server/fixtures/dictation/dictation-debug-largest.wav
 packages/server/src/server/fixtures/dictation/dictation-debug-largest.transcript.txt
 packages/protocol/src/generated/validation/*.aot.ts
 packages/protocol/src/generated/validation/ws-outbound-schema-metadata.ts
+packages/protocol/src/generated/validation/message-defaults.ts
 packages/protocol/codegen/generated/
 
 /artifacts

@@ -37,6 +37,7 @@ const WORKSPACE_FIELDS = [
   "branch",
   "prNumber",
   "forge",
+  "metadata",
 ] as const;
 const AGENT_FIELDS = [
   "title",
@@ -229,6 +230,12 @@ export const PASEO_TOOL_CATALOG = {
     completedLabel: "Renamed workspace",
     context: field("title"),
     detail: { inputOrder: ["title", "workspaceId"] },
+  },
+  update_workspace: {
+    label: "Update workspace",
+    completedLabel: "Updated workspace",
+    context: field("title", "workspaceId"),
+    detail: { inputOrder: ["title", "workspaceId", "metadata"] },
   },
   archive_workspace: {
     label: "Archive workspace",

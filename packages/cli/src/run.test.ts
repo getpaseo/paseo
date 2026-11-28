@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createCli } from "./cli";
+import { createCliForArgv } from "./cli";
 import { createCliParseArgv } from "./run";
 
 const runModuleUrl = new URL("./run.ts", import.meta.url).href;
@@ -36,7 +36,7 @@ async function runCliWithClosedStdout(
 
 describe("runCli", () => {
   it("lets plugin update own --version while preserving global output options", async () => {
-    const cli = createCli()
+    const cli = (await createCliForArgv(["plugin", "update"]))
       .exitOverride()
       .configureOutput({ writeOut: () => {} });
     const update = cli.commands

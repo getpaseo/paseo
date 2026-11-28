@@ -1217,6 +1217,47 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     },
   );
 
+  it("derives COLORFGBG from defaultColors unless already set in env", () => {
+    const defaultEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: {},
+      baseEnv: { PATH: "/usr/bin:/bin", COLORFGBG: "9;9" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(defaultEnv.COLORFGBG).toBe("15;0");
+
+    const lightEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: {},
+      baseEnv: { PATH: "/usr/bin:/bin", COLORFGBG: "15;0" },
+      defaultColors: { foreground: "#1a1a1e", background: "#ffffff" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(lightEnv.COLORFGBG).toBe("0;15");
+
+    const darkEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: {},
+      baseEnv: { PATH: "/usr/bin:/bin", COLORFGBG: "0;15" },
+      defaultColors: { foreground: "#fafafa", background: "#181b1a" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(darkEnv.COLORFGBG).toBe("15;0");
+
+    const explicitEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: { COLORFGBG: "7;0" },
+      baseEnv: { PATH: "/usr/bin:/bin" },
+      defaultColors: { foreground: "#1a1a1e", background: "#ffffff" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(explicitEnv.COLORFGBG).toBe("7;0");
+  });
+
   it.skipIf(!hasZsh)("emits zsh shell integration command completion", async () => {
     const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-command-finished-home-"));
     temporaryDirs.push(homeDir);

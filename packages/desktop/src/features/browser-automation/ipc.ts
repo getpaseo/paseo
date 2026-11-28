@@ -16,6 +16,11 @@ import {
   promptShimRestoreScript,
 } from "./dialog-handling.js";
 import { BrowserTabClosedError, executeAutomationCommand, hasPaintedPixels } from "./service.js";
+import {
+  guardHostPointerFocus,
+  type FocusGuardHostWebContents,
+  type PointerFocusGuardResult,
+} from "./focus-guard.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -35,7 +40,7 @@ interface IpcHandlerRegistry {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
 
-interface HostWebContents {
+interface SnapshotHostWebContents {
   readonly id: number;
   once(event: "destroyed", listener: () => void): void;
 }
@@ -43,10 +48,10 @@ interface HostWebContents {
 export class HostSnapshotEngineRegistry {
   private readonly entries = new Map<
     number,
-    { hostContents: HostWebContents; snapshotEngine: BrowserSnapshotEngine }
+    { hostContents: SnapshotHostWebContents; snapshotEngine: BrowserSnapshotEngine }
   >();
 
-  public get(hostContents: HostWebContents): BrowserSnapshotEngine {
+  public get(hostContents: SnapshotHostWebContents): BrowserSnapshotEngine {
     const existing = this.entries.get(hostContents.id);
     if (existing) {
       return existing.snapshotEngine;
@@ -114,7 +119,10 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   insertText(text: string): Promise<void>;
 }
 
-export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
+export function adaptWebContents(
+  contents: BrowserAutomationWebContents,
+  options?: { guardPointerFocus?: () => Promise<PointerFocusGuardResult> },
+): TabContents {
   const contentsId = contents.id;
   observeConsoleMessages(contents, contentsId);
   const cdpQueue = getCdpQueue(contentsId);
@@ -146,6 +154,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     },
     sendInputEvent: (event) => contents.sendInputEvent(event),
     insertText: (text) => contents.insertText(text),
+    ...(options?.guardPointerFocus ? { guardPointerFocus: options.guardPointerFocus } : {}),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
@@ -437,13 +446,23 @@ function normalizeConsoleMessage(input: {
   };
 }
 
-function createRegistry(hostWebContentsId: number): BrowserRegistry {
+function createRegistry(hostContents: FocusGuardHostWebContents): BrowserRegistry {
+  const hostWebContentsId = hostContents.id;
   return {
     listRegisteredBrowserIds: listRegisteredPaseoBrowserIds,
     listRegisteredBrowserIdsForWorkspace: listRegisteredPaseoBrowserIdsForWorkspace,
     getTabContents(browserId: string): TabContents | null {
       const contents = getPaseoBrowserWebContentsForHostWindow(browserId, hostWebContentsId);
-      return contents ? adaptWebContents(contents) : null;
+      if (!contents) {
+        return null;
+      }
+      return adaptWebContents(contents, {
+        guardPointerFocus: () =>
+          guardHostPointerFocus({
+            hostContents,
+            browserId,
+          }),
+      });
     },
     getBrowserWorkspaceId: getPaseoBrowserWorkspaceId,
     getWorkspaceActiveBrowserId(workspaceId: string): string | null {
@@ -456,7 +475,7 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
   const ipc = options?.ipc ?? ipcMain;
 
   ipc.handle("paseo:browser:execute-automation-command", async (event, rawRequest: unknown) => {
-    const hostContents = (event as { sender?: HostWebContents }).sender;
+    const hostContents = (event as { sender?: FocusGuardHostWebContents }).sender;
     const hostWebContentsId = hostContents?.id;
     if (!hostContents || typeof hostWebContentsId !== "number") {
       return {
@@ -468,7 +487,7 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
         },
       };
     }
-    const registry = createRegistry(hostWebContentsId);
+    const registry = createRegistry(hostContents);
     const parsed = BrowserAutomationExecuteRequestSchema.safeParse(rawRequest);
     if (!parsed.success) {
       return {

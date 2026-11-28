@@ -352,6 +352,33 @@ export function sanitizeProviderEnvOverlay(
   return createExternalProcessEnv({}, envOverlay);
 }
 
+export function buildProviderUsageLaunch(
+  defaultBinary: string,
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+  env: Record<string, string>,
+): import("@getpaseo/plugin/server/provider").ProviderLaunch {
+  const commandConfig = runtimeSettings?.command;
+  if (commandConfig?.mode === "replace") {
+    return {
+      command: commandConfig.argv[0],
+      args: commandConfig.argv.slice(1),
+      env,
+    };
+  }
+  if (commandConfig?.mode === "append") {
+    return {
+      command: defaultBinary,
+      args: [...(commandConfig.args ?? [])],
+      env,
+    };
+  }
+  return {
+    command: defaultBinary,
+    args: [],
+    env,
+  };
+}
+
 export async function isProviderCommandAvailable(
   commandConfig: ProviderCommand | undefined,
   resolveDefaultCommand: () => string | Promise<string>,

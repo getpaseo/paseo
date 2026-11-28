@@ -10,8 +10,8 @@
  *    `stop --keep-terminals` and moving A's node-pty, worker bundle and shell integration away,
  *    a daemon from B adopts the same worker and opens a new, working terminal in it with B's
  *    environment and CLI, while the first terminal keeps A's.
- * 2. Worker protocol versions (PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE): protocols 0–4
- *    are obsolete unreleased wires, so their programs/workers/copies are closed and a current
+ * 2. Worker protocol versions (PASEO_TERMINAL_WORKER_PROTOCOL_OVERRIDE): protocols 0–5
+ *    are obsolete wires, so their programs/workers/copies are closed and a current
  *    worker serves new terminals. A truly newer protocol is left running, reported as
  *    terminal_worker_incompatible, and closed by `daemon stop`.
  *
@@ -49,7 +49,7 @@ const paseoHome = join(root, "home");
 const cliHome = join(root, "os-home");
 const workDir = join(root, "work");
 for (const dir of [paseoHome, cliHome, workDir]) mkdirSync(dir, { recursive: true });
-const currentProtocolVersion = 6;
+const currentProtocolVersion = 7;
 const zsh = ["/bin/zsh", "/usr/bin/zsh"].find((candidate) => existsSync(candidate)) ?? null;
 
 interface Installation {
@@ -456,9 +456,9 @@ try {
   });
   console.log(`Competing listener owns released port ${releasedPort}`);
 
-  // Protocols 0–4 have no draining adapter. Protocol 5 is now the supported previous wire;
+  // Protocols 0–5 have no draining adapter. Protocol 6 is now the supported previous wire;
   // its classification is covered by terminal-worker-protocol.test.ts.
-  for (const protocolVersion of [0, 1, 2, 3, 4]) {
+  for (const protocolVersion of [0, 1, 2, 3, 4, 5]) {
     console.log(`Test 4: obsolete protocol ${protocolVersion} is closed before serving terminals`);
     const obsolete = await leaveWorkerWithProtocol(
       a,

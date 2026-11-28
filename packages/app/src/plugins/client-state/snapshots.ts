@@ -69,6 +69,7 @@ export function createPluginWorkspaceSnapshot(
     statusEnteredAt: serializeTimestamp(workspace.statusEnteredAt),
     archivingAt: workspace.archivingAt,
     diffStat,
+    metadata: cloneAndFreeze(workspace.metadata ?? {}),
   });
   const byHost = workspaceSnapshots.get(workspace) ?? new Map<string, CachedWorkspace>();
   byHost.set(hostId, { language: i18n.language, snapshot });

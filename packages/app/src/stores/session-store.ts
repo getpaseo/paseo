@@ -137,6 +137,7 @@ export interface WorkspaceDescriptor {
   title?: string | null;
   pinnedAt?: string | null;
   labels?: string[];
+  metadata?: Record<string, JsonValue>;
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
   archivingAt: string | null;
@@ -183,6 +184,7 @@ export function normalizeWorkspaceDescriptor(
     pinnedAt: payload.pinnedAt ?? null,
     // COMPAT(workspaceLabels): old daemons omit assignments.
     labels: payload.labels ?? [],
+    metadata: payload.metadata ?? {},
     status: payload.status,
     statusEnteredAt,
     archivingAt: payload.archivingAt ?? null,

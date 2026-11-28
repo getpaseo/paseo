@@ -314,6 +314,10 @@ export class SessionDelivery {
       },
     };
     source.subscriptions.set(id, owner);
+    const tagForSource = (message: SessionOutboundMessage): SessionOutboundMessage =>
+      source.modern || message.type === "fs.file.update" || message.type === "checkout_diff_update"
+        ? withSubscriptionId(message, responseId)
+        : legacyMessage(message);
     return {
       id,
       responseId,
@@ -321,13 +325,7 @@ export class SessionDelivery {
       signal: owner.cancellation.signal,
       emit: (message) => {
         if (!owner.active || !source.active) return;
-        const tagged =
-          source.modern ||
-          message.type === "fs.file.update" ||
-          message.type === "checkout_diff_update"
-            ? withSubscriptionId(message, responseId)
-            : legacyMessage(message);
-        this.sendOwned(owner, tagged);
+        this.sendOwned(owner, tagForSource(message));
       },
       emitBinary: (frame) => {
         if (!owner.active || !source.active) return;
@@ -336,7 +334,7 @@ export class SessionDelivery {
       },
       emitAndWait: async (message) => {
         if (!owner.active || !source.active) throw new Error("Subscription source is closed");
-        const projected = this.project(source.socket, withSubscriptionId(message, responseId));
+        const projected = this.project(source.socket, tagForSource(message));
         this.proofs.set(projected, owner);
         await this.send(source.socket, projected);
       },

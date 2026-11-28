@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { renderError, toCommandError } from "./index.js";
+import { renderError, toCommandError } from "./render.js";
 
 it("preserves the message of an Error with an RPC code in JSON output", () => {
   const error = Object.assign(new Error("Plugin requires Paseo >=0.8.0. Your daemon is 0.7.2."), {

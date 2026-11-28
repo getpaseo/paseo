@@ -380,7 +380,9 @@ export async function discover(
       home: scope.env.HOME || scope.env.USERPROFILE || homedir(),
     };
   const candidates =
-    scope.kind === "global" ? await globalRoutes(lookup) : await sessionRoutes(scope, lookup);
+    scope.kind === "global"
+      ? await globalRoutes(scope, lookup)
+      : await sessionRoutes(scope, lookup);
   const accounts: UsageAccount[] = [];
   for (const input of candidates) {
     const credentials = await resolveClaudeCredentials(input, lookup);
@@ -415,7 +417,10 @@ export async function discover(
 
 function claudeKeychainRoute(lookup: ClaudeCredentialLookup) {
   const env = lookup.env ?? process.env;
-  const configDir = env.CLAUDE_CONFIG_DIR;
+  const secureStorageDir = env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  // CLAUDE_SECURESTORAGE_CONFIG_DIR short-circuits CLAUDE_CONFIG_DIR for macOS Keychain naming:
+  // non-empty hashes that directory; explicitly empty forces the plain service name.
+  const configDir = secureStorageDir !== undefined ? secureStorageDir : env.CLAUDE_CONFIG_DIR;
   // macOS still uses Keychain with CLAUDE_CONFIG_DIR, with an entry keyed to that directory:
   // https://code.claude.com/docs/en/authentication#credential-management
   // Verified in @anthropic-ai/claude-code 2.1.59, package/cli.js: _c() appends the first
@@ -435,12 +440,29 @@ async function claudeRoute(lookup: ClaudeCredentialLookup): Promise<UsageInput> 
     : { route: { store: "claude", path: claudeCredentialPath(lookup) } };
 }
 
-async function globalRoutes(lookup: ClaudeCredentialLookup): Promise<UsageInput[]> {
-  return [
-    await claudeRoute(lookup),
+async function globalRoutes(
+  scope: Extract<UsageScope, { kind: "global" }>,
+  lookup: ClaudeCredentialLookup,
+): Promise<UsageInput[]> {
+  const claudeEnv = scope.launch
+    ? { ...lookup.env, ...scope.launch.env }
+    : (lookup.env ?? process.env);
+  const claudeLookup: ClaudeCredentialLookup = scope.launch
+    ? {
+        ...lookup,
+        env: claudeEnv,
+        home: claudeEnv.HOME || claudeEnv.USERPROFILE || lookup.home,
+      }
+    : lookup;
+  const routes: UsageInput[] = [];
+  if (!shouldSuppressLocalClaudeAuth(claudeEnv, scope.launch)) {
+    routes.push(await claudeRoute(claudeLookup));
+  }
+  routes.push(
     { route: { store: "pi", path: piAuthPath(lookup) } },
     ...discoverOmp(lookup).map((route) => ({ route })),
-  ];
+  );
+  return routes;
 }
 
 async function sessionRoutes(
@@ -448,18 +470,58 @@ async function sessionRoutes(
   lookup: ClaudeCredentialLookup,
 ): Promise<UsageInput[]> {
   if (scope.provider === "claude") {
-    const env = scope.env;
-    const foreign =
-      env.ANTHROPIC_BASE_URL &&
-      env.ANTHROPIC_BASE_URL.replace(/\/+$/, "") !== "https://api.anthropic.com";
-    if (enabled(env.CLAUDE_CODE_USE_BEDROCK) || enabled(env.CLAUDE_CODE_USE_VERTEX) || foreign)
-      return [];
+    if (shouldSuppressLocalClaudeAuth(scope.env, scope.launch)) return [];
     return [await claudeRoute(lookup)];
   }
   if (!scope.model?.startsWith("anthropic/")) return [];
   if (scope.provider === "pi") return [{ route: { store: "pi", path: piAuthPath(lookup) } }];
   if (scope.provider === "omp") return discoverOmp(lookup).map((route) => ({ route }));
   return [];
+}
+
+function hasNonEmpty(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isWrapperLaunch(
+  launch: UsageScope["launch"] | undefined,
+  expectedBinary: string,
+): boolean {
+  if (!launch) return false;
+  if (launch.args.length > 0) return true;
+  const command = launch.command.trim();
+  if (!command) return false;
+  const base = command.replaceAll("\\", "/").split("/").pop()?.toLowerCase() ?? "";
+  const stem = base.replace(/\.(?:exe|cmd|bat|ps1)$/, "");
+  return stem !== expectedBinary;
+}
+
+/**
+ * Suppresses reading default local `~/.claude` / Keychain credentials when the provider or session
+ * authenticates through explicit env tokens, a non-Anthropic endpoint, or a wrapper command.
+ * Custom `CLAUDE_CONFIG_DIR` profiles on the default CLI binary are unaffected.
+ */
+function shouldSuppressLocalClaudeAuth(
+  env: NodeJS.ProcessEnv,
+  launch: UsageScope["launch"] | undefined,
+): boolean {
+  if (isWrapperLaunch(launch, "claude")) return true;
+  if (
+    hasNonEmpty(env.CLAUDE_CODE_OAUTH_TOKEN) ||
+    hasNonEmpty(env.ANTHROPIC_API_KEY) ||
+    hasNonEmpty(env.ANTHROPIC_AUTH_TOKEN)
+  ) {
+    return true;
+  }
+  const baseUrl = env.ANTHROPIC_BASE_URL?.trim();
+  const foreign =
+    Boolean(baseUrl) && baseUrl!.replace(/\/+$/, "").toLowerCase() !== "https://api.anthropic.com";
+  return (
+    enabled(env.CLAUDE_CODE_USE_BEDROCK) ||
+    enabled(env.CLAUDE_CODE_USE_VERTEX) ||
+    enabled(env.CLAUDE_CODE_USE_FOUNDRY) ||
+    foreign
+  );
 }
 
 function enabled(value: string | undefined): boolean {

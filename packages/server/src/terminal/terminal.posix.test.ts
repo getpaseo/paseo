@@ -222,6 +222,111 @@ function writeOsc11Helper(prefix: string): string {
   return path;
 }
 
+const OSC_COLOR_HELPER_SCRIPT = `process.stdin.setRawMode(true);
+process.stdin.resume();
+const code = process.argv[2];
+let buf = "";
+const timer = setTimeout(() => {
+  process.stdout.write("OSC_COLOR_TIMEOUT\\n");
+  process.exit(2);
+}, 2500);
+process.stdin.on("data", (chunk) => {
+  buf += chunk.toString("binary");
+  const match = buf.match(new RegExp("\\\\x1b\\\\]" + code + ";rgb:[0-9a-f/]+\\\\x1b\\\\\\\\"));
+  if (!match) {
+    return;
+  }
+  clearTimeout(timer);
+  process.stdout.write("OSC_COLOR_OK:" + code + ":" + match[0].replace(/\\x1b/g, "ESC") + "\\n");
+  process.exit(0);
+});
+process.stdout.write("\\x1b]" + code + ";?\\x07");
+`;
+
+const COLOR_SCHEME_HELPER_SCRIPT = `process.stdin.setRawMode(true);
+process.stdin.resume();
+const mode = process.argv[2];
+let buf = "";
+const timer = setTimeout(() => {
+  process.stdout.write("SCHEME_TIMEOUT:" + buf.replace(/\\x1b/g, "ESC") + "\\n");
+  process.exit(2);
+}, 4000);
+if (mode === "query") {
+  process.stdin.on("data", (chunk) => {
+    buf += chunk.toString("binary");
+    const match = buf.match(/\\x1b\\[\\?997;([12])n/);
+    if (!match) return;
+    clearTimeout(timer);
+    process.stdout.write("SCHEME_QUERY_OK:" + match[1] + "\\n");
+    process.exit(0);
+  });
+  process.stdout.write("\\x1b[?996n");
+} else if (mode === "decrqm") {
+  let stage = 0;
+  let before = "";
+  process.stdin.on("data", (chunk) => {
+    buf += chunk.toString("binary");
+    if (stage === 0) {
+      const m = buf.match(/\\x1b\\[\\?2031;(\\d)\\$y/);
+      if (!m) return;
+      before = m[1];
+      buf = "";
+      stage = 1;
+      process.stdout.write("\\x1b[?2031h\\x1b[?2031$p");
+    } else if (stage === 1) {
+      const m = buf.match(/\\x1b\\[\\?2031;(\\d)\\$y/);
+      if (!m) return;
+      clearTimeout(timer);
+      process.stdout.write("DECRQM_OK:" + before + ":" + m[1] + "\\n");
+      process.exit(0);
+    }
+  });
+  process.stdout.write("\\x1b[?2031$p");
+} else if (mode === "watch") {
+  const reports = [];
+  process.stdin.on("data", (chunk) => {
+    buf += chunk.toString("binary");
+    if (buf.includes("D")) {
+      buf = buf.replaceAll("D", "");
+      process.stdout.write("\\x1b[?2031l");
+      process.stdout.write("SCHEME_DISABLED\\n");
+    }
+    if (buf.includes("Q")) {
+      clearTimeout(timer);
+      process.stdout.write("SCHEME_DONE:" + reports.join(",") + "\\n");
+      process.exit(0);
+    }
+    let match;
+    while ((match = buf.match(/\\x1b\\[\\?997;([12])n/))) {
+      reports.push(match[1]);
+      process.stdout.write("SCHEME_EVENT:" + match[1] + "\\n");
+      buf = buf.slice(match.index + match[0].length);
+    }
+  });
+  process.stdout.write("\\x1b[?2031hSCHEME_WATCH_READY\\n");
+}
+`;
+
+function waitForOutputLine(session: TerminalSession, line: string): Promise<TerminalState> {
+  return waitForState(session, (state) => getLines(state).includes(line));
+}
+
+function writeOscColorHelper(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirs.push(dir);
+  const path = join(dir, "helper.cjs");
+  writeFileSync(path, OSC_COLOR_HELPER_SCRIPT);
+  return path;
+}
+
+function writeColorSchemeHelper(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirs.push(dir);
+  const path = join(dir, "helper.cjs");
+  writeFileSync(path, COLOR_SCHEME_HELPER_SCRIPT);
+  return path;
+}
+
 function isDaOkLine(line: string): boolean {
   return line.startsWith("DA_OK:");
 }
@@ -1071,6 +1176,136 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
 
       const ack = getLines(await readTerminalState(session)).find(isOsc11OkLine) ?? "";
       expect(ack).toBe("OSC11_OK:ESC]11;rgb:0b0b/0b0b/0b0bESC\\");
+    });
+
+    it("reports the terminal creation palette for OSC 10/11/12 queries and sets COLORFGBG", async () => {
+      const colors = {
+        foreground: "#112233",
+        background: "#abcdef",
+        cursor: "#445566",
+      };
+      const helperPath = writeOscColorHelper("terminal-osc-all-helper-");
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+          defaultColors: colors,
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      session.send({ type: "input", data: 'echo "CFGBG=$COLORFGBG"\r' });
+      await waitForOutputLine(session, "CFGBG=0;15");
+
+      for (const [code, expected] of [
+        [10, "rgb:1111/2222/3333"],
+        [11, "rgb:abab/cdcd/efef"],
+        [12, "rgb:4444/5555/6666"],
+      ] as const) {
+        session.send({ type: "input", data: `${process.execPath} ${helperPath} ${code}\r` });
+        await waitForState(session, (state) =>
+          getLines(state).some((line) => line.startsWith(`OSC_COLOR_OK:${code}:`)),
+        );
+        const ack =
+          getLines(await readTerminalState(session)).find((line) =>
+            line.startsWith(`OSC_COLOR_OK:${code}:`),
+          ) ?? "";
+        expect(ack).toBe(`OSC_COLOR_OK:${code}:ESC]${code};${expected}ESC\\`);
+      }
+    });
+
+    it("composites translucent terminal colors before reporting OSC queries", async () => {
+      const colors = {
+        foreground: "#33669980",
+        background: "#112233cc",
+        cursor: "#abcdef40",
+      };
+      const helperPath = writeOscColorHelper("terminal-osc-alpha-helper-");
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+          defaultColors: colors,
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      for (const [code, response] of [
+        [10, "rgb:2222/4242/6262"],
+        [11, "rgb:1010/1d1d/2b2b"],
+        [12, "rgb:3737/4949/5c5c"],
+      ] as const) {
+        session.send({ type: "input", data: `${process.execPath} ${helperPath} ${code}\r` });
+        await waitForState(session, (state) =>
+          getLines(state).some((line) => line.startsWith(`OSC_COLOR_OK:${code}:`)),
+        );
+        const ack =
+          getLines(await readTerminalState(session)).find((line) =>
+            line.startsWith(`OSC_COLOR_OK:${code}:`),
+          ) ?? "";
+        expect(ack).toBe(`OSC_COLOR_OK:${code}:ESC]${code};${response}ESC\\`);
+      }
+    });
+
+    it("updates OSC 10/11/12, answers DSR 996/997 + DECRQM 2031, and emits DEC 2031 polarity changes live", async () => {
+      const oscHelper = writeOscColorHelper("terminal-osc-live-helper-");
+      const schemeHelper = writeColorSchemeHelper("terminal-scheme-live-helper-");
+      const light = { foreground: "#1a1a1e", background: "#ffffff", cursor: "#1a1a1e" };
+      const dark = { foreground: "#fafafa", background: "#181b1a", cursor: "#fafafa" };
+
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+          defaultColors: light,
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      // DSR 996 query reports light (2) initially
+      session.send({ type: "input", data: `${process.execPath} ${schemeHelper} query\r` });
+      await waitForOutputLine(session, "SCHEME_QUERY_OK:2");
+
+      // DECRQM 2031 reports reset (2) before enabling and set (1) after enabling
+      session.send({ type: "input", data: `${process.execPath} ${schemeHelper} decrqm\r` });
+      await waitForOutputLine(session, "DECRQM_OK:2:1");
+
+      // Start mode 2031 watcher
+      session.send({ type: "input", data: `${process.execPath} ${schemeHelper} watch\r` });
+      await waitForOutputLine(session, "SCHEME_WATCH_READY");
+
+      // Same polarity update (another light palette) does NOT emit a 997 report
+      session.send({
+        type: "palette",
+        defaultColors: { foreground: "#111111", background: "#fafafa", cursor: "#111111" },
+      });
+      // Flip light -> dark emits CSI ? 997 ; 1 n
+      session.send({ type: "palette", defaultColors: dark });
+      await waitForOutputLine(session, "SCHEME_EVENT:1");
+
+      // Flip dark -> light emits CSI ? 997 ; 2 n
+      session.send({ type: "palette", defaultColors: light });
+      await waitForOutputLine(session, "SCHEME_EVENT:2");
+
+      // Disable mode 2031, flip to dark again, confirm no third event is emitted
+      session.send({ type: "input", data: "D" });
+      await waitForOutputLine(session, "SCHEME_DISABLED");
+      session.send({ type: "palette", defaultColors: dark });
+      session.send({ type: "input", data: "Q" });
+      await waitForOutputLine(session, "SCHEME_DONE:1,2");
+
+      // Subsequent OSC 11 and DSR 996 queries immediately reflect the updated dark palette
+      session.send({ type: "input", data: `${process.execPath} ${oscHelper} 11\r` });
+      await waitForOutputLine(session, "OSC_COLOR_OK:11:ESC]11;rgb:1818/1b1b/1a1aESC\\");
+
+      session.send({ type: "input", data: `${process.execPath} ${schemeHelper} query\r` });
+      await waitForOutputLine(session, "SCHEME_QUERY_OK:1");
     });
   });
 

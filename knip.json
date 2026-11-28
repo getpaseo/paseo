@@ -47,8 +47,14 @@
       "ignore": ["android/**", "ios/**", ".expo/**", "dist/**", "scripts/reset-project.js"]
     },
     "packages/cli": {
-      "entry": ["src/index.ts", "bin/paseo", "src/**/*.test.{ts,tsx}", "tests/**/*.{ts,tsx}"],
-      "project": ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"]
+      "entry": [
+        "src/index.ts",
+        "bin/paseo",
+        "scripts/**/*.mjs",
+        "src/**/*.test.{ts,tsx}",
+        "tests/**/*.{ts,tsx}"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "tests/**/*.{ts,tsx}"]
     },
     "packages/relay": {
       "entry": ["src/index.ts", "src/e2ee.ts", "src/cloudflare-adapter.ts", "src/**/*.test.ts"],

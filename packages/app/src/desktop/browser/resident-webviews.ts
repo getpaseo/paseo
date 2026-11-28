@@ -107,6 +107,8 @@ function applyResidentHostParkingStyle(host: HTMLElement): void {
 
 function applyParkedBrowserSurfaceStyle(surface: HTMLElement): void {
   surface.setAttribute("aria-hidden", "true");
+  surface.setAttribute("inert", "");
+  surface.setAttribute("tabindex", "-1");
   surface.style.position = "fixed";
   surface.style.left = "0";
   surface.style.top = "0";
@@ -271,6 +273,8 @@ export function presentBrowserWebview(
   const surfaceBottom = Math.floor(bottom);
   const hasVisibleArea = surfaceRight > surfaceLeft && surfaceBottom > surfaceTop;
   surface.setAttribute("aria-hidden", "false");
+  surface.removeAttribute("inert");
+  surface.removeAttribute("tabindex");
   surface.style.position = "fixed";
   surface.style.left = `${surfaceLeft}px`;
   surface.style.top = `${surfaceTop}px`;

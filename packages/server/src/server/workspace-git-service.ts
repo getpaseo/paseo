@@ -147,6 +147,9 @@ const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
 // Small values (booleans, short strings, small arrays); generous cap.
 const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
+// Retain the last-known snapshot after a target ages past the 90s warm release grace so
+// reconnects serve stale-while-revalidate instead of blocking on cold Git bursts.
+const WORKSPACE_GIT_RETAINED_SNAPSHOT_MAX = 2_000;
 
 export function computeBackgroundGitFetchDelayMs(consecutiveErrors: number): number {
   if (consecutiveErrors <= 0) {
@@ -526,6 +529,14 @@ interface WorkspaceGitTarget {
   folderMissing: boolean;
   folderRestorePromise: Promise<void> | null;
   closed: boolean;
+  // Creation order across targets. One target exists per cwd at a time, so a higher generation
+  // always read its git facts later than every earlier target for that cwd.
+  generation: number;
+}
+
+interface RetainedWorkspaceSnapshot {
+  generation: number;
+  snapshot: WorkspaceGitRuntimeSnapshot;
 }
 
 type RepoFetchState =
@@ -763,6 +774,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<string>
   >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
+  private readonly retainedSnapshots = new LRUCache<string, RetainedWorkspaceSnapshot>({
+    max: WORKSPACE_GIT_RETAINED_SNAPSHOT_MAX,
+  });
+  private nextWorkspaceTargetGeneration = 0;
   private readonly checkoutDiffCache = new CheckoutDiffCache(() => this.deps.now().getTime());
   private watcherErrorCallbackCount = 0;
   constructor(options: WorkspaceGitServiceOptions) {
@@ -900,6 +915,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!request.force && target.latestSnapshot) {
       return target.latestSnapshot;
     }
+    if (!request.force && !target.folderMissing) {
+      const retained = this.retainedSnapshots.get(cwd);
+      if (retained) {
+        this.scheduleBackgroundRevalidation(target, request);
+        return retained.snapshot;
+      }
+    }
 
     return this.requestWorkspaceSnapshot(target, request);
   }
@@ -951,7 +973,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   private getCachedSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
     cwd = resolve(cwd);
-    return this.workspaceTargets.get(cwd)?.latestSnapshot ?? null;
+    return (
+      this.workspaceTargets.get(cwd)?.latestSnapshot ??
+      this.retainedSnapshots.get(cwd)?.snapshot ??
+      null
+    );
   }
 
   async getCheckoutDiff(
@@ -1186,6 +1212,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const normalizedCwd = resolve(cwd);
     const target = this.workspaceTargets.get(normalizedCwd);
     if (!target || target.closed) {
+      this.retainedSnapshots.delete(normalizedCwd);
       return;
     }
     this.invalidateForge(normalizedCwd);
@@ -1237,6 +1264,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchResolutions.clear();
     this.workingTreeWatchAliases.clear();
     this.watchSetupTimeouts.clear();
+    this.retainedSnapshots.clear();
     this.snapshotUpdatedListeners.clear();
     // Unsubscribing can remove a target while its Git command still owns the cwd.
     // Stop admission first, then drain those refreshes and the parent lookups they start.
@@ -1386,6 +1414,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private createWorkspaceTarget(cwd: string): WorkspaceGitTarget {
+    const retained = this.retainedSnapshots.get(cwd);
     const target: WorkspaceGitTarget = {
       gitDirPaths: null,
       cwd,
@@ -1409,7 +1438,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       latestSnapshotLoadedAtMs: null,
       latestFacts: null,
       factsPromise: null,
-      latestFingerprint: null,
+      latestFingerprint: retained ? JSON.stringify(retained.snapshot) : null,
       lastShellOutAtMs: null,
       repoGitRoot: null,
       observationSetupPromise: null,
@@ -1417,6 +1446,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       folderMissing: false,
       folderRestorePromise: null,
       closed: false,
+      generation: this.nextWorkspaceTargetGeneration++,
     };
 
     this.workspaceTargets.set(cwd, target);
@@ -1424,19 +1454,43 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private scheduleInitialWorkspaceRefresh(target: WorkspaceGitTarget): void {
+    const hasRetainedSnapshot = this.retainedSnapshots.has(target.cwd);
     queueMicrotask(() => {
       if (!this.isActiveObservedWorkspaceTarget(target) || target.latestSnapshot) {
         return;
       }
       void this.refreshWorkspaceTarget(target, {
-        origin: "demand",
+        origin: hasRetainedSnapshot ? "observation" : "demand",
         force: false,
         refreshStructure: true,
         refreshWorktree: true,
         includeForge: true,
-        reason: "initial",
+        reason: hasRetainedSnapshot ? "revalidate" : "initial",
         queueIfBusy: false,
         movedRemoteRefs: new Set(),
+      });
+    });
+  }
+
+  private scheduleBackgroundRevalidation(
+    target: WorkspaceGitTarget,
+    request: WorkspaceGitRefreshRequest,
+  ): void {
+    queueMicrotask(() => {
+      if (
+        this.disposed ||
+        target.closed ||
+        target.folderMissing ||
+        target.latestSnapshot ||
+        this.workspaceTargets.get(target.cwd) !== target
+      ) {
+        return;
+      }
+      void this.refreshWorkspaceTarget(target, {
+        ...request,
+        origin: "observation",
+        reason: `${request.reason}:revalidate`,
+        queueIfBusy: false,
       });
     });
   }
@@ -1890,6 +1944,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.folderMissing = true;
+    this.retainedSnapshots.delete(target.cwd);
     if (target.refreshState.status === "in-flight") {
       target.refreshState.queued = null;
     }
@@ -4106,15 +4161,37 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
   }
 
+  // Only the newest target for a cwd may retain its snapshot, so a slow refresh from an older
+  // target never replaces facts a later target already read.
+  private retainSnapshot(target: WorkspaceGitTarget, snapshot: WorkspaceGitRuntimeSnapshot): void {
+    if (this.disposed || target.folderMissing) {
+      return;
+    }
+    const liveTarget = this.workspaceTargets.get(target.cwd);
+    const retained = this.retainedSnapshots.get(target.cwd);
+    if (
+      (liveTarget && liveTarget !== target) ||
+      (retained && retained.generation > target.generation)
+    ) {
+      return;
+    }
+    this.retainedSnapshots.set(target.cwd, { generation: target.generation, snapshot });
+  }
+
   private rememberSnapshot(
     target: WorkspaceGitTarget,
     snapshot: WorkspaceGitRuntimeSnapshot,
     options?: { forceEmit?: boolean },
   ): void {
-    if (target.closed || target.folderMissing || this.workspaceTargets.get(target.cwd) !== target) {
+    if (target.folderMissing) {
+      return;
+    }
+    if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+      this.retainSnapshot(target, snapshot);
       return;
     }
     target.latestSnapshot = snapshot;
+    this.retainedSnapshots.delete(target.cwd);
     if (target.listeners.size > 0) {
       this.updateForgePrStatusPollForTarget(target);
     }
@@ -4515,6 +4592,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   private removeWorkspaceTarget(target: WorkspaceGitTarget): void {
+    if (target.latestSnapshot && !target.folderMissing) {
+      this.retainSnapshot(target, target.latestSnapshot);
+    }
     this.detachWorkspaceFromRepoTarget(target);
     this.closeWorkspaceTarget(target);
     this.workspaceTargets.delete(target.cwd);

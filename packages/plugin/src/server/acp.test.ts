@@ -16,7 +16,7 @@ import type {
   ProviderInput,
   ProviderPermissionResponse,
 } from "./provider.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
@@ -8020,6 +8020,398 @@ describe("ACP form elicitation", () => {
       await waitForEvent(events, (e) => e.type === "session.turn" && e.state === "completed");
     } finally {
       await connection.close();
+    }
+  });
+});
+
+describe("runAcpProvider interrupt settlement and hung-cancel retirement (#3256)", () => {
+  async function writeAcpInterruptScript(
+    dir: string,
+    config: {
+      pidFile: string;
+      cancelMode: "responsive" | "ignore";
+      ignoreSigterm?: boolean;
+      loadSession: boolean;
+      responsiveDelayMs?: number;
+    },
+  ): Promise<string> {
+    const scriptPath = path.join(dir, "interrupt-acp.mjs");
+    await writeFile(
+      scriptPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `import { createInterface } from "node:readline";`,
+        `const cfg = ${JSON.stringify(config)};`,
+        `appendFileSync(cfg.pidFile, String(process.pid) + "\\n");`,
+        `if (cfg.ignoreSigterm) { process.on("SIGTERM", () => {}); }`,
+        `const write = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");`,
+        `let pendingPromptId = null;`,
+        `createInterface({ input: process.stdin }).on("line", (line) => {`,
+        `  if (!line.trim()) return;`,
+        `  const msg = JSON.parse(line);`,
+        `  if (msg.method === "initialize") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: cfg.loadSession ? { loadSession: true } : {} } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/new") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "plugin-acp-session" } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/load") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: {} });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/prompt") {`,
+        `    const text = msg.params?.prompt?.[0]?.text ?? "";`,
+        `    if (text.startsWith("hang")) {`,
+        `      pendingPromptId = msg.id;`,
+        `      write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "hang-tool", name: "run", title: "Work", status: "in_progress" } } });`,
+        `      return;`,
+        `    }`,
+        `    write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok:" + text } } } });`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/cancel") {`,
+        `    if (cfg.cancelMode === "responsive" && pendingPromptId !== null) {`,
+        `      const id = pendingPromptId;`,
+        `      pendingPromptId = null;`,
+        `      setTimeout(() => write({ jsonrpc: "2.0", id, result: { stopReason: "cancelled" } }), cfg.responsiveDelayMs ?? 60);`,
+        `    }`,
+        `  }`,
+        `});`,
+      ].join("\n"),
+      "utf8",
+    );
+    return scriptPath;
+  }
+
+  it("waits for a responsive ACP child to settle before completing session.interrupt and keeps the process alive", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-plugin-acp-responsive-"));
+    temporaryDirectories.push(dir);
+    const pidFile = path.join(dir, "pids.log");
+    const scriptPath = await writeAcpInterruptScript(dir, {
+      pidFile,
+      cancelMode: "responsive",
+      loadSession: true,
+      responsiveDelayMs: 80,
+    });
+    const registration = runAcpProvider({
+      id: "responsive-interrupt-acp",
+      label: "Responsive Interrupt ACP",
+      command: [process.execPath, scriptPath],
+      acpOptions: { interruptGraceMs: 500 },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.persistence"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const pidsBefore = (await readFile(pidFile, "utf8")).trim().split("\n").map(Number);
+      const sessionPid = pidsBefore.at(-1)!;
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "resp-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "hang-1" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "timeline.item" && event.item.type === "tool_call",
+      );
+
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stop-resp",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "stop-resp",
+      );
+
+      // The turn settled BEFORE request.completed, without retiring or killing the child.
+      const cancelIdx = events.findIndex(
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:resp-1" &&
+          event.state === "canceled",
+      );
+      const completedIdx = events.findIndex(
+        (event) => event.type === "request.completed" && event.requestId === "stop-resp",
+      );
+      expect(cancelIdx).toBeGreaterThanOrEqual(0);
+      expect(cancelIdx).toBeLessThan(completedIdx);
+      expect(events.some((event) => event.type === "session.closed")).toBe(false);
+      expect(() => process.kill(sessionPid, 0)).not.toThrow();
+
+      // Next prompt runs on the same process.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "resp-2",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "still-alive" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:resp-2" &&
+          event.state === "completed",
+      );
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "assistant_message" &&
+            event.item.text === "ok:still-alive",
+        ),
+      ).toBe(true);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("kills and retires a hung resumable ACP child (even ignoring SIGTERM) without emitting duplicate turn failures", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-plugin-acp-hung-resumable-"));
+    temporaryDirectories.push(dir);
+    const pidFile = path.join(dir, "pids.log");
+    const scriptPath = await writeAcpInterruptScript(dir, {
+      pidFile,
+      cancelMode: "ignore",
+      ignoreSigterm: true,
+      loadSession: true,
+    });
+    const registration = runAcpProvider({
+      id: "hung-resumable-acp",
+      label: "Hung Resumable ACP",
+      command: [process.execPath, scriptPath],
+      acpOptions: { interruptGraceMs: 120, interruptKillGraceMs: 120 },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.persistence"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const sessionPid = (await readFile(pidFile, "utf8")).trim().split("\n").map(Number).at(-1)!;
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "hung-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "hang-forever" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "timeline.item" && event.item.type === "tool_call",
+      );
+
+      await Promise.all([
+        connection.send({ type: "session.interrupt", requestId: "stop-1", sessionId: "session-1" }),
+        connection.send({ type: "session.interrupt", requestId: "stop-2", sessionId: "session-1" }),
+      ]);
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "stop-1",
+        3_000,
+      );
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "stop-2",
+        3_000,
+      );
+      const closedEvent = await waitForEvent(events, (event) => event.type === "session.closed");
+
+      expect(() => process.kill(sessionPid, 0)).toThrow();
+      expect(closedEvent.type === "session.closed" && closedEvent.error).toBeUndefined();
+      expect(events.filter((event) => event.type === "session.closed")).toHaveLength(1);
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:hung-1" &&
+            event.state !== "started",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          type: "session.turn",
+          turnId: "acp:hung-1",
+          state: "canceled",
+        }),
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("kills and retires a hung non-resumable ACP child and includes a clear error on session.closed", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-plugin-acp-hung-nonresumable-"));
+    temporaryDirectories.push(dir);
+    const pidFile = path.join(dir, "pids.log");
+    const scriptPath = await writeAcpInterruptScript(dir, {
+      pidFile,
+      cancelMode: "ignore",
+      loadSession: false,
+    });
+    const registration = runAcpProvider({
+      id: "hung-nonresumable-acp",
+      label: "Hung Non-Resumable ACP",
+      command: [process.execPath, scriptPath],
+      acpOptions: { interruptGraceMs: 120, interruptKillGraceMs: 120 },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const sessionPid = (await readFile(pidFile, "utf8")).trim().split("\n").map(Number).at(-1)!;
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "hung-nr-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "hang-forever" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "timeline.item" && event.item.type === "tool_call",
+      );
+
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stop-nr",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "stop-nr",
+        3_000,
+      );
+      const closedEvent = await waitForEvent(events, (event) => event.type === "session.closed");
+
+      expect(() => process.kill(sessionPid, 0)).toThrow();
+      expect(closedEvent).toMatchObject({
+        type: "session.closed",
+        sessionId: "session-1",
+        error: { message: expect.stringMatching(/does not support session resume/i) },
+      });
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:hung-nr-1" &&
+            event.state !== "started",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          type: "session.turn",
+          turnId: "acp:hung-nr-1",
+          state: "canceled",
+        }),
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("waits a full 10s default grace window before retiring an unresponsive prompt", async () => {
+    vi.useFakeTimers();
+    const hasEvent = (events: ProviderEvent[], predicate: (event: ProviderEvent) => boolean) =>
+      events.some(predicate);
+    try {
+      const { connector } = connectorHarness({
+        handleRequest(_instance, request) {
+          if (request.method === "session/prompt") {
+            return true; // Intentionally never answer prompt or cancel.
+          }
+          return false;
+        },
+      });
+      const registration = runAcpProvider({
+        id: "default-10s-grace-acp",
+        label: "Default 10s Grace ACP",
+        connector,
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      const isReady = (event: ProviderEvent) => event.type === "session.ready";
+      const isTurnStarted = (event: ProviderEvent) =>
+        event.type === "session.turn" &&
+        event.turnId === "acp:slow-grace" &&
+        event.state === "started";
+      try {
+        await connection.send(openInput());
+        await vi.waitFor(() => expect(hasEvent(events, isReady)).toBe(true));
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "slow-grace",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "hang" }] },
+          },
+        });
+        await vi.waitFor(() => expect(hasEvent(events, isTurnStarted)).toBe(true));
+
+        await connection.send({
+          type: "session.interrupt",
+          requestId: "stop-10s",
+          sessionId: "session-1",
+        });
+
+        // Must NOT escalate at 3.5s or 9.9s (3s is too tight for event-loop stalls).
+        await vi.advanceTimersByTimeAsync(3_500);
+        expect(events.some((event) => event.type === "session.closed")).toBe(false);
+        expect(
+          events.some(
+            (event) => event.type === "request.completed" && event.requestId === "stop-10s",
+          ),
+        ).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(6_400);
+        expect(events.some((event) => event.type === "session.closed")).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(200);
+        expect(
+          events.some(
+            (event) => event.type === "request.completed" && event.requestId === "stop-10s",
+          ),
+        ).toBe(true);
+        expect(events.some((event) => event.type === "session.closed")).toBe(true);
+      } finally {
+        await connection.close();
+      }
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

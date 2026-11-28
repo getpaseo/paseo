@@ -1282,6 +1282,107 @@ describe("Suite E: Workspace Tools", () => {
     }
   }, 30_000);
 
+  test("workspace metadata create, update, delete, list, and live snapshot work end-to-end over MCP", async () => {
+    const created = await callToolStructured(topLevelClient, "create_workspace", {
+      isolation: "local",
+      path: worktreeRepoCwd,
+      title: "Metadata flow",
+      metadata: {
+        issues: ["https://github.com/getpaseo/paseo/issues/10"],
+        body: "Initial body",
+      },
+    });
+    const workspaceId = str(created.workspaceId);
+    expect(created.metadata).toEqual({
+      issues: ["https://github.com/getpaseo/paseo/issues/10"],
+      body: "Initial body",
+    });
+
+    let scoped: McpClient | null = null;
+    const daemonClient = new DaemonClient({ url: `ws://127.0.0.1:${daemonHandle.port}/ws` });
+    try {
+      const listedBefore = await callToolStructured(topLevelClient, "list_workspaces", {});
+      expect(recordArr(listedBefore.workspaces)).toContainEqual(
+        expect.objectContaining({
+          workspaceId,
+          title: "Metadata flow",
+          metadata: {
+            issues: ["https://github.com/getpaseo/paseo/issues/10"],
+            body: "Initial body",
+          },
+        }),
+      );
+
+      const child = await callToolStructured(topLevelClient, "create_agent", {
+        workspaceId,
+        title: "Metadata worker",
+        provider: "claude/claude-test-model",
+        initialPrompt: "Say done.",
+      });
+      scoped = await createMcpClient(
+        `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${str(child.agentId)}`,
+      );
+
+      // Omit workspaceId to update caller's workspace; clear body with null and update issues.
+      const patched = await callToolStructured(scoped, "update_workspace", {
+        metadata: {
+          issues: [
+            "https://github.com/getpaseo/paseo/issues/10",
+            "https://github.com/getpaseo/paseo/issues/20",
+          ],
+          notes: "Added second issue",
+          body: null,
+        },
+      });
+      expect(patched).toMatchObject({
+        workspaceId,
+        title: "Metadata flow",
+        metadata: {
+          issues: [
+            "https://github.com/getpaseo/paseo/issues/10",
+            "https://github.com/getpaseo/paseo/issues/20",
+          ],
+          notes: "Added second issue",
+        },
+      });
+
+      const listedAfter = await callToolStructured(topLevelClient, "list_workspaces", {});
+      expect(recordArr(listedAfter.workspaces)).toContainEqual(
+        expect.objectContaining({
+          workspaceId,
+          metadata: {
+            issues: [
+              "https://github.com/getpaseo/paseo/issues/10",
+              "https://github.com/getpaseo/paseo/issues/20",
+            ],
+            notes: "Added second issue",
+          },
+        }),
+      );
+
+      await daemonClient.connect();
+      const snapshots = await daemonClient.fetchWorkspaces();
+      expect(snapshots.entries).toContainEqual(
+        expect.objectContaining({
+          id: workspaceId,
+          metadata: {
+            issues: [
+              "https://github.com/getpaseo/paseo/issues/10",
+              "https://github.com/getpaseo/paseo/issues/20",
+            ],
+            notes: "Added second issue",
+          },
+        }),
+      );
+    } finally {
+      await daemonClient.close().catch(() => undefined);
+      await scoped?.close().catch(() => undefined);
+      await topLevelClient
+        .callTool({ name: "archive_workspace", args: { workspaceId } })
+        .catch(() => undefined);
+    }
+  }, 30_000);
+
   test("a background agent's children and workspaces are background unless it overrides", async () => {
     const visibleAgentId = await createTopLevelAgent();
     const workspaceId = daemonHandle.daemon.agentManager.getAgent(visibleAgentId)?.workspaceId;

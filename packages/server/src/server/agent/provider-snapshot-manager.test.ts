@@ -4067,3 +4067,82 @@ test("isProviderActiveForUsage rechecks on forceRefresh and enforces a real time
     manager.destroy();
   }
 });
+
+test("listProviderEnvironments returns enabled env-configured providers with base ID and configuredEnvKeys", async () => {
+  const manager = new ProviderSnapshotManager({
+    logger: createTestLogger(),
+    providerOverrides: {
+      "claude-work": {
+        extends: "claude",
+        label: "Claude (Work)",
+        env: {
+          CLAUDE_CONFIG_DIR: "/tmp/claude-work",
+          CLAUDE_SECURESTORAGE_CONFIG_DIR: "/tmp/claude-work-secure",
+        },
+      },
+      "claude-disabled": {
+        extends: "claude",
+        label: "Claude (Disabled)",
+        enabled: false,
+        env: {
+          CLAUDE_CONFIG_DIR: "/tmp/claude-disabled",
+        },
+      },
+      "codex-work": {
+        extends: "codex",
+        label: "Codex (Work)",
+        env: {
+          CODEX_HOME: "/tmp/codex-work",
+        },
+      },
+      "codex-wrapper": {
+        extends: "codex",
+        label: "Codex (Wrapper)",
+        command: ["/opt/homebrew/bin/teamcodex", "run", "--"],
+        env: {
+          CODEX_HOME: "/tmp/codex-wrapper",
+        },
+      },
+      "codex-no-env": {
+        extends: "codex",
+        label: "Codex (No Env)",
+      },
+    },
+  });
+  try {
+    const envs = manager.listProviderEnvironments();
+    expect(
+      envs.map(({ provider, label, configuredEnvKeys, launch }) => ({
+        provider,
+        label,
+        configuredEnvKeys,
+        launch,
+      })),
+    ).toEqual([
+      {
+        provider: "claude",
+        label: "Claude (Work)",
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"],
+        launch: { command: "claude", args: [] },
+      },
+      {
+        provider: "codex",
+        label: "Codex (Work)",
+        configuredEnvKeys: ["CODEX_HOME"],
+        launch: { command: "codex", args: [] },
+      },
+      {
+        provider: "codex",
+        label: "Codex (Wrapper)",
+        configuredEnvKeys: ["CODEX_HOME"],
+        launch: { command: "/opt/homebrew/bin/teamcodex", args: ["run", "--"] },
+      },
+    ]);
+    expect(envs[0]!.env.CLAUDE_CONFIG_DIR).toBe("/tmp/claude-work");
+    expect(envs[0]!.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe("/tmp/claude-work-secure");
+    expect(envs[1]!.env.CODEX_HOME).toBe("/tmp/codex-work");
+  } finally {
+    await manager.shutdown();
+    manager.destroy();
+  }
+});

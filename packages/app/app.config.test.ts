@@ -112,3 +112,92 @@ describe("hardware keyboard scene integration", () => {
     expect(configureHardwareKeyboardAppDelegate(configured)).toBe(configured);
   });
 });
+
+// Android Bold text bolds unstyled text at draw time after React Native measured it
+// unbolded, which clips trailing words (#4057, #10152, #10850). The activity must opt out
+// with a sparse Configuration() so other configuration fields still update live.
+describe("Android Bold text opt-out", () => {
+  const {
+    configureIgnoreBoldTextMainActivity,
+  } = require("./plugins/with-android-ignore-bold-text.js");
+  const {
+    configureDisplayMetricsActivity,
+  } = require("./modules/paseo-display-metrics/app.plugin.js");
+  const mainActivity = [
+    "package sh.paseo",
+    "import expo.modules.splashscreen.SplashScreenManager",
+    "",
+    "import android.os.Build",
+    "import android.os.Bundle",
+    "",
+    "import com.facebook.react.ReactActivity",
+    "",
+    "class MainActivity : ReactActivity() {",
+    "  override fun onCreate(savedInstanceState: Bundle?) {",
+    "    super.onCreate(null)",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+
+  it("zeroes fontWeightAdjustment on a sparse Configuration before attaching and is idempotent", () => {
+    const configured = configureIgnoreBoldTextMainActivity(mainActivity);
+    expect(configured).toMatch(/^import android\.content\.Context$/m);
+    expect(configured).toMatch(/^import android\.content\.res\.Configuration$/m);
+    expect(configured).toContain("override fun attachBaseContext(newBase: Context)");
+    expect(configured).toContain("val override = Configuration()");
+    expect(configured).not.toContain("Configuration(configuration)");
+    expect(configured).toContain("override.fontWeightAdjustment = 0");
+    expect(configured).toContain(
+      "super.attachBaseContext(newBase.createConfigurationContext(override))",
+    );
+    expect(configured.indexOf("attachBaseContext")).toBeLessThan(configured.indexOf("onCreate"));
+    expect(configureIgnoreBoldTextMainActivity(configured)).toBe(configured);
+  });
+
+  it("composes cleanly with withAndroidDisplayMetrics in both plugin orders", () => {
+    const displayFirst = configureIgnoreBoldTextMainActivity(
+      configureDisplayMetricsActivity(mainActivity),
+    );
+    const boldFirst = configureDisplayMetricsActivity(
+      configureIgnoreBoldTextMainActivity(mainActivity),
+    );
+
+    for (const configured of [displayFirst, boldFirst]) {
+      expect(configured).toContain("override fun attachBaseContext(newBase: Context)");
+      expect(configured).toContain("val override = Configuration()");
+      expect(configured).toContain("override.fontWeightAdjustment = 0");
+      expect(configured).toContain("override fun onContentChanged()");
+      expect(configured).toContain(
+        "override fun onConfigurationChanged(newConfig: android.content.res.Configuration)",
+      );
+      expect(configured).toContain(
+        "sh.paseo.displaymetrics.PaseoDisplayMetrics.syncWithWindow(this)",
+      );
+      expect(configureIgnoreBoldTextMainActivity(configured)).toBe(configured);
+      expect(configureDisplayMetricsActivity(configured)).toBe(configured);
+    }
+  });
+
+  it("fails the prebuild when the MainActivity template changes shape", () => {
+    expect(() => configureIgnoreBoldTextMainActivity("package sh.paseo\n")).toThrow(
+      /MainActivity class declaration/,
+    );
+  });
+
+  it("fails the prebuild rather than duplicate an existing attachBaseContext override", () => {
+    const withExistingOverride = mainActivity.replace(
+      "override fun onCreate",
+      "override fun attachBaseContext(newBase: Context) { super.attachBaseContext(newBase) }\n\n  override fun onCreate",
+    );
+    expect(() => configureIgnoreBoldTextMainActivity(withExistingOverride)).toThrow(
+      /existing attachBaseContext override/,
+    );
+  });
+
+  it("is registered in the app config", async () => {
+    const { exp } = await getPrebuildConfigAsync(__dirname, { platforms: ["android"] });
+    // Expo records function plugins by name.
+    expect(exp.plugins).toContain("withAndroidIgnoreBoldText");
+  }, 30_000);
+});

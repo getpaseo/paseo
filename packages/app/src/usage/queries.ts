@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { supportsUsageReports } from "@getpaseo/client/internal/daemon-client";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
+import { UsageReportChangedStatusPayloadSchema } from "@getpaseo/protocol/messages";
 import {
   skipToken,
   useMutation,
@@ -10,8 +11,10 @@ import {
 } from "@tanstack/react-query";
 import { useShallow } from "zustand/shallow";
 import { useFetchQuery } from "@/data/query";
+import { useHostFeature } from "@/runtime/host-features";
 import {
   getHostRuntimeStore,
+  useHostRuntimeClient,
   useHostRuntimeConnectionStatuses,
   useHostRuntimeIsConnected,
   useHosts,
@@ -20,7 +23,9 @@ import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useUsageSetting } from "./setting";
 import { usageCopy } from "./copy";
 import {
+  applyPushedReport,
   markUsageRefreshFailure,
+  nextUsagePollDelayMs,
   replaceReport,
   resolveAgentUsageView,
   resolveUsageRefresh,
@@ -38,6 +43,8 @@ import type { UsageReportEntry, UsageView } from "./types";
 // An explicit refresh passes `forceRefresh` to bypass that cache.
 const REPORTS_STALE_TIME_MS = 60_000;
 const REPORTS_REFETCH_INTERVAL_MS = 5 * 60_000;
+// A failed report is asked for again this often; the daemon backs its own retries off from 30s.
+const FAILED_REPORTS_REFETCH_INTERVAL_MS = 60_000;
 
 /** Every report list of a host: its own and each agent's. */
 function hostUsageQueryKey(serverId: string) {
@@ -141,6 +148,60 @@ async function getReport(
   );
 }
 
+/**
+ * Applies the reports a host updates on its own (from live Claude or Codex rate-limit telemetry)
+ * to every usage list of that host showing the account, so they move without a poll.
+ */
+function useLiveUsageReports(serverId: string | null, enabled: boolean): void {
+  const queryClient = useQueryClient();
+  const client = useHostRuntimeClient(serverId ?? "");
+  const connected = useHostRuntimeIsConnected(serverId ?? "");
+  // COMPAT(usageReportUpdates): added in v0.18.2, remove gate after 2027-05-27.
+  // Older hosts reject the event name, so subscribe only once the host advertises it.
+  const supported = useHostFeature(serverId, "usageReportUpdates");
+  useEffect(() => {
+    if (!serverId || !client || !connected || !supported || !enabled) return;
+    const feed = client.observeEvents(["status.usage_report_changed"]);
+    feed.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "status") return;
+        const parsed = UsageReportChangedStatusPayloadSchema.safeParse(message.payload);
+        if (!parsed.success) return;
+        for (const query of queryClient
+          .getQueryCache()
+          .findAll({ queryKey: hostUsageQueryKey(serverId) })) {
+          const current = query.state.data as UsageReportEntry[] | undefined;
+          const next = applyPushedReport(current, parsed.data.report);
+          if (!next || next === current) continue;
+          // Preserve `dataUpdatedAt` so pushing one source never postpones the poll schedule
+          // (or failed-report retry) of other sources in the same list.
+          queryClient.setQueryData<UsageReportEntry[]>(query.queryKey, next, {
+            updatedAt: query.state.dataUpdatedAt,
+          });
+        }
+      },
+    });
+    return () => {
+      void feed
+        .release()
+        .catch((error) => console.warn("[Usage] Failed to release the usage report feed", error));
+    };
+  }, [client, connected, enabled, queryClient, serverId, supported]);
+}
+
+function pollDelay(query: {
+  state: { data: UsageReportEntry[] | undefined; dataUpdatedAt: number; errorUpdatedAt: number };
+}): number {
+  return nextUsagePollDelayMs({
+    reports: query.state.data,
+    updatedAt: Math.max(query.state.dataUpdatedAt, query.state.errorUpdatedAt),
+    now: Date.now(),
+    intervalMs: REPORTS_REFETCH_INTERVAL_MS,
+    errorIntervalMs: FAILED_REPORTS_REFETCH_INTERVAL_MS,
+  });
+}
+
 function supportsUsage(session: SessionState | undefined): boolean {
   return supportsUsageReports(session?.serverInfo?.features);
 }
@@ -174,6 +235,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
+  useLiveUsageReports(serverId, isConnected && isSupported && setting.enabled);
   const mutation = useMutation({
     mutationKey: [...usageReportsQueryKey(serverId), "refresh"],
     mutationFn: (hostId: string) => refreshReports(queryClient, hostId),
@@ -216,8 +278,14 @@ export function useUsageHostReports({
     queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
     dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
-    refetchInterval: shouldPoll ? REPORTS_REFETCH_INTERVAL_MS : false,
+    // Respect `staleTimeMs` instead of `useFetchQuery`'s `"always"` default so hiding and
+    // reopening the sidebar does not trigger an extra fetch or reset `dataUpdatedAt`.
+    refetchOnMount: true,
+    // Re-read after every update of the reports, so the next poll is due five minutes after the
+    // last one landed, however often the summary was hidden in between.
+    refetchInterval: shouldPoll ? pollDelay : false,
   });
+  useLiveUsageReports(serverId, setting.enabled);
   return setting.enabled ? (query.data ?? NO_REPORTS) : NO_REPORTS;
 }
 
@@ -247,6 +315,7 @@ export function useAgentUsage(serverId: string, agentId: string): AgentUsageView
     retry: false,
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
+  useLiveUsageReports(serverId, canReport);
   const { t } = useTranslation();
   return resolveAgentUsageView({ canReport, query: toQueryState(query) }, t);
 }

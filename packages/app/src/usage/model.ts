@@ -89,6 +89,43 @@ function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): Usag
 }
 
 /**
+ * A report list with a report the host pushed in place of its copy. A list without that report
+ * stays as it is: the push names an account, not the lists that show it. The push carries usage
+ * only, so the listed copy's `defaultEnabled` hint stays.
+ */
+export function applyPushedReport(
+  reports: UsageReportEntry[] | undefined,
+  pushed: UsageReportEntry,
+): UsageReportEntry[] | undefined {
+  const shown = reports?.find((entry) => entry.id === pushed.id);
+  if (!reports || !shown) return reports;
+  const next =
+    shown.defaultEnabled === undefined
+      ? pushed
+      : { ...pushed, defaultEnabled: shown.defaultEnabled };
+  if (laterFetched(shown, next) === shown) return reports;
+  return replaceReport(reports, pushed.id, next);
+}
+
+/**
+ * How long until the next poll, counted from the last time the reports were updated rather than
+ * from when the poller mounted, so hiding and showing the summary keeps the schedule. A failed
+ * report is polled again sooner; the daemon decides when a retry reaches the vendor.
+ */
+export function nextUsagePollDelayMs(input: {
+  reports: readonly UsageReportEntry[] | undefined;
+  updatedAt: number;
+  now: number;
+  intervalMs: number;
+  errorIntervalMs: number;
+}): number {
+  const failed = input.reports?.some((entry) => entry.report.status === "error") ?? false;
+  const interval = failed ? input.errorIntervalMs : input.intervalMs;
+  if (input.updatedAt <= 0) return interval;
+  return Math.max(1_000, interval - (input.now - input.updatedAt));
+}
+
+/**
  * A report list with one streamed report in place of its previous copy, or appended if new. A
  * copy fetched after the streamed one stays.
  */

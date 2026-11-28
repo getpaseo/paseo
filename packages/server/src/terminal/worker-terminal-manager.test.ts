@@ -1691,8 +1691,8 @@ async function leaveWorkerWithTerminal(
   };
 }
 
-it.each([1, 4])(
-  "hard cuts unreleased worker protocol %s, closing its terminals",
+it.each([1, 4, 5])(
+  "hard cuts obsolete worker protocol %s, closing its terminals",
   async (version) => {
     const paseoHome = createTemporaryHome();
     const old = await leaveWorkerWithTerminal(paseoHome, version);
@@ -1718,19 +1718,58 @@ it.each([1, 4])(
     expect(manager.getTerminal(old.terminalId)).toBeUndefined();
     const workers = await workerRecords(paseoHome);
     expect(workers).toHaveLength(1);
-    expect(workers[0]!.protocolVersion).toBe(6);
+    expect(workers[0]!.protocolVersion).toBe(TERMINAL_WORKER_PROTOCOL_VERSION);
   },
 );
 
+it("drains a v6 worker safely while v7 carries creation and live terminal palettes", async () => {
+  const paseoHome = createTemporaryHome();
+  const draining = await leaveWorkerWithTerminal(paseoHome, 6);
+  const light = { foreground: "#1a1a1e", background: "#ffffff", cursor: "#1a1a1e" };
+  const dark = { foreground: "#fafafa", background: "#181b1a", cursor: "#fafafa" };
+
+  manager = await startRealWorkerManager({ paseoHome });
+
+  const drainingSession = manager.getTerminal(draining.terminalId);
+  expect(drainingSession).toBeDefined();
+  expect(drainingSession?.getDefaultColors?.()).toBeUndefined();
+  // v6 draining adapter drops v7 palette sends without erroring or killing the draining worker.
+  drainingSession?.send({ type: "palette", defaultColors: light });
+  expect(drainingSession?.getDefaultColors?.()).toBeUndefined();
+  expect(isProcessAlive(draining.programPid)).toBe(true);
+
+  // New terminals land on the v7 worker with creation-time and live palette state.
+  const created = await manager.createTerminal({
+    workspaceId: "ws-protocol",
+    cwd: draining.cwd,
+    defaultColors: light,
+    ...nodeTerminalCommand("setInterval(() => {}, 1000);"),
+  });
+  expect(created.getDefaultColors?.()).toEqual(light);
+
+  created.send({ type: "palette", defaultColors: dark });
+  expect(created.getDefaultColors?.()).toEqual(dark);
+
+  // Detach and re-adopt to confirm the v7 worker retains the live palette across daemon restarts.
+  await manager.detach({ afterPendingRequests: true });
+  manager = await startRealWorkerManager({ paseoHome });
+  expect(manager.getTerminal(created.id)?.getDefaultColors?.()).toEqual(dark);
+  expect(manager.getTerminal(draining.terminalId)).toBeDefined();
+
+  const workers = await workerRecords(paseoHome);
+  expect(workers.map((record) => record.protocolVersion).sort()).toEqual([6, 7]);
+}, 30000);
+
 it("leaves a worker from a newer Paseo running, reports it incompatible, and closes it on a kill stop", async () => {
   const paseoHome = createTemporaryHome();
-  const newer = await leaveWorkerWithTerminal(paseoHome, 7);
+  const newerProtocol = TERMINAL_WORKER_PROTOCOL_VERSION + 1;
+  const newer = await leaveWorkerWithTerminal(paseoHome, newerProtocol);
 
   manager = await startRealWorkerManager({ paseoHome });
 
   const unavailable = manager.getUnavailableError?.();
   expect(unavailable).toBeInstanceOf(TerminalWorkerIncompatibleError);
-  expect(unavailable?.message).toContain("worker protocol 7");
+  expect(unavailable?.message).toContain(`worker protocol ${newerProtocol}`);
   await expect(manager.getTerminals(newer.cwd)).rejects.toBeInstanceOf(
     TerminalWorkerIncompatibleError,
   );

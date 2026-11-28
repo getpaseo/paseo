@@ -136,7 +136,8 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
-const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+const INTERRUPT_SESSION_TIMEOUT_MS = 15_000;
+const INTERRUPT_SETTLEMENT_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
@@ -321,6 +322,11 @@ export type {
   AgentTimelineRow,
   AgentTimelineWindow,
 } from "./agent-timeline-store-types.js";
+
+export type UsageObservedListener = (
+  agentId: string,
+  observation: Extract<AgentStreamEvent, { type: "usage_observed" }>,
+) => void;
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
@@ -953,6 +959,7 @@ export class AgentManager {
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly stopListeners = new Set<(agentId: string) => void>();
+  private readonly usageListeners = new Set<UsageObservedListener>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
@@ -1293,6 +1300,12 @@ export class AgentManager {
   onStop(listener: (agentId: string) => void): () => void {
     this.stopListeners.add(listener);
     return () => this.stopListeners.delete(listener);
+  }
+
+  /** Account usage an agent's provider observed while working (see `usage_observed`). */
+  onUsageObserved(listener: UsageObservedListener): () => void {
+    this.usageListeners.add(listener);
+    return () => this.usageListeners.delete(listener);
   }
 
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
@@ -3292,6 +3305,26 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<AgentRunResult> {
+    try {
+      return await this.runAgentOnce(agentId, prompt, options);
+    } catch (error) {
+      if (!isStaleProviderSessionError(error)) {
+        throw error;
+      }
+      this.logger.info(
+        { agentId, err: error },
+        "Provider session went stale during runAgent; reopening from persistence",
+      );
+      await this.reloadAgentSession(agentId);
+      return await this.runAgentOnce(agentId, prompt, options);
+    }
+  }
+
+  private async runAgentOnce(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<AgentRunResult> {
     const events = this.streamAgent(agentId, prompt, options);
     const timeline: AgentTimelineItem[] = [];
     let finalText = "";
@@ -4058,7 +4091,10 @@ export class AgentManager {
       }
       const started = await this.waitWithTimeout({
         operation: Promise.race([admission.run.turnStartedPromise, admission.run.settledPromise]),
-        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+        timeoutMs: Math.min(
+          INTERRUPT_SETTLEMENT_TIMEOUT_MS,
+          this.rescueTimeouts.interruptSessionMs,
+        ),
       });
       if (started === "timed_out") {
         stalledStart = admission.run;
@@ -4277,9 +4313,7 @@ export class AgentManager {
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
-      timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
+      timeoutMs: Math.min(INTERRUPT_SETTLEMENT_TIMEOUT_MS, this.rescueTimeouts.interruptSessionMs),
     });
 
     if (!interruptAcknowledged) {
@@ -5160,6 +5194,10 @@ export class AgentManager {
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
+      return;
+    }
+    if (event.type === "usage_observed") {
+      for (const listener of this.usageListeners) listener(agent.id, event);
       return;
     }
     if (event.type === "background_work") {

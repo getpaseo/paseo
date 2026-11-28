@@ -344,6 +344,8 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
 const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
+const ACP_INTERRUPT_GRACE_MS = 10_000;
+const ACP_INTERRUPT_KILL_GRACE_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
 
@@ -516,6 +518,8 @@ interface ACPAgentClientOptions {
   extensionCommandsParser?: ACPExtensionCommandsParser;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  interruptGraceMs?: number;
+  interruptKillGraceMs?: number;
   terminateProcess?: ProcessTerminator;
   now?: () => number;
 }
@@ -555,6 +559,8 @@ interface ACPAgentSessionOptions {
   wrap?: AgentLaunchContext["wrap"];
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
+  interruptGraceMs?: number;
+  interruptKillGraceMs?: number;
   terminateProcess?: ProcessTerminator;
 }
 
@@ -1101,6 +1107,8 @@ export class ACPAgentClient implements AgentClient {
   ) => Promise<void>;
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
+  private readonly interruptGraceMs?: number;
+  private readonly interruptKillGraceMs?: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   private readonly now: () => number;
@@ -1132,6 +1140,8 @@ export class ACPAgentClient implements AgentClient {
     this.thinkingOptionWriter = options.thinkingOptionWriter;
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
+    this.interruptGraceMs = options.interruptGraceMs;
+    this.interruptKillGraceMs = options.interruptKillGraceMs;
     this.extensionCommandsParser = options.extensionCommandsParser;
     this.now = options.now ?? Date.now;
   }
@@ -1175,6 +1185,9 @@ export class ACPAgentClient implements AgentClient {
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+        interruptGraceMs: this.interruptGraceMs,
+        interruptKillGraceMs: this.interruptKillGraceMs,
+        terminateProcess: this.terminateProcess,
       },
     );
     await session.initializeNewSession();
@@ -1236,6 +1249,9 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      interruptGraceMs: this.interruptGraceMs,
+      interruptKillGraceMs: this.interruptKillGraceMs,
+      terminateProcess: this.terminateProcess,
     });
     await session.initializeResumedSession();
     return session;
@@ -2072,16 +2088,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private activeTurn: {
+    turnId: string;
+    settled: Promise<void>;
+    resolveSettled: () => void;
+  } | null = null;
+  private activeInterrupt: Promise<void> | null = null;
+  private retiringForInterrupt = false;
+  private retiredAfterInterrupt = false;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
   private historyRuntimeReleased = false;
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
+  private readonly interruptGraceMs: number;
+  private readonly interruptKillGraceMs: number;
   private readonly terminateProcess: ProcessTerminator;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
     this.provider = options.provider;
+    this.interruptGraceMs = options.interruptGraceMs ?? ACP_INTERRUPT_GRACE_MS;
+    this.interruptKillGraceMs = options.interruptKillGraceMs ?? ACP_INTERRUPT_KILL_GRACE_MS;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
     this.capabilities = options.capabilities;
     this.logger = options.logger.child({ module: "agent", provider: options.provider });
@@ -2280,9 +2308,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    if (this.closed) {
-      throw new Error(`${this.provider} session is closed`);
-    }
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error(`${this.provider} session is not initialized`);
     }
@@ -2302,6 +2328,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.activeTurn = this.createActiveTurnWaiter(turnId);
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -2319,10 +2346,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         prompt: toACPContentBlocks(prompt),
       })
       .then((response) => {
+        if (this.closed || this.retiringForInterrupt || this.activeForegroundTurnId !== turnId) {
+          return;
+        }
         this.handlePromptResponse(response, turnId);
         return;
       })
       .catch((error) => {
+        if (this.closed || this.retiringForInterrupt || this.activeForegroundTurnId !== turnId) {
+          return;
+        }
         const summary = summarizeACPRequestError(error);
         this.finishTurn({
           type: "turn_failed",
@@ -2347,7 +2380,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         signal: AbortSignal.timeout(ACP_DISCONNECT_EXIT_GRACE_MS),
       }).catch(() => undefined);
     }
-    if (this.closed || this.activeForegroundTurnId !== turnId) {
+    if (this.closed || this.retiringForInterrupt || this.activeForegroundTurnId !== turnId) {
       return;
     }
     this.synthesizeCanceledToolCalls();
@@ -2444,6 +2477,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async setMode(modeId: string): Promise<void> {
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2583,6 +2617,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async setModel(modelId: string | null): Promise<{ model: string | null }> {
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2691,6 +2726,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2750,6 +2786,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    * The agent manager sends one apply at a time per session.
    */
   async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
+    this.assertSessionUsable();
     assertChangesAreLive({
       provider: this.config.provider,
       patch: options,
@@ -2821,6 +2858,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async setConfigFeature(featureId: string, value: unknown): Promise<void> {
+    this.assertSessionUsable();
     if (!this.connection || !this.sessionId) {
       throw new Error("ACP session not initialized");
     }
@@ -2959,14 +2997,149 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async interrupt(): Promise<void> {
-    if (!this.connection || !this.sessionId) {
+    if (this.activeInterrupt) {
+      return this.activeInterrupt;
+    }
+    if (this.closed || !this.connection || !this.sessionId) {
       return;
     }
 
     this.cancelPendingPermissions();
 
-    if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+    const turnId = this.activeForegroundTurnId;
+    if (!turnId) {
+      return;
+    }
+
+    const interrupting = this.interruptActiveTurn(turnId).finally(() => {
+      if (this.activeInterrupt === interrupting) {
+        this.activeInterrupt = null;
+      }
+    });
+    this.activeInterrupt = interrupting;
+    return interrupting;
+  }
+
+  private async interruptActiveTurn(turnId: string): Promise<void> {
+    const connection = this.connection;
+    const sessionId = this.sessionId;
+    if (!connection || !sessionId) {
+      return;
+    }
+
+    const turn =
+      this.activeTurn?.turnId === turnId ? this.activeTurn : this.createActiveTurnWaiter(turnId);
+    this.activeTurn = turn;
+
+    // Fire session/cancel without awaiting it before the grace timer so a stalled
+    // child stdin pipe cannot block escalation past the cancel window.
+    void connection.cancel({ sessionId }).catch((error) => {
+      this.logger.debug({ err: error, turnId }, "ACP session/cancel notification failed");
+    });
+
+    const settledInTime = await settlesWithin(turn.settled, this.interruptGraceMs);
+    if (settledInTime || this.closed || this.activeForegroundTurnId !== turnId) {
+      return;
+    }
+
+    await this.retireHungTurn(turnId);
+  }
+
+  private async retireHungTurn(turnId: string): Promise<void> {
+    this.retiringForInterrupt = true;
+    const child = this.child;
+    try {
+      await this.terminateRunningTerminals(this.interruptKillGraceMs);
+      if (child) {
+        await this.terminateChildWithStdioCleanup(child, this.interruptKillGraceMs);
+      }
+      this.child = null;
+      this.connection = null;
+      this.retiredAfterInterrupt = true;
+      this.synthesizeCanceledToolCalls();
+      this.toolCalls.clear();
+    } finally {
+      this.retiringForInterrupt = false;
+    }
+
+    if (this.closed) {
+      return;
+    }
+
+    this.finishTurn({
+      type: "turn_canceled",
+      provider: this.provider,
+      reason: "Interrupted after cancel timeout",
+      turnId,
+    });
+
+    if (!this.canResumeSession()) {
+      this.pushEvent({
+        type: "turn_failed",
+        provider: this.provider,
+        error: this.nonResumableRetirementMessage(),
+      });
+    }
+  }
+
+  private nonResumableRetirementMessage(): string {
+    return `Stopped unresponsive ${this.provider} process after cancel timed out. This provider does not support session resume; start a new agent or reload to continue.`;
+  }
+
+  private assertSessionUsable(): void {
+    if (this.closed) {
+      throw new Error(`${this.provider} session is closed`);
+    }
+    if (!this.retiredAfterInterrupt) {
+      return;
+    }
+    if (!this.canResumeSession()) {
+      throw new Error(this.nonResumableRetirementMessage());
+    }
+    throw new StaleProviderSessionError(
+      this.sessionId ?? this.provider,
+      "after cancel timeout retirement",
+    );
+  }
+
+  private createActiveTurnWaiter(turnId: string): {
+    turnId: string;
+    settled: Promise<void>;
+    resolveSettled: () => void;
+  } {
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    return { turnId, settled, resolveSettled };
+  }
+
+  private async terminateRunningTerminals(timeoutMs: number): Promise<void> {
+    const terminalTerminations = Array.from(this.terminalEntries.values())
+      .filter((terminal) => terminal.running)
+      .map((terminal) =>
+        this.terminateProcess(terminal.child, {
+          gracefulTimeoutMs: timeoutMs,
+          forceTimeoutMs: timeoutMs,
+        }),
+      );
+    await Promise.all(terminalTerminations);
+    this.terminalEntries.clear();
+  }
+
+  private async terminateChildWithStdioCleanup(
+    child: ChildProcessWithoutNullStreams,
+    timeoutMs: number,
+  ): Promise<void> {
+    try {
+      await this.terminateProcess(child, {
+        gracefulTimeoutMs: timeoutMs,
+        forceTimeoutMs: timeoutMs,
+      });
+    } finally {
+      child.stdin?.destroy?.();
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
     }
   }
 
@@ -2984,6 +3157,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
     this.closed = true;
+    this.activeTurn?.resolveSettled();
+    this.activeTurn = null;
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
@@ -3014,16 +3189,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
-    const terminalTerminations = Array.from(this.terminalEntries.values())
-      .filter((terminal) => terminal.running)
-      .map((terminal) =>
-        this.terminateProcess(terminal.child, {
-          gracefulTimeoutMs: 2_000,
-          forceTimeoutMs: 2_000,
-        }),
-      );
-    await Promise.all(terminalTerminations);
-    this.terminalEntries.clear();
+    await this.terminateRunningTerminals(2_000);
 
     if (this.child) {
       await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
@@ -3332,7 +3498,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     const processError = rejectOnProcessFailure(child, stderrChunks);
     child.once("exit", (code, signal) => {
-      if (this.closed || this.historyRuntimeReleased) {
+      if (
+        this.closed ||
+        this.historyRuntimeReleased ||
+        this.retiringForInterrupt ||
+        this.child !== child
+      ) {
         return;
       }
       this.logger.warn(
@@ -3888,12 +4059,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.cancelPendingPermissions(
       (pending) => event.type !== "turn_completed" || pending.turnId === event.turnId,
     );
+    const settledTurn =
+      this.activeTurn && (!event.turnId || this.activeTurn.turnId === event.turnId)
+        ? this.activeTurn
+        : null;
+    if (settledTurn) {
+      this.activeTurn = null;
+    }
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;
     }
     this.pushEvent(event);
+    settledTurn?.resolveSettled();
   }
 
   private cancelPendingPermissions(
@@ -4655,6 +4834,22 @@ function coerceSessionConfigMetadata(
     return {};
   }
   return metadata as Partial<AgentSessionConfig>;
+}
+
+async function settlesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 async function terminateChildProcess(

@@ -55,6 +55,8 @@ export interface PluginWorkspaceSnapshot {
   readonly statusEnteredAt: string | null;
   readonly archivingAt: string | null;
   readonly diffStat: { readonly additions: number; readonly deletions: number } | null;
+  /** Structured data stored on the workspace. */
+  readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 
 export interface PluginAgentSnapshot {

@@ -511,6 +511,20 @@ export type AgentStreamEvent =
       type: "background_work";
       provider: AgentProvider;
       items: import("./background-work/index.js").AgentBackgroundWorkInput[] | null;
+    }
+  | {
+      /**
+       * Account usage the provider saw while working. The daemon merges it into the cached report
+       * of the account the agent runs under; it never reaches the timeline.
+       */
+      type: "usage_observed";
+      provider: AgentProvider;
+      /** The usage source whose report the windows belong to. */
+      sourceId: string;
+      /** Empty when the provider saw usage move but not by how much: the report is refetched. */
+      windows: import("@getpaseo/plugin/server/usage").UsageWindow[];
+      balances?: import("@getpaseo/plugin/server/usage").UsageBalance[];
+      planLabel?: string;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {
@@ -734,6 +748,20 @@ export interface AgentUsageSession {
   model?: string;
   env: Record<string, string>;
   sessionKey: string;
+}
+
+/** An enabled provider configured with its own env, supplied to host usage discovery. */
+export interface ProviderUsageEnvironment {
+  /** Base provider ID (the provider a custom provider extends, or its own ID). */
+  provider: string;
+  /** Provider display label, used to name logins discovered through it. */
+  label: string;
+  /** Effective launch environment for the provider (sanitized at the usage registry boundary). */
+  env: Record<string, string>;
+  /** Keys explicitly configured in the provider's own `env` override, when known. */
+  configuredEnvKeys?: readonly string[];
+  /** Resolved command/args for the provider, used daemon-side to suppress wrapper disk fallback. */
+  launch?: Pick<import("@getpaseo/plugin/server/provider").ProviderLaunch, "command" | "args">;
 }
 
 export interface AgentSession {

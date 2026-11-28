@@ -1,4 +1,5 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { UsageSourceRegistry } from "./index.js";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -289,7 +290,7 @@ test("concurrent requests for the same ID share one vendor fetch", async () => {
   const second = registry.listReports();
   finish({ status: "available", windows: [] });
   const [one, two] = await Promise.all([first, second]);
-  expect(one[0]).toBe(two[0]);
+  expect(one[0]).toEqual(two[0]);
   expect(fetches).toBe(1);
 });
 
@@ -1234,4 +1235,858 @@ test("Cursor macOS discovery recovers from a stale desktop 401 via Keychain fall
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("#3589: host listings discover configured providers with distinct config dirs after global logins", async () => {
+  let providers = [
+    { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/work" } },
+    {
+      provider: "claude",
+      label: "Claude (secure)",
+      env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: "/secure" },
+    },
+    { provider: "claude", label: "Claude (copy)", env: { CLAUDE_CONFIG_DIR: "/default-copy" } },
+    { provider: "codex", label: "Codex (work)", env: { CODEX_HOME: "/codex-work" } },
+  ];
+  const calls: unknown[] = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => providers,
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    providers: ["claude", "pi", "omp"],
+    discover: async (scope) => {
+      if (scope.kind === "global") return [{ key: "default", input: "/default" }];
+      const dir = scope.env.CLAUDE_SECURESTORAGE_CONFIG_DIR ?? scope.env.CLAUDE_CONFIG_DIR;
+      if (dir === "/work") return [{ key: "work", input: dir }];
+      if (dir === "/secure") return [{ key: "secure", input: dir }];
+      return [{ key: "default", input: dir }];
+    },
+    fetch: async (input) => {
+      calls.push(input);
+      return input === "/default"
+        ? { status: "unavailable", problem: { kind: "rejected", status: 401 } }
+        : { status: "available", windows: [] };
+    },
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    providers: ["codex", "opencode", "pi", "omp"],
+    discover: async (scope) => {
+      if (scope.kind === "global") return [];
+      return [{ key: "work", input: scope.env.CODEX_HOME }];
+    },
+    fetch: async (input) => {
+      calls.push(input);
+      return { status: "available", windows: [] };
+    },
+  });
+  const reports = await registry.listReports();
+  expect(reports.map((entry) => [entry.id, entry.report.status])).toEqual([
+    ["claude:default", "available"],
+    ["claude:work", "available"],
+    ["claude:secure", "available"],
+    ["codex:work", "available"],
+  ]);
+  expect(calls).toEqual(["/default", "/default-copy", "/work", "/secure", "/codex-work"]);
+  providers = [];
+  expect((await registry.listReports()).map((entry) => entry.id)).toEqual(["claude:default"]);
+});
+
+test("#3589: configured provider discovery dispatches ONLY to sources whose providers list matches", async () => {
+  const seenBySource = new Map<
+    string,
+    Array<{ kind: string; provider?: string; env?: Record<string, string> }>
+  >();
+  const record = (
+    id: string,
+    scope: { kind: string; provider?: string; env?: Record<string, string> },
+  ) => {
+    const entries = seenBySource.get(id) ?? [];
+    entries.push(scope);
+    seenBySource.set(id, entries);
+  };
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/claude-work" } },
+      { provider: "codex", label: "Codex (work)", env: { CODEX_HOME: "/codex-work" } },
+    ],
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    providers: ["claude", "pi", "omp"],
+    discover: async (scope) => {
+      record("claude", scope);
+      return [];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    providers: ["codex", "opencode"],
+    discover: async (scope) => {
+      record("codex", scope);
+      return [];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  registry.register({
+    id: "third-party-unscoped",
+    label: "Third-Party Unscoped",
+    discover: async (scope) => {
+      record("third-party-unscoped", scope);
+      return [];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  registry.register({
+    id: "third-party-other",
+    label: "Third-Party Other",
+    providers: ["other"],
+    discover: async (scope) => {
+      record("third-party-other", scope);
+      return [];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+
+  await registry.listReports();
+
+  expect(seenBySource.get("claude")).toEqual([
+    { kind: "global" },
+    { kind: "session", provider: "claude", env: { CLAUDE_CONFIG_DIR: "/claude-work" } },
+  ]);
+  expect(seenBySource.get("codex")).toEqual([
+    { kind: "global" },
+    { kind: "session", provider: "codex", env: { CODEX_HOME: "/codex-work" } },
+  ]);
+  expect(seenBySource.get("third-party-unscoped")).toEqual([{ kind: "global" }]);
+  expect(seenBySource.get("third-party-other")).toEqual([{ kind: "global" }]);
+});
+
+test("#3589: configured provider discovery strips secret and arbitrary env vars and skips secret-only, token-override, and wrapper providers", async () => {
+  const receivedEnvs: Array<{ source: string; env: Record<string, string> }> = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      {
+        provider: "claude",
+        label: "Claude (mixed)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-work",
+          CLAUDE_SECURESTORAGE_CONFIG_DIR: "/claude-secure",
+          XDG_CONFIG_HOME: "/home/alice/.config",
+          XDG_DATA_HOME: "/home/alice/.local/share",
+          OPENCODE_CONFIG_DIR: "/opencode-cfg",
+          OPENCODE_DB: "/opencode-data/opencode.db",
+          OPENAI_API_KEY: "sk-openai-secret",
+          GITHUB_TOKEN: "ghp-secret",
+          MY_SECRET: "arbitrary-secret",
+        },
+        launch: { command: "/opt/claude-nightly/claude", args: [] },
+      },
+      {
+        provider: "codex",
+        label: "Codex (work with OPENAI_API_KEY in shell)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-work",
+          OPENAI_API_KEY: "sk-openai-secret",
+          MY_SECRET: "arbitrary-secret",
+        },
+        launch: { command: "codex", args: [] },
+      },
+      {
+        provider: "claude",
+        label: "Claude (secret-only)",
+        env: {
+          HOME: "/home/alice",
+          ANTHROPIC_API_KEY: "sk-ant-only",
+          MY_SECRET: "only-secret",
+        },
+        configuredEnvKeys: ["ANTHROPIC_API_KEY", "MY_SECRET"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (oauth-token)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-oauth",
+          CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-token",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (api-key)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-apikey",
+          ANTHROPIC_API_KEY: "sk-ant-api03-key",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (auth-token)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-authtoken",
+          ANTHROPIC_AUTH_TOKEN: "auth-token-secret",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_AUTH_TOKEN"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (wrapper)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-wrapper",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR"],
+        launch: { command: "/opt/homebrew/bin/teamclaude", args: ["run", "--"] },
+      },
+      {
+        provider: "claude",
+        label: "Claude (proxy)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-proxy",
+          ANTHROPIC_BASE_URL: "https://llm-proxy.example",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "ANTHROPIC_BASE_URL"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (bedrock)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-bedrock",
+          CLAUDE_CODE_USE_BEDROCK: "1",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_BEDROCK"],
+      },
+      {
+        provider: "claude",
+        label: "Claude (foundry)",
+        env: {
+          HOME: "/home/alice",
+          CLAUDE_CONFIG_DIR: "/claude-foundry",
+          CLAUDE_CODE_USE_FOUNDRY: "true",
+        },
+        configuredEnvKeys: ["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_FOUNDRY"],
+      },
+      {
+        provider: "codex",
+        label: "Codex (api-key)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-apikey",
+          CODEX_API_KEY: "sk-codex-key",
+        },
+        configuredEnvKeys: ["CODEX_HOME", "CODEX_API_KEY"],
+      },
+      {
+        provider: "codex",
+        label: "Codex (access-token)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-token",
+          CODEX_ACCESS_TOKEN: "at-codex-token",
+        },
+        configuredEnvKeys: ["CODEX_HOME", "CODEX_ACCESS_TOKEN"],
+      },
+      {
+        provider: "codex",
+        label: "Codex (wrapper)",
+        env: {
+          HOME: "/home/alice",
+          CODEX_HOME: "/codex-wrapper",
+        },
+        configuredEnvKeys: ["CODEX_HOME"],
+        launch: { command: "/opt/homebrew/bin/teamcodex", args: ["run", "--"] },
+      },
+    ],
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    providers: ["claude"],
+    discover: async (scope) => {
+      if (scope.kind === "session") receivedEnvs.push({ source: "claude", env: scope.env });
+      return [];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    providers: ["codex"],
+    discover: async (scope) => {
+      if (scope.kind === "session") receivedEnvs.push({ source: "codex", env: scope.env });
+      return [];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+
+  await registry.listReports();
+
+  expect(receivedEnvs).toEqual([
+    {
+      source: "claude",
+      env: {
+        HOME: "/home/alice",
+        CLAUDE_CONFIG_DIR: "/claude-work",
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: "/claude-secure",
+        XDG_CONFIG_HOME: "/home/alice/.config",
+        XDG_DATA_HOME: "/home/alice/.local/share",
+        OPENCODE_CONFIG_DIR: "/opencode-cfg",
+        OPENCODE_DB: "/opencode-data/opencode.db",
+      },
+    },
+    {
+      source: "codex",
+      env: {
+        HOME: "/home/alice",
+        CODEX_HOME: "/codex-work",
+      },
+    },
+  ]);
+});
+
+test("#3589: a failed provider login is named after its provider; one the host already has keeps the host's name", async () => {
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      { provider: "claude", label: "Claude (home)", env: { CLAUDE_CONFIG_DIR: "/default" } },
+      { provider: "claude", label: "Claude (a)", env: { CLAUDE_CONFIG_DIR: "/a" } },
+      { provider: "claude", label: "Claude (b)", env: { CLAUDE_CONFIG_DIR: "/b" } },
+      { provider: "claude", label: "Claude (b again)", env: { CLAUDE_CONFIG_DIR: "/b" } },
+    ],
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    providers: ["claude"],
+    discover: async (scope) => {
+      const dir = scope.kind === "global" ? "/default" : scope.env.CLAUDE_CONFIG_DIR;
+      return [{ key: `dir${dir?.replace("/", "-")}`, harness: "Claude", input: dir }];
+    },
+    fetch: async () => ({
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "1970-01-01T00:00:01.000Z", refreshedBy: "claude" },
+    }),
+  });
+  const reports = await registry.listReports();
+  expect(
+    reports.map((entry) => [entry.id, entry.loginErrors?.map((login) => login.harness)]),
+  ).toEqual([
+    ["claude:dir-default", ["Claude"]],
+    ["claude:dir-a", ["Claude (a)"]],
+    ["claude:dir-b", ["Claude (b)"]],
+  ]);
+});
+
+test("#3589: a provider's failed discovery keeps only that provider's last logins", async () => {
+  let providers = [
+    { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/work" } },
+  ];
+  const failing = new Set<string>();
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    { warn: () => {} },
+    {
+      hasAgent: () => false,
+      usageSession: () => null,
+      providerEnvironments: () => providers,
+    },
+  );
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    providers: ["claude"],
+    discover: async (scope) => {
+      const dir = scope.kind === "global" ? "/default" : scope.env.CLAUDE_CONFIG_DIR;
+      if (dir && failing.has(dir)) throw new Error("Login store temporarily unavailable");
+      return [{ key: dir!.slice(1), input: dir }];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  const listIds = async () => (await registry.listReports()).map((entry) => entry.id);
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  failing.add("/work");
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  // Renaming a provider keeps its launch environment.
+  providers = [{ provider: "claude", label: "Claude (Work)", env: { CLAUDE_CONFIG_DIR: "/work" } }];
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  // A changed launch environment has no previous result to keep.
+  providers = [
+    { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/other" } },
+  ];
+  failing.add("/other");
+  expect(await listIds()).toEqual(["claude:default"]);
+  failing.clear();
+  providers = [{ provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/work" } }];
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  // The host's own failed discovery keeps the host's logins, not a disabled provider's.
+  providers = [];
+  failing.add("/default");
+  expect(await listIds()).toEqual(["claude:default"]);
+});
+
+test("#3589: renaming a provider preserves cached usage and recovery history while updating error labels", async () => {
+  let label = "Before";
+  let available = true;
+  let polls = 0;
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      { provider: "claude", label, env: { CLAUDE_CONFIG_DIR: "/work" } },
+    ],
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    providers: ["claude"],
+    discover: async (scope) =>
+      scope.kind === "global" ? [] : [{ key: "work", input: { path: "/work" } }],
+    fetch: async () => {
+      polls++;
+      return available
+        ? { status: "available", windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] }
+        : { status: "error", error: "offline" };
+    },
+  });
+  const [success] = await registry.listReports();
+  available = false;
+  label = "After";
+  const [cached] = await registry.listReports();
+  expect(cached?.report).toEqual(success?.report);
+  expect(polls).toBe(1);
+  const [failed] = await registry.listReports({ forceRefresh: true });
+  expect(failed?.lastSuccessful?.report).toEqual(success?.report);
+  expect(failed?.loginErrors?.map((login) => login.harness)).toEqual(["After"]);
+  label = "Renamed again";
+  const [relabeled] = await registry.listReports();
+  expect(polls).toBe(2);
+  expect(relabeled?.lastSuccessful).toEqual(failed?.lastSuccessful);
+  expect(relabeled?.loginErrors?.map((login) => login.harness)).toEqual(["Renamed again"]);
+});
+
+test("unregistering a source drops the accounts each host scope kept for it", async () => {
+  let fails = false;
+  const registry = new UsageSourceRegistry(Date.now, 300_000, { warn: () => {} });
+  const claude = source({
+    id: "claude",
+    providers: ["claude"],
+    discover: async () => {
+      if (fails) throw new Error("Login store temporarily unavailable");
+      return [{ key: "default", input: {} }];
+    },
+  });
+  registry.register(claude);
+  expect((await registry.listReports()).map((entry) => entry.id)).toEqual(["claude:default"]);
+  registry.unregister("claude");
+  registry.register(claude);
+  fails = true;
+  expect(await registry.listReports()).toEqual([]);
+});
+
+test("a failed fetch is retried after 30 seconds, backing off to the five-minute cache", async () => {
+  let now = 0;
+  let fetches = 0;
+  let result: unknown = { status: "error", error: "Claude usage API returned 500" };
+  const registry = new UsageSourceRegistry(() => now);
+  registry.register(
+    source({
+      id: "quota",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => {
+        fetches++;
+        return result;
+      },
+    }),
+  );
+  const fetchesAt = async (at: number) => {
+    now = at;
+    await registry.listReports();
+    return fetches;
+  };
+  expect(await fetchesAt(0)).toBe(1);
+  expect(await fetchesAt(29_999)).toBe(1);
+  expect(await fetchesAt(30_000)).toBe(2);
+  // The second failure in a row waits twice as long.
+  expect(await fetchesAt(89_999)).toBe(2);
+  expect(await fetchesAt(90_000)).toBe(3);
+  result = { status: "available", windows: [] };
+  expect(await fetchesAt(210_000)).toBe(4);
+  // A success is kept for the full five minutes again.
+  expect(await fetchesAt(509_999)).toBe(4);
+  expect(await fetchesAt(510_000)).toBe(5);
+});
+
+function observedUsageRegistry(now: () => number) {
+  const sessions = new Map([
+    ["working", { provider: "claude", env: { HOME: "/work" }, sessionKey: "launch-1" }],
+    ["elsewhere", { provider: "claude", env: { HOME: "/other" }, sessionKey: "launch-2" }],
+    ["codex-agent", { provider: "codex", env: { HOME: "/work" }, sessionKey: "launch-3" }],
+    ["no-account", { provider: "claude", env: { HOME: "/missing" }, sessionKey: "launch-4" }],
+  ]);
+  const fetched: string[] = [];
+  const registry = new UsageSourceRegistry(now, 300_000, undefined, {
+    hasAgent: (id) => sessions.has(id),
+    usageSession: (id) => sessions.get(id) ?? null,
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      if (scope.kind === "session" && scope.provider !== "claude") return [];
+      if (scope.kind === "session" && scope.env.HOME === "/missing") return [];
+      const key = scope.kind === "session" && scope.env.HOME === "/other" ? "other" : "work";
+      return [{ key, input: key }];
+    },
+    fetch: async (input) => {
+      fetched.push(String(input));
+      return {
+        status: "available",
+        observedAt: "2026-11-27T00:00:00.000Z",
+        windows: [
+          { id: "five_hour", label: "Session", usedPct: 10, remainingPct: 90, tone: "ok" },
+          { id: "weekly", label: "Weekly", usedPct: 50, remainingPct: 50, tone: "ok" },
+          { id: "weekly_model_fable", label: "Weekly · Fable", usedPct: 30, remainingPct: 70 },
+        ],
+      };
+    },
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: async (scope) => {
+      if (scope.kind === "session" && scope.provider !== "codex") return [];
+      return [{ key: "codex-acct", input: "codex-acct" }];
+    },
+    fetch: async (input) => {
+      fetched.push(String(input));
+      return {
+        status: "available",
+        planLabel: "plus",
+        observedAt: "2026-11-27T00:00:00.000Z",
+        windows: [
+          { id: "five_hour", label: "5-hour", usedPct: 5, remainingPct: 95, tone: "ok" },
+          { id: "weekly", label: "Weekly", usedPct: 20, remainingPct: 80, tone: "ok" },
+        ],
+        balances: [{ id: "credits", label: "Credits", remaining: 10, unit: "credits", tone: "ok" }],
+      };
+    },
+  });
+  return { registry, fetched };
+}
+
+test("usage an agent observes moves only its account's cached report, and keeps windows the observation lacks", async () => {
+  let now = 1_000;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: Array<{ id: string; windows: unknown }> = [];
+  registry.subscribe((entry) =>
+    announced.push({
+      id: entry.id,
+      windows: entry.report.status === "available" ? entry.report.windows : null,
+    }),
+  );
+  await registry.listReports();
+  await registry.listReports({ agentId: "elsewhere" });
+  expect(fetched).toEqual(["work", "codex-acct", "other"]);
+
+  now = 61_000;
+  await registry.observeUsage("working", {
+    sourceId: "claude",
+    windows: [
+      {
+        id: "five_hour",
+        label: "Session",
+        usedPct: 73,
+        remainingPct: 27,
+        resetsAt: "2026-11-27T20:40:00.000Z",
+        tone: "warning",
+      },
+      {
+        id: "weekly",
+        label: "Weekly",
+        usedPct: 91,
+        remainingPct: 9,
+        resetsAt: null,
+        tone: "danger",
+      },
+    ],
+  });
+  // Another source's observation and an unknown agent change nothing.
+  await registry.observeUsage("working", {
+    sourceId: "codex",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 1, resetsAt: null }],
+  });
+  await registry.observeUsage("gone", {
+    sourceId: "claude",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 1, resetsAt: null }],
+  });
+
+  const merged = [
+    {
+      id: "five_hour",
+      label: "Session",
+      usedPct: 73,
+      remainingPct: 27,
+      resetsAt: "2026-11-27T20:40:00.000Z",
+      tone: "warning",
+    },
+    { id: "weekly", label: "Weekly", usedPct: 91, remainingPct: 9, resetsAt: null, tone: "danger" },
+    { id: "weekly_model_fable", label: "Weekly · Fable", usedPct: 30, remainingPct: 70 },
+  ];
+  expect(announced).toEqual([{ id: "claude:work", windows: merged }]);
+  const reports = await registry.listReports();
+  expect(fetched).toEqual(["work", "codex-acct", "other"]);
+  const work = reports.find((entry) => entry.id === "claude:work");
+  expect(work).toMatchObject({
+    fetchedAt: new Date(now).toISOString(),
+    successfulAt: new Date(now).toISOString(),
+    report: { status: "available", windows: merged },
+  });
+  // The observation is the newest sample, so the fetch's observation time no longer applies.
+  expect(work?.report).not.toHaveProperty("observedAt");
+  expect(reports.find((entry) => entry.id === "claude:other")?.report).toMatchObject({
+    windows: [{ usedPct: 10 }, { usedPct: 50 }, { usedPct: 30 }],
+  });
+
+  // The cache keeps its fetch time, so the per-model window still refreshes on schedule.
+  now = 301_000;
+  await registry.listReports();
+  expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+});
+
+test("Codex observations update windows, balances, and planLabel on the discovered account's cached report", async () => {
+  let now = 1_000;
+  const { registry } = observedUsageRegistry(() => now);
+  const announced: UsageReportEntry[] = [];
+  registry.subscribe((entry) => announced.push(entry));
+  await registry.listReports();
+
+  now = 31_000;
+  await registry.observeUsage("codex-agent", {
+    sourceId: "codex",
+    planLabel: "pro",
+    windows: [
+      {
+        id: "five_hour",
+        label: "5-hour",
+        usedPct: 31,
+        remainingPct: 69,
+        resetsAt: "2026-11-27T20:40:00.000Z",
+        tone: "ok",
+      },
+      {
+        id: "weekly",
+        label: "Weekly",
+        usedPct: 64,
+        remainingPct: 36,
+        resetsAt: "2026-11-29T02:00:00.000Z",
+        tone: "ok",
+      },
+    ],
+    balances: [{ id: "credits", label: "Credits", remaining: 19.5, unit: "credits", tone: "ok" }],
+  });
+
+  expect(announced).toHaveLength(1);
+  expect(announced[0]).toMatchObject({
+    id: "codex:codex-acct",
+    fetchedAt: new Date(now).toISOString(),
+    successfulAt: new Date(now).toISOString(),
+    report: {
+      status: "available",
+      planLabel: "pro",
+      windows: [
+        {
+          id: "five_hour",
+          label: "5-hour",
+          usedPct: 31,
+          remainingPct: 69,
+          resetsAt: "2026-11-27T20:40:00.000Z",
+          tone: "ok",
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          usedPct: 64,
+          remainingPct: 36,
+          resetsAt: "2026-11-29T02:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+      balances: [{ id: "credits", label: "Credits", remaining: 19.5, unit: "credits", tone: "ok" }],
+    },
+  });
+  expect(announced[0]?.report).not.toHaveProperty("observedAt");
+});
+
+test("ignores observations when the agent has no discovered disk account for that source", async () => {
+  let now = 1_000;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: string[] = [];
+  registry.subscribe((entry) => announced.push(entry.id));
+
+  await registry.observeUsage("no-account", {
+    sourceId: "claude",
+    windows: [{ id: "five_hour", label: "Session", usedPct: 45, resetsAt: null }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(fetched).toEqual([]);
+  expect(announced).toEqual([]);
+});
+
+test("an observation without usage refetches its account at most once a minute and announces it", async () => {
+  let now = 0;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: string[] = [];
+  registry.subscribe((entry) => announced.push(`${entry.id}@${entry.fetchedAt}`));
+  await registry.listReports();
+  const observeNothing = async (at: number) => {
+    now = at;
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  await observeNothing(10_000);
+  await observeNothing(69_000);
+  await observeNothing(70_000);
+  expect(fetched.filter((input) => input === "work")).toEqual(["work", "work", "work"]);
+  expect(announced).toEqual([
+    `claude:work@${new Date(10_000).toISOString()}`,
+    `claude:work@${new Date(70_000).toISOString()}`,
+  ]);
+});
+
+test("a throttled refetch schedules one trailing refetch at the end of the minute window", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-11-28T00:00:00.000Z"));
+    const { registry, fetched } = observedUsageRegistry(() => Date.now());
+    const announced: string[] = [];
+    const unsubscribe = registry.subscribe((entry) => announced.push(entry.fetchedAt));
+    await registry.listReports();
+
+    vi.advanceTimersByTime(10_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+
+    // Two turns finish inside the 60s throttle window: neither fetches immediately, and they
+    // coalesce into a single trailing refetch when the 60s window expires.
+    vi.advanceTimersByTime(20_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    vi.advanceTimersByTime(15_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(24_999);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(3);
+    expect(announced).toHaveLength(2);
+
+    // If every listener unsubscribes before a trailing timer fires, it skips the fetch.
+    vi.advanceTimersByTime(10_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    unsubscribe();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(3);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("with no app listening, an observation neither fetches nor discovers reports", async () => {
+  let now = 0;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  await registry.listReports();
+  now = 10_000;
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched.filter((input) => input === "work")).toEqual(["work"]);
+
+  // Once an app listens, the same observation refetches the account.
+  const stop = registry.subscribe(() => {});
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched.filter((input) => input === "work")).toEqual(["work", "work"]);
+  stop();
+});
+
+test("with no app listening, usage from an agent no client listed fetches nothing", async () => {
+  const { registry, fetched } = observedUsageRegistry(() => 0);
+  await registry.observeUsage("working", {
+    sourceId: "claude",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 91, resetsAt: null }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched).toEqual([]);
+});
+
+test("usage observed before any report was fetched fetches the account once", async () => {
+  let now = 0;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: string[] = [];
+  registry.subscribe((entry) => announced.push(entry.id));
+  await registry.observeUsage("working", {
+    sourceId: "claude",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 91, resetsAt: null }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched).toEqual(["work"]);
+  expect(announced).toEqual(["claude:work"]);
+});
+
+test("unregister clears failure backoff and observed refetch throttle for that source", async () => {
+  let now = 0;
+  let fetches = 0;
+  const registry = new UsageSourceRegistry(() => now, 300_000, undefined, {
+    hasAgent: (id) => id === "working",
+    usageSession: (id) =>
+      id === "working" ? { provider: "claude", env: {}, sessionKey: "s1" } : null,
+  });
+  const makeSource = () =>
+    source({
+      id: "claude",
+      discover: async () => [{ key: "acct", input: {} }],
+      fetch: async () => {
+        fetches++;
+        return { status: "error", error: "500" };
+      },
+    });
+  registry.register(makeSource());
+  registry.subscribe(() => {});
+
+  await registry.listReports();
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetches).toBe(2);
+
+  // Unregister and re-register: backoff and refetch throttle should start clean.
+  registry.unregister("claude");
+  registry.register(makeSource());
+  now = 1_000;
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetches).toBe(3);
 });

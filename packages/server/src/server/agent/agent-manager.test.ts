@@ -16741,3 +16741,125 @@ test("a wrapped refresh passes a Windows script provider command to the wrapper 
   expect(manager.getAgent(created.id)?.lifecycle).not.toBe("error");
   await manager.closeAgent(created.id);
 });
+
+test("cancelAgentRun default interrupt timeout accommodates a 10s cancel grace plus 2s teardown (#3256)", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-15s-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let finishInterrupt!: () => void;
+
+  class SlowInterruptSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "slow-interrupt-turn";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      await new Promise<void>((resolve) => {
+        finishInterrupt = () => {
+          this.pushEvent({
+            type: "turn_canceled",
+            provider: this.provider,
+            turnId: "slow-interrupt-turn",
+            reason: "Interrupted after cancel timeout",
+          });
+          resolve();
+        };
+      });
+    }
+  }
+
+  class SlowInterruptClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SlowInterruptSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SlowInterruptClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(created.id, "hang");
+    const draining = drainAsyncGenerator(stream);
+    await manager.waitForAgentRunStart(created.id);
+
+    let cancelResult: { status: string } | null = null;
+    const cancelPromise = manager.cancelAgentRun(created.id).then((result) => {
+      cancelResult = result;
+      return result;
+    });
+
+    // At 12s (10s grace + 2s teardown), AgentManager must NOT have timed out prematurely.
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(cancelResult).toBeNull();
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("running");
+
+    finishInterrupt();
+    await expect(cancelPromise).resolves.toEqual({ status: "settled" });
+    await draining;
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
+  } finally {
+    vi.useRealTimers();
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cancelAgentRun still force-cancels after 2s when an acknowledged non-ACP interrupt never emits a terminal event (#3256)", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-settlement-2s-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class SilentInterruptSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "silent-interrupt-turn";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      // Acknowledges immediately, simulating a non-ACP provider whose terminal event is lost.
+    }
+  }
+
+  class SilentInterruptClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SilentInterruptSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SilentInterruptClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(created.id, "stuck-non-acp");
+    const draining = drainAsyncGenerator(stream);
+    await manager.waitForAgentRunStart(created.id);
+
+    const cancelPromise = manager.cancelAgentRun(created.id);
+    // Must force-cancel after the 2s settlement rescue timeout, not wait 15s.
+    await vi.advanceTimersByTimeAsync(2_100);
+    await expect(cancelPromise).resolves.toEqual({ status: "settled" });
+    await draining;
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
+  } finally {
+    vi.useRealTimers();
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

@@ -9,6 +9,7 @@ import { SessionDelivery } from "../server/session/owned-subscriptions/index.js"
 import type {
   SessionInboundMessage,
   SessionOutboundMessage,
+  TerminalDefaultColors,
   TerminalState,
 } from "@getpaseo/protocol/messages";
 import type pino from "pino";
@@ -21,9 +22,12 @@ function createFixture(): {
   terminal: TerminalSession;
   terminalManager: TerminalManager;
   appliedSizes: string[];
+  appliedPalettes: TerminalDefaultColors[];
 } {
   const appliedSizes: string[] = [];
+  const appliedPalettes: TerminalDefaultColors[] = [];
   let size = { rows: 24, cols: 80 };
+  let defaultColors: TerminalDefaultColors | undefined;
   const state = (): TerminalState => ({
     rows: size.rows,
     cols: size.cols,
@@ -37,12 +41,20 @@ function createFixture(): {
     cwd: "/tmp",
     workspaceId: "workspace-1",
     getSize: () => size,
-    send: (message: { type: string; rows?: number; cols?: number }) => {
-      if (message.type !== "resize" || message.rows === undefined || message.cols === undefined) {
-        return;
+    getDefaultColors: () => defaultColors,
+    send: (message: {
+      type: string;
+      rows?: number;
+      cols?: number;
+      defaultColors?: TerminalDefaultColors;
+    }) => {
+      if (message.type === "resize" && message.rows !== undefined && message.cols !== undefined) {
+        size = { rows: message.rows, cols: message.cols };
+        appliedSizes.push(`${message.cols}x${message.rows}`);
+      } else if (message.type === "palette" && message.defaultColors) {
+        defaultColors = message.defaultColors;
+        appliedPalettes.push(message.defaultColors);
       }
-      size = { rows: message.rows, cols: message.cols };
-      appliedSizes.push(`${message.cols}x${message.rows}`);
     },
     subscribe: () => () => {},
     onExit: () => () => {},
@@ -51,7 +63,7 @@ function createFixture(): {
     getTerminal: () => terminal,
     getTerminalState: async () => ({ state: state(), revision: 0 }),
   } as unknown as TerminalManager;
-  return { terminal, terminalManager, appliedSizes };
+  return { terminal, terminalManager, appliedSizes, appliedPalettes };
 }
 
 function createController(
@@ -137,5 +149,53 @@ describe("terminal session controller size ownership", () => {
 
     await ownership.close();
     expect(appliedSizes).toEqual(["100x30", "101x31", "103x33", "105x35"]);
+  });
+
+  test("routes palette claims and owner-only updates through one connection-owned arbiter", async () => {
+    const { terminalManager, appliedPalettes } = createFixture();
+    const controllerA = createController(terminalManager);
+    const controllerB = createController(terminalManager);
+    const sourceA = {};
+    const sourceB = {};
+    const ownership = new SessionDelivery(() => {});
+    const light = { foreground: "#1a1a1e", background: "#ffffff", cursor: "#1a1a1e" };
+    const dark = { foreground: "#fafafa", background: "#181b1a", cursor: "#fafafa" };
+    const dispatch = (
+      controller: TerminalSessionController,
+      source: object,
+      message: SessionInboundMessage,
+    ) =>
+      ownership.request(source, message, async () => {
+        await controller.dispatch(message, ownership);
+      });
+
+    await dispatch(controllerA, sourceA, {
+      type: "terminal_input",
+      terminalId: "terminal-1",
+      message: { type: "palette", defaultColors: light, intent: "claim" },
+    });
+    await dispatch(controllerB, sourceB, {
+      type: "terminal_input",
+      terminalId: "terminal-1",
+      message: { type: "palette", defaultColors: dark, intent: "update" },
+    });
+    await dispatch(controllerA, sourceA, {
+      type: "terminal_input",
+      terminalId: "terminal-1",
+      message: { type: "palette", defaultColors: dark, intent: "update" },
+    });
+    await dispatch(controllerB, sourceB, {
+      type: "terminal_input",
+      terminalId: "terminal-1",
+      message: { type: "palette", defaultColors: light, intent: "claim" },
+    });
+    await dispatch(controllerA, sourceA, {
+      type: "terminal_input",
+      terminalId: "terminal-1",
+      message: { type: "palette", defaultColors: dark, intent: "update" },
+    });
+
+    await ownership.close();
+    expect(appliedPalettes).toEqual([light, dark, light]);
   });
 });

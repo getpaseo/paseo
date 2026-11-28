@@ -8,7 +8,7 @@ import {
   PluginTranslationProvider,
   type PluginClientStateSource,
 } from "@getpaseo/plugin/client/host";
-import React, { createContext, useContext, useMemo, type ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 import { createPluginClientStateSource } from "./client-state/source";
 import { pluginComposersSource } from "./composer-items/source";
 import type { InstalledPlugin } from "./types";
@@ -20,6 +20,43 @@ export function usePluginInstallation(): InstalledPlugin {
   const plugin = useContext(PluginInstallationContext);
   if (!plugin) throw new Error("Plugin host UI must render inside a plugin surface");
   return plugin;
+}
+
+const PluginInstallationServerIdContext = createContext<string | undefined>(undefined);
+
+/** Host server ID for the enclosing plugin installation, or undefined outside a plugin surface. */
+export function usePluginInstallationServerId(): string | undefined {
+  return useContext(PluginInstallationServerIdContext);
+}
+
+/** Rebuilds the plugin installation's host server ID across React Native portals. */
+export function usePluginInstallationServerIdBridge() {
+  const serverId = usePluginInstallationServerId();
+  return useCallback(
+    (children: ReactNode) => (
+      <PluginInstallationServerIdContext.Provider value={serverId}>
+        {children}
+      </PluginInstallationServerIdContext.Provider>
+    ),
+    [serverId],
+  );
+}
+
+/** The installation and its host server ID, for host UI rendered inside a plugin surface. */
+function InstallationContexts({
+  plugin,
+  children,
+}: {
+  plugin: InstalledPlugin;
+  children: ReactNode;
+}) {
+  return (
+    <PluginInstallationContext.Provider value={plugin}>
+      <PluginInstallationServerIdContext.Provider value={plugin.serverId}>
+        {children}
+      </PluginInstallationServerIdContext.Provider>
+    </PluginInstallationContext.Provider>
+  );
 }
 
 /**
@@ -41,7 +78,7 @@ export function PluginInstallationProvider({
     [plugin.serverId, surfaceState],
   );
   return (
-    <PluginInstallationContext.Provider value={plugin}>
+    <InstallationContexts plugin={plugin}>
       <QueryClientProvider client={plugin.queryClient}>
         <PaseoApiProvider paseo={getPluginClientApi(plugin).paseo}>
           <PluginRpcProvider invoke={plugin.invoke} subscribe={plugin.subscribe}>
@@ -53,6 +90,6 @@ export function PluginInstallationProvider({
           </PluginRpcProvider>
         </PaseoApiProvider>
       </QueryClientProvider>
-    </PluginInstallationContext.Provider>
+    </InstallationContexts>
   );
 }

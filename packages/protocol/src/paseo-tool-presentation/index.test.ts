@@ -30,6 +30,13 @@ describe("Paseo tool display", () => {
     ["update_agent", { agentId: "agt_1", name: "Renamed" }, "Update agent", "Renamed"],
     ["create_workspace", { path: "/tmp/repo/feature-x" }, "Create workspace", "feature-x"],
     ["create_workspace", { title: "Docs", branchName: "docs" }, "Create workspace", "Docs"],
+    ["update_workspace", { title: "Payments" }, "Update workspace", "Payments"],
+    [
+      "update_workspace",
+      { workspaceId: "wks_1", metadata: { issues: ["#42"] } },
+      "Update workspace",
+      "wks_1",
+    ],
     ["start_workspace_script", { scriptName: "web" }, "Start script", "web"],
     ["send_terminal_keys", { terminalId: "t1", keys: "npm test" }, "Send keys", "npm test"],
     ["create_schedule", { prompt: "Check CI", cron: "0 9 * * 1" }, "Create schedule", "0 9 * * 1"],

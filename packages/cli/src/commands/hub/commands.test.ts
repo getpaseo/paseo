@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { describe, it } from "vitest";
-import { render } from "../../output/index.js";
+import { render } from "../../output/render.js";
 import { runHubConnect } from "./connect.js";
 import type { HubCredentialStore, StoredHubCredential } from "./credentials.js";
 import type { HubDaemonClient, HubDaemonConnection, HubStatus } from "./daemon-client.js";

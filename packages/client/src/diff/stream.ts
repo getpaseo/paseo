@@ -4,7 +4,7 @@ import {
   type DiffBegin,
   type DiffBody,
   type DiffFrame,
-} from "@getpaseo/protocol/binary-frames/index";
+} from "@getpaseo/protocol/binary-frames/diff";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import type { DiffState } from "./index.js";
 
