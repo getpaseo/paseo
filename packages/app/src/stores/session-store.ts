@@ -83,6 +83,7 @@ export interface Agent {
   status: AgentLifecycleStatus;
   backgroundWork?: AgentBackgroundWorkSummary;
   turn: TurnLiveness;
+  latestTurnChanges?: import("@getpaseo/protocol/messages").AgentTurnChanges | null;
   createdAt: Date;
   updatedAt: Date;
   lastUserMessageAt: Date | null;

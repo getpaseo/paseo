@@ -37,6 +37,9 @@ import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
 import { ReviewCommentSheet, ReviewFeedbackAction } from "@/review";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
+import { LatestTurnDiff } from "@/git/latest-turn-diff";
+import { useWorkingDiffComparison } from "@/git/working-diff-comparison";
+import { useHostFeature } from "@/runtime/host-features";
 import { ChangedFilesTree } from "@/git/changed-files-tree";
 import { JUMP_TO_FILE_CLEARANCE, JumpToFile } from "@/git/jump-to-file";
 import {
@@ -184,6 +187,7 @@ interface ChangesSurfaceProps {
   presentation?: ChangesPresentation;
   focusPath?: string;
   focusRequestId?: number;
+  turnAgentId?: string;
   onOpenFile?: (path: string) => void;
   onOpenToSide?: (path: string) => void;
   onSelectDiffFile?: (path: string) => void;
@@ -280,7 +284,13 @@ export function DiffLayoutToggle({
   );
 }
 
+interface LatestTurnMode {
+  active: boolean;
+  onSelect: () => void;
+}
+
 interface DiffModeMenuProps {
+  latestTurn?: LatestTurnMode;
   diffMode: "uncommitted" | "base" | "all";
   committedDescription?: string;
   testIDPrefix?: string;
@@ -290,6 +300,7 @@ interface DiffModeMenuProps {
 }
 
 export function DiffModeMenu({
+  latestTurn,
   diffMode,
   committedDescription,
   testIDPrefix = "changes-diff",
@@ -301,6 +312,7 @@ export function DiffModeMenu({
   const uncommittedLabel = t("workspace.git.diff.uncommitted");
   const committedLabel = t("workspace.git.diff.committed");
   const allLabel = t("workspace.git.diff.all");
+  const latestTurnLabel = t("workspace.git.diff.latestTurn");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -314,7 +326,11 @@ export function DiffModeMenu({
           return (
             <>
               <Text style={toolbarLabelTriggerTextStyle(highlighted)} numberOfLines={1}>
-                {{ all: allLabel, uncommitted: uncommittedLabel, base: committedLabel }[diffMode]}
+                {latestTurn?.active
+                  ? latestTurnLabel
+                  : { all: allLabel, uncommitted: uncommittedLabel, base: committedLabel }[
+                      diffMode
+                    ]}
               </Text>
               <ToolbarLabelTriggerIcon>
                 <ThemedChevronDown size={12} uniProps={extraMutedIconColorMapping} />
@@ -326,7 +342,7 @@ export function DiffModeMenu({
       <DropdownMenuContent align="start" width={260} testID={`${testIDPrefix}-status-menu`}>
         <DropdownMenuItem
           testID={`${testIDPrefix}-mode-all`}
-          selected={diffMode === "all"}
+          selected={!latestTurn?.active && diffMode === "all"}
           onSelect={onSelectAll}
         >
           {allLabel}
@@ -334,7 +350,7 @@ export function DiffModeMenu({
         <DropdownMenuSeparator />
         <DropdownMenuItem
           testID={`${testIDPrefix}-mode-uncommitted`}
-          selected={diffMode === "uncommitted"}
+          selected={!latestTurn?.active && diffMode === "uncommitted"}
           onSelect={onSelectUncommitted}
         >
           {uncommittedLabel}
@@ -342,12 +358,24 @@ export function DiffModeMenu({
         <DropdownMenuSeparator />
         <DropdownMenuItem
           testID={`${testIDPrefix}-mode-committed`}
-          selected={diffMode === "base"}
+          selected={!latestTurn?.active && diffMode === "base"}
           description={committedDescription}
           onSelect={onSelectBase}
         >
           {committedLabel}
         </DropdownMenuItem>
+        {latestTurn && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              testID={`${testIDPrefix}-mode-latest-turn`}
+              selected={latestTurn.active}
+              onSelect={latestTurn.onSelect}
+            >
+              {latestTurnLabel}
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -481,6 +509,7 @@ interface ChangesRepositoryToolbarModel {
 }
 
 interface ChangesComparisonToolbarModel {
+  latestTurn?: LatestTurnMode;
   committedDescription?: string;
   diffMode: "uncommitted" | "base" | "all";
   mode: ChangesToolbarMode;
@@ -498,6 +527,7 @@ interface ChangesHeaderProps {
 }
 
 interface BuildChangesHeaderModelInput {
+  latestTurn?: LatestTurnMode;
   baseRef: string | null;
   isWorktree: boolean;
   branchName: string | null;
@@ -535,6 +565,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       workspaceId: input.workspaceId,
     },
     comparison: {
+      latestTurn: input.latestTurn,
       committedDescription: input.committedDescription,
       diffMode: input.diffMode,
       mode: input.mode,
@@ -554,6 +585,7 @@ function ChangesHeader({ compact, repository, comparison, sidebarSurface }: Chan
       <ChangesDiffOnlyToolbar
         compact={compact}
         mode={comparison.mode}
+        model={comparison}
         sidebarSurface={sidebarSurface}
       />
     );
@@ -577,10 +609,12 @@ function ChangesHeader({ compact, repository, comparison, sidebarSurface }: Chan
 function ChangesDiffOnlyToolbar({
   compact,
   mode,
+  model,
   sidebarSurface,
 }: {
   compact: boolean;
   mode: Extract<ChangesToolbarMode, { kind: "diff" }>;
+  model: ChangesComparisonToolbarModel;
   sidebarSurface: boolean;
 }) {
   return (
@@ -590,7 +624,9 @@ function ChangesDiffOnlyToolbar({
       testID="changes-header"
       trailing="glyph"
     >
-      <ChangesToolbarLeading />
+      <ChangesToolbarLeading>
+        {model.latestTurn && <ChangesDiffMode model={model} />}
+      </ChangesToolbarLeading>
       <ChangesToolbarTrailing>
         <ChangesToolbarActions mode={mode} compact={compact} />
       </ChangesToolbarTrailing>
@@ -767,13 +803,7 @@ function ChangesComparisonToolbar({
       trailing="glyph"
     >
       <ChangesToolbarLeading>
-        <DiffModeMenu
-          diffMode={model.diffMode}
-          committedDescription={model.committedDescription}
-          onSelectUncommitted={model.onSelectUncommitted}
-          onSelectBase={model.onSelectBase}
-          onSelectAll={model.onSelectAll}
-        />
+        <ChangesDiffMode model={model} />
         {model.selectedDiffStat ? (
           <DiffStat
             additions={model.selectedDiffStat.additions}
@@ -786,6 +816,19 @@ function ChangesComparisonToolbar({
         <ChangesToolbarActions mode={model.mode} compact={compact} />
       </ChangesToolbarTrailing>
     </ChangesToolbarRow>
+  );
+}
+
+function ChangesDiffMode({ model }: { model: ChangesComparisonToolbarModel }) {
+  return (
+    <DiffModeMenu
+      diffMode={model.diffMode}
+      latestTurn={model.latestTurn}
+      committedDescription={model.committedDescription}
+      onSelectUncommitted={model.onSelectUncommitted}
+      onSelectBase={model.onSelectBase}
+      onSelectAll={model.onSelectAll}
+    />
   );
 }
 
@@ -1483,7 +1526,113 @@ function useDiffTabNavigation({
   };
 }
 
-export function ChangesSurface({
+export function ChangesSurface(props: ChangesSurfaceProps) {
+  const { serverId, workspaceId, turnAgentId, focusRequestId } = props;
+  const supported = useHostFeature(serverId, "latestTurnChanges");
+  const request = `${turnAgentId ?? ""}:${focusRequestId ?? ""}`;
+  const [selection, setSelection] = useState({ request, active: Boolean(turnAgentId) });
+  const selectLatestTurn = useCallback(() => setSelection({ request, active: true }), [request]);
+  const leaveLatestTurn = useCallback(() => setSelection({ request, active: false }), [request]);
+  const canShowLatestTurn = supported && Boolean(workspaceId);
+  const active = selection.request === request ? selection.active : Boolean(turnAgentId);
+  const latestTurn = useMemo(
+    () => (canShowLatestTurn ? { active, onSelect: selectLatestTurn } : undefined),
+    [active, canShowLatestTurn, selectLatestTurn],
+  );
+  if (latestTurn?.active && workspaceId) {
+    return (
+      <LatestTurnChangesSurface
+        key={request}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        cwd={props.cwd}
+        enabled={props.enabled !== false}
+        turnAgentId={turnAgentId}
+        latestTurn={latestTurn}
+        leaveLatestTurn={leaveLatestTurn}
+        sidebarSurface={props.presentation === "tree"}
+      />
+    );
+  }
+  return <WorkingChangesSurface {...props} latestTurn={latestTurn} />;
+}
+
+function LatestTurnChangesSurface({
+  serverId,
+  workspaceId,
+  cwd,
+  enabled,
+  turnAgentId,
+  latestTurn,
+  leaveLatestTurn,
+  sidebarSurface,
+}: {
+  serverId: string;
+  workspaceId: string;
+  cwd: string;
+  enabled: boolean;
+  turnAgentId?: string;
+  latestTurn: LatestTurnMode;
+  leaveLatestTurn: () => void;
+  sidebarSurface: boolean;
+}) {
+  const { comparison, selectComparison } = useWorkingDiffComparison({ serverId, workspaceId, cwd });
+  const compact = useIsCompactFormFactor();
+  const { settings } = useAppSettings();
+  const { preferences } = useChangesPreferences();
+  const displayPreferences = useMemo(
+    () => ({
+      layout: resolveDiffLayout(preferences.layout, isWeb && !compact),
+      wrapLines: preferences.wrapLines,
+      codeFontSize: settings.codeFontSize,
+      monoFontFamily: settings.monoFontFamily,
+    }),
+    [
+      compact,
+      preferences.layout,
+      preferences.wrapLines,
+      settings.codeFontSize,
+      settings.monoFontFamily,
+    ],
+  );
+  const actions = useMemo(() => {
+    const select = (next: typeof comparison) => {
+      selectComparison(next);
+      leaveLatestTurn();
+    };
+    return {
+      onSelectBase: () => select("base"),
+      onSelectAll: () => select("all"),
+      onSelectUncommitted: () => select("uncommitted"),
+    };
+  }, [leaveLatestTurn, selectComparison]);
+
+  return (
+    <View style={styles.container}>
+      <ChangesToolbarRow
+        compact={compact}
+        sidebarSurface={sidebarSurface}
+        testID="changes-header"
+        trailing="glyph"
+      >
+        <ChangesToolbarLeading>
+          <DiffModeMenu diffMode={comparison} latestTurn={latestTurn} {...actions} />
+        </ChangesToolbarLeading>
+      </ChangesToolbarRow>
+      <LatestTurnDiff
+        serverId={serverId}
+        workspaceId={workspaceId}
+        defaultAgentId={turnAgentId}
+        enabled={enabled}
+        displayPreferences={displayPreferences}
+        ignoreWhitespace={preferences.hideWhitespace}
+      />
+    </View>
+  );
+}
+
+function WorkingChangesSurface({
+  latestTurn,
   serverId,
   workspaceId,
   cwd,
@@ -1497,7 +1646,7 @@ export function ChangesSurface({
   onAddToChat,
   state: changesState,
   onStateChange,
-}: ChangesSurfaceProps) {
+}: ChangesSurfaceProps & { latestTurn?: LatestTurnMode }) {
   const { settings: appSettings } = useAppSettings();
   const { preferences, updatePreferences } = useChangesPreferences();
   const { t } = useTranslation();
@@ -1899,6 +2048,7 @@ export function ChangesSurface({
         compact: isMobile,
         cwd,
         diffMode,
+        latestTurn,
         gitActions,
         mode: toolbarMode,
         onOpenPullRequest: handleOpenPullRequest,
@@ -1918,6 +2068,7 @@ export function ChangesSurface({
       cwd,
       diffMode,
       gitActions,
+      latestTurn,
       handleOpenPullRequest,
       handleSelectBase,
       handleSelectAll,

@@ -625,6 +625,7 @@ export function resolveConfigFromPersisted(
   const voiceLlm = resolveVoiceLlmConfig(env, persisted);
   return {
     ...settings,
+    latestTurnChanges: persisted.agents?.latestTurnChanges ?? false,
     listen: resolveListenAddress(env, cli, persisted),
     paseoHome,
     desktopManaged: env.PASEO_DESKTOP_MANAGED === "1",

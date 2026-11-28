@@ -19,6 +19,7 @@ import { StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
+import { useHostFeature } from "@/runtime/host-features";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useAgentStreamTail } from "@/agent-stream/use-agent-stream-tail";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
@@ -353,7 +354,15 @@ function resolveConversationAgentId(target: ConversationTarget): string | undefi
  * first prompt creates the agent and the tab retargets. The agent gates are idle for a draft.
  */
 export function AgentConversationPanel() {
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { t } = useTranslation();
+  const { serverId, workspaceId, target, openFileInWorkspace, openPreferredTarget } =
+    usePaneContext();
+  const latestTurnSupported = useHostFeature(serverId, "latestTurnChanges");
+  const turnAgentId = target.kind === "agent" ? target.agentId : undefined;
+  const openLatestTurn = useCallback(() => {
+    if (!turnAgentId) return;
+    openPreferredTarget({ kind: "working_diff", turnAgentId, focusRequestId: Date.now() }, "diffs");
+  }, [openPreferredTarget, turnAgentId]);
   const { isInteractive } = usePaneFocus();
   invariant(
     target.kind === "agent" || target.kind === "draft",
@@ -362,6 +371,18 @@ export function AgentConversationPanel() {
 
   return (
     <RetainedChatContent>
+      {latestTurnSupported && target.kind === "agent" && (
+        <View style={styles.turnChangesAction}>
+          <Button
+            size="sm"
+            variant="ghost"
+            testID="agent-open-latest-turn"
+            onPress={openLatestTurn}
+          >
+            {t("workspace.git.diff.latestTurnOpen")}
+          </Button>
+        </View>
+      )}
       <AgentPanelContent
         serverId={serverId}
         workspaceId={workspaceId}
@@ -1863,6 +1884,7 @@ const animatedStaticStyles = RNStyleSheet.create({
 });
 
 const styles = StyleSheet.create((theme) => ({
+  turnChangesAction: { alignItems: "flex-start", paddingHorizontal: theme.spacing[2] },
   root: {
     flex: 1,
     backgroundColor: theme.colors.surface0,

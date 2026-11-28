@@ -236,6 +236,7 @@ import {
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
+import { runWithRepositoryRoot } from "../utils/git-repository-discovery.js";
 import {
   createGitMutationService,
   type GitMutationService,
@@ -2447,6 +2448,11 @@ export class Session {
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
+    if (this.agentManager.latestTurnChangesEnabled) {
+      payload.latestTurnChanges ??= null;
+    } else {
+      delete payload.latestTurnChanges;
+    }
     if (!payload.internal && !storedRecord?.internal && !payload.archivedAt) {
       payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(payload.id);
     }
@@ -2461,12 +2467,16 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(
+    const payload = buildStoredAgentPayload(
       record,
       registeredProviderIds,
       (provider, own) => this.agentManager.effectiveOptionsFor(provider, own),
       this.agentManager.getAgentBackgroundWorkSummary(record.id),
     );
+    if (this.agentManager.latestTurnChangesEnabled) {
+      payload.latestTurnChanges = record.latestTurnChanges ?? null;
+    }
+    return payload;
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -3895,6 +3905,32 @@ export class Session {
     }
   }
 
+  private async deleteAgentState(
+    agentId: string,
+    agent: Pick<ManagedAgent, "cwd" | "workspaceId"> | null,
+  ): Promise<void> {
+    if (!agent) {
+      return this.agentManager.deleteAgentState(agentId);
+    }
+    if (agent.workspaceId) {
+      const checkoutExists = await stat(agent.cwd).then(
+        () => true,
+        () => false,
+      );
+      if (!checkoutExists) {
+        // An archived linked worktree's private refs live in the recorded common repository.
+        const workspace = await this.workspaceRegistry.get(agent.workspaceId);
+        const root = workspace?.mainRepoRoot;
+        if (root) {
+          return runWithRepositoryRoot(root, () =>
+            this.agentManager.deleteAgentState(agentId, root),
+          );
+        }
+      }
+    }
+    return this.agentManager.deleteAgentState(agentId, agent.cwd);
+  }
+
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Deleting agent ${agentId} from registry`);
 
@@ -3919,7 +3955,7 @@ export class Session {
 
     try {
       await this.agentStorage.remove(agentId);
-      await this.agentManager.deleteAgentState(agentId);
+      await this.deleteAgentState(agentId, knownAgent);
       // Directory removal is daemon-wide; agent_deleted below stays a source-scoped RPC reply.
       if (knownAgent) this.agentManager.notifyAgentRemoved(knownAgent);
     } catch (error) {

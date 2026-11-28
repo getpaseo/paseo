@@ -531,6 +531,9 @@
         "idleRuntimeCleanup": {
           "type": "boolean"
         },
+        "latestTurnChanges": {
+          "type": "boolean"
+        },
         "resumeOnStartup": {
           "type": "boolean"
         },

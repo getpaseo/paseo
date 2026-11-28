@@ -1074,6 +1074,13 @@ export const fr: TranslationResources = {
         checkingRepository: "Vérification du dépôt…",
         notRepository: "Ce n’est pas un dépôt git",
         diffMode: "Mode de diff",
+        latestTurn: "Dernier tour",
+        latestTurnOpen: "Voir les modifications du dernier tour",
+        latestTurnDescription:
+          "Modifications de l’arbre de travail pendant le dernier tour de l’agent",
+        latestTurnChooseAgent: "Choisir un agent",
+        latestTurnRunning: "Les modifications apparaîtront à la fin de ce tour.",
+        latestTurnUnavailable: "Aucune capture du dernier tour.",
         all: "Toutes les modifications",
         uncommitted: "Non commité",
         committed: "Commité",

@@ -2134,6 +2134,7 @@ export class VoiceAssistantWebSocketServer {
         providerOptionControls: true,
         entityMetadata: true,
         diffSubscription: true,
+        latestTurnChanges: this.agentManager.latestTurnChangesEnabled,
         binaryChunkingV1: true,
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,

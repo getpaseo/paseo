@@ -650,7 +650,7 @@ server.addHook("agent.archive.after", async ({ agent, archivedAt }) => {
 
 ## agent.turn.before
 
-A live turn starts. Receives `{ agent, turnId }`. History replay does not fire it.
+A live turn starts. Receives `{ agent, turnId }`. History replay does not fire it. When `captureOwner` is `"core"`, the daemon owns Git turn capture. A plugin can read the optional `latestTurnChanges` comparison from the refreshed agent snapshot after settlement. Both turn notifications carry the marker when core capture is enabled.
 
 ```ts
 server.addHook("agent.turn.before", async ({ agent, turnId }) => {

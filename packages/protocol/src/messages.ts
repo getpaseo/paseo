@@ -964,6 +964,14 @@ export const AgentBackgroundWorkSummarySchema = z.object({
 
 export type AgentBackgroundWorkSummary = z.infer<typeof AgentBackgroundWorkSummarySchema>;
 
+const gitObjectId = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+export const AgentTurnChangesSchema = z.object({
+  turnId: z.string(),
+  before: gitObjectId,
+  after: gitObjectId,
+});
+export type AgentTurnChanges = z.infer<typeof AgentTurnChangesSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -983,6 +991,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   status: AgentStatusSchema,
   backgroundWork: AgentBackgroundWorkSummarySchema.optional(),
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
+  latestTurnChanges: AgentTurnChangesSchema.nullable().optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),
@@ -4266,6 +4275,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerOptionControls: z.boolean().optional(),
         entityMetadata: z.boolean().optional(),
         diffSubscription: z.boolean().optional(),
+        latestTurnChanges: z.boolean().optional(),
         binaryChunkingV1: z.boolean().optional(),
         workspaceSetupObservation: z.boolean().optional(),
         workspaceSortTimes: z.boolean().optional(),

@@ -33,6 +33,10 @@ This is best-effort continuation. A crash between saving intent and dispatching 
 or repeat a continuation. Provider resume owns conversation restoration; there is no recovery retry
 loop or exactly-once turn guarantee.
 
+## Latest-turn worktree changes
+
+Set `agents.latestTurnChanges` to `true` in the daemon config and restart the daemon to enable this preview. Paseo compares the Git worktree at foreground dispatch and settlement. Changes made by people, terminals, and other agents during that window can appear in the comparison. Ignored untracked files stay out of the snapshots. The latest pair is kept in private Git refs in the checkout and may therefore retain file contents until Git prunes them. The capture adds Git work at both turn boundaries.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider

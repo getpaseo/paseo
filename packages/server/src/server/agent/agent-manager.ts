@@ -75,6 +75,14 @@ import {
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { JsonValue, ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { toStoredAgentRecord } from "./agent-projections.js";
+import type { AgentTurnChanges } from "@getpaseo/protocol/messages";
+import {
+  captureTurnTree,
+  releaseTurnBaseline,
+  releaseTurnComparison,
+  retainTurnBaseline,
+  retainTurnComparison,
+} from "./turn-changes.js";
 import { sanitizeAgentMetrics, withModelMetric } from "./agent-metrics.js";
 import {
   applyProviderOptionsPatch,
@@ -422,6 +430,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  latestTurnChangesEnabled?: boolean;
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
@@ -554,6 +563,8 @@ interface ManagedAgentBase {
   lastUsage?: AgentUsage;
   /** Provider-owned session metrics, replaced whole on every provider update. */
   sessionMetrics?: AgentMetric[];
+  latestTurnChanges?: AgentTurnChanges | null;
+  pendingTurnChanges?: { turnId: string; before: string | null };
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -934,6 +945,7 @@ export interface RetiredInternalAgent {
 }
 
 export class AgentManager {
+  readonly latestTurnChangesEnabled: boolean;
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly retiredInternalAgents = new Map<
     string,
@@ -990,6 +1002,7 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
+    this.latestTurnChangesEnabled = options.latestTurnChangesEnabled === true;
     this.pluginLifecycle = options.pluginLifecycle;
     this.pluginSessions = options.pluginSessions;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
@@ -1946,6 +1959,7 @@ export class AgentManager {
             attention: extractAttention(record),
             // Shown until the reopened session reports its own.
             sessionMetrics: record.sessionMetrics,
+            latestTurnChanges: record.latestTurnChanges,
           }
         : {}),
       workspaceId,
@@ -2162,7 +2176,7 @@ export class AgentManager {
       await this.drainSessionEvents(agentId);
       this.cancelRunningProviderSubagents(agentId);
       this.clearProviderBackgroundWork(agentId);
-      closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      closedExisting = await this.prepareAgentForClosure(existing, "agent reloaded");
       await this.persistSnapshot(closedExisting);
       this.assertAcceptingAgentRegistrations();
 
@@ -2199,6 +2213,7 @@ export class AgentManager {
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
         sessionMetrics: preservedSessionMetrics,
+        latestTurnChanges: existing.latestTurnChanges,
         lastError: preservedLastError,
         attention: preservedAttention,
         restoring: true,
@@ -2443,7 +2458,7 @@ export class AgentManager {
     this.cancelRunningProviderSubagents(agentId);
     // close() drops the session's subscribers before the provider could report an empty list.
     this.clearProviderBackgroundWork(agentId);
-    const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
+    const closedAgent = await this.prepareAgentForClosure(agent, "agent closed");
 
     let persistError: unknown;
     try {
@@ -2684,6 +2699,7 @@ export class AgentManager {
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
         sessionMetrics: record.sessionMetrics,
+        latestTurnChanges: record.latestTurnChanges,
         lastError: record.lastError ?? undefined,
         attention,
         internal: record.internal,
@@ -3481,11 +3497,7 @@ export class AgentManager {
       return null;
     }
     try {
-      const result = await agent.session.startTurn(prompt, options);
-      if (pendingRun.settled) {
-        throw new Error(`Agent ${agentId} run was canceled before its turn started`);
-      }
-      return result.turnId;
+      return await this.dispatchForegroundTurn(params);
     } catch (error) {
       if (error instanceof AgentTurnStartCanceledError) {
         if (!pendingRun.settled) {
@@ -3539,6 +3551,84 @@ export class AgentManager {
         this.runs.settleForegroundRun(agentId, pendingRun.token);
       }
       throw error;
+    }
+  }
+
+  private async dispatchForegroundTurn({
+    agent,
+    pendingRun,
+    prompt,
+    options,
+  }: Pick<
+    Parameters<AgentManager["startPendingForegroundTurn"]>[0],
+    "agent" | "pendingRun" | "prompt" | "options"
+  >) {
+    const shouldCapture = this.latestTurnChangesEnabled && !agent.internal && !agent.background;
+    const before = shouldCapture ? await this.tryCaptureTurnBaseline(agent, pendingRun) : null;
+    let accepted = false;
+    try {
+      if (pendingRun.settled) return null;
+      if (pendingRun.cancelRequested) throw new AgentTurnStartCanceledError();
+      const result = await agent.session.startTurn(prompt, options);
+      if (pendingRun.settled) {
+        throw new Error(`Agent ${agent.id} run was canceled before its turn started`);
+      }
+      accepted = true;
+      if (shouldCapture) {
+        agent.pendingTurnChanges = { turnId: result.turnId, before };
+      }
+      return result.turnId;
+    } finally {
+      if (!accepted && before) await this.tryReleaseTurnBaseline(agent, before);
+    }
+  }
+
+  private async tryCaptureTurnBaseline(agent: ActiveManagedAgent, run: PendingForegroundRun) {
+    try {
+      const before = await captureTurnTree(agent.cwd);
+      if (!before || run.settled || run.cancelRequested) return null;
+      await retainTurnBaseline(agent.cwd, agent.id, before);
+      return before;
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Could not capture turn baseline");
+      return null;
+    }
+  }
+
+  private async tryReleaseTurnBaseline(agent: ManagedAgent, before: string) {
+    try {
+      await releaseTurnBaseline(agent.cwd, agent.id, before);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Could not release turn baseline");
+    }
+  }
+
+  private async captureSettledTurn(agent: ActiveManagedAgent, turnId: string) {
+    const pending = agent.pendingTurnChanges;
+    if (pending?.turnId !== turnId) return;
+    agent.pendingTurnChanges = undefined;
+    agent.latestTurnChanges = null;
+    try {
+      const after = pending.before ? await captureTurnTree(agent.cwd) : null;
+      if (pending.before && after) {
+        const comparison = { turnId, before: pending.before, after };
+        await retainTurnComparison(agent.cwd, agent.id, comparison);
+        agent.latestTurnChanges = comparison;
+      }
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Could not capture settled turn");
+    }
+    if (!agent.latestTurnChanges) {
+      if (pending.before) await this.tryReleaseTurnBaseline(agent, pending.before);
+      await this.tryReleaseTurnComparison(agent.cwd, agent.id);
+    }
+  }
+
+  private async tryReleaseTurnComparison(cwd: string, agentId: string, includePending = false) {
+    try {
+      await releaseTurnComparison(cwd, agentId, includePending);
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "Could not release turn comparison");
     }
   }
 
@@ -4294,6 +4384,7 @@ export class AgentManager {
     if (!run) {
       return { status: "not_running" };
     }
+    if (run.kind === "foreground") run.cancelRequested = true;
     if (cause === "stop") {
       for (const listener of this.stopListeners) listener(agentId);
     }
@@ -4314,11 +4405,14 @@ export class AgentManager {
         { agentId, turnId: runTurnId, kind: run.kind },
         "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
       );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-        turnId: runTurnId,
+      await this.queueSessionOperation(agentId, async () => {
+        if (this.runs.getRun(agentId) !== run) return;
+        await this.dispatchSessionEvent(agent, {
+          type: "turn_canceled",
+          provider: agent.provider,
+          reason: "interrupted",
+          turnId: runTurnId,
+        });
       });
       await run.settledPromise;
     } else if (settlement === "timed_out" && run.kind === "foreground") {
@@ -4337,10 +4431,13 @@ export class AgentManager {
         { agentId, kind: run.kind },
         "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
       );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
+      await this.queueSessionOperation(agentId, async () => {
+        if (this.runs.getRun(agentId) !== run) return;
+        await this.dispatchSessionEvent(agent, {
+          type: "turn_canceled",
+          provider: agent.provider,
+          reason: "interrupted",
+        });
       });
     }
 
@@ -4474,7 +4571,12 @@ export class AgentManager {
     }
   }
 
-  async deleteAgentState(agentId: string): Promise<void> {
+  async deleteAgentState(agentId: string, deletedCwd?: string): Promise<void> {
+    const agent = this.agents.get(agentId) ?? (await this.registry?.get(agentId));
+    const cwd = deletedCwd ?? agent?.cwd;
+    if (cwd) {
+      await this.tryReleaseTurnComparison(cwd, agentId, true);
+    }
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
   }
@@ -4739,6 +4841,7 @@ export class AgentManager {
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
       sessionMetrics?: AgentMetric[];
+      latestTurnChanges?: AgentTurnChanges | null;
       lastError?: string;
       attention?: AttentionState;
       /**
@@ -4952,6 +5055,7 @@ export class AgentManager {
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
           sessionMetrics?: AgentMetric[];
+          latestTurnChanges?: AgentTurnChanges | null;
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
@@ -5006,6 +5110,7 @@ export class AgentManager {
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       sessionMetrics: options?.sessionMetrics,
+      latestTurnChanges: options?.latestTurnChanges,
       lastError: options?.lastError,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
@@ -5027,10 +5132,10 @@ export class AgentManager {
     };
   }
 
-  private prepareAgentForClosure(
+  private async prepareAgentForClosure(
     agent: LiveManagedAgent,
     cancelReason: string,
-  ): ManagedAgentClosed {
+  ): Promise<ManagedAgentClosed> {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -5045,6 +5150,14 @@ export class AgentManager {
       turnId,
     }));
     this.runs.clearAgentRun(agent.id);
+    if (agent.pendingTurnChanges) {
+      agent.pendingTurnChanges = undefined;
+      agent.latestTurnChanges = null;
+      // Finish cleanup before a reopened agent can retain a new baseline.
+      const cleanup = this.tryReleaseTurnComparison(agent.cwd, agent.id, true);
+      this.trackBackgroundTask(cleanup);
+      await cleanup;
+    }
     return {
       ...agent,
       lifecycle: "closed",
@@ -5117,37 +5230,33 @@ export class AgentManager {
       pendingRun.stagedEvents.push(event);
       return;
     }
-    const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
-    const next = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const current = this.agents.get(agentId);
-        if (!current) {
-          return;
-        }
-        if (current.session == null) {
-          return;
-        }
-        this.logger.trace(
-          {
-            agentId,
-            provider: event.provider,
-            sessionId: current.persistence?.sessionId ?? undefined,
-            turnId: getAgentStreamEventTurnId(event),
-            event,
-          },
-          "agent.manager.dequeue",
-        );
-        await this.dispatchSessionEvent(current, event);
+    void this.queueSessionOperation(agentId, async () => {
+      const current = this.agents.get(agentId);
+      if (!current) {
         return;
-      })
-      .catch((err) => {
-        this.logger.error(
-          { err, agentId, eventType: event.type },
-          "Failed to process session event",
-        );
-      });
+      }
+      if (current.session == null) {
+        return;
+      }
+      this.logger.trace(
+        {
+          agentId,
+          provider: event.provider,
+          sessionId: current.persistence?.sessionId ?? undefined,
+          turnId: getAgentStreamEventTurnId(event),
+          event,
+        },
+        "agent.manager.dequeue",
+      );
+      await this.dispatchSessionEvent(current, event);
+    });
+  }
 
+  private queueSessionOperation(agentId: string, operation: () => Promise<void>): Promise<void> {
+    const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
+    const next = previous.then(operation).catch((err) => {
+      this.logger.error({ err, agentId }, "Failed to process session event");
+    });
     this.sessionEventTails.set(agentId, next);
     this.trackBackgroundTask(next);
     void next.finally(() => {
@@ -5155,6 +5264,7 @@ export class AgentManager {
         this.sessionEventTails.delete(agentId);
       }
     });
+    return next;
   }
 
   /**
@@ -5591,13 +5701,12 @@ export class AgentManager {
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
-        this.runs.settleTerminalRun(agent.id, eventTurnId);
-        if (isForegroundEvent) {
-          this.finalizeForegroundTurn(agent, eventTurnId);
-        } else if (terminalDisposition !== "stale" && !agent.activeForegroundTurnId) {
-          // Publish autonomous readiness only after the tracked run has settled.
-          this.emitState(agent);
-        }
+        await this.settleLiveTerminalTurn(
+          agent,
+          eventTurnId,
+          isForegroundEvent,
+          terminalDisposition,
+        );
       }
 
       if (flags.shouldDispatchEvent) {
@@ -5608,6 +5717,24 @@ export class AgentManager {
     this.traceHandleStreamEventEnd(agent, event, eventTurnId, flags);
 
     return flags.shouldNotifyWaiters;
+  }
+
+  private async settleLiveTerminalTurn(
+    agent: ActiveManagedAgent,
+    turnId: string | undefined,
+    isForegroundEvent: boolean,
+    disposition: ActiveTurnTerminalDisposition,
+  ) {
+    if (turnId && isForegroundEvent && disposition !== "stale" && agent.pendingTurnChanges) {
+      await this.captureSettledTurn(agent, turnId);
+    }
+    this.runs.settleTerminalRun(agent.id, turnId);
+    if (isForegroundEvent) {
+      this.finalizeForegroundTurn(agent, turnId);
+    } else if (disposition !== "stale" && !agent.activeForegroundTurnId) {
+      // Publish autonomous readiness only after the tracked run has settled.
+      this.emitState(agent);
+    }
   }
 
   private traceHandleStreamEventStart(
@@ -6486,6 +6613,7 @@ export class AgentManager {
         this.pluginLifecycle,
         describeHookAgent({ ...agent, title: agent.config.title }),
         event,
+        this.latestTurnChangesEnabled ? "core" : undefined,
       );
     }
   }

@@ -37,6 +37,7 @@ import { createTerminalManager } from "../terminal/terminal-manager.js";
 import { AgentManager, type AgentManagerEvent, type ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderSubagentDescriptor } from "./agent/provider-subagents/store.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent/agent-storage.js";
+import { retainTurnBaseline, retainTurnComparison } from "./agent/turn-changes.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -6245,6 +6246,122 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
     expect(response?.payload.error).toBeNull();
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { scenario: "settled and pending captures in a removed checkout", settled: true, removed: true },
+  { scenario: "a first pending capture in a removed checkout", settled: false, removed: true },
+  { scenario: "a first pending capture in an existing checkout", settled: false, removed: false },
+])("deletion cleans $scenario with capture disabled", async ({ settled, removed }) => {
+  const scratch = mkdtempSync(path.join(tmpdir(), "session-bare-turn-snapshots-"));
+  const root = path.join(scratch, "repo.git");
+  const cwd = path.join(scratch, "checkout");
+  const git = (args: string[], gitCwd = scratch) =>
+    execFileSync("git", args, {
+      cwd: gitCwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  try {
+    git(["init", "-b", "main", "seed"]);
+    git(
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "initial",
+      ],
+      path.join(scratch, "seed"),
+    );
+    git(["clone", "--bare", "seed", root]);
+    git(["--git-dir", root, "worktree", "add", "--detach", cwd, "main"]);
+
+    const commit = git(["rev-parse", "HEAD"], cwd).trim();
+    const changes = { turnId: "turn-1", before: commit, after: commit };
+    const now = "2026-03-01T12:00:00.000Z";
+    const archivedAt = removed ? now : null;
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-bare-turn-snapshots",
+      projectId: "proj-bare-turn-snapshots",
+      cwd,
+      kind: "worktree",
+      worktreeRoot: cwd,
+      mainRepoRoot: root,
+      displayName: "checkout",
+      createdAt: now,
+      updatedAt: now,
+      archivedAt,
+    });
+    const agent = {
+      ...makeStoredAgent({
+        id: "agent-bare-turn-snapshots",
+        cwd,
+        updatedAt: now,
+        workspaceId: workspace.workspaceId,
+      }),
+      latestTurnChanges: settled ? changes : undefined,
+      archivedAt,
+    };
+    if (settled) {
+      await retainTurnBaseline(cwd, agent.id, commit);
+      await retainTurnComparison(cwd, agent.id, changes);
+    }
+    await retainTurnBaseline(cwd, agent.id, commit);
+    if (removed) git(["--git-dir", root, "worktree", "remove", cwd]);
+    const refs = () =>
+      git(["--git-dir", root, "for-each-ref", "--format=%(refname)", "refs/paseo/turn-changes/"]);
+    expect(
+      refs()
+        .trimEnd()
+        .split("\n")
+        .map((ref) => path.posix.basename(ref)),
+    ).toEqual(settled ? ["after", "before", "pending"] : ["pending"]);
+
+    const logger = createTestLogger();
+    const storage = new AgentStorage(path.join(scratch, "agents"), logger);
+    await storage.upsert(agent);
+    const manager = new AgentManager({
+      clients: {},
+      registry: storage,
+      latestTurnChangesEnabled: false,
+      logger,
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForWorkspaceTests({
+      agentManager: {
+        latestTurnChangesEnabled: manager.latestTurnChangesEnabled,
+        closeAgent: manager.closeAgent.bind(manager),
+        flush: manager.flush.bind(manager),
+        deleteAgentState: manager.deleteAgentState.bind(manager),
+        notifyAgentRemoved: manager.notifyAgentRemoved.bind(manager),
+      },
+      agentStorage: { get: storage.get.bind(storage), remove: storage.remove.bind(storage) },
+      onMessage: (message) => messages.push(message),
+    });
+    session.workspaceRegistry.get = async () => workspace;
+
+    await session.handleMessage({
+      type: "delete_agent_request",
+      agentId: agent.id,
+      requestId: "delete-agent",
+    });
+
+    expect(findByType(messages, "agent_deleted")?.payload).toEqual({
+      agentId: agent.id,
+      requestId: "delete-agent",
+    });
+    expect(await storage.get(agent.id)).toBeNull();
+    expect(refs()).toBe("");
+    expect(git(["--git-dir", root, "rev-parse", "main"]).trim()).toBe(commit);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });
 

@@ -155,7 +155,12 @@ export type PluginTurnOutcome =
   | { kind: "canceled"; reason: string };
 
 export interface PluginHookEvents {
-  "agent.turn.before": { agent: PluginHookAgent; turnId: string | null };
+  "agent.turn.before": {
+    agent: PluginHookAgent;
+    turnId: string | null;
+    /** When present, the daemon owns turn snapshots. */
+    captureOwner?: "core";
+  };
   "agent.turn.after": {
     agent: PluginHookAgent;
     turnId: string | null;
@@ -166,6 +171,7 @@ export interface PluginHookEvents {
      * started before the read, or when `turnId` is `null`.
      */
     outcome: PluginTurnOutcome;
+    captureOwner?: "core";
   };
   "agent.permission.before": { agent: PluginHookAgent; request: AgentPermissionRequest };
   "agent.permission.after": {

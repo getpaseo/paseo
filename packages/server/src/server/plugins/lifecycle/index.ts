@@ -266,24 +266,26 @@ export function publishAgentStream(
   lifecycle: PluginLifecycle,
   agent: PluginHookAgent,
   event: AgentStreamEvent,
+  captureOwner?: "core",
 ): void {
+  const turn = { agent, ...(captureOwner ? { captureOwner } : {}) };
   if (event.type === "turn_started") {
-    lifecycle.emit("agent.turn.before", { agent, turnId: event.turnId ?? null });
+    lifecycle.emit("agent.turn.before", { ...turn, turnId: event.turnId ?? null });
   } else if (event.type === "turn_completed") {
     lifecycle.emit("agent.turn.after", {
-      agent,
+      ...turn,
       turnId: event.turnId ?? null,
       outcome: { kind: "completed" },
     });
   } else if (event.type === "turn_failed") {
     lifecycle.emit("agent.turn.after", {
-      agent,
+      ...turn,
       turnId: event.turnId ?? null,
       outcome: { kind: "failed", error: { message: event.error, code: event.code } },
     });
   } else if (event.type === "turn_canceled") {
     lifecycle.emit("agent.turn.after", {
-      agent,
+      ...turn,
       turnId: event.turnId ?? null,
       outcome: { kind: "canceled", reason: event.reason },
     });

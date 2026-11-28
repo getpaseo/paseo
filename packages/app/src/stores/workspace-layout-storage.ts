@@ -49,6 +49,7 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
     kind: z.literal("working_diff"),
     focusPath: z.string().optional(),
     focusRequestId: z.number().optional(),
+    turnAgentId: z.string().optional(),
     // COMPAT(workingDiffTarget): accepted from pre-canonical tab ids; normalization removes them.
     mode: z.enum(["uncommitted", "base"]).optional(),
     baseRef: z.string().nullable().optional(),
