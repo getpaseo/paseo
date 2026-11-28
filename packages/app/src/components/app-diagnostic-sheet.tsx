@@ -1,11 +1,15 @@
 import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Platform, Text, View } from "react-native";
 import { Copy, RotateCw } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  SheetHeaderIconButton,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ScrollableCodeSurface, SurfaceCard } from "@/components/ui/scrollable-code-surface";
 import { useToast } from "@/contexts/toast-context";
@@ -42,8 +46,6 @@ interface DiagnosticCollectionResult {
 }
 
 const SNAP_POINTS = ["55%", "88%"];
-const ThemedCopy = withUnistyles(Copy);
-const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -150,68 +152,31 @@ export function AppDiagnosticSheet({
       .catch(() => toast.error(t("settings.diagnostics.app.copyFailed")));
   }, [diagnostic, t, toast]);
 
-  const iconButtonStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.iconButton,
-      (Boolean(hovered) || pressed) && styles.iconButtonHovered,
-    ],
-    [],
-  );
-
-  const disabledIconButtonStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.iconButton,
-      (Boolean(hovered) || pressed) && Boolean(diagnostic) && styles.iconButtonHovered,
-      diagnostic ? null : styles.disabled,
-    ],
-    [diagnostic],
-  );
-
   const header = useMemo<SheetHeader>(
     () => ({
       title: t("settings.diagnostics.app.title"),
       actions: (
-        <View style={styles.headerActions}>
-          <Pressable
+        <>
+          <SheetHeaderIconButton
+            icon={Copy}
+            label={t("settings.diagnostics.app.copyAccessibility")}
             onPress={handleCopyPress}
             disabled={!diagnostic}
-            hitSlop={8}
-            style={disabledIconButtonStyle}
-            accessibilityRole="button"
-            accessibilityLabel={t("settings.diagnostics.app.copyAccessibility")}
-          >
-            <ThemedCopy size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-          </Pressable>
-          <Pressable
-            onPress={handleRefreshPress}
-            disabled={loading}
-            hitSlop={8}
-            style={iconButtonStyle}
-            accessibilityRole="button"
-            accessibilityLabel={
+          />
+          <SheetHeaderIconButton
+            icon={RotateCw}
+            label={
               loading
                 ? t("settings.diagnostics.app.refreshingAccessibility")
                 : t("settings.diagnostics.app.refreshAccessibility")
             }
-          >
-            {loading ? (
-              <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-            ) : (
-              <ThemedRotateCw size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-            )}
-          </Pressable>
-        </View>
+            onPress={handleRefreshPress}
+            busy={loading}
+          />
+        </>
       ),
     }),
-    [
-      diagnostic,
-      disabledIconButtonStyle,
-      handleCopyPress,
-      handleRefreshPress,
-      iconButtonStyle,
-      loading,
-      t,
-    ],
+    [diagnostic, handleCopyPress, handleRefreshPress, loading, t],
   );
 
   return (
@@ -341,24 +306,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  iconButton: {
-    width: 28,
-    height: 28,
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  disabled: {
-    opacity: 0.5,
   },
   statusDot: {
     width: 8,

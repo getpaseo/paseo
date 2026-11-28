@@ -1,0 +1,4 @@
+Fixed
+- Fixed the daemon failing to start when the terminal worker cannot read its own process identity, which left Paseo Desktop without a daemon on Windows machines where Windows PowerShell 5.1 cannot run Get-CimInstance
+
+Full notes: https://paseo.sh/changelog

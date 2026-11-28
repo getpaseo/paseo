@@ -1,5 +1,6 @@
 import type { ManagedProcessInspection } from "../server/managed-processes/managed-processes.js";
-import { TERMINAL_WORKER_MARKER_ARG, type TerminalWorkerRecord } from "./terminal-worker-record.js";
+import { connectTerminalWorker, probeTerminalWorkerSocket } from "./terminal-worker-client.js";
+import { type TerminalWorkerRecord } from "./terminal-worker-record.js";
 
 // Who a pid named in a terminal worker record belongs to, before anything signals it.
 //
@@ -15,20 +16,49 @@ export type ProcessOwnership =
   | { status: "owned" }
   | { status: "unknown"; reason: string };
 
-export function classifyTerminalWorkerProcess(
-  record: Pick<TerminalWorkerRecord, "recordId" | "identity">,
-  inspection: ManagedProcessInspection,
-): ProcessOwnership {
-  const birth = classifyBirth(record.identity.startedAt, inspection);
-  if (birth.status !== "owned" || inspection.status !== "alive") return birth;
-  const commandLine = inspection.snapshot.commandLine;
-  if (!commandLine) {
-    return { status: "unknown", reason: "command line unavailable" };
+/** The home lock owns these records; the record-specific socket proves a live worker. */
+export async function identifyTerminalWorker(
+  record: Pick<TerminalWorkerRecord, "pid" | "socketPath">,
+): Promise<ProcessOwnership> {
+  try {
+    process.kill(record.pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return { status: "gone" };
   }
-  if (!hasWorkerMarker(commandLine, record.recordId)) {
-    return { status: "unrelated", reason: "command line lacks the worker marker" };
+  const socket = await probeTerminalWorkerSocket(record.socketPath);
+  if (socket === "refused") return { status: "gone" };
+  if (socket === "accepting") return { status: "owned" };
+  return { status: "unknown", reason: "worker socket probe inconclusive" };
+}
+
+/** Rechecks the live worker immediately before a forced termination. */
+export async function authorizeTerminalWorkerTermination(
+  record: TerminalWorkerRecord,
+): Promise<ProcessOwnership> {
+  const ownership = await identifyTerminalWorker(record);
+  if (ownership.status !== "owned") return ownership;
+  // COMPAT(terminal-worker-legacy-socket): added after v0.15.1, remove after 2027-02-06.
+  // Legacy names contain only home + pid. A stale record can reach a newer worker, so an
+  // accepting legacy socket requires proof of its secret before cleanup may signal it.
+  if (
+    record.socketPath.endsWith(`-${record.recordId}.sock`) ||
+    record.socketPath.endsWith(`-${record.recordId}`)
+  )
+    return ownership;
+  try {
+    const connection = await connectTerminalWorker({
+      socketPath: record.socketPath,
+      secret: record.secret,
+      timeoutMs: 1000,
+    });
+    const matches = connection.workerPid === record.pid;
+    connection.disconnect();
+    return matches
+      ? ownership
+      : { status: "unknown", reason: "legacy socket authenticated another pid" };
+  } catch {
+    return { status: "unknown", reason: "legacy socket ownership could not be authenticated" };
   }
-  return { status: "owned" };
 }
 
 export function classifyTerminalProgramProcess(
@@ -56,14 +86,4 @@ function classifyBirth(
     return { status: "unrelated", reason: "pid reused by a process with another birth time" };
   }
   return { status: "owned" };
-}
-
-function hasWorkerMarker(commandLine: string, recordId: string): boolean {
-  const tokens = commandLine.split(/\s+/);
-  for (let index = 0; index < tokens.length - 1; index += 1) {
-    if (tokens[index] === TERMINAL_WORKER_MARKER_ARG && tokens[index + 1] === recordId) {
-      return true;
-    }
-  }
-  return false;
 }

@@ -68,6 +68,64 @@ describe("GitProcessScheduler", () => {
     expect(started).toEqual([0, 3, 2]);
   });
 
+  test("admits normal work before a queued background burst", async () => {
+    const scheduler = new GitProcessScheduler({
+      maxProcessesPerSecond: 100,
+      maxProcessConcurrency: 1,
+    });
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+
+    const activeBackground = scheduler.run(createConcurrencyTask(0, started, releases), {
+      priority: "background",
+    });
+    await vi.waitFor(() => expect(started).toEqual([0]));
+    const queuedBackground = [2, 3, 4].map((index) =>
+      scheduler.run(createConcurrencyTask(index, started, releases), { priority: "background" }),
+    );
+    const normalWork = scheduler.run(createConcurrencyTask(5, started, releases));
+    const highWork = scheduler.run(createConcurrencyTask(6, started, releases), {
+      priority: "high",
+    });
+
+    releases.shift()?.();
+    await Promise.all([activeBackground, ...queuedBackground, normalWork, highWork]);
+
+    expect(started).toEqual([0, 6, 5, 2, 3, 4]);
+  });
+
+  test("starts normal work at the next start slot when background work saturates the rate", async () => {
+    vi.useFakeTimers();
+    const scheduler = new GitProcessScheduler({
+      maxProcessesPerSecond: 2,
+      maxProcessConcurrency: 8,
+    });
+    const started: string[] = [];
+    const task = (name: string) => () => {
+      started.push(name);
+      const completed = Promise.resolve();
+      return { result: completed, exited: completed };
+    };
+    const background = Array.from({ length: 8 }, (_, index) =>
+      scheduler.run(task(`background-${index}`), { priority: "background" }),
+    );
+    // Admission yields a real event-loop turn per process; let every
+    // background job reach the start-rate limiter.
+    for (let turn = 0; turn < 10; turn += 1) {
+      await new Promise<void>((resolve) => scheduleImmediate(resolve));
+    }
+    expect(started).toEqual(["background-0", "background-1"]);
+
+    const normal = scheduler.run(task("normal"));
+    while (started.length < 3) {
+      await vi.advanceTimersToNextTimerAsync();
+    }
+
+    expect(started[2]).toBe("normal");
+    await vi.runAllTimersAsync();
+    await Promise.all([...background, normal]);
+  });
+
   test("yields to daemon liveness work between process starts", async () => {
     const scheduler = new GitProcessScheduler({
       maxProcessesPerSecond: 100,

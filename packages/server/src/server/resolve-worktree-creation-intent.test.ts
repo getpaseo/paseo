@@ -6,6 +6,7 @@ import {
   CheckoutSourceForgeMismatchError,
   MissingCheckoutTargetError,
   resolveWorktreeCreationIntent,
+  type ResolveWorktreeCreationIntentDeps,
   UnsupportedForgeCheckoutTargetError,
 } from "./resolve-worktree-creation-intent.js";
 
@@ -19,6 +20,7 @@ interface ResolverHarness {
   forgeService: ForgeService;
   headRefLookups: GitHubHeadRefLookup[];
   resolveDefaultBranch: (repoRoot: string) => Promise<string>;
+  fetchRef: ResolveWorktreeCreationIntentDeps["fetchRef"];
 }
 
 function createResolverHarness(overrides?: {
@@ -86,6 +88,7 @@ function createResolverHarness(overrides?: {
     forgeService,
     headRefLookups,
     resolveDefaultBranch: async () => "main",
+    fetchRef: async () => "origin",
   };
 }
 

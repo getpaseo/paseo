@@ -3,7 +3,7 @@ import type { Logger } from "pino";
 import type {
   AgentCapabilityFlags,
   AgentClient,
-  AgentFeature,
+  AgentOptionControl,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -715,6 +715,7 @@ function createToolCall(input: {
 export class MockLoadTestAgentClient implements AgentClient {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
+  private readonly sessionHistories = new Map<string, AgentStreamEvent[]>();
 
   constructor(private readonly logger?: Logger) {}
 
@@ -722,9 +723,13 @@ export class MockLoadTestAgentClient implements AgentClient {
     config: AgentSessionConfig,
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    const sessionId = randomUUID();
+    const history: AgentStreamEvent[] = [];
+    this.sessionHistories.set(sessionId, history);
     return new MockLoadTestAgentSession({
       config,
-      sessionId: randomUUID(),
+      sessionId,
+      history,
       logger: this.logger,
     });
   }
@@ -735,6 +740,11 @@ export class MockLoadTestAgentClient implements AgentClient {
     _launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    let history = this.sessionHistories.get(handle.sessionId);
+    if (!history) {
+      history = [];
+      this.sessionHistories.set(handle.sessionId, history);
+    }
     return new MockLoadTestAgentSession({
       config: {
         cwd: metadata.cwd ?? overrides?.cwd ?? process.cwd(),
@@ -743,6 +753,7 @@ export class MockLoadTestAgentClient implements AgentClient {
         provider: MOCK_LOAD_TEST_PROVIDER_ID,
       },
       sessionId: handle.sessionId,
+      history,
       logger: this.logger,
     });
   }
@@ -787,12 +798,12 @@ function getConfiguredAssistantResponses(value: unknown): string[] {
 export class MockLoadTestAgentSession implements AgentSession {
   readonly provider: AgentProvider = MOCK_LOAD_TEST_PROVIDER_ID;
   readonly capabilities = CAPABILITIES;
-  readonly features: AgentFeature[] = [];
+  readonly controls: AgentOptionControl[] = [];
   readonly id: string;
   private readonly usageSessionKey = randomUUID();
 
   private readonly listeners = new Set<(event: AgentStreamEvent) => void>();
-  private readonly history: AgentStreamEvent[] = [];
+  private readonly history: AgentStreamEvent[];
   private readonly logger?: Logger;
   private activeTurn: ActiveTurn | null = null;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -806,24 +817,30 @@ export class MockLoadTestAgentSession implements AgentSession {
   private remainingPromptRejections: number;
   private remainingSteerFailures: number;
 
-  constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
+  constructor(options: {
+    config: AgentSessionConfig;
+    sessionId: string;
+    history?: AgentStreamEvent[];
+    logger?: Logger;
+  }) {
     this.id = options.sessionId;
+    this.history = options.history ?? [];
     this.logger = options.logger;
     this.modeId = options.config.modeId ?? MOCK_LOAD_TEST_MODE_ID;
     this.modelId = options.config.model ?? MOCK_LOAD_TEST_DEFAULT_MODEL_ID;
     this.assistantResponse =
-      typeof options.config.featureValues?.mockAssistantResponse === "string"
-        ? options.config.featureValues.mockAssistantResponse
+      typeof options.config.providerOptions?.mockAssistantResponse === "string"
+        ? options.config.providerOptions.mockAssistantResponse
         : null;
     this.assistantResponses = getConfiguredAssistantResponses(
-      options.config.featureValues?.mockAssistantResponses,
+      options.config.providerOptions?.mockAssistantResponses,
     );
     this.streamingAssistantResponse =
-      typeof options.config.featureValues?.mockStreamingAssistantResponse === "string"
-        ? options.config.featureValues.mockStreamingAssistantResponse
+      typeof options.config.providerOptions?.mockStreamingAssistantResponse === "string"
+        ? options.config.providerOptions.mockStreamingAssistantResponse
         : null;
     const requestedStreamingInterval =
-      options.config.featureValues?.mockStreamingAssistantIntervalMs;
+      options.config.providerOptions?.mockStreamingAssistantIntervalMs;
     this.streamingAssistantIntervalMs =
       typeof requestedStreamingInterval === "number" &&
       Number.isFinite(requestedStreamingInterval) &&
@@ -831,10 +848,10 @@ export class MockLoadTestAgentSession implements AgentSession {
         ? Math.min(requestedStreamingInterval, 1_000)
         : MOCK_LOAD_TEST_INTERVAL_MS;
     this.rewindError =
-      typeof options.config.featureValues?.mockRewindError === "string"
-        ? options.config.featureValues.mockRewindError
+      typeof options.config.providerOptions?.mockRewindError === "string"
+        ? options.config.providerOptions.mockRewindError
         : null;
-    const requestedPromptRejections = options.config.featureValues?.mockPromptRejections;
+    const requestedPromptRejections = options.config.providerOptions?.mockPromptRejections;
     this.remainingPromptRejections =
       typeof requestedPromptRejections === "number" &&
       Number.isSafeInteger(requestedPromptRejections) &&
@@ -842,7 +859,7 @@ export class MockLoadTestAgentSession implements AgentSession {
         ? requestedPromptRejections
         : 0;
     this.remainingSteerFailures = getPositiveFeatureInteger(
-      options.config.featureValues?.mockSteerAmbiguousFailures,
+      options.config.providerOptions?.mockSteerAmbiguousFailures,
     );
   }
 

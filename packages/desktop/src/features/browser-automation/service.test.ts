@@ -1,4 +1,5 @@
 import { resolve as resolvePath } from "node:path";
+import { createContext, runInContext } from "node:vm";
 
 import { describe, expect, test, vi } from "vitest";
 import type {
@@ -21,6 +22,7 @@ class FakeImage implements TabImage {
   public constructor(
     private readonly bytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3]),
     private readonly size = { width: 640, height: 480 },
+    private readonly alpha = 255,
   ) {}
 
   public toPNG(): Uint8Array {
@@ -30,7 +32,13 @@ class FakeImage implements TabImage {
   public getSize(): { width: number; height: number } {
     return this.size;
   }
+
+  public toBitmap(): Uint8Array {
+    return new Uint8Array([0, 0, 0, 0, 10, 20, 30, this.alpha]);
+  }
 }
+
+const UNPAINTED_FULL_PAGE_PNG = "unpaintedPng";
 
 class FakeTab implements TabContents {
   public withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
@@ -76,6 +84,7 @@ class FakeTab implements TabContents {
   public fullPageScreenshotThrows = false;
   public fullPageScreenshotErrorMessage = "UnknownVizError";
   public fullPageCaptureFailuresBeforeSuccess = 0;
+  public fullPageUnpaintedCapturesBeforePainted = 0;
   public layoutMetrics = {
     cssLayoutViewport: { clientWidth: 390, clientHeight: 844 },
     cssContentSize: { width: 390, height: 1200 },
@@ -86,6 +95,11 @@ class FakeTab implements TabContents {
   public canNavigateBack = true;
   public canNavigateForward = false;
   public keypressTargetEditable = false;
+  public focusAcceptsTarget = true;
+  public focusGuardMode: "none" | "ready" | "composing" | "unavailable" = "none";
+  public focusGuardEvents: string[] = [];
+  public failFocusEmulation = false;
+  public failMousePress = false;
 
   public constructor(
     public readonly id: number,
@@ -141,7 +155,7 @@ class FakeTab implements TabContents {
       return { x: 640, y: 400 };
     }
     if (code.includes("element.focus({ preventScroll: true })")) {
-      return { editable: this.keypressTargetEditable };
+      return { focused: this.focusAcceptsTarget, editable: this.keypressTargetEditable };
     }
     if (code.includes("__PASEO_BROWSER_EVALUATE__")) {
       if (this.evaluateScriptThrows) {
@@ -190,6 +204,11 @@ class FakeTab implements TabContents {
     this.actions.push("invalidate");
   }
 
+  public decodePng(png: Uint8Array): TabImage {
+    const unpainted = Buffer.from(png).equals(Buffer.from(UNPAINTED_FULL_PAGE_PNG, "base64"));
+    return new FakeImage(png, { width: 390, height: 1200 }, unpainted ? 0 : 255);
+  }
+
   public getConsoleMessages(): BrowserAutomationConsoleLogEntry[] {
     return this.consoleMessages;
   }
@@ -206,6 +225,16 @@ class FakeTab implements TabContents {
   ): Promise<unknown> {
     this.actions.push(`debug:${command}`);
     this.debugCommands.push({ command, ...(params ? { params } : {}) });
+    if (command === "Emulation.setFocusEmulationEnabled" && this.failFocusEmulation) {
+      throw new Error("Emulation domain unavailable");
+    }
+    if (
+      command === "Input.dispatchMouseEvent" &&
+      params?.type === "mousePressed" &&
+      this.failMousePress
+    ) {
+      throw new Error("mousePressed failed");
+    }
     if (command === "Page.getLayoutMetrics") {
       return this.layoutMetrics;
     }
@@ -216,6 +245,10 @@ class FakeTab implements TabContents {
       }
       if (this.fullPageScreenshotThrows) {
         throw new Error(this.fullPageScreenshotErrorMessage);
+      }
+      if (this.fullPageUnpaintedCapturesBeforePainted > 0) {
+        this.fullPageUnpaintedCapturesBeforePainted -= 1;
+        return { data: UNPAINTED_FULL_PAGE_PNG };
       }
       return { data: this.fullPageScreenshotData };
     }
@@ -234,6 +267,24 @@ class FakeTab implements TabContents {
 
   public async insertText(text: string): Promise<void> {
     this.insertedText.push(text);
+  }
+
+  public async guardPointerFocus() {
+    if (this.focusGuardMode === "none" || this.focusGuardMode === "ready") {
+      this.focusGuardEvents.push("acquire");
+      return {
+        status: "ready" as const,
+        release: () => {
+          this.focusGuardEvents.push("release");
+        },
+      };
+    }
+    if (this.focusGuardMode === "composing") {
+      this.focusGuardEvents.push("composing");
+      return { status: "composing" as const };
+    }
+    this.focusGuardEvents.push("unavailable");
+    return { status: "unavailable" as const };
   }
 
   public waitForCaptureStart(count: number): Promise<void> {
@@ -432,6 +483,54 @@ function snapshotResult(nodes: FakeTab["snapshotNodes"]) {
 
 function containsScript(tab: FakeTab, ...parts: string[]): boolean {
   return tab.scripts.some((script) => parts.every((part) => script.includes(part)));
+}
+
+/**
+ * A browser whose tab runs the network script the host injects against `performance`, the way a
+ * page runs it, so the test sees what the script reads from Chromium's timing entries.
+ */
+function browserWithTimingEntries(entries: { resource: unknown[]; navigation: unknown[] }) {
+  const browser = new BrowserAutomationHarness();
+  const fakeAnswer = browser.tab.executeJavaScript.bind(browser.tab);
+  const page = createContext({
+    performance: {
+      getEntriesByType: (type: string) =>
+        type === "navigation" ? entries.navigation : entries.resource,
+    },
+  });
+  browser.tab.executeJavaScript = async (script: string) =>
+    script.includes("performance.getEntriesByType")
+      ? runInContext(script, page)
+      : fakeAnswer(script);
+  return browser;
+}
+
+/**
+ * Runs the script the host injects into a page the way Chromium runs it on a page whose Content
+ * Security Policy omits 'unsafe-eval': injected code runs, but code in the page cannot turn a
+ * string into code (eval, new Function). Node's vm refuses string code generation the same way.
+ */
+function pageRunningInjectedScripts(input: {
+  allowEval: boolean;
+  globals?: Record<string, unknown>;
+}) {
+  const page = createContext(
+    { document: { title: "Fixture" }, ...input.globals },
+    { codeGeneration: { strings: input.allowEval, wasm: input.allowEval } },
+  );
+  return (script: string): unknown => runInContext(script, page);
+}
+
+/** A browser whose tab runs the evaluate script in `page`; its other scripts keep the fake answers. */
+function browserEvaluatingIn(page: (script: string) => unknown) {
+  const browser = new BrowserAutomationHarness();
+  const fakeAnswer = browser.tab.executeJavaScript.bind(browser.tab);
+  browser.tab.executeJavaScript = async (script: string) => {
+    if (!script.includes("__PASEO_BROWSER_EVALUATE__")) return fakeAnswer(script);
+    browser.tab.scripts.push(script);
+    return page(script);
+  };
+  return browser;
 }
 
 function requireSnapshotRefs(result: Awaited<ReturnType<BrowserAutomationHarness["snapshot"]>>) {
@@ -639,6 +738,10 @@ describe("executeAutomationCommand", () => {
     });
     expect(browser.tab.debugCommands).toEqual([
       {
+        command: "Emulation.setFocusEmulationEnabled",
+        params: { enabled: true },
+      },
+      {
         command: "Input.dispatchMouseEvent",
         params: { type: "mouseMoved", x: 40, y: 30, button: "none", modifiers: 0 },
       },
@@ -698,6 +801,7 @@ describe("executeAutomationCommand", () => {
       result: { command: "click", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
     expect(browser.tab.debugCommands.map((entry) => entry.params)).toEqual([
+      { enabled: true },
       { type: "mouseMoved", x: 40, y: 30, button: "none", modifiers: 10 },
       {
         type: "mousePressed",
@@ -908,13 +1012,14 @@ describe("executeAutomationCommand", () => {
       },
     });
     expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
+      "Emulation.setFocusEmulationEnabled",
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
       "Input.dispatchMouseEvent",
     ]);
-    expect(browser.tab.debugCommands.at(1)?.params).toMatchObject({
+    expect(browser.tab.debugCommands.at(2)?.params).toMatchObject({
       type: "mousePressed",
       x: 100,
       y: 50,
@@ -1094,7 +1199,7 @@ describe("executeAutomationCommand", () => {
     });
   });
 
-  test("type writes trusted text into a ref", async () => {
+  test("type focuses a ref in DOM without CDP mousePressed before inserting text", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
 
@@ -1109,12 +1214,10 @@ describe("executeAutomationCommand", () => {
       ok: true,
       result: { command: "type", browserId: BROWSER_A, ref: "@e1", x: 40, y: 30 },
     });
+    expect(containsScript(browser.tab, "element.focus({ preventScroll: true })")).toBe(true);
+    expect(containsScript(browser.tab, "setSelectionRange")).toBe(true);
     expect(browser.tab.insertedText).toEqual(["Ada"]);
-    expect(browser.tab.debugCommands.map((entry) => entry.command)).toEqual([
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
-      "Input.dispatchMouseEvent",
-    ]);
+    expect(browser.tab.debugCommands).toEqual([]);
   });
 
   test("type inserts text through the tab, not the window-wide debugger input", async () => {
@@ -1194,29 +1297,36 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.debugCommands).toEqual([]);
   });
 
-  test("keypress reports unsupported when focusing an editable ref requires unavailable CDP", async () => {
+  test("keypress focuses an editable ref in DOM without CDP mousePressed before the trusted key", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.snapshotNodes = formElements();
-    browser.tab.keypressTargetEditable = true;
 
     requireSnapshotRefs(await browser.snapshot());
     Object.defineProperty(browser.tab, "sendDebugCommand", { value: undefined });
 
-    await expect(
-      browser.execute({
-        command: "keypress",
-        args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
-      }),
-    ).resolves.toEqual({
-      requestId: "req-keypress",
-      ok: false,
-      error: {
-        code: "browser_unsupported",
-        message: "browser_keypress requires trusted browser input",
-        retryable: false,
-      },
+    const action = await browser.execute({
+      command: "keypress",
+      args: { browserId: BROWSER_A, ref: "@e1", key: "Enter" },
     });
-    expect(browser.tab.inputEvents).toEqual([]);
+
+    expect(action).toEqual({
+      requestId: "req-keypress",
+      ok: true,
+      result: { command: "keypress", browserId: BROWSER_A, key: "Enter", ref: "@e1", x: 40, y: 30 },
+    });
+    expect(containsScript(browser.tab, "element.focus({ preventScroll: true })")).toBe(true);
+    expect(browser.tab.inputEvents).toEqual([
+      {
+        type: "keyDown",
+        keyCode: "Enter",
+        skipIfUnhandled: true,
+      },
+      {
+        type: "keyUp",
+        keyCode: "Enter",
+        skipIfUnhandled: true,
+      },
+    ]);
   });
 
   test("navigate loads the requested HTTP URL in the explicit tab", async () => {
@@ -1406,6 +1516,72 @@ describe("executeAutomationCommand", () => {
     });
   });
 
+  test("logs reports the HTTP status the browser recorded, and none it did not", async () => {
+    const timing = (name: string, initiatorType: string, responseStatus?: number) => ({
+      name,
+      initiatorType,
+      startTime: 1,
+      duration: 2,
+      transferSize: 3,
+      ...(responseStatus === undefined ? {} : { responseStatus }),
+    });
+    const browser = browserWithTimingEntries({
+      resource: [
+        timing("https://a.test/api/orders", "fetch", 404),
+        // Chromium reports 0 for a cross-origin response that sends no Timing-Allow-Origin.
+        timing("https://cdn.test/lib.js", "script", 0),
+        // A browser without the field.
+        timing("https://a.test/old.css", "css"),
+      ],
+      navigation: [timing("https://a.test/form", "navigation", 200)],
+    });
+
+    const result = await browser.execute({ command: "logs", args: { browserId: BROWSER_A } });
+
+    expect(result).toEqual({
+      requestId: "req-logs",
+      ok: true,
+      result: {
+        command: "logs",
+        browserId: BROWSER_A,
+        console: [],
+        network: [
+          {
+            url: "https://a.test/api/orders",
+            type: "fetch",
+            status: 404,
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://cdn.test/lib.js",
+            type: "script",
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://a.test/old.css",
+            type: "css",
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+          {
+            url: "https://a.test/form",
+            method: "GET",
+            type: "navigation",
+            status: 200,
+            startTime: 1,
+            duration: 2,
+            transferSize: 3,
+          },
+        ],
+      },
+    });
+  });
+
   test("evaluate returns primitive JSON from the page context", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.evaluateScriptResult = { ok: true, resultJson: "42" };
@@ -1556,6 +1732,99 @@ describe("executeAutomationCommand", () => {
       containsScript(browser.tab, "__PASEO_BROWSER_EVALUATE__", "resultJson.length <= 80000"),
     ).toBe(true);
     expect(containsScript(browser.tab, "resultJson.slice(0, 79000)")).toBe(true);
+  });
+
+  describe.each([
+    { page: "allows eval", allowEval: true },
+    { page: "forbids eval (its Content Security Policy omits 'unsafe-eval')", allowEval: false },
+  ])("evaluate on a page that $page", ({ allowEval }) => {
+    const evaluate = (browser: BrowserAutomationHarness, source: string) =>
+      browser.execute({
+        command: "evaluate",
+        args: { browserId: BROWSER_A, function: source },
+      });
+
+    test("runs the function and returns its result as JSON", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      expect(await evaluate(browser, "() => document.title")).toEqual({
+        requestId: "req-evaluate",
+        ok: true,
+        result: {
+          command: "evaluate",
+          browserId: BROWSER_A,
+          resultJson: '"Fixture"',
+          truncated: false,
+        },
+      });
+    });
+
+    test("awaits an async function", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      const result = await evaluate(
+        browser,
+        "async () => { await Promise.resolve(); return 6 * 7; }",
+      );
+
+      expect(result).toMatchObject({ ok: true, result: { resultJson: "42" } });
+    });
+
+    test("resolves names against the page's globals, never the wrapper's own", async () => {
+      const globals = {
+        element: "page element",
+        args: "page args",
+        value: "page value",
+        resultJson: "page json",
+        userFunction: "page function",
+        __paseoEvaluate: "page wrapper",
+        readFunction: "page reader",
+      };
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval, globals }));
+
+      const result = await evaluate(
+        browser,
+        "() => [element, args, value, resultJson, userFunction, __paseoEvaluate, readFunction]",
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        result: { resultJson: JSON.stringify(Object.values(globals)) },
+      });
+    });
+
+    test("reports what the function throws", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      expect(await evaluate(browser, "() => { throw new Error('boom'); }")).toMatchObject({
+        ok: false,
+        error: { code: "browser_unknown_error", message: "boom" },
+      });
+    });
+
+    test("reports an expression that is not a function", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      expect(await evaluate(browser, "document.title")).toMatchObject({
+        ok: false,
+        error: {
+          code: "browser_unknown_error",
+          message: "browser_evaluate input must evaluate to a function.",
+        },
+      });
+    });
+
+    test("reports a syntax error with the compiler's own message, without touching the page", async () => {
+      const browser = browserEvaluatingIn(pageRunningInjectedScripts({ allowEval }));
+
+      const result = await evaluate(browser, "() => {");
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "browser_unknown_error", message: expect.stringMatching(/^Unexpected /) },
+      });
+      expect(containsScript(browser.tab, "__PASEO_BROWSER_EVALUATE__")).toBe(false);
+    });
   });
 
   test("screenshot captures the painted viewport", async () => {
@@ -1827,6 +2096,56 @@ describe("executeAutomationCommand", () => {
     }
   });
 
+  test("screenshot with fullPage waits for a CDP image with painted pixels", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.fullPageUnpaintedCapturesBeforePainted = 1;
+
+      const resultPromise = browser.execute({
+        command: "screenshot",
+        args: { browserId: BROWSER_A, fullPage: true },
+      });
+      await vi.advanceTimersByTimeAsync(200);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: true,
+        result: { command: "screenshot", dataBase64: "fullPagePng" },
+      });
+      expect(
+        browser.tab.debugCommands.filter((entry) => entry.command === "Page.captureScreenshot"),
+      ).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("screenshot with fullPage returns no-frame when the page never paints", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.fullPageUnpaintedCapturesBeforePainted = Number.POSITIVE_INFINITY;
+
+      const resultPromise = browser.execute({
+        command: "screenshot",
+        args: { browserId: BROWSER_A, fullPage: true },
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(resultPromise).resolves.toEqual({
+        requestId: "req-screenshot",
+        ok: false,
+        error: {
+          code: "screenshot_no_frame",
+          message: "The tab has not painted yet. Retry the screenshot.",
+          retryable: true,
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("screenshot with fullPage surfaces ordinary CDP capture errors", async () => {
     const browser = new BrowserAutomationHarness();
     browser.tab.fullPageScreenshotThrows = true;
@@ -1973,5 +2292,214 @@ describe("executeAutomationCommand", () => {
       },
       { command: "DOM.describeNode", params: { objectId: "object-1" } },
     ]);
+  });
+
+  test("click and drag bracket CDP pointer presses with focus guard and release on failure", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.focusGuardMode = "ready";
+    browser.tab.failFocusEmulation = true;
+
+    requireSnapshotRefs(await browser.snapshot());
+    const click = await browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e4" },
+    });
+    expect(click).toMatchObject({ ok: true, result: { command: "click", ref: "@e4" } });
+    expect(browser.tab.focusGuardEvents).toEqual(["acquire", "release"]);
+
+    browser.tab.focusGuardEvents = [];
+    browser.tab.failMousePress = true;
+    await expect(
+      browser.execute({
+        command: "drag",
+        args: { browserId: BROWSER_A, sourceRef: "@e4", targetRef: "@e5" },
+      }),
+    ).rejects.toThrow("mousePressed failed");
+    expect(browser.tab.focusGuardEvents).toEqual(["acquire", "release"]);
+  });
+
+  test("click refuses pointer input with retryable browser_denied while the user is IME-composing", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.focusGuardMode = "composing";
+
+    requireSnapshotRefs(await browser.snapshot());
+    const click = await browser.execute({
+      command: "click",
+      args: { browserId: BROWSER_A, ref: "@e4" },
+    });
+
+    expect(click).toEqual({
+      requestId: "req-click",
+      ok: false,
+      error: {
+        code: "browser_denied",
+        message: expect.stringContaining("input method"),
+        retryable: true,
+      },
+    });
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test("drag fails closed with retryable browser_timeout when the focus guard is unavailable", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.focusGuardMode = "unavailable";
+
+    requireSnapshotRefs(await browser.snapshot());
+    const drag = await browser.execute({
+      command: "drag",
+      args: { browserId: BROWSER_A, sourceRef: "@e4", targetRef: "@e5" },
+    });
+
+    expect(drag).toEqual({
+      requestId: "req-drag",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: expect.stringContaining("keyboard focus"),
+        retryable: true,
+      },
+    });
+    expect(browser.tab.debugCommands).toEqual([]);
+  });
+
+  test("type DOM focus script positions caret at the end of inputs, textareas, and contenteditable", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    requireSnapshotRefs(await browser.snapshot());
+
+    await browser.execute({
+      command: "type",
+      args: { browserId: BROWSER_A, ref: "@e1", text: "!" },
+    });
+    const focusScript = browser.tab.scripts.find((script) =>
+      script.includes("element.focus({ preventScroll: true })"),
+    );
+    expect(focusScript).toBeDefined();
+
+    // Verify <input> caret placement at end.
+    const inputCalls: unknown[] = [];
+    const inputDoc: { activeElement: unknown } = { activeElement: null };
+    const inputElement = {
+      isConnected: true,
+      tagName: "INPUT",
+      value: "hello",
+      ownerDocument: inputDoc,
+      getAttribute: (name: string) => (name === "type" ? "text" : null),
+      focus: (opts: unknown) => {
+        inputCalls.push(["focus", opts]);
+        inputDoc.activeElement = inputElement;
+      },
+      setSelectionRange: (start: number, end: number) => inputCalls.push(["range", start, end]),
+    };
+    const inputResult = runInContext(
+      focusScript!,
+      createContext({
+        window: {
+          __PASEO_BROWSER_AUTOMATION__: {
+            resolve: () => ({ ok: true, element: inputElement }),
+          },
+        },
+      }),
+    );
+    expect(inputResult).toEqual({ focused: true });
+    expect(inputCalls).toEqual([
+      ["focus", { preventScroll: true }],
+      ["range", 5, 5],
+    ]);
+
+    // Verify contenteditable caret collapse to end.
+    const rangeCalls: unknown[] = [];
+    const range = {
+      selectNodeContents: (el: unknown) => rangeCalls.push(["selectNodeContents", el]),
+      collapse: (toStart: boolean) => rangeCalls.push(["collapse", toStart]),
+    };
+    const selection = {
+      removeAllRanges: () => rangeCalls.push(["removeAllRanges"]),
+      addRange: (r: unknown) => rangeCalls.push(["addRange", r]),
+    };
+    const editableDoc: {
+      activeElement: unknown;
+      createRange: () => typeof range;
+      defaultView: { getSelection: () => typeof selection };
+    } = {
+      activeElement: null,
+      createRange: () => range,
+      defaultView: { getSelection: () => selection },
+    };
+    const editableDiv = {
+      isConnected: true,
+      tagName: "DIV",
+      isContentEditable: true,
+      focus: (opts: unknown) => {
+        rangeCalls.push(["focus", opts]);
+        editableDoc.activeElement = editableDiv;
+      },
+      ownerDocument: editableDoc,
+    };
+    const editableResult = runInContext(
+      focusScript!,
+      createContext({
+        window: {
+          __PASEO_BROWSER_AUTOMATION__: {
+            resolve: () => ({ ok: true, element: editableDiv }),
+          },
+        },
+      }),
+    );
+    expect(editableResult).toEqual({ focused: true });
+    expect(rangeCalls).toEqual([
+      ["focus", { preventScroll: true }],
+      ["selectNodeContents", editableDiv],
+      ["collapse", false],
+      ["removeAllRanges"],
+      ["addRange", range],
+    ]);
+
+    // Verify non-focusable element reports focused: false rather than silently succeeding.
+    const unfocusableDoc = { activeElement: null };
+    const unfocusable = {
+      isConnected: true,
+      tagName: "DIV",
+      focus: () => {},
+      ownerDocument: unfocusableDoc,
+    };
+    const unfocusableResult = runInContext(
+      focusScript!,
+      createContext({
+        window: {
+          __PASEO_BROWSER_AUTOMATION__: {
+            resolve: () => ({ ok: true, element: unfocusable }),
+          },
+        },
+      }),
+    );
+    expect(unfocusableResult).toEqual({ focused: false });
+  });
+
+  test("type fails clearly without inserting text when the ref element refuses DOM focus", async () => {
+    const browser = new BrowserAutomationHarness();
+    browser.tab.snapshotNodes = formElements();
+    browser.tab.focusAcceptsTarget = false;
+    requireSnapshotRefs(await browser.snapshot());
+
+    const result = await browser.execute({
+      command: "type",
+      args: { browserId: BROWSER_A, ref: "@e1", text: "Ada" },
+    });
+
+    expect(result).toEqual({
+      requestId: "req-type",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message:
+          "Browser element @e1 did not accept focus for typing. Click it first and try again.",
+        retryable: true,
+      },
+    });
+    expect(browser.tab.insertedText).toEqual([]);
   });
 });

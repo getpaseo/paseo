@@ -56,6 +56,11 @@ export interface OwnedSubscription {
   release(): Promise<void>;
 }
 
+const BINARY_REPLY_REQUESTS: ReadonlySet<string> = new Set([
+  "file_explorer_request",
+  "plugin.rpc.invoke.request",
+]);
+
 // One registration per context kind; per-session registrations outlive closed sessions in Node.
 const requests = new AsyncLocalStorage<RequestOwner>();
 const projectionSource = new AsyncLocalStorage<ProjectionOwner>();
@@ -309,6 +314,10 @@ export class SessionDelivery {
       },
     };
     source.subscriptions.set(id, owner);
+    const tagForSource = (message: SessionOutboundMessage): SessionOutboundMessage =>
+      source.modern || message.type === "fs.file.update" || message.type === "checkout_diff_update"
+        ? withSubscriptionId(message, responseId)
+        : legacyMessage(message);
     return {
       id,
       responseId,
@@ -316,13 +325,7 @@ export class SessionDelivery {
       signal: owner.cancellation.signal,
       emit: (message) => {
         if (!owner.active || !source.active) return;
-        const tagged =
-          source.modern ||
-          message.type === "fs.file.update" ||
-          message.type === "checkout_diff_update"
-            ? withSubscriptionId(message, responseId)
-            : legacyMessage(message);
-        this.sendOwned(owner, tagged);
+        this.sendOwned(owner, tagForSource(message));
       },
       emitBinary: (frame) => {
         if (!owner.active || !source.active) return;
@@ -331,7 +334,7 @@ export class SessionDelivery {
       },
       emitAndWait: async (message) => {
         if (!owner.active || !source.active) throw new Error("Subscription source is closed");
-        const projected = this.project(source.socket, withSubscriptionId(message, responseId));
+        const projected = this.project(source.socket, tagForSource(message));
         this.proofs.set(projected, owner);
         await this.send(source.socket, projected);
       },
@@ -394,12 +397,13 @@ export class SessionDelivery {
     if (owner) await this.releaseOwner(owner);
   }
 
-  authorizeFileReply(frame: Uint8Array, socket: object): void {
+  /** Lets a binary frame answer the current request, for requests whose reply can be bytes. */
+  authorizeBinaryReply(frame: Uint8Array, socket: object): void {
     const owner = this.currentRequest;
     if (
       owner?.active &&
       owner.source.socket === socket &&
-      owner.request.type === "file_explorer_request"
+      BINARY_REPLY_REQUESTS.has(owner.request.type)
     )
       this.proofs.set(frame, owner);
   }

@@ -40,6 +40,24 @@ describe("server config", () => {
     expect(blockingMs).toBeLessThan(50);
   });
 
+  test.each([undefined, false, true])(
+    "restart recovery requires explicit opt-in (%s)",
+    async (enabled) => {
+      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-recovery-"));
+      roots.push(paseoHome);
+      await writeFile(
+        path.join(paseoHome, "config.json"),
+        JSON.stringify({
+          version: 1,
+          agents: { resumeOnStartup: enabled, resumePrompt: "Continue exactly.\n" },
+        }),
+      );
+      const config = loadConfig(paseoHome, { env: {} });
+      expect(config.resumeOnStartup).toBe(enabled === true);
+      expect(config.resumePrompt).toBe("Continue exactly.\n");
+    },
+  );
+
   test("records when the daemon is managed by Paseo Desktop", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-desktop-managed-"));
     roots.push(paseoHome);

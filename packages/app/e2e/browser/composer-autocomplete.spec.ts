@@ -12,14 +12,25 @@ import {
 import { expectWorkspaceTabVisible, openSessions } from "../support/helpers/archive-tab";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
-import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
+import {
+  switchWorkspaceViaSidebar,
+  waitForSidebarHydration,
+} from "../support/helpers/workspace-ui";
 import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
 } from "../support/helpers/sidebar";
-import { expectNewWorkspaceProjectSelected } from "../support/helpers/new-workspace";
+import {
+  expectNewWorkspaceProjectSelected,
+  openGlobalNewWorkspaceComposer,
+  openStartingRefPicker,
+  selectBranchInPicker,
+  selectWorkspaceIsolation,
+} from "../support/helpers/new-workspace";
+import { gotoAppShell } from "../support/helpers/app";
+import { seedWorkspace } from "../support/helpers/seed-client";
 
 const TEST_COMMANDS = [
   {
@@ -105,11 +116,32 @@ interface PopoverFrameRecorderWindow extends Window {
   __stopComposerAutocompleteFrameRecorder?: () => void;
 }
 
-async function installListCommandsStub(page: Page): Promise<void> {
+interface ListCommandsReply {
+  commands: readonly { name: string; description: string; argumentHint: string }[];
+  error: string | null;
+}
+
+const TEST_COMMANDS_REPLY: ListCommandsReply = { commands: TEST_COMMANDS, error: null };
+
+/**
+ * Rewrites every `list_commands_response` with `reply()`. A reply that returns a promise holds
+ * the response until it settles, standing in for a slow host.
+ */
+async function installListCommandsStub(
+  page: Page,
+  reply: () => ListCommandsReply | Promise<ListCommandsReply> = () => TEST_COMMANDS_REPLY,
+  options?: {
+    onClientMessage?: (message: string | Buffer, forward: () => void) => void;
+  },
+): Promise<void> {
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
+      if (options?.onClientMessage) {
+        options.onClientMessage(message, () => server.send(message));
+        return;
+      }
       server.send(message);
     });
 
@@ -130,14 +162,20 @@ async function installListCommandsStub(page: Page): Promise<void> {
             };
           };
         };
+        const payload = parsed.message?.payload;
         if (
           parsed.type === "session" &&
           parsed.message?.type === "list_commands_response" &&
-          parsed.message.payload
+          payload
         ) {
-          parsed.message.payload.commands = TEST_COMMANDS;
-          parsed.message.payload.error = null;
-          ws.send(JSON.stringify(parsed));
+          const send = (result: ListCommandsReply) => {
+            payload.commands = result.commands;
+            payload.error = result.error;
+            ws.send(JSON.stringify(parsed));
+          };
+          const result = reply();
+          if (result instanceof Promise) void result.then(send);
+          else send(result);
           return;
         }
       } catch {
@@ -147,6 +185,35 @@ async function installListCommandsStub(page: Page): Promise<void> {
       ws.send(message);
     });
   });
+}
+
+async function holdWorkspaceCreateWithCommandsStub(page: Page): Promise<{ release: () => void }> {
+  let release: (() => void) | null = null;
+  await installListCommandsStub(page, undefined, {
+    onClientMessage(message, forward) {
+      if (typeof message === "string" && message.includes('"workspace.create.request"')) {
+        release = forward;
+        return;
+      }
+      forward();
+    },
+  });
+  return {
+    release: () => {
+      release?.();
+    },
+  };
+}
+
+function createHeldReply(): {
+  reply: () => Promise<ListCommandsReply>;
+  release: () => void;
+} {
+  let release = () => {};
+  const held = new Promise<ListCommandsReply>((resolve) => {
+    release = () => resolve(TEST_COMMANDS_REPLY);
+  });
+  return { reply: () => held, release };
 }
 
 async function openAppWideNewWorkspace(page: Page): Promise<void> {
@@ -419,6 +486,44 @@ test.describe("Composer autocomplete", () => {
     }
   });
 
+  test("shows autocomplete after closing the New Workspace branch picker and hides it while submitting", async ({
+    page,
+  }) => {
+    const heldCreate = await holdWorkspaceCreateWithCommandsStub(page);
+
+    const seeded = await seedWorkspace({ repoPrefix: "autocomplete-branch-picker-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openGlobalNewWorkspaceComposer(page);
+
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await selectWorkspaceIsolation(page, "worktree");
+      await expect(page.getByTestId("new-workspace-ref-picker-trigger")).toBeVisible({
+        timeout: 30_000,
+      });
+
+      await openStartingRefPicker(page);
+      await selectBranchInPicker(page, "main");
+      await expect(input).toBeFocused();
+
+      await page.keyboard.type("/h");
+      const popover = page.getByTestId("composer-autocomplete-popover");
+      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+
+      // Submitting while locked hides the autocomplete popover instead of leaving it over loading.
+      await page.getByTestId("workspace-create-submit").click();
+      await expect(input).not.toBeEditable({ timeout: 10_000 });
+      await expect(popover).toHaveCount(0);
+    } finally {
+      heldCreate.release();
+      await seeded.cleanup();
+    }
+  });
+
   test("keeps New workspace off the running-agent command list before a project is chosen", async ({
     page,
   }) => {
@@ -545,16 +650,17 @@ test.describe("Composer autocomplete", () => {
       const input = composerLocator(page);
       await expect(input).toBeEditable({ timeout: 30_000 });
 
-      await input.fill("/he");
+      // `/hea` lists two commands and `/he` enough to reach the height cap, so the list grows.
+      await input.fill("/hea");
       const popover = page.getByTestId("composer-autocomplete-popover");
-      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible({
+      await expect(popover.getByText("/heapdump", { exact: true }).first()).toBeVisible({
         timeout: 30_000,
       });
       const beforeDelete = await visiblePopoverBox(page);
 
       await input.press("Backspace");
-      await expect(input).toHaveValue("/h");
-      await expect(popover.getByText("/history", { exact: true }).first()).toBeVisible({
+      await expect(input).toHaveValue("/he");
+      await expect(popover.getByText("/hello", { exact: true }).first()).toBeVisible({
         timeout: 30_000,
       });
       const afterDelete = await visiblePopoverBox(page);
@@ -730,6 +836,129 @@ test.describe("Composer autocomplete", () => {
       expect(Math.abs(popoverBox!.width - composerBox!.width)).toBeLessThanOrEqual(4);
     } finally {
       await agent.cleanup();
+    }
+  });
+
+  test("forgets an arrow-key choice once the search changes", async ({ page }) => {
+    await installListCommandsStub(page);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "autocomplete-stale-choice-",
+      title: "Autocomplete stale choice",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await expectWorkspaceTabVisible(page, session.agentId);
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await input.fill("/");
+      const popover = page.getByTestId("composer-autocomplete-popover");
+      await expect(popover.getByText("/tdd", { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+
+      // Down wraps from the default bottom row to the top: /clear, then /exit.
+      await input.press("ArrowDown");
+      await input.press("ArrowDown");
+      await input.press("h");
+      // On web the search reads the cursor after paint, so the input's value runs ahead of
+      // the list. Wait on the list itself. The list mounts only the rows near its scroll
+      // position, so one missing row proves nothing: right after the arrows wrap to the top,
+      // /tdd at the bottom is unmounted while the search is still "". With the search at "",
+      // the list always mounts the bottom row (/tdd) or the chosen one (/exit); only the
+      // search "h" leaves both out. Check them in one query so no frame falls between them.
+      await expect(
+        popover.filter({
+          has: page.getByText("/help", { exact: true }),
+          hasNot: page.getByText(/^\/(tdd|exit)$/),
+        }),
+      ).toBeVisible();
+      await input.press("Backspace");
+      await expect(input).toHaveValue("/");
+      // /tdd is back only once the search is "" again.
+      await expect(popover.getByText("/tdd", { exact: true }).first()).toBeVisible();
+      await input.press("Enter");
+
+      await expect(input).toHaveValue("/tdd ");
+      await expectWorkspaceTabVisible(page, session.agentId);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("shows loading inside the popover until a slow host answers", async ({ page }) => {
+    const host = createHeldReply();
+    await installListCommandsStub(page, host.reply);
+    const agent = await openReadyMockAgent(page);
+
+    try {
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await input.fill("/");
+
+      const popover = page.getByTestId("composer-autocomplete-popover");
+      await expect(popover.getByTestId("composer-autocomplete-loading")).toBeVisible({
+        timeout: 30_000,
+      });
+      const loading = await visiblePopoverBox(page);
+
+      host.release();
+      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(popover.getByTestId("composer-autocomplete-loading")).toHaveCount(0);
+      const results = await visiblePopoverBox(page);
+
+      expect(Math.abs(results.bottom - loading.bottom)).toBeLessThanOrEqual(4);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("shows why commands failed, keeps Enter from choosing a hidden command, and retries", async ({
+    page,
+  }) => {
+    let reply: () => ListCommandsReply | Promise<ListCommandsReply> = () => ({
+      commands: [],
+      error: "Timed out waiting for the agent session",
+    });
+    await installListCommandsStub(page, () => reply());
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "autocomplete-failing-host-",
+      title: "Autocomplete failing host",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await expectWorkspaceTabVisible(page, session.agentId);
+      const input = composerLocator(page);
+      await expect(input).toBeEditable({ timeout: 30_000 });
+      await input.fill("/");
+
+      const popover = page.getByTestId("composer-autocomplete-popover");
+      const errorRow = popover.getByTestId("composer-autocomplete-error");
+      await expect(errorRow).toContainText("Timed out waiting for the agent session", {
+        timeout: 30_000,
+      });
+
+      await input.press("Enter");
+      await page.waitForTimeout(500);
+      await expectWorkspaceTabVisible(page, session.agentId);
+
+      await input.fill("/");
+      await expect(errorRow).toBeVisible({ timeout: 30_000 });
+
+      const host = createHeldReply();
+      reply = host.reply;
+      await errorRow.getByRole("button", { name: "Retry" }).click();
+      await expect(popover.getByTestId("composer-autocomplete-loading")).toBeVisible();
+
+      host.release();
+      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+    } finally {
+      await session.cleanup();
     }
   });
 

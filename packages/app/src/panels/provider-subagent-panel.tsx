@@ -26,12 +26,13 @@ import {
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
   observeProviderSubagentTimeline,
+  loadOlderProviderSubagentTimeline,
   useProviderSubagentStore,
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { deriveSubagentStatusBucket } from "@/subagents";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -107,10 +108,7 @@ function useProviderSubagentDescriptor(
     titleState: descriptor ? "ready" : "loading",
     icon: useProviderIcon(provider, context.serverId),
     statusBucket: descriptor
-      ? deriveSidebarStateBucket({
-          status: providerSubagentLifecycleStatus(descriptor.status),
-          requiresAttention: descriptor.status === "failed",
-        })
+      ? deriveSubagentStatusBucket(providerSubagentLifecycleStatus(descriptor.status))
       : null,
   };
 }
@@ -180,26 +178,24 @@ function ProviderSubagentPanel() {
     });
   }, [client, supported, serverId, target.parentAgentId, target.subagentId]);
 
-  const loadOlder = useCallback((): boolean => {
+  const loadOlder = useCallback(async (): Promise<boolean> => {
     if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
       return false;
     }
-    const firstSeq = timeline.cursor?.startSeq ?? null;
-    if (firstSeq === null) return false;
     setIsLoadingOlder(true);
-    void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
-        direction: "before",
-        cursor: { epoch: timeline.epoch, seq: firstSeq },
+    try {
+      return await loadOlderProviderSubagentTimeline({
+        client,
+        serverId,
+        parentAgentId: target.parentAgentId,
+        subagentId: target.subagentId,
         limit: TIMELINE_FETCH_PAGE_SIZE,
-      })
-      .then((payload) => {
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return undefined;
-      })
-      .catch(() => undefined)
-      .finally(() => setIsLoadingOlder(false));
-    return true;
+      });
+    } catch {
+      return false;
+    } finally {
+      setIsLoadingOlder(false);
+    }
   }, [
     client,
     isLoadingOlder,

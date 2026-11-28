@@ -1,6 +1,6 @@
-import type { ParsedDiffFile } from "@/git/use-diff-query";
+import type { DiffFileHeader } from "@/git/diff-snapshot";
 
-// Builds a directory hierarchy from the `ParsedDiffFile[]` the Changes view
+// Builds a directory hierarchy from the `DiffFileHeader[]` the Changes view
 // renders. The tree renders on every form factor, consistent with the Files
 // explorer.
 //
@@ -17,7 +17,7 @@ import type { ParsedDiffFile } from "@/git/use-diff-query";
 
 export interface DiffTreeFileNode {
   kind: "file";
-  file: ParsedDiffFile;
+  file: DiffFileHeader;
   fileIndex: number;
   /** basename, e.g. "diff-pane.tsx" */
   name: string;
@@ -47,7 +47,7 @@ export interface DiffTreeFolderRow {
 
 export interface DiffTreeFileRow {
   kind: "file";
-  file: ParsedDiffFile;
+  file: DiffFileHeader;
   fileIndex: number;
   depth: number;
 }
@@ -73,7 +73,7 @@ function sortTree(node: DiffTreeDirNode): void {
 }
 
 /** Build the (uncompressed) directory tree. Returns the virtual root (dirPath ""). */
-export function buildDiffTree(files: ParsedDiffFile[]): DiffTreeDirNode {
+export function buildDiffTree(files: DiffFileHeader[]): DiffTreeDirNode {
   const root: DiffTreeDirNode = { kind: "dir", dirPath: "", name: "", children: [] };
   const dirByPath = new Map<string, DiffTreeDirNode>([["", root]]);
 

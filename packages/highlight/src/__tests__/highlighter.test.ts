@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { setImmediate } from "node:timers/promises";
 import { highlightCodeWithBudget, HIGHLIGHT_MAX_SOURCE_BYTES } from "../budgeted-highlighter.js";
 import type { HighlightToken } from "../types.js";
 import { highlightCode, highlightCodeInSteps, highlightLine } from "../highlighter.js";
+import { getParserForFile } from "../parsers.js";
 
 describe("highlightCode", () => {
   it("highlights JavaScript code with correct token styles", () => {
@@ -31,6 +32,50 @@ describe("highlightCode", () => {
 
     const stringToken = result[1].find((t) => t.text.includes("world"));
     expect(stringToken?.style).toBe("string");
+  });
+
+  it.each(["scripts/build.sh", "build.bash", "build.zsh"])("highlights shell in %s", (path) => {
+    const lines = highlightCode('export MESSAGE="hello"', path);
+    expect(lines[0]).toContainEqual({ text: "export", style: "keyword" });
+    expect(lines[0]).toContainEqual({ text: '"hello"', style: "string" });
+  });
+
+  it.each(["Dockerfile", "docker/Dockerfile", "C:\\docker\\Dockerfile", "build.dockerfile"])(
+    "highlights Docker instructions in %s",
+    (path) => {
+      const lines = highlightCode("FROM alpine\n# Build stage", path);
+      expect(lines[0]).toContainEqual({ text: "FROM", style: "keyword" });
+      expect(lines[1]).toEqual([{ text: "# Build stage", style: "comment" }]);
+    },
+  );
+
+  it("highlights Ruby code", () => {
+    const code = [
+      "class Greeter < Base",
+      "  # say hello",
+      "  def greet(name)",
+      '    puts "hello #{name}" if name',
+      "  end",
+      "end",
+    ].join("\n");
+    const result = highlightCode(code, "greeter.rb");
+
+    expect(result).toHaveLength(6);
+    expect(result[0].find((t) => t.text === "class")?.style).toBe("keyword");
+    expect(result[1].find((t) => t.text.includes("say hello"))?.style).toBe("comment");
+    expect(result[2].find((t) => t.text === "def")?.style).toBe("keyword");
+    expect(result[3].find((t) => t.text.includes("hello"))?.style).toBe("string");
+    expect(result[3].find((t) => t.text === "if")?.style).toBe("keyword");
+  });
+
+  it("highlights extensionless Ruby files by name", () => {
+    const code = 'source "https://rubygems.org"\n\ngem "rails", "~> 7.1"';
+    for (const filename of ["Gemfile", "app/Gemfile", "tasks.rake", "app.gemspec"]) {
+      const result = highlightCode(code, filename);
+      expect(result).toHaveLength(3);
+      expect(result[0].find((t) => t.text.includes("rubygems"))?.style).toBe("string");
+      expect(result[2].find((t) => t.text.includes("rails"))?.style).toBe("string");
+    }
   });
 
   it("highlights Swift code", () => {
@@ -63,6 +108,236 @@ describe("highlightCode", () => {
 
     const stringToken = result[1].find((t) => t.text.includes("hello"));
     expect(stringToken?.style).toBe("string");
+  });
+
+  it.each(["changes.diff", "bug.patch", "diff", "patch"])(
+    "highlights unified diffs for %s without trailing-whitespace warnings",
+    (target) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const code = [
+          "diff --git a/app.py b/app.py",
+          "index 1111111..2222222 100644",
+          "--- a/app.py",
+          "+++ b/app.py",
+          "@@ -1,3 +1,3 @@ def greet():",
+          " print('hello')",
+          " ",
+          "-old = 1  ",
+          "+new = 2  ",
+        ].join("\n");
+        const result = highlightCode(code, target);
+
+        expect(result).toHaveLength(9);
+        expect(result[0]).toEqual([{ text: "diff --git a/app.py b/app.py", style: null }]);
+        expect(result[1]).toEqual([{ text: "index 1111111..2222222 100644", style: null }]);
+        expect(result[2]).toEqual([{ text: "--- a/app.py", style: "diffDeletion" }]);
+        expect(result[3]).toEqual([{ text: "+++ b/app.py", style: "diffAddition" }]);
+        expect(result[4]).toEqual([{ text: "@@ -1,3 +1,3 @@ def greet():", style: "meta" }]);
+        expect(result[5]).toEqual([{ text: " print('hello')", style: null }]);
+        expect(result[6]).toEqual([{ text: " ", style: null }]);
+        expect(result[7]).toEqual([{ text: "-old = 1  ", style: "diffDeletion" }]);
+        expect(result[8]).toEqual([{ text: "+new = 2  ", style: "diffAddition" }]);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
+  it("highlights Kotlin code", () => {
+    const code = 'class Greeter {\n  val message: String = "hello"\n}';
+    const result = highlightCode(code, "test.kt");
+
+    expect(result).toHaveLength(3);
+
+    const classToken = result[0].find((t) => t.text === "class");
+    expect(classToken?.style).toBe("keyword");
+
+    const valToken = result[1].find((t) => t.text === "val");
+    expect(valToken?.style).toBe("keyword");
+
+    const typeToken = result[1].find((t) => t.text === "String");
+    expect(typeToken?.style).toBe("type");
+
+    const stringToken = result[1].find((t) => t.text.includes("hello"));
+    expect(stringToken?.style).toBe("string");
+  });
+
+  it("highlights TOML code", () => {
+    const code = [
+      "[server]",
+      'host = "localhost"',
+      "port = 8080",
+      "enabled = true",
+      "born = 1979-05-27T07:32:00Z",
+    ].join("\n");
+    const result = highlightCode(code, "config.toml");
+
+    expect(result).toHaveLength(5);
+
+    expect(result[0].find((t) => t.text === "[server]")?.style).toBe("keyword");
+
+    expect(result[1].find((t) => t.text === "host")?.style).toBe("property");
+    expect(result[1].find((t) => t.text === '"localhost"')?.style).toBe("string");
+
+    expect(result[2].find((t) => t.text === "port")?.style).toBe("property");
+    expect(result[2].find((t) => t.text === "8080")?.style).toBe("number");
+
+    expect(result[3].find((t) => t.text === "enabled")?.style).toBe("property");
+    expect(result[3].find((t) => t.text === "true")?.style).toBe("keyword");
+
+    expect(result[4].find((t) => t.text === "born")?.style).toBe("property");
+    expect(result[4].find((t) => t.text === "1979-05-27T07:32:00Z")?.style).toBe("keyword");
+  });
+
+  it("highlights SQL code", () => {
+    const code =
+      "-- Fetch active users\nSELECT id, name FROM users WHERE active = TRUE AND age > 18;";
+    const result = highlightCode(code, "query.sql");
+
+    expect(result[0][0]).toEqual({ text: "-- Fetch active users", style: "comment" });
+    expect(result[1]).toContainEqual({ text: "SELECT", style: "keyword" });
+    expect(result[1]).toContainEqual({ text: "FROM", style: "keyword" });
+    expect(result[1]).toContainEqual({ text: "WHERE", style: "keyword" });
+  });
+
+  it("highlights Lua code", () => {
+    const code = '-- Greeting\nlocal function greet(name)\n  return "hi " .. name\nend';
+    const result = highlightCode(code, "script.lua");
+
+    expect(result[0][0]).toEqual({ text: "-- Greeting", style: "comment" });
+    expect(result[1]).toContainEqual({ text: "local", style: "keyword" });
+    expect(result[1]).toContainEqual({ text: "function", style: "keyword" });
+    expect(result[2].find((t) => t.text.includes("hi"))?.style).toBe("string");
+  });
+
+  it("highlights Protobuf definitions", () => {
+    const code = 'syntax = "proto3";\nmessage User {\n  string id = 1;\n}';
+    const result = highlightCode(code, "schema.proto");
+
+    expect(result[0]).toContainEqual({ text: "syntax", style: "keyword" });
+    expect(result[0]).toContainEqual({ text: '"proto3"', style: "string" });
+    expect(result[1]).toContainEqual({ text: "message", style: "keyword" });
+    expect(result[2]).toContainEqual({ text: "string", style: "keyword" });
+  });
+
+  it.each(["deploy.ps1", "module.psm1", "manifest.psd1"])(
+    "highlights PowerShell in %s",
+    (filename) => {
+      const code = '# Greet\nfunction Get-Name {\n  $msg = "hello"\n  return $msg\n}';
+      const result = highlightCode(code, filename);
+
+      expect(result[0][0]).toEqual({ text: "# Greet", style: "comment" });
+      expect(result[1]).toContainEqual({ text: "function", style: "keyword" });
+      expect(result[2].find((t) => t.text.includes("hello"))?.style).toBe("string");
+    },
+  );
+
+  it.each(["build.groovy", "build.gradle"])("highlights Groovy/Gradle in %s", (filename) => {
+    const code = '// Build\ndef version = "1.0"\nplugins {\n  id "java"\n}';
+    const result = highlightCode(code, filename);
+
+    expect(result[0][0]).toEqual({ text: "// Build", style: "comment" });
+    expect(result[1]).toContainEqual({ text: "def", style: "keyword" });
+    expect(result[1]).toContainEqual({ text: '"1.0"', style: "string" });
+    expect(result[3]).toContainEqual({ text: '"java"', style: "string" });
+  });
+
+  it.each(["Main.scala", "script.sc"])("highlights Scala in %s", (filename) => {
+    const code = 'case class User(name: String)\nobject Main { val msg = "hi" }';
+    const result = highlightCode(code, filename);
+
+    expect(result[0]).toContainEqual({ text: "case", style: "keyword" });
+    expect(result[0]).toContainEqual({ text: "class", style: "keyword" });
+    expect(result[0]).toContainEqual({ text: "String", style: "type" });
+    expect(result[1]).toContainEqual({ text: "object", style: "keyword" });
+    expect(result[1]).toContainEqual({ text: '"hi"', style: "string" });
+  });
+
+  it.each(["CMakeLists.txt", "app/CMakeLists.txt", "toolchain.cmake"])(
+    "highlights CMake in %s",
+    (filename) => {
+      const code = "# Build\ncmake_minimum_required(VERSION 3.20)\nproject(Paseo)";
+      const result = highlightCode(code, filename);
+
+      expect(result[0][0]).toEqual({ text: "# Build", style: "comment" });
+      expect(result[1]).toContainEqual({ text: "cmake_minimum_required", style: "definition" });
+      expect(result[2]).toContainEqual({ text: "project", style: "definition" });
+    },
+  );
+
+  it.each(["app.properties", "config.ini", "service.conf"])(
+    "highlights properties/INI in %s",
+    (filename) => {
+      const code = "# Settings\n[database]\nhost = localhost";
+      const result = highlightCode(code, filename);
+
+      expect(result[0][0]).toEqual({ text: "# Settings", style: "comment" });
+      expect(result[1]).toContainEqual({ text: "[database]", style: "heading" });
+      expect(result[2].some((t) => t.style !== null)).toBe(true);
+    },
+  );
+
+  it.each(["analysis.r", "analysis.R"])("highlights R in %s", (filename) => {
+    const code = "# Compute mean\nmean_val <- function(x) {\n  return(mean(x))\n}";
+    const result = highlightCode(code, filename);
+
+    expect(result[0][0]).toEqual({ text: "# Compute mean", style: "comment" });
+    expect(result[1]).toContainEqual({ text: "<-", style: "operator" });
+    expect(result[1]).toContainEqual({ text: "function", style: "keyword" });
+  });
+
+  it.each(["script.pl", "Module.pm"])("highlights Perl in %s", (filename) => {
+    const code = '# Greet\nuse strict;\nmy $name = "world";';
+    const result = highlightCode(code, filename);
+
+    expect(result[0][0]).toEqual({ text: "# Greet", style: "comment" });
+    expect(result[1]).toContainEqual({ text: "use", style: "keyword" });
+    expect(result[2]).toContainEqual({ text: "my", style: "definition" });
+    expect(result[2]).toContainEqual({ text: '"world"', style: "string" });
+  });
+
+  it.each(["paper.tex", "style.sty", "article.cls"])("highlights LaTeX in %s", (filename) => {
+    const code =
+      "% Header\n\\documentclass{article}\n\\begin{document}\nHello $x^2$.\n\\end{document}";
+    const result = highlightCode(code, filename);
+
+    expect(result[0][0]).toEqual({ text: "% Header", style: "comment" });
+    expect(result[1]).toContainEqual({ text: "\\documentclass", style: "tag" });
+    expect(result[2]).toContainEqual({ text: "\\begin", style: "tag" });
+  });
+
+  it.each([
+    "changes.diff",
+    "bug.patch",
+    "greeter.rb",
+    "Gemfile",
+    "test.kt",
+    "config.toml",
+    "query.sql",
+    "script.lua",
+    "schema.proto",
+    "deploy.ps1",
+    "build.gradle",
+    "Main.scala",
+    "CMakeLists.txt",
+    "config.ini",
+    "analysis.R",
+    "script.pl",
+    "paper.tex",
+  ])("handles empty input and long lines cleanly in %s", (filename) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(highlightCode("", filename)).toEqual([[{ text: "", style: null }]]);
+      const longLine = "x".repeat(5000);
+      const result = highlightCode(longLine, filename);
+      expect(result).toHaveLength(1);
+      expect(result[0].map((t) => t.text).join("")).toBe(longLine);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("highlights C# code", () => {
@@ -330,6 +605,8 @@ const title = "Hello";
       "meta",
       "heading",
       "link",
+      "diffAddition",
+      "diffDeletion",
       null,
     ]);
 
@@ -341,6 +618,137 @@ const title = "Hello";
         expect(validStyles.has(token.style)).toBe(true);
       }
     }
+  });
+});
+
+describe("Terraform", () => {
+  function styleOf(line: HighlightToken[], text: string) {
+    return line.find((token) => token.text === text)?.style;
+  }
+
+  it("highlights blocks, labels, attributes, and values", () => {
+    const code = [
+      "# The web server",
+      'resource "aws_instance" "web" {',
+      "  count   = 2",
+      "  enabled = true",
+      '  tags    = merge(var.labels, { Name = "web" })',
+      "}",
+    ].join("\n");
+    const result = highlightCode(code, "main.tf");
+
+    expect(result[0][0]).toEqual({ text: "# The web server", style: "comment" });
+    expect(styleOf(result[1], "resource")).toBe("type");
+    expect(styleOf(result[1], '"aws_instance"')).toBe("string");
+    expect(styleOf(result[1], '"web"')).toBe("string");
+    expect(styleOf(result[2], "count")).toBe("definition");
+    expect(styleOf(result[2], "2")).toBe("number");
+    expect(styleOf(result[3], "true")).toBe("literal");
+    expect(styleOf(result[4], "merge")).toBe("function");
+    expect(styleOf(result[4], "var")).toBe("variable");
+    expect(styleOf(result[4], "labels")).toBe("property");
+  });
+
+  it("highlights expressions interpolated inside strings", () => {
+    const result = highlightCode('name = "app-${var.env}-web"', "main.tf");
+
+    expect(result[0].map((token) => [token.text, token.style])).toEqual([
+      ["name", "definition"],
+      [" ", null],
+      ["=", "operator"],
+      [" ", null],
+      ['"app-', "string"],
+      ["${", "punctuation"],
+      ["var", "variable"],
+      [".", "operator"],
+      ["env", "property"],
+      ["}", "punctuation"],
+      ['-web"', "string"],
+    ]);
+  });
+
+  it("highlights heredoc bodies as strings and resumes after the terminator", () => {
+    const code = ["policy = <<-EOT", '  { "Version": "2012" }', "  EOT", "retries = 3"].join("\n");
+    const result = highlightCode(code, "main.tf");
+
+    expect(styleOf(result[0], "EOT")).toBe("keyword");
+    expect(result[1].map((token) => token.style)).toEqual(["string"]);
+    expect(styleOf(result[3], "retries")).toBe("definition");
+    expect(styleOf(result[3], "3")).toBe("number");
+  });
+
+  it("ends a heredoc with a Unicode delimiter", () => {
+    const result = highlightCode("x = <<ÉOF\nfoo\nÉOF\ny = 1", "main.tf");
+
+    expect(styleOf(result[3], "y")).toBe("definition");
+    expect(styleOf(result[3], "1")).toBe("number");
+  });
+
+  it.each([
+    ['x = "$$${var.name}"', "$"],
+    ['x = "%%%{ if true }"', "%"],
+  ])("keeps escaped template text in %s as a string", (code) => {
+    const line = highlightCode(code, "main.tf")[0];
+
+    expect(line[line.length - 1]).toEqual({ text: code.slice(4), style: "string" });
+  });
+
+  it("parses a real configuration without error nodes", () => {
+    const code = [
+      "terraform {",
+      '  required_version = ">= 1.5"',
+      '  backend "s3" {}',
+      "}",
+      "",
+      'variable "subnets" {',
+      "  type    = map(object({ cidr = string }))",
+      "  default = {}",
+      "}",
+      "",
+      "locals {",
+      "  names = [for key, subnet in var.subnets : upper(key) if subnet.cidr != null]",
+      '  first = length(local.names) > 0 ? local.names[0] : "none"',
+      "  arns  = aws_instance.web[*].arn",
+      "  /* block comment */",
+      "  path  = provider::time::rfc3339_parse(timestamp()) // trailing",
+      "}",
+      "",
+      'data "aws_iam_policy_document" "assume" {',
+      '  dynamic "statement" {',
+      "    for_each = var.subnets",
+      "    content {",
+      '      sid = "${statement.key}-%{ if statement.value.cidr != "" }set%{ else }unset%{ endif }"',
+      "    }",
+      "  }",
+      "}",
+      "",
+      'output "script" {',
+      "  value = <<EOT",
+      "#!/bin/sh",
+      "echo ${local.first}",
+      "EOT",
+      "}",
+    ].join("\n");
+
+    const parser = getParserForFile("main.tf");
+    if (!parser) throw new Error("Expected a parser for .tf files");
+    const errors: number[] = [];
+    parser.parse(code).iterate({
+      enter(node) {
+        if (node.type.isError) errors.push(node.from);
+      },
+    });
+
+    expect(errors.map((from) => code.slice(from, from + 30))).toEqual([]);
+  });
+
+  it("uses the same grammar for tfvars and hcl files", () => {
+    expect(highlightCode('region = "eu-west-1"', "prod.tfvars")).toEqual(
+      highlightCode('region = "eu-west-1"', "terragrunt.hcl"),
+    );
+    expect(styleOf(highlightLine('region = "eu-west-1"', "prod.tfvars"), "region")).toBe(
+      "definition",
+    );
   });
 });
 

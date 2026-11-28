@@ -7,7 +7,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useMenuContext } from "@/components/ui/menu";
 import { Button } from "@/components/ui/button";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { controlHeightForLayout } from "@/components/ui/control-geometry";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { SPACING } from "@/styles/theme";
 import { FloatingActionButton } from "@/components/ui/floating-action-button";
@@ -64,7 +64,7 @@ function OpenReviewFeedbackAction({
         bottom:
           bottom +
           bottomOffset +
-          (isCompact ? 88 : buttonControlHeight.sm + SPACING[4] + SPACING[2]),
+          (isCompact ? 88 : controlHeightForLayout("md", isCompact) + SPACING[4] + SPACING[2]),
       },
     ],
     [bottom, bottomOffset, isCompact],
@@ -145,7 +145,6 @@ function FeedbackTrigger({
         <Button
           ref={triggerRef}
           variant="default"
-          size="sm"
           leftIcon={Send}
           accessibilityLabel={label}
           disabled={disabled}

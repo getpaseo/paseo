@@ -18,6 +18,7 @@ import { getFullAccessConfig, getAskModeConfig } from "./daemon-e2e/agent-config
 import { parsePcm16MonoWav, wordSimilarity } from "./test-utils/dictation-e2e.js";
 import type {
   AgentClient,
+  AgentLaunchContext,
   AgentPersistenceHandle,
   AgentRunResult,
   AgentSession,
@@ -180,6 +181,210 @@ test("DaemonClient uploads file bytes to daemon temp storage", async () => {
   }
 });
 
+test("DaemonClient uploads a >24 MiB multi-photo batch sequentially with supportsDrain=false, delivers native image blocks, projects timeline images, and rejects outside paths", async () => {
+  const clients = createTestAgentClients();
+  const claude = clients.claude as AgentClient;
+  const receivedPrompts: unknown[] = [];
+  const recordingClaude: AgentClient = Object.create(claude, {
+    createSession: {
+      value: async (...args: Parameters<AgentClient["createSession"]>) => {
+        const session = await claude.createSession(...args);
+        const origStartTurn = session.startTurn.bind(session);
+        session.startTurn = (prompt, options) => {
+          receivedPrompts.push(prompt);
+          return origStartTurn(prompt, options);
+        };
+        return session;
+      },
+    },
+  });
+
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...clients, claude: recordingClaude },
+  });
+  let maxOutboundFrameBytes = 0;
+  const trackingWsFactory = Object.assign(
+    (url: string) => {
+      const ws = new WebSocket(url);
+      const origSend = ws.send.bind(ws);
+      ws.send = ((data: Parameters<WebSocket["send"]>[0], ...rest: unknown[]) => {
+        let byteLength = 0;
+        if (typeof data === "string") {
+          byteLength = Buffer.byteLength(data, "utf8");
+        } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+          byteLength = data.byteLength;
+        }
+        if (byteLength > maxOutboundFrameBytes) {
+          maxOutboundFrameBytes = byteLength;
+        }
+        return (origSend as (...args: unknown[]) => unknown)(data, ...rest);
+      }) as WebSocket["send"];
+      return ws;
+    },
+    { supportsDrain: false },
+  );
+
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.18.1",
+    webSocketFactory: trackingWsFactory,
+  });
+
+  try {
+    await client.connect();
+    const agent = await client.createAgent({
+      provider: "claude",
+      cwd: tmpCwd(),
+      title: "Vision batch agent",
+    });
+
+    // 13 photos × 2 MiB = 26 MiB (> 16 MiB OkHttp limit and > 24 MiB #11117 batch)
+    const photoCount = 13;
+    const photoSize = 2 * 1024 * 1024;
+    const expectedPhotos: Uint8Array[] = [];
+    const uploadedImageAttachments = [];
+    for (let index = 0; index < photoCount; index += 1) {
+      const bytes = new Uint8Array(photoSize);
+      bytes.fill((index + 1) & 0xff);
+      bytes[0] = 0xff;
+      bytes[1] = 0xd8;
+      bytes[photoSize - 1] = index;
+      expectedPhotos.push(bytes);
+
+      const upload = await client.uploadFile({
+        fileName: `photo-${index + 1}.jpg`,
+        mimeType: "image/jpeg",
+        bytes,
+      });
+      expect(upload.error).toBeNull();
+      expect(upload.file).not.toBeNull();
+      uploadedImageAttachments.push({
+        ...upload.file!,
+        role: "image" as const,
+      });
+    }
+
+    await client.sendAgentMessage(agent.id, "Describe all 13 photos", {
+      messageId: "msg-batch-13",
+      attachments: uploadedImageAttachments,
+    });
+
+    // No single WebSocket frame should ever approach 16 MiB (each FileChunk is ~128 KiB).
+    expect(maxOutboundFrameBytes).toBeLessThan(256 * 1024);
+
+    expect(receivedPrompts).toHaveLength(1);
+    const promptBlocks = receivedPrompts[0] as Array<Record<string, unknown>>;
+    expect(promptBlocks[0]).toEqual({ type: "text", text: "Describe all 13 photos" });
+    const imageBlocks = promptBlocks.filter((block) => block.type === "image");
+    expect(imageBlocks).toHaveLength(photoCount);
+    expect(promptBlocks.filter((block) => block.type === "uploaded_file")).toHaveLength(0);
+    for (let index = 0; index < photoCount; index += 1) {
+      const block = imageBlocks[index] as { type: "image"; data: string; mimeType: string };
+      expect(block.mimeType).toBe("image/jpeg");
+      const decoded = Buffer.from(block.data, "base64");
+      expect(decoded.byteLength).toBe(photoSize);
+      expect(decoded[0]).toBe(0xff);
+      expect(decoded[1]).toBe(0xd8);
+      expect(decoded[photoSize - 1]).toBe(index);
+    }
+
+    // Timeline projection keeps lightweight uploaded image metadata for reload/cross-device rendering.
+    const timeline = await client.fetchAgentTimeline(agent.id, { projection: "canonical" });
+    const userRow = timeline.entries.find(
+      (entry) =>
+        entry.item.type === "user_message" && entry.item.clientMessageId === "msg-batch-13",
+    );
+    expect(userRow?.item.type).toBe("user_message");
+    if (userRow?.item.type === "user_message") {
+      expect(userRow.item.images).toHaveLength(photoCount);
+      expect(userRow.item.images?.[0]?.fileName).toBe("photo-1.jpg");
+    }
+
+    // New agent creation with uploaded image attachments also delivers native vision image blocks.
+    const createdWithImage = await client.createAgent({
+      provider: "claude",
+      cwd: tmpCwd(),
+      initialPrompt: "Inspect first photo",
+      clientMessageId: "msg-create-1",
+      attachments: [uploadedImageAttachments[0]!],
+    });
+    expect(createdWithImage.id).toBeTruthy();
+    expect(receivedPrompts).toHaveLength(2);
+    const createBlocks = receivedPrompts[1] as Array<Record<string, unknown>>;
+    expect(createBlocks.filter((block) => block.type === "image")).toHaveLength(1);
+
+    // Security invariant: reject paths outside paseoHome/uploads.
+    await expect(
+      client.sendAgentMessage(agent.id, "Leak secret", {
+        attachments: [
+          {
+            type: "uploaded_file",
+            id: "evil",
+            fileName: "local-credential",
+            mimeType: "image/png",
+            size: 32,
+            path: path.join(daemon.paseoHome, "local-credential"),
+            role: "image",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/outside/i);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);
+
+test("agent.config.apply sets an option that has no control and the next snapshot reports it", async () => {
+  const clients = createTestAgentClients();
+  const codex = clients.codex as AgentClient;
+  const applied: unknown[] = [];
+  // Records what reaches the provider session; behavior is the fake client's.
+  const recordingCodex: AgentClient = Object.create(codex, {
+    createSession: {
+      value: async (...args: Parameters<AgentClient["createSession"]>) => {
+        const session = await codex.createSession(...args);
+        const apply = session.applyOptions?.bind(session);
+        session.applyOptions = async (options) => {
+          applied.push(options);
+          await apply?.(options);
+        };
+        return session;
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...clients, codex: recordingCodex },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd: tmpCwd(),
+      title: "Options agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+    });
+    expect(agent.options?.sandbox_mode).toBeUndefined();
+
+    await client.applyAgentConfig(agent.id, { options: { sandbox_mode: "read-only" } });
+
+    expect(applied).toEqual([expect.objectContaining({ sandbox_mode: "read-only" })]);
+    const next = await client.fetchAgent(agent.id);
+    expect(next?.agent.options).toMatchObject({ sandbox_mode: "read-only" });
+    expect(next?.agent.controls?.map((control) => control.key)).not.toContain("sandbox_mode");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("createAgent with background initialPrompt returns a running snapshot before turn completion", async () => {
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({
@@ -324,6 +529,7 @@ class RecordingMcpResumeClient implements AgentClient {
   readonly provider = "codex" as const;
   readonly capabilities;
   readonly resumeOverrides: Array<Partial<AgentSessionConfig> | undefined> = [];
+  readonly resumeLaunchContexts: Array<AgentLaunchContext | undefined> = [];
   private readonly inner = createTestAgentClients({ supportsMcpServers: true }).codex;
 
   constructor() {
@@ -341,8 +547,10 @@ class RecordingMcpResumeClient implements AgentClient {
   resumeSession(
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.resumeOverrides.push(overrides);
+    this.resumeLaunchContexts.push(launchContext);
     return this.inner.resumeSession(handle, overrides);
   }
 
@@ -402,7 +610,7 @@ class RejectingMcpResumeClient implements AgentClient {
   }
 }
 
-test("createAgent fails when the initial turn cannot start", async () => {
+test("createAgent preserves the error snapshot when the initial turn cannot start", async () => {
   const testAgent = new StubAgentClient({
     sessionId: "start-turn-failure-session",
     supportsStreaming: false,
@@ -421,16 +629,18 @@ test("createAgent fails when the initial turn cannot start", async () => {
     await client.connect();
     await client.fetchAgents({ subscribe: {} });
 
-    await expect(
-      client.createAgent({
-        provider: "codex",
-        cwd: tmpCwd(),
-        title: "Start failure agent",
-        modeId: "full-access",
-        model: "gpt-5.4-mini",
-        initialPrompt: "Run exactly: sleep 30",
-      }),
-    ).rejects.toThrow("Initial turn failed to start");
+    const created = await client.createAgent({
+      provider: "codex",
+      cwd: tmpCwd(),
+      title: "Start failure agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+      initialPrompt: "Run exactly: sleep 30",
+    });
+    expect(created.status).toBe("error");
+    expect(created.lastError).toBe("Initial turn failed to start");
+    const fetched = await client.fetchAgent({ agentId: created.id });
+    expect(fetched?.agent.lastError).toBe("Initial turn failed to start");
   } finally {
     await client.close();
     await daemon.close();
@@ -1034,6 +1244,38 @@ test("resume_agent rehydrates the newest private MCP config from a redacted pers
   }
 });
 
+test("resume_agent keeps the workspace of the agent it matches", async () => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({
+    agentClients: { codex: provider },
+  });
+
+  try {
+    const opened = await localCtx.client.openProject(cwd);
+    if (!opened.workspace) {
+      throw new Error(opened.error ?? "Workspace did not open");
+    }
+    const workspaceId = opened.workspace.id;
+    const created = await localCtx.client.createAgent({
+      config: { provider: "codex", cwd },
+      workspaceId,
+    });
+    if (!created.persistence) {
+      throw new Error("Expected a persistence handle");
+    }
+
+    await localCtx.client.archiveAgent(created.id);
+    const resumed = await localCtx.client.resumeAgent(created.persistence);
+
+    expect(provider.resumeLaunchContexts[0]?.env?.PASEO_WORKSPACE_ID).toBe(workspaceId);
+    expect(resumed.workspaceId).toBe(workspaceId);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("resume_agent restores archive state when an MCP-capable provider returns an unsupported session", async () => {
   const cwd = tmpCwd();
   const provider = new RejectingMcpResumeClient();
@@ -1369,27 +1611,6 @@ test("creates agent and exercises lifecycle", async () => {
   });
 
   const createRequestId = `create-${Date.now()}`;
-  const createdStatusPromise = waitForSignal(15000, (resolve) => {
-    const unsubscribe = ctx.client.on("status", (message) => {
-      if (message.type !== "status") {
-        return;
-      }
-      const payload = message.payload as {
-        status?: string;
-        agentId?: string;
-        requestId?: string;
-      };
-      if (payload.status !== "agent_created") {
-        return;
-      }
-      if (payload.requestId !== createRequestId) {
-        return;
-      }
-      resolve(message);
-    });
-    return unsubscribe;
-  });
-
   const agent = await ctx.client.createAgent({
     ...getFullAccessConfig("codex"),
     cwd,
@@ -1404,30 +1625,8 @@ test("creates agent and exercises lifecycle", async () => {
 
   const agentUpdate = await agentUpdatePromise;
   expect(agentUpdate.payload.agent.id).toBe(agent.id);
-  const createdStatus = await createdStatusPromise;
-  expect((createdStatus.payload as { agentId?: string }).agentId).toBe(agent.id);
 
   const failRequestId = `fail-${Date.now()}`;
-  const failedStatusPromise = waitForSignal(15000, (resolve) => {
-    const unsubscribe = ctx.client.on("status", (message) => {
-      if (message.type !== "status") {
-        return;
-      }
-      const payload = message.payload as {
-        status?: string;
-        requestId?: string;
-      };
-      if (payload.status !== "agent_create_failed") {
-        return;
-      }
-      if (payload.requestId !== failRequestId) {
-        return;
-      }
-      resolve(message);
-    });
-    return unsubscribe;
-  });
-
   await expect(
     ctx.client.createAgent({
       ...getFullAccessConfig("codex"),
@@ -1436,7 +1635,6 @@ test("creates agent and exercises lifecycle", async () => {
       requestId: failRequestId,
     }),
   ).rejects.toThrow("Working directory does not exist");
-  await failedStatusPromise;
 
   let sawRefresh = false;
   const unsubscribe = ctx.client.subscribe((event) => {
@@ -1615,6 +1813,11 @@ test("creates agent and exercises lifecycle", async () => {
 }, 300000);
 
 test("handles permission flow", async () => {
+  const permissionEvents = ctx.client.observeEvents([
+    "agent_permission_request",
+    "agent_permission_resolved",
+  ]);
+  await permissionEvents.ready;
   const cwd = tmpCwd();
   const filePath = path.join(cwd, "permission.txt");
 
@@ -1683,6 +1886,7 @@ test("handles permission flow", async () => {
     // Prevent unhandled rejections if the test fails before promises resolve.
     await permissionRequestPromise.catch(() => {});
     await permissionResolvedPromise.catch(() => {});
+    await permissionEvents.release();
     await ctx.client.deleteAgent(agent.id);
     rmSync(cwd, { recursive: true, force: true });
   }

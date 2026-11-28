@@ -45,27 +45,3 @@ test("the production app consumes a draft once and leaves other drafts pending",
   expect(store.getState().consumePending(submission)).toBeNull();
   expect(Object.keys(store.getState().pendingByDraftId)).toEqual(["draft-2"]);
 });
-
-test("consuming draft presentation retains its running creation through remount and retry", () => {
-  const store = loadProductionStore();
-  const result = new Promise<never>(() => {});
-  const creation = { result, retry: () => result };
-  const submission = {
-    serverId: "server",
-    workspaceId: "workspace",
-    draftId: "draft-one",
-    text: "hello",
-    attachments: [],
-    cwd: "/repo",
-    provider: "codex",
-    clientMessageId: "message",
-    timestamp: 1,
-    agentCreation: creation,
-  };
-  store.getState().setPending(submission);
-  store.getState().consumePending(submission);
-  expect(store.getState().pendingByDraftId[submission.draftId]).toBeUndefined();
-  expect(store.getState().creationByDraftId[submission.draftId]).toBe(creation);
-  store.getState().clearDraftSetup({ draftId: submission.draftId });
-  expect(store.getState().creationByDraftId[submission.draftId]).toBeUndefined();
-});

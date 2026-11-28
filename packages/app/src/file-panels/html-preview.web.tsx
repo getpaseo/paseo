@@ -25,12 +25,21 @@ const iframeStyle = {
 
 export function FileHtmlPreview({ html, testID }: { html: string; testID?: string }) {
   const { t } = useTranslation();
-  const document = useMemo(() => withPreviewCsp(html), [html]);
+  // A document URL lets the browser resolve fragment links within the preview.
+  // srcDoc would inherit the app URL and navigate the frame back into Paseo.
+  const source = useMemo(
+    () => `data:text/html;charset=utf-8,${encodeURIComponent(withPreviewCsp(html))}`,
+    [html],
+  );
   return (
+    // Each document loads in a new frame. The Source view keeps this preview mounted and hidden,
+    // and it gets a changed document in the same render that shows it again. Chromium can leave a
+    // reused frame blank when it navigates at that moment.
     <iframe
+      key={source}
       data-testid={testID}
       title={t("panels.file.filePanels.builtin.html")}
-      srcDoc={document}
+      src={source}
       sandbox={SANDBOX}
       referrerPolicy="no-referrer"
       style={iframeStyle}

@@ -1,8 +1,8 @@
 import {
   TerminalStreamOpcode,
-  TerminalReplayMetadataSchema,
+  parseTerminalReplayMetadata,
   type TerminalStreamFrame,
-} from "@getpaseo/protocol/binary-frames/index";
+} from "@getpaseo/protocol/binary-frames/terminal-wire";
 
 export type TerminalReplayEvent =
   | { type: "begin"; rows?: number; cols?: number; retainedHistoryLines?: number }
@@ -80,9 +80,8 @@ export class TerminalStreamRouter {
         } catch {
           return;
         }
-        const parsed = TerminalReplayMetadataSchema.safeParse(raw);
-        if (!parsed.success) return;
-        const metadata = parsed.data;
+        const metadata = parseTerminalReplayMetadata(raw);
+        if (!metadata) return;
         event = { ...identity, type: "replay", replay: { type: "begin", ...metadata } };
       } else if (frame.opcode === TerminalStreamOpcode.ReplayData)
         event = { ...identity, type: "replay", replay: { type: "data", data: frame.payload } };

@@ -13,6 +13,8 @@ export type KeyboardActionId =
   | "message-input.voice-toggle"
   | "message-input.voice-mute-toggle"
   | "message-input.mode-cycle"
+  | "message-input.model-toggle"
+  | "message-input.effort-cycle"
   | "workspace.agent.new"
   | "workspace.tab.menu.open"
   | "workspace.tab.target.agent"
@@ -28,6 +30,7 @@ export type KeyboardActionId =
   | "workspace.tab.copy-resume-command"
   | "workspace.tab.copy-id"
   | "workspace.tab.copy-file-path"
+  | "workspace.tab.reveal-in-files"
   | "workspace.tab.close-left"
   | "workspace.tab.close-right"
   | "workspace.tab.close-others"
@@ -51,6 +54,7 @@ export type KeyboardActionId =
   | "workspace.project.pick"
   | "worktree.new"
   | "workspace.archive"
+  | "workspace.archive.undo"
   | "workspace.pin"
   // Command-center only: no keybind, so these are absent from route-shortcut.ts.
   | "workspace.rename"
@@ -66,6 +70,8 @@ export type KeyboardActionDefinition =
   | { id: "message-input.voice-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.voice-mute-toggle"; scope: KeyboardActionScope }
   | { id: "message-input.mode-cycle"; scope: KeyboardActionScope }
+  | { id: "message-input.model-toggle"; scope: KeyboardActionScope }
+  | { id: "message-input.effort-cycle"; scope: KeyboardActionScope }
   | { id: "workspace.agent.new"; scope: KeyboardActionScope }
   | { id: "workspace.tab.menu.open"; scope: KeyboardActionScope }
   | { id: "workspace.tab.target.agent"; scope: KeyboardActionScope }
@@ -86,6 +92,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.tab.copy-resume-command"; scope: KeyboardActionScope }
   | { id: "workspace.tab.copy-id"; scope: KeyboardActionScope }
   | { id: "workspace.tab.copy-file-path"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.reveal-in-files"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-left"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-right"; scope: KeyboardActionScope }
   | { id: "workspace.tab.close-others"; scope: KeyboardActionScope }
@@ -109,6 +116,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.project.pick"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "workspace.archive"; scope: KeyboardActionScope }
+  | { id: "workspace.archive.undo"; scope: KeyboardActionScope }
   | { id: "workspace.pin"; scope: KeyboardActionScope }
   | { id: "workspace.rename"; scope: KeyboardActionScope }
   | { id: "workspace.setup.show"; scope: KeyboardActionScope };

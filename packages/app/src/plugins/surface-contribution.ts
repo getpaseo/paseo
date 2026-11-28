@@ -5,6 +5,26 @@ import {
   pluginScreenParamsFromRoute,
 } from "./routes";
 import type { InstalledPlugin } from "./types";
+import type { PluginCatalogStatus } from "./registry";
+import type { HostRuntimeConnectionStatus } from "@/runtime/host-runtime";
+
+export type PluginSurfacePlaceholderStatus = "loading" | "offline" | "error" | "unavailable";
+
+interface PluginSurfacePlaceholderInput {
+  connectionStatus: HostRuntimeConnectionStatus;
+  catalogStatus: PluginCatalogStatus;
+}
+
+export function resolvePluginSurfacePlaceholder({
+  connectionStatus,
+  catalogStatus,
+}: PluginSurfacePlaceholderInput): PluginSurfacePlaceholderStatus {
+  if (connectionStatus === "offline" || connectionStatus === "error") return "offline";
+  if (connectionStatus !== "online") return "loading";
+  if (catalogStatus === "loading") return "loading";
+  if (catalogStatus === "error") return "error";
+  return "unavailable";
+}
 
 export type PluginSurfaceContributionIdentity =
   | { kind: "sidebar"; id: string }

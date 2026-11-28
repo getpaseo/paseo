@@ -160,6 +160,8 @@ it("preserves another terminal's glyph pixels when a shared atlas is cleared", a
   expectSamePixels({ expected: before, actual: after, label: "sibling after atlas clear" });
 });
 
+// Software WebGL can take over 30 seconds for this corpus on a contended runner.
+// Each capture still has its own two-second render deadline.
 it("preserves both headers while ordinary output grows the shared glyph atlas", async () => {
   const { active, sibling } = await mountPair();
   const cells = active.terminal.cols * (active.terminal.rows - 2);
@@ -199,4 +201,4 @@ it("preserves both headers while ordinary output grows the shared glyph atlas", 
       label: `sibling frame ${batch}`,
     });
   }
-}, 30000);
+}, 60_000);

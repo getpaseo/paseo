@@ -1,0 +1,6 @@
+{
+  "id": "diff-watch",
+  "requirements": {
+    "paseo": ">=0.15.0-beta.2"
+  }
+}

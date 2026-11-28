@@ -46,9 +46,20 @@ export const CLIENT_CAPS = {
   // COMPAT(pluginTimelineItems): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   pluginTimelineItems: "plugin_timeline_items",
   workspaceSetupObservation: "workspace_setup_observation",
+  // COMPAT(pluginBinaryPayloads): added in v0.15.0, remove after 2027-05-02 once client floor >= v0.15.0.
+  // The daemon sends plugin RPC outputs as binary opcode 0x21 only to clients that decode it.
+  pluginBinaryPayloads: "plugin_binary_payloads",
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
   workspaceSetupBlocked: "workspace_setup_blocked",
+  // COMPAT(backgroundAgents): added in v0.15.0, remove after 2027-05-03 once client floor >= v0.15.0.
+  // Sources without it never receive agent-level background agents in inclusive lists or
+  // update subscriptions, because older apps auto-open a tab for every replicated root agent.
+  backgroundAgents: "background_agents",
   browserHost: "browser_host",
+  // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove after 2027-05-22 once client floor >= v0.17.2.
+  // An agent sender's steer means wait-for-turn-end from clients without it, because older
+  // CLIs and connected hosts send an explicit steer for every default agent send.
+  agentActiveTurnBehaviors: "agent_active_turn_behaviors",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

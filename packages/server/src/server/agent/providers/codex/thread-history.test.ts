@@ -1,4 +1,3 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -27,15 +26,24 @@ async function openCodexThread(
   const appServer = createFakeCodexAppServer(
     fakeCodexThreadHistory({ "saved-thread": thread }, options),
   );
-  const provider = new CodexAppServerAgentClient(createTestLogger());
+  const provider = new CodexAppServerAgentClient(
+    createTestLogger(),
+    {
+      command: { mode: "replace", argv: ["codex-must-not-run-in-this-test"] },
+    },
+    {
+      appServerProcess: {
+        resolvePrefix: async () => ({ command: "codex", args: [] }),
+        spawn: () => appServer.child,
+      },
+    },
+  );
   const internals = provider as unknown as {
     goalsEnabledPromise: Promise<boolean> | null;
     autoReviewEnabledPromise: Promise<boolean> | null;
-    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
   };
   internals.goalsEnabledPromise = Promise.resolve(false);
   internals.autoReviewEnabledPromise = Promise.resolve(false);
-  internals.spawnAppServer = async () => appServer.child;
   const session = await provider.resumeSession({ sessionId: "saved-thread" });
   return { appServer, session };
 }
@@ -139,7 +147,7 @@ describe("Codex thread history", () => {
     appServer.assertNoErrors();
   });
 
-  test("a page too big to send shows a warning row and stops loading", async () => {
+  test("a page too big to send retries smaller pages, then warns at the item that cannot fit", async () => {
     const answers = Array.from({ length: 120 }, (_, index) =>
       agentItem(`agent-${index}`, `Answer ${index}`),
     );
@@ -155,11 +163,12 @@ describe("Codex thread history", () => {
     );
     const loaded = [
       { type: "user_message", text: "One", messageId: "user-1" },
-      ...answers.slice(0, 99).map((answer) => ({
+      ...answers.map((answer) => ({
         type: "assistant_message",
         text: answer.text,
         messageId: answer.id,
       })),
+      { type: "user_message", text: "Two", messageId: "user-2" },
       {
         type: "notification",
         level: "warning",
@@ -168,6 +177,12 @@ describe("Codex thread history", () => {
     ];
     try {
       expect(timelineItems(await readHistory(session))).toEqual(loaded);
+      // Each oversized page retries the same cursor at half the size until it fits.
+      expect(
+        historyRequests(appServer)
+          .filter((request) => request.method === "thread/items/list")
+          .map((request) => (request.params as { limit: number }).limit),
+      ).toEqual([100, 100, 50, 25, 12, 12, 6, 6, 3, 3, 1, 1]);
       // The oversized reply failed only its own request; the session still answers.
       expect(timelineItems(await readHistory(session))).toEqual(loaded);
     } finally {

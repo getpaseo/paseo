@@ -6,6 +6,9 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { isolatePaseoHome } from "../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";

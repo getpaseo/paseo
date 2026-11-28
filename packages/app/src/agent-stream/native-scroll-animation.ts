@@ -1,10 +1,10 @@
 export function shouldAnimateNativeScrollToBottom(input: {
-  offsetY: number;
+  distanceFromEnd: number;
   viewportHeight: number;
-  windowSize: number;
+  drawDistance: number;
 }): boolean {
-  // VirtualizedList splits the extra window around the viewport. An animated
-  // jump farther than the bottom-side overscan crosses unmounted history.
-  const bottomOverscanHeight = ((input.windowSize - 1) / 2) * input.viewportHeight;
-  return input.viewportHeight > 0 && input.offsetY <= bottomOverscanHeight;
+  // Scrolled away from the end, LegendList keeps half its draw distance mounted below the
+  // viewport. An animated jump farther than that crosses rows it has not rendered.
+  const mountedBelowViewport = input.drawDistance / 2;
+  return input.viewportHeight > 0 && input.distanceFromEnd <= mountedBelowViewport;
 }

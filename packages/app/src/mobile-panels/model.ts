@@ -17,6 +17,7 @@ export interface MobilePanelCommit {
 
 export interface MobilePanelTransition {
   animationTarget?: MobilePanelView;
+  immediateTarget?: MobilePanelView;
   commit?: MobilePanelCommit;
   state: MobilePanelMotionState;
 }
@@ -48,7 +49,7 @@ function settleMobilePanelAtPosition(
 }
 
 export type MobilePanelEvent =
-  | { type: "command"; selection: MobilePanelSelection }
+  | { type: "command"; selection: MobilePanelSelection; immediate?: boolean }
   | { type: "gesture.begin"; origin: MobilePanelView }
   | {
       type: "gesture.finish";
@@ -78,7 +79,20 @@ export function transitionMobilePanel(
     if (event.selection.revision <= state.revision) {
       return { state };
     }
-    const continuesCurrentMotion = state.motionTarget === event.selection.target;
+    if (event.immediate) {
+      return {
+        immediateTarget: event.selection.target,
+        state: {
+          ...event.selection,
+          gesture: null,
+          motionTarget: event.selection.target,
+          settledTarget: event.selection.target,
+        },
+      };
+    }
+    // An interrupted drag left the position between anchors, so it moves back even when the
+    // target is unchanged. Without a drag, the command adopts motion already heading there.
+    const continuesCurrentMotion = !state.gesture && state.motionTarget === event.selection.target;
     return {
       animationTarget: continuesCurrentMotion ? undefined : event.selection.target,
       state: {

@@ -1,6 +1,8 @@
 import type { ExplorerDirectory, ExplorerEntry } from "@/stores/session-store";
 import type { SortOption } from "@/stores/panel-store/state";
+import { DIRECTORY_LISTING_INVALIDATED, type DirectoryListingResult } from "./directory-listings";
 import { filterVisibleExplorerEntries, isHiddenExplorerPath } from "./visibility";
+import { parentExplorerPath } from "@/utils/explorer-paths";
 
 export const MAX_AUTO_EXPANDED_DIRECTORY_DEPTH = 5;
 
@@ -16,11 +18,13 @@ interface FlattenExplorerTreeInput {
   showHiddenFiles: boolean;
 }
 
+type RestoredExpandedPaths = string[] | typeof DIRECTORY_LISTING_INVALIDATED;
+
 interface RestoreExpandedDirectoriesInput {
   rootDirectory: ExplorerDirectory;
   persistedExpandedPaths: ReadonlySet<string>;
   showHiddenFiles: boolean;
-  requestDirectoryListing: (path: string) => Promise<ExplorerDirectory | null>;
+  requestDirectoryListing: (path: string) => Promise<DirectoryListingResult>;
 }
 
 interface ShowHiddenFilesAndRestoreExpandedDirectoriesInput extends Omit<
@@ -33,7 +37,7 @@ interface ShowHiddenFilesAndRestoreExpandedDirectoriesInput extends Omit<
 interface ReconcileRestoredExpandedPathsInput {
   persistedExpandedPaths: ReadonlySet<string>;
   currentExpandedPaths: ReadonlySet<string>;
-  restoredExpandedPaths: string[];
+  restoredExpandedPaths: RestoredExpandedPaths;
 }
 
 interface SetExpandedDirectoryPathInput {
@@ -85,7 +89,7 @@ export async function restoreExpandedDirectories({
   persistedExpandedPaths,
   showHiddenFiles,
   requestDirectoryListing,
-}: RestoreExpandedDirectoriesInput): Promise<string[]> {
+}: RestoreExpandedDirectoriesInput): Promise<RestoredExpandedPaths> {
   const restoredPaths = ["."];
   const restoredPathSet = new Set(restoredPaths);
   let parentDirectories = [rootDirectory];
@@ -110,9 +114,11 @@ export async function restoreExpandedDirectories({
     const requestedDirectories = await Promise.all(
       pathsToRequest.map((path) => requestDirectoryListing(path)),
     );
+    if (requestedDirectories.includes(DIRECTORY_LISTING_INVALIDATED))
+      return DIRECTORY_LISTING_INVALIDATED;
     parentDirectories = [];
     for (const directory of requestedDirectories) {
-      if (!directory) {
+      if (!directory || directory === DIRECTORY_LISTING_INVALIDATED) {
         continue;
       }
       restoredPaths.push(directory.path);
@@ -128,7 +134,7 @@ export function showHiddenFilesAndRestoreExpandedDirectories({
   persistedExpandedPaths,
   showHiddenFiles,
   requestDirectoryListing,
-}: ShowHiddenFilesAndRestoreExpandedDirectoriesInput): Promise<string[]> {
+}: ShowHiddenFilesAndRestoreExpandedDirectoriesInput): Promise<RestoredExpandedPaths> {
   showHiddenFiles();
   return restoreExpandedDirectories({
     rootDirectory,
@@ -143,6 +149,8 @@ export function reconcileRestoredExpandedPaths({
   currentExpandedPaths,
   restoredExpandedPaths,
 }: ReconcileRestoredExpandedPathsInput): string[] {
+  if (restoredExpandedPaths === DIRECTORY_LISTING_INVALIDATED)
+    return Array.from(currentExpandedPaths);
   const reconciledPaths = new Set(restoredExpandedPaths);
 
   for (const path of persistedExpandedPaths) {
@@ -202,13 +210,16 @@ function sortExplorerEntries(entries: ExplorerEntry[], sortOption: SortOption): 
   return sorted;
 }
 
-/** Load and expand the path to a directory selected outside the tree. */
+/**
+ * Load and expand the path to a directory selected outside the tree, the directory included.
+ * Resolves false when one of those listings cannot be loaded.
+ */
 export async function revealExplorerDirectory(input: {
   directoryPath: string;
-  requestDirectoryListing: (path: string) => Promise<ExplorerDirectory | null>;
+  requestDirectoryListing: (path: string) => Promise<DirectoryListingResult>;
   expandPaths: (paths: string[]) => void;
   showHiddenFiles: () => void;
-}): Promise<void> {
+}): Promise<boolean> {
   if (isHiddenExplorerPath(input.directoryPath)) input.showHiddenFiles();
   const paths = ["."];
   if (input.directoryPath !== ".") {
@@ -218,7 +229,85 @@ export async function revealExplorerDirectory(input: {
     }
   }
   for (const path of paths) {
-    if (!(await input.requestDirectoryListing(path))) return;
+    const directory = await input.requestDirectoryListing(path);
+    if (!directory || directory === DIRECTORY_LISTING_INVALIDATED) return false;
   }
   input.expandPaths(paths);
+  return true;
+}
+
+/**
+ * Load and expand the ancestors of an entry selected outside the tree. Resolves false when the
+ * entry is not in its parent's listing.
+ */
+export async function revealExplorerEntry({
+  entryPath,
+  requestDirectoryListing,
+  expandPaths,
+  showHiddenFiles,
+}: {
+  entryPath: string;
+  requestDirectoryListing: (path: string) => Promise<DirectoryListingResult>;
+  expandPaths: (paths: string[]) => void;
+  showHiddenFiles: () => void;
+}): Promise<boolean> {
+  if (isHiddenExplorerPath(entryPath)) showHiddenFiles();
+  const parentPath = parentExplorerPath(entryPath);
+  let found = false;
+  await revealExplorerDirectory({
+    directoryPath: parentPath,
+    expandPaths,
+    showHiddenFiles,
+    requestDirectoryListing: async (path) => {
+      const directory = await requestDirectoryListing(path);
+      if (path === parentPath && directory && directory !== DIRECTORY_LISTING_INVALIDATED) {
+        found = directory.entries.some((entry) => entry.path === entryPath);
+      }
+      return directory;
+    },
+  });
+  return found;
+}
+
+/**
+ * Files Refresh: re-lists the expanded directories (and the root), and drops the cached
+ * listing of every other directory. Expanding a directory only fetches when it has no
+ * cached listing, so keeping a collapsed directory's old listing would show it as it was
+ * before the refresh.
+ */
+export async function refreshExplorerDirectories({
+  hasWorkspaceScope,
+  expandedPaths,
+  showHiddenFiles,
+  requestDirectoryListing,
+  invalidateDirectoryListings,
+}: {
+  hasWorkspaceScope: boolean;
+  expandedPaths: Set<string>;
+  showHiddenFiles: boolean;
+  requestDirectoryListing: (
+    path: string,
+    opts?: { recordHistory?: boolean; setCurrentPath?: boolean },
+  ) => Promise<DirectoryListingResult>;
+  invalidateDirectoryListings: (retainedPaths: readonly string[]) => void;
+}): Promise<null> {
+  if (!hasWorkspaceScope) {
+    return null;
+  }
+  const directoryPaths = Array.from(expandedPaths).filter(
+    (path) => showHiddenFiles || !isHiddenExplorerPath(path),
+  );
+  if (!directoryPaths.includes(".")) {
+    directoryPaths.unshift(".");
+  }
+  invalidateDirectoryListings(directoryPaths);
+  await Promise.all(
+    directoryPaths.map((path) =>
+      requestDirectoryListing(path, {
+        recordHistory: false,
+        setCurrentPath: false,
+      }),
+    ),
+  );
+  return null;
 }

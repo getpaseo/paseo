@@ -23,6 +23,8 @@ const allStyles: HighlightStyle[] = [
   "meta",
   "heading",
   "link",
+  "diffAddition",
+  "diffDeletion",
 ];
 
 describe("darkHighlightColors", () => {

@@ -509,6 +509,8 @@ check_autocomplete() {
     fi
   fi
   ad wait 'id="composer-autocomplete-popover"' 10000
+  # Rows replace the popover's loading row once the host lists them; a cold Claude list is slow.
+  ad wait "text=\"${expected}\"" 30000
   # The popover remeasures once keyboard motion settles.
   sleep 1
   capture_screen "${prefix}.png"
@@ -581,7 +583,7 @@ run_host_scroll() {
   prepare_composer closed
   if [[ "${host}" == new-workspace ]]; then
     ad press 'id="workspace-create-isolation-trigger"' --settle
-    ad press 'text="Local"' --settle
+    ad press 'text="Project directory"' --settle
   fi
   # Submit through each real host; draft/workspace creation then mounts its chat.
   # A selectable mock model keeps this test independent of provider credentials.

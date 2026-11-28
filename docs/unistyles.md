@@ -86,7 +86,7 @@ mounts—never at module evaluation time.
 
 ## Dynamic Pixel Styles On Web
 
-Avoid feeding changing pixel values such as `{ top, left }`, `{ maxHeight }`, or `{ minWidth }` into the `style` prop of Unistyles-managed React Native components on web. The web runtime hashes each distinct style object by value and appends a CSS rule to `#unistyles-web`; those rules are not reclaimed during the page lifetime, so pointer-driven positioning can turn into steady stylesheet growth.
+Avoid feeding changing pixel values such as `{ top, left }`, `{ maxHeight }`, or `{ minWidth }` into the `style` prop of Unistyles-managed React Native components on web. The web runtime hashes each distinct style object by value and inserts a CSS rule into `#unistyles-web` for it, then deletes the rule when the last element using it unmounts. Pointer-driven positioning turns into a rule insert and delete per move.
 
 Use the inline style escape hatch below for high-churn values. Do not split a component into plain/web/native variants just to keep one measured value out of the CSS registry. Raw DOM wrappers are reserved for real DOM infrastructure, such as terminal hosts, virtualized web rows, or third-party drag wrappers.
 
@@ -224,6 +224,7 @@ Quick confirmation in DevTools console:
 ```js
 [...document.styleSheets]
   .flatMap((s) => [...(s.cssRules || [])])
+  .flatMap((r) => (r.cssRules ? [...r.cssRules] : [r]))
   .map((r) => r.cssText)
   .filter((t) => t.includes("unistyles") && t.includes("> *"));
 ```
@@ -346,7 +347,7 @@ Gotchas:
 - **Narrow the discriminated union before spreading.** `updateTheme`'s updater returns the theme union; spreading the union widens `colorScheme` to `"light" | "dark"`, which is assignable to neither concrete member. Branch on `t.colorScheme` so each branch spreads a single narrowed theme type (no `as`).
 - **`lineHeight.diff` is the code/diff line-height axis** — it is coupled to the code-font-size control (≈ `codeFontSize * 1.5`). Do NOT use it for prose. Markdown body line-height scales with content size (`Math.round(theme.fontSize.content * 1.4)`); routing prose through `lineHeight.diff` clips text at small code sizes.
 - **High-churn draft values** (live-while-typing in the appearance preview) bypass the theme: apply them as inline styles marked with `inlineUnistylesStyle` so per-keystroke values don't grow the `#unistyles-web` CSS registry.
-- **Web numeric appearance tokens need a render; native tracked styles update in place.** On web, string tokens such as colors become CSS variables, but numeric tokens (font sizes, line heights) are baked into generated classes. `AppearanceStyleBoundary` remounts web shell chrome and explorer content to refresh those classes. Native sidebars and explorer hosts stay outside appearance keys: their gesture refs outlive detached dependents until Gesture Handler's passive cleanup, so remounting a related gesture can query an unmounted view. Their tracked native styles and existing themed leaf props update without replacing the gesture hosts or draggable lists. Parsed PR markdown uses its own `withUnistyles` style mapping.
+- **Web numeric appearance tokens need a render; native tracked styles update in place.** On web, string tokens such as colors become CSS variables, but numeric tokens (font sizes, line heights) are baked into generated classes. `AppearanceStyleBoundary` remounts web shell chrome and explorer content to refresh those classes. Settings retains its screen and form; `AppearanceText` refreshes numeric text styles at the leaf, and its font fields use `withUnistyles` to refresh input styles without replacing the inputs. Native sidebars and explorer hosts stay outside appearance keys: their gesture refs outlive detached dependents until Gesture Handler's passive cleanup, so remounting a related gesture can query an unmounted view. Their tracked native styles and existing themed leaf props update without replacing the gesture hosts or draggable lists. Parsed PR markdown uses its own `withUnistyles` style mapping.
 - **Appearance keys belong below native lifetime owners.** `ThemedStack` wraps screen content through `screenLayout`, preserving navigator identity; nested navigators are listed in `nestedNavigatorScreens` and own their own screen boundaries. The remaining shell surfaces retain their appearance refresh separately from native panel hosts. A key above a native stack can detach its screen container inside a FragmentManager transaction during settings hydration. Keep both navigators and retained panel gesture hosts outside those keys. `applyAppearance` patches the active theme before inactive registry entries so subscribers receive the committed values in the same update. Do not add local appearance keys or a boundary above a navigator.
 - **Dynamic font tokens stay widened.** `fontFamily`, `fontSize`, and `lineHeight` on `commonTheme` are annotated `string`/`number` (not narrowed by `as const`) so the updater's return assigns; the platform default stacks live in `DEFAULT_UI_FONT_STACK` / `DEFAULT_MONO_FONT_STACK`.
 
@@ -365,6 +366,14 @@ CSS variables then follow the OS theme while `withUnistyles` props retain the ol
 colors. Keep this patch until upstream reads the scheme through separate lists.
 The desktop browser E2E checks both transition directions in an isolated Electron
 process, because Playwright's focus emulation prevents real hidden-page behavior.
+
+The stylesheet patch backports upstream PR #1354 (3.8.0). Unistyles 3.2.4 rewrote
+the whole text of `#unistyles-web` whenever a class was added or removed, and
+the browser then restyled the entire document: about 5 ms each time, several
+times for one hover card. The backport changes one CSSOM rule per class instead.
+The tag therefore has no text; read its rules through `sheet.cssRules`. Classes
+without a media query sit inside an `@media all` group. Assert on the stylesheet
+in E2E with `packages/app/e2e/support/helpers/shared-stylesheet.ts`.
 
 Register every dependency patch in `scripts/postinstall-patches.mjs`. A file in
 `patches/` is inert unless that script knows which installed package activates

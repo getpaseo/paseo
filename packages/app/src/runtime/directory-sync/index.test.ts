@@ -10,16 +10,20 @@ import type {
   DaemonClient,
   WorkspaceLabelListPayload,
 } from "@getpaseo/client/internal/daemon-client";
-import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type {
+  SessionOutboundMessage,
+  WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
   useSessionStore,
 } from "@/stores/session-store";
-import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
+import { deriveProjectPlacementFromCwd } from "@/utils/project-placement";
 import { selectWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks/selectors";
 import { useWorkspaceLabels } from "@/workspace-labels";
-import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
+import type { DirectoryCheckpoint, DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import {
   DirectoryRefreshSupersededError,
   DirectorySync,
@@ -41,12 +45,15 @@ class FakeDirectoryClient {
   supportsWorkspaceLabels = false;
   listWorkspaceLabelsCalls = 0;
   fetchAgentsCalls = 0;
+  observeAgentsCalls = 0;
   lastAgentOptions: unknown;
   fetchWorkspacesCalls = 0;
+  observeWorkspacesCalls = 0;
   lastWorkspaceOptions: unknown;
   listProjectsCalls = 0;
   lastProjectOptions: unknown;
   projectResult: ProjectListResult | null = null;
+  readonly listSnapshots: Promise<unknown>[] = [];
   private pendingAgentFetch: Promise<AgentFetchResult> | null = null;
   private pendingWorkspaceFetch: Promise<WorkspaceFetchResult> | null = null;
   private pendingProjectFetch: Promise<ProjectListResult> | null = null;
@@ -151,15 +158,22 @@ class FakeDirectoryClient {
   }
 
   observeAgents(options: Parameters<DaemonClient["observeAgents"]>[0]) {
-    return subscriptionFixture(this.fetchAgents({ ...options, subscribe: {} }), (receive) =>
-      this.on("agent_update", receive),
+    this.observeAgentsCalls += 1;
+    const subscription = subscriptionFixture(
+      this.fetchAgents({ ...options, subscribe: {} }),
+      (receive) => this.on("agent_update", receive),
     );
+    this.listSnapshots.push(subscription.ready);
+    return subscription;
   }
 
   observeWorkspaces(options: Parameters<DaemonClient["observeWorkspaces"]>[0]) {
-    return subscriptionFixture(this.fetchWorkspaces(options), (receive) =>
+    this.observeWorkspacesCalls += 1;
+    const subscription = subscriptionFixture(this.fetchWorkspaces(options), (receive) =>
       this.on("workspace_update", receive),
     );
+    this.listSnapshots.push(subscription.ready);
+    return subscription;
   }
 
   observeEvents(events: readonly SessionOutboundMessage["type"][]) {
@@ -591,6 +605,83 @@ describe("DirectorySync session readiness", () => {
     expect(client.fetchWorkspacesCalls).toBe(1);
     directory.dispose();
   });
+
+  it.each([
+    ["full", "before"],
+    ["full", "after"],
+    ["route", "before"],
+    ["route", "after"],
+  ] as const)(
+    "restores live directory updates when %s demand returns %s refresh completion",
+    async (demand, timing) => {
+      const serverId = `released-directory-${demand}-${timing}`;
+      const { client, directory } = createDirectory(serverId);
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+      store.updateSessionServerInfo(serverId, {
+        serverId,
+        hostname: null,
+        version: "test",
+        features: { workspaceMultiplicity: true, projectList: true },
+      });
+      const source = {};
+      function setDemand(demanded: boolean): void {
+        if (demand === "full") directory.setDemand(source, demanded);
+        else directory.setAgentRouteDemand(demanded ? ["agent-1"] : []);
+      }
+      const releaseProjects = client.holdProjectFetch();
+      const projects: ProjectListResult = { requestId: "projects", projects: [] };
+
+      try {
+        setDemand(true);
+        const refresh = directory.refreshDemand();
+        await expect
+          .poll(() => [client.observeAgentsCalls, client.observeWorkspacesCalls])
+          .toEqual([1, 1]);
+
+        await Promise.all(client.listSnapshots);
+        setDemand(false);
+        if (timing === "before") setDemand(true);
+        releaseProjects(projects);
+        await refresh;
+        if (timing === "after") setDemand(true);
+
+        await expect
+          .poll(() => [client.observeAgentsCalls, client.observeWorkspacesCalls])
+          .toEqual([2, 2]);
+        client.emit({
+          type: "agent_update",
+          payload: {
+            kind: "upsert",
+            agent: {
+              ...projectAgentSnapshot(createAgent(serverId, "agent-1")),
+              title: "Live title",
+            },
+            project: deriveProjectPlacementFromCwd("/repo"),
+          },
+        });
+        client.emit({
+          type: "workspace_update",
+          payload: {
+            kind: "upsert",
+            workspace: { ...createWorkspaceEntry("workspace-1"), name: "Live workspace" },
+          },
+        });
+
+        await expect
+          .poll(() => {
+            const session = useSessionStore.getState().sessions[serverId];
+            return [
+              session.agents.get("agent-1")?.title,
+              session.workspaces.get("workspace-1")?.name,
+            ];
+          })
+          .toEqual(["Live title", "Live workspace"]);
+      } finally {
+        directory.dispose();
+      }
+    },
+  );
 
   it("publishes cached directory data before the authoritative request completes", async () => {
     const serverId = "cached-directory";
@@ -1579,6 +1670,187 @@ it("fills every cached workspace beneath live updates received during the SQLite
   database.close();
 });
 
+/**
+ * A host whose cache was damaged before the eviction fix: workspaces survived, project rows did not,
+ * and a version 1 checkpoint still claims the project directory is current. The daemon holds
+ * projects A and B; renaming A is its update at `renameSeq`.
+ */
+async function createDamagedLegacyProjectDirectory(serverId: string, renameSeq: number) {
+  serverIds.add(serverId);
+  const { cache, database, storage, reopen, holdRead } = createSqliteCache();
+  cache.setHosts([serverId]);
+  const workspacePayload = (id: string, projectId: string): WorkspaceDescriptorPayload => ({
+    id,
+    projectId,
+    projectDisplayName: projectId,
+    projectRootPath: `/repo/${projectId}`,
+    workspaceDirectory: `/repo/${projectId}`,
+    projectKind: "git",
+    workspaceKind: "local_checkout",
+    name: id,
+    status: "done",
+    statusEnteredAt: null,
+    activityAt: null,
+    archivingAt: null,
+    diffStat: null,
+    scripts: [],
+  });
+  const project = (projectId: string, projectDisplayName: string) => ({
+    projectId,
+    projectDisplayName,
+    projectRootPath: `/repo/${projectId}`,
+    projectKind: "git" as const,
+  });
+  const workspaceEntries = [workspacePayload("wa", "A"), workspacePayload("wb", "B")];
+  cache.replaceDirectoryBaseline(serverId, {
+    agents: new Map(),
+    workspaces: new Map(
+      workspaceEntries.map((entry) => [entry.id, normalizeWorkspaceDescriptor(entry)]),
+    ),
+    projects: new Map(),
+  });
+  await cache.flush();
+  await storage.apply({
+    deletes: [],
+    upserts: [
+      {
+        serverId,
+        kind: "checkpoint",
+        id: "singleton",
+        payload: JSON.stringify({
+          version: 1,
+          cursors: { projects: { generation: "g", afterSeq: renameSeq - 1 } },
+        }),
+      },
+    ],
+  });
+  const reopened = reopen();
+  reopened.setHosts([serverId]);
+  const client = new FakeDirectoryClient();
+  let failNextProjectRequest = false;
+  client.listProjects = async (options?: unknown): Promise<ProjectListResult> => {
+    client.lastProjectOptions = options;
+    if (failNextProjectRequest) {
+      failNextProjectRequest = false;
+      throw new Error("Request timed out");
+    }
+    const resumesAfterRename =
+      (options as { sync?: { afterSeq?: number } } | undefined)?.sync?.afterSeq === renameSeq;
+    return resumesAfterRename
+      ? {
+          requestId: "projects",
+          projects: [],
+          sync: { generation: "g", headSeq: renameSeq, mode: "changes", removals: [] },
+        }
+      : {
+          requestId: "projects",
+          projects: [project("A", "Renamed"), project("B", "B")],
+          sync: { generation: "g", headSeq: renameSeq, mode: "snapshot", removals: [] },
+        };
+  };
+  client.fetchWorkspaces = async (): Promise<WorkspaceFetchResult> => ({
+    requestId: "workspaces",
+    entries: workspaceEntries,
+    emptyProjects: [],
+    pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    sync: { generation: "g", headSeq: 2, mode: "snapshot", removals: [] },
+  });
+  const directory = new DirectorySync(
+    serverId,
+    {
+      onAgentStoppedRunning: () => {},
+      markAgentLoading: () => {},
+      markAgentReady: () => {},
+      markAgentError: () => {},
+    },
+    reopened,
+  );
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+  store.updateSessionServerInfo(serverId, {
+    serverId,
+    hostname: null,
+    version: "test",
+    features: { workspaceMultiplicity: true, directorySync: true, projectList: true },
+  });
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  return {
+    client,
+    directory,
+    holdRead,
+    failNextProjectRequest: () => {
+      failNextProjectRequest = true;
+    },
+    renameProjectA: () =>
+      client.emit({
+        type: "project.update",
+        payload: {
+          kind: "upsert",
+          project: project("A", "Renamed"),
+          generation: "g",
+          seq: renameSeq,
+        },
+      }),
+    sessionProjectIds: () =>
+      [...useSessionStore.getState().sessions[serverId].projects.keys()].sort(),
+    persistedProjectIds: async () => {
+      await reopened.flush();
+      const restarted = reopen();
+      restarted.setHosts([serverId]);
+      return [...(await restarted.readDirectory(serverId)).projects.keys()].sort();
+    },
+    close: async () => {
+      directory.dispose();
+      await reopened.flush();
+      database.close();
+    },
+  };
+}
+
+it("re-syncs every project when a project update lands while an untrusted cache loads", async () => {
+  const damaged = await createDamagedLegacyProjectDirectory("untrusted-checkpoint-race", 6);
+  try {
+    let renamed = false;
+    damaged.holdRead(async () => {
+      if (renamed) return;
+      renamed = true;
+      damaged.renameProjectA();
+    });
+
+    damaged.directory.setDemand({}, true);
+    await damaged.directory.refreshDemand();
+
+    expect(renamed).toBe(true);
+    expect(damaged.client.lastProjectOptions).toEqual({ sync: {} });
+    expect(damaged.sessionProjectIds()).toEqual(["A", "B"]);
+    expect(await damaged.persistedProjectIds()).toEqual(["A", "B"]);
+  } finally {
+    await damaged.close();
+  }
+});
+
+it("re-syncs every project when a project update lands after the first sync fails", async () => {
+  const damaged = await createDamagedLegacyProjectDirectory("failed-first-sync", 3);
+  try {
+    damaged.failNextProjectRequest();
+    damaged.directory.setDemand({}, true);
+    await expect(damaged.directory.refreshDemand()).rejects.toThrow("Request timed out");
+
+    damaged.renameProjectA();
+    await damaged.directory.refreshDemand();
+
+    expect(damaged.client.lastProjectOptions).toEqual({ sync: {} });
+    expect(damaged.sessionProjectIds()).toEqual(["A", "B"]);
+    expect(await damaged.persistedProjectIds()).toEqual(["A", "B"]);
+  } finally {
+    await damaged.close();
+  }
+});
+
 function createWorkspaceLabelDirectory(serverId: string) {
   const { client, directory } = createDirectory(serverId, { workspaceLabels: true });
   const store = useSessionStore.getState();
@@ -1873,3 +2145,206 @@ it.each(["before", "during", "before-metadata", "damaged"] as const)(
     }
   },
 );
+
+it("batches a burst of 200 workspace_update frames into one mergeWorkspaces commit and one checkpoint write", async () => {
+  const serverId = "workspace-update-burst-batching";
+  serverIds.add(serverId);
+  const client = new FakeDirectoryClient();
+  const checkpointWrites: Array<{
+    mutations: readonly DirectoryReplicaMutation[];
+    checkpoint: DirectoryCheckpoint | undefined;
+  }> = [];
+  const directory = new DirectorySync(
+    serverId,
+    {
+      onAgentStoppedRunning: () => {},
+      markAgentLoading: () => {},
+      markAgentReady: () => {},
+      markAgentError: () => {},
+    },
+    {
+      readAgent: async () => undefined,
+      readWorkspace: async () => undefined,
+      readDirectory: async () => ({
+        agents: new Map(),
+        workspaces: new Map(),
+        projects: new Map(),
+      }),
+      commitDirectoryMutations: (_serverId, mutations, checkpoint) => {
+        checkpointWrites.push({ mutations: [...mutations], checkpoint });
+      },
+    },
+  );
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+  store.updateSessionServerInfo(serverId, {
+    serverId,
+    hostname: null,
+    version: "test",
+    features: { workspaceMultiplicity: true, directorySync: true },
+  });
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  directory.setDemand({}, true);
+  await directory.refreshDemand();
+
+  let workspaceStoreCommits = 0;
+  let lastWorkspacesMap = useSessionStore.getState().sessions[serverId]?.workspaces;
+  const unsubscribeStore = useSessionStore.subscribe((state) => {
+    const nextMap = state.sessions[serverId]?.workspaces;
+    if (nextMap !== lastWorkspacesMap) {
+      lastWorkspacesMap = nextMap;
+      workspaceStoreCommits += 1;
+    }
+  });
+  checkpointWrites.length = 0;
+
+  try {
+    for (let index = 0; index < 200; index += 1) {
+      client.emit({
+        type: "workspace_update",
+        payload: {
+          kind: "upsert",
+          workspace: {
+            ...createWorkspaceEntry(`ws-burst-${index}`),
+            name: `Workspace ${index}`,
+          },
+          generation: "gen-burst",
+          seq: index + 1,
+        },
+      });
+    }
+
+    await expect
+      .poll(() => useSessionStore.getState().sessions[serverId]?.workspaces.size)
+      .toBe(200);
+
+    expect(workspaceStoreCommits).toBe(1);
+    expect(checkpointWrites).toHaveLength(1);
+    expect(checkpointWrites[0]?.mutations).toHaveLength(200);
+    expect(checkpointWrites[0]?.checkpoint?.workspaces).toEqual({
+      generation: "gen-burst",
+      afterSeq: 200,
+    });
+    expect(
+      useSessionStore.getState().sessions[serverId]?.workspaces.get("ws-burst-199")?.name,
+    ).toBe("Workspace 199");
+  } finally {
+    unsubscribeStore();
+    directory.dispose();
+  }
+});
+
+it("coalesces duplicate upserts and removals within a single workspace_update batch in arrival order", async () => {
+  const serverId = "workspace-update-batch-ordering";
+  serverIds.add(serverId);
+  const client = new FakeDirectoryClient();
+  const checkpointWrites: Array<{
+    mutations: readonly DirectoryReplicaMutation[];
+    checkpoint: DirectoryCheckpoint | undefined;
+  }> = [];
+  const directory = new DirectorySync(
+    serverId,
+    {
+      onAgentStoppedRunning: () => {},
+      markAgentLoading: () => {},
+      markAgentReady: () => {},
+      markAgentError: () => {},
+    },
+    {
+      readAgent: async () => undefined,
+      readWorkspace: async () => undefined,
+      readDirectory: async () => ({
+        agents: new Map(),
+        workspaces: new Map(),
+        projects: new Map(),
+      }),
+      commitDirectoryMutations: (_serverId, mutations, checkpoint) => {
+        checkpointWrites.push({ mutations: [...mutations], checkpoint });
+      },
+    },
+  );
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+  store.updateSessionServerInfo(serverId, {
+    serverId,
+    hostname: null,
+    version: "test",
+    features: { workspaceMultiplicity: true, directorySync: true },
+  });
+  directory.connectionChanged({
+    client: client as unknown as DaemonClient,
+    status: "online",
+    source: { clientGeneration: 1, connectionEpoch: 1 },
+  });
+  directory.setDemand({}, true);
+  await directory.refreshDemand();
+  checkpointWrites.length = 0;
+
+  try {
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-1"), name: "v1" },
+        generation: "gen-ord",
+        seq: 1,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-1"), name: "v2" },
+        generation: "gen-ord",
+        seq: 2,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-2"), name: "ephemeral" },
+        generation: "gen-ord",
+        seq: 3,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "remove",
+        id: "ws-2",
+        generation: "gen-ord",
+        seq: 4,
+      },
+    });
+    client.emit({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: { ...createWorkspaceEntry("ws-3"), name: "kept" },
+        generation: "gen-ord",
+        seq: 5,
+      },
+    });
+
+    await expect
+      .poll(() => useSessionStore.getState().sessions[serverId]?.workspaces.get("ws-3")?.name)
+      .toBe("kept");
+
+    const workspaces = useSessionStore.getState().sessions[serverId]?.workspaces;
+    expect(workspaces?.get("ws-1")?.name).toBe("v2");
+    expect(workspaces?.has("ws-2")).toBe(false);
+    expect(workspaces?.get("ws-3")?.name).toBe("kept");
+    expect(checkpointWrites).toHaveLength(1);
+    expect(checkpointWrites[0]?.checkpoint?.workspaces).toEqual({
+      generation: "gen-ord",
+      afterSeq: 5,
+    });
+  } finally {
+    directory.dispose();
+  }
+});

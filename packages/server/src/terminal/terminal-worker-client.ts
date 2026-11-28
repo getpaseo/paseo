@@ -1,4 +1,5 @@
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import { createConnection } from "node:net";
 import { attachFramedSocket, type FramedSocket } from "./terminal-worker-frames.js";
 import {
@@ -15,6 +16,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 export interface TerminalWorkerConnection {
   readonly connected: boolean;
   readonly workerPid: number;
+  readonly protocolVersion?: number;
   send(message: TerminalWorkerRequest, callback: (error: Error | null) => void): boolean;
   /** Closes the socket. The worker keeps running and keeps its terminals. */
   disconnect(): void;
@@ -31,13 +33,15 @@ export class TerminalWorkerConnectError extends Error {
 
 class SocketTerminalWorkerConnection extends EventEmitter implements TerminalWorkerConnection {
   readonly workerPid: number;
+  readonly protocolVersion: number;
   private readonly framed: FramedSocket;
   private closed = false;
 
-  constructor(framed: FramedSocket, workerPid: number) {
+  constructor(framed: FramedSocket, workerPid: number, protocolVersion: number) {
     super();
     this.framed = framed;
     this.workerPid = workerPid;
+    this.protocolVersion = protocolVersion;
     framed.socket.once("close", () => {
       this.closed = true;
       this.emit("close");
@@ -109,7 +113,7 @@ export function connectTerminalWorker(input: {
       }
       settled = true;
       clearTimeout(timer);
-      connection = new SocketTerminalWorkerConnection(framed, message.pid);
+      connection = new SocketTerminalWorkerConnection(framed, message.pid, message.protocolVersion);
       resolve(connection);
     });
     // `on`, not `once`: an error after authentication must not go unhandled. `close`
@@ -138,4 +142,35 @@ export function connectTerminalWorker(input: {
       framed.send(hello);
     });
   });
+}
+
+export type TerminalWorkerSocketProbe = "accepting" | "refused" | "unknown";
+
+const PROBE_TIMEOUT_MS = 1_000;
+// What a connect to a socket nobody listens on fails with: the unix socket file is left behind
+// (ECONNREFUSED) or gone, as a Windows pipe is once its server closes (ENOENT).
+const NO_LISTENER_ERRORS = new Set(["ECONNREFUSED", "ENOENT"]);
+
+/**
+ * Whether anything accepts connections on a worker's socket. It never authenticates, so the
+ * daemon controlling the worker keeps control: the worker drops a connection that closes
+ * before its hello.
+ */
+export async function probeTerminalWorkerSocket(
+  socketPath: string,
+): Promise<TerminalWorkerSocketProbe> {
+  const socket = createConnection(socketPath);
+  const timeout = new AbortController();
+  try {
+    return await Promise.race([
+      once(socket, "connect").then(() => "accepting" as const),
+      delay(PROBE_TIMEOUT_MS, "unknown" as const, { signal: timeout.signal }),
+    ]);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code && NO_LISTENER_ERRORS.has(code) ? "refused" : "unknown";
+  } finally {
+    timeout.abort();
+    socket.destroy();
+  }
 }

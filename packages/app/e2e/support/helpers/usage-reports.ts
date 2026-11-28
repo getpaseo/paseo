@@ -11,6 +11,12 @@ export interface UsageListRequest {
 export interface UsageReportsFixture {
   listRequests(): UsageListRequest[];
   waitForListRequests(count: number): Promise<void>;
+  /** Waits until the app holds an active `status.usage_report_changed` subscription. */
+  waitForUsageReportSubscription(): Promise<void>;
+  /** Pushes a `status.usage_report_changed` update to every active app subscription. */
+  pushReportUpdate(report: UsageReportEntry): void;
+  /** Runs `action`, then waits until the app has received the agent's next usage scope. */
+  untilUsageScopeChanges(agentId: string, action: () => Promise<unknown>): Promise<void>;
 }
 
 interface UsageReportsFixtureOptions {
@@ -26,6 +32,8 @@ interface UsageReportsFixtureOptions {
    */
   usageSupported?: boolean | (() => boolean);
   usageSettingSupported?: boolean;
+  /** Overrides `server_info.features.usageReportUpdates` when set. */
+  usageReportUpdates?: boolean;
   /** Released hosts expose provider.usage.list with no source icons. */
   providerUsageListOnly?: boolean;
   /** The host daemon's port; defaults to the E2E daemon. */
@@ -65,6 +73,7 @@ function withUsageSupportFeature(
   enabled: boolean,
   providerUsageListOnly: boolean,
   usageSettingSupported: boolean,
+  usageReportUpdates?: boolean,
 ): string | null {
   const envelope = parseJson(message) as {
     type?: unknown;
@@ -91,10 +100,31 @@ function withUsageSupportFeature(
           usageSetting: usageSettingSupported ? true : undefined,
           usageSources: enabled && !providerUsageListOnly,
           providerUsageList: enabled,
+          ...(usageReportUpdates !== undefined ? { usageReportUpdates } : {}),
         },
       },
     },
   });
+}
+
+function agentUsageScope(message: WebSocketMessage): { agentId: string; key: string } | null {
+  const envelope = parseJson(message) as {
+    type?: unknown;
+    message?: {
+      type?: unknown;
+      payload?: { kind?: unknown; agent?: { id?: unknown; usageScopeKey?: unknown } };
+    };
+  } | null;
+  const agent = envelope?.message?.payload?.agent;
+  if (
+    envelope?.message?.type !== "agent_update" ||
+    envelope.message.payload?.kind !== "upsert" ||
+    typeof agent?.id !== "string" ||
+    typeof agent.usageScopeKey !== "string"
+  ) {
+    return null;
+  }
+  return { agentId: agent.id, key: agent.usageScopeKey };
 }
 
 function pick<T>(values: T[], index: number): T {
@@ -121,12 +151,47 @@ function createCounter() {
   };
 }
 
+function trackUsageReportSubscriptionMessage(
+  request: Record<string, unknown> | null,
+  pendingUsageSubRequestIds: Set<string>,
+  usageReportSubscriptions: Map<string, { send: (payload: string) => void }>,
+  socketSubIds: Set<string>,
+): void {
+  if (
+    request?.type === "session.events.set_subscription.request" &&
+    typeof request.requestId === "string" &&
+    Array.isArray(request.events) &&
+    request.events.includes("status.usage_report_changed")
+  ) {
+    pendingUsageSubRequestIds.add(request.requestId);
+  }
+  if (
+    request?.type === "subscription.release.request" &&
+    typeof request.subscriptionId === "string"
+  ) {
+    usageReportSubscriptions.delete(request.subscriptionId);
+    socketSubIds.delete(request.subscriptionId);
+  }
+}
+
 export async function installUsageReportsFixture(
   page: Page,
   options: UsageReportsFixtureOptions,
 ): Promise<UsageReportsFixture> {
   const listRequests: UsageListRequest[] = [];
   const listCounter = createCounter();
+  const usageReportSubscriptions = new Map<string, { send: (payload: string) => void }>();
+  const usageReportSubCounter = createCounter();
+  const usageScopes = new Map<string, string>();
+  const usageScopeChanges = new Map<string, ReturnType<typeof createCounter>>();
+  const usageScopeCounts = new Map<string, number>();
+  const usageScopeCounter = (agentId: string) => {
+    const existing = usageScopeChanges.get(agentId);
+    if (existing) return existing;
+    const created = createCounter();
+    usageScopeChanges.set(agentId, created);
+    return created;
+  };
   const usageSupported = options.usageSupported ?? true;
   const isUsageSupported = () =>
     typeof usageSupported === "function" ? usageSupported() : usageSupported;
@@ -139,10 +204,23 @@ export async function installUsageReportsFixture(
     options.port === undefined ? daemonWsRoutePattern() : wsRoutePatternForPort(`${options.port}`);
   await page.routeWebSocket(route, (ws) => {
     const server = ws.connectToServer();
+    const pendingUsageSubRequestIds = new Set<string>();
+    const socketSubIds = new Set<string>();
+
+    ws.onClose(() => {
+      for (const id of socketSubIds) usageReportSubscriptions.delete(id);
+      socketSubIds.clear();
+    });
 
     ws.onMessage((message) => {
       const request = getSessionMessage(message);
       const requestId = request?.requestId;
+      trackUsageReportSubscriptionMessage(
+        request,
+        pendingUsageSubRequestIds,
+        usageReportSubscriptions,
+        socketSubIds,
+      );
       if (request?.type === requestType && typeof requestId === "string") {
         const listRequest: UsageListRequest = {
           forceRefresh: request.forceRefresh === true,
@@ -230,6 +308,26 @@ export async function installUsageReportsFixture(
     });
 
     server.onMessage((message) => {
+      const sessionMessage = getSessionMessage(message);
+      const subPayload =
+        sessionMessage?.type === "session.events.set_subscription.response"
+          ? (sessionMessage.payload as
+              | { requestId?: unknown; subscriptionId?: unknown }
+              | undefined)
+          : undefined;
+      if (
+        typeof subPayload?.requestId === "string" &&
+        pendingUsageSubRequestIds.delete(subPayload.requestId) &&
+        typeof subPayload.subscriptionId === "string"
+      ) {
+        usageReportSubscriptions.set(subPayload.subscriptionId, {
+          send: (payload) => ws.send(payload),
+        });
+        socketSubIds.add(subPayload.subscriptionId);
+        ws.send(message);
+        usageReportSubCounter.increment();
+        return;
+      }
       const serverInfo =
         typeof message === "string"
           ? withUsageSupportFeature(
@@ -237,8 +335,18 @@ export async function installUsageReportsFixture(
               isUsageSupported(),
               providerUsageListOnly,
               options.usageSettingSupported ?? true,
+              options.usageReportUpdates,
             )
           : null;
+      const scope = agentUsageScope(message);
+      if (scope && usageScopes.get(scope.agentId) !== scope.key) {
+        usageScopes.set(scope.agentId, scope.key);
+        usageScopeCounts.set(scope.agentId, (usageScopeCounts.get(scope.agentId) ?? 0) + 1);
+        // The app must hold the new scope before a test acts on it.
+        ws.send(serverInfo ?? message);
+        usageScopeCounter(scope.agentId).increment();
+        return;
+      }
       ws.send(serverInfo ?? message);
     });
   });
@@ -246,5 +354,28 @@ export async function installUsageReportsFixture(
   return {
     listRequests: () => [...listRequests],
     waitForListRequests: (count) => listCounter.waitFor(count),
+    waitForUsageReportSubscription: () => usageReportSubCounter.waitFor(1),
+    pushReportUpdate: (report) => {
+      for (const [subscriptionId, target] of usageReportSubscriptions) {
+        target.send(
+          JSON.stringify({
+            type: "session",
+            message: {
+              type: "status",
+              payload: {
+                status: "usage_report_changed",
+                subscriptionId,
+                report,
+              },
+            },
+          }),
+        );
+      }
+    },
+    untilUsageScopeChanges: async (agentId, action) => {
+      const next = (usageScopeCounts.get(agentId) ?? 0) + 1;
+      await action();
+      await usageScopeCounter(agentId).waitFor(next);
+    },
   };
 }

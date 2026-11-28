@@ -1,5 +1,12 @@
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
-import type { Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  HookCallback,
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+  SessionCronSummary,
+  StopHookInput,
+} from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,6 +17,7 @@ import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { AgentTimelineRow } from "../../agent-manager.js";
 import { projectTimelineRows } from "../../timeline-projection.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { asInternals } from "../../../test-utils/class-mocks.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 
 /**
@@ -712,19 +720,36 @@ describe("background Claude subagents", () => {
 test("Claude runtime safety protects silent shells, monitors and pending completion notifications", () => {
   const safety = new ClaudeRuntimeSafety();
   const observe = (message: unknown) => safety.observe(message as SDKMessage);
-  observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" });
+  expect(observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" })).toEqual([]);
   expect(safety.canStopRuntime()).toBe(true);
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        { task_id: "quiet-shell", task_type: "local_bash", description: "sleep 7200" },
+        { task_id: "monitor", task_type: "local_bash", description: "watch build" },
+        { task_id: "native-child", task_type: "local_agent", description: "research" },
+      ],
+    }),
+  ).toEqual([
+    { id: "quiet-shell", kind: "shell", description: "sleep 7200", canStop: true },
+    { id: "monitor", kind: "shell", description: "watch build", canStop: true },
+  ]);
+  expect(safety.canStopRuntime()).toBe(false);
   observe({
     type: "system",
-    subtype: "background_tasks_changed",
-    tasks: [
-      { task_id: "quiet-shell", task_type: "local_bash", description: "sleep 7200" },
-      { task_id: "monitor", task_type: "local_bash", description: "watch build" },
-      { task_id: "native-child", task_type: "local_agent", description: "research" },
-    ],
+    subtype: "task_started",
+    task_id: "monitor",
+    tool_use_id: "tool-monitor",
   });
-  expect(safety.canStopRuntime()).toBe(false);
-  observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+  expect(
+    observe({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tool-monitor", name: "Monitor" }] },
+    })?.find((item) => item.id === "monitor")?.kind,
+  ).toBe("monitor");
+  expect(observe({ type: "system", subtype: "background_tasks_changed", tasks: [] })).toEqual([]);
   expect(safety.canStopRuntime()).toBe(false);
   for (const task_id of ["quiet-shell", "monitor"])
     observe({ type: "system", subtype: "task_notification", task_id });
@@ -736,9 +761,112 @@ test("Claude runtime safety protects silent shells, monitors and pending complet
   expect(safety.canStopRuntime()).toBe(false);
   observe({ type: "system", subtype: "background_tasks_changed", tasks: [] });
   expect(safety.canStopRuntime()).toBe(true);
+  safety.retire();
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "late", task_type: "local_bash" }],
+    }),
+  ).toBeUndefined();
+  safety.reset();
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "new", task_type: "local_bash" }],
+    }),
+  ).toEqual([{ id: "new", kind: "shell", description: null, canStop: true }]);
 });
 
-test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+test("emits inventory only when relevant observations change it", () => {
+  const safety = new ClaudeRuntimeSafety();
+  const observe = (message: unknown) => safety.observe(message as SDKMessage);
+  expect(observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" })).toEqual([]);
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "m", task_type: "local_bash" }],
+    }),
+  ).toEqual([{ id: "m", kind: "shell", description: null, canStop: true }]);
+  expect(
+    observe({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "m", task_type: "local_bash" }],
+    }),
+  ).toBeUndefined();
+  expect(
+    observe({ type: "system", subtype: "task_started", task_id: "m", tool_use_id: "tool" }),
+  ).toBeUndefined();
+  expect(
+    observe({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tool", name: "Monitor" }] },
+    }),
+  ).toEqual([{ id: "m", kind: "monitor", description: null, canStop: true }]);
+  expect(
+    observe({ type: "assistant", message: { content: [{ type: "text", text: "streamed" }] } }),
+  ).toBeUndefined();
+  expect(
+    observe({ type: "system", subtype: "task_started", task_id: "m", tool_use_id: "other" }),
+  ).toEqual([{ id: "m", kind: "shell", description: null, canStop: true }]);
+});
+
+test("Claude runtime safety releases a process that has not been sent a turn", () => {
+  const safety = new ClaudeRuntimeSafety();
+  // A resumed process that only answered control requests never sends init.
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.notePromptSent();
+  expect(safety.canStopRuntime()).toBe(false);
+  safety.observe({ type: "system", subtype: "init", claude_code_version: "2.1.292" } as SDKMessage);
+  expect(safety.canStopRuntime()).toBe(true);
+  safety.reset();
+  expect(safety.canStopRuntime()).toBe(true);
+  // A CLI without a roster that ran a turn may own background work.
+  safety.observe({ type: "system", subtype: "init", claude_code_version: "2.1.220" } as SDKMessage);
+  expect(safety.canStopRuntime()).toBe(false);
+  safety.retire();
+  expect(safety.canStopRuntime()).toBe(false);
+});
+
+test("Claude session started by a control request without a turn can stop its runtime", async () => {
+  let launched = 0;
+  const query = {
+    next: () => new Promise<IteratorResult<SDKMessage>>(() => {}),
+    return: async () => ({ done: true, value: undefined }),
+    close: () => {},
+    interrupt: async () => {},
+    setPermissionMode: async () => {},
+    setModel: async () => {},
+    supportedModels: async () => [],
+    supportedCommands: async () => [],
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Query;
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      launched++;
+      return query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  try {
+    // Reopening a chat lists its commands, which launches Claude with no prompt.
+    await session.listCommands!();
+    expect(launched).toBe(1);
+    expect(await session.canStopRuntime!()).toBe(true);
+  } finally {
+    await session.close();
+  }
+});
+
+/** A Claude session whose SDK stream the test feeds one message at a time. */
+async function createPumpedClaudeSession() {
   let wake: (() => void) | undefined;
   const channel = { closed: false };
   const queue: Array<{ message: SDKMessage; consumed(): void }> = [];
@@ -765,6 +893,7 @@ test("Claude session runtime safety observes pumped background work and autonomo
     wake?.();
   };
   let nativeInput!: AsyncIterator<SDKUserMessage>;
+  let stopHook: HookCallback | undefined;
   let connected!: () => void;
   const connection = new Promise<void>((resolve) => {
     connected = resolve;
@@ -789,9 +918,10 @@ test("Claude session runtime safety observes pumped background work and autonomo
   const session = await new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveBinary: async () => "/test/claude/bin",
-    queryFactory: ({ prompt }) => {
+    queryFactory: ({ prompt, options }) => {
       if (typeof prompt === "string") throw new Error("Expected streaming input");
       nativeInput = prompt[Symbol.asyncIterator]();
+      stopHook = options?.hooks?.Stop?.[0]?.hooks[0];
       connected();
       return query;
     },
@@ -809,12 +939,33 @@ test("Claude session runtime safety observes pumped background work and autonomo
     usage: { input_tokens: 1, output_tokens: 1 },
     total_cost_usd: 0,
   };
-  try {
-    await session.startTurn("start background work");
+  // A session-only cron lives in this process, and Claude reports it only to the Stop hook.
+  const stop = (session_crons: SessionCronSummary[]) => {
+    const stopInput: StopHookInput = {
+      hook_event_name: "Stop",
+      session_id: "runtime-safety",
+      transcript_path: "",
+      cwd: process.cwd(),
+      stop_hook_active: false,
+      session_crons,
+    };
+    return stopHook!(stopInput, undefined, { signal: new AbortController().signal });
+  };
+  /** Starts a foreground turn and returns once Claude has opened it. */
+  async function startTurn(prompt: string) {
+    await session.startTurn(prompt);
     await connection;
     const input = await nativeInput.next();
     await push({ type: "command_lifecycle", command_uuid: input.value.uuid, state: "started" });
     await push(init);
+  }
+  return { session, push, stop, startTurn, init, result };
+}
+
+test("Claude session runtime safety observes pumped background work and autonomous replies", async () => {
+  const { session, push, stop, startTurn, init, result } = await createPumpedClaudeSession();
+  try {
+    await startTurn("start background work");
     await push(result);
     expect(await session.canStopRuntime!()).toBe(true);
     await push({
@@ -838,6 +989,197 @@ test("Claude session runtime safety observes pumped background work and autonomo
     expect(await session.canStopRuntime!()).toBe(false);
     await push(result);
     expect(await session.canStopRuntime!()).toBe(true);
+    await stop([{ id: "99eb0b69", schedule: "0 */6 * * *", recurring: true, prompt: "say hi" }]);
+    expect(await session.canStopRuntime!()).toBe(false);
+    await stop([]);
+    expect(await session.canStopRuntime!()).toBe(true);
+  } finally {
+    await session.close();
+  }
+});
+
+test("Claude session reports a pending wakeup until the turn its background work starts", async () => {
+  const { session, push, stop, startTurn, init, result } = await createPumpedClaudeSession();
+  try {
+    await startTurn("run the build in the background");
+    await push({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "build", task_type: "local_bash", description: "npm run build" }],
+    });
+    await push(result);
+    expect(session.hasPendingWakeup!()).toBe(true);
+    // Claude's order at wake-up: the notification, the empty roster, then the new turn.
+    await push({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "build",
+      status: "completed",
+      output: "built",
+      summary: "built",
+    });
+    await push({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+    expect(session.hasPendingWakeup!()).toBe(true);
+    await push(init);
+    expect(session.hasPendingWakeup!()).toBe(false);
+    await push(result);
+    expect(session.hasPendingWakeup!()).toBe(false);
+
+    // A one-shot wakeup starts a turn by itself; a recurring cron never settles.
+    const wakeup = { id: "wake", schedule: "30 14 26 11 *", recurring: false, prompt: "check" };
+    const cron = { id: "cron", schedule: "0 */6 * * *", recurring: true, prompt: "say hi" };
+    await stop([wakeup, cron]);
+    expect(session.hasPendingWakeup!()).toBe(true);
+    await stop([cron]);
+    expect(session.hasPendingWakeup!()).toBe(false);
+  } finally {
+    await session.close();
+  }
+});
+
+/**
+ * A Claude process that never answers: nothing is pumped, so no `init`, no lifecycle and no
+ * result. `cancelAsyncMessage` is the SDK's withdraw path for a prompt Claude has not taken yet.
+ */
+function createWithdrawableQuery() {
+  let wake: (() => void) | undefined;
+  const queue: SDKMessage[] = [];
+  const channel = { closed: false };
+  const pump = (async function* () {
+    while (!channel.closed) {
+      const message = queue.shift();
+      if (!message) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        continue;
+      }
+      yield message;
+    }
+  })();
+  const query = {
+    next: () => pump.next(),
+    return: async () => {
+      channel.closed = true;
+      wake?.();
+      return pump.return(undefined);
+    },
+    close: () => {
+      channel.closed = true;
+      wake?.();
+    },
+    interrupt: vi.fn(async () => undefined),
+    cancelAsyncMessage: vi.fn(async () => true),
+    setPermissionMode: vi.fn(async () => undefined),
+    setModel: vi.fn(async () => undefined),
+    supportedModels: vi.fn(async () => []),
+    supportedCommands: vi.fn(async () => []),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  } as unknown as Query & {
+    interrupt: ReturnType<typeof vi.fn>;
+    cancelAsyncMessage: ReturnType<typeof vi.fn>;
+  };
+  return {
+    query,
+    push: (message: unknown) => {
+      queue.push(message as SDKMessage);
+      wake?.();
+    },
+  };
+}
+
+async function createWithdrawableSession() {
+  const withdrawn = createWithdrawableQuery();
+  let nativeInput!: AsyncIterator<SDKUserMessage>;
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      if (typeof prompt === "string") throw new Error("Expected streaming input");
+      nativeInput = prompt[Symbol.asyncIterator]();
+      return withdrawn.query;
+    },
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  // The query starts on the first prompt, so the input iterator exists only from then on.
+  return { session, withdrawn, promptIterator: () => nativeInput };
+}
+
+interface SessionRuntimeInternals {
+  mainTurnInFlight: boolean;
+}
+
+test("a prompt withdrawn before Claude starts leaves the runtime stoppable", async () => {
+  const { session, withdrawn, promptIterator } = await createWithdrawableSession();
+  try {
+    await session.startTurn("hello");
+    const prompt = await promptIterator().next();
+    // Claude never sent init, so it never started this prompt: the cancel withdraws it.
+    await session.interrupt();
+
+    await vi.waitFor(() => {
+      expect(withdrawn.query.cancelAsyncMessage).toHaveBeenCalledWith(prompt.value.uuid);
+    });
+    expect(withdrawn.query.interrupt).not.toHaveBeenCalled();
+    // A process that was sent a prompt and then withdrew it owns no background work, so idle
+    // cleanup must be able to stop it.
+    await vi.waitFor(async () => {
+      expect(await session.canStopRuntime!()).toBe(true);
+    });
+  } finally {
+    await session.close();
+  }
+});
+
+test("a prompt Claude had already started keeps the runtime held after the cancel", async () => {
+  const { session, withdrawn, promptIterator } = await createWithdrawableSession();
+  try {
+    await session.startTurn("hello");
+    const prompt = await promptIterator().next();
+    withdrawn.push({
+      type: "command_lifecycle",
+      command_uuid: prompt.value.uuid,
+      state: "started",
+    });
+    await vi.waitFor(() =>
+      expect(asInternals<SessionRuntimeInternals>(session).mainTurnInFlight).toBe(true),
+    );
+
+    await session.interrupt();
+
+    // Nothing was left to withdraw, so the withdrawal must not clear the turn it never took.
+    expect(withdrawn.query.cancelAsyncMessage).not.toHaveBeenCalled();
+    expect(await session.canStopRuntime!()).toBe(false);
+  } finally {
+    await session.close();
+  }
+});
+
+test("withdrawing a queued steer during a started turn before init keeps the runtime held", async () => {
+  const { session, withdrawn, promptIterator } = await createWithdrawableSession();
+  try {
+    const { turnId } = await session.startTurn("hello");
+    const prompt = await promptIterator().next();
+    withdrawn.push({
+      type: "command_lifecycle",
+      command_uuid: prompt.value.uuid,
+      state: "started",
+    });
+    await vi.waitFor(() =>
+      expect(asInternals<SessionRuntimeInternals>(session).mainTurnInFlight).toBe(true),
+    );
+    const steer = await session.steerActiveTurn!("wait actually", { expectedTurnId: turnId });
+    expect(steer.status).toBe("accepted");
+    const steeredPrompt = await promptIterator().next();
+
+    await session.interrupt();
+
+    await vi.waitFor(() => {
+      expect(withdrawn.query.cancelAsyncMessage).toHaveBeenCalledWith(steeredPrompt.value.uuid);
+      expect(withdrawn.query.interrupt).toHaveBeenCalled();
+    });
+    expect(await session.canStopRuntime!()).toBe(false);
   } finally {
     await session.close();
   }

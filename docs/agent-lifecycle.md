@@ -14,9 +14,10 @@ Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idl
 
 ## Daemon restart recovery
 
-Hosts resume interrupted agents by default after graceful shutdown or a crash. The daemon
-reopens the saved provider conversation and settings, then sends `Resume working.`. Change
-`agents.resumePrompt` or disable `agents.resumeOnStartup` in host config or Host settings → Agents.
+Restart recovery is off by default. Enable `agents.resumeOnStartup` in host config or
+Settings → Host → Daemon to resume interrupted agents after graceful shutdown or a crash. The daemon
+reopens the saved provider conversation and settings, then sends `Resume working.`. Customize
+the prompt with `agents.resumePrompt` or the same settings page.
 Disabling recovery consumes pending intent; enabling it later does not revive old work.
 
 Only agents recorded as running qualify. Idle and initializing agents stay inactive. Archived
@@ -79,7 +80,9 @@ Provider checks follow the signals their runtimes expose:
 - Codex queries background terminals for loaded threads, including native children, and protects
   pending provider requests. App servers without the terminal-list RPC stay resident.
 - OpenCode checks active executions and descendants. V1 checks PTYs; v2 also checks shell and
-  inbox inventories. The shared server remains leased while a session vetoes collection.
+  inbox inventories. The shared server remains leased while a session vetoes collection. V2 lets
+  another session's execution veto only when releasing the lease would stop the server; the shared
+  server stays up after its last lease goes.
 - Pi checks streaming, compaction, pending replies, and adapter-owned operations. Known native
   subagent signals also protect their parent through the daemon's subagent store.
 - OMP additionally requires `get_state.isSettled: true` and `hasPendingAsyncWork: false`.
@@ -135,6 +138,12 @@ the marker. Closing a tab sets that client's label to `false`. Any `true` client
 open. Detach clears the parent and every open-tab label. The surviving child therefore becomes a
 normal root agent immediately, and closing its still-open tab archives it.
 
+Agent-scoped workspace creation records the caller's workspace as `parentWorkspaceId`.
+This is informational ancestry for future workspace grouping. It does not change placement,
+visibility, status, or archive behavior. Archiving a parent workspace preserves its children's
+records and parentage. Unscoped creation and existing workspaces have no parent; ancestry is
+never inferred from directories, projects, or Git branches.
+
 Runtime ownership is resolved from explicit workspace ID and caller context, never from `cwd`. Workspace creation is a separate operation with `local | worktree` isolation; agent creation reuses that workspace unless a new workspace is explicitly requested.
 
 Setup belongs to the workspace, including combined workspace-plus-agent creation and the supported agent `worktree` request. Run setup through the workspace workflow before launching configured terminals or scripts. Setup output is read in the Setup panel from per-command snapshots; never produce setup chat timeline rows or concatenate command logs. Legacy agent `git`/`worktreeName` inputs and hidden MCP worktree placement are rejected with workspace-creation guidance. Existing wire schemas retain an empty combined-log string for parsing compatibility.
@@ -143,12 +152,29 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 
 `notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback.
 
-Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
+Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch. The module keeps one ordered queue per recipient, and the recipient reads its prompts in the order the daemon admitted them. Nothing overtakes an older queued message. A prompt takes its place when the daemon admits it, even while the provider is still starting an earlier turn, and a message stays in the queue until the turn that carries it starts. The turn has started when the agent manager acknowledges the run start; a turn that fails after that point is not delivered again.
 
-The pending message window is in memory. Clean shutdown flushes it before closing agents; an abrupt
-crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
+Any sender picks `queue`, `steer`, or `interrupt` with `activeTurnBehavior`. Agent senders default to `queue`; non-agent senders (app, CLI, plugins, Hub, top-level MCP) default to `interrupt`. Each kind of prompt is released this way:
+
+- **`queue`** waits for any running or starting turn (including compaction) to end on its own or fail, then delivers the queued prompts together. The daemon releases it when it observes the recipient settle; a two-second timer also retries. On an idle recipient, agent messages wait two quiet seconds (steady arrivals cannot hold that window open past ten seconds); a non-agent queued message skips that quiet window and starts a turn at once. A non-agent queued message is sent unwrapped when dispatched alone, and in a `kind="user-message"` envelope when it shares a prompt with other messages. Finish notifications and change-request updates always queue.
+- **`steer`** waits for neither the quiet window nor the turn. It is dispatched at admission as one prompt that enters the running turn: the messages queued before it, then the steer. A provider that cannot steer, or that refuses this steer, gets the prompt as a replacing turn instead, the same as a person's steer.
+- **`interrupt`** is dispatched at admission the same way, as one prompt that replaces the running turn. An older queued message cannot start a turn after the newer `interrupt` that countermands it.
+- **A person's direct prompt** (`steer` or `interrupt` from app, CLI, plugins, Hub, or top-level MCP) is dispatched directly and takes the queue along the same way: the messages admitted before it first, then the person's text, in one provider prompt. Messages admitted after it follow it. The person's text keeps its own transcript row. When the turn does not start, the messages return to the queue in their place. That covers a start the provider rejects and a start that is not acknowledged within 60 seconds; a provider that starts the turn after those 60 seconds receives the messages twice.
+- **Stop** (the stop button, Escape, `cancel_agent`, a Hub interrupt) starts nothing. Messages admitted before the Stop are held, not dropped, including an interrupt whose turn had not started yet. They go ahead of the recipient's next prompt, in that prompt's turn: a person's prompt, or an agent message or notification admitted after the Stop. A held steer or interrupt no longer enters the turn; it waits like a queued message. A queue step or dispatch decided before the Stop is void, and the queue is held again when the message that reopened it is withdrawn. A replacing prompt, a reload, and a rewind are not a Stop. Neither is `cancel_agent` on a recipient with no running or starting turn: it stops nothing, reports that it canceled no run, and a queued message keeps its quiet window.
+
+The queued receipt carries the applied behavior and guidance text for the sender. The text comes from two facts known at admission: whether the recipient has a running turn, and whether its provider can steer (`AgentManager.canSteer`, which is true when the session offers `steerActiveTurn`). It does not wait for the outcome. Guidance for a message queued behind a running turn tells the sender to send a short `steer` or `interrupt` follow-up instead of resending, because the follow-up carries the queued message ahead of it and a resend would be read twice. The MCP tool, the WebSocket `send_agent_message_response`, the CLI, and the connected-host path all relay this one text.
+
+Older CLIs and connected hosts send an explicit `steer` for every default agent send. The daemon reads an agent sender's `steer` as `queue` unless the client advertises the `agent_active_turn_behaviors` capability. A new client talking to a daemon without `server_info.features.agentActiveTurnBehaviors` sends no behavior for `queue` and refuses a `steer`. A new client talking to a daemon without `server_info.features.nonAgentMessageQueue` refuses a non-agent `queue` before sending.
+
+A command the provider accepts out of band is the one exception to admission order: it runs alone without ending the turn. A queued command runs ahead of older messages, and a `steer` or `interrupt` that runs this way takes no queued message along. A person's command leaves the queue where it is. A prompt is a command when it starts with a slash and a name that has no second slash, so `/compact` is one and `/tmp/build.log is stale` is plain text.
+
+One provider prompt has one session mode. A batch released by a steer, an interrupt, or a person's prompt uses the latest explicit choice in it, the person's own first. Queued messages with conflicting choices keep separate ordered dispatches.
+
+The pending message window is in memory. Clean shutdown flushes it, held messages included, before
+closing agents; an abrupt crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
 acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued
-admission within their original timeout and cancellation scope.
+admission within their original timeout and cancellation scope, and return at permission
+checkpoints and when a Stop holds the queue.
 
 Finish notification intent has a separate daemon-owned lifetime. The finish-subscriptions module
 persists caller, child, host, and ownership policy through an injectable store; its JSON adapter uses
@@ -159,7 +185,7 @@ caller, child, and host into one watch.
 
 Bootstrap restores these watches after repairing stale running records to `closed` and before opening
 ingress. Reading a closed child's result does not load its provider. A finish notification reports that
-the child's run has settled; the parent decides whether its task is complete. A child chosen for restart
+the child has settled (see below); the parent decides whether its task is complete. A child chosen for restart
 recovery is observed only after its resume was sent, so the parent never hears that it was closed
 in between. Archived or deleted parents suppress delivery;
 parent-owned creation watches also stop
@@ -172,6 +198,18 @@ outstanding intent. A crash after successful dispatch but before removal commits
 notification. Clean shutdown can also flush an already queued callback while retaining its intent,
 so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
 
+A turn end is not always a settled child. When the child ends its turn with work that will start its
+next turn by itself, the caller gets one `message` notice ("ended its turn but is still working") and
+the subscription keeps following the child. That work is a running turn, queued messages, a pending
+provider wake-up (`AgentSession.hasPendingWakeup`: Claude background tasks, task notifications, and
+one-shot wake-ups), or the child's own outstanding finish subscriptions as a caller. Heartbeats,
+recurring crons, change-request watches, and other daemon background items never count: they are
+external triggers, not work the caller is waiting for. While following, turn ends and work changes stay
+silent until nothing is pending, which sends `finished` and removes the subscription. `followingSince`
+is stored before the notice is sent, so restarts resume following without repeating it, and following
+ends after 24 hours with an "is still working" notice. Remote children and providers without the probe
+report their first turn end as `finished`.
+
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.
 A watched child that closes before its finish event also notifies the caller so delegated work cannot disappear silently during archive or workspace teardown.
@@ -182,23 +220,42 @@ Some providers can create their own child sessions inside one provider runtime. 
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
 
-## Background workspaces
+## Background visibility
 
-`workspace.background` controls discovery only. Background workspaces contain ordinary durable
-agents and terminals: provider history, plugin hooks, parentage, archive, and restart recovery
-keep their normal behavior. Visibility is creation-only; selecting an existing workspace cannot
-change it. New workspaces default to false, inherit the caller workspace's value when an agent
-creates one without an override, and accept explicit true or false.
+An agent is effectively background when it or its workspace is background:
+`agent.background || workspace.background`. Background controls discovery only. Background agents
+and the agents in background workspaces are ordinary durable agents: provider history, plugin
+hooks, parentage, finish notifications to a caller, archive, and restart recovery keep their
+normal behavior. Both flags are fixed at creation.
 
-The daemon derives agent discovery from workspace ownership. Default workspace and agent lists,
-including History requests, exclude background work; `filter.includeBackground` includes it.
-Exact-ID operations bypass discovery filtering. The app replicates both kinds and filters only
-its sidebar with **Show background**, so direct navigation and restored tabs remain available.
+- **Agent.** `create_agent_request.background` marks the agent. Use it for helpers the user does
+  not watch, such as a plugin's classifier in the user's open workspace. A background agent never
+  raises attention, adds nothing to its workspace's status bucket or Last prompt time, and stays
+  out of tabs, the parent's subagent track and agent lists in the app. A tab opened by id still
+  works.
+- **Workspace.** `workspace.background` hides the workspace from the sidebar unless **Show
+  background** is on.
+- **Inheritance.** When `background` is omitted, an agent created by a caller agent takes the
+  caller's own `background`. A new workspace takes the caller's effective background. A request
+  that creates its workspace applies `background` to both the agent and the workspace. Explicit
+  true or false always wins.
+
+`AgentDirectory` (`packages/server/src/server/agent/directory.ts`) owns visibility for lists.
+Default workspace and agent lists, including History requests, exclude background work;
+`includeBackground` includes it. Exact-ID operations bypass discovery filtering. The app
+replicates inclusively and filters at each surface.
+
+Sources without the `background_agents` hello capability get workspace-only visibility on
+inclusive reads and subscriptions: agents in background workspaces, but no agent-level background
+agents. Older apps replicate inclusively and auto-open a tab for every root agent, so a classifier
+run would otherwise open a tab each turn. That visibility has its own directory sync generation.
 
 Sequenced directories keep complete canonical collections. A filtered read must never replace
 those collections with its subset. Inclusive and default observations have distinct cursor
 scopes, so changing scope requires a fresh snapshot rather than reusing an incomplete cache.
-Clients gate creation and inclusive discovery on `features.backgroundWorkspaces`.
+Clients gate background workspaces and inclusive discovery on `features.backgroundWorkspaces`.
+They gate a background agent placed in an existing workspace or under a caller on
+`features.backgroundAgents`.
 
 ### Private daemon helpers
 
@@ -231,12 +288,36 @@ Workspace archive is a separate lifecycle. Archiving or removing a worktree can 
 agent record without setting the agent's `archivedAt`, while its `workspaceId` still points at the
 archived workspace. History navigation must not infer workspace lifecycle from `agent.archivedAt`
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
-only the route's explicit Unarchive or Restore action changes the archived workspace.
+the route exposes explicit Unarchive and Restore actions.
+
+Workspace archive is undoable from the archived toast, or with Cmd/Ctrl+Z, while the toast is up.
+The daemon runs one archive lane per workspace, shared by every connection
+(`packages/server/src/server/workspace-archive-operations.ts`):
+
+| A request arrives while  | Result                                                    |
+| ------------------------ | --------------------------------------------------------- |
+| an archive runs: archive | joins the running archive                                 |
+| an archive runs: undo    | aborts the archive, waits for it to settle, then restores |
+| an undo runs: archive    | waits for the undo, then archives                         |
+| an undo runs: undo       | joins the running undo                                    |
+
+A request takes its place in the lane before its first `await`. Arrival order decides, so an undo
+sent right behind its archive still cancels it.
+
+An aborted archive stops at its next checkpoint and reports `canceled`; the undo unarchives only
+the agents that archive itself archived. Deleting the worktree directory is the point of no
+return: an undo after it recreates the worktree through workspace recovery. The client shows or
+hides the row by the latest local intent, so a late remove or upsert from a superseded request
+does not flip it back. Tabs and layout are purged only once the undo window closes with the
+archive committed.
 
 History navigation opens the selected agent without changing either archive state. Workspace
-**Restore** recovers only the workspace; the selected archived agent stays open with its callout.
-The agent's **Unarchive** runs the provider's native unarchive hook before interactive resume and
-history hydration. Other archived agents stay archived.
+**Unarchive**, **Restore**, Undo, and reopening the directory recover the agents closed by that
+workspace archive, including
+after a daemon restart or after the toast expires. Agents archived individually beforehand stay
+archived. A failed worktree recreation leaves the workspace and its agents archived for retry.
+Each recovered agent runs the provider's native unarchive hook before interactive resume and
+history hydration.
 
 Opening an agent is a navigation choice, independent of whether its details are cached. The
 layout retains that choice across reload while the panel fetches the agent from the daemon.
@@ -285,16 +366,26 @@ Workspace status is an aggregate activity signal computed **per `workspaceId`**.
 
 Running provider-native subagents contribute `running` to the workspace owned by their parent agent. Their completed, failed, and canceled states stay in the parent's subagents track.
 
-A finished workspace can be marked unread after it has been reviewed. The daemon restores
-`finished` attention on its newest eligible workspace-root agent without sending a new completion
-notification. Opening the workspace clears that attention through the normal focus flow.
+A finished or failed workspace can be marked unread after it has been reviewed. The daemon restores
+attention on its newest eligible workspace-root agent, `error` for an agent whose lifecycle is
+`error` and `finished` otherwise, without sending a new notification. Opening a workspace restores
+its selected tab; attention on another agent remains unread until that agent is focused or the
+workspace is explicitly marked read.
 
-Attention is set by the agent finishing or failing and cleared by the client's
-`workspace.clear_attention`, which fires when the user reads the chat. Loading an agent's runtime is
+Attention is set by the agent finishing or failing and acknowledged by deliberate focus or
+interaction with its chat, including repeat clicks in an already focused pane. A completion
+arriving while focused stays unread until the next interaction; leaving does not acknowledge it. Loading an agent's runtime is
 neither, so resuming carries the stored attention and the stored last-activity time through
 untouched. Forging either makes a background resume look like the user read a workspace and like the
 agent worked in it just now, which rewrites the sidebar timestamp permanently — persisted
 `updatedAt` is what workspace `statusEnteredAt` is re-derived from on the next daemon start.
+
+The `failed` bucket follows unread `error` attention, not lifecycle status. An agent stays `error`
+until its next turn starts, so reading the chat dismisses the red dot the same way it dismisses the
+green one. For the same reason every new failure raises `error` attention, including a failed reload
+that leaves the lifecycle at `error`, and replaces unread `finished` attention; otherwise the failed
+agent would show the green dot or none. Subagents track marks are the exception: they follow the
+child's lifecycle, because the track is where a failed child stays visible.
 
 ## The subagents track
 

@@ -4,16 +4,17 @@ Install this directory as a plugin, open an agent, and choose **Button examples:
 Command Center. One header button and one composer pill appear. Choose another mode to update
 those same registrations. Switching agents moves the example to that agent's workspace and composer.
 
-| Command Center command                | Header                                | Composer                        | Try                                                                                                                   |
-| ------------------------------------- | ------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Button examples: action**           | Refresh icon only                     | Refresh icon and label          | Refresh reads the workspace from the daemon and updates the label and tooltip. Paseo owns pending and error feedback. |
-| **Button examples: menu**             | Wrench, Tools, chevron                | Wrench and Tools                | Refresh, a separator, custom details, a Display submenu, and a disabled item.                                         |
-| **Button examples: popover**          | Reactive status dot, Details, chevron | Reactive status dot and Details | Workspace data updates through `useWorkspace`; Done closes the surface.                                               |
-| **Button examples: hide / show**      | Hide or restore the button            | Hide or restore the pill        | Visibility changes through `registration.update({ visible })`.                                                        |
-| **Button examples: disable / enable** | Disable or enable the button          | Disable or enable the pill      | Disabled state changes through `registration.update({ disabled })`.                                                   |
+| Command Center command                | Header                                | Composer                     | Try                                                                                                                   |
+| ------------------------------------- | ------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Button examples: action**           | Refresh icon only                     | Refresh icon and label       | Refresh reads the workspace from the daemon and updates the label and tooltip. Paseo owns pending and error feedback. |
+| **Button examples: menu**             | Wrench, Tools, chevron                | Wrench, Tools, chevron       | Refresh, a separator, custom details, a Display submenu, and a disabled item.                                         |
+| **Button examples: popover**          | Reactive status dot, Details, chevron | Status dot, Details, chevron | Workspace data updates through `useWorkspace`; Done closes the surface.                                               |
+| **Button examples: hide / show**      | Hide or restore the button            | Hide or restore the pill     | Visibility changes through `registration.update({ visible })`.                                                        |
+| **Button examples: disable / enable** | Disable or enable the button          | Disable or enable the pill   | Disabled state changes through `registration.update({ disabled })`.                                                   |
 
 On compact layouts the header button is borderless and icon-only. Menus and custom content open
-bottom sheets. Composer pills keep their icon and label, without a chevron, on every layout.
+bottom sheets. Composer pills keep their icon and label on every layout, and menus and popovers keep
+their chevron.
 
 The example contributes one header button at a time. Additional actions live under the named
 **Tools** button; the example does not add a three-dot control or trigger plugin overflow.

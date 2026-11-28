@@ -5,11 +5,13 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
@@ -17,17 +19,19 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
-import {
-  PiProviderOptionsSchema,
-  PiRpcAgentClient,
-  PiRpcAgentSession,
-  transformPiModels,
-} from "./agent.js";
+import { PiProviderOptionsSchema, PiRpcAgentClient, PiRpcAgentSession } from "./agent.js";
+import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
+import { isolatePaseoHome } from "../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
+
+// A run Pi starts by itself carries the id the session assigns to it.
+const AUTONOMOUS_TURN_ID = expect.stringMatching(/^autonomous-/);
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -140,16 +144,6 @@ function piUserEntry(input: { id: string; parentId: string | null; text: string 
 
 function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
   return { type: "message", id, parentId, message: { role: "assistant", content: [] } };
-}
-
-// Pi's context path: the entries from the root to the leaf.
-function piBranchTo(entries: PiSessionEntry[], leafId: string): PiSessionEntry[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const branch: PiSessionEntry[] = [];
-  for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
-    branch.unshift(entry);
-  }
-  return branch;
 }
 
 function parseEntryCapture(notification: string): unknown {
@@ -983,6 +977,337 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("streams Pi content blocks by content index when an earlier thinking delta arrives late", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "verify" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "." },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: " complete." },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_end", contentIndex: 1 },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "verify" },
+      { type: "reasoning", text: "." },
+      { type: "assistant_message", text: "Answer", messageId: "response-1" },
+      { type: "assistant_message", text: " complete.", messageId: "response-1" },
+    ]);
+  });
+
+  test("keeps Pi answer text and fenced code blocks intact when thinking interleaves mid-word", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("show code");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-1", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: '```ts\nconst msg = "Validation makes that fail lou',
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 1,
+        delta: "All green. Note: the broker caches this value.",
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: 'dly instead of silently";\n```',
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_end", contentIndex: 0 },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "assistant_message",
+        text: '```ts\nconst msg = "Validation makes that fail lou',
+        messageId: "response-1",
+      },
+      {
+        type: "assistant_message",
+        text: 'dly instead of silently";\n```',
+        messageId: "response-1",
+      },
+      {
+        type: "reasoning",
+        text: "All green. Note: the broker caches this value.",
+      },
+    ]);
+  });
+
+  test("flushes indexed Pi blocks under the previous message id when its end event is missing", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "answer" },
+    });
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-2", content: [] },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "answer", messageId: "response-1" },
+    ]);
+  });
+
+  test("flushes buffered Pi content when Stop interrupts a turn mid-stream", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.abort = async () => {
+      // Pi emits an aborted terminal response before acknowledging abort (interruptingTurn path).
+      fakeSession.finishTurn({
+        role: "assistant",
+        responseId: "response-1",
+        stopReason: "aborted",
+        errorMessage: "Interrupted by user",
+        content: [],
+      });
+    };
+
+    const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-1", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "plan" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "partial answer" },
+    });
+
+    // Block 1 is still buffered behind unfinished block 0 before Stop.
+    expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "plan" }]);
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "plan" },
+      { type: "assistant_message", text: "partial answer", messageId: "response-1" },
+    ]);
+    await expect(events.nextTurnCancellation()).resolves.toEqual({
+      type: "turn_canceled",
+      provider: "pi",
+      reason: "interrupted",
+      turnId,
+    });
+  });
+
+  test("flushes buffered Pi content when Stop resolves without an agent_end frame", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-1", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "plan" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "partial answer" },
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "plan" },
+      { type: "assistant_message", text: "partial answer", messageId: "response-1" },
+    ]);
+    await expect(events.nextTurnCancellation()).resolves.toEqual({
+      type: "turn_canceled",
+      provider: "pi",
+      reason: "interrupted",
+      turnId,
+    });
+  });
+
+  test("does not stall later Pi text blocks behind a non-streamed or toolCall entry at index 0", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+          { type: "text", text: "" },
+        ],
+      },
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+          { type: "text", text: "Immediate" },
+        ],
+      },
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Immediate" },
+    });
+
+    // Must stream immediately without waiting for toolcall_end(0) or message_end.
+    expect(events.timelineItems()).toEqual([
+      { type: "assistant_message", text: "Immediate", messageId: "response-1" },
+    ]);
+  });
+
+  test("does not stall later Pi text blocks behind an unstreamed empty placeholder at index 0", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Direct answer" },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "assistant_message", text: "Direct answer", messageId: "response-1" },
+    ]);
+  });
+
   test("emits live user messages with submitted Pi tree entry ids", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -1015,7 +1340,7 @@ describe("PiRpcAgentSession", () => {
     const events = new SessionEvents(session);
     const fakeSession = pi.latestSession();
     fakeSession.treeUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
-    fakeSession.contextUserEntries = fakeSession.treeUserEntries;
+    fakeSession.historyUserEntries = fakeSession.treeUserEntries;
 
     await session.startTurn("new prompt", { clientMessageId: "client-new" });
     fakeSession.finishSubmittedUserMessage({
@@ -1143,13 +1468,15 @@ describe("PiRpcAgentSession", () => {
         error: null,
       },
     ]);
-    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+    ]);
 
     fakeSession.settleTurn();
 
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1233,12 +1560,14 @@ describe("PiRpcAgentSession", () => {
 
       const stopping = session.interrupt();
       await turnFinished.promise;
-      expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+      expect(events.turnLifecycleEvents()).toEqual([
+        { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      ]);
       abortFinished.resolve();
       await stopping;
       expect(events.turnLifecycleEvents()).toEqual([
-        { type: "turn_started", turnId: undefined },
-        { type: "turn_canceled", turnId: undefined },
+        { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+        { type: "turn_canceled", turnId: AUTONOMOUS_TURN_ID },
       ]);
 
       const { turnId } = await session.startTurn("follow-up");
@@ -1268,10 +1597,10 @@ describe("PiRpcAgentSession", () => {
     fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
 
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1297,8 +1626,8 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnLifecycleEvents()).toEqual([
       { type: "turn_started", turnId },
       { type: "turn_completed", turnId },
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1320,8 +1649,8 @@ describe("PiRpcAgentSession", () => {
 
     await expect(session.interrupt()).rejects.toThrow("Pi process exited");
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
     await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi process exited" });
   });
@@ -1343,7 +1672,7 @@ describe("PiRpcAgentSession", () => {
 
     await expect(session.interrupt()).rejects.toThrow("Abort failed");
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
-      turnId: undefined,
+      turnId: AUTONOMOUS_TURN_ID,
       error: expect.stringContaining("Provider disconnected"),
     });
   });
@@ -1597,6 +1926,111 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("closes a history-only Pi runtime after replaying its timeline", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+
+    const client: import("../../agent-sdk-types.js").AgentClient = createClient(pi);
+    const session = await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+
+    onTestFinished(() => session.close());
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) history.push(event);
+
+    expect(history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "timeline",
+          provider: "pi",
+          item: expect.objectContaining({ type: "assistant_message", text: "Old answer" }),
+        }),
+      ]),
+    );
+    expect(pi.latestSession().closeCalls).toBe(1);
+
+    await session.close();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay is stopped", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.messages = [
+        { role: "user", content: "Old question" },
+        { role: "assistant", content: [{ type: "text", text: "Old answer" }] },
+      ];
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    expect((await history.next()).done).toBe(false);
+    await history.return();
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("closes a history-only Pi runtime when replay fails", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((runtimeSession) => {
+      runtimeSession.getHistoryError = new Error("History unavailable");
+    });
+    const session = await createClient(pi).resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: tmpdir() },
+      },
+      {},
+      undefined,
+      { purpose: "history" },
+    );
+    onTestFinished(() => session.close());
+    const history = session.streamHistory();
+    await expect(history.next()).rejects.toThrow("History unavailable");
+    expect(pi.latestSession().closeCalls).toBe(1);
+  });
+
+  test("keeps an interactive Pi runtime open after replaying history", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: tmpdir() },
+    });
+    onTestFinished(() => session.close());
+    for await (const _event of session.streamHistory()) {
+      // Hydrate the session before its next interactive prompt.
+    }
+    expect(pi.latestSession().closeCalls).toBe(0);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ provider: "pi" });
+  });
+
   test("resumes a session whose model was removed on the model Pi falls back to", async () => {
     const pi = new FakePi();
     pi.removeModel("9router/deepseek-v4-flash");
@@ -1750,7 +2184,7 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
-  test("captures the session's user entries apart from the ones on the current branch", async () => {
+  test("captures all session user entries as rewind targets, including abandoned branches", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).createSession(createConfig());
     onTestFinished(() => session.close());
@@ -1768,7 +2202,6 @@ describe("PiRpcAgentSession", () => {
     const context = {
       sessionManager: {
         getEntries: () => entries,
-        buildContextEntries: () => piBranchTo(entries, "two-reply"),
       },
       ui: { notify: (message: string) => notifications.push(message) },
     };
@@ -1783,10 +2216,6 @@ describe("PiRpcAgentSession", () => {
           { id: "abandoned", parentId: "one-reply", text: "rewound away" },
           { id: "two", parentId: "one-reply", text: "second" },
         ],
-        contextEntries: [
-          { id: "one", parentId: null, text: "first" },
-          { id: "two", parentId: "one-reply", text: "second" },
-        ],
       },
     ]);
   });
@@ -1799,6 +2228,7 @@ describe("PiRpcAgentSession", () => {
       createConfig({
         systemPrompt: "Agent prompt",
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       }),
     );
 
@@ -1817,7 +2247,9 @@ describe("PiRpcAgentSession", () => {
 
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
 
     await session.close();
   });
@@ -1840,6 +2272,7 @@ describe("PiRpcAgentSession", () => {
       },
       {
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       },
     );
 
@@ -1863,7 +2296,9 @@ describe("PiRpcAgentSession", () => {
     ]);
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
   });
 
   test("updates model and thinking through Pi runtime commands", async () => {
@@ -2101,6 +2536,33 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test.each([false, true])(
+    "rejects new turns with Reload guidance after the Pi process exits (active: %s)",
+    async (active) => {
+      const { pi, session, events } = await createSession();
+      try {
+        if (active) {
+          await session.startTurn("before crash");
+        }
+        const runtime = pi.latestSession();
+        runtime.emit({ type: "process_exit", error: "Pi exited" });
+        if (active) {
+          await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi exited" });
+        }
+        const promptCount = runtime.prompts.length;
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await expect(session.startTurn("after crash")).rejects.toThrow(
+            "Pi process exited. Reload agent before sending another message.",
+          );
+        }
+        expect(runtime.prompts).toHaveLength(promptCount);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("fails an autonomous turn when the Pi process exits before settlement", async () => {
     const { pi, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -2111,11 +2573,11 @@ describe("PiRpcAgentSession", () => {
 
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
       error: "Pi exited",
-      turnId: undefined,
+      turnId: AUTONOMOUS_TURN_ID,
     });
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -2397,6 +2859,37 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentSession steering", () => {
+  test("steers a run Pi started by itself instead of refusing it", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    const [started] = events.turnLifecycleEvents();
+    // The manager keeps a provider turn id and steers with it.
+    const result = await session.steerActiveTurn("join the running work", {
+      expectedTurnId: started?.turnId ?? "autonomous-assigned-by-manager",
+    });
+
+    expect(started?.turnId).toEqual(expect.any(String));
+    expect(result).toEqual({ status: "accepted" });
+    expect(fakeSession.steerCalls).toEqual([{ message: "join the running work", imageCount: 0 }]);
+
+    fakeSession.finishAgentRun({
+      message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] },
+      willRetry: false,
+    });
+    fakeSession.settleTurn();
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toEqual([
+      expect.objectContaining({ turnId: started?.turnId }),
+    ]);
+    const idle = await session.steerActiveTurn("after the run", {
+      expectedTurnId: started?.turnId ?? "autonomous-assigned-by-manager",
+    });
+    expect(idle).toEqual({ status: "unavailable" });
+  });
+
   test("steers the active Pi turn and correlates the echoed user message", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -2719,6 +3212,7 @@ describe("PiRpcAgentClient", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-import-config-"));
     const cwd = path.join(root, "workspace");
     const sessionsDir = path.join(root, "sessions");
+    mkdirSync(cwd, { recursive: true });
     mkdirSync(sessionsDir, { recursive: true });
     const sessionFile = path.join(sessionsDir, "20260103_session.jsonl");
     writeFileSync(
@@ -2957,13 +3451,13 @@ describe("PiRpcAgentClient", () => {
     },
   );
 
-  test("lists no draft features without starting a Pi session", async () => {
+  test("lists no draft controls without starting a Pi session", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
 
     await expect(
-      client.listFeatures(createConfig({ model: "openrouter/test/model" })),
-    ).resolves.toEqual([]);
+      client.listControls(createConfig({ model: "openrouter/test/model" })),
+    ).resolves.toEqual({ controls: [], options: {} });
 
     expect(pi.recordedLaunches).toHaveLength(0);
   });
@@ -3260,7 +3754,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    pi.latestSession().contextUserEntries = pi.latestSession().treeUserEntries;
+    pi.latestSession().historyUserEntries = pi.latestSession().treeUserEntries;
 
     await session.startTurn("first prompt");
     pi.latestSession().finishTurn({ role: "assistant", content: [] });
@@ -3284,7 +3778,7 @@ describe("PiRpcAgentClient", () => {
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
-    fakeSession.contextUserEntries = [
+    fakeSession.historyUserEntries = [
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
 
@@ -3532,35 +4026,390 @@ describe("PiRpcAgentClient", () => {
   });
 });
 
-describe("transformPiModels", () => {
-  test("normalizes labels that include the upstream provider prefix", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/google/gemini-2.5-flash-lite",
-          label: "openrouter/google/gemini_2.5 flash lite",
-        },
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-5.5",
-          label: "openrouter/OpenAI: GPT-5.5",
-        },
-      ]),
-    ).toEqual([
-      {
+describe("PiRpcAgentClient history resume", () => {
+  const BUILTIN_MCP_COMMAND = {
+    name: "mcp",
+    source: "extension",
+    sourceInfo: { path: "builtin:mcp" },
+  } as const;
+  const PASEO_MCP_SERVERS = {
+    paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
+  } as const;
+
+  interface ArchivedPiSession {
+    handle: {
+      provider: string;
+      sessionId: string;
+      nativeHandle: string;
+      metadata: { cwd: string; model?: string };
+    };
+    sessionFile: string;
+    header: Record<string, unknown>;
+    body: string;
+    originalBytes: Buffer;
+  }
+
+  function createDeletedFolder(): string {
+    const folder = mkdtempSync(path.join(tmpdir(), "paseo-pi-deleted-cwd-"));
+    rmSync(folder, { recursive: true, force: true });
+    return folder;
+  }
+
+  function createFileWhereFolderWas(): string {
+    const folder = createDeletedFolder();
+    writeFileSync(folder, "not a directory");
+    onTestFinished(() => rmSync(folder, { force: true }));
+    return folder;
+  }
+
+  function createExistingFolder(): string {
+    const folder = mkdtempSync(path.join(tmpdir(), "paseo-pi-existing-cwd-"));
+    onTestFinished(() => rmSync(folder, { recursive: true, force: true }));
+    return folder;
+  }
+
+  function writeArchivedSession(cwd: string, metadata: { model?: string } = {}): ArchivedPiSession {
+    const dir = mkdtempSync(path.join(tmpdir(), "paseo-pi-archived-session-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const sessionFile = path.join(dir, "2026-01-01_pi-session-1.jsonl");
+    const header = {
+      type: "session",
+      version: 3,
+      id: "pi-session-1",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      cwd,
+    };
+    const body = [
+      JSON.stringify({
+        type: "message",
+        id: "entry-1",
+        parentId: null,
+        message: { role: "user", content: "Où est le café ☕ ?" },
+      }),
+      JSON.stringify({
+        type: "message",
+        id: "entry-2",
+        parentId: "entry-1",
+        message: { role: "assistant", content: [{ type: "text", text: "Dans la cuisine." }] },
+      }),
+    ]
+      .map((line) => `${line}\n`)
+      .join("");
+    writeFileSync(sessionFile, `${JSON.stringify(header)}\n${body}`);
+    return {
+      handle: {
         provider: "pi",
-        id: "openrouter/google/gemini-2.5-flash-lite",
-        label: "gemini 2.5 flash lite",
-        description: "openrouter/google/gemini_2.5 flash lite",
+        sessionId: "pi-session-1",
+        nativeHandle: sessionFile,
+        metadata: { cwd, ...metadata },
       },
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-5.5",
-        label: "GPT-5.5",
-        description: "openrouter/OpenAI: GPT-5.5",
+      sessionFile,
+      header,
+      body,
+      originalBytes: readFileSync(sessionFile),
+    };
+  }
+
+  function readSessionCopy(sessionFile: string): { header: unknown; body: string } {
+    const content = readUtf8File(sessionFile);
+    const headerEnd = content.indexOf("\n");
+    return {
+      header: JSON.parse(content.slice(0, headerEnd)),
+      body: content.slice(headerEnd + 1),
+    };
+  }
+
+  function resumeArchived(
+    client: PiRpcAgentClient,
+    archived: ArchivedPiSession,
+    purpose: "history" | "interactive",
+    overrides: Partial<AgentSessionConfig> = {},
+  ): Promise<AgentSession> {
+    return client.resumeSession(archived.handle, overrides, undefined, { purpose });
+  }
+
+  function writeFakePiProcess(): {
+    command: [string, ...string[]];
+    readLaunches: () => Array<{ cwd: string; session: string | null }>;
+  } {
+    const dir = mkdtempSync(path.join(tmpdir(), "paseo-pi-process-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const scriptPath = path.join(dir, "fake-pi.cjs");
+    const launchesPath = path.join(dir, "launches.jsonl");
+    writeFileSync(
+      scriptPath,
+      `
+const fs = require("node:fs");
+const readline = require("node:readline");
+const [launchesPath, ...piArgs] = process.argv.slice(2);
+const sessionFlag = piArgs.indexOf("--session");
+const sessionFile = sessionFlag === -1 ? null : piArgs[sessionFlag + 1];
+fs.appendFileSync(launchesPath, JSON.stringify({ cwd: process.cwd(), session: sessionFile }) + "\\n");
+if (sessionFile) {
+  const header = JSON.parse(fs.readFileSync(sessionFile, "utf8").split("\\n", 1)[0]);
+  if (header.cwd && !fs.existsSync(header.cwd)) {
+    fs.writeSync(
+      2,
+      "Stored session working directory does not exist: " + header.cwd + "\\nSession file: " + sessionFile + "\\nCurrent working directory: " + process.cwd() + "\\n",
+    );
+    process.exit(1);
+  }
+}
+const models = [
+  { provider: "openrouter", id: "a" },
+  { provider: "openrouter", id: "b" },
+];
+const state = {
+  sessionId: "pi-session-1",
+  sessionFile,
+  model: models[0],
+  thinkingLevel: "medium",
+  isStreaming: false,
+  isCompacting: false,
+  messageCount: 0,
+  pendingMessageCount: 0,
+};
+const commands = [${JSON.stringify(BUILTIN_MCP_COMMAND)}];
+function handle(request) {
+  switch (request.type) {
+    case "get_state":
+      return state;
+    case "get_commands":
+      return { commands };
+    case "get_available_models":
+      return { models };
+    case "set_model":
+      fs.appendFileSync(
+        sessionFile,
+        JSON.stringify({ type: "model_change", id: "model-1", provider: request.provider, modelId: request.modelId }) + "\\n",
+      );
+      state.model = models.find((model) => model.id === request.modelId);
+      return state.model;
+    default:
+      return {};
+  }
+}
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  process.stdout.write(
+    JSON.stringify({ id: request.id, type: "response", command: request.type, success: true, data: handle(request) }) + "\\n",
+  );
+});
+`,
+    );
+    return {
+      command: [process.execPath, scriptPath, launchesPath],
+      readLaunches: () =>
+        readUtf8File(launchesPath)
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as { cwd: string; session: string | null }),
+    };
+  }
+
+  test.each([
+    ["is gone", createDeletedFolder],
+    ["is now a file", createFileWhereFolderWas],
+  ])(
+    "a history resume of an agent whose folder %s starts Pi from the home directory on a copy of its session",
+    async (_folderState, createFolder) => {
+      const archived = writeArchivedSession(createFolder());
+      const pi = new FakePi();
+
+      const session = await resumeArchived(createClient(pi), archived, "history");
+      onTestFinished(() => session.close());
+
+      expect(pi.recordedLaunches).toHaveLength(1);
+      const launch = pi.recordedLaunches[0]!;
+      expect(launch.cwd).toBe(homedir());
+      expect(launch.session).not.toBe(archived.sessionFile);
+      expect(readSessionCopy(launch.session!)).toEqual({
+        header: { ...archived.header, cwd: homedir() },
+        body: archived.body,
+      });
+    },
+  );
+
+  test("a history resume of an agent whose folder is gone removes its session copy after replay and leaves the original unchanged", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    const sessionCopy = pi.recordedLaunches[0]!.session!;
+    expect(existsSync(sessionCopy)).toBe(true);
+    for await (const _event of session.streamHistory()) {
+      // Completion releases both the runtime and its temporary session copy.
+    }
+    expect(pi.latestSession().closeCalls).toBe(1);
+
+    expect(existsSync(path.dirname(sessionCopy))).toBe(false);
+    expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
+  });
+
+  test("a history resume of an agent whose folder is gone persists the original session file while Pi reports the copy", async () => {
+    const storedCwd = createDeletedFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    onTestFinished(() => session.close());
+    await session.getRuntimeInfo();
+
+    expect(pi.latestSession().state.sessionFile).toBe(pi.recordedLaunches[0]!.session);
+    expect(session.describePersistence()).toMatchObject({
+      nativeHandle: archived.sessionFile,
+      metadata: { cwd: storedCwd },
+    });
+  });
+
+  test("a history resume of an agent whose folder is gone removes its session copy when Pi fails to start", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.getStateError = new Error("Pi RPC process exited with code 1 and signal null");
+    });
+
+    await expect(resumeArchived(createClient(pi), archived, "history")).rejects.toThrow(
+      "Pi RPC process exited with code 1",
+    );
+
+    expect(pi.recordedLaunches).toHaveLength(1);
+    expect(pi.recordedLaunches[0]!.session).not.toBe(archived.sessionFile);
+    expect(existsSync(path.dirname(pi.recordedLaunches[0]!.session!))).toBe(false);
+  });
+
+  test("a history resume of an agent whose folder is gone checks MCP support from the home directory", async () => {
+    const archived = writeArchivedSession(createDeletedFolder());
+    const pi = new FakePi();
+    pi.queueCommands([BUILTIN_MCP_COMMAND]);
+
+    const session = await resumeArchived(createClient(pi), archived, "history", {
+      mcpServers: PASEO_MCP_SERVERS,
+    });
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches.map((launch) => launch.cwd)).toEqual([homedir(), homedir()]);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+  });
+
+  test("an interactive resume of an agent whose folder is gone still fails in its stored folder", async () => {
+    const storedCwd = createDeletedFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    await expect(resumeArchived(createClient(pi), archived, "interactive")).rejects.toThrow(
+      `Stored session working directory does not exist: ${storedCwd}`,
+    );
+
+    expect(pi.recordedLaunches).toMatchObject([{ cwd: storedCwd, session: archived.sessionFile }]);
+  });
+
+  test("a history resume of an agent whose folder exists keeps the stored folder and session file", async () => {
+    const storedCwd = createExistingFolder();
+    const archived = writeArchivedSession(storedCwd);
+    const pi = new FakePi();
+
+    const session = await resumeArchived(createClient(pi), archived, "history");
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches).toMatchObject([{ cwd: storedCwd, session: archived.sessionFile }]);
+  });
+
+  test("a history resume of an agent whose folder is gone opens its session in a real Pi process started from the home directory", async () => {
+    const archived = writeArchivedSession(createDeletedFolder(), { model: "openrouter/b" });
+    const fakePiProcess = writeFakePiProcess();
+    const logger = pino({ level: "silent" });
+    const client = new PiRpcAgentClient({
+      logger,
+      runtime: new PiCliRuntime({ logger, command: fakePiProcess.command }),
+    });
+
+    const session = await resumeArchived(client, archived, "history", {
+      mcpServers: PASEO_MCP_SERVERS,
+    });
+    onTestFinished(() => session.close());
+
+    const launches = fakePiProcess.readLaunches();
+    const home = realpathSync.native(homedir());
+    expect(launches.map((launch) => realpathSync.native(launch.cwd))).toEqual([home, home]);
+    expect(session.capabilities.supportsMcpServers).toBe(true);
+    const sessionCopy = launches[1]!.session!;
+    expect(readUtf8File(sessionCopy)).toContain('"type":"model_change"');
+    expect(session.describePersistence()?.nativeHandle).toBe(archived.sessionFile);
+
+    await session.close();
+    expect(existsSync(path.dirname(sessionCopy))).toBe(false);
+    expect(readFileSync(archived.sessionFile)).toEqual(archived.originalBytes);
+  });
+});
+
+describe("Pi catalog model labels", () => {
+  test.each([
+    {
+      name: "keeps slashes and underscores inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "s-q3fn(p-t)",
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
       },
-    ]);
+      label: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+    },
+    {
+      name: "keeps a free-text name that ends in a slash-separated word",
+      model: {
+        provider: "llama-swap",
+        id: "ds-strata-6",
+        name: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+      },
+      label: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+    },
+    {
+      name: "keeps a colon inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "qwen3-tail",
+        name: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+      },
+      label: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    },
+    {
+      name: "drops the vendor prefix from an upstream model name",
+      model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
+      label: "GPT-5.5",
+    },
+    {
+      name: "shortens a path-like name to its last segment",
+      model: {
+        provider: "openrouter",
+        id: "google/gemini-2.5-flash-lite",
+        name: "google/gemini-2.5-flash-lite",
+      },
+      label: "gemini-2.5-flash-lite",
+    },
+    {
+      name: "falls back to the last segment of a path-like id",
+      model: { provider: "openrouter", id: "google/gemini_2.5-flash-lite" },
+      label: "gemini 2.5-flash-lite",
+    },
+    {
+      name: "falls back to an id with spaces when the name is blank",
+      model: { provider: "local", id: "DeepSeek-V4.1-Flash 2.25bpw (Strata)", name: "  " },
+      label: "DeepSeek-V4.1-Flash 2.25bpw (Strata)",
+    },
+  ])("$name", async ({ model, label }) => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = [model];
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
+    expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
   });
 });
 

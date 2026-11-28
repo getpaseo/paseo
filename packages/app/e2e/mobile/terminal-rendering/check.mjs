@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
+import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import xterm from "@xterm/headless";
 import { PNG } from "pngjs";
 import { ACCENT, fixtureLines, fixtureOutput, RULER_CELLS, SELECT_LINE } from "./fixture.mjs";
@@ -82,6 +83,8 @@ async function fixtureTerminal(size) {
     rows: size.rows,
     allowProposedApi: true,
   });
+  // The app's buffer uses grapheme widths; the expected cells must too.
+  terminal.loadAddon(new UnicodeGraphemesAddon());
   await new Promise((done) =>
     terminal.write(fixtureOutput(size.columns).replaceAll("\n", "\r\n"), done),
   );

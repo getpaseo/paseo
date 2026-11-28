@@ -4,7 +4,7 @@ import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
   AgentClient,
-  AgentFeature,
+  AgentDraftControls,
   AgentModelDefinition,
   AgentMode,
   AgentSessionConfig,
@@ -392,17 +392,20 @@ vi.mock("./providers/cursor-acp-agent.js", () => ({
       return true;
     }
 
-    async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
       mockState.cursorListFeaturesConfigs.push(config);
-      return [
-        {
-          type: "select",
-          id: "fast",
-          label: "Fast",
-          value: "false",
-          options: [{ id: "false", label: "Off" }],
-        },
-      ];
+      return {
+        options: config.providerOptions ?? {},
+        controls: [
+          {
+            type: "select",
+            key: "fast",
+            label: "Fast",
+            defaultValue: "false",
+            choices: [{ value: "false", label: "Off" }],
+          },
+        ],
+      };
     }
   },
 }));
@@ -642,6 +645,32 @@ test("new provider extending codex archives and unarchives its native sessions",
   ]);
 });
 
+test("launch-wrap support comes from the provider contract and follows extends", () => {
+  const registry = buildProviderRegistry(logger, {
+    isDev: true,
+    providerOverrides: {
+      "my-claude": { extends: "claude", label: "My Claude" },
+      "my-acp": { extends: "acp", label: "My ACP", command: ["my-acp", "--acp"] },
+    },
+  });
+
+  const support = Object.fromEntries(
+    Object.keys(registry).map((id) => [id, registry[id].createClient(logger).supportsLaunchWrap]),
+  );
+  expect(support).toEqual({
+    claude: true,
+    codex: true,
+    copilot: true,
+    opencode: true,
+    pi: true,
+    omp: true,
+    mock: false,
+    "mock-slow": false,
+    "my-claude": true,
+    "my-acp": true,
+  });
+});
+
 test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {
   const omp = new FakeOmp(["custom-omp"]);
   const registry = buildProviderRegistry(logger, {
@@ -791,6 +820,33 @@ test("ACP provider configuration retains opaque options", () => {
   });
 });
 
+test("a saved legacy Codex Fast preference wins over a configured service_tier default", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: { codex: { options: { service_tier: "default", plan_mode: false } } },
+  });
+  const client = registry.codex.createClient(logger);
+
+  // The manager hands the registry a pre-v0.10 record's `fast_mode` already converted.
+  expect(client.effectiveOptions?.({ service_tier: "fast" })).toEqual({
+    service_tier: "fast",
+    plan_mode: false,
+  });
+  expect(client.effectiveOptions?.({})).toEqual({ service_tier: "default", plan_mode: false });
+});
+
+test("a configured legacy Codex Fast default supplies the service_tier default", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: { codex: { options: { fast_mode: true } } },
+  });
+  const client = registry.codex.createClient(logger);
+
+  // Removing an agent's own speed falls back to the configured Fast.
+  expect(client.effectiveOptions?.({})).toEqual({ service_tier: "fast" });
+  expect(client.effectiveOptions?.({ service_tier: "default" })).toEqual({
+    service_tier: "default",
+  });
+});
+
 test("cursor provider extending acp uses CursorACPAgentClient", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
@@ -823,7 +879,7 @@ test("cursor provider extending acp uses CursorACPAgentClient", () => {
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
 });
 
-test("wrapped cursor client lists ACP features through the inner provider", async () => {
+test("wrapped cursor client lists ACP controls through the inner provider", async () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
       cursor: {
@@ -837,19 +893,22 @@ test("wrapped cursor client lists ACP features through the inner provider", asyn
   const client = registry.cursor.createClient(logger);
 
   await expect(
-    client.listFeatures?.({
+    client.listControls?.({
       provider: "cursor",
       cwd: "/tmp/cursor",
     }),
-  ).resolves.toEqual([
-    {
-      type: "select",
-      id: "fast",
-      label: "Fast",
-      value: "false",
-      options: [{ id: "false", label: "Off" }],
-    },
-  ]);
+  ).resolves.toEqual({
+    controls: [
+      {
+        type: "select",
+        key: "fast",
+        label: "Fast",
+        defaultValue: "false",
+        choices: [{ value: "false", label: "Off" }],
+      },
+    ],
+    options: {},
+  });
   expect(mockState.cursorListFeaturesConfigs).toEqual([
     {
       provider: "acp",
@@ -1515,7 +1574,7 @@ describe("model merging", () => {
       models
         .find((model) => model.id === "claude-sonnet-5")
         ?.thinkingOptions?.map((option) => option.id),
-    ).toEqual(["off", "low", "medium", "high", "xhigh", "max", "ultracode"]);
+    ).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
     expect(models.find((model) => model.id === "claude-opus-5")?.thinkingOptions).toEqual([]);
     expect(models.find((model) => model.id === "custom-explicit")).toMatchObject({
       thinkingOptions: [{ id: "bespoke", label: "Bespoke", isDefault: true }],

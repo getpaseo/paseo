@@ -49,6 +49,21 @@ restarting the process. It writes snapshots and native failure state under
 production package. This needs a native rebuild when the Unistyles patch changes; a Metro
 reload cannot update it.
 
+To check the first Android composer tap after pinch-to-zoom, install the rebuilt
+APK and connect it to a chat whose latest assistant message contains a visible
+Markdown image. For example, put `picture.png` in the agent workspace and have
+the assistant reply with `![Test image](picture.png)`. Set `CHAT_URL` to the
+chat's Paseo deep link and run from the repository root:
+
+```bash
+agent-device test packages/app/e2e/mobile/composer-keyboard/lightbox-pinch.android.ad \
+  --platform android --serial emulator-5554 -e APP_ID=sh.paseo -e "CHAT_URL=$CHAT_URL"
+```
+
+Use `APP_ID=sh.paseo.debug` for a development build. If the image has different
+alt text, pass it with `-e IMAGE_LABEL="..."`. The test pinches the image, closes
+it, types in the composer, and checks that a single Attach tap opens Upload file.
+
 For Android keyboard continuity, run the current checkout in the app, open an idle terminal
 with an empty prompt, hide its keyboard, and run:
 
@@ -452,18 +467,9 @@ Regular `View` components can safely use Unistyles dynamic styles — the confli
 
 ## Native Chat Stream Layout
 
-The native agent stream uses an inverted `FlatList`, so chat layout has three coordinate systems:
-
-- chronological stream order
-- strategy-ordered array order
-- native inverted cell visual order
-
 Do not compute stream neighbors, history/live-head seams, turn footer ownership, assistant block spacing, or tool sequence endings inside React render loops. Those policies live in `packages/app/src/agent-stream/layout.ts` and are unit-tested without React Native rendering.
 
-Platform-specific stream edges belong on `StreamStrategy`:
-
-- forward web uses the last history item as the history/live-head boundary and renders content before a footer
-- native inverted uses the first history item as the history/live-head boundary and compensates for inverted cell child order
+Platform-specific stream edges belong on `StreamStrategy`. Web and native both render in chronological order, so both use the last history item as the history/live-head boundary and render content before a footer.
 
 If a chat footer looks duplicated or appears above the assistant message on mobile, start with `packages/app/src/agent-stream/layout.test.ts`. Do not add a React Native renderer test for this class of bug; make the pure layout invariant fail first.
 

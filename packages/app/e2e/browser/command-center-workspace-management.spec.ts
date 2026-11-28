@@ -2,6 +2,7 @@ import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 
@@ -135,6 +136,38 @@ test.describe("Command center workspace management", () => {
         .filter({ hasText: workspace.projectDisplayName });
       await header.click();
       await expect(workspaceRow(page, workspace.workspaceId)).toContainText(customTitle, {
+        timeout: 15_000,
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps Rename workspace ahead of Rename agent across renam and rename", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "cc-rename-order-",
+      title: "Command center rename order",
+      model: "five-minute-stream",
+    });
+
+    try {
+      await openAgentRoute(page, workspace);
+      const panel = await openCommandCenter(page);
+      const searchInput = panel.getByTestId("command-center-input");
+      const renameWorkspace = action(panel, "Rename workspace");
+      const renameAgent = action(panel, "Rename agent");
+
+      for (const query of ["renam", "rename"]) {
+        await searchInput.fill(query);
+        await expect(renameWorkspace).toBeVisible({ timeout: 15_000 });
+        await expect(renameAgent).toBeVisible({ timeout: 15_000 });
+        const workspaceTop = (await renameWorkspace.boundingBox())?.y ?? Number.NaN;
+        const agentTop = (await renameAgent.boundingBox())?.y ?? Number.NaN;
+        expect(workspaceTop, query).toBeLessThan(agentTop);
+      }
+
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId("workspace-rename-modal-global-input")).toBeFocused({
         timeout: 15_000,
       });
     } finally {

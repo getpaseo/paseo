@@ -1,5 +1,9 @@
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { existsSync } from "node:fs";
+import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path, { join } from "node:path";
 import type pino from "pino";
@@ -10,11 +14,16 @@ import type {
   PullRequestStatusResult,
 } from "../utils/checkout-git.js";
 import {
+  BACKGROUND_GIT_FETCH_INTERVAL_MS,
+  BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS,
+  WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS,
   WORKSPACE_GIT_OBSERVATION_SETUP_CONCURRENCY,
   WORKSPACE_GIT_REFRESH_CONCURRENCY,
   WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS,
   WorkspaceGitServiceImpl,
+  computeBackgroundGitFetchDelayMs,
   type WorkspaceGitRuntimeSnapshot,
+  workspaceFolderExists,
 } from "./workspace-git-service.js";
 
 const REPO_CWD = path.resolve("/tmp/repo");
@@ -23,6 +32,7 @@ function createLogger() {
   const logger = {
     child: () => logger,
     debug: vi.fn(),
+    info: vi.fn(),
     warn: vi.fn(),
   };
   return logger;
@@ -85,6 +95,8 @@ function createSnapshot(
       pullRequest: resolveSnapshotPullRequest(base, overrides),
       error: resolveSnapshotError(base, overrides),
     },
+    // Every remote these fixtures use is on github.com.
+    ...(forgeName ? { forgeWeb: { host: "github.com" } } : {}),
   };
 }
 
@@ -161,6 +173,8 @@ function createCheckoutSnapshotFacts(cwd: string): CheckoutSnapshotFacts {
     comparisonBaseRef: null,
     branchRemoteName: "origin",
     branchMergeRef: "refs/heads/main",
+    upstreamStatus: { state: "none" },
+    pushTarget: null,
     pullRequestLookupTarget: { headRef: "main" },
   };
 }
@@ -249,9 +263,10 @@ function createGitHubServiceStub(): ForgeService {
 }
 
 interface CreateServiceTestOptions {
+  logger?: ReturnType<typeof createLogger>;
   subscribe?: ReturnType<typeof vi.fn>;
   getCheckoutStatus?: ReturnType<typeof vi.fn>;
-  getCheckoutSnapshotFacts?: ReturnType<typeof vi.fn>;
+  getCheckoutSnapshotFacts?: (cwd: string) => Promise<CheckoutSnapshotFacts>;
   getCheckoutShortstat?: ReturnType<typeof vi.fn>;
   getCheckoutWorktreeState?: ReturnType<typeof vi.fn>;
   getPullRequestStatus?: ReturnType<typeof vi.fn>;
@@ -261,6 +276,7 @@ interface CreateServiceTestOptions {
   runGitFetch?: ReturnType<typeof vi.fn>;
   runGitCommand?: ReturnType<typeof vi.fn>;
   getWorkspaceGitSelfHealPhaseMs?: (cwd: string) => number;
+  workspaceFolderExists?: (cwd: string) => Promise<boolean>;
   now?: () => Date;
 }
 
@@ -294,6 +310,7 @@ function buildDefaultTestServiceDeps() {
       signal: null,
     })),
     getWorkspaceGitSelfHealPhaseMs: vi.fn(() => 30_000),
+    workspaceFolderExists: vi.fn(async () => true),
     createWatcherLivenessCanary: vi.fn(() => ({
       path: "",
       filterEvents: (events) => events,
@@ -303,6 +320,8 @@ function buildDefaultTestServiceDeps() {
   };
 }
 
+// Registering a workspace reads the checkout twice: once at start and once
+// when observation setup establishes watcher coverage.
 function createService(options?: CreateServiceTestOptions) {
   const deps = { ...buildDefaultTestServiceDeps(), ...options };
   deps.getCheckoutWorktreeState =
@@ -318,10 +337,199 @@ function createService(options?: CreateServiceTestOptions) {
       };
     });
   return new WorkspaceGitServiceImpl({
-    logger: createLogger() as unknown as pino.Logger,
+    logger: (options?.logger ?? createLogger()) as unknown as pino.Logger,
     paseoHome: "/tmp/paseo-test",
     deps,
   });
+}
+
+type WatchCallback = (error: Error | null, events: Array<{ path: string; type: "update" }>) => void;
+
+interface FolderBackedGitOptions {
+  facts?: (cwd: string) => CheckoutSnapshotFacts;
+  unwatchableDirectories?: string[];
+  heldWatch?: { directory: string; release: Promise<void> };
+}
+
+function createFolderBackedGit(options?: FolderBackedGitOptions) {
+  const watchCallbacks = new Map<string, WatchCallback>();
+  const subscribe = vi.fn(async (directory: string, callback: WatchCallback) => {
+    if (!existsSync(directory) || options?.unwatchableDirectories?.includes(directory)) {
+      throw new Error(`Cannot watch ${directory}`);
+    }
+    if (options?.heldWatch?.directory === directory) {
+      await options.heldWatch.release;
+    }
+    watchCallbacks.set(directory, callback);
+    return createAsyncSubscription();
+  });
+  const getCheckoutSnapshotFacts = vi.fn(
+    async (cwd: string): Promise<CheckoutSnapshotFacts> =>
+      existsSync(cwd) ? (options?.facts ?? createCheckoutSnapshotFacts)(cwd) : { isGit: false },
+  );
+  const getCheckoutStatus = vi.fn(async (cwd: string) =>
+    existsSync(cwd) ? createCheckoutStatus(cwd) : ({ isGit: false } as const),
+  );
+  const getCheckoutShortstat = vi.fn(async (_cwd: string) => ({ additions: 1, deletions: 0 }));
+  const getCheckoutWorktreeState = vi.fn(async (_cwd: string) => ({
+    isDirty: false,
+    diffStat: { additions: 1, deletions: 0 },
+  }));
+  const runGitCommand = vi.fn(async (args: string[], runOptions: { cwd: string }) => ({
+    stdout: args[0] === "rev-parse" ? `${runOptions.cwd}\n` : "",
+    stderr: "",
+    truncated: false,
+    exitCode: 0,
+    signal: null,
+  }));
+  const runGitFetch = vi.fn(async (_cwd: string) => ({ changes: [], error: null }));
+  const callsIn = (fake: ReturnType<typeof vi.fn>, cwd: string) =>
+    fake.mock.calls.filter(([calledCwd]) => calledCwd === cwd).length;
+
+  return {
+    deps: {
+      subscribe,
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      getCheckoutShortstat,
+      getCheckoutWorktreeState,
+      runGitCommand,
+      runGitFetch,
+      workspaceFolderExists: async (cwd: string) => existsSync(cwd),
+      now: () => new Date(),
+    },
+    watchCallbackFor(directory: string): WatchCallback {
+      const callback = watchCallbacks.get(directory);
+      if (!callback) {
+        throw new Error(`No watcher was started for ${directory}`);
+      }
+      return callback;
+    },
+    watchAttemptsFor: (directory: string) => callsIn(subscribe, directory),
+    pollsOf: (cwd: string) => callsIn(getCheckoutShortstat, cwd),
+    fetchesIn: (cwd: string) => callsIn(runGitFetch, cwd),
+    gitCommandsIn(cwd: string): number {
+      const cwdCommands = [
+        getCheckoutSnapshotFacts,
+        getCheckoutStatus,
+        getCheckoutShortstat,
+        getCheckoutWorktreeState,
+        runGitFetch,
+      ].reduce((count, fake) => count + callsIn(fake, cwd), 0);
+      const commandsRunInCwd = runGitCommand.mock.calls.filter(
+        ([, runOptions]) => runOptions.cwd === cwd,
+      ).length;
+      return cwdCommands + commandsRunInCwd;
+    },
+  };
+}
+
+function linkedWorktreeFacts(gitCommonDir: string) {
+  return (cwd: string): CheckoutSnapshotFacts => ({
+    ...createCheckoutSnapshotFacts(cwd),
+    absoluteGitDir: join(gitCommonDir, "worktrees", path.basename(cwd)),
+    gitCommonDir,
+  });
+}
+
+async function settle(assertion: () => void): Promise<void> {
+  // Observation setup resolves real filesystem paths even while the polling clock is frozen.
+  // Give that I/O wall-clock time without advancing the service's polling deadlines.
+  const deadline = performance.now() + 5_000;
+  while (true) {
+    try {
+      assertion();
+      return;
+    } catch (failure) {
+      if (performance.now() >= deadline) throw failure;
+    }
+    await delay(1);
+    await vi.advanceTimersByTimeAsync(0);
+  }
+}
+
+async function waitForRefreshesToSettle(service: WorkspaceGitServiceImpl): Promise<void> {
+  await settle(() => {
+    expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+  });
+}
+
+async function waitForObservationToSettle(
+  service: WorkspaceGitServiceImpl,
+  repositoryWorkspaceLinkCount: number,
+): Promise<void> {
+  await settle(() => {
+    const metrics = service.getMetrics();
+    expect(metrics.repositoryWorkspaceLinkCount).toBe(repositoryWorkspaceLinkCount);
+    expect(metrics.workspaceObservationSetupInFlightCount).toBe(0);
+    expect(metrics.workspaceRefreshInFlightCount).toBe(0);
+  });
+}
+
+async function advanceThroughDegradedPolls(service: WorkspaceGitServiceImpl): Promise<void> {
+  for (const delayMs of [5_000, 10_000, 20_000, 40_000, 60_000, 60_000]) {
+    await vi.advanceTimersByTimeAsync(delayMs);
+    await waitForRefreshesToSettle(service);
+  }
+}
+
+async function advanceThroughWorkingTreeRecoveryAttempts(
+  service: WorkspaceGitServiceImpl,
+): Promise<void> {
+  for (const delayMs of [30_000, 60_000, 120_000]) {
+    await vi.advanceTimersByTimeAsync(delayMs);
+    await waitForRefreshesToSettle(service);
+  }
+}
+
+// Stalls every subscription for `watchPath` the way a CPU-starved startup scan does, until the
+// service aborts it at the subscribe deadline. Other paths subscribe immediately.
+function createStallingWatchSetup(watchPath: string) {
+  const signals: AbortSignal[] = [];
+  let acceptNext = false;
+  let acceptedCallback: WatchCallback | null = null;
+  const subscribe = vi.fn(
+    async (directory: string, callback: WatchCallback, options?: { signal?: AbortSignal }) => {
+      if (directory !== watchPath) {
+        return createAsyncSubscription();
+      }
+      const signal = options?.signal ?? new AbortController().signal;
+      signals.push(signal);
+      if (acceptNext) {
+        acceptNext = false;
+        acceptedCallback = callback;
+        return createAsyncSubscription();
+      }
+      return new Promise<ReturnType<typeof createAsyncSubscription>>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  );
+  return {
+    subscribe,
+    signals,
+    acceptNextAttempt() {
+      acceptNext = true;
+    },
+    failAcceptedWatcher() {
+      acceptedCallback?.(new Error("accepted watcher stopped"), []);
+    },
+    async expectAttemptAbortedAtDeadline() {
+      const signal = signals.at(-1);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+      expect(signal?.aborted).toBe(true);
+      expect(signal?.reason).toMatchObject({ name: "WorkspaceGitWatcherSubscriptionTimeoutError" });
+    },
+    async expectNextAttemptAfter(delayMs: number, service: WorkspaceGitServiceImpl) {
+      const attempts = signals.length;
+      await vi.advanceTimersByTimeAsync(delayMs - 1);
+      await waitForRefreshesToSettle(service);
+      expect(signals).toHaveLength(attempts);
+      await vi.advanceTimersByTimeAsync(1);
+      await settle(() => expect(signals).toHaveLength(attempts + 1));
+    },
+  };
 }
 
 describe("WorkspaceGitServiceImpl", () => {
@@ -384,6 +592,180 @@ describe("WorkspaceGitServiceImpl", () => {
     await service.dispose();
   });
 
+  test("a client reconnecting within the release grace reuses the warm target", async () => {
+    const getCheckoutStatus = vi.fn(buildDefaultTestServiceDeps().getCheckoutStatus);
+    const service = createService({ getCheckoutStatus });
+    try {
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      const snapshot = await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      first.unsubscribe();
+      expect(service.getMetrics().workspaceTargetCount).toBe(1);
+      const reads = getCheckoutStatus.mock.calls.length;
+
+      const second = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(snapshot);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(reads);
+      second.unsubscribe();
+
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  test("past the 90s release grace, getSnapshot returns the retained snapshot immediately while refreshing in the background", async () => {
+    const delayedRefresh = createDeferred<CheckoutStatusGit>();
+    const delayedStarted = createDeferred<void>();
+    let delayNextRefresh = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => {
+      if (!delayNextRefresh) {
+        return createCheckoutStatus(cwd, { currentBranch: "main" });
+      }
+      delayedStarted.resolve();
+      return delayedRefresh.promise;
+    });
+    const service = createService({ getCheckoutStatus });
+    const published: WorkspaceGitRuntimeSnapshot[] = [];
+    service.onSnapshotUpdated((snapshot) => published.push(snapshot));
+    try {
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      const initial = await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      first.unsubscribe();
+
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+
+      // Reconnecting past the 90s grace must return the retained snapshot immediately
+      // without waiting on the slow background Git refresh.
+      delayNextRefresh = true;
+      const stale = await service.getSnapshot(REPO_CWD);
+      expect(stale).toEqual(initial);
+
+      // Background revalidation still runs and publishes the fresh snapshot when it lands.
+      await delayedStarted.promise;
+      delayedRefresh.resolve(
+        createCheckoutStatus(REPO_CWD, { currentBranch: "feature/revalidated" }),
+      );
+      await settle(() => {
+        expect(published.at(-1)?.git.currentBranch).toBe("feature/revalidated");
+      });
+      await expect(service.getSnapshot(REPO_CWD)).resolves.toMatchObject({
+        git: { currentBranch: "feature/revalidated" },
+      });
+    } finally {
+      delayedRefresh.resolve(
+        createCheckoutStatus(REPO_CWD, { currentBranch: "feature/revalidated" }),
+      );
+      await service.dispose();
+    }
+  });
+
+  test("reconnecting past the 90s release grace stays quiet on unchanged revalidation and emits when Git changed", async () => {
+    let branch = "main";
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, { currentBranch: branch }),
+    );
+    const service = createService({ getCheckoutStatus });
+    const published: WorkspaceGitRuntimeSnapshot[] = [];
+    service.onSnapshotUpdated((snapshot) => published.push(snapshot));
+    try {
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      first.unsubscribe();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+      expect(published).toHaveLength(1);
+
+      // Unchanged revalidation after grace must not emit redundant updates.
+      const secondListener = vi.fn();
+      const second = service.registerWorkspace({ cwd: REPO_CWD }, secondListener);
+      await waitForRefreshesToSettle(service);
+      await waitForObservationToSettle(service, 1);
+      expect(secondListener).toHaveBeenCalledTimes(0);
+      expect(published).toHaveLength(1);
+      second.unsubscribe();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+
+      // A real Git change during disconnect must emit once revalidation finishes.
+      branch = "feature/changed-while-away";
+      const thirdListener = vi.fn();
+      const third = service.registerWorkspace({ cwd: REPO_CWD }, thirdListener);
+      await settle(() => {
+        expect(thirdListener).toHaveBeenCalledTimes(1);
+      });
+      expect(thirdListener.mock.calls[0]?.[0]?.git.currentBranch).toBe(
+        "feature/changed-while-away",
+      );
+      expect(published).toHaveLength(2);
+      third.unsubscribe();
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  test("late refresh retains its snapshot unless a newer target generation already exists, and forced reads bypass retention", async () => {
+    const staleStatus = createDeferred<CheckoutStatusGit>();
+    const staleStarted = createDeferred<void>();
+    let mode: "initial" | "stale" | "newer" | "forced" = "initial";
+    const service = new WorkspaceGitServiceImpl({
+      logger: createLogger() as unknown as pino.Logger,
+      paseoHome: "/tmp/paseo-test",
+      releaseGraceMs: 0,
+      deps: {
+        ...buildDefaultTestServiceDeps(),
+        getCheckoutStatus: async (cwd: string) => {
+          if (mode === "initial") return createCheckoutStatus(cwd, { currentBranch: "main" });
+          if (mode === "stale") {
+            staleStarted.resolve();
+            return staleStatus.promise;
+          }
+          if (mode === "newer")
+            return createCheckoutStatus(cwd, { currentBranch: "feature/newer" });
+          return createCheckoutStatus(cwd, { currentBranch: "feature/forced" });
+        },
+      },
+    });
+    try {
+      const older = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      mode = "stale";
+      const staleRefresh = service.getSnapshot(REPO_CWD, { force: true, reason: "stale" });
+      await staleStarted.promise;
+      older.unsubscribe();
+
+      mode = "newer";
+      const newer = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await service.getSnapshot(REPO_CWD, { force: true, reason: "newer" });
+      newer.unsubscribe();
+
+      // Older target's late refresh resolves after newer target already retained its snapshot.
+      staleStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature/stale" }));
+      await staleRefresh;
+
+      // Non-forced read gets the newer retained snapshot, not the stale one.
+      mode = "forced";
+      await expect(service.getSnapshot(REPO_CWD)).resolves.toMatchObject({
+        git: { currentBranch: "feature/newer" },
+      });
+
+      // Forced read bypasses the retained snapshot and returns fresh Git state.
+      await expect(
+        service.getSnapshot(REPO_CWD, { force: true, reason: "explicit-refresh" }),
+      ).resolves.toMatchObject({
+        git: { currentBranch: "feature/forced" },
+      });
+    } finally {
+      staleStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature/stale" }));
+      await service.dispose();
+    }
+  });
+
   test("onSnapshotUpdated delivers without workspace subscribers and can unsubscribe", async () => {
     const service = createService();
     const snapshots: WorkspaceGitRuntimeSnapshot[] = [];
@@ -420,6 +802,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = new WorkspaceGitServiceImpl({
       logger: createLogger() as unknown as pino.Logger,
       paseoHome: "/tmp/paseo-test",
+      releaseGraceMs: 0,
       deps: {
         ...buildDefaultTestServiceDeps(),
         getPullRequestStatus: async () => {
@@ -614,6 +997,35 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(1);
 
+    service.dispose();
+  });
+
+  test("a refresh requested after a mutation waits for a new snapshot", async () => {
+    const gate = createDeferred<CheckoutStatusGit>();
+    let reads = 0;
+    const service = createService({
+      getCheckoutStatus: (cwd: string) => {
+        reads += 1;
+        return reads === 1
+          ? gate.promise
+          : Promise.resolve(createCheckoutStatus(cwd, { currentBranch: "new-base" }));
+      },
+    });
+    const first = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "before-mutation",
+    });
+    await vi.waitFor(() => expect(reads).toBe(1));
+    const after = service.getSnapshot(REPO_CWD, {
+      force: true,
+      includeForge: false,
+      reason: "after-mutation",
+      afterInFlight: true,
+    });
+    gate.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "old-base" }));
+    await first;
+    expect((await after).git.currentBranch).toBe("new-base");
     service.dispose();
   });
 
@@ -956,6 +1368,18 @@ describe("WorkspaceGitServiceImpl", () => {
   });
 
   test("repo-level fetch intervals are shared for workspaces in the same repo", async () => {
+    // Keep the second workspace's observation setup behind its initial snapshot.
+    const secondCwd = join(REPO_CWD, "packages", "server");
+    const runGitCommand = vi.fn(async (_args, options) => {
+      if (options.cwd === secondCwd) await delay(250);
+      return {
+        stdout: `${REPO_CWD}\n`,
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      };
+    });
     const firstFetch = createDeferred<void>();
     const runGitFetch = vi.fn(async () => {
       await firstFetch.promise;
@@ -977,6 +1401,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const resolveAbsoluteGitDir = vi.fn(async () => join(REPO_CWD, ".git"));
 
     const service = createService({
+      runGitCommand,
       getCheckoutSnapshotFacts,
       getCheckoutRefDerivedState,
       resolveAbsoluteGitDir,
@@ -985,12 +1410,9 @@ describe("WorkspaceGitServiceImpl", () => {
     });
 
     const first = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
-    const second = service.registerWorkspace(
-      { cwd: join(REPO_CWD, "packages", "server") },
-      vi.fn(),
-    );
+    const second = service.registerWorkspace({ cwd: secondCwd }, vi.fn());
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
       expect(runGitFetch).toHaveBeenCalledTimes(1);
       expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
@@ -999,11 +1421,13 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(hasOriginRemote).toHaveBeenCalledTimes(0);
     expect(runGitFetch).toHaveBeenCalledTimes(1);
 
+    await waitForObservationToSettle(service, 2);
+
     firstFetch.resolve();
     await flushPromises();
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(2);
     });
 
@@ -1051,7 +1475,7 @@ describe("WorkspaceGitServiceImpl", () => {
     await vi.waitFor(() => {
       expect(runGitFetch).toHaveBeenCalledTimes(1);
       expect(service.getMetrics().fetchInFlightCount).toBe(0);
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
     });
     getCheckoutSnapshotFacts.mockClear();
 
@@ -1113,7 +1537,7 @@ describe("WorkspaceGitServiceImpl", () => {
     );
     await vi.waitFor(
       () => {
-        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
         expect(service.getMetrics()).toMatchObject({
           repositoryWorkspaceLinkCount: 2,
           workspaceObservationSetupInFlightCount: 0,
@@ -1130,7 +1554,7 @@ describe("WorkspaceGitServiceImpl", () => {
     });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(6);
     });
     expect(getCheckoutRefDerivedState).not.toHaveBeenCalled();
 
@@ -1170,7 +1594,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const listener = vi.fn();
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
     await vi.waitFor(() => {
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
       expect(service.getMetrics().fetchInFlightCount).toBe(1);
     });
 
@@ -1182,8 +1606,10 @@ describe("WorkspaceGitServiceImpl", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutRefDerivedState).toHaveBeenCalledTimes(1);
-      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
-      expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(3);
+      // Initial read, the checkout read once the watcher covers the tree,
+      // then the fallback.
+      expect(getCheckoutShortstat).toHaveBeenCalledTimes(3);
     });
     expect(listener.mock.lastCall?.[0].git.diffStat).toEqual({ additions: 2, deletions: 0 });
 
@@ -1377,6 +1803,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscribe).toHaveBeenCalledTimes(1);
     expect(subscribe).toHaveBeenCalledWith(REPO_CWD, expect.any(Function), {
       ignore: [join(REPO_CWD, ".git")],
+      signal: expect.any(AbortSignal),
     });
 
     subscription.unsubscribe();
@@ -1411,6 +1838,401 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test.each(["repository metadata", "working tree"])(
+    "recovers after a %s watcher subscription times out during setup",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      let attempts = 0;
+      const subscribe = vi.fn(async (directory: string) => {
+        if (directory === watchPath && ++attempts === 1) {
+          return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+        }
+        return createAsyncSubscription();
+      });
+      const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+      const service = createService({ subscribe, getCheckoutStatus });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(attempts).toBe(1));
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await waitForObservationToSettle(service, 1);
+        const readsBeforePoll = getCheckoutStatus.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(5_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(readsBeforePoll);
+        await vi.advanceTimersByTimeAsync(24_999);
+        expect(attempts).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        await settle(() => expect(attempts).toBe(2));
+        // Recovery emits a debounced working-tree refresh before observation takes over.
+        await vi.advanceTimersByTimeAsync(1_000);
+        await waitForRefreshesToSettle(service);
+        const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(20_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBe(readsAfterRecovery);
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+    15_000,
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "aborts each timed-out %s watcher setup and backs retries off toward an hour",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      const setup = createStallingWatchSetup(watchPath);
+      const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+      const service = createService({ subscribe: setup.subscribe, getCheckoutStatus });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(setup.signals).toHaveLength(1));
+        await setup.expectAttemptAbortedAtDeadline();
+        await waitForObservationToSettle(service, 1);
+        for (const delayMs of [
+          30_000, 60_000, 120_000, 240_000, 480_000, 960_000, 1_920_000, 3_600_000,
+        ]) {
+          await setup.expectNextAttemptAfter(delayMs, service);
+          await setup.expectAttemptAbortedAtDeadline();
+        }
+        // Degraded polling keeps the checkout fresh while the watcher waits out an hour.
+        const readsBeforeCappedWait = getCheckoutStatus.mock.calls.length;
+        await setup.expectNextAttemptAfter(3_600_000, service);
+        expect(getCheckoutStatus.mock.calls.length).toBeGreaterThanOrEqual(
+          readsBeforeCappedWait + 59,
+        );
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+    30_000,
+  );
+
+  test("rejects and unsubscribes a watcher subscription that resolves past its deadline before the timeout timer runs", async () => {
+    vi.useFakeTimers();
+    let monotonicMs = 1_000;
+    const lateSubscription = createAsyncSubscription();
+    let attempts = 0;
+    const subscribe = vi.fn(async (directory: string) => {
+      if (directory === REPO_CWD && ++attempts === 1) {
+        // Advance the monotonic clock past the deadline without firing timers, matching a
+        // synchronous stall whose subscribe() resolves in a microtask before setTimeout runs.
+        monotonicMs += WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS + 500;
+        return lateSubscription;
+      }
+      return createAsyncSubscription();
+    });
+    const service = createService({ subscribe, monotonicNow: () => monotonicMs });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    try {
+      await settle(() => expect(attempts).toBe(1));
+      await waitForObservationToSettle(service, 1);
+      expect(lateSubscription.unsubscribe).toHaveBeenCalledTimes(1);
+      // Confirm timeout backoff was recorded (first retry waits 30s).
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(attempts).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await settle(() => expect(attempts).toBe(2));
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+    }
+  });
+
+  test.each(["repository metadata", "working tree"])(
+    "keeps the %s watcher retry delay when the last observer reconnects",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      const setup = createStallingWatchSetup(watchPath);
+      const service = createService({ subscribe: setup.subscribe, now: () => new Date() });
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      try {
+        await settle(() => expect(setup.signals).toHaveLength(1));
+        await setup.expectAttemptAbortedAtDeadline();
+        await waitForObservationToSettle(service, 1);
+        await setup.expectNextAttemptAfter(30_000, service);
+        await setup.expectAttemptAbortedAtDeadline();
+        first.unsubscribe();
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        const second = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+        try {
+          await settle(() => {
+            const metrics = service.getMetrics();
+            const observationReady =
+              metrics.repositoryWorkspaceLinkCount === 1 &&
+              metrics.workspaceObservationSetupInFlightCount === 0;
+            expect(observationReady || setup.signals.length > 2).toBe(true);
+          });
+          expect(setup.signals).toHaveLength(2);
+          await setup.expectNextAttemptAfter(45_000, service);
+          await setup.expectAttemptAbortedAtDeadline();
+          await setup.expectNextAttemptAfter(120_000, service);
+        } finally {
+          second.unsubscribe();
+        }
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "keeps the scheduled %s watcher retry after an error and a setup timeout",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      const setup = createStallingWatchSetup(watchPath);
+      setup.acceptNextAttempt();
+      const service = createService({ subscribe: setup.subscribe, now: () => new Date() });
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      try {
+        await waitForObservationToSettle(service, 1);
+        expect(setup.signals).toHaveLength(1);
+        setup.failAcceptedWatcher();
+        await setup.expectNextAttemptAfter(30_000, service);
+        await setup.expectAttemptAbortedAtDeadline();
+        first.unsubscribe();
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        const second = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+        try {
+          await waitForObservationToSettle(service, 1);
+          await setup.expectNextAttemptAfter(45_000, service);
+        } finally {
+          second.unsubscribe();
+        }
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "an accepted %s watcher subscription resets the setup-timeout backoff",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      const setup = createStallingWatchSetup(watchPath);
+      const service = createService({ subscribe: setup.subscribe });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(setup.signals).toHaveLength(1));
+        await setup.expectAttemptAbortedAtDeadline();
+        for (const delayMs of [30_000, 60_000, 120_000, 240_000, 480_000]) {
+          await setup.expectNextAttemptAfter(delayMs, service);
+          await setup.expectAttemptAbortedAtDeadline();
+        }
+        setup.acceptNextAttempt();
+        await setup.expectNextAttemptAfter(960_000, service);
+        setup.failAcceptedWatcher();
+        // The ordinary recovery ladder's ceiling applies again, not the 32-minute timeout step.
+        await setup.expectNextAttemptAfter(300_000, service);
+        await setup.expectAttemptAbortedAtDeadline();
+        await setup.expectNextAttemptAfter(300_000, service);
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+    30_000,
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "ignores expired %s watcher callbacks after recovery",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      let attempts = 0;
+      const callbacks: Array<
+        (error: Error | null, events: Array<{ path: string; type: "update" }>) => void
+      > = [];
+      const recovered = createAsyncSubscription();
+      const subscribe = vi.fn(async (directory: string, callback: (typeof callbacks)[number]) => {
+        if (directory === watchPath) callbacks.push(callback);
+        if (directory === watchPath && ++attempts === 1) {
+          return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+        }
+        return directory === watchPath ? recovered : createAsyncSubscription();
+      });
+      const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+      const service = createService({ subscribe, getCheckoutStatus });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(attempts).toBe(1));
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await waitForObservationToSettle(service, 1);
+        const readsBeforePoll = getCheckoutStatus.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(5_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(readsBeforePoll);
+        await vi.advanceTimersByTimeAsync(24_999);
+        expect(attempts).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        await settle(() => expect(attempts).toBe(2));
+        // Recovery emits a debounced working-tree refresh before observation takes over.
+        await vi.advanceTimersByTimeAsync(1_000);
+        await waitForRefreshesToSettle(service);
+        const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+        callbacks[0]!(new Error("expired watcher stopped"), []);
+        callbacks[0]!(null, [{ path: join(watchPath, "stale.ts"), type: "update" }]);
+        expect(recovered.unsubscribe).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(20_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBe(readsAfterRecovery);
+        expect(recovered.unsubscribe).not.toHaveBeenCalled();
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+    15_000,
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "refreshes changes missed before %s watcher recovery",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      let attempts = 0;
+      let changed = false;
+      const subscribe = vi.fn(async (directory: string) => {
+        if (directory === watchPath && ++attempts === 1) {
+          return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+        }
+        return createAsyncSubscription();
+      });
+      const getCheckoutStatus = vi.fn(async (cwd: string) =>
+        createCheckoutStatus(cwd, {
+          isDirty: changed,
+          currentBranch: changed ? "feature" : "main",
+        }),
+      );
+      const service = createService({
+        subscribe,
+        getCheckoutStatus,
+        getCheckoutSnapshotFacts: async (cwd) => ({
+          ...createCheckoutSnapshotFacts(cwd),
+          currentBranch: changed ? "feature" : "main",
+        }),
+      });
+      const snapshots: WorkspaceGitRuntimeSnapshot[] = [];
+      service.onSnapshotUpdated((snapshot) => snapshots.push(snapshot));
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(attempts).toBe(1));
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await waitForObservationToSettle(service, 1);
+        await vi.advanceTimersByTimeAsync(29_999);
+        await waitForRefreshesToSettle(service);
+        expect(snapshots.at(-1)?.git).toMatchObject({ currentBranch: "main", isDirty: false });
+        changed = true;
+        await vi.advanceTimersByTimeAsync(1);
+        await settle(() => expect(attempts).toBe(2));
+        await vi.advanceTimersByTimeAsync(1_000);
+        await waitForRefreshesToSettle(service);
+        expect(snapshots.at(-1)?.git).toMatchObject(
+          kind === "repository metadata" ? { currentBranch: "feature" } : { isDirty: true },
+        );
+        const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(20_000);
+        await waitForRefreshesToSettle(service);
+        expect(getCheckoutStatus.mock.calls.length).toBe(readsAfterRecovery);
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "settles a pending %s watcher retry after the final consumer leaves",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      let attempts = 0;
+      const subscribe = vi.fn(async (directory: string) => {
+        if (directory === watchPath) {
+          attempts += 1;
+          return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+        }
+        return createAsyncSubscription();
+      });
+      const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+      const service = createService({ subscribe, getCheckoutStatus });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(attempts).toBe(1));
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await waitForObservationToSettle(service, 1);
+        await vi.advanceTimersByTimeAsync(30_000);
+        await settle(() => expect(attempts).toBe(2));
+        subscription.unsubscribe();
+        await waitForRefreshesToSettle(service);
+        const readsAfterUnsubscribe = getCheckoutStatus.mock.calls.length;
+        // Vitest reports any unhandled rejection as a suite failure.
+        await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(attempts).toBe(2);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(getCheckoutStatus.mock.calls.length).toBe(readsAfterUnsubscribe);
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+  );
+
+  test("metadata recovery reconciles exclusions changed during the outage", async () => {
+    let ignoredDirectories = "generated/\n";
+    let attempts = 0;
+    let workingTreeCallback!: (
+      error: Error | null,
+      events: Array<{ path: string; type: "delete" }>,
+    ) => void;
+    const workingTreeSubscription = createAsyncSubscription();
+    const subscribe = vi.fn(async (directory: string, callback: typeof workingTreeCallback) => {
+      if (directory === join(REPO_CWD, ".git") && ++attempts === 1) {
+        return new Promise<ReturnType<typeof createAsyncSubscription>>(() => {});
+      }
+      if (directory === REPO_CWD) {
+        workingTreeCallback = callback;
+        return workingTreeSubscription;
+      }
+      return createAsyncSubscription();
+    });
+    const runGitCommand = vi.fn(async (args: string[]) => ({
+      stdout: args[0] === "rev-parse" ? `${REPO_CWD}\n` : ignoredDirectories,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+    const service = createService({ subscribe, runGitCommand, getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    try {
+      await settle(() => expect(attempts).toBe(1));
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+      await waitForObservationToSettle(service, 1);
+      expect(subscribe.mock.calls.find(([directory]) => directory === REPO_CWD)).toBeDefined();
+      ignoredDirectories = ""; // info/exclude changed while metadata observation was unavailable.
+      await vi.advanceTimersByTimeAsync(30_000);
+      await settle(() => expect(attempts).toBe(2));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await waitForRefreshesToSettle(service);
+      const readsAfterRecovery = getCheckoutStatus.mock.calls.length;
+      workingTreeCallback(null, [
+        { path: join(REPO_CWD, "generated", "output.ts"), type: "delete" },
+      ]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await waitForRefreshesToSettle(service);
+      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(readsAfterRecovery);
+      expect(workingTreeSubscription.updateIgnore).toHaveBeenCalledWith([join(REPO_CWD, ".git")]);
+    } finally {
+      subscription.unsubscribe();
+      await service.dispose();
+    }
+  });
+
   test("sets a bounded polling fallback when recursive observation is unavailable", async () => {
     const subscribe = vi.fn(async () => {
       throw new Error("watcher unavailable");
@@ -1418,7 +2240,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = createService({ subscribe });
     const subscription = await service.requestWorkingTreeWatch(REPO_CWD, vi.fn());
 
-    expect(vi.getTimerCount()).toBe(1);
+    expect(vi.getTimerCount()).toBe(2);
 
     subscription.unsubscribe();
     service.dispose();
@@ -1442,6 +2264,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscription.repoRoot).toBeNull();
     expect(subscribe).toHaveBeenCalledWith(plainCwd, expect.any(Function), {
       ignore: [join(plainCwd, ".git")],
+      signal: expect.any(AbortSignal),
     });
     expect(vi.getTimerCount()).toBe(1);
 
@@ -1551,5 +2374,921 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(getCheckoutDiff).toHaveBeenCalledTimes(CACHE_MAX + OVERFLOW + 1);
 
     service.dispose();
+  });
+});
+
+describe("WorkspaceGitServiceImpl with workspace folders that no longer exist", () => {
+  const temporaryFolders: string[] = [];
+
+  async function createTemporaryFolder(): Promise<string> {
+    const folder = await mkdtemp(join(os.tmpdir(), "paseo-workspace-git-"));
+    temporaryFolders.push(folder);
+    return folder;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await Promise.all(
+      temporaryFolders.splice(0).map((folder) => rm(folder, { recursive: true, force: true })),
+    );
+  });
+
+  test("polling stops for a workspace whose folder no longer exists", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+
+    await rm(workspace, { recursive: true, force: true });
+    const gitCommandsAtDeletion = git.gitCommandsIn(workspace);
+    await advanceThroughDegradedPolls(service);
+
+    expect(git.gitCommandsIn(workspace)).toBe(gitCommandsAtDeletion);
+    expect(service.getMetrics()).toMatchObject({
+      repositoryTargetCount: 0,
+      workingTreeWatchTargetCount: 0,
+    });
+    expect(vi.getTimerCount()).toBe(1);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test.each([0, 250])(
+    "a deleted worktree leaves its shared repository polling and fetch to the surviving worktree (watch delay: %ims)",
+    async (watchDelayMs) => {
+      const gitCommonDir = join(await createTemporaryFolder(), ".git");
+      const deletedWorktree = await createTemporaryFolder();
+      const survivingWorktree = await createTemporaryFolder();
+      const watchReady = createDeferred<void>();
+      const git = createFolderBackedGit({
+        facts: linkedWorktreeFacts(gitCommonDir),
+        heldWatch: { directory: survivingWorktree, release: watchReady.promise },
+      });
+      let survivingWorktreeEdits = 0;
+      git.deps.getCheckoutShortstat.mockImplementation(async (cwd: string) => ({
+        additions: cwd === survivingWorktree ? ++survivingWorktreeEdits : 1,
+        deletions: 0,
+      }));
+      const service = createService(git.deps);
+      try {
+        const deletedSubscription = service.registerWorkspace({ cwd: deletedWorktree }, vi.fn());
+        await waitForObservationToSettle(service, 1);
+        const survivingSubscription = service.registerWorkspace(
+          { cwd: survivingWorktree },
+          vi.fn(),
+        );
+        const pollingTime = Date.now();
+        void delay(watchDelayMs).then(() => watchReady.resolve());
+        await waitForObservationToSettle(service, 2);
+        expect(Date.now()).toBe(pollingTime);
+
+        await rm(deletedWorktree, { recursive: true, force: true });
+        await vi.advanceTimersByTimeAsync(60_000);
+        await waitForRefreshesToSettle(service);
+        const deletedWorktreeCommands = git.gitCommandsIn(deletedWorktree);
+
+        for (let tick = 0; tick < 3; tick += 1) {
+          const survivingWorktreePolls = git.pollsOf(survivingWorktree);
+          await vi.advanceTimersByTimeAsync(5_000);
+          await settle(() => {
+            expect(git.pollsOf(survivingWorktree)).toBe(survivingWorktreePolls + 1);
+          });
+        }
+        expect(git.gitCommandsIn(deletedWorktree)).toBe(deletedWorktreeCommands);
+
+        const fetchesBefore = git.deps.runGitFetch.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(2 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+        expect(git.deps.runGitFetch.mock.calls.slice(fetchesBefore).map(([cwd]) => cwd)).toEqual([
+          survivingWorktree,
+          survivingWorktree,
+        ]);
+        expect(git.gitCommandsIn(deletedWorktree)).toBe(deletedWorktreeCommands);
+
+        deletedSubscription.unsubscribe();
+        survivingSubscription.unsubscribe();
+      } finally {
+        watchReady.resolve();
+        await service.dispose();
+      }
+    },
+  );
+
+  test("deleting every worktree of a repository stops its polling and background fetch", async () => {
+    const gitCommonDir = join(await createTemporaryFolder(), ".git");
+    const firstWorktree = await createTemporaryFolder();
+    const secondWorktree = await createTemporaryFolder();
+    const git = createFolderBackedGit({ facts: linkedWorktreeFacts(gitCommonDir) });
+    const service = createService(git.deps);
+    const firstSubscription = service.registerWorkspace({ cwd: firstWorktree }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    const secondSubscription = service.registerWorkspace({ cwd: secondWorktree }, vi.fn());
+    await waitForObservationToSettle(service, 2);
+
+    await rm(firstWorktree, { recursive: true, force: true });
+    await rm(secondWorktree, { recursive: true, force: true });
+    const commandsAtDeletion = [
+      git.gitCommandsIn(firstWorktree),
+      git.gitCommandsIn(secondWorktree),
+    ];
+    await advanceThroughDegradedPolls(service);
+
+    expect([git.gitCommandsIn(firstWorktree), git.gitCommandsIn(secondWorktree)]).toEqual(
+      commandsAtDeletion,
+    );
+    expect(service.getMetrics()).toMatchObject({
+      repositoryTargetCount: 0,
+      workingTreeWatchTargetCount: 0,
+    });
+    expect(vi.getTimerCount()).toBe(2);
+
+    firstSubscription.unsubscribe();
+    secondSubscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("working tree fallback polling and watcher recovery stop for a workspace whose folder no longer exists", async () => {
+    const workspace = await createTemporaryFolder();
+    await mkdir(join(workspace, ".git"));
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+
+    await rm(workspace, { recursive: true, force: true });
+    git.watchCallbackFor(workspace)(new Error("watched directory was deleted"), []);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    const commandsAfterWatcherError = git.gitCommandsIn(workspace);
+    const watchAttemptsAfterWatcherError = git.watchAttemptsFor(workspace);
+    await advanceThroughDegradedPolls(service);
+
+    expect(git.gitCommandsIn(workspace)).toBe(commandsAfterWatcherError);
+    expect(git.watchAttemptsFor(workspace)).toBe(watchAttemptsAfterWatcherError);
+    expect(vi.getTimerCount()).toBe(1);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a workspace whose folder comes back resumes polling on its next subscription", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const firstSubscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    const commandsWhileMissing = git.gitCommandsIn(workspace);
+    await advanceThroughDegradedPolls(service);
+    expect(git.gitCommandsIn(workspace)).toBe(commandsWhileMissing);
+
+    await mkdir(workspace);
+    const secondSubscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    const pollsAfterResume = git.pollsOf(workspace);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waitForRefreshesToSettle(service);
+
+    expect(git.pollsOf(workspace)).toBe(pollsAfterResume + 1);
+
+    firstSubscription.unsubscribe();
+    secondSubscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a suspended workspace costs no git while its folder is missing, even when a refresh is requested", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    await advanceThroughDegradedPolls(service);
+    const commandsWhileMissing = git.gitCommandsIn(workspace);
+
+    for (let probe = 0; probe < 10; probe += 1) {
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS);
+      await waitForRefreshesToSettle(service);
+    }
+    service.scheduleRefreshForCwd(workspace);
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waitForRefreshesToSettle(service);
+
+    expect(git.gitCommandsIn(workspace)).toBe(commandsWhileMissing);
+    expect(vi.getTimerCount()).toBe(1);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a suspended worktree resumes polling and its repository fetch once its folder is back, without a new subscription", async () => {
+    const gitCommonDir = join(await createTemporaryFolder(), ".git");
+    const worktree = await createTemporaryFolder();
+    const git = createFolderBackedGit({ facts: linkedWorktreeFacts(gitCommonDir) });
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: worktree }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(worktree, { recursive: true, force: true });
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(worktree);
+    const fetchesBeforeRestore = git.fetchesIn(worktree);
+    await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_OBSERVATION_REENSURE_INTERVAL_MS);
+    await waitForObservationToSettle(service, 1);
+    expect(git.fetchesIn(worktree)).toBe(fetchesBeforeRestore + 1);
+
+    const pollsAfterRestore = git.pollsOf(worktree);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waitForRefreshesToSettle(service);
+    expect(git.pollsOf(worktree)).toBe(pollsAfterRestore + 1);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a forced snapshot resumes a suspended workspace whose folder is back", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(workspace);
+    const snapshot = await service.getSnapshot(workspace, {
+      force: true,
+      reason: "refresh-button",
+    });
+    await waitForObservationToSettle(service, 1);
+
+    expect(snapshot.git.isGit).toBe(true);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a plain snapshot read resumes a suspended workspace whose folder is back, instead of returning the non-git snapshot cached while it was gone", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect((await service.getSnapshot(workspace)).git.isGit).toBe(false);
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(workspace);
+    const snapshot = await service.getSnapshot(workspace);
+
+    expect(snapshot.git.isGit).toBe(true);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a snapshot read during restoration waits for fresh checkout facts", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    let holdRestoredRead = false;
+    const service = createService({
+      ...git.deps,
+      getCheckoutSnapshotFacts: async (cwd: string) => {
+        if (holdRestoredRead) {
+          started.resolve();
+          await release.promise;
+        }
+        return git.deps.getCheckoutSnapshotFacts(cwd);
+      },
+    });
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect((await service.getSnapshot(workspace)).git.isGit).toBe(false);
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(workspace);
+    holdRestoredRead = true;
+    const restoringRead = service.getSnapshot(workspace);
+    await started.promise;
+    const concurrentRead = service.getSnapshot(workspace);
+    release.resolve();
+
+    expect((await restoringRead).git.isGit).toBe(true);
+    expect((await concurrentRead).git.isGit).toBe(true);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a resumed workspace rebuilds observation from fresh facts, not the non-git facts cached while its folder was gone", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const firstSubscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await rm(workspace, { recursive: true, force: true });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect((await service.getSnapshot(workspace)).git.isGit).toBe(false);
+    await advanceThroughDegradedPolls(service);
+    await waitForObservationToSettle(service, 0);
+
+    await mkdir(workspace);
+    const secondSubscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+
+    expect((await service.getSnapshot(workspace)).git.isGit).toBe(true);
+
+    firstSubscription.unsubscribe();
+    secondSubscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("resuming waits for an observation setup that was still running when the folder vanished", async () => {
+    const workspace = await createTemporaryFolder();
+    const gitDir = join(workspace, ".git");
+    await mkdir(gitDir);
+    const metadataWatchRelease = createDeferred<void>();
+    const git = createFolderBackedGit({
+      unwatchableDirectories: [workspace],
+      heldWatch: { directory: gitDir, release: metadataWatchRelease.promise },
+    });
+    const service = createService(git.deps);
+    const firstSubscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await settle(() => {
+      expect(git.watchAttemptsFor(gitDir)).toBe(1);
+    });
+
+    await rm(workspace, { recursive: true, force: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle(() => {
+      expect(service.getMetrics()).toMatchObject({
+        repositoryTargetCount: 0,
+        workingTreeWatchTargetCount: 0,
+      });
+    });
+    await mkdir(workspace);
+    const secondSubscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    metadataWatchRelease.resolve();
+    await waitForObservationToSettle(service, 1);
+
+    expect(service.getMetrics().workingTreeWatchTargetCount).toBe(1);
+
+    firstSubscription.unsubscribe();
+    secondSubscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("an open working tree watch neither notifies nor recovers while its folder is missing, and picks up once it is back", async () => {
+    const workspace = await createTemporaryFolder();
+    await mkdir(join(workspace, ".git"));
+    const git = createFolderBackedGit();
+    const service = createService(git.deps);
+    const workspaceSubscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    const diffListener = vi.fn();
+    const diffWatch = await service.requestWorkingTreeWatch(workspace, diffListener);
+
+    await rm(workspace, { recursive: true, force: true });
+    git.watchCallbackFor(workspace)(new Error("watched directory was deleted"), []);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    const commandsAfterWatcherError = git.gitCommandsIn(workspace);
+    const notificationsAfterWatcherError = diffListener.mock.calls.length;
+    const watchAttemptsAfterWatcherError = git.watchAttemptsFor(workspace);
+    await advanceThroughWorkingTreeRecoveryAttempts(service);
+
+    expect(git.gitCommandsIn(workspace)).toBe(commandsAfterWatcherError);
+    expect(diffListener.mock.calls.length).toBe(notificationsAfterWatcherError);
+    expect(git.watchAttemptsFor(workspace)).toBe(watchAttemptsAfterWatcherError);
+    expect(service.getMetrics().workingTreeWatchTargetCount).toBe(1);
+
+    await mkdir(join(workspace, ".git"), { recursive: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await waitForRefreshesToSettle(service);
+    expect(diffListener.mock.calls.length).toBe(notificationsAfterWatcherError + 1);
+
+    await vi.advanceTimersByTimeAsync(240_000);
+    await waitForRefreshesToSettle(service);
+    expect(git.watchAttemptsFor(workspace)).toBe(watchAttemptsAfterWatcherError + 1);
+    const notificationsAfterResubscribe = diffListener.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    await waitForRefreshesToSettle(service);
+    expect(diffListener.mock.calls.length).toBe(notificationsAfterResubscribe);
+
+    diffWatch.unsubscribe();
+    workspaceSubscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("a refresh crossing suspension preserves the cached snapshot and drops queued work", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const started = createDeferred<void>();
+    const release = createDeferred<void>();
+    let holdNextRead = false;
+    let factsReads = 0;
+    const service = createService({
+      ...git.deps,
+      getCheckoutSnapshotFacts: async (cwd: string) => {
+        factsReads++;
+        if (holdNextRead) {
+          holdNextRead = false;
+          started.resolve();
+          await release.promise;
+        }
+        return git.deps.getCheckoutSnapshotFacts(cwd);
+      },
+    });
+    const updates: WorkspaceGitRuntimeSnapshot[] = [];
+    const subscription = service.registerWorkspace({ cwd: workspace }, (snapshot) =>
+      updates.push(snapshot),
+    );
+    await waitForObservationToSettle(service, 1);
+    const cached = await service.getSnapshot(workspace);
+    holdNextRead = true;
+    const active = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: false,
+      reason: "overlapping-refresh",
+    });
+    await started.promise;
+    const queued = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: true,
+      reason: "queued-refresh",
+    });
+    await rm(workspace, { recursive: true, force: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle(() => expect(service.getMetrics().repositoryWorkspaceLinkCount).toBe(0));
+    const readsAtSuspension = factsReads;
+    const updatesAtSuspension = updates.length;
+    release.resolve();
+    expect(await active).toEqual(cached);
+    expect(await queued).toEqual(cached);
+    expect(await service.getSnapshot(workspace)).toEqual(cached);
+    expect(updates).toHaveLength(updatesAtSuspension);
+    expect(factsReads).toBe(readsAtSuspension);
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("restoration settles a suspended refresh before reloading facts", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const staleFacts = createDeferred<CheckoutSnapshotFacts>();
+    const started = createDeferred<void>();
+    let holdNextRead = false;
+    const service = createService({
+      ...git.deps,
+      getCheckoutSnapshotFacts: async (cwd: string) => {
+        if (holdNextRead) {
+          holdNextRead = false;
+          started.resolve();
+          return staleFacts.promise;
+        }
+        return git.deps.getCheckoutSnapshotFacts(cwd);
+      },
+    });
+    const updates: WorkspaceGitRuntimeSnapshot[] = [];
+    const subscription = service.registerWorkspace({ cwd: workspace }, (snapshot) =>
+      updates.push(snapshot),
+    );
+    await waitForObservationToSettle(service, 1);
+    const cached = await service.getSnapshot(workspace);
+    holdNextRead = true;
+    const active = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: false,
+      reason: "overlapping-refresh",
+    });
+    await started.promise;
+    await rm(workspace, { recursive: true, force: true });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settle(() => expect(service.getMetrics().repositoryWorkspaceLinkCount).toBe(0));
+    const updatesAtSuspension = updates.length;
+    await mkdir(workspace);
+    const restored = service.getSnapshot(workspace, {
+      force: true,
+      includeForge: false,
+      reason: "folder-returned",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    staleFacts.resolve({ isGit: false });
+    expect(await active).toEqual(cached);
+    expect((await restored).git.isGit).toBe(true);
+    expect(updates.slice(updatesAtSuspension).every((snapshot) => snapshot.git.isGit)).toBe(true);
+    await waitForObservationToSettle(service, 1);
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("workspaceFolderExists reports a missing folder and a path under a file as missing", async () => {
+    const folder = await createTemporaryFolder();
+    const file = join(folder, "file.txt");
+    await writeFile(file, "");
+
+    expect(await workspaceFolderExists(folder)).toBe(true);
+    expect(await workspaceFolderExists(join(folder, "missing"))).toBe(false);
+    expect(await workspaceFolderExists(join(file, "nested"))).toBe(false);
+  });
+});
+
+describe("WorkspaceGitServiceImpl background fetch backoff", () => {
+  const temporaryFolders: string[] = [];
+
+  async function createTemporaryFolder(): Promise<string> {
+    const folder = await mkdtemp(join(os.tmpdir(), "paseo-git-fetch-backoff-"));
+    temporaryFolders.push(folder);
+    return folder;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await Promise.all(
+      temporaryFolders.splice(0).map((folder) => rm(folder, { recursive: true, force: true })),
+    );
+  });
+
+  test("pauses periodic background fetches on auth failure and resumes on forced refresh, state change, or remoteUrl change", async () => {
+    const workspace = await createTemporaryFolder();
+    const logger = createLogger();
+    const git = createFolderBackedGit();
+    let currentRemoteUrl = "https://github.com/acme/repo.git";
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+    git.deps.runGitFetch.mockResolvedValue({
+      changes: [],
+      error: new Error(
+        "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+      ),
+    });
+
+    const service = createService({ ...git.deps, logger });
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(1);
+    });
+
+    // Advancing through many intervals must not repeat failing auth fetches.
+    await vi.advanceTimersByTimeAsync(10 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    expect(git.fetchesIn(workspace)).toBe(1);
+    expect(
+      logger.warn.mock.calls.filter(([, message]) =>
+        String(message).includes("paused due to authentication failure"),
+      ),
+    ).toHaveLength(1);
+
+    // 1. Forced getSnapshot resumes fetching.
+    await service.getSnapshot(workspace, { force: true, reason: "user-refresh" });
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(5 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    expect(git.fetchesIn(workspace)).toBe(2);
+
+    // 2. onWorkspaceStateMayHaveChanged resumes fetching.
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(3);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(5 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    expect(git.fetchesIn(workspace)).toBe(3);
+
+    // 3. Changing remoteUrl and refreshing resumes fetching and restores periodic cadence on success.
+    git.deps.runGitFetch.mockResolvedValue({ changes: [], error: null });
+    currentRemoteUrl = "git@github.com:acme/repo.git";
+    await service.refresh(workspace);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(4);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(5);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("pauses when runGitFetch rejects with an auth error and honors resume signals received in flight", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+        throw new Error("git@github.com: Permission denied (publickey).");
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+
+    // A resume signal during the in-flight failing attempt must schedule a follow-up fetch
+    // rather than letting the stale error leave background fetch paused.
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    releaseFirstFetch.resolve();
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+
+    // After the retry succeeds, normal periodic cadence is active.
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(3);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("backs off transient background fetch failures exponentially and resets on success", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    git.deps.runGitFetch.mockResolvedValue({
+      changes: [],
+      error: new Error(
+        "fatal: unable to access 'https://github.com/acme/repo.git/': The requested URL returned error: 503",
+      ),
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await waitForObservationToSettle(service, 1);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(1);
+    });
+
+    const expectedDelays = [
+      computeBackgroundGitFetchDelayMs(1),
+      computeBackgroundGitFetchDelayMs(2),
+      computeBackgroundGitFetchDelayMs(3),
+      computeBackgroundGitFetchDelayMs(4),
+      computeBackgroundGitFetchDelayMs(5),
+      computeBackgroundGitFetchDelayMs(6),
+    ];
+    expect(expectedDelays).toEqual([
+      360_000,
+      720_000,
+      1_440_000,
+      2_880_000,
+      BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS,
+      BACKGROUND_GIT_FETCH_MAX_BACKOFF_MS,
+    ]);
+
+    for (let index = 0; index < expectedDelays.length; index += 1) {
+      const delayMs = expectedDelays[index]!;
+      const countBefore = git.fetchesIn(workspace);
+      await vi.advanceTimersByTimeAsync(delayMs - 1);
+      expect(git.fetchesIn(workspace)).toBe(countBefore);
+
+      if (index === expectedDelays.length - 1) {
+        git.deps.runGitFetch.mockResolvedValue({ changes: [], error: null });
+      }
+      await vi.advanceTimersByTimeAsync(1);
+      await settle(() => {
+        expect(git.fetchesIn(workspace)).toBe(countBefore + 1);
+        expect(service.getMetrics().fetchInFlightCount).toBe(0);
+      });
+    }
+
+    // Success resets the next fetch delay back to BACKGROUND_GIT_FETCH_INTERVAL_MS.
+    const countAfterSuccess = git.fetchesIn(workspace);
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS - 1);
+    expect(git.fetchesIn(workspace)).toBe(countAfterSuccess);
+    await vi.advanceTimersByTimeAsync(1);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(countAfterSuccess + 1);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("does not trigger a redundant follow-up fetch when force refresh or state change overlaps a healthy in-flight fetch", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+
+    await service.getSnapshot(workspace, { force: true, reason: "open-project" });
+    service.onWorkspaceStateMayHaveChanged(workspace);
+    releaseFirstFetch.resolve();
+
+    await settle(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await waitForRefreshesToSettle(service);
+    expect(git.fetchesIn(workspace)).toBe(1);
+
+    // Normal 3-minute schedule remains active.
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("triggers a follow-up fetch when remoteUrl changes during a healthy in-flight fetch", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    let currentRemoteUrl = "https://github.com/acme/repo.git";
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+
+    currentRemoteUrl = "git@github.com:acme/repo.git";
+    await service.getSnapshot(workspace, { force: true, reason: "remote-changed" });
+    releaseFirstFetch.resolve();
+
+    await settle(() => {
+      expect(git.fetchesIn(workspace)).toBe(2);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("preserves in-flight state when origin is removed mid-fetch and avoids concurrent fetch if re-added", async () => {
+    const workspace = await createTemporaryFolder();
+    const git = createFolderBackedGit();
+    let currentRemoteUrl: string | null = "https://github.com/acme/repo.git";
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+    const firstFetchStarted = createDeferred<void>();
+    const releaseFirstFetch = createDeferred<void>();
+    const secondFetchStarted = createDeferred<void>();
+    const releaseSecondFetch = createDeferred<void>();
+    let attempt = 0;
+    git.deps.runGitFetch.mockImplementation(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        firstFetchStarted.resolve();
+        await releaseFirstFetch.promise;
+      } else if (attempt === 2) {
+        secondFetchStarted.resolve();
+        await releaseSecondFetch.promise;
+      }
+      return { changes: [], error: null };
+    });
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await firstFetchStarted.promise;
+    await waitForRefreshesToSettle(service);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Removing origin while fetch 1 is in flight must keep fetchInFlightCount at 1.
+    currentRemoteUrl = null;
+    await service.refresh(workspace);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Re-adding origin while fetch 1 is still in flight must NOT launch a concurrent fetch 2.
+    currentRemoteUrl = "https://github.com/acme/other.git";
+    await service.getSnapshot(workspace, { force: true, reason: "re-added-origin" });
+    expect(git.fetchesIn(workspace)).toBe(1);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Releasing fetch 1 starts fetch 2 sequentially.
+    releaseFirstFetch.resolve();
+    await secondFetchStarted.promise;
+    expect(git.fetchesIn(workspace)).toBe(2);
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+
+    // Removing origin while fetch 2 is in flight and letting it settle leaves fetchInFlightCount at 0
+    // with no follow-up fetch scheduled.
+    currentRemoteUrl = null;
+    await service.getSnapshot(workspace, { force: true, reason: "removed-origin-again" });
+    expect(service.getMetrics().fetchInFlightCount).toBe(1);
+    releaseSecondFetch.resolve();
+    await settle(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(2 * BACKGROUND_GIT_FETCH_INTERVAL_MS);
+    expect(git.fetchesIn(workspace)).toBe(2);
+
+    subscription.unsubscribe();
+    await service.dispose();
+  });
+
+  test("ensureRepoTarget preserves fetchState resolved during async observation setup", async () => {
+    const workspace = await createTemporaryFolder();
+    const gitDir = join(workspace, ".git");
+    await mkdir(gitDir);
+    const metadataWatchRelease = createDeferred<void>();
+    let currentRemoteUrl: string | null = "https://github.com/acme/repo.git";
+    const git = createFolderBackedGit({
+      heldWatch: { directory: gitDir, release: metadataWatchRelease.promise },
+    });
+    git.deps.getCheckoutSnapshotFacts.mockImplementation(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      remoteUrl: currentRemoteUrl,
+    }));
+    git.deps.getCheckoutStatus.mockImplementation(async (cwd: string) =>
+      createCheckoutStatus(cwd, { remoteUrl: currentRemoteUrl }),
+    );
+
+    const service = createService(git.deps);
+    const subscription = service.registerWorkspace({ cwd: workspace }, vi.fn());
+    await settle(() => {
+      expect(git.watchAttemptsFor(gitDir)).toBe(1);
+    });
+
+    // While ensureRepoTarget is awaiting startRepoMetadataObservation, remove origin and refresh.
+    currentRemoteUrl = null;
+    await service.getSnapshot(workspace, { force: true, reason: "origin-removed-during-setup" });
+
+    metadataWatchRelease.resolve();
+    await waitForObservationToSettle(service, 1);
+    expect(git.fetchesIn(workspace)).toBe(0);
+
+    subscription.unsubscribe();
+    await service.dispose();
   });
 });

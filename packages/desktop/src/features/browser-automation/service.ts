@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { Script } from "node:vm";
 
 import type {
   BrowserAutomationCommand,
@@ -10,6 +11,7 @@ import type {
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
+import type { PointerFocusGuardResult } from "./focus-guard.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   dispatchTrustedClick,
@@ -35,12 +37,15 @@ export interface TabContents {
   goForward(): void;
   reload(): void;
   captureFrame(signal: AbortSignal): Promise<TabImage>;
+  decodePng(png: Uint8Array): TabImage;
   invalidate(): void;
   withFrameProduction<T>(capture: () => Promise<T>): Promise<T>;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
   // Commits text into this tab's focused element. CDP Input.insertText would
   // commit into whichever element has focus in the Paseo window instead.
   insertText(text: string): Promise<void>;
+  // Brackets CDP pointer presses that move native Chromium focus into the guest.
+  guardPointerFocus?(): Promise<PointerFocusGuardResult>;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
   captureDialogs?<T>(
     task: () => Promise<T>,
@@ -51,6 +56,22 @@ export interface TabContents {
 export interface TabImage {
   toPNG(): Uint8Array;
   getSize(): { width: number; height: number };
+  // Raw 32-bit pixels. Alpha is the fourth byte of each pixel in BGRA and RGBA order alike.
+  toBitmap(): Uint8Array;
+}
+
+// Electron guest pages have a transparent base background, so a page that has
+// painted nothing yet (for example a dev server hiding body until its JS boots)
+// yields a frame where every pixel is transparent. That frame is not a
+// screenshot of the page.
+export function hasPaintedPixels(image: TabImage): boolean {
+  const bitmap = image.toBitmap();
+  for (let alpha = 3; alpha < bitmap.length; alpha += 4) {
+    if (bitmap[alpha] !== 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export interface BrowserRegistry {
@@ -612,7 +633,12 @@ async function executeClick(
     if (!actionable.ok) {
       return actionabilityFailure(requestId, ref, actionable);
     }
-    await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point, options);
+    const guarded = await withPointerFocusGuard(requestId, target.contents, () =>
+      dispatchTrustedClick(cdpSender(target.contents), actionable.target.point, options),
+    );
+    if (!guarded.ok) {
+      return guarded.failure;
+    }
     return {
       requestId,
       ok: true,
@@ -772,11 +798,12 @@ async function executeDrag(
     if (!dropTarget.ok) {
       return actionabilityFailure(requestId, targetRef, dropTarget);
     }
-    await dispatchTrustedDrag(
-      cdpSender(target.contents),
-      source.target.point,
-      dropTarget.target.point,
+    const guarded = await withPointerFocusGuard(requestId, target.contents, () =>
+      dispatchTrustedDrag(cdpSender(target.contents), source.target.point, dropTarget.target.point),
     );
+    if (!guarded.ok) {
+      return guarded.failure;
+    }
     return {
       requestId,
       ok: true,
@@ -847,6 +874,11 @@ async function executeEvaluate(
         return staleRefFailure(requestId, ref);
       }
       elementExpression = expression;
+    }
+
+    const syntaxError = functionSyntaxError(functionSource);
+    if (syntaxError !== null) {
+      return fail(requestId, "browser_unknown_error", capEvaluateErrorMessage(syntaxError));
     }
 
     let rawResult: unknown;
@@ -983,6 +1015,52 @@ function cdpSender(contents: TabContents): NonNullable<TabContents["sendDebugCom
   return contents.sendDebugCommand?.bind(contents) as NonNullable<TabContents["sendDebugCommand"]>;
 }
 
+async function enablePageFocusEmulation(contents: TabContents): Promise<void> {
+  if (!contents.sendDebugCommand) {
+    return;
+  }
+  // Suppress guest blur so restoring host focus does not close page menus; failure is tolerable.
+  await contents
+    .sendDebugCommand("Emulation.setFocusEmulationEnabled", { enabled: true })
+    .catch(() => undefined);
+}
+
+async function withPointerFocusGuard<T>(
+  requestId: string,
+  contents: TabContents,
+  task: () => Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false; failure: FailurePayload }> {
+  const guard = contents.guardPointerFocus ? await contents.guardPointerFocus() : null;
+  if (guard?.status === "composing") {
+    return {
+      ok: false,
+      failure: fail(
+        requestId,
+        "browser_denied",
+        "The user is typing with an input method, so pointer input was not sent. Retry in a moment.",
+        true,
+      ),
+    };
+  }
+  if (guard?.status === "unavailable") {
+    return {
+      ok: false,
+      failure: fail(
+        requestId,
+        "browser_timeout",
+        "Could not protect keyboard focus before pointer input. Retry in a moment.",
+        true,
+      ),
+    };
+  }
+  try {
+    await enablePageFocusEmulation(contents);
+    return { ok: true, value: await task() };
+  } finally {
+    guard?.release();
+  }
+}
+
 async function executeWait(
   requestId: string,
   workspaceId: string | undefined,
@@ -1056,9 +1134,6 @@ async function executeType(
     return target;
   }
   return withDialogCapture(target.contents, async () => {
-    if (!target.contents.sendDebugCommand) {
-      return fail(requestId, "browser_unsupported", "browser_type requires trusted browser input");
-    }
     let actionable: ActionabilityResult | null = null;
     if (ref) {
       const elementExpression = snapshotEngine.runtimeElementExpression({
@@ -1076,7 +1151,18 @@ async function executeType(
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);
       }
-      await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
+      const focusOutcome = await focusElementForKeyboardInput(target.contents, elementExpression);
+      if (focusOutcome === "stale_ref") {
+        return staleRefFailure(requestId, ref);
+      }
+      if (focusOutcome === "not_focused") {
+        return fail(
+          requestId,
+          "browser_timeout",
+          `Browser element ${ref} did not accept focus for typing. Click it first and try again.`,
+          true,
+        );
+      }
     }
     await target.contents.insertText(text);
     return {
@@ -1122,19 +1208,9 @@ async function executeKeypress(
       if (!actionable.ok) {
         return actionabilityFailure(requestId, ref, actionable);
       }
-      const focused = await focusKeypressTarget(target.contents, elementExpression);
-      if (focused === "stale_ref") {
+      const focusOutcome = await focusElementForKeyboardInput(target.contents, elementExpression);
+      if (focusOutcome === "stale_ref") {
         return staleRefFailure(requestId, ref);
-      }
-      if (focused === "editable") {
-        if (!target.contents.sendDebugCommand) {
-          return fail(
-            requestId,
-            "browser_unsupported",
-            "browser_keypress requires trusted browser input",
-          );
-        }
-        await dispatchTrustedClick(cdpSender(target.contents), actionable.target.point);
       }
     }
     dispatchTrustedKey((event) => target.contents.sendInputEvent(event), key);
@@ -1342,11 +1418,18 @@ async function executeFullPageScreenshot(
         const metrics = await getCdpLayoutMetrics(target.contents);
         width = metrics.contentWidth;
         height = metrics.contentHeight;
-        return (await sendDebugCommand("Page.captureScreenshot", {
+        const result = (await sendDebugCommand("Page.captureScreenshot", {
           format: "png",
           captureBeyondViewport: true,
           clip: { x: 0, y: 0, width, height, scale: 1 },
         })) as CdpCaptureScreenshotResult;
+        if (
+          result.data &&
+          !hasPaintedPixels(target.contents.decodePng(Buffer.from(result.data, "base64")))
+        ) {
+          throw new Error("Page.captureScreenshot returned no painted frame");
+        }
+        return result;
       });
     } catch (error) {
       if (isScreenshotNoFrameError(error)) {
@@ -1550,14 +1633,36 @@ function capEvaluateErrorMessage(message: string): string {
     : message.slice(0, MAX_EVALUATE_ERROR_MESSAGE_LENGTH);
 }
 
+/**
+ * The syntax error in the agent's function, or null. It is compiled here because a script that
+ * fails to compile in the page only reports "Script failed to execute", and a typo deserves the
+ * compiler's own message. Compiling runs nothing.
+ */
+function functionSyntaxError(functionSource: string): string | null {
+  try {
+    void new Script(`(${functionSource})`);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * The page script that runs the agent's function and returns its result as bounded JSON.
+ *
+ * The function goes into the script as code, not as a string for the page to eval(): a page whose
+ * Content Security Policy omits 'unsafe-eval' refuses eval() but still runs what the host injects.
+ * The function-producing thunk is an argument defined outside the wrapper, so its names resolve
+ * against the page's globals without capturing any wrapper parameters or locals.
+ */
 function buildEvaluateScript(
   functionSource: string,
   elementExpression: string | undefined,
 ): string {
-  return String.raw`(async () => {
+  return String.raw`(async (readFunction) => {
     const __PASEO_BROWSER_EVALUATE__ = true;
     try {
-      const userFunction = (0, eval)(${JSON.stringify(`(${functionSource})`)});
+      const userFunction = readFunction();
       if (typeof userFunction !== 'function') {
         throw new Error('browser_evaluate input must evaluate to a function.');
       }
@@ -1582,25 +1687,55 @@ function buildEvaluateScript(
 	    } catch (error) {
 	      return { error: error instanceof Error ? error.message : String(error) };
 	    }
-	  })()`;
+	  })(() => (${functionSource}))`;
 }
 
-async function focusKeypressTarget(
+async function focusElementForKeyboardInput(
   contents: TabContents,
   elementExpression: string,
-): Promise<"editable" | "focused" | "stale_ref"> {
+): Promise<"focused" | "not_focused" | "stale_ref"> {
   const result = await contents.executeJavaScript(String.raw`(() => {
     const element = ${elementExpression};
-    if (!element) return { staleRef: true };
-    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
-    const inputType = tagName === 'input' ? String(element.getAttribute('type') || 'text').toLowerCase() : '';
-    const editableInput = tagName === 'textarea' ||
-      (tagName === 'input' && !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
-    const editable = editableInput || element.isContentEditable === true;
-    if (!editable && typeof element.focus === 'function') {
+    if (!element || !element.isConnected) return { staleRef: true };
+    if (typeof element.focus === 'function') {
       element.focus({ preventScroll: true });
     }
-    return { editable };
+    const root = typeof element.getRootNode === 'function' ? element.getRootNode() : element.ownerDocument;
+    const active = root && 'activeElement' in root ? root.activeElement : element.ownerDocument?.activeElement;
+    const focused = Boolean(
+      active &&
+        (active === element ||
+          (typeof element.contains === 'function' && element.contains(active))),
+    );
+    if (!focused) {
+      return { focused: false };
+    }
+    const tagName = element.tagName ? element.tagName.toLowerCase() : '';
+    const inputType = tagName === 'input'
+      ? String(element.getAttribute('type') || 'text').toLowerCase()
+      : '';
+    const isTextInput =
+      tagName === 'textarea' ||
+      (tagName === 'input' &&
+        !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(inputType));
+    if (isTextInput && typeof element.setSelectionRange === 'function') {
+      try {
+        const end = typeof element.value === 'string' ? element.value.length : 0;
+        element.setSelectionRange(end, end);
+      } catch {
+        // Input types such as email and number reject setSelectionRange.
+      }
+    } else if (element.isContentEditable === true) {
+      const selection = element.ownerDocument?.defaultView?.getSelection?.();
+      if (selection) {
+        const range = element.ownerDocument.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+    return { focused: true };
   })()`);
   if (!result || typeof result !== "object") {
     return "stale_ref";
@@ -1609,7 +1744,7 @@ async function focusKeypressTarget(
   if (record.staleRef === true) {
     return "stale_ref";
   }
-  return record.editable === true ? "editable" : "focused";
+  return record.focused === true ? "focused" : "not_focused";
 }
 
 function readString(value: unknown): string | null {
@@ -1628,6 +1763,8 @@ const NETWORK_PERFORMANCE_SCRIPT = String.raw`(() => {
       url: entry.name,
       method: entry.initiatorType === 'navigation' ? 'GET' : undefined,
       type: entry.initiatorType,
+      // 0 when the browser does not say (a cross-origin response without Timing-Allow-Origin).
+      status: typeof entry.responseStatus === 'number' && entry.responseStatus > 0 ? entry.responseStatus : undefined,
       startTime: entry.startTime,
       duration: entry.duration,
       transferSize: typeof entry.transferSize === 'number' ? entry.transferSize : undefined,

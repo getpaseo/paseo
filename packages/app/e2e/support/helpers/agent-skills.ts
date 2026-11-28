@@ -22,7 +22,7 @@ type AgentSkillsClient = Pick<
   "close" | "connect" | "getAgentSkillsStatus" | "saveAgentSkillsSelection"
 >;
 
-export type SkillTargetName = "agents" | "claude";
+export type SkillTargetName = "agents" | "claude" | "antigravity";
 
 export interface AgentSkillsSandbox {
   available: string[];
@@ -64,6 +64,7 @@ export async function startAgentSkillsSandbox(): Promise<AgentSkillsSandbox> {
   const targets = {
     agents: path.join(home, ".agents", "skills"),
     claude: path.join(home, ".claude", "skills"),
+    antigravity: path.join(home, ".gemini", "config", "skills"),
   };
   const codexSkillsDir = path.join(home, ".codex", "skills");
 
@@ -133,9 +134,13 @@ export async function openAgentSkillsSettings(
     host: "127.0.0.1",
     port: sandbox.daemon.port,
   });
-  if (options.compact) await goBackInSettings(page);
+  if (options.compact) {
+    // Adding a host opens its client host detail page; back once goes to Hosts, back again returns to the Settings root.
+    await goBackInSettings(page);
+    await goBackInSettings(page);
+  }
   await selectSettingsHost(page, sandbox.daemon.serverId);
-  await openHostSection(page, sandbox.daemon.serverId, "agents");
+  await openHostSection(page, sandbox.daemon.serverId, "tools");
   await expect(page.getByTestId("host-agent-skills-card")).toBeVisible();
 }
 
@@ -154,7 +159,7 @@ export async function chooseCustomSkills(page: Page, selected: string[]): Promis
   await all.click();
   const keep = new Set(selected);
   for (const name of await listSkillChoices(page)) {
-    if (!keep.has(name)) await page.getByRole("checkbox", { name, exact: true }).click();
+    if (!keep.has(name)) await skillSwitch(page, name).click();
   }
   await expectSkillChoices(page, selected);
 }
@@ -176,7 +181,7 @@ export async function cancelSkillSelection(page: Page): Promise<void> {
 }
 
 export async function toggleSkill(page: Page, name: string): Promise<void> {
-  await page.getByRole("checkbox", { name, exact: true }).click();
+  await skillSwitch(page, name).click();
 }
 
 export function answerNextRemovalWarning(
@@ -222,15 +227,21 @@ export async function expectSkillFile(
 export async function expectSkillChoices(page: Page, selected: string[]): Promise<void> {
   const expected = new Set(selected);
   for (const name of await listSkillChoices(page)) {
-    await expect(page.getByRole("checkbox", { name, exact: true })).toBeChecked({
+    await expect(skillSwitch(page, name)).toBeChecked({
       checked: expected.has(name),
     });
   }
 }
 
+/** One bundled skill's switch in the picker; "All skills" sits outside the list. */
+function skillSwitch(page: Page, name: string) {
+  return page.getByTestId("skill-selection-list-card").getByRole("switch", { name, exact: true });
+}
+
 async function listSkillChoices(page: Page): Promise<string[]> {
   return page
-    .getByRole("checkbox")
+    .getByTestId("skill-selection-list-card")
+    .getByRole("switch")
     .evaluateAll((elements) =>
       elements
         .map((element) => element.getAttribute("aria-label") ?? "")

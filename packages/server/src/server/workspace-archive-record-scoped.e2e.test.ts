@@ -1,5 +1,13 @@
-import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +16,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { createWorktree } from "../utils/worktree.js";
+import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import {
   createDaemonTestContext,
   DaemonClient,
@@ -277,6 +286,118 @@ test("renaming a workspace updates every subscribed client", async () => {
   }
 });
 
+test("a local checkout rejects a base change without creating worktree metadata", async () => {
+  const repo = createGitRepo();
+  const id = await createLocalWorkspace(repo, "Local");
+  await expect(
+    ctx.client.setWorkspaceBaseBranch({ workspaceId: id, baseRef: "refs/heads/main" }),
+  ).rejects.toThrow("not a Paseo worktree");
+  expect(await readPaseoWorktreeMetadata(repo)).toBeNull();
+});
+
+test("changing a worktree base refreshes its diff and persists across restart", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["checkout", "-b", "release"], { cwd: repo });
+  writeFileSync(path.join(repo, "release.txt"), "release\n");
+  execFileSync("git", ["add", "release.txt"], { cwd: repo });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "release"], { cwd: repo });
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repo, worktreeSlug: "base-refresh", baseBranch: "main" },
+  });
+  const workspace = created.workspace;
+  if (!workspace) throw new Error(created.error ?? "Failed to create workspace");
+  const cwd = workspace.workspaceDirectory;
+  execFileSync("git", ["merge", "--ff-only", "release"], { cwd });
+  expect(
+    (await ctx.client.getCheckoutDiff(cwd, { mode: "base" })).files.map((file) => file.path),
+  ).toContain("release.txt");
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/release",
+  });
+  expect(
+    (await ctx.client.getCheckoutDiff(cwd, { mode: "base" })).files.map((file) => file.path),
+  ).not.toContain("release.txt");
+  await expect(
+    ctx.client.setWorkspaceBaseBranch({ workspaceId: workspace.id, baseRef: "refs/heads/missing" }),
+  ).rejects.toThrow("Base branch not found");
+  execFileSync("git", ["update-ref", "refs/remotes/origin/vanished", "release"], { cwd });
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/remotes/origin/vanished",
+  });
+  execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/vanished"], { cwd });
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/main",
+  });
+  expect(
+    (await ctx.client.getCheckoutDiff(cwd, { mode: "base" })).files.map((file) => file.path),
+  ).toContain("release.txt");
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/release",
+  });
+  const previous = ctx;
+  const paseoHomeRoot = path.dirname(previous.daemon.paseoHome);
+  await previous.client.close();
+  await previous.daemon.daemon.stop();
+  tempRoots.push(previous.daemon.staticDir);
+  ctx = await createDaemonTestContext({ paseoHomeRoot });
+  expect((await ctx.client.getCheckoutStatus(cwd)).baseRefExact).toBe("refs/heads/release");
+}, 30_000);
+
+test("a managed workspace restores its changed base after archival removes the checkout", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["branch", "release"], { cwd: repo });
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repo, worktreeSlug: "changed-base", baseBranch: "main" },
+  });
+  const workspace = created.workspace;
+  if (!workspace) throw new Error(created.error ?? "Failed to create workspace");
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: workspace.id,
+    baseRef: "refs/heads/release",
+  });
+  const joinedId = await createLocalWorkspace(
+    workspace.workspaceDirectory,
+    "Joined after changing base",
+  );
+  expect((await ctx.client.archiveWorkspace(workspace.id)).error).toBe(null);
+  expect(existsSync(workspace.workspaceDirectory)).toBe(true);
+  expect((await ctx.client.archiveWorkspace(joinedId)).error).toBe(null);
+  expect(existsSync(workspace.workspaceDirectory)).toBe(false);
+  await ctx.client.restoreWorkspace(joinedId);
+  expect((await readPaseoWorktreeMetadata(workspace.workspaceDirectory))?.baseRef).toBe(
+    "refs/heads/release",
+  );
+  expect((await ctx.client.getCheckoutStatus(workspace.workspaceDirectory)).baseRefExact).toBe(
+    "refs/heads/release",
+  );
+});
+
+test("an archived workspace keeps its base when a later workspace reuses its path", async () => {
+  const repo = createGitRepo();
+  execFileSync("git", ["branch", "release"], { cwd: repo });
+  const source = { kind: "worktree", cwd: repo, worktreeSlug: "reused-path", baseBranch: "main" };
+  const first = (await ctx.client.createWorkspace({ source })).workspace;
+  if (!first) throw new Error("Failed to create first workspace");
+  expect((await ctx.client.archiveWorkspace(first.id)).error).toBe(null);
+  expect(existsSync(first.workspaceDirectory)).toBe(false);
+  const second = (await ctx.client.createWorkspace({ source })).workspace;
+  if (!second) throw new Error("Failed to create second workspace");
+  expect(second.workspaceDirectory).toBe(first.workspaceDirectory);
+  await ctx.client.setWorkspaceBaseBranch({
+    workspaceId: second.id,
+    baseRef: "refs/heads/release",
+  });
+  expect((await ctx.client.archiveWorkspace(second.id)).error).toBe(null);
+  await ctx.client.restoreWorkspace(first.id);
+  expect((await readPaseoWorktreeMetadata(first.workspaceDirectory))?.baseRef).toBe(
+    "refs/heads/main",
+  );
+});
+
 test.each(["worktree", "workspace"] as const)(
   "%s archive immediately removes the deleted worktree from a warm CLI listing",
   async (command) => {
@@ -456,7 +577,130 @@ test.skipIf(process.platform === "win32")(
   60000,
 );
 
+async function createWorktreeWithTeardown(
+  slug: string,
+  worktreeConfig: { teardown: string; teardownTimeoutMs?: number },
+): Promise<{ workspaceId: string; worktreePath: string }> {
+  const repoDir = createGitRepo();
+  writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify({ worktree: worktreeConfig }));
+  execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add teardown"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  const result = await ctx.client.createWorkspace({
+    source: { kind: "worktree", cwd: repoDir, worktreeSlug: slug, baseBranch: "main" },
+  });
+  const workspace = result.workspace;
+  if (!workspace?.workspaceDirectory) {
+    throw new Error(result.error ?? "Failed to create worktree workspace");
+  }
+  return { workspaceId: workspace.id, worktreePath: workspace.workspaceDirectory };
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 test.skipIf(process.platform === "win32")(
+  "a paseo.json teardown that never exits is stopped and the archive answers",
+  async () => {
+    const pidFile = path.join(makeTempDir("hanging-teardown-"), "sleep.pid");
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("hanging-teardown", {
+      teardown: `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+      teardownTimeoutMs: 2000,
+    });
+
+    try {
+      const archive = await ctx.client.archiveWorkspace(workspaceId);
+
+      expect({
+        error: archive.error,
+        workspaceActive: (await activeWorkspaceIds()).has(workspaceId),
+        worktreeOnDisk: existsSync(worktreePath),
+      }).toEqual({ error: null, workspaceActive: false, worktreeOnDisk: true });
+      const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
+      await expect.poll(() => isProcessRunning(sleepPid), { timeout: 5000 }).toBe(false);
+    } finally {
+      if (existsSync(pidFile)) {
+        const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
+        if (isProcessRunning(sleepPid)) process.kill(sleepPid, "SIGKILL");
+      }
+    }
+  },
+  30000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "a paseo.json teardown that prints more than 1 MiB still removes the worktree",
+  async () => {
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("chatty-teardown", {
+      teardown: `node -e "process.stdout.write('x'.repeat(2 * 1024 * 1024))"`,
+    });
+
+    const archive = await ctx.client.archiveWorkspace(workspaceId);
+
+    expect({
+      error: archive.error,
+      workspaceActive: (await activeWorkspaceIds()).has(workspaceId),
+      worktreeOnDisk: existsSync(worktreePath),
+    }).toEqual({ error: null, workspaceActive: false, worktreeOnDisk: false });
+  },
+  60000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "a teardown that handles SIGTERM and exits zero still leaves the worktree",
+  async () => {
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("teardown-trap", {
+      teardown: `trap 'exit 0' TERM; sleep 5 & wait`,
+      teardownTimeoutMs: 2000,
+    });
+
+    const archive = await ctx.client.archiveWorkspace(workspaceId);
+
+    expect({
+      error: archive.error,
+      workspaceActive: (await activeWorkspaceIds()).has(workspaceId),
+      worktreeOnDisk: existsSync(worktreePath),
+    }).toEqual({ error: null, workspaceActive: false, worktreeOnDisk: true });
+  },
+  15000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "the archive answers when an exited teardown shell's child holds its output open",
+  async () => {
+    const pidFile = path.join(makeTempDir("teardown-open-output-"), "sleep.pid");
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("teardown-open-output", {
+      teardown: `sleep 12 & echo $! > ${JSON.stringify(pidFile)}`,
+      teardownTimeoutMs: 2000,
+    });
+
+    try {
+      const archive = await ctx.client.archiveWorkspace(workspaceId);
+
+      expect({
+        error: archive.error,
+        workspaceActive: (await activeWorkspaceIds()).has(workspaceId),
+        worktreeOnDisk: existsSync(worktreePath),
+      }).toEqual({ error: null, workspaceActive: false, worktreeOnDisk: true });
+    } finally {
+      if (existsSync(pidFile)) {
+        const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
+        if (isProcessRunning(sleepPid)) process.kill(sleepPid, "SIGKILL");
+      }
+    }
+  },
+  10000,
+);
+
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "repeating archive removes a residual worktree for an already-archived workspace",
   async () => {
     const repoDir = createGitRepo();
@@ -473,42 +717,24 @@ test.skipIf(process.platform === "win32")(
       throw new Error(result.error ?? "Failed to create worktree workspace");
     }
 
-    const writerStartedPath = path.join(repoDir, "writer-started");
-    const stopWriterPath = path.join(repoDir, "stop-writer");
-    const target = path.join(
-      workspace.workspaceDirectory,
-      "node_modules/react-native-svg/lib/typescript",
-    );
-    const writer = spawn(
-      process.execPath,
-      [
-        "-e",
-        `const fs=require('fs'),path=require('path');const target=${JSON.stringify(target)};const started=${JSON.stringify(writerStartedPath)};const stop=${JSON.stringify(stopWriterPath)};fs.writeFileSync(started,'started');while(!fs.existsSync(stop)){try{fs.mkdirSync(target,{recursive:true});fs.writeFileSync(path.join(target,'active'),String(Date.now()))}catch{}}`,
-      ],
-      { stdio: "ignore" },
-    );
-    const writerExit = new Promise<void>((resolve) => writer.once("exit", () => resolve()));
-
+    const directory = workspace.workspaceDirectory;
+    const originalMode = statSync(directory).mode & 0o777;
+    // Deny removal of entries such as .git until the second archive request.
+    chmodSync(directory, originalMode & ~0o222);
     try {
-      await expect.poll(() => existsSync(writerStartedPath), { timeout: 10000 }).toBe(true);
-
       const firstArchive = await ctx.client.archiveWorkspace(workspace.id);
 
       expect(firstArchive.error).toBeNull();
       expect((await activeWorkspaceIds()).has(workspace.id)).toBe(false);
-      expect(existsSync(workspace.workspaceDirectory)).toBe(true);
-
-      writeFileSync(stopWriterPath, "stop\n");
-      await writerExit;
-
-      const retry = await ctx.client.archiveWorkspace(workspace.id);
-
-      expect(retry.error).toBeNull();
-      expect(existsSync(workspace.workspaceDirectory)).toBe(false);
+      expect(existsSync(directory)).toBe(true);
     } finally {
-      writeFileSync(stopWriterPath, "stop\n");
-      await writerExit;
+      if (existsSync(directory)) chmodSync(directory, originalMode);
     }
+
+    const retry = await ctx.client.archiveWorkspace(workspace.id);
+
+    expect(retry.error).toBeNull();
+    expect(existsSync(directory)).toBe(false);
   },
   60000,
 );

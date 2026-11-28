@@ -1,0 +1,5 @@
+- Background tasks: See and stop background tasks above the composer for Claude Code, Codex and OpenCode v2.
+- Built-in plugin gallery: Browse, search and install plugins without leaving Paseo. Manage their settings and updates from the same page.
+- Command center tabs: Switch between Workspaces, Files and Actions, with recent workspaces shown first. Search now includes archived workspaces and matches agent titles within their workspace.
+
+Full notes: https://paseo.sh/changelog

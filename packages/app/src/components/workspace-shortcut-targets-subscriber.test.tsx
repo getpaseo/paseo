@@ -125,6 +125,20 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
   });
 
+  it("keeps keyboard navigation populated when the sidebar starts hidden", async () => {
+    await act(async () => {
+      root?.render(
+        <SidebarModelProvider active={false} keyboardNavigationActive>
+          <WorkspaceShortcutTargetsSubscriber enabled />
+        </SidebarModelProvider>,
+      );
+    });
+    expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([
+      { serverId: "srv", workspaceId: "ws-1" },
+      { serverId: "srv", workspaceId: "ws-2" },
+    ]);
+  });
+
   it("publishes workspace shortcut targets without rendering the sidebar", async () => {
     await act(async () => {
       root?.render(

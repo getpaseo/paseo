@@ -10,6 +10,7 @@ export interface CodexThreadHistoryClient {
 }
 
 export type CodexThreadHistoryMode = "legacy" | "paginated";
+export type CodexHistoryStatus = "running" | "completed" | "failed" | "canceled";
 
 export interface CodexHistoryRow {
   item: unknown;
@@ -17,6 +18,11 @@ export interface CodexHistoryRow {
   /** The item's times on a paginated thread; its turn's on a legacy thread. */
   startedAt: unknown;
   completedAt: unknown;
+}
+
+interface CodexThreadHistoryRead {
+  rows: Iterable<CodexHistoryRow> | AsyncIterable<CodexHistoryRow>;
+  status: CodexHistoryStatus | null;
 }
 
 /** A history reply over the line cap; the rows before it were already read. */
@@ -29,7 +35,22 @@ export class CodexThreadHistoryTooLargeError extends Error {
 
 const CodexThreadMetadataSchema = z
   .object({
-    thread: z.object({ historyMode: z.enum(["legacy", "paginated"]).optional() }).passthrough(),
+    thread: z
+      .object({
+        historyMode: z.enum(["legacy", "paginated"]).optional(),
+        status: z.unknown().optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+const CodexLegacyTurnSchema = z
+  .object({
+    id: z.string().optional(),
+    startedAt: z.unknown().optional(),
+    completedAt: z.unknown().optional(),
+    status: z.unknown().optional(),
+    items: z.array(z.unknown()).default([]),
   })
   .passthrough();
 
@@ -37,18 +58,8 @@ const CodexLegacyThreadReadSchema = z
   .object({
     thread: z
       .object({
-        turns: z
-          .array(
-            z
-              .object({
-                id: z.string().optional(),
-                startedAt: z.unknown().optional(),
-                completedAt: z.unknown().optional(),
-                items: z.array(z.unknown()).default([]),
-              })
-              .passthrough(),
-          )
-          .default([]),
+        status: z.unknown().optional(),
+        turns: z.array(CodexLegacyTurnSchema).default([]),
       })
       .passthrough()
       .default({ turns: [] }),
@@ -71,15 +82,48 @@ const CodexItemsPageSchema = z
   })
   .passthrough();
 
+const CodexLatestTurnPageSchema = z.object({
+  data: z.array(z.object({ status: z.unknown().optional() })),
+});
+
 /** Codex builds before 0.143 report no history mode; their threads are legacy. */
 export async function readCodexThreadHistoryMode(
   client: CodexThreadHistoryClient,
   threadId: string,
 ): Promise<CodexThreadHistoryMode> {
-  const response = CodexThreadMetadataSchema.parse(
+  return (await readThreadMetadata(client, threadId)).historyMode ?? "legacy";
+}
+
+async function readThreadMetadata(client: CodexThreadHistoryClient, threadId: string) {
+  return CodexThreadMetadataSchema.parse(
     await client.request("thread/read", { threadId, includeTurns: false }),
-  );
-  return response.thread.historyMode ?? "legacy";
+  ).thread;
+}
+
+function readHistoryStatus(
+  threadStatus: unknown,
+  latestTurnStatus?: unknown,
+): CodexHistoryStatus | null {
+  if (
+    typeof threadStatus === "object" &&
+    threadStatus !== null &&
+    "type" in threadStatus &&
+    threadStatus.type === "active"
+  ) {
+    return "running";
+  }
+  // An unloaded thread can contain an unfinished rollout. Only the runtime
+  // status proves that it is still working.
+  switch (latestTurnStatus) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "canceled";
+    default:
+      return null;
+  }
 }
 
 /**
@@ -87,21 +131,20 @@ export async function readCodexThreadHistoryMode(
  * pages; a legacy thread arrives in one `thread/read` reply, as Codex offers
  * no pages for it.
  */
-export async function* readCodexThreadHistory(
+export async function readCodexThreadHistory(
   client: CodexThreadHistoryClient,
   threadId: string,
-): AsyncGenerator<CodexHistoryRow> {
-  if ((await readCodexThreadHistoryMode(client, threadId)) === "paginated") {
-    yield* readPaginatedHistory(client, threadId);
-  } else {
-    yield* readLegacyHistory(client, threadId);
+  options?: { readLatestTurn?: boolean },
+): Promise<CodexThreadHistoryRead> {
+  const metadata = await readThreadMetadata(client, threadId);
+  if (metadata.historyMode === "paginated") {
+    const active = readHistoryStatus(metadata.status);
+    return {
+      rows: readPaginatedHistory(client, threadId),
+      status:
+        active ?? (options?.readLatestTurn ? await readLatestTurnStatus(client, threadId) : null),
+    };
   }
-}
-
-async function* readLegacyHistory(
-  client: CodexThreadHistoryClient,
-  threadId: string,
-): AsyncGenerator<CodexHistoryRow> {
   const response = await requestHistory(
     client,
     "thread/read",
@@ -111,7 +154,37 @@ async function* readLegacyHistory(
       `run \`codex migrate-rollouts --apply --thread ${threadId}\` (Codex 0.148 or newer), ` +
       `then unarchive the agent.`,
   );
-  for (const turn of CodexLegacyThreadReadSchema.parse(response).thread.turns) {
+  const { thread } = CodexLegacyThreadReadSchema.parse(response);
+  return {
+    rows: readLegacyRows(thread.turns),
+    status: readHistoryStatus(thread.status, thread.turns.at(-1)?.status),
+  };
+}
+
+async function readLatestTurnStatus(
+  client: CodexThreadHistoryClient,
+  threadId: string,
+): Promise<CodexHistoryStatus | null> {
+  try {
+    const response = await client.request("thread/turns/list", {
+      threadId,
+      limit: 1,
+      sortDirection: "desc",
+      itemsView: "notLoaded",
+    });
+    const page = CodexLatestTurnPageSchema.parse(response);
+    return readHistoryStatus(undefined, page.data[0]?.status);
+  } catch {
+    // Older Codex builds and stores can reject this optional probe. The
+    // recorded parent outcome and the child's timeline still load normally.
+    return null;
+  }
+}
+
+function* readLegacyRows(
+  turns: z.infer<typeof CodexLegacyTurnSchema>[],
+): Generator<CodexHistoryRow> {
+  for (const turn of turns) {
     for (const item of turn.items) {
       yield { item, turnId: turn.id, startedAt: turn.startedAt, completedAt: turn.completedAt };
     }
@@ -124,15 +197,28 @@ async function* readPaginatedHistory(
 ): AsyncGenerator<CodexHistoryRow> {
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
+  let limit = PAGE_SIZE;
   for (;;) {
-    const page = CodexItemsPageSchema.parse(
-      await requestHistory(
-        client,
-        "thread/items/list",
-        { threadId, limit: PAGE_SIZE, sortDirection: "asc", cursor },
+    let response: unknown;
+    try {
+      response = await client.request("thread/items/list", {
+        threadId,
+        limit,
+        sortDirection: "asc",
+        cursor,
+      });
+    } catch (error) {
+      if (!(error instanceof CodexAppServerResponseTooLargeError)) throw error;
+      // Image-heavy items can push a full page past the line cap; retry the same cursor smaller.
+      if (limit > 1) {
+        limit = Math.max(1, Math.floor(limit / 2));
+        continue;
+      }
+      throw new CodexThreadHistoryTooLargeError(
         "The rest of this Codex thread's history is too large to load.",
-      ),
-    );
+      );
+    }
+    const page = CodexItemsPageSchema.parse(response);
     for (const row of page.data) {
       yield {
         item: row.item,

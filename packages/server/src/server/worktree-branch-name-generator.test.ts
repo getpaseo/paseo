@@ -339,6 +339,45 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     );
   });
 
+  test("host instructions apply alongside default styles and leave baseline intact when empty", async () => {
+    const empty = await generateBranchPromptWithConfig(undefined, {
+      metadataGeneration: { instructions: "   \n\t " },
+    });
+    expect(empty.prompt).toBe(BRANCH_PROMPT_BASELINE);
+
+    const withHost = await generateBranchPromptWithConfig(undefined, {
+      metadataGeneration: {
+        instructions: "  Write in Simplified Chinese. Do not use em dashes.  ",
+      },
+    });
+    expect(withHost.prompt).toContain("Title style:\nAn actionable task label");
+    expect(withHost.prompt).toContain("Branch style:\nA short task-shaped slug");
+    expect(withHost.prompt).toContain(
+      "Additional instructions:\nWrite in Simplified Chinese. Do not use em dashes.",
+    );
+    expect(withHost.prompt).toContain("Return JSON only with fields 'title' and 'branch'.");
+  });
+
+  test("host instructions compose with project overrides and defer to project style on conflict", async () => {
+    const { prompt } = await generateBranchPromptWithConfig(
+      {
+        metadataGeneration: {
+          title: { instructions: "Write titles in English." },
+        },
+      },
+      {
+        metadataGeneration: {
+          instructions: "Write in Simplified Chinese. Do not use em dashes.",
+        },
+      },
+    );
+
+    expect(prompt).toContain("Title style:\nWrite titles in English.");
+    expect(prompt).toContain(
+      "Additional host instructions (follow these too, unless the style above says otherwise):\nWrite in Simplified Chinese. Do not use em dashes.",
+    );
+  });
+
   test("keeps the branch slug validator fallback when instructions are present", async () => {
     const repoRoot = createTempDir("paseo-branch-config-");
     const worktreeRoot = createTempDir("paseo-branch-worktree-");
@@ -386,7 +425,15 @@ describe("generateBranchNameFromFirstAgentContext", () => {
   });
 });
 
-async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt: string }> {
+async function generateBranchPromptWithConfig(
+  config: unknown,
+  daemonConfig?: {
+    metadataGeneration?: {
+      providers?: Array<{ provider: string; model?: string; thinkingOptionId?: string }>;
+      instructions?: string;
+    };
+  },
+): Promise<{ prompt: string }> {
   const repoRoot = createTempDir("paseo-branch-config-");
   if (typeof config === "string") {
     writeFileSync(path.join(repoRoot, "paseo.json"), config);
@@ -405,6 +452,7 @@ async function generateBranchPromptWithConfig(config: unknown): Promise<{ prompt
     workspaceGitService: createNoopWorkspaceGitService({
       resolveRepoRoot: async () => repoRoot,
     }),
+    daemonConfig,
     firstAgentContext: { prompt: "Fix the login flow" },
     logger: createLogger(),
     deps: { generateStructuredAgentResponseWithFallback: structured.generateStructured },

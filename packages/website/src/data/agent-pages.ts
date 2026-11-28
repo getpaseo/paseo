@@ -25,6 +25,8 @@ export const AGENT_PAGES = [
   { slug: "cursor", name: "Cursor" },
   { slug: "muse-code", name: "Muse Code" },
   { slug: "antigravity", name: "Antigravity" },
+  { slug: "fx", name: "fx" },
+  { slug: "hoplite", name: "Hoplite" },
   { slug: "copilot", name: "GitHub Copilot" },
   { slug: "gemini", name: "Gemini CLI" },
   { slug: "hermes", name: "Hermes Agent" },

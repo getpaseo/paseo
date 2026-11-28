@@ -1,3 +1,4 @@
+import { getPluginClientApi } from "./client-state/api";
 import appPackage from "../../package.json";
 import { afterEach, expect, it } from "vitest";
 import { QueryObserver } from "@tanstack/react-query";
@@ -6,6 +7,7 @@ import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { settingsRpc } from "@getpaseo/plugin";
 import { syncPluginCatalog } from "./catalog-sync-model";
 import { createPluginHosts } from "./hosts";
+import { openPluginNotification } from "./notification-open";
 import { PluginRegistry } from "./registry";
 import { pluginSettingsKey } from "./settings/query";
 import type { InstalledPlugin } from "./types";
@@ -139,7 +141,7 @@ function harness() {
           },
           installation.lifetime.signal,
         ),
-        paseo: installation.paseo,
+        paseo: getPluginClientApi(installation).paseo,
         i18n: installation.i18n,
         rpc: async () => {
           throw new Error("Unexpected runtime RPC");
@@ -149,10 +151,14 @@ function harness() {
         },
         openScreen() {},
         openSurface() {},
+        composers: () => [],
         async playAudio() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
+        subscribe: () => {
+          throw new Error("Subscriptions are not used here");
+        },
       };
     },
   });
@@ -195,6 +201,83 @@ async function connected() {
   await expect.poll(() => h.registry.getSnapshot().length).toBe(1);
   return { ...h, stop };
 }
+
+it("keeps a restored plugin screen loading until its catalog arrives", async () => {
+  const h = harness();
+  expect(h.registry.getCatalogStatus("host")).toBe("loading");
+  const pending = Promise.withResolvers<Catalog>();
+  class PendingClient extends CatalogClient {
+    override getPluginCatalog() {
+      this.fetches++;
+      return pending.promise;
+    }
+  }
+  const client = new PendingClient();
+  h.sync({ client });
+
+  expect(h.registry.getCatalogStatus("host")).toBe("loading");
+  expect(h.registry.getSnapshot()).toEqual([]);
+  pending.resolve(client.catalog);
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.installed().id).toBe("reports");
+  expect(client.fetches).toBe(1);
+});
+
+it("settles an empty catalog without leaving missing plugin screens loading", async () => {
+  const h = harness();
+  h.client.catalog = [];
+  const snapshot = h.registry.getSnapshot();
+  const statuses: string[] = [];
+  cleanups.push(
+    h.registry.subscribe(() => {
+      statuses.push(h.registry.getCatalogStatus("host"));
+    }),
+  );
+  h.sync();
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.registry.getSnapshot()).toBe(snapshot);
+  expect(statuses).toEqual(["loading", "ready"]);
+});
+
+it("settles a failed catalog request instead of loading indefinitely", async () => {
+  const h = harness();
+  class FailingClient extends CatalogClient {
+    override async getPluginCatalog(): Promise<Catalog> {
+      throw new Error("Catalog request failed");
+    }
+  }
+  h.sync({ client: new FailingClient() });
+
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("error");
+  expect(h.registry.getSnapshot()).toEqual([]);
+});
+
+it("ignores an old failed request after a new connection loads its catalog", async () => {
+  const h = harness();
+  const pending = Promise.withResolvers<Catalog>();
+  const started = Promise.withResolvers<void>();
+  class PendingClient extends CatalogClient {
+    override getPluginCatalog() {
+      started.resolve();
+      return pending.promise;
+    }
+  }
+  const stop = h.sync({ client: new PendingClient() });
+  await started.promise;
+  stop();
+  h.sync();
+  await expect.poll(() => h.registry.getCatalogStatus("host")).toBe("ready");
+  const plugin = h.installed();
+
+  pending.reject(new Error("Old connection failed"));
+  await pending.promise.catch(() => undefined);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  expect(h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(h.installed()).toBe(plugin);
+});
 
 function settingsQuery(plugin: InstalledPlugin) {
   return {
@@ -309,13 +392,22 @@ it("replaces changed bundles on reconnect and disposes the old installation", as
 });
 
 it("replaces an explicitly reloaded bundle even when its source is unchanged", async () => {
-  const h = await connected();
+  let catalogChanges = 0;
+  const h = harness();
+  const stop = h.sync({
+    onCatalogChanged: () => {
+      catalogChanges++;
+    },
+  });
+  cleanups.push(stop);
+  await expect.poll(() => h.registry.getSnapshot().length).toBe(1);
   const plugin = h.installed();
   h.client.update({
     type: "status",
     payload: { status: "plugin_catalog_changed", pluginId: "reports" },
   });
   await expect.poll(() => h.installed() === plugin).toBe(false);
+  expect(catalogChanges).toBe(1);
   expect(h.disposals()).toBe(1);
   expect(h.evaluations()).toBe(2);
 });
@@ -421,4 +513,56 @@ it("ignores an in-flight catalog snapshot after disconnect", async () => {
   expect(h.registry.getSnapshot()).toBe(snapshot);
   expect(h.client.settings.reads).toBe(1);
   expect(h.evaluations()).toBe(1);
+});
+
+it("keeps catalog loading before server_info arrives so cold-launch plugin taps wait for onNotificationOpen", async () => {
+  const h = harness();
+  h.client.catalog = [
+    {
+      id: "ci-alerts",
+      requirements: { paseo: `>=${appPackage.version}` },
+      clientBundle: `(function() { return { default: function(plugin) {
+        plugin.addScreen({ id: "alert", title: "Alert", Component: function() { return null; } });
+        plugin.onNotificationOpen(function(ctx) {
+          ctx.openScreen({ screenId: "alert", params: { buildId: String(ctx.event.data && ctx.event.data.buildId || "") } });
+        });
+        return function() {};
+      } }; })`,
+    },
+  ];
+
+  // Before server_info arrives: supported is null (unknown) and connected is false.
+  const stopUnknown = h.sync({ connected: false, supported: null });
+  expect(h.registry.getCatalogStatus("host")).toBe("loading");
+
+  const openedRoutes: string[] = [];
+  const pendingTap = openPluginNotification(
+    {
+      kind: "plugin",
+      serverId: "host",
+      pluginId: "ci-alerts",
+      notificationId: "notif-cold",
+      open: { type: "screen", screenId: "fallback" },
+      data: { buildId: 77 },
+    },
+    {
+      registry: h.registry,
+      timeoutMs: 1_000,
+      openAgent: () => undefined,
+      openWorkspace: () => undefined,
+      openRoute: (route) => openedRoutes.push(route),
+    },
+  );
+
+  // Tap stays pending while server_info has not arrived (does not jump to fallback).
+  await Promise.resolve();
+  expect(openedRoutes).toEqual([]);
+
+  // Host connects and advertises plugin support -> catalog loads and invokes onNotificationOpen.
+  stopUnknown();
+  h.sync({ connected: true, supported: true });
+
+  await pendingTap;
+  expect(h.registry.getCatalogStatus("host")).toBe("ready");
+  expect(openedRoutes).toEqual(["/h/host/plugin/ci-alerts/surface/alert?param.buildId=77"]);
 });

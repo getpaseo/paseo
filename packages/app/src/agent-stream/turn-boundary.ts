@@ -1,4 +1,4 @@
-import type { StreamItem, TimelinePosition } from "@/types/stream";
+import { getAssistantReply, type StreamItem, type TimelinePosition } from "@/types/stream";
 
 export type AssistantTurnForkBoundary =
   | { boundaryCursor: TimelinePosition; boundaryMessageId?: string }
@@ -9,15 +9,15 @@ export function resolveAssistantTurnForkBoundary(input: {
   startIndex: number;
   supportsTimelineCursor: boolean;
 }): AssistantTurnForkBoundary | undefined {
-  const item = input.items[input.startIndex];
-  if (item?.kind !== "assistant_message") {
+  const reply = getAssistantReply(input.items[input.startIndex]);
+  if (!reply) {
     return undefined;
   }
-  if (input.supportsTimelineCursor && item.timelineCursor) {
+  if (input.supportsTimelineCursor && reply.timelineCursor) {
     return {
-      boundaryCursor: item.timelineCursor,
-      ...(item.messageId ? { boundaryMessageId: item.messageId } : {}),
+      boundaryCursor: reply.timelineCursor,
+      ...(reply.messageId ? { boundaryMessageId: reply.messageId } : {}),
     };
   }
-  return item.messageId ? { boundaryMessageId: item.messageId } : undefined;
+  return reply.messageId ? { boundaryMessageId: reply.messageId } : undefined;
 }

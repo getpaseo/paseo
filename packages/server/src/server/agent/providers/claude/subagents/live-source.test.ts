@@ -156,6 +156,42 @@ describe("ClaudeTaskProtocolSource", () => {
     ]);
   });
 
+  it("resumes a child a reopened session restored on its original row", () => {
+    const source = new ClaudeTaskProtocolSource();
+    source.restore([
+      {
+        taskId: "a1730a6215e1f5cf6",
+        id: "toolu_original",
+        presentation: { title: "general-purpose", model: "claude-sonnet-5", effort: "high" },
+      },
+    ]);
+
+    // Restored is not running: a canceled turn and an unannounced frame leave it alone.
+    expect(source.cancelRunningForegroundTasks()).toEqual([]);
+    expect(source.resolveSubagentId("toolu_original")).toBeUndefined();
+
+    expect(
+      source.observe(taskStarted({ tool_use_id: "toolu_resumed", prompt: "Resumed prompt" })),
+    ).toEqual([
+      { kind: "status", id: "toolu_original", status: "running" },
+      {
+        kind: "timeline",
+        id: "toolu_original",
+        item: { type: "user_message", text: "Resumed prompt" },
+      },
+    ]);
+    expect(source.resolveSubagentId("toolu_original")).toBe("toolu_original");
+    expect(source.resolveSubagentId("toolu_resumed")).toBe("toolu_original");
+    expect(
+      source.observeSidechainFrame(
+        { type: "assistant", message: { model: "claude-opus-5" } } as unknown as SDKMessage,
+        "toolu_original",
+      ),
+    ).toEqual([
+      { kind: "subtitle", id: "toolu_original", subtitle: "general-purpose · Opus 5 · High" },
+    ]);
+  });
+
   it("declares a distinct task separately", () => {
     const source = new ClaudeTaskProtocolSource();
     source.observe(taskStarted({ task_id: "first", tool_use_id: "toolu_first" }));

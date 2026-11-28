@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Image, Pressable, ScrollView, Text, View, type ViewStyle } from "react-native";
+import { Image, Pressable, Text, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   CircleCheck,
@@ -74,13 +74,14 @@ import {
   type PrTimelineEntry,
 } from "./timeline";
 import {
-  Section,
+  SectionHeader,
   SummaryPill,
   dangerColorMapping,
   foregroundMutedColorMapping,
   sectionKitStyles,
   successColorMapping,
 } from "./section-kit";
+import { PullRequestPaneSplit } from "./split";
 
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleX = withUnistyles(CircleX);
@@ -478,13 +479,13 @@ export function PullRequestPane({
     : null;
 
   return (
-    <View style={styles.root} testID="pr-pane">
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+    <PullRequestPaneSplit activityOpen={activityOpen}>
+      <>
         <PaneContentToolbar style={styles.toolbar} testID="pr-pane-toolbar">
           <View style={styles.toolbarActions}>
             <Button
               variant="ghost"
-              size="xs"
+              size="sm"
               leftIcon={ExternalLink}
               onPress={handleOpenPrUrl}
               style={styles.viewButton}
@@ -499,7 +500,9 @@ export function PullRequestPane({
               accessibilityLabel={
                 isRefreshing
                   ? t("workspace.git.diff.refreshing")
-                  : t("workspace.git.diff.refreshState", { brand: forgePresentation.brandLabel })
+                  : t("workspace.git.diff.refreshState", {
+                      brand: forgePresentation.brandLabel,
+                    })
               }
               testID="pr-pane-refresh"
               style={toolbarRefreshButtonStyle}
@@ -564,60 +567,58 @@ export function PullRequestPane({
             onAddLogsToChat={handleAddCheckLogsToChat}
           />
         )}
-
-        <View style={styles.divider} />
-
-        <Section
-          title={t("workspace.git.pr.sections.activity")}
-          open={activityOpen}
-          onToggle={handleToggleActivity}
-          summary={
-            <>
-              <SummaryPill count={approvals} icon={SUMMARY_APPROVAL_ICON} variant="success" />
-              <SummaryPill
-                count={changesRequested}
-                icon={SUMMARY_CHANGES_REQUESTED_ICON}
-                variant="danger"
+      </>
+      <SectionHeader
+        title={t("workspace.git.pr.sections.activity")}
+        open={activityOpen}
+        onToggle={handleToggleActivity}
+        summary={
+          <>
+            <SummaryPill count={approvals} icon={SUMMARY_APPROVAL_ICON} variant="success" />
+            <SummaryPill
+              count={changesRequested}
+              icon={SUMMARY_CHANGES_REQUESTED_ICON}
+              variant="danger"
+            />
+            <SummaryPill count={commentCount} icon={SUMMARY_COMMENT_ICON} variant="muted" />
+          </>
+        }
+      />
+      <View style={sectionKitStyles.sectionBody}>
+        {timelineEntries.length > 0 && attachEnabled && visibleEntries.length > 0 ? (
+          <View style={styles.activityToolbar}>
+            <Button
+              variant="ghost"
+              size="sm"
+              leftIcon={MessageSquarePlus}
+              onPress={handleAddAllToChat}
+              disabled={activityLoading}
+            >
+              {t("workspace.git.pr.actions.addAllToChat")}
+            </Button>
+          </View>
+        ) : null}
+        {activityLoading ? <PrActivitySkeleton /> : null}
+        {!activityLoading && visibleEntries.length === 0 ? (
+          <Text style={sectionKitStyles.emptyText}>{t("workspace.git.pr.empty.noActivity")}</Text>
+        ) : null}
+        {!activityLoading
+          ? visibleEntries.map(({ entry, collapsed }) => (
+              <TimelineEntryCard
+                key={entry.id}
+                entry={entry}
+                collapsed={collapsed}
+                collapsedEntryIds={collapsedEntryIds}
+                attachEnabled={attachEnabled}
+                brandLabel={forgePresentation.brandLabel}
+                onAddToChat={handleAddActivityToChat}
+                onAddThreadToChat={handleAddThreadToChat}
+                onToggleCollapsed={handleToggleEntryCollapsed}
               />
-              <SummaryPill count={commentCount} icon={SUMMARY_COMMENT_ICON} variant="muted" />
-            </>
-          }
-        >
-          {timelineEntries.length > 0 && attachEnabled && visibleEntries.length > 0 ? (
-            <View style={styles.activityToolbar}>
-              <Button
-                variant="ghost"
-                size="xs"
-                leftIcon={MessageSquarePlus}
-                onPress={handleAddAllToChat}
-                disabled={activityLoading}
-              >
-                {t("workspace.git.pr.actions.addAllToChat")}
-              </Button>
-            </View>
-          ) : null}
-          {activityLoading ? <PrActivitySkeleton /> : null}
-          {!activityLoading && visibleEntries.length === 0 ? (
-            <Text style={sectionKitStyles.emptyText}>{t("workspace.git.pr.empty.noActivity")}</Text>
-          ) : null}
-          {!activityLoading
-            ? visibleEntries.map(({ entry, collapsed }) => (
-                <TimelineEntryCard
-                  key={entry.id}
-                  entry={entry}
-                  collapsed={collapsed}
-                  collapsedEntryIds={collapsedEntryIds}
-                  attachEnabled={attachEnabled}
-                  brandLabel={forgePresentation.brandLabel}
-                  onAddToChat={handleAddActivityToChat}
-                  onAddThreadToChat={handleAddThreadToChat}
-                  onToggleCollapsed={handleToggleEntryCollapsed}
-                />
-              ))
-            : null}
-        </Section>
-      </ScrollView>
-    </View>
+            ))
+          : null}
+      </View>
+    </PullRequestPaneSplit>
   );
 }
 
@@ -882,7 +883,7 @@ function SingleActivityCard({
             <View style={styles.cardFooter}>
               <Button
                 variant="ghost"
-                size="xs"
+                size="sm"
                 leftIcon={MessageSquarePlus}
                 onPress={handleAddToChat}
               >
@@ -959,7 +960,7 @@ function ReviewCard({
           {collapsed && attachEnabled && canAddPullRequestActivityToChat(review) ? (
             <Button
               variant="ghost"
-              size="xs"
+              size="sm"
               leftIcon={MessageSquarePlus}
               onPress={handleAddToChat}
               style={styles.checkAddButton}
@@ -994,7 +995,7 @@ function ReviewCard({
             <View style={styles.cardFooter}>
               <Button
                 variant="ghost"
-                size="xs"
+                size="sm"
                 leftIcon={MessageSquarePlus}
                 onPress={handleAddToChat}
               >
@@ -1127,7 +1128,7 @@ function ThreadBlock({
             <View style={styles.cardFooter}>
               <Button
                 variant="ghost"
-                size="xs"
+                size="sm"
                 leftIcon={MessageSquarePlus}
                 onPress={handleAddThreadToChat}
               >
@@ -1192,15 +1193,6 @@ function ThreadComment({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  root: {
-    flex: 1,
-    minHeight: 0,
-    backgroundColor: theme.colors.surfaceSidebar,
-  },
-  scroll: {
-    flex: 1,
-    minHeight: 0,
-  },
   invisible: {
     opacity: 0,
   },
@@ -1260,10 +1252,6 @@ const styles = StyleSheet.create((theme) => ({
   headerLinkIconHidden: {
     marginLeft: theme.spacing[1],
     opacity: 0,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: theme.colors.border,
   },
   toolbar: {
     flexDirection: "row",

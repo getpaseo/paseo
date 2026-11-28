@@ -1,4 +1,8 @@
-import { startDesktopDaemon, type DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
+import {
+  getDesktopDaemonStatus,
+  startDesktopDaemon,
+  type DesktopDaemonStatus,
+} from "@/desktop/daemon/desktop-daemon";
 import { connectionFromListen } from "@/types/host-connection";
 import type { HostRuntimeStore } from "@/runtime/host-runtime";
 
@@ -14,6 +18,7 @@ type DaemonConnectionStore = Pick<HostRuntimeStore, "getHosts" | "upsertConnecti
 export interface DaemonStartServiceDeps {
   store: DaemonConnectionStore;
   startDesktopDaemon?: () => Promise<DesktopDaemonStatus>;
+  getDesktopDaemonStatus?: () => Promise<DesktopDaemonStatus>;
 }
 
 export async function upsertDesktopDaemonConnection(
@@ -48,6 +53,7 @@ export async function upsertDesktopDaemonConnection(
 export class DaemonStartService {
   private readonly store: DaemonConnectionStore;
   private readonly invokeStartDesktopDaemon: () => Promise<DesktopDaemonStatus>;
+  private readonly invokeGetDesktopDaemonStatus: () => Promise<DesktopDaemonStatus>;
   private readonly listeners = new Set<() => void>();
   private lastError: string | null = null;
   private inFlightCount = 0;
@@ -55,6 +61,7 @@ export class DaemonStartService {
   constructor(deps: DaemonStartServiceDeps) {
     this.store = deps.store;
     this.invokeStartDesktopDaemon = deps.startDesktopDaemon ?? startDesktopDaemon;
+    this.invokeGetDesktopDaemonStatus = deps.getDesktopDaemonStatus ?? getDesktopDaemonStatus;
   }
 
   async start(): Promise<DaemonStartResult> {
@@ -79,7 +86,21 @@ export class DaemonStartService {
         return { ok: true };
       }
 
-      const daemon = await this.invokeStartDesktopDaemon();
+      let daemon = await this.invokeStartDesktopDaemon();
+      // The desktop start command can return after its readiness deadline while
+      // the owned process keeps initializing. Keep the startup UI pending until
+      // that process can supply its host identity; do not launch it again.
+      const readinessDeadline = Date.now() + 120_000;
+      while (daemon.status === "starting") {
+        if (Date.now() >= readinessDeadline) {
+          return this.fail("The local daemon is still starting. Wait a moment and retry.");
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+        daemon = await this.invokeGetDesktopDaemonStatus();
+      }
+      if (daemon.status !== "running") {
+        return this.fail(daemon.error ?? "The local daemon stopped before startup completed.");
+      }
       const result = await upsertDesktopDaemonConnection(this.store, daemon);
       return result.ok ? result : this.fail(result.error);
     } catch (error) {

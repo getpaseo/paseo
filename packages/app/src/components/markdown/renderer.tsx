@@ -1,17 +1,23 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useState, type ComponentProps } from "react";
 import { EnrichedMarkdownText, type LinkPressEvent } from "react-native-enriched-markdown";
 import { withUnistyles } from "react-native-unistyles";
 import {
   useAssistantFileLinkActions,
   useAssistantFileLinkEnvironment,
+  type AssistantFileLinkSource,
 } from "@/assistant-file-links";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { matchCommandLink, useAgentCommandHints, type CommandHints } from "@/agent-commands";
+import { useForgeShorthand } from "@/git/forge-shorthand";
+import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
+import { isHttpUrl } from "@/utils/http-url";
+import { openExternalUrl } from "@/utils/open-external-url";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
 import { density, resolveDensity } from "@/styles/density";
 import { MarkdownBlockStack } from "./block-stack";
+import { LinkMenu, useLinkMenuLongPress, type LinkMenuSubject } from "./link-menu";
 import { WEB_RENDERERS } from "./renderers";
 import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
@@ -22,6 +28,8 @@ import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fen
 
 const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
 const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
+// A README is written for its forge, where the lines of a paragraph join into one.
+const EXTERNAL_MD4C_FLAGS = { ...MD4C_FLAGS, hardSoftBreaks: false };
 
 // Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
 const markdownStyle =
@@ -50,6 +58,12 @@ export interface MarkdownRendererProps extends MarkdownImageContext {
   streaming?: boolean;
   onLinkPress?: (url: string) => unknown;
   agentCommands?: boolean;
+  /**
+   * Author-controlled Markdown from outside this host, such as a plugin README: only its https
+   * links and images work, nothing is read as a file, forge reference or command, and the lines of
+   * a paragraph join as they do on its forge.
+   */
+  external?: boolean;
 }
 
 /** All Markdown surfaces share the same engine and source adaptation. */
@@ -76,6 +90,18 @@ const CommandMarkdownPart = memo(function CommandMarkdownPart(props: MarkdownRen
   return <MarkdownPart {...props} commandHints={commandHints} />;
 });
 
+type ReadMarkdownLink =
+  | { kind: "web"; url: string }
+  | { kind: "command"; command: string }
+  | { kind: "source"; source: AssistantFileLinkSource }
+  | { kind: "inert" };
+
+/** The text view, with the long press its menu needs on native. */
+function MarkdownText(props: ComponentProps<typeof ThemedMarkdown> & { markdown: string }) {
+  const longPress = useLinkMenuLongPress(props.markdown);
+  return <ThemedMarkdown {...props} {...longPress} />;
+}
+
 const MarkdownPart = memo(function MarkdownPart({
   text,
   compact = false,
@@ -84,36 +110,73 @@ const MarkdownPart = memo(function MarkdownPart({
   streaming = false,
   onLinkPress,
   agentCommands: _agentCommands,
+  external = false,
   commandHints = null,
   ...imageContext
 }: MarkdownRendererProps & { commandHints?: CommandHints | null }) {
   const environment = useAssistantFileLinkEnvironment();
   const actions = useAssistantFileLinkActions();
+  const workspaceForgeShorthand = useForgeShorthand();
+  const forgeShorthand = external ? null : workspaceForgeShorthand;
+  const environmentMatchesHost =
+    !imageContext.serverId || imageContext.serverId === environment.serverId;
   const client =
     imageContext.client ??
-    (environment.client?.readFile
+    (environmentMatchesHost && environment.client?.readFile
       ? { readFile: environment.client.readFile.bind(environment.client) }
       : undefined);
   const { markdown, imageSources, linkRecognition, linkSource } = useMarkdownSource(
     text,
     {
-      workspaceRoot: environment.workspaceRoot,
+      workspaceRoot: environmentMatchesHost ? environment.workspaceRoot : undefined,
       serverId: environment.serverId,
       ...imageContext,
       client,
     },
-    commandHints?.names,
+    {
+      commandNames: commandHints?.names,
+      forgeReferencePattern: forgeShorthand?.pattern,
+      external,
+    },
   );
   const [image, setImage] = useState<ImageLightboxSource | null>(null);
-  const pressLink = useStableEvent(({ url, sourceType }: LinkPressEvent) => {
-    const command = commandHints && matchCommandLink(url, sourceType, commandHints.names);
-    if (command) {
-      commandHints.insert(command);
-      return;
+  // What a link is, for pressing it and for its menu alike.
+  const readLink = useStableEvent(({ url, sourceType }: LinkPressEvent): ReadMarkdownLink => {
+    if (external) {
+      // The parser still autolinks bare http, www and email text; only https links open.
+      const safe = pluginOverviewUrl(url);
+      return safe ? { kind: "web", url: safe } : { kind: "inert" };
     }
-    const source = linkSource(url, sourceType);
-    if (onLinkPress && !actions.canResolveFile(source)) onLinkPress(url);
-    else actions.open(source, "preferred");
+    const command = commandHints && matchCommandLink(url, sourceType, commandHints.names);
+    if (command) return { kind: "command", command };
+    const forgeUrl = sourceType === "text" ? forgeShorthand?.resolve(url) : null;
+    if (forgeUrl) return { kind: "web", url: forgeUrl };
+    return { kind: "source", source: linkSource(url, sourceType) };
+  });
+  const pressLink = useStableEvent((event: LinkPressEvent) => {
+    const link = readLink(event);
+    if (link.kind === "web") {
+      void openExternalUrl(link.url);
+    } else if (link.kind === "command") {
+      commandHints?.insert(link.command);
+    } else if (link.kind === "source") {
+      if (onLinkPress && !actions.canResolveFile(link.source)) onLinkPress(event.url);
+      else actions.open(link.source, "preferred");
+    }
+  });
+  const describeLink = useStableEvent((pressed: LinkPressEvent): LinkMenuSubject | null => {
+    const link = readLink(pressed);
+    const { serverId, workspaceId, workspaceRoot } = environment;
+    const workspace =
+      !external && serverId && workspaceRoot ? { serverId, workspaceId, workspaceRoot } : null;
+    const web = (url: string) =>
+      isHttpUrl(url) ? ({ kind: "web", url, workspace } as const) : null;
+    if (link.kind === "web") return web(link.url);
+    if (link.kind !== "source") return null;
+    const inspection = actions.inspect(link.source);
+    if (inspection?.kind === "url") return web(inspection.url);
+    if (!inspection || !workspace) return null;
+    return { kind: "path", source: link.source, inspection, workspace };
   });
   const pressImage = useStableEvent(({ url }: { url: string }) => {
     if (url !== PENDING_MARKDOWN_IMAGE) setImage({ type: "uri", uri: url });
@@ -126,31 +189,33 @@ const MarkdownPart = memo(function MarkdownPart({
   );
   return (
     <MermaidStreamingContext.Provider value={streaming}>
-      <MarkdownBlockStack imageSources={imageSources}>
-        {segments.map((segment) =>
-          segment.kind === "mermaid" ? (
-            <MermaidFence key={`${segment.kind}:${segment.id}`} code={segment.source} />
-          ) : (
-            <ThemedMarkdown
-              key={`${segment.kind}:${segment.id}`}
-              markdown={segment.source}
-              uniProps={pickMarkdownStyle(compact, muted)}
-              flavor="github"
-              selectable={selectable}
-              md4cFlags={MD4C_FLAGS}
-              linkRecognition={linkRecognition}
-              enableTaskListItemToggle={false}
-              enableLinkPreview={false}
-              enableBlockContextMenu={false}
-              // JS reveal owns pacing; native fade animation is a separate experiment.
-              streamingAnimation={false}
-              onLinkPress={pressLink}
-              onImagePress={pressImage}
-              renderers={isWeb ? WEB_RENDERERS : undefined}
-            />
-          ),
-        )}
-      </MarkdownBlockStack>
+      <LinkMenu describeLink={describeLink}>
+        <MarkdownBlockStack imageSources={imageSources}>
+          {segments.map((segment) =>
+            segment.kind === "mermaid" ? (
+              <MermaidFence key={`${segment.kind}:${segment.id}`} code={segment.source} />
+            ) : (
+              <MarkdownText
+                key={`${segment.kind}:${segment.id}`}
+                markdown={segment.source}
+                uniProps={pickMarkdownStyle(compact, muted)}
+                flavor="github"
+                selectable={selectable}
+                md4cFlags={external ? EXTERNAL_MD4C_FLAGS : MD4C_FLAGS}
+                linkRecognition={linkRecognition}
+                enableTaskListItemToggle={false}
+                enableLinkPreview={false}
+                enableBlockContextMenu={false}
+                // JS reveal owns pacing; native fade animation is a separate experiment.
+                streamingAnimation={false}
+                onLinkPress={pressLink}
+                onImagePress={pressImage}
+                renderers={isWeb ? WEB_RENDERERS : undefined}
+              />
+            ),
+          )}
+        </MarkdownBlockStack>
+      </LinkMenu>
       {image ? <AttachmentLightbox source={image} onClose={closeImage} /> : null}
     </MermaidStreamingContext.Provider>
   );

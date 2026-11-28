@@ -1,6 +1,5 @@
 package sh.paseo.terminal
 
-import android.os.Build
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -44,13 +43,6 @@ class TerminalRowLayoutTest {
       val output = row.getString("output")
       val (toExpected, toContrast) = difference(drawn, expected) to difference(drawn, contrast)
       Log.i("TerminalRowLayoutTest", "$output expected=$toExpected contrast=$toContrast")
-      // Android 10's platform ICU splits this conjunct. Keep its observed raster baseline
-      // explicit rather than claiming this supported OS passes the modern grapheme corpus.
-      if (Build.VERSION.SDK_INT == 29 && output == "स्ते") {
-        assertTrue("Android 10 unexpectedly matches modern conjunct clustering", toExpected > MATCH_TOLERANCE)
-        assertTrue("Android 10 split-conjunct baseline changed", toContrast <= MATCH_TOLERANCE)
-        continue
-      }
       assertTrue("$output differs from its grapheme clusters by $toExpected", toExpected <= MATCH_TOLERANCE)
       assertTrue("$output also matches the wrong clusters", toContrast > MATCH_TOLERANCE)
     }

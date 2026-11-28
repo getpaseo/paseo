@@ -3,6 +3,7 @@ import type {
   AgentProvider,
   AgentSelectOption,
 } from "../../agent-sdk-types.js";
+import { modelDisplayLabel } from "../model-label.js";
 import type { OmpModel, OmpThinkingLevel } from "./rpc-types.js";
 
 export const DEFAULT_OMP_THINKING_LEVEL: OmpThinkingLevel = "medium";
@@ -43,7 +44,7 @@ export function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentMode
   return {
     provider,
     id: `${model.provider}/${model.id}`,
-    label: `${model.provider}/${model.name ?? model.id}`,
+    label: modelDisplayLabel(model),
     description: `${model.provider}/${model.id}`,
     metadata: {
       provider: model.provider,

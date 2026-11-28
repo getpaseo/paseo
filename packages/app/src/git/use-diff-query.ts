@@ -5,7 +5,13 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
 import { checkoutDiffPushRoute } from "@/data/push-router";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import type { ParsedDiffFile, SubscribeCheckoutDiffResponse } from "@getpaseo/protocol/messages";
+import {
+  checkoutDiffComparisonError,
+  deriveCheckoutDiffResult,
+  type CheckoutDiffSnapshot,
+} from "./diff-snapshot";
+export { deriveCheckoutDiffResult } from "./diff-snapshot";
+import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 
 interface UseCheckoutDiffQueryOptions {
@@ -18,7 +24,7 @@ interface UseCheckoutDiffQueryOptions {
   queryScope?: string;
 }
 
-type CheckoutDiffQueryPayload = Omit<SubscribeCheckoutDiffResponse["payload"], "subscriptionId">;
+type CheckoutDiffQueryPayload = CheckoutDiffSnapshot;
 
 // Re-export the canonical protocol type so all consumers share one definition.
 export type { ParsedDiffFile };
@@ -77,7 +83,11 @@ export function useCheckoutDiffQuery({
     return normalizedScope ? [...comparisonKey, "scope", normalizedScope] : comparisonKey;
   }, [serverId, cwd, compareMode, compareBaseRef, compareIgnoreWhitespace, queryScope]);
   const subscriptionId = useMemo(() => `checkoutDiff:${JSON.stringify(queryKey)}`, [queryKey]);
-  const routeEnabled = Boolean(queryEnabled && isConnected && cwd && !requiresUpdate);
+  const comparisonError =
+    queryEnabled && isConnected ? checkoutDiffComparisonError(normalizedCompare) : null;
+  const routeEnabled = Boolean(
+    queryEnabled && isConnected && cwd && !requiresUpdate && !comparisonError,
+  );
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
@@ -97,46 +107,13 @@ export function useCheckoutDiffQuery({
     }),
   });
 
-  return deriveCheckoutDiffResult(
+  const boundaryError =
     requiresUpdate && isConnected
-      ? {
-          requestId: "unsupported",
-          cwd,
-          files: [],
-          error: { code: "UNKNOWN", message: "Update the host to view All changes" },
-        }
+      ? { code: "UNKNOWN" as const, message: "Update the host to view All changes" }
+      : comparisonError;
+  return deriveCheckoutDiffResult(
+    boundaryError
+      ? { requestId: "unavailable", cwd, files: [], error: boundaryError }
       : (query.data ?? null),
   );
-}
-
-export interface CheckoutDiffResult {
-  files: ParsedDiffFile[];
-  payloadError: CheckoutDiffQueryPayload["error"];
-  diffTooLarge: boolean;
-  isLoading: boolean;
-  isFetching: boolean;
-  isError: boolean;
-  error: null;
-}
-
-/**
- * The result derives from the payload alone. Until a payload arrives there is no
- * diff to describe, so the boundary reports loading rather than an empty diff —
- * whether the query is idle (an inactive retained panel), in flight, or the host
- * is disconnected. Reporting `files: []` as settled made callers render "+0 -0"
- * and "No changes" for a diff nobody has fetched yet.
- */
-export function deriveCheckoutDiffResult(
-  payload: CheckoutDiffQueryPayload | null,
-): CheckoutDiffResult {
-  const payloadError = payload?.error ?? null;
-  return {
-    files: payload?.files ?? [],
-    payloadError,
-    diffTooLarge: payload?.diffTooLarge === true,
-    isLoading: payload === null,
-    isFetching: false,
-    isError: Boolean(payloadError),
-    error: null,
-  };
 }

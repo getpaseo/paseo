@@ -3,10 +3,12 @@ import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
 import { Terminal, type ITheme, type IMarker } from "@xterm/xterm";
+import type { TerminalCharacterWidths } from "../character-widths";
 import {
   type TerminalInputModeState,
   TerminalInputModeTracker,
@@ -121,8 +123,8 @@ interface TerminalEmulatorRuntimeDisposables {
   removeVisualViewportResize: () => void;
   clearFitTimeouts: () => void;
   removeFontListeners: () => void;
-  removeTouchListeners: () => void;
   removeFilePasteListener: () => void;
+  removeUserInputListeners: () => void;
   restoreDocumentStyles: () => void;
   restoreViewportStyles: () => void;
   disposeFitAddon: () => void;
@@ -153,10 +155,13 @@ const isAppleHandheld =
     maxTouchPoints: navigator.maxTouchPoints,
   });
 
-const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
+// DOM events xterm turns into typed data on its textarea. Pastes stay suppressed during a
+// replay: until the snapshot restores bracketed paste mode, a multi-line paste would run
+// line by line in the shell.
+const USER_INPUT_EVENT_TYPES = ["keydown", "keypress", "input"] as const;
 const RESET_TERMINAL_OUTPUT = new Uint8Array([0x1b, 0x63]);
 const terminalOutputEncoder = new TextEncoder();
 
@@ -182,15 +187,26 @@ function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
 }
 
 export interface TerminalClipboard {
+  /** Whether the async Clipboard API is usable. Browsers omit it outside secure contexts. */
+  isAvailable?(): boolean;
   readText(): Promise<string>;
   read(): Promise<readonly Pick<ClipboardItem, "types" | "getType">[]>;
   writeText(text: string): Promise<void>;
 }
 
+function getBrowserClipboard(): Clipboard | undefined {
+  return typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+}
+
+function rejectUnavailableClipboard(): Promise<never> {
+  return Promise.reject(new Error("Clipboard API is unavailable"));
+}
+
 const browserClipboard: TerminalClipboard = {
-  readText: () => navigator.clipboard.readText(),
-  read: () => navigator.clipboard.read(),
-  writeText: (text) => navigator.clipboard.writeText(text),
+  isAvailable: () => !!getBrowserClipboard(),
+  readText: () => getBrowserClipboard()?.readText() ?? rejectUnavailableClipboard(),
+  read: () => getBrowserClipboard()?.read() ?? rejectUnavailableClipboard(),
+  writeText: (text) => getBrowserClipboard()?.writeText(text) ?? rejectUnavailableClipboard(),
 };
 
 async function readClipboardImage(clipboard: TerminalClipboard): Promise<TerminalFile | null> {
@@ -221,6 +237,12 @@ function findFileOnlyPaste(transfer: DataTransfer | null): File | null {
   return null;
 }
 
+// Grapheme widths match the daemon and native buffers. Legacy hosts keep the
+// Unicode 11 table web used before. See docs/terminal-rendering.md.
+function applyCharacterWidths(terminal: Terminal, widths: TerminalCharacterWidths): void {
+  terminal.unicode.activeVersion = widths === "graphemes" ? "15-graphemes" : "11";
+}
+
 export class TerminalEmulatorRuntime {
   constructor(
     private readonly options: FindShortcutPlatform = { isMac: isMacUserAgent() },
@@ -233,6 +255,7 @@ export class TerminalEmulatorRuntime {
     shift: false,
     alt: false,
   };
+  private characterWidths: TerminalCharacterWidths = "graphemes";
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
   private searchAddon: SearchAddon | null = null;
@@ -295,6 +318,8 @@ export class TerminalEmulatorRuntime {
   private hasUngatedWrites = false;
   private readonly inputModeDecoder = new TextDecoder();
   private suppressInput = false;
+  // The latest user input event the host saw; its eventPhase is NONE once dispatch ends.
+  private userInputEvent: Event | null = null;
   private readonly inputModeTracker = new TerminalInputModeTracker();
   private lastInputModeState: TerminalInputModeState = this.inputModeTracker.getState();
   private themeBackgroundElements: HTMLElement[] = [];
@@ -318,6 +343,16 @@ export class TerminalEmulatorRuntime {
 
   setPendingModifiers(input: { pendingModifiers: PendingTerminalModifiers }): void {
     this.pendingModifiers = input.pendingModifiers;
+  }
+
+  setCharacterWidths(input: { widths: TerminalCharacterWidths }): void {
+    this.characterWidths = input.widths;
+    const terminal = this.terminal;
+    if (!terminal) {
+      return;
+    }
+    applyCharacterWidths(terminal, input.widths);
+    this.refreshVisibleRows();
   }
 
   private loadSearchAddon(terminal: Terminal): void {
@@ -368,22 +403,7 @@ export class TerminalEmulatorRuntime {
         !event.altKey &&
         !event.metaKey
       ) {
-        const key = event.key.toLowerCase();
-
-        // Ctrl+C: copy selection to clipboard if text is selected, otherwise let xterm send SIGINT
-        if (key === "c" && terminal.hasSelection()) {
-          void this.clipboard.writeText(terminal.getSelection());
-          return false;
-        }
-
-        // Ctrl+V: paste clipboard text, or the clipboard image when there is no text
-        if (key === "v") {
-          event.preventDefault();
-          this.pasteClipboard(terminal);
-          return false;
-        }
-
-        return true;
+        return !this.handleCtrlClipboardShortcut(terminal, event);
       }
 
       if (this.maybeSendMacEditingShortcut(terminal, event)) {
@@ -430,6 +450,36 @@ export class TerminalEmulatorRuntime {
       event.stopPropagation();
       return false;
     });
+  }
+
+  /** Returns true when a non-Mac Ctrl+C / Ctrl+V clipboard shortcut was handled. */
+  private handleCtrlClipboardShortcut(
+    terminal: Pick<Terminal, "hasSelection" | "getSelection" | "paste">,
+    event: KeyboardEvent,
+  ): boolean {
+    const key = event.key.toLowerCase();
+    // Without the Clipboard API (e.g. plain http on a LAN address), the browser's native
+    // copy/paste events still fire and xterm handles them, so leave the default action.
+    const clipboardAvailable = this.clipboard.isAvailable?.() ?? true;
+
+    // Ctrl+C: copy selection to clipboard if text is selected, otherwise let xterm send SIGINT
+    if (key === "c" && terminal.hasSelection()) {
+      if (clipboardAvailable) {
+        void this.clipboard.writeText(terminal.getSelection());
+      }
+      return true;
+    }
+
+    // Ctrl+V: paste clipboard text, or the clipboard image when there is no text
+    if (key === "v") {
+      if (clipboardAvailable) {
+        event.preventDefault();
+        this.pasteClipboard(terminal);
+      }
+      return true;
+    }
+
+    return false;
   }
 
   private handleFindShortcut(event: KeyboardEvent): boolean {
@@ -529,11 +579,12 @@ export class TerminalEmulatorRuntime {
       theme: withOverviewRulerBorderHidden(input.theme),
     });
     const fitAddon = new FitAddon();
-    const unicode11Addon = new Unicode11Addon();
     let webglAddon: WebglAddon | null = null;
     let imageAddon: ImageAddon | null = null;
     terminal.loadAddon(fitAddon);
-    terminal.loadAddon(unicode11Addon);
+    terminal.loadAddon(new Unicode11Addon());
+    terminal.loadAddon(new UnicodeGraphemesAddon());
+    applyCharacterWidths(terminal, this.characterWidths);
     terminal.loadAddon(new WebLinksAddon(openExternalLink));
     const localFileLinkProvider = terminal.registerLinkProvider(
       createTerminalLocalFileLinkProvider(terminal, {
@@ -568,11 +619,6 @@ export class TerminalEmulatorRuntime {
     terminal.open(input.host);
     this.themeBackgroundElements = this.collectThemeBackgroundElements(input);
     this.applyThemeBackground(input.theme);
-    try {
-      terminal.unicode.activeVersion = "11";
-    } catch {
-      // Ignore if unicode API isn't available in this build/runtime.
-    }
 
     const disposeImageAddon = (): void => {
       try {
@@ -606,6 +652,7 @@ export class TerminalEmulatorRuntime {
       terminal.parser.registerCsiHandler({ final: "c" }, () => true);
       terminal.parser.registerCsiHandler({ prefix: ">", final: "c" }, () => true);
       terminal.parser.registerCsiHandler({ prefix: "=", final: "c" }, () => true);
+      terminal.parser.registerCsiHandler({ prefix: ">", final: "q" }, () => true);
       terminal.parser.registerCsiHandler({ final: "n" }, () => true);
       terminal.parser.registerCsiHandler({ prefix: "?", final: "n" }, () => true);
       terminal.parser.registerCsiHandler({ final: "R" }, () => true);
@@ -614,6 +661,7 @@ export class TerminalEmulatorRuntime {
         { prefix: "?", intermediates: "$", final: "p" },
         () => true,
       );
+      terminal.parser.registerDcsHandler({ intermediates: "$", final: "q" }, () => true);
       for (const code of [10, 11, 12]) {
         terminal.parser.registerOscHandler(code, (data) => data.trim() === "?");
       }
@@ -698,8 +746,17 @@ export class TerminalEmulatorRuntime {
 
     fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
 
+    // xterm reports what the user types and the replies it generates while parsing
+    // through the same onData. Replies only come out of parsing a write, never while a
+    // user input event is dispatching, so typing survives a replay that suppresses them.
+    const recordUserInputEvent = (event: Event): void => {
+      this.userInputEvent = event;
+    };
+    for (const type of USER_INPUT_EVENT_TYPES) {
+      input.host.addEventListener(type, recordUserInputEvent, true);
+    }
     const inputDisposable = terminal.onData((data) => {
-      if (this.suppressInput) {
+      if (this.suppressInput && !this.isDispatchingUserInput()) {
         return;
       }
       this.callbacks.onInput?.(data);
@@ -721,11 +778,6 @@ export class TerminalEmulatorRuntime {
     };
     input.host.addEventListener("paste", filePasteHandler, true);
 
-    const removeTouchListeners = this.setupTouchScrollHandlers({
-      root: input.root,
-      host: input.host,
-      terminal,
-    });
     const resizeObserver = new ResizeObserver(() => {
       fitAndEmitResize({ shouldClaim: false });
     });
@@ -805,9 +857,14 @@ export class TerminalEmulatorRuntime {
       removeFontListeners: () => {
         fontSet?.removeEventListener?.("loadingdone", fontReadyHandler);
       },
-      removeTouchListeners,
       removeFilePasteListener: () => {
         input.host.removeEventListener("paste", filePasteHandler, true);
+      },
+      removeUserInputListeners: () => {
+        for (const type of USER_INPUT_EVENT_TYPES) {
+          input.host.removeEventListener(type, recordUserInputEvent, true);
+        }
+        this.userInputEvent = null;
       },
       restoreDocumentStyles,
       restoreViewportStyles,
@@ -837,8 +894,8 @@ export class TerminalEmulatorRuntime {
       disposables.removeVisualViewportResize();
       disposables.clearFitTimeouts();
       disposables.removeFontListeners();
-      disposables.removeTouchListeners();
       disposables.removeFilePasteListener();
+      disposables.removeUserInputListeners();
       disposables.disposeFitAddon();
       disposables.disposeWebglAddon();
       disposables.disposeTerminal();
@@ -877,6 +934,10 @@ export class TerminalEmulatorRuntime {
 
   paste(text: string): void {
     this.terminal?.paste(text);
+  }
+
+  private isDispatchingUserInput(): boolean {
+    return (this.userInputEvent?.eventPhase ?? Event.NONE) !== Event.NONE;
   }
 
   private pasteClipboard(terminal: Pick<Terminal, "paste">): void {
@@ -992,10 +1053,17 @@ export class TerminalEmulatorRuntime {
     if (!terminal) {
       return;
     }
+    terminal.textarea?.removeAttribute("virtualkeyboardpolicy");
     if (input?.forceRefocus) {
       terminal.blur();
     }
     terminal.focus();
+  }
+
+  suppressAutomaticKeyboard(): void {
+    // Android Chrome can reopen the keyboard during a drag after Back leaves the input
+    // focused. Manual policy prevents that without closing an already open keyboard.
+    this.terminal?.textarea?.setAttribute("virtualkeyboardpolicy", "manual");
   }
 
   blur(): void {
@@ -1375,122 +1443,6 @@ export class TerminalEmulatorRuntime {
           previousViewportWebkitOverflowScrolling,
         );
       }
-    };
-  }
-
-  private setupTouchScrollHandlers(input: {
-    root: HTMLDivElement;
-    host: HTMLDivElement;
-    terminal: Terminal;
-  }): () => void {
-    let touchScrollRemainderPx = 0;
-    const measuredLineHeight =
-      input.host.querySelector<HTMLElement>(".xterm-rows > div")?.getBoundingClientRect().height ??
-      0;
-    const touchScrollLineHeightPx =
-      measuredLineHeight > 0 ? measuredLineHeight : DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX;
-
-    const activeTouch = {
-      identifier: -1,
-      startX: 0,
-      startY: 0,
-      lastX: 0,
-      lastY: 0,
-      mode: null as "vertical" | "horizontal" | null,
-    };
-
-    const touchStartHandler = (event: TouchEvent) => {
-      if (event.touches.length !== 1) {
-        touchScrollRemainderPx = 0;
-        activeTouch.identifier = -1;
-        activeTouch.mode = null;
-        return;
-      }
-
-      const touch = event.touches[0];
-      if (!touch) {
-        touchScrollRemainderPx = 0;
-        activeTouch.identifier = -1;
-        activeTouch.mode = null;
-        return;
-      }
-
-      activeTouch.identifier = touch.identifier;
-      activeTouch.startX = touch.clientX;
-      activeTouch.startY = touch.clientY;
-      activeTouch.lastX = touch.clientX;
-      activeTouch.lastY = touch.clientY;
-      activeTouch.mode = null;
-      touchScrollRemainderPx = 0;
-    };
-
-    const touchMoveHandler = (event: TouchEvent) => {
-      if (event.touches.length !== 1) {
-        return;
-      }
-
-      const touch = Array.from(event.touches).find(
-        (candidate) => candidate.identifier === activeTouch.identifier,
-      );
-      if (!touch) {
-        return;
-      }
-
-      const totalDeltaX = touch.clientX - activeTouch.startX;
-      const totalDeltaY = touch.clientY - activeTouch.startY;
-      if (activeTouch.mode === null) {
-        const absX = Math.abs(totalDeltaX);
-        const absY = Math.abs(totalDeltaY);
-        if (absX > 8 || absY > 8) {
-          activeTouch.mode = absY >= absX ? "vertical" : "horizontal";
-        }
-      }
-
-      const deltaY = touch.clientY - activeTouch.lastY;
-      activeTouch.lastX = touch.clientX;
-      activeTouch.lastY = touch.clientY;
-
-      if (activeTouch.mode !== "vertical") {
-        return;
-      }
-
-      touchScrollRemainderPx += deltaY;
-      const lineDelta = Math.trunc(touchScrollRemainderPx / touchScrollLineHeightPx);
-      if (lineDelta !== 0) {
-        input.terminal.scrollLines(-lineDelta);
-        touchScrollRemainderPx -= lineDelta * touchScrollLineHeightPx;
-      }
-
-      event.preventDefault();
-    };
-
-    const touchEndHandler = (event: TouchEvent) => {
-      const activeTouchEnded = Array.from(event.changedTouches).some(
-        (touch) => touch.identifier === activeTouch.identifier,
-      );
-      if (activeTouchEnded || event.touches.length === 0) {
-        touchScrollRemainderPx = 0;
-        activeTouch.identifier = -1;
-        activeTouch.mode = null;
-      }
-    };
-
-    const touchCancelHandler = () => {
-      touchScrollRemainderPx = 0;
-      activeTouch.identifier = -1;
-      activeTouch.mode = null;
-    };
-
-    input.root.addEventListener("touchstart", touchStartHandler, { passive: true });
-    input.root.addEventListener("touchmove", touchMoveHandler, { passive: false });
-    input.root.addEventListener("touchend", touchEndHandler, { passive: true });
-    input.root.addEventListener("touchcancel", touchCancelHandler, { passive: true });
-
-    return () => {
-      input.root.removeEventListener("touchstart", touchStartHandler);
-      input.root.removeEventListener("touchmove", touchMoveHandler);
-      input.root.removeEventListener("touchend", touchEndHandler);
-      input.root.removeEventListener("touchcancel", touchCancelHandler);
     };
   }
 }

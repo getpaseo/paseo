@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, type ReactNode } from "r
 import invariant from "tiny-invariant";
 import { NavigationContext, NavigationRouteContext } from "expo-router/react-navigation";
 import { useAssistantFileLinkEnvironmentBridge } from "@/assistant-file-links";
+import { useForgeShorthandBridge } from "@/git/forge-shorthand";
 import { useComposerEditingEnvironmentBridge } from "@/composer/editing-session";
 import { RetainedPanelActivity, useRetainedPanelActive } from "@/components/retained-panel";
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
@@ -56,13 +57,14 @@ export function useSheetPaneBridge(): ContextBridge {
   const editing = useComposerEditingEnvironmentBridge();
   const cache = useDiffDocumentWorkspaceCacheBridge();
   const files = useAssistantFileLinkEnvironmentBridge();
+  const forgeShorthand = useForgeShorthandBridge();
   const active = useRetainedPanelActive();
   const serverId = useHostRouteServerId();
   const navigation = useContext(NavigationContext);
   const route = useContext(NavigationRouteContext);
   return useCallback(
     (children) => {
-      const content = editing(cache(files(children)));
+      const content = editing(cache(files(forgeShorthand(children))));
       return (
         <SheetPaneHostContext.Provider value={host}>
           <NavigationContext.Provider value={navigation}>
@@ -79,6 +81,6 @@ export function useSheetPaneBridge(): ContextBridge {
         </SheetPaneHostContext.Provider>
       );
     },
-    [host, editing, cache, files, active, serverId, navigation, route],
+    [host, editing, cache, files, forgeShorthand, active, serverId, navigation, route],
   );
 }

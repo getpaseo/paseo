@@ -1,4 +1,6 @@
+import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
@@ -53,7 +55,7 @@ import {
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
-import { chooseAddProjectMethod, expectAddProjectPage } from "../support/helpers/add-project-flow";
+import { expectAddProjectTab } from "../support/helpers/add-project-flow";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
 import {
   expectSidebarWorkspaceSelected,
@@ -289,8 +291,7 @@ test.describe("New workspace flow", () => {
       await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
       await addProject.click();
 
-      await expectAddProjectPage(page, "method");
-      await chooseAddProjectMethod(page, "directory-search");
+      await expectAddProjectTab(page, "existing");
     } finally {
       await repo.cleanup();
     }
@@ -888,6 +889,53 @@ test.describe("New workspace flow", () => {
         await tempRepo.cleanup();
       }
     });
+  });
+
+  test("existing worktree starts the first agent in the chosen worktree", async ({ page }) => {
+    const tempRepo = await createTempGitRepo("existing-worktree-");
+    // Made with git, not Paseo: the list holds every git worktree of the repository.
+    const worktreePath = path.join(tempRepo.path, "manual-worktree");
+    execSync(`git worktree add -b e2e/manual ${JSON.stringify(worktreePath)}`, {
+      cwd: tempRepo.path,
+      stdio: "ignore",
+    });
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+      localProjectIds.add(openedProject.projectId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "existing");
+      await expect(page.getByTestId("new-workspace-worktree-picker-trigger")).toContainText(
+        "e2e/manual",
+      );
+      await submitNewWorkspacePrompt(page);
+
+      const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      localWorkspaceIds.add(createdWorkspace.workspaceId);
+      expect(await realpath(createdWorkspace.workspaceDirectory)).toBe(
+        await realpath(worktreePath),
+      );
+
+      const agentTabs = page
+        .getByTestId(`workspace-deck-entry-${getServerId()}:${createdWorkspace.workspaceId}`)
+        .filter({ visible: true })
+        .locator('[data-testid^="workspace-tab-agent_"]');
+      await expect(agentTabs).toHaveCount(1, { timeout: 30_000 });
+    } finally {
+      await tempRepo.cleanup();
+    }
   });
 
   test("branch picker opens via keyboard and selects the filtered option on Enter", async ({

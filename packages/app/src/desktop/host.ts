@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
-import type { BrowserKeyboardPolicy } from "@/desktop/browser/shortcuts";
+import type { BrowserKeyboardPolicy } from "@/keyboard";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -82,6 +82,8 @@ export interface DesktopEditorOpenTargetInput {
 export interface DesktopEditorBridge {
   listTargets?: (input?: { workspacePath?: string }) => Promise<DesktopEditorTargetDescriptor[]>;
   openTarget?: (input: DesktopEditorOpenTargetInput) => Promise<void>;
+  /** Opens a file with the application the operating system associates with it. */
+  openDefaultApp?: (input: { path: string }) => Promise<void>;
 }
 
 export interface DesktopWebUtilsBridge {
@@ -144,6 +146,42 @@ export interface DesktopAttachedBrowserRegistration {
   webContentsId: number;
 }
 
+export type DesktopBrowserProxyTarget =
+  | {
+      type: "directTcp";
+      endpoint: string;
+      useTls?: boolean;
+    }
+  | {
+      type: "remoteSsh";
+      host: string;
+      sshPort?: number;
+      daemonPort?: number;
+    }
+  | {
+      type: "relay";
+      serverId: string;
+      relayEndpoint: string;
+      useTls?: boolean;
+      daemonPublicKeyB64: string;
+      minimumSecurityMode?: "protected";
+    };
+
+export type DesktopBrowserProxyStatus = "idle" | "connecting" | "ready" | "reconnecting" | "error";
+
+export interface DesktopBrowserProxyStatusSnapshot {
+  serverId: string;
+  partition: string;
+  status: DesktopBrowserProxyStatus;
+  error: string | null;
+  socksPort: number | null;
+}
+
+export interface DesktopBrowserProxyTicketRequestEvent {
+  requestId: string;
+  serverId: string;
+}
+
 export interface DesktopBrowserBridge {
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
@@ -155,10 +193,27 @@ export interface DesktopBrowserBridge {
   }) => Promise<void>;
   focus?: (browserId: string) => Promise<boolean>;
   openDevTools?: (browserId: string) => Promise<unknown>;
-  clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
+  clearProfile?: (legacyBrowserIds: string[], hostServerIds?: string[]) => Promise<void>;
+  ensureHostProxy?: (input: {
+    serverId: string;
+    target: DesktopBrowserProxyTarget;
+    forceReconnect?: boolean;
+  }) => Promise<DesktopBrowserProxyStatusSnapshot>;
+  updateHostProxyTarget?: (input: {
+    serverId: string;
+    target: DesktopBrowserProxyTarget;
+  }) => Promise<void>;
+  getHostProxyStatus?: (serverId: string) => Promise<DesktopBrowserProxyStatusSnapshot | null>;
+  releaseHostProxy?: (serverId: string) => Promise<void>;
+  deliverProxyTicket?: (input: {
+    requestId: string;
+    ticket?: string;
+    error?: string;
+  }) => Promise<void>;
   executeAutomationCommand?: (
     request: BrowserAutomationExecuteRequest,
   ) => Promise<BrowserAutomationExecuteResponse["payload"]>;
+  acknowledgeFocusGuard?: (input: { token: string; composing: boolean }) => void;
   /** Capture a PNG screenshot of the guest viewport cropped to `rect`. */
   captureElement?: (
     browserId: string,
@@ -175,6 +230,8 @@ export interface DesktopInvokeBridge {
 export interface DesktopHostBridge {
   platform?: string;
   windowChromeMode?: string;
+  browserHostLabel?: string;
+  browserHostInstanceId?: string;
   invoke?: DesktopInvokeBridge["invoke"];
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;

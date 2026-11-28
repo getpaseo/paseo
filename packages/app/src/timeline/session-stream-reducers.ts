@@ -1,8 +1,9 @@
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentMetric, AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
+import { stampTimelineTurnMetrics } from "@/timeline/turn-metrics";
 import {
   applyStreamEvent,
   flushHeadToTail,
@@ -133,6 +134,7 @@ interface TimelineResponseEntry {
   turnId?: string;
   item: AgentTimelineItem;
   timestamp: string;
+  turnMetrics?: AgentMetric[];
 }
 
 export interface ProcessTimelineResponseInput {
@@ -289,7 +291,10 @@ function classifySessionTimelineSeq({
   seq: number;
 }): SessionTimelineSeqDecision {
   if (!cursor) {
-    return "init";
+    // A synced chat without coverage was empty when it last caught up. Only an epoch's
+    // first row can start coverage; a later row means rows before it were missed, for
+    // example while offline, and a cursor started there would hide them from catch-up.
+    return seq === 1 ? "init" : "gap";
   }
   if (cursor.epoch !== epoch) {
     return "drop_epoch";
@@ -786,21 +791,38 @@ function reconcileOverlappingProjectedAssistant(params: {
   epoch: string;
   currentEndSeq: number;
 }): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
-  const { unit } = params;
-  if (
-    unit.event.type !== "timeline" ||
-    unit.event.item.type !== "assistant_message" ||
-    !unit.sourceSeqRanges.some(
-      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
-    )
-  ) {
-    return { tail: params.tail, head: params.head, reconciled: false };
+  const { unit, currentEndSeq, epoch } = params;
+  const unchanged = { tail: params.tail, head: params.head, reconciled: false };
+  if (unit.event.type !== "timeline" || unit.event.item.type !== "assistant_message") {
+    return unchanged;
   }
 
   const projectedText = unit.event.item.text;
   const projectedMessageId = unit.event.item.messageId;
+  const crossesCursor = unit.sourceSeqRanges.some(
+    (range) => range.startSeq <= currentEndSeq && range.endSeq > currentEndSeq,
+  );
+  // A steer occupies the gap between source ranges. Match that projected reply
+  // by its source positions because a tool call can split rows with the same id.
+  const coversItem = (item: AssistantMessageItem) => {
+    const cursor = item.timelineCursor;
+    return (
+      cursor?.epoch === epoch &&
+      unit.sourceSeqRanges.some(
+        (range) => range.startSeq <= cursor.seq && cursor.seq <= range.endSeq,
+      )
+    );
+  };
+  const bridgesSteer =
+    unit.sourceSeqRanges.length > 1 &&
+    projectedMessageId !== undefined &&
+    unit.seqEnd > currentEndSeq &&
+    unit.sourceSeqRanges.some((range) => range.endSeq <= currentEndSeq);
+  if (!crossesCursor && !bridgesSteer) return unchanged;
+
   const matches = (item: StreamItem) => {
     if (item.kind !== "assistant_message") return false;
+    if (bridgesSteer) return item.messageId === projectedMessageId && coversItem(item);
     if (projectedMessageId && item.messageId) return item.messageId === projectedMessageId;
     return projectedText.startsWith(item.text);
   };
@@ -812,15 +834,13 @@ function reconcileOverlappingProjectedAssistant(params: {
 
   const headMatch = findMatch(params.head);
   const tailMatch = findMatch(params.tail);
-  const match = headMatch ?? tailMatch;
-  if (!match) {
-    return { tail: params.tail, head: params.head, reconciled: false };
-  }
+  // Keep a cached reply before the steer even if a live suffix also exists.
+  const match = bridgesSteer ? (tailMatch ?? headMatch) : (headMatch ?? tailMatch);
+  if (!match) return unchanged;
 
   const messageId = projectedMessageId ?? match.current.messageId;
   const replacement: AssistantMessageItem = {
-    kind: "assistant_message",
-    id: match.current.id,
+    ...match.current,
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
@@ -832,21 +852,26 @@ function reconcileOverlappingProjectedAssistant(params: {
     return next;
   };
 
+  const removeMatch = (items: StreamItem[], index: number) => [
+    ...items.slice(0, index),
+    ...items.slice(index + 1),
+  ];
+  if (bridgesSteer && tailMatch) {
+    return {
+      tail: replaceMatch(params.tail, tailMatch.index),
+      head: headMatch ? removeMatch(params.head, headMatch.index) : params.head,
+      reconciled: true,
+    };
+  }
   if (headMatch) {
-    const tailCursor = tailMatch?.current.timelineCursor;
-    const replacesCachedPrefix =
-      tailMatch !== null &&
-      tailCursor?.epoch === params.epoch &&
-      unit.sourceSeqRanges.some(
-        (range) => range.startSeq <= tailCursor.seq && tailCursor.seq <= range.endSeq,
-      );
     return {
       // Live chunks can arrive before catch-up while their cached prefix is still painted.
       // The projected reply owns both copies; keeping the prefix would duplicate it and
       // cause completion to discard the updated head as an already-committed item.
-      tail: replacesCachedPrefix
-        ? [...params.tail.slice(0, tailMatch.index), ...params.tail.slice(tailMatch.index + 1)]
-        : params.tail,
+      tail:
+        tailMatch && coversItem(tailMatch.current)
+          ? removeMatch(params.tail, tailMatch.index)
+          : params.tail,
       head: replaceMatch(params.head, headMatch.index),
       reconciled: true,
     };
@@ -1265,7 +1290,8 @@ export function processTimelineResponse(
   // ------------------------------------------------------------------
   // Convert entries to timeline units
   // ------------------------------------------------------------------
-  const timelineUnits = selectEntriesOwnedByTimelinePage(payload).map((entry) => ({
+  const pageEntries = selectEntriesOwnedByTimelinePage(payload);
+  const timelineUnits = pageEntries.map((entry) => ({
     seq: entry.seqStart,
     seqEnd: entry.seqEnd,
     sourceSeqRanges:
@@ -1376,8 +1402,8 @@ export function processTimelineResponse(
     });
   }
 
-  const nextTail = timelineResult.tail;
-  const nextHead = timelineResult.head;
+  const nextTail = stampTimelineTurnMetrics(timelineResult.tail, payload.epoch, pageEntries);
+  const nextHead = stampTimelineTurnMetrics(timelineResult.head, payload.epoch, pageEntries);
   const nextCursor = timelineResult.cursor;
   const cursorChanged = timelineResult.cursorChanged;
   sideEffects.push(...timelineResult.sideEffects);
@@ -1539,26 +1565,31 @@ function processTimelineSequencingGate(input: {
       cursorChanged: true,
     };
   }
-  if (decision === "gap") {
-    return {
-      ...base,
-      shouldApplyStreamEvent: false,
-      sideEffects: currentCursor
-        ? [
-            {
-              type: "catch_up",
-              cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
-            },
-          ]
-        : [],
-    };
-  }
   if (decision === "drop_epoch" && seq === 1) {
     return {
       ...base,
       nextTimelineCursor: { epoch, startSeq: seq, endSeq: seq },
       cursorChanged: true,
       resetLiveTimeline: true,
+    };
+  }
+  // A gap and an epoch change both mean the local cursor cannot certify the next row.
+  // The epoch case is a rewind or replacement this client did not observe as an
+  // invalidation; the daemon answers an `after` request carrying the stale epoch with a
+  // reset tail, which installs current history. Dropping those rows would leave the chat
+  // on pre-rewind history while the new epoch streams.
+  if (decision === "gap" || decision === "drop_epoch") {
+    return {
+      ...base,
+      shouldApplyStreamEvent: false,
+      sideEffects: [
+        {
+          type: "catch_up",
+          cursor: currentCursor
+            ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
+            : { epoch, endSeq: 0 },
+        },
+      ],
     };
   }
   return {

@@ -115,6 +115,11 @@ const buildPermissionDetails = (
 
   if (title) {
     details.push(title);
+  } else if (description && request.input) {
+    const inputPreview = safeStringify(request.input);
+    if (inputPreview) {
+      details.push(inputPreview);
+    }
   }
   if (description && description !== title) {
     details.push(description);

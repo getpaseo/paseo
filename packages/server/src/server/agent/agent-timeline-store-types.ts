@@ -1,5 +1,5 @@
 import type { ProjectedTimelineRow } from "./timeline-projection.js";
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentMetric, AgentTimelineItem } from "./agent-sdk-types.js";
 
 export interface AgentTimelineRow {
   seq: number;
@@ -7,6 +7,8 @@ export interface AgentTimelineRow {
   item: AgentTimelineItem;
   readonly turnId?: string;
   readonly providerMessageId?: string;
+  /** Metrics of the turn this row carries the footer for. */
+  readonly turnMetrics?: AgentMetric[];
 }
 
 export interface AgentTimelineCursor {

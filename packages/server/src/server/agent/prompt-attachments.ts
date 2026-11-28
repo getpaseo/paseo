@@ -1,12 +1,23 @@
 import { getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
-import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type {
+  AgentAttachment,
+  UploadedFileAttachment,
+  UploadedImage,
+} from "@getpaseo/protocol/messages";
+import { readUploadedImageFile } from "../file-upload/index.js";
 import type { AgentPromptContentBlock, AgentPromptInput } from "./agent-sdk-types.js";
 
 const REVIEW_LINE_MARKERS = { add: "+", remove: "-", context: " " } as const;
 
+export interface ResolvedPromptImage {
+  data: string;
+  mimeType: string;
+  uploadedImage?: UploadedImage;
+}
+
 export function buildAgentPrompt(
   text: string,
-  images?: Array<{ data: string; mimeType: string }>,
+  images?: Array<ResolvedPromptImage>,
   attachments?: AgentAttachment[],
 ): AgentPromptInput {
   const normalized = text.trim();
@@ -31,10 +42,68 @@ export function buildAgentPrompt(
     blocks.push({ type: "text", text: normalized });
   }
   for (const image of images ?? []) {
-    blocks.push({ type: "image", data: image.data, mimeType: image.mimeType });
+    blocks.push({
+      type: "image",
+      data: image.data,
+      mimeType: image.mimeType,
+      ...(image.uploadedImage ? { uploadedImage: image.uploadedImage } : {}),
+    });
   }
   blocks.push(...otherAttachments);
   return blocks;
+}
+
+function isUploadedImageAttachment(
+  attachment: AgentAttachment,
+): attachment is UploadedFileAttachment & { role: "image" } {
+  return attachment.type === "uploaded_file" && attachment.role === "image";
+}
+
+export async function resolveAgentPrompt(input: {
+  paseoHome?: string;
+  text: string;
+  images?: Array<{ data: string; mimeType: string }>;
+  attachments?: AgentAttachment[];
+}): Promise<AgentPromptInput> {
+  const resolvedImages: ResolvedPromptImage[] = [...(input.images ?? [])];
+  const uploadedImageAttachments: Array<UploadedFileAttachment & { role: "image" }> = [];
+  const remainingAttachments: AgentAttachment[] = [];
+  for (const attachment of input.attachments ?? []) {
+    if (isUploadedImageAttachment(attachment)) {
+      uploadedImageAttachments.push(attachment);
+    } else {
+      remainingAttachments.push(attachment);
+    }
+  }
+
+  if (uploadedImageAttachments.length > 0) {
+    if (!input.paseoHome) {
+      throw new Error("paseoHome is required to resolve uploaded image attachments.");
+    }
+    for (const attachment of uploadedImageAttachments) {
+      const uploadedImage: UploadedImage = {
+        id: attachment.id,
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        path: attachment.path,
+      };
+      const file = await readUploadedImageFile({
+        paseoHome: input.paseoHome,
+        uploadedImage,
+      });
+      resolvedImages.push({
+        data: file.bytes.toString("base64"),
+        mimeType: attachment.mimeType,
+        uploadedImage: {
+          ...uploadedImage,
+          size: file.size,
+          path: file.resolvedPath,
+        },
+      });
+    }
+  }
+  return buildAgentPrompt(input.text, resolvedImages, remainingAttachments);
 }
 
 export function renderPromptAttachmentAsText(attachment: AgentAttachment): string {

@@ -64,7 +64,8 @@ export function createTestRegistries() {
   const workspaceRegistry: WorkspaceRegistry = {
     initialize: async () => {},
     existsOnDisk: async () => true,
-    list: async () => Array.from(workspaces.values()),
+    listAll: async () => Array.from(workspaces.values()),
+    listActive: async () => Array.from(workspaces.values()).filter((w) => !w.archivedAt),
     get: async (id: string) => workspaces.get(id) ?? null,
     update: async (id, updater) => {
       const existing = workspaces.get(id);

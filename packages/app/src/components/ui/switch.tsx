@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import {
   Pressable,
+  View,
   type GestureResponderEvent,
   type StyleProp,
   type ViewStyle,
@@ -13,11 +14,17 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { createControlGeometry, switchGeometry } from "@/components/ui/control-geometry";
+import { switchGeometryForLayout, type SwitchGeometry } from "@/components/ui/control-geometry";
+import { useContainedControlSize } from "@/components/ui/control-size";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
 
 interface SwitchProps {
-  value: boolean;
+  /**
+   * `null` while the value is not known yet, such as while it loads from a host. The switch's space
+   * stays reserved and empty, so the switch takes it when the value arrives and nothing moves.
+   */
+  value: boolean | null;
   onValueChange?: (value: boolean) => void;
   disabled?: boolean;
   accessibilityLabel?: string;
@@ -29,6 +36,7 @@ const TIMING = { duration: 180, easing: Easing.inOut(Easing.ease) };
 
 interface SwitchTrackProps {
   value: boolean;
+  geometry: SwitchGeometry;
   trackOffColor: string;
   trackOnColor: string;
   thumbOffColor: string;
@@ -37,6 +45,7 @@ interface SwitchTrackProps {
 
 function SwitchTrack({
   value,
+  geometry,
   trackOffColor,
   trackOnColor,
   thumbOffColor,
@@ -48,15 +57,36 @@ function SwitchTrack({
     backgroundColor: interpolateColor(progress.value, [0, 1], [trackOffColor, trackOnColor]),
   }));
 
+  const { thumbTravel } = geometry;
   const thumbAnimatedStyle = useAnimatedStyle(() => ({
     backgroundColor: interpolateColor(progress.value, [0, 1], [thumbOffColor, thumbOnColor]),
-    transform: [{ translateX: progress.value * switchGeometry.thumbTravel }],
+    transform: [{ translateX: progress.value * thumbTravel }],
   }));
 
-  const trackStyle = useMemo(() => [styles.switchTrack, trackAnimatedStyle], [trackAnimatedStyle]);
+  const trackSize = useMemo(
+    () => ({
+      width: geometry.trackWidth,
+      height: geometry.trackHeight,
+      borderRadius: geometry.trackHeight / 2,
+      padding: (geometry.trackHeight - geometry.thumbSize) / 2,
+    }),
+    [geometry],
+  );
+  const thumbSize = useMemo(
+    () => ({
+      width: geometry.thumbSize,
+      height: geometry.thumbSize,
+      borderRadius: geometry.thumbSize / 2,
+    }),
+    [geometry],
+  );
+  const trackStyle = useMemo(
+    () => [styles.switchTrack, trackSize, trackAnimatedStyle],
+    [trackSize, trackAnimatedStyle],
+  );
   const thumbStyle = useMemo(
-    () => [styles.switchThumb, styles.thumb, thumbAnimatedStyle],
-    [thumbAnimatedStyle],
+    () => [thumbSize, styles.thumb, thumbAnimatedStyle],
+    [thumbSize, thumbAnimatedStyle],
   );
 
   return (
@@ -84,17 +114,40 @@ export function Switch({
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation();
-      if (disabled) return;
+      if (disabled || value === null) return;
       onValueChange?.(!value);
     },
     [disabled, onValueChange, value],
   );
 
-  const accessibilityState = useMemo(() => ({ checked: value, disabled }), [value, disabled]);
-  const pressableStyle = useMemo(
-    () => [styles.switchControl, disabled ? styles.disabled : null, style],
-    [disabled, style],
+  const size = useContainedControlSize() ?? "md";
+  const isCompact = useIsCompactFormFactor();
+  const geometry = useMemo(() => switchGeometryForLayout(size, isCompact), [size, isCompact]);
+
+  const accessibilityState = useMemo(
+    () => ({ checked: value === true, disabled }),
+    [value, disabled],
   );
+  const pressableStyle = useMemo(
+    () => [
+      styles.switchControl,
+      // The press area is a full control tall and grows out of the track; the layout only sees
+      // the track.
+      {
+        minHeight: geometry.hitHeight,
+        marginVertical: (geometry.trackHeight - geometry.hitHeight) / 2,
+      },
+      disabled ? styles.disabled : null,
+      style,
+    ],
+    [disabled, geometry.hitHeight, geometry.trackHeight, style],
+  );
+  const unknownStyle = useMemo(
+    () => [{ width: geometry.trackWidth, minHeight: geometry.trackHeight }, style],
+    [geometry.trackWidth, geometry.trackHeight, style],
+  );
+
+  if (value === null) return <View style={unknownStyle} testID={testID} />;
 
   return (
     <Pressable
@@ -108,29 +161,18 @@ export function Switch({
       testID={testID}
       style={pressableStyle}
     >
-      <ThemedSwitchTrack value={value} />
+      <ThemedSwitchTrack value={value} geometry={geometry} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create((theme) => {
-  const geometry = createControlGeometry(theme);
-
   return {
     switchControl: {
-      ...geometry.switchControl,
-    },
-    switchTrack: {
-      width: switchGeometry.trackWidth,
-      height: switchGeometry.trackHeight,
-      borderRadius: switchGeometry.trackHeight / 2,
-      padding: (switchGeometry.trackHeight - switchGeometry.thumbSize) / 2,
       justifyContent: "center",
     },
-    switchThumb: {
-      width: switchGeometry.thumbSize,
-      height: switchGeometry.thumbSize,
-      borderRadius: switchGeometry.thumbSize / 2,
+    switchTrack: {
+      justifyContent: "center",
     },
     thumb: {
       shadowColor: "rgba(0, 0, 0, 0.25)",

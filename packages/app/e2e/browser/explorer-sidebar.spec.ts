@@ -13,10 +13,26 @@ import {
   ensureExplorerSidebar,
   openFilesPanel,
   waitForWorkspaceTabsVisible,
+  dragTabIntoExplorer,
 } from "../support/helpers/workspace-tabs";
 
 function explorerSidebar(page: Parameters<typeof ensureExplorerSidebar>[0]) {
   return page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
+}
+
+const LAYOUT_VIEWPORTS = {
+  compact: { width: 390, height: 844 },
+  wide: { width: 1280, height: 900 },
+};
+
+// The previous layout stays on screen for a few renders after the resize. Wait for the shell to
+// switch so the next step reads the layout it resized to.
+async function resizeToLayout(
+  page: Parameters<typeof ensureExplorerSidebar>[0],
+  layout: keyof typeof LAYOUT_VIEWPORTS,
+) {
+  await page.setViewportSize(LAYOUT_VIEWPORTS[layout]);
+  await expect(page.getByTestId(`${layout}-shell`)).toBeVisible();
 }
 
 async function expectExplorerActiveTabForeground(
@@ -194,26 +210,6 @@ test("Explorer keeps Files and Changes close actions in the context menu", async
   }
 });
 
-async function dragTabIntoExplorer(
-  page: Parameters<typeof ensureExplorerSidebar>[0],
-  tabId: string,
-) {
-  const source = page.getByTestId("workspace-pane-main").getByTestId(`workspace-tab-${tabId}`);
-  const destination = explorerSidebar(page).getByTestId("workspace-tab-files");
-  const sourceBox = await source.boundingBox();
-  const destinationBox = await destination.boundingBox();
-  if (!sourceBox || !destinationBox)
-    throw new Error("Tab drag requires visible source and destination");
-  const start = { x: sourceBox.x + 12, y: sourceBox.y + sourceBox.height / 2 };
-  await page.mouse.move(start.x, start.y);
-  await page.mouse.down();
-  await page.mouse.move(start.x + 12, start.y + 4);
-  await page.mouse.move(destinationBox.x + 12, destinationBox.y + destinationBox.height / 2, {
-    steps: 20,
-  });
-  await page.mouse.up();
-}
-
 test("moves agents into Explorer and keeps the shared Agent launcher available", async ({
   page,
 }, testInfo) => {
@@ -263,7 +259,7 @@ test("tablet prototype keeps Explorer tabs when resizing down to a phone", async
     await page.screenshot({ path: testInfo.outputPath("tablet-951.png") });
     await openExplorerAgentDraft(page);
     await page.screenshot({ path: testInfo.outputPath("tablet-agent-draft.png") });
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await revealPhoneExplorer(page);
     await expect(
       explorerSidebar(page).getByRole("button", { name: "New tab", exact: true }),
@@ -308,10 +304,10 @@ test("retains the Explorer host through appearance changes and folding", async (
       .poll(() => explorer.evaluate((element) => getComputedStyle(element).backgroundColor))
       .not.toBe(previousColor);
     expect(await host.evaluate((element) => element.isConnected)).toBe(true);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await ensureExplorerSidebar(page);
     expect(await host.evaluate((element) => element.isConnected)).toBe(true);
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await resizeToLayout(page, "wide");
     await expect(explorer).toBeVisible();
     expect(await host.evaluate((element) => element.isConnected)).toBe(true);
   } finally {
@@ -346,7 +342,7 @@ test("reorders compact Explorer tabs with a pointer without changing selection",
   const workspace = await seedWorkspace({ repoPrefix: "explorer-compact-drag-" });
   try {
     await gotoWorkspace(page, workspace.workspaceId);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await openFilesPanel(page);
     await reorderCompactExplorerTabs(page);
     await expect(
@@ -413,9 +409,9 @@ test("updates populated code and diff appearance without losing the editor insta
       .getByTestId("file-source-editor")
       .elementHandle();
     await text.fill(`${source}\n// retained Explorer edit`);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await ensureExplorerSidebar(page);
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await resizeToLayout(page, "wide");
     expect(await explorerEditor!.evaluate((node) => node.isConnected)).toBe(true);
     await expect(text).toContainText("retained Explorer edit");
   } finally {
@@ -480,9 +476,9 @@ test("retains populated Explorer chat and terminal attachments through appearanc
     const terminalNode = await terminal.elementHandle();
     await page.getByTestId("workspace-explorer-toggle").first().click();
     await ensureExplorerSidebar(page);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await ensureExplorerSidebar(page);
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await resizeToLayout(page, "wide");
     await cycleWorkspaceTheme(page);
     expect(await terminalNode!.evaluate((node) => node.isConnected)).toBe(true);
     expect(attaches).toHaveLength(1);
@@ -502,7 +498,7 @@ test("compact file sheets cover Explorer and return to its retained file list", 
   try {
     await writeFile(`${workspace.repoPath}/sheet-marker.txt`, "Explorer sheet marker\n");
     await gotoWorkspace(page, workspace.workspaceId);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     const explorer = await ensureExplorerSidebar(page);
     await openFilesPanel(page);
     const host = await explorer.elementHandle();
@@ -513,6 +509,40 @@ test("compact file sheets cover Explorer and return to its retained file list", 
     await expect(page.getByText("Explorer sheet marker", { exact: true })).toHaveCount(0);
     await expect(explorer.getByTestId("file-explorer-tree-scroll")).toBeVisible();
     expect(await host!.evaluate((node) => node.isConnected)).toBe(true);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+async function toggleCommentInMainEditor(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  const editor = page.getByLabel("Source editor for comment.cs").getByRole("textbox");
+  await expect(editor).toBeVisible();
+  await editor.press(process.platform === "darwin" ? "Meta+Slash" : "Control+Slash");
+  await expect(editor).toHaveText("// public class Example {}");
+}
+
+test("keeps the comment shortcut in the editor beside an Explorer agent", async ({ page }) => {
+  const workspace = await seedMockAgentWorkspace({
+    repoPrefix: "explorer-comment-shortcut-",
+    title: "Chat beside the editor",
+    model: "ten-second-stream",
+  });
+  try {
+    await writeFile(`${workspace.cwd}/comment.cs`, "public class Example {}");
+    await openAgentRoute(page, workspace);
+    await expect(
+      page.getByRole("button", { name: "Select model (Ten second stream)" }),
+    ).toBeVisible();
+    await ensureExplorerSidebar(page);
+    await dragTabIntoExplorer(page, `agent_${workspace.agentId}`);
+    await expect(
+      explorerSidebar(page).getByRole("button", { name: "Select model (Ten second stream)" }),
+    ).toBeVisible();
+    await openFilesPanel(page);
+    await openFileFromExplorer(page, "comment.cs");
+    await explorerSidebar(page).getByTestId(`workspace-tab-agent_${workspace.agentId}`).click();
+    await toggleCommentInMainEditor(page);
+    await expect(page.getByPlaceholder(/Search (all )?models/)).toBeHidden();
   } finally {
     await workspace.cleanup();
   }

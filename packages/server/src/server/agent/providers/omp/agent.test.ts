@@ -15,6 +15,9 @@ import { OmpHarness } from "./test-utils/omp-harness.js";
 import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import { isolatePaseoHome } from "../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
   "turn_started",
@@ -590,6 +593,36 @@ describe("OMP agent client and session", () => {
     );
   });
 
+  test("follows the thinking level OMP switches to on its own", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ thinkingOptionId: "low" });
+    const runtime = omp.runtime();
+
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({ type: "thinking_level_changed", thinkingLevel: "high" }),
+    );
+    await waitForImmediate();
+    expect((await omp.requireSession().getRuntimeInfo()).thinkingOptionId).toBe("high");
+
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "thinking_level_changed",
+        thinkingLevel: "medium",
+        configured: "auto",
+      }),
+    );
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "thinking_level_changed",
+        thinkingLevel: "medium",
+        configured: "auto",
+      }),
+    );
+    await waitForImmediate();
+    expect((await omp.requireSession().getRuntimeInfo()).thinkingOptionId).toBe("auto");
+    expect(omp.eventTypes().filter((type) => type === "thinking_option_changed")).toHaveLength(2);
+  });
+
   test("shows OMP's fallback model without persisting it as the selected model", async () => {
     const omp = new OmpHarness();
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
@@ -613,9 +646,9 @@ describe("OMP agent client and session", () => {
     expect(omp.requireSession().describePersistence()?.metadata?.model).toBe(
       "openrouter/google/gemini-3.8-flash",
     );
-    expect(omp.requireSession().features).toEqual([
+    expect(omp.requireSession().controls).toEqual([
       expect.objectContaining({
-        value: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply/i),
       }),
     ]);
@@ -626,16 +659,88 @@ describe("OMP agent client and session", () => {
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
     const session = omp.requireSession();
     omp.runtime().fastModeResult = { enabled: true, active: false };
-    await session.setFeature?.("fast_mode", true);
+    await session.applyOptions?.({ fast_mode: true });
     expect(omp.runtime().setFastModeRequests).toEqual([true]);
-    expect(session.features).toEqual([
+    expect(session.controls).toEqual([
       expect.objectContaining({
-        id: "fast_mode",
-        value: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply to this model/i),
         tooltip: expect.stringMatching(/does not apply to this model/i),
       }),
     ]);
+  });
+
+  test("applies only the options it is given and leaves the runtime alone otherwise", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+
+    // A patch without the key leaves the runtime alone.
+    await session.applyOptions?.({});
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+  });
+
+  test("rejects a live option the creation schema would reject, and sends nothing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+
+    await expect(session.applyOptions?.({ sandbox_mode: "read-only" })).rejects.toThrow(/omp/i);
+    await expect(session.applyOptions?.({ fast_mode: "yes" })).rejects.toThrow(/omp/i);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("a removal turns Fast off, and a Fast the runtime keeps is returned", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await expect(session.applyOptions?.({ fast_mode: null })).resolves.toEqual({});
+    expect(omp.runtime().setFastModeRequests).toEqual([true, false]);
+
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await expect(session.applyOptions?.({ fast_mode: true })).resolves.toEqual({
+      fast_mode: false,
+    });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+  });
+
+  test("a session opened without the Fast it was given says so in its open patch", async () => {
+    const omp = new OmpHarness();
+    // The fake runtime answers the open-time Fast request with Fast off.
+    await omp.start({ providerOptions: { fast_mode: true } });
+
+    expect(omp.requireSession().openOptionsPatch).toEqual({ fast_mode: false });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+  });
+
+  test("reports a Fast change the runtime made on its own", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.applyOptions?.({ fast_mode: true });
+    expect(omp.eventTypes()).not.toContain("options_changed");
+
+    omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
+    omp.runtime().queueStateReports([
+      {
+        ...omp.runtime().state,
+        model: omp.runtime().setModelResult,
+        fastModeEnabled: false,
+        fastModeActive: false,
+      },
+    ]);
+    await session.setModel?.("openrouter/other/model");
+
+    expect(omp.eventTypes().filter((type) => type === "options_changed")).toHaveLength(1);
   });
 
   test("shows Fast only when OMP reports its state fields", async () => {
@@ -649,11 +754,11 @@ describe("OMP agent client and session", () => {
     } = omp.runtime().state;
     omp.runtime().state = olderState;
     await session.getRuntimeInfo();
-    expect(session.features).toEqual([]);
-    await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow(/unavailable/i);
+    expect(session.controls).toEqual([]);
+    await expect(session.applyOptions?.({ fast_mode: true })).rejects.toThrow(/unavailable/i);
     omp.runtime().state = { ...olderState, fastModeEnabled: false, fastModeActive: false };
     await session.getRuntimeInfo();
-    expect(session.features).toHaveLength(1);
+    expect(session.controls).toHaveLength(1);
   });
 
   test("switching model refreshes whether Fast applies", async () => {
@@ -661,8 +766,7 @@ describe("OMP agent client and session", () => {
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
     const session = omp.requireSession();
     omp.runtime().fastModeResult = { enabled: true, active: true };
-    await session.setFeature?.("fast_mode", true);
-    expect(session.features).toEqual([expect.objectContaining({ value: true })]);
+    await session.applyOptions?.({ fast_mode: true });
 
     omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
     omp.runtime().queueStateReports([
@@ -674,24 +778,79 @@ describe("OMP agent client and session", () => {
       },
     ]);
     await session.setModel?.("openrouter/other/model");
-    expect(session.features).toEqual([
+    expect(session.controls).toEqual([
       expect.objectContaining({
-        value: true,
+        key: "fast_mode",
         description: expect.stringMatching(/does not apply/i),
       }),
     ]);
   });
 
+  test("a replacement runtime starts with the Fast the session has now, not the one it opened with", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: false, active: false };
+    await session.applyOptions?.({ fast_mode: false });
+
+    await omp.setMode("ask");
+
+    // The approval-mode restart starts a second runtime; it must not turn Fast back on.
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("a replacement runtime starts with the Fast the session opened with, not the one it was asked for", async () => {
+    const omp = new OmpHarness();
+    // The fake runtime answers the open-time Fast request with Fast off.
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    expect(omp.requireSession().openOptionsPatch).toEqual({ fast_mode: false });
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+
+    await omp.setMode("ask");
+
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("a replacement runtime that refuses the Fast the session had publishes what it accepted", async () => {
+    const omp = new OmpHarness();
+    omp.acceptFastOnNextRuntime();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    expect(omp.requireSession().openOptionsPatch).toEqual({});
+
+    // The approval-mode restart starts a second runtime, which refuses Fast.
+    await omp.setMode("ask");
+
+    expect(omp.optionsChanges()).toEqual([{ fast_mode: false }]);
+  });
+
+  test("a Fast change the runtime reports when a turn completes is published", async () => {
+    const omp = new OmpHarness();
+    omp.acceptFastOnNextRuntime();
+    await omp.start({ modeId: "full", providerOptions: { fast_mode: true } });
+    omp.runtime().state = { ...omp.runtime().state, fastModeEnabled: false, fastModeActive: false };
+
+    const { completion } = await omp.startPromptUntilProviderIdle("hello", "done", {
+      isStreaming: false,
+      isCompacting: false,
+    });
+    await completion;
+    await omp.requireSession().getRuntimeInfo();
+
+    expect(omp.optionsChanges()).toEqual([{ fast_mode: false }]);
+  });
+
   test("restores Fast from the initial OMP state on create and resume", async () => {
     const created = new OmpHarness();
-    await created.start({ featureValues: { fast_mode: true } });
+    await created.start({ providerOptions: { fast_mode: true } });
     expect(created.runtime().setFastModeRequests).toEqual([true]);
     expect(created.runtime().getStateRequestCount).toBe(1);
 
     const resumed = new OmpHarness();
     await resumed.resume(
       { user: { id: "user-1", text: "hello" }, assistant: { id: "assistant-1", text: "hi" } },
-      { featureValues: { fast_mode: true } },
+      { providerOptions: { fast_mode: true } },
     );
     expect(resumed.runtime().setFastModeRequests).toEqual([true]);
     expect(resumed.runtime().getStateRequestCount).toBe(1);
@@ -823,6 +982,84 @@ describe("OMP agent client and session", () => {
         error: null,
       },
     ]);
+  });
+
+  test("preserves tool intent across live updates and completion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "tool_execution_start",
+        toolCallId: "intent-call",
+        toolName: "bash",
+        args: { command: "echo hello" },
+        intent: "Inspect output",
+      }),
+    );
+    omp.emit({
+      type: "tool_execution_update",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      partialResult: { output: "hello" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      result: { output: "hello" },
+    });
+    expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
+      { status: "running", metadata: { intent: "Inspect output" } },
+      { status: "running", metadata: { intent: "Inspect output" } },
+      { status: "completed", metadata: { intent: "Inspect output" } },
+    ]);
+  });
+
+  test("does not treat a live tool argument named i as intent", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "tool_execution_start",
+        toolCallId: "ordinary-i",
+        toolName: "bash",
+        args: { command: "echo hello", i: "ordinary input" },
+      }),
+    );
+    expect(omp.timeline().find((item) => item.type === "tool_call")).not.toHaveProperty("metadata");
+  });
+
+  test.each([
+    { outcome: "failed", isError: true },
+    { outcome: "canceled", isError: false },
+  ])("keeps tool intent on a $outcome live tool call", async ({ outcome, isError }) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.startTurn("run it");
+    omp.emit({ type: "agent_start" });
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "intent-call",
+      toolName: "bash",
+      args: { command: "sleep 10" },
+      intent: "Wait for output",
+    });
+    if (isError) {
+      omp.emit({
+        type: "tool_execution_end",
+        toolCallId: "intent-call",
+        toolName: "bash",
+        result: { output: "boom" },
+        isError,
+      });
+    } else {
+      await omp.interrupt();
+    }
+
+    expect(omp.timeline().findLast((item) => item.type === "tool_call")).toMatchObject({
+      status: outcome,
+      metadata: { intent: "Wait for output" },
+    });
   });
 
   test("shows a concise error for a failed tool while keeping shell output", async () => {
@@ -1519,6 +1756,270 @@ describe("OMP agent client and session", () => {
     expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
   });
 
+  test("streams OMP content blocks by content index when an earlier thinking delta arrives late", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [
+        { type: "thinking", thinking: "" },
+        { type: "text", text: "" },
+      ],
+    };
+
+    runtime.emit({ type: "message_start", message });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "verify" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "." },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: " complete." },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_end", contentIndex: 1 },
+    });
+
+    expect(omp.timeline()).toEqual([
+      { type: "reasoning", text: "verify" },
+      { type: "reasoning", text: "." },
+      { type: "assistant_message", text: "Answer", messageId: "omp-response-1" },
+      { type: "assistant_message", text: " complete.", messageId: "omp-response-1" },
+    ]);
+  });
+
+  test("keeps OMP answer text and fenced code blocks intact when thinking interleaves mid-word", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("show code");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [],
+    };
+
+    runtime.emit({ type: "message_start", message });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: '```ts\nconst msg = "Validation makes that fail lou',
+      },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 1,
+        delta: "All green. Note: the broker caches this value.",
+      },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: 'dly instead of silently";\n```',
+      },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_end", contentIndex: 0 },
+    });
+
+    expect(omp.timeline()).toEqual([
+      {
+        type: "assistant_message",
+        text: '```ts\nconst msg = "Validation makes that fail lou',
+        messageId: "omp-response-1",
+      },
+      {
+        type: "assistant_message",
+        text: 'dly instead of silently";\n```',
+        messageId: "omp-response-1",
+      },
+      {
+        type: "reasoning",
+        text: "All green. Note: the broker caches this value.",
+      },
+    ]);
+  });
+
+  test("flushes buffered OMP content when Stop interrupts a turn mid-stream", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("stop mid-stream");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [],
+    };
+    runtime.beginTurn();
+    runtime.emit({ type: "message_start", message });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "plan" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "partial answer" },
+    });
+
+    expect(omp.timeline()).toEqual([{ type: "reasoning", text: "plan" }]);
+
+    // OMP aborts without emitting message_end before agent_end.
+    runtime.onAbort = () => {
+      runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+    };
+    await omp.interrupt();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.timeline()).toEqual([
+      { type: "reasoning", text: "plan" },
+      { type: "assistant_message", text: "partial answer", messageId: "omp-response-1" },
+    ]);
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
+  });
+
+  test("does not stall later OMP text blocks behind a non-streamed or toolCall entry at index 0", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [
+        { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+        { type: "text", text: "" },
+      ],
+    };
+
+    const parsedToolStart = OmpRuntimeEventSchema.parse({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+    });
+    runtime.emit({ type: "message_start", message });
+    runtime.emit(parsedToolStart);
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Immediate" },
+    });
+
+    expect(omp.timeline()).toEqual([
+      { type: "assistant_message", text: "Immediate", messageId: "omp-response-1" },
+    ]);
+  });
+
+  test("flushes indexed OMP blocks under the previous message id when its end event is missing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello");
+    const runtime = omp.runtime();
+    const firstMessage: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [],
+    };
+    const secondMessage: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-2",
+      content: [],
+    };
+
+    runtime.emit({ type: "message_start", message: firstMessage });
+    runtime.emit({
+      type: "message_update",
+      message: firstMessage,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "think" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message: firstMessage,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "answer" },
+    });
+    runtime.emit({ type: "message_start", message: secondMessage });
+
+    expect(omp.timeline()).toEqual([
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "answer", messageId: "omp-response-1" },
+    ]);
+  });
+
   test("a resumed session does not re-emit replayed events as live timeline items", async () => {
     const omp = new OmpHarness();
     await omp.resume({
@@ -1728,4 +2229,70 @@ test("closing OMP during image conversion rejects its pending start", async () =
   expect(runtime.latestSession().prompts).toHaveLength(0);
   await session.close();
   await rejected;
+});
+
+describe("OMP catalog model labels", () => {
+  test.each([
+    {
+      name: "keeps slashes and underscores inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "s-q3fn(p-t)",
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+      },
+      label: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+    },
+    {
+      name: "keeps a free-text name that ends in a slash-separated word",
+      model: {
+        provider: "llama-swap",
+        id: "ds-strata-6",
+        name: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+      },
+      label: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+    },
+    {
+      name: "keeps a colon inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "qwen3-tail",
+        name: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+      },
+      label: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    },
+    {
+      name: "keeps an OMP catalog name as it is",
+      model: {
+        provider: "openrouter",
+        id: "anthropic/claude-opus-4.1:batch",
+        name: "Claude Opus 4.1 (batch)",
+      },
+      label: "Claude Opus 4.1 (batch)",
+    },
+    {
+      name: "drops the vendor prefix from an upstream model name",
+      model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
+      label: "GPT-5.5",
+    },
+    {
+      name: "falls back to the last segment of a path-like id",
+      model: { provider: "pioneer", id: "canada-quant/glm_5.2" },
+      label: "glm 5.2",
+    },
+  ])("$name", async ({ model, label }) => {
+    const runtime = new FakeOmp();
+    runtime.queueSessionSetup((session) => {
+      session.models = [model];
+    });
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
+    expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
+  });
 });

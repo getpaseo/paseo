@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { test, expect } from "../support/fixtures";
 import {
   buildHostWorkspaceRoute,
@@ -6,20 +7,31 @@ import {
   buildSettingsRoute,
   buildSettingsSectionRoute,
 } from "@/utils/host-routes";
+import { openCompactSidebar } from "../support/helpers/usage-sidebar-item";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import {
   closeCompactSettings,
+  captureCompactSidebarReturn,
+  openSettingsFromCompactSidebar,
+  captureCompactSidebarContext,
+  expectCompactSidebarOpen,
+  closeCompactSidebar,
   scrollSettingsSidebarToEnd,
   revealSettingsSidebarSection,
   expectSettingsSidebarScrollSettled,
   scrollSettingsSidebarUp,
-  changeSettingsInterfaceFontSize,
   selectSettingsHostSectionsRapidly,
   expectSettingsSidebarScrollOffset,
   scrollSettingsDetailDown,
   expectSettingsDetailScrollOffset,
   openSettingsSection,
+  changeSettingsSyntaxTheme,
+  revealSettingsSyntaxTheme,
+  expectSettingsSyntaxColorChanged,
+  changeSettingsTypography,
+  normalizeSettingsFontSizes,
+  changeSettingsInterfaceFontSizeKeepingSidebarPosition,
   expectSettingsHeader,
   openAddHostFlow,
   selectHostConnectionType,
@@ -38,6 +50,9 @@ import {
   fillDirectHostUri,
   expectDirectHostFormValues,
   expectDirectHostSslEnabled,
+  expectDirectHostSslDisabled,
+  fillDirectHostAddress,
+  toggleDirectHostSsl,
   expectDirectHostUriValue,
   expectDirectHostUriHidden,
   expectDiagnosticsContent,
@@ -47,8 +62,13 @@ import {
   seedSavedSettingsHosts,
   selectSettingsHost,
   expectSettingsHostPickerLabel,
+  openClientHostSettings,
   openSettingsHostSection,
   removeCurrentHostFromSettings,
+  openSidebarHostPicker,
+  sidebarHostRowButton,
+  activateSidebarHostSettingsWithKeyboard,
+  bindCommandCenterToEnter,
 } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
@@ -81,81 +101,116 @@ test.describe("Settings sidebar scroll position", () => {
     await expectSettingsSidebarScrollOffset(page, 0);
   });
 
-  test("keeps the sidebar position through interface font changes", async ({ page }) => {
+  test("updates appearance without losing the detail scroll or form edits", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsSection(page, "appearance");
-    const offset = await scrollSettingsSidebarToEnd(page);
-    await changeSettingsInterfaceFontSize(page, 20);
-    await expectSettingsSidebarScrollOffset(page, offset);
+    const { offset, keywordColor } = await revealSettingsSyntaxTheme(page);
+    await changeSettingsSyntaxTheme(page, "Dracula");
+    await expectSettingsDetailScrollOffset(page, offset);
+    await expectSettingsSyntaxColorChanged(page, keywordColor);
+    await changeSettingsTypography(page);
+  });
+
+  test("shows normalized font sizes after committing out-of-range and empty values", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    await normalizeSettingsFontSizes(page);
+  });
+
+  test("keeps the sidebar context through interface font changes", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    await scrollSettingsSidebarToEnd(page);
+    const offset = await changeSettingsInterfaceFontSizeKeepingSidebarPosition(page, 20);
     await openSettingsHostSection(page, getServerId(), "providers");
     await expectSettingsSidebarScrollOffset(page, offset);
   });
 
-  test("scrolls the sidebar and detail pane independently", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-    const sidebarOffset = await scrollSettingsSidebarToEnd(page);
-    await openSettingsHostSection(page, getServerId(), "providers");
-    await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
-    const detailOffset = await scrollSettingsDetailDown(page);
-    await expectSettingsSidebarScrollOffset(page, sidebarOffset);
-
-    await scrollSettingsSidebarUp(page, 60);
-    await expectSettingsSidebarScrollOffset(page, sidebarOffset - 60);
-    await expectSettingsDetailScrollOffset(page, detailOffset);
-  });
-
-  test("keeps the sidebar position after rapid consecutive selections", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-
-    const scrollTop = await scrollSettingsSidebarToEnd(page);
-
-    await selectSettingsHostSectionsRapidly(page);
-    await expectSettingsSidebarScrollOffset(page, scrollTop);
-
-    await expectSettingsSidebarScrollSettled(page, scrollTop);
-  });
-
-  test("keeps the sidebar position when switching between app and host sections", async ({
+  test("keeps sidebar and detail scrolling independent through section changes", async ({
     page,
   }) => {
     await gotoAppShell(page);
     await openSettings(page);
 
-    const hostScrollTop = await scrollSettingsSidebarToEnd(page);
-    await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
+    await test.step("scrolls the sidebar and detail pane independently", async () => {
+      const sidebarOffset = await scrollSettingsSidebarToEnd(page);
+      await openSettingsHostSection(page, getServerId(), "providers");
+      await expect(page.getByTestId("host-page-providers-card")).toBeVisible();
+      const detailOffset = await scrollSettingsDetailDown(page);
+      await expectSettingsSidebarScrollOffset(page, sidebarOffset);
 
-    for (const section of [
-      "providers",
-      "terminals",
-      "providers",
-      "terminals",
-      "providers",
-    ] as const) {
-      await openSettingsHostSection(page, getServerId(), section);
-      await expect(page.getByTestId("page-title")).toHaveText(
-        section === "providers" ? "Providers" : "Terminals",
-      );
-      await expectSettingsSidebarScrollOffset(page, hostScrollTop);
-    }
+      await scrollSettingsSidebarUp(page, 60);
+      await expectSettingsSidebarScrollOffset(page, sidebarOffset - 60);
+      await expectSettingsDetailScrollOffset(page, detailOffset);
+    });
 
-    const sidebar = page.getByTestId("settings-sidebar");
-    const appScrollTop = await revealSettingsSidebarSection(page, "diagnostics");
-    await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
+    await test.step("keeps the sidebar position after rapid consecutive selections", async () => {
+      const scrollTop = await scrollSettingsSidebarToEnd(page);
 
-    await openSettingsSection(page, "about");
-    await expectAboutContent(page);
-    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+      await selectSettingsHostSectionsRapidly(page);
+      await expectSettingsSidebarScrollOffset(page, scrollTop);
 
-    await openSettingsSection(page, "diagnostics");
-    await expectDiagnosticsContent(page);
-    await expectSettingsSidebarScrollOffset(page, appScrollTop);
+      await expectSettingsSidebarScrollSettled(page, scrollTop);
+    });
+
+    await test.step("keeps the sidebar position when switching between app and host sections", async () => {
+      const hostScrollTop = await scrollSettingsSidebarToEnd(page);
+      await expect(page.getByTestId("settings-host-section-providers")).toBeInViewport();
+
+      for (const section of [
+        "providers",
+        "terminals",
+        "providers",
+        "terminals",
+        "providers",
+      ] as const) {
+        await openSettingsHostSection(page, getServerId(), section);
+        await expect(page.getByTestId("page-title")).toHaveText(
+          section === "providers" ? "Providers" : "Terminals",
+        );
+        await expectSettingsSidebarScrollOffset(page, hostScrollTop);
+      }
+
+      const sidebar = page.getByTestId("settings-sidebar");
+      const appScrollTop = await revealSettingsSidebarSection(page, "about");
+      await expect(sidebar.getByRole("button", { name: "About", exact: true })).toBeInViewport();
+
+      await openSettingsSection(page, "about");
+      await expectAboutContent(page);
+      await expectDiagnosticsContent(page);
+      await expectSettingsSidebarScrollOffset(page, appScrollTop);
+
+      await openSettingsSection(page, "shortcuts");
+      await expectSettingsSidebarScrollOffset(page, appScrollTop);
+    });
   });
 });
 
 test.describe("Settings sidebar navigation", () => {
+  test("the sidebar host row opens Daemon in one click", async ({ page, withWorkspace }) => {
+    const workspace = await withWorkspace({ prefix: "sidebar-host-settings-" });
+    await openWorkspace(page, workspace);
+    await openSidebarHostPicker(page);
+    await sidebarHostRowButton(page).click();
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "daemon"));
+  });
+
+  test("Enter opens the active sidebar host row", async ({ page, withWorkspace }) => {
+    await bindCommandCenterToEnter(page);
+    const workspace = await withWorkspace({ prefix: "keyboard-host-settings-" });
+    await openWorkspace(page, workspace);
+    await openSidebarHostPicker(page);
+    await activateSidebarHostSettingsWithKeyboard(page);
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "daemon"));
+  });
+
   test("opening Settings closes the composer model selector until it is opened again", async ({
     page,
     withWorkspace,
@@ -228,13 +283,10 @@ test.describe("Settings sidebar navigation", () => {
     await gotoAppShell(page);
     await openSettings(page);
 
-    await openSettingsSection(page, "diagnostics");
-    await expectSettingsHeader(page, "Diagnostics");
-    await expectDiagnosticsContent(page);
-
     await openSettingsSection(page, "about");
     await expectSettingsHeader(page, "About");
     await expectAboutContent(page);
+    await expectDiagnosticsContent(page);
 
     await openSettingsSection(page, "general");
     await expectSettingsHeader(page, "General");
@@ -259,18 +311,18 @@ test.describe("Settings sidebar navigation", () => {
     await gotoAppShell(page);
     await openSettings(page);
     await selectSettingsHost(page, secondaryServerId);
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await openSettingsSection(page, "appearance");
     await expectSettingsHostPickerLabel(page, "Stable horse");
     await openSettingsSection(page, "general");
     await expectSettingsHostPickerLabel(page, "Stable horse");
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await selectSettingsHost(page, primaryServerId);
     await openSettingsSection(page, "about");
     await expectSettingsHostPickerLabel(page, "First horse");
   });
 
-  test("/h/[serverId]/settings redirects to the host connections section", async ({ page }) => {
+  test("/h/[serverId]/settings redirects to the host daemon section", async ({ page }) => {
     await gotoAppShell(page);
     await verifyLegacyHostSettingsRedirect(page);
   });
@@ -283,6 +335,16 @@ test.describe("Settings sidebar navigation", () => {
     await openAddHostFlow(page);
     await expectAddHostMethodOptions(page);
     await selectHostConnectionType(page, "direct");
+
+    await fillDirectHostAddress(page, "example.paseo.test", "7443");
+    await expectDirectHostSslDisabled(page);
+    await toggleDirectHostSsl(page);
+    await expectDirectHostSslEnabled(page);
+    await toggleHostAdvanced(page);
+    await expectDirectHostUriValue(page, "tcp://example.paseo.test:7443?ssl=true");
+    await toggleHostAdvanced(page);
+    await toggleDirectHostSsl(page);
+    await expectDirectHostSslDisabled(page);
 
     await toggleHostAdvanced(page);
     await fillDirectHostUri(page, "tcp://example.paseo.test:7443?ssl=true&password=shared-secret");
@@ -313,12 +375,12 @@ test.describe("Settings sidebar navigation", () => {
 
     await test.step("a dropdown owns Escape", async () => {
       await openSettingsSection(page, "appearance");
-      await page.getByLabel(/Theme:/).click();
-      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toBeVisible();
+      await page.getByLabel(/Highlight theme:/).click();
+      await expect(page.getByRole("menuitem", { name: "GitHub", exact: true })).toBeVisible();
 
       await page.keyboard.press("Escape");
 
-      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("menuitem", { name: "GitHub", exact: true })).toHaveCount(0);
       await expect(page).toHaveURL(/\/settings(\/|$)/);
     });
 
@@ -339,6 +401,87 @@ test.describe("Settings sidebar navigation", () => {
 
 test.describe("Settings — compact master-detail", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  test("returning from Settings preserves the open sidebar from the first paint", async ({
+    page,
+    withWorkspace,
+  }, testInfo) => {
+    const workspace = await withWorkspace({ prefix: "settings-sidebar-continuity-" });
+    for (let i = 0; i < 12; i++) await withWorkspace({ prefix: "settings-sidebar-scroll-" });
+    await openWorkspace(page, workspace);
+    await openCompactSidebar(page);
+    await expectCompactSidebarOpen(page);
+    const expectContextPreserved = await captureCompactSidebarContext(page);
+    const openingFrames = await captureCompactSidebarReturn(page, () =>
+      openSettingsFromCompactSidebar(page),
+    );
+    await writeFile(
+      testInfo.outputPath("sidebar-opening-frames.json"),
+      JSON.stringify(openingFrames, null, 2),
+    );
+    expect(openingFrames.some((frame) => frame.settingsVisible)).toBe(true);
+    expect(openingFrames.every((frame) => frame.sidebarVisible || frame.settingsVisible)).toBe(
+      true,
+    );
+    await openSettingsSection(page, "appearance");
+    await goBackInSettings(page);
+    const frames = await captureCompactSidebarReturn(page, () => closeCompactSettings(page));
+    await writeFile(
+      testInfo.outputPath("sidebar-return-frames.json"),
+      JSON.stringify(frames, null, 2),
+    );
+    await testInfo.attach("sidebar-return-frames", {
+      body: JSON.stringify(frames, null, 2),
+      contentType: "application/json",
+    });
+    const workspaceFrames = frames.filter((frame) => !frame.pathname.startsWith("/settings"));
+    expect(workspaceFrames.length).toBeGreaterThan(0);
+    expect(workspaceFrames.every((frame) => frame.sidebarVisible)).toBe(true);
+    const firstX = workspaceFrames[0]!.closeX;
+    expect(
+      workspaceFrames.every((frame) => Math.abs((frame.closeX ?? Infinity) - firstX!) < 1),
+    ).toBe(true);
+    await expectCompactSidebarOpen(page);
+    await expectContextPreserved();
+    await openSettingsFromCompactSidebar(page);
+    const backFrames = await captureCompactSidebarReturn(page, async () => {
+      await page.goBack();
+    });
+    await writeFile(
+      testInfo.outputPath("browser-back-frames.json"),
+      JSON.stringify(backFrames, null, 2),
+    );
+    await testInfo.attach("browser-back-frames", {
+      body: JSON.stringify(backFrames, null, 2),
+      contentType: "application/json",
+    });
+    const backWorkspaceFrames = backFrames.filter(
+      (frame) => !frame.pathname.startsWith("/settings"),
+    );
+    expect(backWorkspaceFrames.length).toBeGreaterThan(0);
+    expect(backWorkspaceFrames.every((frame) => frame.sidebarVisible)).toBe(true);
+    await expectCompactSidebarOpen(page);
+    await closeCompactSidebar(page);
+  });
+
+  test("widening during Settings discards the mobile sidebar return", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "settings-sidebar-resize-" });
+    await openWorkspace(page, workspace);
+    await openCompactSettings(page, buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
+    await page.setViewportSize({ width: 1000, height: 844 });
+    await expect(page.getByTestId("settings-detail-pane")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await goBackInSettings(page);
+    await expectCompactSettingsList(page);
+    await closeCompactSettings(page);
+    await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeHidden();
+    await expect(
+      page.getByRole("button", { name: "Open menu", exact: true }).first(),
+    ).toBeInViewport();
+  });
 
   test("the compact tab switcher reopens after Settings hides its workspace", async ({ page }) => {
     const workspace = await seedMockAgentWorkspace({
@@ -367,6 +510,7 @@ test.describe("Settings — compact master-detail", () => {
       await expect(newAgent).toHaveCount(0);
 
       await closeCompactSettings(page);
+      await closeCompactSidebar(page);
       await expect(switcher).toBeVisible();
       await expect(newAgent).toHaveCount(0);
       await switcher.click();
@@ -382,12 +526,12 @@ test.describe("Settings — compact master-detail", () => {
     await gotoAppShell(page);
     await openCompactSettings(page, buildOpenProjectRoute());
 
-    await expectSettingsSidebarSections(page, ["general", "diagnostics", "about"]);
+    await expectSettingsSidebarSections(page, ["general", "hosts", "about"]);
     await expectCompactSettingsList(page);
 
     await test.step("open app details and return to the list", async () => {
-      await openSettingsSection(page, "diagnostics");
-      await expectAppRoute(page, buildSettingsSectionRoute("diagnostics"));
+      await openSettingsSection(page, "about");
+      await expectAppRoute(page, buildSettingsSectionRoute("about"));
       await expectDiagnosticsContent(page);
       await expectSettingsSidebarHidden(page);
       await expectSettingsBackButton(page);
@@ -408,7 +552,7 @@ test.describe("Settings — compact master-detail", () => {
     });
   });
 
-  test("host picker settings opens Overview and backs through the settings list", async ({
+  test("host picker settings opens Daemon and backs through the settings list", async ({
     page,
     withWorkspace,
   }) => {
@@ -418,10 +562,10 @@ test.describe("Settings — compact master-detail", () => {
     await openWorkspace(page, workspace);
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
     await page.getByTestId("sidebar-hosts-trigger").click();
-    await page.getByRole("button", { name: /Open .* settings/ }).click();
+    await sidebarHostRowButton(page).click();
 
-    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
-    await expect(page.getByText("Overview", { exact: true })).toBeVisible();
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "daemon"));
+    await expect(page.getByText("Daemon", { exact: true }).first()).toBeVisible();
 
     await goBackInSettings(page);
     await expectCompactSettingsList(page);
@@ -451,14 +595,14 @@ test.describe("Settings — compact master-detail", () => {
     await expectSettingsSidebarVisible(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
 
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await goBackInSettings(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
 
     await openSettingsSection(page, "appearance");
     await goBackInSettings(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
-    await openSettingsHostSection(page, secondaryServerId, "connections");
+    await openSettingsHostSection(page, secondaryServerId, "daemon");
     await goBackInSettings(page);
     await expectSettingsHostPickerLabel(page, secondaryHostLabel);
   });
@@ -471,8 +615,9 @@ test.describe("Settings — compact master-detail", () => {
 
     await openWorkspace(page, workspace);
     await openCompactSettings(page, buildHostWorkspaceRoute(getServerId(), workspace.workspaceId));
-    await openSettingsHostSection(page, getServerId(), "host");
+    await openClientHostSettings(page, getServerId());
     await removeCurrentHostFromSettings(page);
+    await goBackInSettings(page);
     await closeCompactSettings(page);
 
     await expect(page).toHaveURL(/\/welcome$/);

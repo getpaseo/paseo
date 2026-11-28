@@ -38,12 +38,9 @@ async function expectDarkIcons(expected, context) {
   assert.equal(windowState(), expected, context);
 }
 
+// Settings > Appearance shows every theme as a tile in one radio group.
 function selectTheme(theme) {
-  const current = ad("snapshot", "-i").match(/"Theme: ([^"]+)"/)?.[1];
-  assert(current, "Start on Settings > Appearance");
-  ad("press", `label="Theme: ${current}"`, "--settle");
   ad("press", `label="${theme}"`, "--settle");
-  ad("wait", "text", `Theme: ${theme}`, "5000");
 }
 
 ad("settings", "appearance", "light");

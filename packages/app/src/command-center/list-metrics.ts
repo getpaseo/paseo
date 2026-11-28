@@ -16,6 +16,8 @@ export const COMMAND_CENTER_LINE_HEIGHT = {
   singleLine: 20,
   title: 18,
   subtitle: 16,
+  /** The matched-agent line under a workspace's subtitle. */
+  agent: 16,
   sectionLabel: 16,
 } as const;
 
@@ -26,6 +28,8 @@ const SECTION_DIVIDER_THICKNESS = 1;
 export interface CommandCenterListMetrics {
   singleLineRow: number;
   twoLineRow: number;
+  /** A workspace row that also names the agent the query matched. */
+  threeLineRow: number;
   /** A section label and the gaps around it. */
   sectionTitle: number;
   /** The rule between two sections and the gaps around it. */
@@ -37,6 +41,7 @@ function listMetrics(rowInset: number): CommandCenterListMetrics {
   return {
     singleLineRow: rowInset + line.singleLine + rowInset,
     twoLineRow: rowInset + line.title + line.subtitle + rowInset,
+    threeLineRow: rowInset + line.title + line.subtitle + line.agent + rowInset,
     sectionTitle: COMMAND_CENTER_SECTION_GAP + line.sectionLabel + COMMAND_CENTER_SECTION_GAP,
     sectionDivider:
       COMMAND_CENTER_SECTION_GAP + SECTION_DIVIDER_THICKNESS + COMMAND_CENTER_SECTION_GAP,

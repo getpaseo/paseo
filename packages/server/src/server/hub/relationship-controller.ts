@@ -246,7 +246,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
   }
 
   async start(): Promise<void> {
-    if (this.record?.state === "active") this.openSocket(this.record, false);
+    if (this.record?.state === "active") this.openSocket(false);
     if (this.record?.state === "pending") {
       const enrollmentGeneration = this.beginEnrollmentAttempt();
       try {
@@ -441,7 +441,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
       this.record = active;
       this.retry = null;
       this.retryAttempt = 0;
-      this.openSocket(active, false);
+      this.openSocket(false);
     } catch (error) {
       if (enrollmentGeneration !== this.enrollmentGeneration) return;
       if (error instanceof HubEnrollmentRejectedError) {
@@ -455,15 +455,17 @@ export class HubRelationshipController implements HubRelationshipManagement {
     }
   }
 
-  private openSocket(record: ActiveRecord, reconnecting: boolean): void {
+  private openSocket(reconnecting: boolean): void {
+    const record = this.record;
+    if (record?.state !== "active") return;
     const generation = ++this.generation;
     this.state = reconnecting ? "reconnecting" : "connecting";
     const events: HubSocketEvents = {
       connected: (socket, sessionProtocol) =>
-        this.socketConnected(generation, record, socket, sessionProtocol),
+        this.socketConnected(generation, socket, sessionProtocol),
       rejected: (statusCode) => this.socketRejected(generation, statusCode),
-      closed: (code) => this.socketClosed(generation, record, code),
-      failed: (error) => this.socketFailed(generation, record, error),
+      closed: (code, reason) => this.socketClosed(generation, code, reason),
+      failed: (error) => this.socketFailed(generation, error),
     };
     this.socket = this.options.remote.openSocket(
       {
@@ -477,15 +479,14 @@ export class HubRelationshipController implements HubRelationshipManagement {
 
   private socketConnected(
     generation: number,
-    record: ActiveRecord,
     socket: WebSocketLike,
     sessionProtocol: "legacy" | "session-v1",
   ): void {
-    if (generation !== this.generation) {
+    const record = this.record;
+    if (generation !== this.generation || record?.state !== "active") {
       socket.close();
       return;
     }
-    this.retryAttempt = 0;
     this.state = "connected";
     this.connectedAt = this.clock.now().toISOString();
     this.lastError = null;
@@ -516,24 +517,31 @@ export class HubRelationshipController implements HubRelationshipManagement {
     this.revoke(`Hub rejected socket authentication (${statusCode})`);
   }
 
-  private socketClosed(generation: number, record: ActiveRecord, code: number): void {
+  private socketClosed(generation: number, code: number, reason?: string): void {
     if (generation !== this.generation) return;
+    if (code === 4403 && reason === "daemon session permissions do not match enrollment") {
+      this.lastError =
+        "Hub and daemon permissions differ. Run `paseo hub permissions grant <permission>` or `paseo hub permissions revoke <permission>` on this daemon to reapply your intended permissions.";
+      this.scheduleSocket(true);
+      return;
+    }
     if (code === 4403) {
       this.revoke("Hub revoked this relationship");
       return;
     }
-    if (this.record?.state === "active") this.scheduleSocket(record);
+    if (this.record?.state === "active") this.scheduleSocket();
   }
 
-  private socketFailed(generation: number, record: ActiveRecord, error: Error): void {
+  private socketFailed(generation: number, error: Error): void {
     if (generation !== this.generation) return;
     this.lastError = error.message;
-    if (this.record?.state === "active") this.scheduleSocket(record);
+    if (this.record?.state === "active") this.scheduleSocket();
   }
 
-  private scheduleSocket(record: ActiveRecord): void {
+  private scheduleSocket(permissionMismatch = false): void {
+    if (this.state === "connected" && !permissionMismatch) this.retryAttempt = 0;
     this.state = "reconnecting";
-    this.schedule(() => this.openSocket(record, true));
+    this.schedule(() => this.openSocket(true));
   }
 
   private scheduleEnrollment(record: PendingRecord, enrollmentGeneration: number): void {

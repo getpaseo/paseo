@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from "node:buffer";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -235,5 +236,65 @@ describe("importing a renamed Claude session", () => {
     await fs.mkdir(path.join(projectDir, `${sessionId}.jsonl`), { recursive: true });
 
     await expect(importSession(sessionId)).rejects.toThrow();
+  });
+
+  test("reads the rename from a transcript too large to hold as one string", async () => {
+    const sessionId = "oversized-transcript";
+    const projectDir = claudeProjectDirSync(SESSION_CWD, { configDir });
+    await fs.mkdir(projectDir, { recursive: true });
+    const transcript = path.join(projectDir, `${sessionId}.jsonl`);
+    // A hole stands in for the long session this used to fail on: the file only
+    // has to be longer than a string can be, and the rename sits at its end.
+    await fs.writeFile(transcript, "");
+    await fs.truncate(transcript, bufferConstants.MAX_STRING_LENGTH + 1);
+    await fs.appendFile(
+      transcript,
+      `\n${[
+        userRecord({ sessionId, content: "Trace the slow query" }),
+        { type: "custom-title", customTitle: "Slow query hunt", sessionId },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n")}\n`,
+    );
+
+    const imported = await importSession(sessionId);
+
+    expect(imported.config.title).toBe("Slow query hunt");
+  });
+
+  test("reads the rename from behind more records than one read covers", async () => {
+    const sessionId = "late-records-rename";
+    await writeSession({
+      sessionId,
+      records: [
+        userRecord({ sessionId, content: "Review this project" }),
+        { type: "custom-title", customTitle: "Scrollback review", sessionId },
+        // One record longer than a single read, then enough records to leave the
+        // rename several reads back from the end of the file.
+        userRecord({ sessionId, content: "x".repeat(128 * 1024) }),
+        ...Array.from({ length: 64 }, (_, index) =>
+          userRecord({ sessionId, content: `${"y".repeat(4 * 1024)} ${index}` }),
+        ),
+      ],
+    });
+
+    const imported = await importSession(sessionId);
+
+    expect(imported.config.title).toBe("Scrollback review");
+  });
+
+  test("imports a large record after the last rename without repeatedly copying it", async () => {
+    const sessionId = "large-record-after-rename";
+    await writeSession({
+      sessionId,
+      records: [
+        { type: "custom-title", customTitle: "Large attachment review", sessionId },
+        userRecord({ sessionId, content: "x".repeat(96 * 1024 * 1024) }),
+      ],
+    });
+
+    const imported = await importSession(sessionId);
+
+    expect(imported.config.title).toBe("Large attachment review");
   });
 });

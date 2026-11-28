@@ -1,12 +1,4 @@
-// These SDK internals are reachable through @modelcontextprotocol/sdk's wildcard export,
-// not a curated public subpath. Keep that package pinned exactly and re-verify these
-// paths on every SDK bump so native host-tool schemas stay byte-compatible.
-import {
-  normalizeObjectSchema,
-  type AnySchema,
-  type ZodRawShapeCompat,
-} from "@modelcontextprotocol/sdk/server/zod-compat.js";
-import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+import { z } from "zod";
 
 import type { PaseoToolDefinition, PaseoToolResult } from "./types.js";
 
@@ -63,16 +55,19 @@ export function addModelVisibleStructuredContent(result: PaseoToolResult): Paseo
   };
 }
 
+// Native host tools must advertise the schema the agent MCP endpoint serves.
+// @modelcontextprotocol/server converts tool input schemas with zod's
+// standard JSON Schema hook at the draft 2020-12 target, so do the same here.
 export function serializePaseoToolInputParameters(
   tool: PaseoToolDefinition,
 ): Record<string, unknown> {
-  const schema = normalizeObjectSchema(
-    tool.inputSchema as AnySchema | ZodRawShapeCompat | undefined,
-  );
-  return schema
-    ? toJsonSchemaCompat(schema, {
-        strictUnions: true,
-        pipeStrategy: "input",
-      })
-    : { ...EMPTY_OBJECT_JSON_SCHEMA };
+  if (tool.inputSchema === undefined) {
+    return { ...EMPTY_OBJECT_JSON_SCHEMA };
+  }
+  const schema =
+    tool.inputSchema instanceof z.ZodType ? tool.inputSchema : z.object(tool.inputSchema);
+  return {
+    type: "object",
+    ...z.toJSONSchema(schema, { target: "draft-2020-12", io: "input" }),
+  };
 }

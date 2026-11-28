@@ -37,14 +37,13 @@ const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
 function navigateDeps(): NavigateToWorkspaceDeps {
   return {
     revealTab: revealWorkspaceTab,
-    revealWorkspace: () => {
-      if (useWorkspaceLayoutStore.getState().layoutMode === "compact") {
-        usePanelStore.getState().showMobileAgent();
-      }
+    revealWorkspace: (workspaceKey, surface) => {
+      useWorkspaceLayoutStore.getState().focusWorkspace(workspaceKey);
+      const panels = usePanelStore.getState();
+      if (surface === "sidebar") panels.showMobileAgentList();
+      else panels.showMobileAgent();
     },
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
-    getSessionAgents: (serverId) =>
-      useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
     deferOpenTab: (input) => useWorkspaceLayoutStore.getState().deferOpenTab(input),
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),

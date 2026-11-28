@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { ExplorerEntry } from "@/stores/session-store";
+import type { ExplorerDirectory, ExplorerEntry } from "@/stores/session-store";
 import {
   MAX_AUTO_EXPANDED_DIRECTORY_DEPTH,
   flattenExplorerTree,
   reconcileRestoredExpandedPaths,
+  refreshExplorerDirectories,
   restoreExpandedDirectories,
+  revealExplorerDirectory,
+  revealExplorerEntry,
   setExpandedDirectoryPath,
   showHiddenFilesAndRestoreExpandedDirectories,
 } from "./tree";
@@ -193,5 +196,152 @@ describe("file explorer tree", () => {
     expect(hiddenFilesAreShown).toBe(true);
     resolveDirectory({ path: ".hidden", entries: [] });
     await expect(restoration).resolves.toEqual([".", ".hidden"]);
+  });
+});
+
+describe("refreshExplorerDirectories", () => {
+  function makeListing(path: string, names: string[]): ExplorerDirectory {
+    return {
+      path,
+      entries: names.map((name) => ({
+        name,
+        path: path === "." ? name : `${path}/${name}`,
+        kind: "file" as const,
+        size: 0,
+        modifiedAt: "2026-01-01T00:00:00.000Z",
+      })),
+    };
+  }
+
+  function createExplorer(disk: Record<string, string[]>, cached: Record<string, string[]>) {
+    const directories = new Map(
+      Object.entries(cached).map(([path, names]) => [path, makeListing(path, names)]),
+    );
+    return {
+      directories,
+      requestDirectoryListing: async (path: string) => {
+        const listing = makeListing(path, disk[path] ?? []);
+        directories.set(path, listing);
+        return listing;
+      },
+      invalidateDirectoryListings: (retainedPaths: readonly string[]) => {
+        const retained = new Set(retainedPaths);
+        for (const path of directories.keys()) if (!retained.has(path)) directories.delete(path);
+      },
+    };
+  }
+
+  it("does not keep a stale listing for a collapsed folder", async () => {
+    // docs/ was expanded and collapsed earlier, then NEW.md was created in it.
+    const explorer = createExplorer(
+      { ".": ["docs"], docs: ["README.md", "NEW.md"] },
+      { ".": ["docs"], docs: ["README.md"] },
+    );
+
+    await refreshExplorerDirectories({
+      hasWorkspaceScope: true,
+      expandedPaths: new Set(["."]),
+      showHiddenFiles: false,
+      requestDirectoryListing: explorer.requestDirectoryListing,
+      invalidateDirectoryListings: explorer.invalidateDirectoryListings,
+    });
+
+    // Expanding docs/ only fetches when it has no cached listing.
+    expect(explorer.directories.has("docs")).toBe(false);
+    expect(explorer.directories.get(".")?.entries.map((entry) => entry.name)).toEqual(["docs"]);
+  });
+
+  it("refreshes expanded folders and keeps their listings", async () => {
+    const explorer = createExplorer(
+      { ".": ["src"], src: ["a.ts", "b.ts"] },
+      { ".": ["src"], src: ["a.ts"] },
+    );
+
+    await refreshExplorerDirectories({
+      hasWorkspaceScope: true,
+      expandedPaths: new Set([".", "src"]),
+      showHiddenFiles: false,
+      requestDirectoryListing: explorer.requestDirectoryListing,
+      invalidateDirectoryListings: explorer.invalidateDirectoryListings,
+    });
+
+    expect(explorer.directories.get("src")?.entries.map((entry) => entry.name)).toEqual([
+      "a.ts",
+      "b.ts",
+    ]);
+  });
+});
+
+describe("revealing a file in the tree", () => {
+  function createTree(listings: Record<string, string[]>) {
+    const listed: string[] = [];
+    const expanded: string[] = [];
+    let hiddenFilesShown = false;
+    const host = {
+      requestDirectoryListing: async (path: string) => {
+        listed.push(path);
+        const children = listings[path];
+        if (!children) return null;
+        return {
+          path,
+          entries: children.map((child) => makeDirectoryEntry(child.split("/").pop()!, child)),
+        };
+      },
+      expandPaths: (paths: string[]) => expanded.push(...paths),
+      showHiddenFiles: () => {
+        hiddenFilesShown = true;
+      },
+    };
+    return {
+      listed,
+      expanded,
+      hiddenFilesShown: () => hiddenFilesShown,
+      reveal: (entryPath: string) => revealExplorerEntry({ ...host, entryPath }),
+      revealDirectory: (directoryPath: string) =>
+        revealExplorerDirectory({ ...host, directoryPath }),
+    };
+  }
+
+  it("loads and expands every ancestor of the file", async () => {
+    const tree = createTree({
+      ".": ["src"],
+      src: ["src/data"],
+      "src/data": ["src/data/report.csv"],
+    });
+
+    await expect(tree.reveal("src/data/report.csv")).resolves.toBe(true);
+
+    expect(tree.listed).toEqual([".", "src", "src/data"]);
+    expect(tree.expanded).toEqual([".", "src", "src/data"]);
+    expect(tree.hiddenFilesShown()).toBe(false);
+  });
+
+  it("turns on hidden files to reveal a dotfile", async () => {
+    const tree = createTree({ ".": [".env"] });
+
+    await expect(tree.reveal(".env")).resolves.toBe(true);
+
+    expect(tree.hiddenFilesShown()).toBe(true);
+  });
+
+  it("lists a directory and its ancestors once each, and says whether it is there", async () => {
+    const tree = createTree({
+      ".": ["src"],
+      src: ["src/data"],
+      "src/data": ["src/data/report.csv"],
+    });
+
+    await expect(tree.revealDirectory("src/data")).resolves.toBe(true);
+
+    expect(tree.listed).toEqual([".", "src", "src/data"]);
+    expect(tree.expanded).toEqual([".", "src", "src/data"]);
+    await expect(tree.revealDirectory("src/gone")).resolves.toBe(false);
+  });
+
+  it("reports a file that is no longer there", async () => {
+    const tree = createTree({ ".": ["src"], src: [] });
+
+    await expect(tree.reveal("src/gone.csv")).resolves.toBe(false);
+    await expect(tree.reveal("missing/gone.csv")).resolves.toBe(false);
   });
 });

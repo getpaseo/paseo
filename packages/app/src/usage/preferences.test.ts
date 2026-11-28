@@ -31,7 +31,7 @@ describe("usage preferences", () => {
   it("unpins a pinned window and keeps the others in order", () => {
     const three = [codexWeekly, claudeFiveHour, { sourceId: "claude", windowId: "weekly" }];
     const unpinned = toggleUsagePin({
-      preferences: { displayAs: "used", pins: three, serverId: null },
+      preferences: { ...DEFAULT_USAGE_PREFERENCES, pins: three },
       pin: claudeFiveHour,
       reports: [],
     });
@@ -40,18 +40,18 @@ describe("usage preferences", () => {
   });
 
   it("switches between used and remaining without touching pins", () => {
-    const preferences = { displayAs: "used" as const, pins: [codexWeekly], serverId: null };
+    const preferences = { ...DEFAULT_USAGE_PREFERENCES, pins: [codexWeekly] };
 
     expect(setUsageDisplayAs(preferences, "remaining")).toEqual({
+      ...DEFAULT_USAGE_PREFERENCES,
       displayAs: "remaining",
       pins: [codexWeekly],
-      serverId: null,
     });
   });
 
   it("remembers the picked host without touching pins", () => {
     expect(setUsageHost({ ...DEFAULT_USAGE_PREFERENCES, pins: [codexWeekly] }, "server")).toEqual({
-      displayAs: "used",
+      ...DEFAULT_USAGE_PREFERENCES,
       pins: [codexWeekly],
       serverId: "server",
     });
@@ -59,7 +59,7 @@ describe("usage preferences", () => {
 
   it("reads preferences saved before hosts could be picked as no pick", () => {
     expect(UsagePreferencesSchema.parse({ displayAs: "remaining", pinned: [codexWeekly] })).toEqual(
-      { displayAs: "remaining", pins: [codexWeekly], serverId: null },
+      { ...DEFAULT_USAGE_PREFERENCES, displayAs: "remaining", pins: [codexWeekly] },
     );
   });
 });
@@ -125,6 +125,6 @@ it("reads old selections without losing display or host and preserves an explici
   ] as const) {
     expect(
       UsagePreferencesSchema.parse({ displayAs: "remaining", serverId: "host", ...input }),
-    ).toEqual({ displayAs: "remaining", serverId: "host", pins });
+    ).toEqual({ ...DEFAULT_USAGE_PREFERENCES, displayAs: "remaining", serverId: "host", pins });
   }
 });

@@ -1,26 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  extensionFromPath,
-  highlightToKeyedLines,
-  MAX_HIGHLIGHT_CHARS,
-  tokenizeToLines,
-} from "./highlight-cache";
-
-describe("extensionFromPath", () => {
-  it("extracts a lowercased extension regardless of absolute/relative path", () => {
-    expect(extensionFromPath("/repo/src/Index.TS")).toBe("ts");
-    expect(extensionFromPath("src/index.ts")).toBe("ts");
-    expect(extensionFromPath("a.b/c.tsx")).toBe("tsx");
-  });
-
-  it("returns null for paths without a usable extension", () => {
-    expect(extensionFromPath(null)).toBeNull();
-    expect(extensionFromPath(undefined)).toBeNull();
-    expect(extensionFromPath("Makefile")).toBeNull();
-    expect(extensionFromPath(".gitignore")).toBeNull();
-    expect(extensionFromPath("trailingdot.")).toBeNull();
-  });
-});
+import { highlightToKeyedLines, MAX_HIGHLIGHT_CHARS, tokenizeToLines } from "./highlight-cache";
 
 describe("tokenizeToLines", () => {
   it("returns one token array per line for a supported language", () => {
@@ -30,7 +9,18 @@ describe("tokenizeToLines", () => {
     expect(lines?.[0].some((token) => token.style === "keyword")).toBe(true);
   });
 
-  it("returns null when there is no extension", () => {
+  it.each(["diff", "patch"])("tokenizes %s fences with diff roles", (lang) => {
+    const lines = tokenizeToLines("--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-old\n+new", lang);
+    expect(lines).toEqual([
+      [{ text: "--- a/f.ts", style: "diffDeletion" }],
+      [{ text: "+++ b/f.ts", style: "diffAddition" }],
+      [{ text: "@@ -1 +1 @@", style: "meta" }],
+      [{ text: "-old", style: "diffDeletion" }],
+      [{ text: "+new", style: "diffAddition" }],
+    ]);
+  });
+
+  it("returns null when there is no filename", () => {
     expect(tokenizeToLines("whatever", null)).toBeNull();
   });
 

@@ -8,10 +8,10 @@ import { expect, test } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
-// Linux delivers the existing inventory as one batch. Other backends have
-// different startup semantics, so they do not exercise this regression.
+// The Linux backend scans the existing inventory at startup without reporting
+// it. Other backends have different startup semantics.
 test.skipIf(process.platform !== "linux").each(["healthy", "directory-churn"])(
-  "%s benchmark collects a startup batch larger than the argument limit",
+  "%s benchmark over a large pre-populated tree reports only later edits",
   async (mode) => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), "paseo-watch-benchmark-test-"));
     try {
@@ -47,7 +47,7 @@ test.skipIf(process.platform !== "linux").each(["healthy", "directory-churn"])(
         },
       );
       const measurement = JSON.parse(stdout);
-      expect(measurement.startupEvents).toBe(40_000);
+      expect(measurement.startupEvents).toBe(0);
       expect(measurement.deliveredEvents).toBeGreaterThan(measurement.startupEvents);
       expect(measurement.missedTrackedPaths).toBe(0);
       expect(measurement.ignoredEvents).toBe(0);

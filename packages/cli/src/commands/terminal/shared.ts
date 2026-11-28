@@ -1,5 +1,5 @@
 import type { DaemonTarget } from "../../utils/daemon-target.js";
-import { createPaseoApi } from "@getpaseo/client";
+import { createTerminalActions } from "@getpaseo/client/node/lean";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
 
@@ -15,8 +15,32 @@ interface TerminalLike {
 export async function connectTerminalClient(target: DaemonTarget) {
   const daemonHost = getDaemonHost({ target });
   try {
-    const client = await connectToDaemon({ target });
-    return { client: createPaseoApi(client), daemonHost, close: () => client.close() };
+    const daemonClient = await connectToDaemon({ target });
+    const terminals = createTerminalActions(daemonClient, async (workspaceId) => {
+      const result = await daemonClient.fetchWorkspaces({
+        filter: { idPrefix: workspaceId, includeBackground: true },
+        page: { limit: 10 },
+      });
+      const workspace = result.entries.find((entry) => entry.id === workspaceId);
+      if (!workspace?.workspaceDirectory) {
+        throw new Error(`Workspace ${workspaceId} is not active or has no available directory`);
+      }
+      return workspace.workspaceDirectory;
+    });
+    const workspaces = {
+      open: async (cwd: string) => {
+        const result = await daemonClient.openProject(cwd);
+        if (result.error || !result.workspace) {
+          throw new Error(result.error ?? `The daemon did not open a workspace for ${cwd}`);
+        }
+        return result.workspace;
+      },
+    };
+    return {
+      client: { terminals, workspaces },
+      daemonHost,
+      close: () => daemonClient.close(),
+    };
   } catch (err) {
     if (err && typeof err === "object" && "code" in err) throw err;
     const message = err instanceof Error ? err.message : String(err);

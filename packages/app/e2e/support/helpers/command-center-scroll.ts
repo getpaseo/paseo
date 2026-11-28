@@ -22,14 +22,9 @@ export async function observeCommandCenterScroll(page: Page): Promise<void> {
 
     const discoverPanel = new MutationObserver(() => {
       const panel = document.querySelector<HTMLElement>('[data-testid="command-center-panel"]');
-      const firstResult = panel?.querySelector<HTMLElement>('[role="button"]');
-      if (!panel || !firstResult) return;
-
-      let viewport = firstResult.parentElement;
-      while (viewport && viewport !== panel && viewport.scrollHeight <= viewport.clientHeight) {
-        viewport = viewport.parentElement;
-      }
-      if (!viewport || viewport === panel) return;
+      const viewport = panel?.querySelector<HTMLElement>('[data-testid="command-center-results"]');
+      const firstResult = viewport?.querySelector<HTMLElement>('[role="button"]');
+      if (!viewport || !firstResult) return;
 
       discoverPanel.disconnect();
       let frame = 0;
@@ -119,15 +114,8 @@ export async function expectVisibleKeyboardNavigationNotToScroll(
   for (let index = 0; index < 4; index += 1) await page.keyboard.press("ArrowDown");
 
   const scrollSamples = await panel
-    .getByRole("button")
-    .first()
-    .evaluate(async (firstResult) => {
-      let viewport = firstResult.parentElement;
-      while (viewport && viewport.scrollHeight <= viewport.clientHeight) {
-        viewport = viewport.parentElement;
-      }
-      if (!viewport) throw new Error("Could not find the command center scroll viewport");
-
+    .getByTestId("command-center-results")
+    .evaluate(async (viewport) => {
       const samples: number[] = [];
       for (let frame = 0; frame < 20; frame += 1) {
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -139,7 +127,8 @@ export async function expectVisibleKeyboardNavigationNotToScroll(
   expect(Math.max(...scrollSamples)).toBe(0);
 }
 
-export async function expectWorkspaceResultsToBeLimitedUntilSearch(panel: Locator): Promise<void> {
+/** All leads with three recent workspaces; a query searches every workspace. */
+export async function expectRecentWorkspacesUntilSearch(panel: Locator): Promise<void> {
   const workspaces = panel.locator(
     '[data-testid^="command-center-workspace-"]:not([data-testid="command-center-workspace-subtitle"])',
   );
@@ -150,9 +139,11 @@ export async function expectWorkspaceResultsToBeLimitedUntilSearch(panel: Locato
       ),
     ).size;
 
-  await expect.poll(distinctWorkspaceCount).toBe(5);
+  await expect(panel.getByText("Recent workspaces", { exact: true })).toBeVisible();
+  await expect.poll(distinctWorkspaceCount).toBe(3);
 
   await panel.getByTestId("command-center-input").fill("Command Center Scroll");
+  await expect(panel.getByText("Recent workspaces", { exact: true })).toHaveCount(0);
   await expect.poll(distinctWorkspaceCount).toBe(9);
 }
 

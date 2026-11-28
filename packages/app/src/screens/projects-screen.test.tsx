@@ -182,6 +182,7 @@ function workspaceSummary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceS
     status: "done",
     currentBranch: "main",
     changeRequestNumber: null,
+    background: false,
     statusEnteredAt: null,
     ...overrides,
   };

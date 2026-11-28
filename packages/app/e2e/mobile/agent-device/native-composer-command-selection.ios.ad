@@ -1,0 +1,13 @@
+context platform=ios timeout=60000 retries=0
+# Start in an empty, connected composer with the Claude provider selected.
+# COMMAND_ROW must name an inserting command, not an immediate client action.
+env COMMAND_ROW="/advisor, Let Claude consult a stronger model at key moments"
+env COMMAND_TEXT="/advisor "
+open sh.paseo.debug
+wait "editable=true" 60000
+fill "editable=true" "/"
+wait "label=\"${COMMAND_ROW}\"" 15000
+press "label=\"${COMMAND_ROW}\""
+# Do not type or move the caret: replacement itself must close autocomplete.
+wait absent "label=\"${COMMAND_ROW}\"" 3000
+wait "editable=true value=\"${COMMAND_TEXT}\"" 3000

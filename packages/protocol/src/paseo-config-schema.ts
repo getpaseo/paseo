@@ -47,6 +47,9 @@ export const PaseoWorktreeConfigRawSchema = z
   .object({
     setup: PaseoLifecycleCommandRawSchema.optional(),
     teardown: PaseoLifecycleCommandRawSchema.optional(),
+    // Checked by WorktreeConfigSchema, where an invalid value falls back to the default, so it
+    // never stops paseo.json from being edited or sent to the app.
+    teardownTimeoutMs: z.unknown().optional(),
     terminals: z.unknown().optional(),
     servicePorts: PaseoServicePortAllocationSchema.optional(),
   })
@@ -79,9 +82,20 @@ export const PaseoConfigRawSchema = z
   })
   .passthrough();
 
+// Node timers can't wait longer than this; a longer delay fires at once.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export const WorktreeConfigSchema = PaseoWorktreeConfigRawSchema.extend({
   setup: z.unknown().optional().transform(normalizeLifecycleCommands),
   teardown: z.unknown().optional().transform(normalizeLifecycleCommands),
+  // Its own catch, so an invalid limit doesn't drop the commands with the rest of the worktree.
+  teardownTimeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .max(MAX_TIMER_DELAY_MS)
+    .optional()
+    .catch(undefined),
 })
   .passthrough()
   .catch({ setup: [], teardown: [] });

@@ -12,6 +12,7 @@ import {
   type PluginClientBundle,
   type PluginClientBundleStore,
 } from "./daemon-client";
+import { createHostChannelTransport } from "./hosts/index.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
@@ -657,6 +658,38 @@ class FakeDaemon {
     },
   };
 
+  finishTransfer(): void {
+    // Four MiB of JSON whitespace precedes this valid application message.
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "status",
+          payload: {
+            status: "server_info",
+            serverId: "srv_heartbeat_test",
+            hostname: null,
+            version: null,
+            features: { binaryChunkingV1: true },
+          },
+        },
+      }),
+    );
+    const frame = new Uint8Array(bytes.length + 4);
+    frame.set([0x31, 1, 0, 2]);
+    frame.set(bytes, 4);
+    this.onMessage(frame);
+    this.onMessage(JSON.stringify({ type: "pong" }));
+    this.daemonAnswersPingsAfter("fast");
+  }
+
+  receiveChunk(start: boolean): void {
+    const frame = new Uint8Array(1024 * 1024 + 4);
+    frame.set([0x31, 1, 0, start ? 1 : 0]);
+    frame.fill(32, 4);
+    this.onMessage(frame);
+  }
+
   openConnection(): void {
     this.onOpen();
     this.onMessage(
@@ -667,6 +700,7 @@ class FakeDaemon {
           payload: {
             status: "server_info",
             serverId: "srv_heartbeat_test",
+            features: { binaryChunkingV1: true },
             hostname: null,
             version: null,
           },
@@ -695,6 +729,10 @@ class FakeDaemon {
     this.onClose({ reason });
   }
 
+  daemonSendsPong(): void {
+    this.onMessage(JSON.stringify({ type: "pong" }));
+  }
+
   triggerError(event?: unknown): void {
     this.onError(event);
   }
@@ -716,13 +754,14 @@ class DaemonClientSession {
   private readonly daemon = new FakeDaemon();
   private readonly client: DaemonClient;
 
-  constructor() {
+  constructor(options: { livenessHeartbeat?: boolean } = {}) {
     this.client = new DaemonClient({
       url: "ws://test",
       clientId: "clsk_heartbeat_test",
       logger: noopLogger,
       reconnect: { enabled: false },
       transportFactory: () => this.daemon.transport,
+      ...options,
     });
     clients.push(this.client);
   }
@@ -1089,6 +1128,7 @@ test("advertises client capabilities in hello", async () => {
     clientType: "cli",
     protocolVersion: 1,
     capabilities: {
+      agent_active_turn_behaviors: true,
       all_providers: true,
       selective_agent_timeline: true,
       timeline_replacement_invalidation: true,
@@ -1106,9 +1146,11 @@ test("advertises client capabilities in hello", async () => {
       terminal_chunked_replay: true,
       timeline_notifications: true,
       plugin_timeline_items: true,
+      plugin_binary_payloads: true,
       workspace_setup_blocked: true,
       workspace_setup_observation: true,
       hello_rejection: true,
+      background_agents: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
         hostKind: "desktop app",
@@ -1452,7 +1494,7 @@ test("keeps the transport connected when a session RPC ping times out", async ()
   await connectPromise;
   expect(client.getConnectionState().status).toBe("connected");
 
-  await expect(client.ping({ timeoutMs: 1 })).rejects.toThrow("Timeout waiting for message");
+  await expect(client.ping({ timeoutMs: 1 })).rejects.toThrow("No response to ping after");
 
   expect(client.getConnectionState().status).toBe("connected");
 });
@@ -1486,6 +1528,47 @@ test("waits for the daemon to acknowledge push token revocation", async () => {
   await revocation;
 });
 
+test("registers a push token with or without notification preferences", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_push_preferences",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { pushNotificationPreferences: true } });
+  await connectPromise;
+
+  client.registerPushToken("ExponentPushToken[legacy-call]");
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "register_push_token",
+    token: "ExponentPushToken[legacy-call]",
+  });
+
+  const preferences = {
+    enabled: true,
+    events: {
+      agentPermission: true,
+      agentError: true,
+      agentFinished: true,
+      terminalNeedsInput: true,
+      terminalFinished: false,
+    },
+    plugins: {
+      enabled: true,
+      muted: ["review-bot"],
+    },
+  };
+  client.registerPushToken("ExponentPushToken[with-prefs]", preferences);
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "register_push_token",
+    token: "ExponentPushToken[with-prefs]",
+    preferences,
+  });
+});
+
 test("bounds the wait for push token revocation", async () => {
   useHeartbeatClock();
   const mock = createMockTransport();
@@ -1501,13 +1584,39 @@ test("bounds the wait for push token revocation", async () => {
   await connectPromise;
 
   const revocation = client.unregisterPushToken("ExponentPushToken[test-device]");
-  const rejection = expect(revocation).rejects.toThrow("Timeout waiting for message (2000ms)");
+  const rejection = expect(revocation).rejects.toThrow(
+    "No response to push.unregister.request after 2000ms",
+  );
   await vi.advanceTimersByTimeAsync(1_999);
   expect(client.getConnectionState().status).toBe("connected");
 
   await vi.advanceTimersByTimeAsync(1);
   await rejection;
   expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("identifies the request when marking an agent as read times out", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_attention_timeout",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const outcome = client.clearAgentAttention("agent-1").catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(await outcome).toMatchObject({
+    name: "DaemonConnectionError",
+    code: "DAEMON_REQUEST_TIMEOUT",
+    message: "No response to clear_agent_attention after 60000ms",
+  });
+  expect(client.isConnected).toBe(true);
 });
 
 test("defaults session RPC waiters to sixty seconds", async () => {
@@ -1554,8 +1663,108 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (60000ms)");
+  await expect(responsePromise).rejects.toThrow("No response to fetch_agent_request after 60000ms");
 });
+
+test.each([
+  [
+    "archive_workspace_request",
+    (client: DaemonClient) => client.archiveWorkspace("workspace-1"),
+    (requestId: string) => ({
+      type: "archive_workspace_response" as const,
+      payload: {
+        requestId,
+        workspaceId: "workspace-1",
+        archivedAt: "2026-01-01T00:00:00.000Z",
+        error: null,
+      },
+    }),
+  ],
+  [
+    "paseo_worktree_archive_request",
+    (client: DaemonClient) => client.archivePaseoWorktree({ worktreePath: "/repo/worktree" }),
+    (requestId: string) => ({
+      type: "paseo_worktree_archive_response" as const,
+      payload: { requestId, success: true, removedAgents: [], error: null },
+    }),
+  ],
+  [
+    "workspace.recovery.restore.request",
+    (client: DaemonClient) => client.restoreWorkspace("workspace-1"),
+    (requestId: string) => ({
+      type: "workspace.recovery.restore.response" as const,
+      payload: { requestId, workspaceId: "workspace-1", accepted: true, error: null },
+    }),
+  ],
+  [
+    "workspace.archive.undo.request",
+    (client: DaemonClient) => client.undoWorkspaceArchive("workspace-1"),
+    (requestId: string) => ({
+      type: "workspace.archive.undo.response" as const,
+      payload: { requestId, workspaceId: "workspace-1", accepted: true, error: null },
+    }),
+  ],
+  [
+    "open_project_request",
+    (client: DaemonClient) => client.openProject("/repo/worktree"),
+    (requestId: string) => ({
+      type: "open_project_response" as const,
+      payload: { requestId, workspace: null, error: null },
+    }),
+  ],
+  [
+    "create_paseo_worktree_request",
+    (client: DaemonClient) => client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" }),
+    (requestId: string) => ({
+      type: "create_paseo_worktree_response" as const,
+      payload: { requestId, workspace: null, error: null, setupTerminalId: null },
+    }),
+  ],
+] as const)(
+  "waits on %s across queued and bounded daemon stages until response or disconnect",
+  async (_type, run, buildResponse) => {
+    useHeartbeatClock();
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "worktree-lifecycle-wait-test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+
+    const connecting = client.connect();
+    transport.triggerOpen();
+    await connecting;
+
+    const pending = run(client);
+    const sentFrame = JSON.parse(assertStr(transport.sent.at(-1))) as {
+      message: { requestId: string };
+    };
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(200_000);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    transport.triggerMessage(wrapSessionMessage(buildResponse(sentFrame.message.requestId)));
+    await expect(pending).resolves.not.toThrow();
+
+    const disconnected = run(client);
+    transport.triggerClose({ code: 1006, reason: "gone" });
+    await expect(disconnected).rejects.toMatchObject({ code: "DAEMON_CONNECTION_LOST" });
+  },
+);
 
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {
   useHeartbeatClock();
@@ -1602,7 +1811,7 @@ test("honors explicit fetchAgent timeout below the session RPC default", async (
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (5000ms)");
+  await expect(responsePromise).rejects.toThrow("No response to fetch_agent_request after 5000ms");
 });
 
 test("preserves legacy fetchAgent id overload", async () => {
@@ -1766,7 +1975,9 @@ test("honors explicit fetchAgentTimeline timeout below the session RPC default",
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (2000ms)");
+  await expect(responsePromise).rejects.toThrow(
+    "No response to fetch_agent_timeline_request after 2000ms",
+  );
 });
 
 test("lists the full agent prompt index", async () => {
@@ -1859,7 +2070,7 @@ test("honors explicit fetchAgents timeout below the session RPC default", async 
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1200ms)");
+  await expect(responsePromise).rejects.toThrow("No response to fetch_agents_request after 1200ms");
 });
 
 test("honors explicit shutdownServer timeout below the session RPC default", async () => {
@@ -1905,7 +2116,9 @@ test("honors explicit shutdownServer timeout below the session RPC default", asy
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+  await expect(responsePromise).rejects.toThrow(
+    "No response to shutdown_server_request after 1500ms",
+  );
 });
 
 test("honors explicit getDaemonStatus timeout below the session RPC default", async () => {
@@ -1951,7 +2164,9 @@ test("honors explicit getDaemonStatus timeout below the session RPC default", as
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+  await expect(responsePromise).rejects.toThrow(
+    "No response to daemon.get_status.request after 1500ms",
+  );
 });
 
 test("honors explicit getDaemonPairingOffer timeout below the session RPC default", async () => {
@@ -1997,7 +2212,9 @@ test("honors explicit getDaemonPairingOffer timeout below the session RPC defaul
   expect(settled).toBe(false);
 
   await vi.advanceTimersByTimeAsync(1);
-  await expect(responsePromise).rejects.toThrow("Timeout waiting for message (1500ms)");
+  await expect(responsePromise).rejects.toThrow(
+    "No response to daemon.get_pairing_offer.request after 1500ms",
+  );
 });
 
 test("gates config reload on the daemon capability", async () => {
@@ -2403,7 +2620,9 @@ test("keeps enable and disable inside the session RPC deadline", async () => {
       expect(settled).toBe(false);
 
       await vi.advanceTimersByTimeAsync(1);
-      await expect(pending).rejects.toThrow("Timeout waiting for message (60000ms)");
+      await expect(pending).rejects.toThrow(
+        `No response to plugin.${action}.request after 60000ms`,
+      );
     }
   } finally {
     vi.useRealTimers();
@@ -2570,7 +2789,7 @@ test("keeps default connect timeout shorter than session RPC waiters", async () 
   }
 });
 
-test("foreground verification replaces a silently broken socket without waiting for heartbeats", async () => {
+test("foreground tears down a silently dead socket after two fresh five-second windows and reconnects at once", async () => {
   useHeartbeatClock();
   const first = new FakeDaemon();
   const second = new FakeDaemon();
@@ -2588,10 +2807,23 @@ test("foreground verification replaces a silently broken socket without waiting 
   await connection;
 
   client.ensureConnected({ verify: true });
-  await vi.advanceTimersByTimeAsync(3_000);
+  expect(first.pingTimestamps()).toEqual(["0s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  // The first silent window is followed by a second check at once, not ten seconds later.
+  expect(first.closesFromClient()).toEqual([]);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s"]);
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(first.closesFromClient()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  // The reconnect is immediate: no 1.5s backoff after a foreground liveness teardown.
   expect(attempts).toBe(2);
   second.openConnection();
   expect(client.getConnectionState()).toEqual({ status: "connected" });
+  // The replacement runs the normal heartbeat cadence.
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(second.pingTimestamps()).toEqual(["20s"]);
+  expect(second.closesFromClient()).toEqual([]);
 });
 
 test("foreground verification preserves a healthy socket and deduplicates simultaneous checks", async () => {
@@ -2616,7 +2848,503 @@ test("foreground verification preserves a healthy socket and deduplicates simult
   expect(daemon.closesFromClient()).toEqual([]);
 });
 
-test("an obsolete foreground probe cannot close a replacement connection", async () => {
+test("chunks prevent heartbeat misses until silence causes two misses", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "bulk-resume",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  let measurementError: unknown;
+  void client.measureLatency({ timeoutMs: 5_000 }).catch((error: unknown) => {
+    measurementError = error;
+  });
+  // Chunks complete every four seconds for the first 36 seconds; no pong ever arrives.
+  for (let index = 0; index < 9; index++) {
+    await vi.advanceTimersByTimeAsync(4_000);
+    daemon.receiveChunk(index === 0);
+    expect(daemon.closesFromClient()).toEqual([]);
+  }
+  expect(measurementError).toEqual(
+    expect.objectContaining({
+      message: "Latency measurement timed out (5000ms)",
+    }),
+  );
+  // Progress inside the foreground window returned the heartbeat to its normal cadence.
+  expect(daemon.pingTimestamps()).toEqual(["0s", "15s"]);
+  await vi.advanceTimersByTimeAsync(19_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(daemon.pingTimestamps()).toEqual(["0s", "15s", "40s"]);
+  await vi.advanceTimersByTimeAsync(24_999);
+  expect(daemon.closesFromClient()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(daemon.pingTimestamps()).toEqual(["0s", "15s", "40s", "65s"]);
+  expect(daemon.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+});
+
+test("foreground preserves a multi-MB transfer with its pong queued behind chunks", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "bulk-resume",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(3_001);
+  expect(daemon.closesFromClient()).toEqual([]);
+  for (let index = 0; index < 5; index++) {
+    await vi.advanceTimersByTimeAsync(4_000);
+    daemon.receiveChunk(index === 0);
+    expect(daemon.closesFromClient()).toEqual([]);
+  }
+  // The first chunk landed seven seconds after foreground: the first window was silent, the
+  // second saw progress, so the cycle ended without a teardown and the cadence is normal again.
+  expect(daemon.pingTimestamps()).toEqual(["0s", "5s", "20s"]);
+  daemon.finishTransfer();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+});
+
+test("chunk progress beyond the daemon lease keeps sending heartbeat pings", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "long-download",
+    logger: noopLogger,
+    reconnect: { enabled: false },
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  for (let index = 0; index < 12; index++) {
+    await vi.advanceTimersByTimeAsync(4_000);
+    daemon.receiveChunk(index === 0);
+    // Each completed window starts the next ping ten seconds later,
+    // even though the response and all queued pongs are still in flight.
+    const now = (index + 1) * 4;
+    const expected = ["0s"];
+    if (now >= 15) expected.push("15s");
+    if (now >= 40) expected.push("40s");
+    expect(daemon.pingTimestamps()).toEqual(expected);
+    expect(daemon.closesFromClient()).toEqual([]);
+  }
+  daemon.finishTransfer();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+});
+
+function connectThroughReplacements(
+  clientId: string,
+  daemons: FakeDaemon[],
+  options?: { reconnect?: { enabled: boolean } },
+): { client: DaemonClient; attempts: () => number } {
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId,
+    logger: noopLogger,
+    ...(options?.reconnect ? { reconnect: options.reconnect } : {}),
+    transportFactory: () => {
+      const daemon = daemons[Math.min(attempts, daemons.length - 1)]!;
+      attempts += 1;
+      return daemon.transport;
+    },
+  });
+  clients.push(client);
+  return { client, attempts: () => attempts };
+}
+
+test("foreground supersedes a heartbeat that straddled the suspension without counting a miss", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("resume-before-expiry", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  first.daemonGoesSilent();
+  await vi.advanceTimersByTimeAsync(10_000); // heartbeat ping outstanding when the OS suspends JS
+  await vi.advanceTimersByTimeAsync(14_990); // resume: AppState lands before the stale timer
+  client.ensureConnected({ verify: true });
+  expect(first.pingTimestamps()).toEqual(["10s", "24.99s"]);
+  await vi.advanceTimersByTimeAsync(10); // the stale deadline passes without a miss
+  await vi.advanceTimersByTimeAsync(4_990);
+  expect(first.closesFromClient()).toEqual([]);
+  expect(first.pingTimestamps()).toEqual(["10s", "24.99s", "29.99s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+});
+
+test("foreground does not inherit a miss recorded before the app was suspended", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("resume-after-expiry", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  first.daemonGoesSilent();
+  await vi.advanceTimersByTimeAsync(25_000); // ping at 10s missed at 25s, before or during suspension
+  client.ensureConnected({ verify: true });
+  expect(first.pingTimestamps()).toEqual(["10s", "25s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  // Two fresh windows: the old miss would have torn down here.
+  expect(first.closesFromClient()).toEqual([]);
+  expect(first.pingTimestamps()).toEqual(["10s", "25s", "30s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+});
+
+test("a slow but healthy socket survives foreground after a miss before the suspension", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("resume-slow-pong", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  daemon.daemonGoesSilent();
+  await vi.advanceTimersByTimeAsync(25_000); // one miss
+  daemon.daemonAnswersPingsAfter("5.5s");
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("a pong that arrives after the first foreground window keeps the connection and restores the cadence", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("5.5s");
+  const { client, attempts } = connectThroughReplacements("slow-pong", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
+  await vi.advanceTimersByTimeAsync(55_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(attempts()).toBe(1);
+  // After the late pong the heartbeat runs ten seconds after each settled probe again.
+  expect(daemon.pingTimestamps()).toEqual(["0s", "5s", "15.5s", "31s", "46.5s"]);
+});
+
+test("a latency measurement outstanding at foreground keeps its own deadline, then the cycle runs", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("latency-then-foreground", [
+    first,
+    second,
+  ]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  const measurement = client.measureLatency({ timeoutMs: 1_000 });
+  const measurementError = measurement.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  client.ensureConnected({ verify: true });
+  expect(first.pingTimestamps()).toEqual(["0s"]);
+  await vi.advanceTimersByTimeAsync(1_000);
+  await expect(measurementError).resolves.toEqual(
+    expect.objectContaining({ message: "Latency measurement timed out (1000ms)" }),
+  );
+  expect(first.closesFromClient()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.pingTimestamps()).toEqual(["0s", "1s", "6s"]);
+  expect(first.closesFromClient()).toEqual([]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+});
+
+test("a shared latency probe's activity from before foreground does not satisfy the fresh check", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("stale-activity", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  void client.measureLatency({ timeoutMs: 5_000 }).catch(() => {});
+  first.receiveChunk(true); // a frame arrived while the measurement was outstanding, then the socket died
+  client.ensureConnected({ verify: true });
+  expect(first.pingTimestamps()).toEqual(["0s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  // The measurement's own deadline passed; the foreground cycle starts its first fresh window now.
+  expect(first.closesFromClient()).toEqual([]);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+});
+
+test("a latency measurement that joined a heartbeat probe survives the foreground check", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("2s");
+  const { client, attempts } = connectThroughReplacements("latency-joins-heartbeat", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // the first heartbeat ping is outstanding
+  const measurement = client.measureLatency({ timeoutMs: 5_000 });
+  await vi.advanceTimersByTimeAsync(1_000);
+  client.ensureConnected({ verify: true });
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s"]);
+  // The heartbeat's pong lands at 12s and answers the measurement that joined it.
+  await vi.advanceTimersByTimeAsync(1_000);
+  await expect(measurement).resolves.toBe(2000);
+  await vi.advanceTimersByTimeAsync(19_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(attempts()).toBe(1);
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s", "22s"]);
+});
+
+test("a joined latency measurement outlives a silent foreground window until its own deadline", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("7s");
+  const { client, attempts } = connectThroughReplacements("latency-outlives-window", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  await vi.advanceTimersByTimeAsync(10_000); // the first heartbeat ping is outstanding
+  const measurement = client.measureLatency({ timeoutMs: 10_000 });
+  await vi.advanceTimersByTimeAsync(1_000);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000); // the first window closes silent at 16s
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s", "16s"]);
+  // The heartbeat's pong lands at 17s, inside the second window and before the 20s deadline.
+  await vi.advanceTimersByTimeAsync(1_000);
+  await expect(measurement).resolves.toBe(7000);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(attempts()).toBe(1);
+  expect(daemon.pingTimestamps()).toEqual(["10s", "11s", "16s", "27s"]);
+});
+
+// Fake timers cannot suspend: a suspension is modelled as the wall clock jumping forward while
+// the pending window timer stays queued, then firing late on resume.
+async function suspendFor(ms: number): Promise<void> {
+  vi.setSystemTime(Date.now() + ms);
+}
+
+test("a foreground window that spanned a second suspension is discarded when the timer fires first", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("suspended-mid-cycle-timer", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000); // window 1 silent, window 2 outstanding
+  expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
+  await suspendFor(60_000);
+  daemon.daemonAnswersPingsAfter("fast"); // the socket is healthy on resume
+  await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
+  client.ensureConnected({ verify: true }); // then AppState lands
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("a foreground window that spanned a second suspension is discarded when AppState fires first", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("suspended-mid-cycle-appstate", [daemon]);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(daemon.pingTimestamps()).toEqual(["0s", "5s"]);
+  await suspendFor(60_000);
+  daemon.daemonAnswersPingsAfter("fast");
+  client.ensureConnected({ verify: true }); // AppState lands before the queued timer
+  await vi.advanceTimersByTimeAsync(5_000); // window 2's timer fires late
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(daemon.closesFromClient()).toEqual([]);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(attempts()).toBe(1);
+});
+
+test("a dead socket after a second suspension mid-cycle still gets two fresh windows", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("suspended-mid-cycle-dead", [
+    first,
+    second,
+  ]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000);
+  first.receiveChunk(true); // a frame before the second suspension is not evidence after it
+  await suspendFor(60_000);
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000); // the late timer discards window 2 and starts over
+  expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([]);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s", "10s", "15s"]);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+});
+
+test("repeated foreground events share one cycle and do not restart its windows", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("repeated-foreground", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  for (let elapsedSeconds = 1; elapsedSeconds <= 9; elapsedSeconds++) {
+    await vi.advanceTimersByTimeAsync(1_000);
+    client.ensureConnected({ verify: true });
+    expect(first.closesFromClient()).toEqual([]);
+  }
+  expect(first.pingTimestamps()).toEqual(["0s", "5s"]);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(attempts()).toBe(2);
+  second.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("a late pong from the replaced socket does not count for the replacement", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  second.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("late-pong", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(attempts()).toBe(2);
+  second.openConnection();
+  client.ensureConnected({ verify: true });
+  expect(second.pingTimestamps()).toEqual(["10s"]);
+  await vi.advanceTimersByTimeAsync(2_000);
+  first.daemonSendsPong();
+  await vi.advanceTimersByTimeAsync(8_000);
+  expect(second.pingTimestamps()).toEqual(["10s", "15s"]);
+  expect(second.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+  expect(first.closesFromClient()).toEqual([{ code: 1001, reason: "Liveness check timed out" }]);
+});
+
+test("closing the client in the middle of a foreground cycle stops it", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("close-mid-cycle", [first, second]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s"]);
+  await client.close();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(first.pingTimestamps()).toEqual(["0s", "5s"]);
+  expect(first.closesFromClient()).toEqual([{ code: 1000, reason: "Client closed" }]);
+  expect(attempts()).toBe(1);
+  expect(client.getConnectionState()).toEqual({ status: "disposed" });
+});
+
+test("a foreground teardown with reconnect disabled reports the timeout and stays down", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("no-reconnect", [daemon], {
+    reconnect: { enabled: false },
+  });
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(client.getConnectionState()).toEqual({
+    status: "disconnected",
+    reason: "Liveness check timed out (5000ms)",
+  });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(attempts()).toBe(1);
+});
+
+test("the immediate reconnect after a foreground teardown backs off normally if it fails", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  const third = new FakeDaemon();
+  first.daemonGoesSilent();
+  const { client, attempts } = connectThroughReplacements("no-storm", [first, second, third]);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(attempts()).toBe(2);
+  second.daemonClosesWith("connection refused");
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(3);
+  third.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("an obsolete heartbeat cannot close a replacement connection", async () => {
   useHeartbeatClock();
   const first = new FakeDaemon();
   const second = new FakeDaemon();
@@ -2709,6 +3437,18 @@ test("starts pinging one interval after connecting and holds the cadence", async
   expect(session.pingTimestamps()).toEqual(["10s", "20s", "30s"]);
 });
 
+test("a client with the liveness heartbeat off never pings on its own", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession({ livenessHeartbeat: false });
+  session.daemonAnswersPingsAfter("fast");
+
+  await session.connect();
+  await session.advance(60_000);
+
+  expect(session.state()).toEqual({ status: "connected" });
+  expect(session.pingTimestamps()).toEqual([]);
+});
+
 test("stops pinging once the connection is gone", async () => {
   useHeartbeatClock();
   const session = new DaemonClientSession();
@@ -2731,6 +3471,30 @@ test("sends only one ping while a slow pong is still outstanding", async () => {
   await session.advance(20_000);
 
   expect(session.pingTimestamps()).toEqual(["10s"]);
+});
+
+test("a heartbeat sharing a latency measurement still saves the RTT", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("2s");
+  await session.connect();
+  await session.advance(9_000);
+  const measurement = session.measureLatency({ timeoutMs: 5_000 });
+  await session.advance(2_000);
+  await expect(measurement).resolves.toBe(2000);
+  expect(session.lastLivenessRttMs()).toBe(2000);
+});
+
+test("a measurement that joins an in-flight ping reports that ping's round trip", async () => {
+  useHeartbeatClock();
+  const session = new DaemonClientSession();
+  session.daemonAnswersPingsAfter("2s");
+  await session.connect();
+  await session.advance(11_000); // the heartbeat ping sent at 10s is still outstanding
+  const measurement = session.measureLatency({ timeoutMs: 5_000 });
+  await session.advance(1_000);
+  await expect(measurement).resolves.toBe(2000);
+  expect(session.lastLivenessRttMs()).toBe(2000);
 });
 
 test("reports the round-trip time of the last successful heartbeat", async () => {
@@ -3727,6 +4491,35 @@ test("rejects an internal create before sending when the host predates internal 
   expect(mock.sent).toHaveLength(0);
 });
 
+test("metadata needs a host that advertises entityMetadata and sends nothing to one that does not", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  const update = "Update the host to use metadata.";
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/tmp/project", metadata: { key: "value" } }),
+  ).rejects.toThrow(update);
+  await expect(
+    client.createWorkspace({
+      source: { kind: "directory", path: "/tmp/project" },
+      metadata: { key: "value" },
+    }),
+  ).rejects.toThrow(update);
+  await expect(client.setAgentMetadata("agent-1", { key: null })).rejects.toThrow(update);
+  await expect(client.setWorkspaceMetadata("workspace-1", { key: null })).rejects.toThrow(update);
+  expect(mock.sent).toHaveLength(0);
+});
+
 test("sends internal workspace creation and internal listings only to hosts that support them", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -4651,6 +5444,65 @@ test("logs configured runtime generation in connection transition events", async
       z.object({ generation: z.number().nullable().optional() }).parse(payload).generation,
     ).toBe(7);
   }
+});
+
+test("closing a client while subscription releases are in flight reports only the disposal", async () => {
+  const mock = createMockTransport();
+  let transportsCreated = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      transportsCreated += 1;
+      return mock.transport;
+    },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const subscriptions = ["/tmp/one", "/tmp/two"].map((cwd) =>
+    client.observeCheckoutDiff(cwd, { mode: "uncommitted" }),
+  );
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(2));
+  for (const [index, frame] of [...mock.sent].entries()) {
+    const request = parseSentFrame(frame);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "subscribe_checkout_diff_response",
+        payload: {
+          subscriptionId: `checkout-sub-${index}`,
+          cwd: request.cwd,
+          files: [],
+          error: null,
+          requestId: request.requestId,
+        },
+      }),
+    );
+  }
+  await Promise.all(subscriptions.map((subscription) => subscription.ready));
+
+  // The host runtime releases its handlers and closes the previous client without waiting.
+  const releases = subscriptions.map((subscription) =>
+    subscription.release().catch(() => undefined),
+  );
+  await vi.waitFor(() => expect(mock.sent).toHaveLength(4));
+
+  const statuses: string[] = [];
+  client.subscribeConnectionStatus((state) => statuses.push(state.status));
+  statuses.length = 0;
+
+  await client.close();
+  await Promise.all(releases);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  expect(statuses).toEqual(["disposed"]);
+  expect(client.lastError).toBeNull();
+  expect(transportsCreated).toBe(1);
 });
 
 test("subscribes to checkout diff updates via RPC handshake", async () => {
@@ -5760,6 +6612,108 @@ test("fetches scoped recent provider sessions", async () => {
       },
     ],
   });
+});
+
+test.each([
+  {
+    scenario: "successful rows after the default RPC deadline",
+    delayMs: 61_000,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [
+        {
+          providerId: "slow-acp",
+          providerLabel: "Slow ACP",
+          providerHandleId: "slow-session",
+          cwd: "/tmp/import-listing",
+          title: "Slow provider session",
+          firstPromptPreview: null,
+          lastPromptPreview: null,
+          lastActivityAt: "2026-04-30T12:34:56.000Z",
+        },
+      ],
+    },
+  },
+  {
+    scenario: "the server's provider timeout after ninety seconds",
+    delayMs: 90_001,
+    payload: {
+      requestId: "recent-listing-deadline",
+      entries: [],
+      providerErrors: [
+        {
+          provider: "slow-acp",
+          message: "Timed out listing importable sessions for provider 'slow-acp' after 90000ms",
+        },
+      ],
+    },
+  },
+])("recent provider listing receives $scenario", async ({ delayMs, payload }) => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_deadline",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const outcome = client
+    .fetchRecentProviderSessions({
+      requestId: "recent-listing-deadline",
+      providers: ["slow-acp"],
+      limit: 1,
+    })
+    .then(
+      (response) => ({ status: "success", response }),
+      (error: unknown) => ({ status: "error", error }),
+    );
+
+  await vi.advanceTimersByTimeAsync(delayMs);
+  transport.triggerMessage(
+    wrapSessionMessage({ type: "fetch_recent_provider_sessions_response", payload }),
+  );
+
+  expect(await outcome).toEqual({ status: "success", response: payload });
+  expect(client.isConnected).toBe(true);
+});
+
+test("recent provider listing still expires when the daemon never answers", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_import_listing_no_response",
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen();
+  await connected;
+
+  const errors: unknown[] = [];
+  const listing = client
+    .fetchRecentProviderSessions({ providers: ["slow-acp"] })
+    .catch((error: unknown) => {
+      errors.push(error);
+    });
+
+  await vi.advanceTimersByTimeAsync(90_001);
+  expect(errors).toEqual([]);
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(errors).toEqual([
+    expect.objectContaining({
+      name: "DaemonConnectionError",
+      code: "DAEMON_REQUEST_TIMEOUT",
+    }),
+  ]);
+  await listing;
+  expect(client.isConnected).toBe(true);
 });
 
 test("imports an agent by provider handle id", async () => {
@@ -7742,6 +8696,301 @@ test("uploadFile stops sending chunks when the connection closes between sends",
   ).toBe(false);
 });
 
+test("uploadFile outlives the 60s RPC deadline while chunks are still streaming", async () => {
+  vi.useFakeTimers();
+  try {
+    const mock = createMockTransport();
+    let releaseSecondChunk: (() => void) | null = null;
+    const baseSend = mock.transport.send;
+    let chunkCount = 0;
+    mock.transport.send = (data) => {
+      const result = baseSend(data);
+      if (typeof data !== "string") {
+        const frame = decodeFileTransferFrame(assertUint8Array(data));
+        if (frame.opcode === FileTransferOpcode.FileChunk) {
+          chunkCount += 1;
+          if (chunkCount === 1) {
+            return new Promise<void>((resolve) => {
+              releaseSecondChunk = resolve;
+            });
+          }
+        }
+      }
+      return result;
+    };
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "upload-slow-uplink",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      livenessHeartbeat: false,
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connection = client.connect();
+    mock.triggerOpen();
+    await connection;
+
+    const upload = client.uploadFile({
+      fileName: "large.jpg",
+      mimeType: "image/jpeg",
+      bytes: new Uint8Array(10),
+      chunkSize: 5,
+      requestId: "req-slow-uplink",
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(releaseSecondChunk).not.toBeNull();
+
+    // Exceed the 60s default session RPC timeout while the first chunk is still draining.
+    await vi.advanceTimersByTimeAsync(75_000);
+    releaseSecondChunk?.();
+    await vi.advanceTimersByTimeAsync(10);
+
+    const file = {
+      type: "uploaded_file" as const,
+      id: "upload_req-slow-uplink",
+      fileName: "large.jpg",
+      mimeType: "image/jpeg",
+      size: 10,
+      path: "/tmp/paseo/uploads/upload_req-slow-uplink/large.jpg",
+    };
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "file.upload.response",
+        payload: { requestId: "req-slow-uplink", file, error: null },
+      }),
+    );
+
+    await expect(upload).resolves.toEqual({
+      requestId: "req-slow-uplink",
+      file,
+      error: null,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("uploadFile times out 60s after FileEnd if the daemon never responds", async () => {
+  vi.useFakeTimers();
+  try {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "upload-post-end-timeout",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      livenessHeartbeat: false,
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connection = client.connect();
+    mock.triggerOpen();
+    await connection;
+
+    const upload = client.uploadFile({
+      fileName: "hang.jpg",
+      mimeType: "image/jpeg",
+      bytes: new Uint8Array(10),
+      chunkSize: 5,
+      requestId: "req-hang",
+    });
+    const caught = upload.catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10);
+    // FileEnd has now been sent; waiting 60s without file.upload.response must time out.
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const error = await caught;
+    expect(error).toBeInstanceOf(DaemonConnectionError);
+    expect((error as DaemonConnectionError).code).toBe("DAEMON_REQUEST_TIMEOUT");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("uploadFile flushes unpaced transports (supportsDrain=false) via session ping/pong every 1 MiB", async () => {
+  const mock = createMockTransport();
+  mock.transport.supportsDrain = false;
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "upload-unpaced-android",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    livenessHeartbeat: false,
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen();
+  await connection;
+
+  const totalBytes = 2 * 1024 * 1024 + 256 * 1024; // 2.25 MiB -> 2 flush barriers at 1 MiB and 2 MiB
+  const upload = client.uploadFile({
+    fileName: "photo.png",
+    mimeType: "image/png",
+    bytes: new Uint8Array(totalBytes),
+    requestId: "req-unpaced",
+  });
+
+  const sentChunkBytes = () =>
+    mock.sent
+      .filter((frame) => typeof frame !== "string")
+      .map(assertUint8Array)
+      .map(decodeFileTransferFrame)
+      .filter((frame) => frame.opcode === FileTransferOpcode.FileChunk)
+      .reduce((sum, frame) => sum + frame.payload.byteLength, 0);
+
+  const findPingRequests = () =>
+    mock.sent
+      .filter((frame): frame is string => typeof frame === "string")
+      .map((raw) => JSON.parse(raw))
+      .filter((env) => env.type === "session" && env.message?.type === "ping")
+      .map((env) => env.message.requestId as string);
+
+  // First 1 MiB window must pause and emit a session ping before queuing more chunks.
+  await vi.waitFor(() => {
+    expect(findPingRequests()).toHaveLength(1);
+  });
+  expect(sentChunkBytes()).toBe(1024 * 1024);
+
+  // Answer first flush ping -> second 1 MiB window streams and pauses at 2 MiB.
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "pong",
+      payload: {
+        requestId: findPingRequests()[0],
+        serverReceivedAt: Date.now(),
+        serverSentAt: Date.now(),
+      },
+    }),
+  );
+
+  await vi.waitFor(() => {
+    expect(findPingRequests()).toHaveLength(2);
+  });
+  expect(sentChunkBytes()).toBe(2 * 1024 * 1024);
+
+  // Answer second flush ping -> final 256 KiB and FileEnd are sent.
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "pong",
+      payload: {
+        requestId: findPingRequests()[1],
+        serverReceivedAt: Date.now(),
+        serverSentAt: Date.now(),
+      },
+    }),
+  );
+
+  await vi.waitFor(() => {
+    const frames = mock.sent
+      .filter((frame) => typeof frame !== "string")
+      .map(assertUint8Array)
+      .map(decodeFileTransferFrame);
+    expect(frames.at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+  });
+  expect(sentChunkBytes()).toBe(totalBytes);
+
+  const file = {
+    type: "uploaded_file" as const,
+    id: "upload_req-unpaced",
+    fileName: "photo.png",
+    mimeType: "image/png",
+    size: totalBytes,
+    path: "/tmp/paseo/uploads/upload_req-unpaced/photo.png",
+  };
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file.upload.response",
+      payload: { requestId: "req-unpaced", file, error: null },
+    }),
+  );
+  await expect(upload).resolves.toEqual({ requestId: "req-unpaced", file, error: null });
+});
+
+test("sendAgentMessage and createAgent forward uploaded image attachments with role='image' without leaking into config", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "uploaded-images-wire",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    livenessHeartbeat: false,
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen({ features: { creationLifecycle: true } });
+  await connection;
+
+  const uploadedImageAttachment = {
+    type: "uploaded_file" as const,
+    id: "upload_1",
+    fileName: "photo.jpg",
+    mimeType: "image/jpeg",
+    size: 2048,
+    path: "/tmp/paseo/uploads/upload_1/photo.jpg",
+    role: "image" as const,
+  };
+
+  const sendPromise = client.sendAgentMessage("agent-1", "Describe", {
+    messageId: "msg-1",
+    attachments: [uploadedImageAttachment],
+  });
+  const sendMsg = parseSentFrame(mock.sent.at(-1)!);
+  expect(sendMsg).toMatchObject({
+    type: "send_agent_message_request",
+    agentId: "agent-1",
+    text: "Describe",
+    attachments: [uploadedImageAttachment],
+  });
+  expect(sendMsg.images).toBeUndefined();
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "send_agent_message_response",
+      payload: {
+        requestId: sendMsg.requestId as string,
+        agentId: "agent-1",
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+  await sendPromise;
+
+  const createPromise = client.createAgent({
+    provider: "claude",
+    cwd: "/tmp/repo",
+    workspaceId: "ws-1",
+    initialPrompt: "Inspect",
+    attachments: [uploadedImageAttachment],
+  });
+  await vi.waitFor(() => {
+    expect(parseSentFrame(mock.sent.at(-1)!).type).toBe("agent.create.request");
+  });
+  const createMsg = parseSentFrame(mock.sent.at(-1)!);
+  expect(createMsg).toMatchObject({
+    type: "agent.create.request",
+    attachments: [uploadedImageAttachment],
+  });
+  expect((createMsg.config as Record<string, unknown>).attachments).toBeUndefined();
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.create.response",
+      payload: {
+        requestId: createMsg.requestId as string,
+        agent: null,
+        error: "done",
+      },
+    }),
+  );
+  await expect(createPromise).rejects.toThrow("done");
+});
+
 test("rejects source installation on an older host before sending a request", async () => {
   const transport = createMockTransport();
   const client = new DaemonClient({
@@ -7958,7 +9207,9 @@ test("usage request timeout detaches its update listener", async () => {
     const result = client.listUsageReports({ requestId: "timeout-usage" }, (report) =>
       updates.push(report),
     );
-    const rejected = expect(result).rejects.toThrow("Timeout waiting for message (60000ms)");
+    const rejected = expect(result).rejects.toThrow(
+      "No response to usage.list_reports.request after 60000ms",
+    );
     await vi.advanceTimersByTimeAsync(60_001);
     await rejected;
     mock.triggerMessage(
@@ -8028,6 +9279,116 @@ test.each([false, true])(
     await send;
   },
 );
+
+describe("agent sender active-turn behaviors", () => {
+  async function connect(features: Record<string, boolean>) {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "agent-behaviors",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: { agentMessageProvenance: true, ...features } });
+    await connecting;
+    return { client, transport };
+  }
+
+  function respond(
+    transport: ReturnType<typeof createMockTransport>,
+    payload: Record<string, unknown> = {},
+  ) {
+    const request = parseSentFrame(transport.sent.at(-1));
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "recipient",
+          accepted: true,
+          error: null,
+          ...payload,
+        },
+      }),
+    );
+    return request;
+  }
+
+  test("a capable host gets the behavior as asked and returns the applied behavior with guidance", async () => {
+    const { client, transport } = await connect({ agentActiveTurnBehaviors: true });
+    const send = client.sendAgentMessage("recipient", "review", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "steer",
+    });
+    const request = respond(transport, {
+      deliveryStatus: "queued",
+      activeTurnBehavior: "steer",
+      guidance: "Steering the running turn.",
+    });
+    expect(request.activeTurnBehavior).toBe("steer");
+    await expect(send).resolves.toEqual({
+      deliveryStatus: "queued",
+      activeTurnBehavior: "steer",
+      guidance: "Steering the running turn.",
+    });
+  });
+
+  test("an older host gets its own agent default for queue and refuses a steer", async () => {
+    const { client, transport } = await connect({});
+    const queued = client.sendAgentMessage("recipient", "review", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "queue",
+    });
+    const request = respond(transport, { deliveryStatus: "queued" });
+    expect("activeTurnBehavior" in request).toBe(false);
+    await expect(queued).resolves.toEqual({ deliveryStatus: "queued" });
+
+    const interrupt = client.sendAgentMessage("recipient", "stop", {
+      sourceAgentId: "sender",
+      activeTurnBehavior: "interrupt",
+    });
+    expect(respond(transport, { deliveryStatus: "queued" }).activeTurnBehavior).toBe("interrupt");
+    await interrupt;
+
+    const sentBefore = transport.sent.length;
+    await expect(
+      client.sendAgentMessage("recipient", "now", {
+        sourceAgentId: "sender",
+        activeTurnBehavior: "steer",
+      }),
+    ).rejects.toThrow("Update the Paseo host to steer a running turn from an agent");
+    expect(transport.sent).toHaveLength(sentBefore);
+  });
+
+  test("non-agent queue is sent to hosts advertising nonAgentMessageQueue", async () => {
+    const { client, transport } = await connect({ nonAgentMessageQueue: true });
+    const send = client.sendAgentMessage("recipient", "review", { activeTurnBehavior: "queue" });
+    const request = respond(transport, {
+      deliveryStatus: "queued",
+      activeTurnBehavior: "queue",
+      guidance: "Queued, not delivered yet.",
+    });
+    expect(request.activeTurnBehavior).toBe("queue");
+    expect("sourceAgentId" in request).toBe(false);
+    await expect(send).resolves.toEqual({
+      deliveryStatus: "queued",
+      activeTurnBehavior: "queue",
+      guidance: "Queued, not delivered yet.",
+    });
+  });
+
+  test("non-agent queue fails before sending against older hosts without nonAgentMessageQueue", async () => {
+    const { client, transport } = await connect({ agentActiveTurnBehaviors: true });
+    await expect(
+      client.sendAgentMessage("recipient", "review", { activeTurnBehavior: "queue" }),
+    ).rejects.toThrow(
+      "Update the Paseo host to queue a message behind a running turn without an agent sender.",
+    );
+    expect(transport.sent).toHaveLength(0);
+  });
+});
 
 test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
   const mock = createMockTransport();
@@ -8742,7 +10103,7 @@ test("RPC deadlines remain active while a preceding frame waits for drain", asyn
   blocked = true;
   const first = client.sendHostFrame("route", new Uint8Array([1]));
   try {
-    await expect(client.ping({ timeoutMs: 20 })).rejects.toThrow("Timeout waiting for message");
+    await expect(client.ping({ timeoutMs: 20 })).rejects.toThrow("No response to ping after");
     expect(client.isConnected).toBe(true);
   } finally {
     drain();
@@ -8902,7 +10263,6 @@ test.each(["latency", "dictation start", "dictation finish"])(
 );
 
 test("routed channels inherit an origin without drain support", async () => {
-  const { createHostChannelTransport } = await import("./hosts/index.js");
   const mock = createMockTransport();
   mock.transport.supportsDrain = false;
   const client = new DaemonClient({
@@ -8923,4 +10283,619 @@ test("routed channels inherit an origin without drain support", async () => {
   )({ url: "ws://route" });
   expect(route.supportsDrain).toBe(false);
   route.close();
+});
+
+describe("provider options across daemon versions", () => {
+  const agentSnapshot = {
+    id: "agent-1",
+    provider: "codex",
+    cwd: "/repo",
+    model: null,
+    thinkingOptionId: null,
+    effectiveThinkingOptionId: null,
+    createdAt: "2026-04-30T00:00:00.000Z",
+    updatedAt: "2026-04-30T00:00:00.000Z",
+    lastUserMessageAt: null,
+    status: "idle",
+    capabilities: {
+      supportsStreaming: false,
+      supportsSessionPersistence: false,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+    },
+    currentModeId: null,
+    availableModes: [],
+    pendingPermissions: [],
+    persistence: null,
+    title: null,
+    labels: {},
+    requiresAttention: false,
+    attentionReason: null,
+  };
+  const speedFeature = {
+    type: "select",
+    id: "service_tier",
+    label: "Speed",
+    value: "priority",
+    options: [
+      { id: "default", label: "Normal", isDefault: true },
+      { id: "priority", label: "Fast" },
+    ],
+  };
+
+  async function connect(features: Record<string, boolean>) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "provider_options",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    mock.triggerOpen({ features });
+    await connecting;
+    const sentMessages = () =>
+      mock.sent.map(
+        (frame) => (JSON.parse(frame as string) as { message: Record<string, unknown> }).message,
+      );
+    return { mock, client, sentMessages };
+  }
+
+  test("a legacy create and a timeline read return the agent with controls over options", async () => {
+    const { mock, client, sentMessages } = await connect({});
+    const legacyAgent = { ...agentSnapshot, features: [speedFeature] };
+    const answerLast = (reply: (requestId: string) => Record<string, unknown>) => {
+      const sent = sentMessages();
+      const requestId = String(sent[sent.length - 1].requestId);
+      mock.triggerMessage(wrapSessionMessage(reply(requestId) as never));
+    };
+
+    const creating = client.createAgent({ provider: "codex", cwd: "/repo" });
+    answerLast((requestId) => ({
+      type: "status",
+      payload: { status: "agent_created", requestId, agentId: "agent-1", agent: legacyAgent },
+    }));
+    const created = await creating;
+
+    const reading = client.fetchAgentTimeline("agent-1");
+    answerLast((requestId) => ({
+      type: "fetch_agent_timeline_response",
+      payload: {
+        requestId,
+        agentId: "agent-1",
+        agent: legacyAgent,
+        direction: "tail",
+        projection: "projected",
+        epoch: "epoch-1",
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+        startCursor: null,
+        endCursor: null,
+        hasOlder: false,
+        hasNewer: false,
+        entries: [],
+        error: null,
+      },
+    }));
+    const timeline = await reading;
+
+    expect(created.options).toEqual({ service_tier: "priority" });
+    expect(created.controls).toEqual([expect.objectContaining({ key: "service_tier" })]);
+    expect(timeline.agent?.options).toEqual({ service_tier: "priority" });
+    expect(timeline.agent?.controls).toEqual([expect.objectContaining({ key: "service_tier" })]);
+  });
+
+  test("a legacy daemon's features arrive as controls over options", async () => {
+    const { mock, client } = await connect({});
+    const received: Array<{ controls?: unknown; options?: unknown }> = [];
+    client.on("agent_update", (message) => {
+      if (message.payload.kind === "upsert") received.push(message.payload.agent);
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_update",
+        payload: { kind: "upsert", agent: { ...agentSnapshot, features: [speedFeature] } },
+      }),
+    );
+    expect(received).toEqual([
+      expect.objectContaining({
+        options: { service_tier: "priority" },
+        controls: [
+          expect.objectContaining({
+            type: "select",
+            key: "service_tier",
+            defaultValue: "default",
+            choices: [
+              { value: "default", label: "Normal" },
+              { value: "priority", label: "Fast" },
+            ],
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  test("a legacy daemon takes option writes as feature writes", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const write = client.setAgentOptions("agent-1", { service_tier: "default" });
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "set_agent_feature_request",
+      agentId: "agent-1",
+      featureId: "service_tier",
+      value: "default",
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "set_agent_feature_response",
+        payload: { requestId: request.requestId, agentId: "agent-1", accepted: true, error: null },
+      }),
+    );
+    await write;
+  });
+
+  // The old Codex setter rejects a non-string `service_tier` and the old Claude setter reads
+  // `null` as off, so a reset is sent as the value the old API can represent.
+  async function resetOnLegacyDaemon(agent: Record<string, unknown>, patch: Record<string, null>) {
+    const { client, sentMessages, mock } = await connect({});
+    const reply = (message: Record<string, unknown>) =>
+      mock.triggerMessage(wrapSessionMessage(message as never));
+    const writing = client.setAgentOptions("agent-1", patch);
+    const [fetch] = sentMessages();
+    expect(fetch).toMatchObject({ type: "fetch_agent_request", agentId: "agent-1" });
+    reply({
+      type: "fetch_agent_response",
+      payload: { requestId: fetch.requestId, agent, project: null, error: null },
+    });
+    return { writing, sentMessages, reply };
+  }
+
+  test("a legacy daemon resets a choice to the default the old API names", async () => {
+    const { writing, sentMessages, reply } = await resetOnLegacyDaemon(
+      { ...agentSnapshot, provider: "codex", features: [speedFeature] },
+      { service_tier: null },
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    const write = sentMessages()[1];
+    expect(write).toMatchObject({
+      type: "set_agent_feature_request",
+      featureId: "service_tier",
+      value: "default",
+    });
+    reply({
+      type: "set_agent_feature_response",
+      payload: { requestId: write.requestId, agentId: "agent-1", accepted: true, error: null },
+    });
+    await writing;
+  });
+
+  test("a legacy daemon resets a toggle to off", async () => {
+    const { writing, sentMessages, reply } = await resetOnLegacyDaemon(
+      {
+        ...agentSnapshot,
+        features: [{ type: "toggle", id: "fast_mode", label: "Fast", value: true }],
+      },
+      { fast_mode: null },
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    const write = sentMessages()[1];
+    expect(write).toMatchObject({ featureId: "fast_mode", value: false });
+    reply({
+      type: "set_agent_feature_response",
+      payload: { requestId: write.requestId, agentId: "agent-1", accepted: true, error: null },
+    });
+    await writing;
+  });
+
+  test("a legacy daemon cannot reset an option no control draws, and writes nothing", async () => {
+    const { writing, sentMessages } = await resetOnLegacyDaemon(
+      { ...agentSnapshot, features: [speedFeature] },
+      { token_budget: null },
+    );
+    await expect(writing).rejects.toThrow("Update the host to reset token_budget.");
+    expect(sentMessages()).toHaveLength(1);
+  });
+
+  test("a legacy daemon applies a config reset as the default the old API names", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const reply = (message: Record<string, unknown>) =>
+      mock.triggerMessage(wrapSessionMessage(message as never));
+    const applying = client.applyAgentConfig("agent-1", {
+      modeId: "plan",
+      options: { service_tier: null, sandbox_mode: "read-only" },
+    });
+    const [fetch] = sentMessages();
+    expect(fetch).toMatchObject({ type: "fetch_agent_request", agentId: "agent-1" });
+    reply({
+      type: "fetch_agent_response",
+      payload: {
+        requestId: fetch.requestId,
+        agent: { ...agentSnapshot, provider: "codex", features: [speedFeature] },
+        project: null,
+        error: null,
+      },
+    });
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    const apply = sentMessages()[1];
+    expect(apply).toMatchObject({
+      type: "agent.config.apply.request",
+      config: {
+        modeId: "plan",
+        featureValues: { service_tier: "default", sandbox_mode: "read-only" },
+      },
+    });
+    expect(apply.config).not.toHaveProperty("options");
+    reply({
+      type: "agent.config.apply.response",
+      payload: { requestId: apply.requestId, agentId: "agent-1", accepted: true, error: null },
+    });
+    await applying;
+  });
+
+  test("a legacy daemon cannot apply a config reset it cannot name, and applies nothing", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const applying = client.applyAgentConfig("agent-1", { options: { token_budget: null } });
+    const [fetch] = sentMessages();
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "fetch_agent_response",
+        payload: {
+          requestId: fetch.requestId,
+          agent: { ...agentSnapshot, features: [speedFeature] },
+          project: null,
+          error: null,
+        },
+      } as never),
+    );
+    await expect(applying).rejects.toThrow("Update the host to reset token_budget.");
+    expect(sentMessages()).toHaveLength(1);
+  });
+
+  test("a current daemon takes option writes as one options patch", async () => {
+    const { client, sentMessages, mock } = await connect({ providerOptionControls: true });
+    const write = client.setAgentOptions("agent-1", { service_tier: null, sandbox_mode: "x" });
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "agent.config.apply.request",
+      agentId: "agent-1",
+      config: { options: { service_tier: null, sandbox_mode: "x" } },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent.config.apply.response",
+        payload: { requestId: request.requestId, agentId: "agent-1", accepted: true, error: null },
+      }),
+    );
+    await write;
+  });
+
+  test("a legacy draft listing answers with controls and options", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const listing = client.listProviderControls({
+      provider: "codex",
+      cwd: "/repo",
+      providerOptions: { service_tier: "default" },
+    });
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: { provider: "codex", featureValues: { service_tier: "default" } },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "codex",
+          features: [{ ...speedFeature, value: "default" }],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: request.requestId,
+        },
+      }),
+    );
+    await expect(listing).resolves.toMatchObject({
+      provider: "codex",
+      options: { service_tier: "default" },
+      controls: [expect.objectContaining({ key: "service_tier" })],
+    });
+  });
+
+  test("a legacy daemon's profiles are read and saved by their options", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    const reading = client.getDaemonConfig();
+    const [read] = sentMessages();
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "get_daemon_config_response",
+        payload: {
+          requestId: read.requestId,
+          config: {
+            mcp: { injectIntoAgents: true },
+            agentProfiles: [
+              {
+                id: "p1",
+                name: "Fast",
+                provider: "codex",
+                featureValues: { service_tier: "fast" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const { config } = await reading;
+    expect(config.agentProfiles?.[0]).toMatchObject({ options: { service_tier: "fast" } });
+    expect(config.agentProfiles?.[0]).not.toHaveProperty("featureValues");
+
+    void client.patchDaemonConfig({ agentProfiles: config.agentProfiles }).catch(() => {});
+    const written = sentMessages().find((message) => message.type === "set_daemon_config_request");
+    expect(written).toMatchObject({
+      config: { agentProfiles: [{ featureValues: { service_tier: "fast" } }] },
+    });
+    expect(written).not.toMatchObject({ config: { agentProfiles: [{ options: {} }] } });
+  });
+
+  test("a legacy daemon's profile with both featureValues and options keeps both when saved", async () => {
+    // `options` survives on a legacy daemon's passthrough profile after a downgrade, while its
+    // own app keeps editing `featureValues`.
+    const { client, sentMessages, mock } = await connect({});
+    const reading = client.getDaemonConfig();
+    const [read] = sentMessages();
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "get_daemon_config_response",
+        payload: {
+          requestId: read.requestId,
+          config: {
+            mcp: { injectIntoAgents: true },
+            agentProfiles: [
+              {
+                id: "p1",
+                name: "Mixed",
+                provider: "codex",
+                featureValues: { service_tier: "fast", sandbox_mode: "workspace-write" },
+                options: { sandbox_mode: "read-only" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const { config } = await reading;
+    expect(config.agentProfiles?.[0]).toMatchObject({
+      options: { service_tier: "fast", sandbox_mode: "read-only" },
+    });
+    expect(config.agentProfiles?.[0]).not.toHaveProperty("featureValues");
+
+    void client.patchDaemonConfig({ agentProfiles: config.agentProfiles }).catch(() => {});
+    const written = sentMessages().find((message) => message.type === "set_daemon_config_request");
+    expect(written).toMatchObject({
+      config: {
+        agentProfiles: [{ featureValues: { service_tier: "fast", sandbox_mode: "read-only" } }],
+      },
+    });
+  });
+
+  test("a legacy daemon applies a profile's options as feature values", async () => {
+    const { client, sentMessages } = await connect({});
+    void client.applyAgentConfig("agent-1", { options: { service_tier: "fast" } }).catch(() => {});
+    const [request] = sentMessages();
+    expect(request).toMatchObject({
+      type: "agent.config.apply.request",
+      config: { featureValues: { service_tier: "fast" } },
+    });
+  });
+
+  test("a cold legacy create lists the provider's features before routing its options", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    void client
+      .createAgent({
+        config: {
+          provider: "claude",
+          cwd: "/repo",
+          providerOptions: { fast_mode: true, sandbox_mode: "read-only" },
+        },
+      })
+      .catch(() => {});
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
+    const [listing] = sentMessages();
+    expect(listing).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: { provider: "claude", cwd: "/repo" },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "claude",
+          features: [{ type: "toggle", id: "fast_mode", label: "Fast", value: false }],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: listing.requestId,
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    expect(sentMessages()[1].config).toMatchObject({
+      featureValues: { fast_mode: true },
+      providerOptions: { sandbox_mode: "read-only" },
+    });
+  });
+
+  test("a legacy workspace create routes its agent's options from its own model's controls", async () => {
+    const { client, sentMessages, mock } = await connect({ creationLifecycle: true });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: { ...agentSnapshot, provider: "codex", model: "mini", features: [] },
+        },
+      }),
+    );
+    void client
+      .createWorkspace({
+        source: { kind: "directory", path: "/repo" },
+        agent: {
+          config: {
+            provider: "codex",
+            cwd: "/repo",
+            model: "gpt-5.5",
+            providerOptions: { service_tier: "fast" },
+          },
+        },
+      } as never)
+      .catch(() => {});
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
+    const [listing] = sentMessages();
+    expect(listing).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: { provider: "codex", cwd: "/repo", model: "gpt-5.5" },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "codex",
+          features: [speedFeature],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: listing.requestId,
+        },
+      }),
+    );
+    const sentTypes = () => sentMessages().map((message) => message.type);
+    await vi.waitFor(() => expect(sentTypes()).toContain("workspace.create.request"));
+    const created = sentMessages()[sentTypes().indexOf("workspace.create.request")];
+    expect(created).toMatchObject({
+      agent: { config: { featureValues: { service_tier: "fast" } } },
+    });
+  });
+
+  test("a legacy create lists the controls of its own model, whatever a snapshot showed", async () => {
+    const { client, sentMessages, mock } = await connect({});
+    // A Haiku agent has no Fast control; that says nothing about Opus.
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: { ...agentSnapshot, provider: "claude", model: "haiku", features: [] },
+        },
+      }),
+    );
+    void client
+      .createAgent({
+        config: {
+          provider: "claude",
+          cwd: "/repo",
+          model: "opus",
+          modeId: "plan",
+          thinkingOptionId: "high",
+          providerOptions: { fast_mode: true, sandbox_mode: "read-only" },
+        },
+      })
+      .catch(() => {});
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(1));
+    const [listing] = sentMessages();
+    expect(listing).toMatchObject({
+      type: "list_provider_features_request",
+      draftConfig: {
+        provider: "claude",
+        cwd: "/repo",
+        model: "opus",
+        modeId: "plan",
+        thinkingOptionId: "high",
+      },
+    });
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "list_provider_features_response",
+        payload: {
+          provider: "claude",
+          features: [{ type: "toggle", id: "fast_mode", label: "Fast", value: false }],
+          error: null,
+          fetchedAt: "2026-04-30T00:00:00.000Z",
+          requestId: listing.requestId,
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(sentMessages()).toHaveLength(2));
+    expect(sentMessages()[1].config).toMatchObject({
+      model: "opus",
+      featureValues: { fast_mode: true },
+      providerOptions: { sandbox_mode: "read-only" },
+    });
+  });
+});
+
+test.each([
+  { name: "route", initialRouteId: null, link: false },
+  { name: "link", initialRouteId: null, link: true },
+  { name: "initial route", initialRouteId: "route", link: false },
+])(
+  "$name fails promptly when its origin is offline during initialization",
+  async ({ initialRouteId, link }) => {
+    vi.useFakeTimers();
+    const origin = new DaemonClient({
+      url: "ws://origin",
+      clientId: "offline-origin",
+      transportFactory: () => createMockTransport().transport,
+      reconnect: { enabled: false },
+      logger: createMockLogger(),
+    });
+    clients.push(origin);
+    const unsubscribe = vi.fn();
+    const subscribe = origin.subscribeConnectionStatus.bind(origin);
+    vi.spyOn(origin, "subscribeConnectionStatus").mockImplementation((listener) => {
+      const release = subscribe(listener);
+      return () => {
+        release();
+        unsubscribe();
+      };
+    });
+    const child = new DaemonClient({
+      url: "ws://routed-host/ws",
+      clientId: "offline-origin-child",
+      transportFactory: createHostChannelTransport(origin, "child", "scope", initialRouteId, link),
+      reconnect: { enabled: false },
+      logger: createMockLogger(),
+    });
+    clients.push(child);
+    const rejected = expect(child.connect()).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.getConnectionState().status).toBe("disconnected");
+    await rejected;
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  },
+);
+
+test("disposing a route before its deferred close does not reopen it on origin recovery", async () => {
+  vi.useFakeTimers();
+  const mock = createMockTransport();
+  const origin = new DaemonClient({
+    url: "ws://origin",
+    clientId: "disposed-route-origin",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+    logger: createMockLogger(),
+  });
+  clients.push(origin);
+  const route = createHostChannelTransport(origin, "child", "scope", null)({ url: "ws://route" });
+  const opened = vi.fn();
+  const closed = vi.fn();
+  route.onOpen(opened);
+  route.onClose(closed);
+  route.close();
+  const connecting = origin.connect();
+  mock.triggerOpen({ features: { ownedSubscriptions: true, connectedHosts: true } });
+  await connecting;
+  await vi.advanceTimersByTimeAsync(0);
+  expect(opened).not.toHaveBeenCalled();
+  expect(closed).toHaveBeenCalledTimes(1);
 });

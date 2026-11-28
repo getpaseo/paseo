@@ -1,13 +1,17 @@
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type {
+  AgentMetric,
   AgentProvider,
   AgentTimelineItem,
   JsonValue,
   ToolCallDetail,
+  UploadedImage,
 } from "@getpaseo/protocol/agent-types";
 import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
+import type { OverviewSummary } from "@/tool-calls/detail-level/overview/model";
+import { stampCompletedTurnMetrics } from "@/timeline/turn-metrics";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
 
 /**
@@ -86,9 +90,26 @@ export type StreamItem =
   | TodoListItem
   | NotificationItem
   | CompactionItem
-  | PluginTimelineStreamItem;
+  | PluginTimelineStreamItem
+  | TurnSummaryItem;
 
-export type UserMessageImageAttachment = AttachmentMetadata;
+export interface DaemonUploadedImageAttachment extends UploadedImage {
+  storageType: "daemon-upload";
+}
+
+export type UserMessageImageAttachment = AttachmentMetadata | DaemonUploadedImageAttachment;
+
+export function toDaemonUploadedImageAttachments(
+  images: readonly UploadedImage[] | undefined,
+): DaemonUploadedImageAttachment[] | undefined {
+  if (!images || images.length === 0) {
+    return undefined;
+  }
+  return images.map((image) => ({
+    ...image,
+    storageType: "daemon-upload" as const,
+  }));
+}
 
 export interface UserMessageItem {
   /** Attribution added by presentation for received agent messages. */
@@ -258,8 +279,10 @@ function produceUserMessage(
     throw new Error("User message upsert matched a non-user row");
   }
   const presentation = presentationPolicy === "incoming" ? incoming : existing;
+  const fallback = presentationPolicy === "incoming" ? existing : incoming;
   const merged = createUserMessage({
     ...presentation,
+    images: presentation.images ?? fallback.images,
     clientMessageId: incoming.clientMessageId ?? existing.clientMessageId,
     messageId: incoming.messageId ?? existing.messageId,
     timelineCursor: incoming.timelineCursor ?? existing.timelineCursor,
@@ -713,6 +736,8 @@ export interface AssistantMessageItem {
   timelineCursor?: TimelinePosition;
   text: string;
   timestamp: Date;
+  /** Set when this message carries its turn's footer. */
+  turnMetrics?: AgentMetric[];
   /** Display-only fields, assigned after source-item plugin transforms. */
 }
 
@@ -767,6 +792,8 @@ export interface ToolCallItem {
   turnId?: string;
   timestamp: Date;
   payload: ToolCallPayload;
+  /** Set when this call carries its turn's footer. */
+  turnMetrics?: AgentMetric[];
 }
 
 export type AgentToolCallItem = ToolCallItem & {
@@ -775,12 +802,21 @@ export type AgentToolCallItem = ToolCallItem & {
 
 /** Find and scrolling address a plugin row by the source it replaces. */
 export function getStreamItemMessageId(item: StreamItem): string {
-  if (item.kind === "plugin") return item.sourceId ?? item.id;
+  if (item.kind === "plugin") return item.source?.id ?? item.id;
   return item.id;
 }
 
 export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem {
   return item.kind === "tool_call" && item.payload.source === "agent";
+}
+
+/** The assistant reply a row shows: the row itself, or the reply a timeline plugin replaced. */
+export function getAssistantReply(
+  item: StreamItem | null | undefined,
+): AssistantMessageItem | null {
+  if (item?.kind === "assistant_message") return item;
+  if (item?.kind === "plugin" && item.source?.kind === "assistant_message") return item.source;
+  return null;
 }
 
 type NotificationLevel = "info" | "warning" | "error";
@@ -810,8 +846,12 @@ export interface CompactionItem {
 export interface PluginTimelineStreamItem {
   kind: "plugin";
   id: string;
-  /** The id of the stream item a timeline transformer replaced; set only by projection. */
-  sourceId?: string;
+  /**
+   * The row a timeline transformer replaced; set only by projection. Turn folding, timing, and the
+   * turn footer read the replaced row through it, so a transformed reply keeps its copy, fork,
+   * duration, and stats.
+   */
+  source?: StreamItem;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
@@ -820,6 +860,25 @@ export interface PluginTimelineStreamItem {
   itemKind: string;
   version: number;
   data: JsonValue;
+}
+
+/**
+ * The row a folded turn leaves between its host and its reply, standing in for the work it
+ * hides. Turn collapse produces it from the loaded rows; it is never stored.
+ */
+export interface TurnSummaryItem {
+  kind: "turn_summary";
+  id: string;
+  timelineCursor?: TimelinePosition;
+  turnId?: string;
+  timestamp: Date;
+  /**
+   * The prompt the turn folds under, or its first loaded tool call when the prompt is above the
+   * loaded history. Keys the reader's expanded turns.
+   */
+  hostId: string;
+  expanded: boolean;
+  tools: OverviewSummary;
 }
 
 export interface TodoEntry {
@@ -900,13 +959,15 @@ function appendUserMessage(
   clientMessageId?: string,
   timelineCursor?: TimelinePosition,
   turnId?: string,
+  images?: UserMessageImageAttachment[],
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
-  if (!hasContent) {
+  const hasImages = Boolean(images && images.length > 0);
+  if (!hasContent && !hasImages) {
     return state;
   }
 
-  const chunkSeed = chunk.trim() || chunk;
+  const chunkSeed = chunk.trim() || chunk || images?.[0]?.id || "image";
   const nextItem = createUserMessage({
     id: messageId ?? createUniqueTimelineId(state, "user", chunkSeed, timestamp),
     clientMessageId,
@@ -914,9 +975,28 @@ function appendUserMessage(
     timelineCursor,
     turnId,
     text: chunk,
+    images,
     timestamp,
   });
   return upsertUserMessage(state, nextItem);
+}
+
+function findSteeredAssistantIndex(
+  items: StreamItem[],
+  messageId: string,
+  turnId: string | undefined,
+): number {
+  let index = items.length - 1;
+  while (items[index]?.kind === "user_message") {
+    index -= 1;
+  }
+  const candidate = items[index];
+  return index < items.length - 1 &&
+    candidate?.kind === "assistant_message" &&
+    candidate.messageId === messageId &&
+    candidate.turnId === turnId
+    ? index
+    : -1;
 }
 
 function appendAssistantMessage(
@@ -927,43 +1007,41 @@ function appendAssistantMessage(
   messageId?: string,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
+  turnId?: string,
 ): StreamItem[] {
   const { chunk, hasContent } = normalizeChunk(text);
   if (!chunk) {
     return state;
   }
 
-  const last = state[state.length - 1];
-  const shouldAppendToLast =
-    last &&
-    last.kind === "assistant_message" &&
-    (messageId === undefined || last.messageId === messageId);
-  if (shouldAppendToLast) {
-    const updated: AssistantMessageItem = {
-      ...last,
-      text: `${last.text}${chunk}`,
-      timestamp,
-      ...(timelineCursor ? { timelineCursor } : {}),
-    };
-    return [...state.slice(0, -1), updated];
+  const lastIndex = state.length - 1;
+  const last = state[lastIndex];
+  let index = -1;
+  if (
+    last?.kind === "assistant_message" &&
+    (messageId === undefined || last.messageId === messageId)
+  ) {
+    index = lastIndex;
+  } else if (source === "live") {
+    if (messageId !== undefined) {
+      index = findSteeredAssistantIndex(state, messageId, turnId);
+    } else if (
+      last?.kind === "user_message" &&
+      state[lastIndex - 1]?.kind === "assistant_message"
+    ) {
+      index = lastIndex - 1;
+    }
   }
 
-  // A submitted user row can follow the streaming assistant during interrupt.
-  // In that case, look one row further back for the assistant to extend.
-  const secondLast = state[state.length - 2];
-  if (
-    source === "live" &&
-    last?.kind === "user_message" &&
-    secondLast?.kind === "assistant_message" &&
-    (messageId === undefined || secondLast.messageId === messageId)
-  ) {
+  const previous = state[index];
+  if (previous?.kind === "assistant_message") {
     const updated: AssistantMessageItem = {
-      ...secondLast,
-      text: `${secondLast.text}${chunk}`,
+      ...previous,
+      text: `${previous.text}${chunk}`,
       timestamp,
       ...(timelineCursor ? { timelineCursor } : {}),
     };
-    return [...state.slice(0, -2), updated, last];
+    return [...state.slice(0, index), updated, ...state.slice(index + 1)];
   }
 
   if (!hasContent) {
@@ -1523,6 +1601,7 @@ function reduceTimelineEvent(
         item.clientMessageId,
         timelineCursor,
         event.turnId,
+        toDaemonUploadedImageAttachments(item.images),
       );
     case "assistant_message":
       return appendAssistantMessage(
@@ -1533,6 +1612,7 @@ function reduceTimelineEvent(
         item.messageId,
         reservedItemIds,
         timelineCursor,
+        event.turnId,
       );
     case "reasoning":
       return appendThought(state, item.text, timestamp, timelineCursor, event.turnId);
@@ -1607,9 +1687,10 @@ export function reduceStreamUpdate(
       );
       return event.item.type === "reasoning" ? updated : finalizeActiveThoughts(updated);
     }
+    case "turn_completed":
+      return stampCompletedTurnMetrics(finalizeActiveThoughts(state), event.metrics, event.turnId);
     case "thread_started":
     case "turn_started":
-    case "turn_completed":
     case "turn_failed":
     case "turn_canceled":
     case "permission_requested":
@@ -1769,23 +1850,27 @@ function getActiveAssistantHeadIndex(head: StreamItem[]): number {
   return -1;
 }
 
-function getTailAssistantToResume(params: {
+function getTailAssistantResumeIndex(params: {
   incomingKind: StreamItem["kind"] | null;
   event: AgentStreamEventPayload;
   nextHead: StreamItem[];
-  tailAssistant: StreamItem | undefined;
-}): AssistantMessageItem | null {
-  if (params.incomingKind !== "assistant_message" || params.nextHead.length !== 0) {
-    return null;
+  tail: StreamItem[];
+  source: StreamUpdateSource;
+}): number {
+  const { incomingKind, event, nextHead, tail, source } = params;
+  if (incomingKind !== "assistant_message" || nextHead.length !== 0) return -1;
+
+  const messageId = getIncomingAssistantMessageId(event);
+  const last = tail.at(-1);
+  if (
+    last?.kind === "assistant_message" &&
+    (messageId === undefined || last.messageId === messageId)
+  ) {
+    return tail.length - 1;
   }
-  if (params.tailAssistant?.kind !== "assistant_message") {
-    return null;
-  }
-  const incomingMessageId = getIncomingAssistantMessageId(params.event);
-  if (incomingMessageId !== undefined && params.tailAssistant.messageId !== incomingMessageId) {
-    return null;
-  }
-  return params.tailAssistant;
+  return source === "live" && event.type === "timeline" && messageId !== undefined
+    ? findSteeredAssistantIndex(tail, messageId, event.turnId)
+    : -1;
 }
 
 /**
@@ -1864,6 +1949,45 @@ export interface ApplyStreamEventResult {
   acknowledgedClientMessageIds?: string[];
 }
 
+function buildCanonicalUserMessage(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  item: Extract<
+    Extract<AgentStreamEventPayload, { type: "timeline" }>["item"],
+    { type: "user_message" }
+  >;
+  turnId?: string;
+  timestamp: Date;
+  timelineCursor?: TimelinePosition;
+}): { canonical: UserMessageItem; hasContent: boolean } {
+  const { tail, head, item, turnId, timestamp, timelineCursor } = params;
+  const normalized = normalizeChunk(item.text);
+  const images = toDaemonUploadedImageAttachments(item.images);
+  const hasContent = normalized.hasContent || Boolean(images?.length);
+  const fallbackKey = normalized.chunk.trim() || images?.[0]?.id || "image";
+  const canonical = createUserMessage({
+    id:
+      item.messageId ?? createUniqueTimelineId([...tail, ...head], "user", fallbackKey, timestamp),
+    messageId: item.messageId,
+    clientMessageId: item.clientMessageId,
+    turnId,
+    timelineCursor,
+    text: normalized.chunk,
+    images,
+    timestamp,
+  });
+  return { canonical, hasContent };
+}
+
+function reconcileUserTurnIfPresent(
+  items: StreamItem[],
+  clientMessageId: string | undefined,
+  turnId: string | undefined,
+): StreamItem[] {
+  if (!clientMessageId) return items;
+  return reconcileCanonicalUserTurnMembership(items, clientMessageId, turnId);
+}
+
 function applyCanonicalUserMessageEvent(params: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -1874,71 +1998,63 @@ function applyCanonicalUserMessageEvent(params: {
 }): ApplyStreamEventResult | null {
   const { tail, head, event, timestamp, timelineCursor, unmatchedInsert = "tail" } = params;
   if (event.type !== "timeline" || event.item.type !== "user_message") return null;
-  const normalized = normalizeChunk(event.item.text);
 
-  const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
-  const flushedHead = head.length > 0 ? [] : head;
-  const canonical = createUserMessage({
-    id:
-      event.item.messageId ??
-      createUniqueTimelineId([...tail, ...head], "user", normalized.chunk.trim(), timestamp),
-    messageId: event.item.messageId,
-    clientMessageId: event.item.clientMessageId,
+  const { canonical, hasContent } = buildCanonicalUserMessage({
+    tail,
+    head,
+    item: event.item,
     turnId: event.turnId,
-    timelineCursor,
-    text: normalized.chunk,
     timestamp,
+    timelineCursor,
   });
+
   if (unmatchedInsert === "head") {
     const reconciled = upsertUserMessageAcrossStream({
       tail,
       head,
       message: canonical,
-      insert: normalized.hasContent ? "head" : "none",
+      insert: hasContent ? "head" : "none",
       presentation: "existing",
     });
-    const reconciledTail = canonical.clientMessageId
-      ? reconcileCanonicalUserTurnMembership(
-          reconciled.tail,
-          canonical.clientMessageId,
-          event.turnId,
-        )
-      : reconciled.tail;
-    const reconciledHead = canonical.clientMessageId
-      ? reconcileCanonicalUserTurnMembership(
-          reconciled.head,
-          canonical.clientMessageId,
-          event.turnId,
-        )
-      : reconciled.head;
+    const reconciledTail = reconcileUserTurnIfPresent(
+      reconciled.tail,
+      canonical.clientMessageId,
+      event.turnId,
+    );
+    const reconciledHead = reconcileUserTurnIfPresent(
+      reconciled.head,
+      canonical.clientMessageId,
+      event.turnId,
+    );
+    const matchedClientMessageId = reconciled.location?.matched
+      ? reconciled.location.message.clientMessageId
+      : undefined;
     return {
       tail: reconciledTail,
       head: reconciledHead,
       changedTail: reconciled.changedTail || reconciledTail !== reconciled.tail,
       changedHead: reconciled.changedHead || reconciledHead !== reconciled.head,
-      acknowledgedClientMessageIds:
-        reconciled.location?.matched && reconciled.location.message.clientMessageId
-          ? [reconciled.location.message.clientMessageId]
-          : [],
+      acknowledgedClientMessageIds: matchedClientMessageId ? [matchedClientMessageId] : [],
     };
   }
-  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, normalized.hasContent);
-  const reconciledTail = canonical.clientMessageId
-    ? reconcileCanonicalUserTurnMembership(
-        reconciled.items,
-        canonical.clientMessageId,
-        event.turnId,
-      )
-    : reconciled.items;
+
+  const flushedTail = head.length > 0 ? flushHeadToTail(tail, head) : tail;
+  const flushedHead = head.length > 0 ? [] : head;
+  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, hasContent);
+  const reconciledTail = reconcileUserTurnIfPresent(
+    reconciled.items,
+    canonical.clientMessageId,
+    event.turnId,
+  );
+  const matchedClientMessageId = reconciled.matched
+    ? reconciled.message.clientMessageId
+    : undefined;
   return {
     tail: reconciledTail,
     head: flushedHead,
     changedTail: flushedTail !== tail || reconciledTail !== flushedTail,
     changedHead: flushedHead !== head,
-    acknowledgedClientMessageIds:
-      reconciled.matched && reconciled.message.clientMessageId
-        ? [reconciled.message.clientMessageId]
-        : [],
+    acknowledgedClientMessageIds: matchedClientMessageId ? [matchedClientMessageId] : [],
   };
 }
 
@@ -2014,15 +2130,17 @@ export function applyStreamEvent(params: {
     flushHead();
   }
 
-  const tailAssistant = getTailAssistantToResume({
+  const resumeIndex = getTailAssistantResumeIndex({
     incomingKind,
     event,
     nextHead,
-    tailAssistant: nextTail.at(-1),
+    tail: nextTail,
+    source,
   });
-  if (tailAssistant) {
-    nextTail = nextTail.slice(0, -1);
-    nextHead = [tailAssistant];
+  if (resumeIndex >= 0) {
+    // Move any steers with the reply so the reply stays above them as it streams.
+    nextHead = nextTail.slice(resumeIndex);
+    nextTail = nextTail.slice(0, resumeIndex);
     changedTail = true;
     changedHead = true;
   }

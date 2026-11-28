@@ -13,6 +13,7 @@ import {
   useRef,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type Ref,
 } from "react";
 import type { DOMProps } from "expo/dom";
@@ -27,6 +28,7 @@ import {
 } from "../terminal/runtime/terminal-emulator-runtime";
 import { encodeTerminalPaste } from "../terminal/runtime/terminal-paste";
 import type { TerminalFile } from "../terminal/file-paste";
+import type { TerminalCharacterWidths } from "../terminal/character-widths";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
@@ -62,6 +64,12 @@ const HOST_DIV_STYLE: CSSProperties = {
   paddingRight: 0,
 };
 
+interface TerminalTouchFocus {
+  pointerId: number;
+  x: number;
+  y: number;
+}
+
 function buildXtermThemeKey(theme: ITheme): string {
   const values: Array<string> = [
     theme.background,
@@ -96,6 +104,7 @@ interface TerminalEmulatorProps {
   ref: Ref<TerminalEmulatorHandle>;
   streamKey: string;
   supportsTerminalInputModeReplay: boolean;
+  characterWidths: TerminalCharacterWidths;
   testId?: string;
   xtermTheme?: ITheme;
   scrollbackLines: number;
@@ -133,6 +142,7 @@ interface TerminalEmulatorProps {
     target: TerminalLocalFileLinkTarget,
     disposition: "main" | "side",
   ) => Promise<void> | void;
+  onOpenExternalUrl?: (url: string) => Promise<void> | void;
   onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
   onFilePaste?: (file: Promise<TerminalFile | null>) => void;
   pendingModifiers?: PendingTerminalModifiers;
@@ -154,6 +164,7 @@ export default function TerminalEmulator({
     cursor: "#e6e6e6",
   },
   scrollbackLines,
+  characterWidths,
   fontFamily,
   fontSize,
   swipeGesturesEnabled = false,
@@ -169,6 +180,7 @@ export default function TerminalEmulator({
   onInputModeChange,
   onResolveLocalFileLink,
   onOpenLocalFileLink,
+  onOpenExternalUrl,
   onRendererReadyChange,
   onFilePaste,
   pendingModifiers = { ctrl: false, shift: false, alt: false },
@@ -183,6 +195,8 @@ export default function TerminalEmulator({
   const fontSizeRef = useRef(fontSize);
   const scrollbackLinesRef = useRef(scrollbackLines);
   scrollbackLinesRef.current = scrollbackLines;
+  const characterWidthsRef = useRef(characterWidths);
+  characterWidthsRef.current = characterWidths;
   fontFamilyRef.current = fontFamily;
   fontSizeRef.current = fontSize;
   const themeKey = useMemo(() => buildXtermThemeKey(xtermTheme), [xtermTheme]);
@@ -200,6 +214,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onOpenExternalUrl: onOpenExternalUrl ?? openExternalUrl,
     onFilePaste,
   });
   mountCallbacksRef.current = {
@@ -212,6 +227,7 @@ export default function TerminalEmulator({
     onInputModeChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onOpenExternalUrl: onOpenExternalUrl ?? openExternalUrl,
     onFilePaste,
   };
   const pendingModifiersRef = useRef(pendingModifiers);
@@ -314,6 +330,10 @@ export default function TerminalEmulator({
   useEffect(() => {
     runtimeRef.current?.setScrollback({ lines: scrollbackLines });
   }, [scrollbackLines]);
+
+  useEffect(() => {
+    runtimeRef.current?.setCharacterWidths({ widths: characterWidths });
+  }, [characterWidths]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -443,10 +463,10 @@ export default function TerminalEmulator({
     runtime.setCallbacks({
       callbacks: {
         ...mountCallbacksRef.current,
-        onOpenExternalUrl: openExternalUrl,
       },
     });
     runtime.setPendingModifiers({ pendingModifiers: pendingModifiersRef.current });
+    runtime.setCharacterWidths({ widths: characterWidthsRef.current });
     runtime.mount({
       root,
       host,
@@ -479,7 +499,7 @@ export default function TerminalEmulator({
         onResolveLocalFileLink,
         onOpenLocalFileLink,
         onFilePaste,
-        onOpenExternalUrl: openExternalUrl,
+        onOpenExternalUrl: onOpenExternalUrl ?? openExternalUrl,
       },
     });
   }, [
@@ -488,6 +508,7 @@ export default function TerminalEmulator({
     onFindResult,
     onInput,
     onInputModeChange,
+    onOpenExternalUrl,
     onOpenLocalFileLink,
     onPendingModifiersConsumed,
     onResolveLocalFileLink,
@@ -543,10 +564,46 @@ export default function TerminalEmulator({
     });
   }, []);
 
-  const handleRootPointerDown = useCallback(() => {
-    onFocus?.();
-    runtimeRef.current?.focus();
-  }, [onFocus]);
+  const touchFocusRef = useRef<TerminalTouchFocus | null>(null);
+
+  const handleRootPointerDown = useCallback(
+    (event: ReactPointerEvent) => {
+      onFocus?.();
+      touchFocusRef.current = null;
+      if (event.pointerType !== "touch") {
+        runtimeRef.current?.focus();
+        return;
+      }
+      // Focusing before a touch becomes a tap opens the keyboard during a scroll.
+      if (event.isPrimary) {
+        touchFocusRef.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+        };
+      }
+    },
+    [onFocus],
+  );
+
+  const handleRootPointerMove = useCallback((event: ReactPointerEvent) => {
+    const touch = touchFocusRef.current;
+    if (touch?.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 8) {
+      touchFocusRef.current = null;
+      runtimeRef.current?.suppressAutomaticKeyboard();
+    }
+  }, []);
+
+  const handleRootPointerUp = useCallback((event: ReactPointerEvent) => {
+    const touch = touchFocusRef.current;
+    touchFocusRef.current = null;
+    if (touch?.pointerId === event.pointerId) runtimeRef.current?.focus();
+  }, []);
+
+  const handleRootPointerCancel = useCallback(() => {
+    touchFocusRef.current = null;
+  }, []);
 
   const handleRootContextMenu = useCallback(
     (event: ReactMouseEvent) => {
@@ -574,10 +631,14 @@ export default function TerminalEmulator({
   return (
     <div
       ref={rootRef}
+      data-pmono=""
       data-testid={testId}
       data-terminal-scrollbar-root="true"
       style={rootDivStyle}
       onPointerDown={handleRootPointerDown}
+      onPointerMove={handleRootPointerMove}
+      onPointerUp={handleRootPointerUp}
+      onPointerCancel={handleRootPointerCancel}
       onContextMenu={handleRootContextMenu}
     >
       <div ref={hostRef} style={HOST_DIV_STYLE} />

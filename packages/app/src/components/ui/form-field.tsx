@@ -21,18 +21,19 @@ import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import {
   createControlGeometry,
   resolveControlInteractionStyles,
-  type FieldControlSize,
+  type ControlSize,
 } from "@/components/ui/control-geometry";
 import { useContainedControlSize } from "@/components/ui/control-size";
 
-const FIELD_CHROME = { xs: "chromeXs", sm: "chromeSm", md: "chromeMd" } as const satisfies Record<
-  FieldControlSize,
+const FIELD_CHROME = { sm: "chromeSm", md: "chromeMd" } as const satisfies Record<
+  ControlSize,
   string
 >;
-const FIELD_TEXT = { xs: "inputXs", sm: "inputSm", md: "inputMd" } as const satisfies Record<
-  FieldControlSize,
-  string
->;
+const FIELD_MULTILINE_CHROME = {
+  sm: "chromeMultilineSm",
+  md: "chromeMultilineMd",
+} as const satisfies Record<ControlSize, string>;
+const FIELD_TEXT = { sm: "inputSm", md: "inputMd" } as const satisfies Record<ControlSize, string>;
 
 interface FieldProps {
   label: string;
@@ -77,7 +78,11 @@ export function Field({ label, children, trailing, hint, error, testID }: FieldP
 }
 
 type FormTextInputProps = AdaptiveTextInputProps & {
-  size?: FieldControlSize;
+  size?: ControlSize;
+  /** A glyph inside the field before the text, such as a search icon. */
+  leading?: ReactNode;
+  /** The value is rejected; the border and focus ring turn to the danger color. */
+  invalid?: boolean;
 };
 
 type FlatFormTextInputStyle = ViewStyle & TextStyle;
@@ -169,12 +174,18 @@ function assignTextInputRef(
 }
 
 export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputProps>(
-  function FormTextInput({ size: sizeProp, style, onFocus, onBlur, editable, ...props }, ref) {
+  function FormTextInput(
+    { size: sizeProp, leading, invalid = false, style, onFocus, onBlur, editable, ...props },
+    ref,
+  ) {
     const [focused, setFocused] = useState(false);
     const containedSize = useContainedControlSize();
     const size = sizeProp ?? containedSize ?? "md";
     const isDisabled = editable === false;
     const chromeSizeStyle = formInputStyles[FIELD_CHROME[size]];
+    const chromeMultilineStyle = props.multiline
+      ? formInputStyles[FIELD_MULTILINE_CHROME[size]]
+      : null;
     const inputSizeStyle = formInputStyles[FIELD_TEXT[size]];
     const splitStyle = useMemo(() => splitFormTextInputStyle(style), [style]);
     const setInputRef = useCallback(
@@ -205,6 +216,8 @@ export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputPro
       ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
         formInputStyles.chrome,
         chromeSizeStyle,
+        chromeMultilineStyle,
+        leading ? formInputStyles.chromeWithLeading : null,
         resolveControlInteractionStyles(
           {
             controlRest: formInputStyles.controlRest,
@@ -218,13 +231,23 @@ export const FormTextInput = forwardRef<EditingTextInputHandle, FormTextInputPro
             disabled: isDisabled,
           },
         ),
+        invalid ? formInputStyles.controlInvalid : null,
         splitStyle.chromeStyle,
       ],
-      [chromeSizeStyle, focused, isDisabled, splitStyle.chromeStyle],
+      [
+        chromeMultilineStyle,
+        chromeSizeStyle,
+        focused,
+        invalid,
+        isDisabled,
+        leading,
+        splitStyle.chromeStyle,
+      ],
     );
 
     return (
       <Pressable disabled={isDisabled} style={chromeStyle}>
+        {leading}
         <AdaptiveTextInput
           ref={setInputRef}
           editable={editable}
@@ -274,14 +297,22 @@ const formInputStyles = StyleSheet.create((theme) => {
     chrome: {
       backgroundColor: theme.colors.surface2,
     },
-    chromeXs: {
-      ...geometry.fieldControlXs,
+    chromeWithLeading: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
     },
     chromeSm: {
       ...geometry.fieldControlSm,
     },
     chromeMd: {
       ...geometry.fieldControlMd,
+    },
+    chromeMultilineSm: {
+      paddingVertical: theme.spacing[2],
+    },
+    chromeMultilineMd: {
+      paddingVertical: theme.spacing[3],
     },
     controlRest: {
       ...geometry.controlRest,
@@ -295,6 +326,11 @@ const formInputStyles = StyleSheet.create((theme) => {
     controlDisabled: {
       ...geometry.controlDisabled,
     },
+    // Matches the inline error under the field (docs/design.md, Errors).
+    controlInvalid: {
+      borderColor: theme.colors.palette.red[300],
+      outlineColor: theme.colors.palette.red[300],
+    },
     input: {
       flex: 1,
       minWidth: 0,
@@ -303,9 +339,6 @@ const formInputStyles = StyleSheet.create((theme) => {
       paddingVertical: 0,
       outlineColor: "transparent",
       outlineWidth: 0,
-    },
-    inputXs: {
-      ...geometry.fieldTextXs,
     },
     inputSm: {
       ...geometry.fieldTextSm,

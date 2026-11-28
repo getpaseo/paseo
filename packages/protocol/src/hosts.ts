@@ -116,8 +116,19 @@ export const HostsLinkOpenRequestSchema = z.object({
   type: z.literal("hosts.link.open.request"),
   requestId: z.string(),
   channelId: z.string().min(1).max(256),
+  flowControl: z.boolean().optional(),
 });
 export const HostsLinkOpenResponseSchema = z.object({
   type: z.literal("hosts.link.open.response"),
-  payload: z.object({ requestId: z.string(), routeId: z.string() }),
+  payload: z.object({
+    requestId: z.string(),
+    routeId: z.string(),
+    flowControl: z.boolean().optional(),
+  }),
+});
+
+export const HostsLinkAckSchema = z.object({
+  type: z.literal("hosts.link.ack.request"),
+  routeId: z.string(),
+  sequence: z.number().int().positive(),
 });

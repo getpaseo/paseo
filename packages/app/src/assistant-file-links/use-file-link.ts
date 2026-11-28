@@ -3,9 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
+import { shouldRouteWorkspaceUrlToProxiedBrowser } from "@/desktop/browser/proxy";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { formatFileLinkTooltipPath } from "./tooltip-path";
-import type { InlinePathTarget } from "./parse";
+import { normalizeInlinePathTarget, type InlinePathTarget } from "./parse";
+import { resolveInlinePathDestination } from "./path-open";
 import {
   useAssistantFileLinkResolverContext,
   type AssistantFileLinkResolverContextValue,
@@ -30,7 +32,27 @@ export interface AssistantFileLinkActions {
   open(source: AssistantFileLinkSource, disposition: OpenFileDisposition): void;
   canOpen(source: AssistantFileLinkSource): boolean;
   canResolveFile(source: AssistantFileLinkSource): boolean;
+  /** What a link names, for offering actions on it. Null when Paseo does nothing with it. */
+  inspect(source: AssistantFileLinkSource): AssistantFileLinkInspection | null;
 }
+
+export interface AssistantFileLinkPath {
+  /** Workspace-relative inside the workspace, absolute or `~/` outside it. */
+  path: string;
+  kind: "file" | "directory";
+}
+
+export type AssistantFileLinkInspection =
+  | { kind: "url"; url: string }
+  | {
+      kind: "path";
+      /** What the link says, before the host has been asked. */
+      written: AssistantFileLinkPath;
+      /** Where it actually leads, or null when nothing matches. */
+      lookup(): Promise<AssistantFileLinkPath | null>;
+      /** Tells the user `lookup` found nothing. */
+      reportNotFound(): void;
+    };
 
 interface AssistantFileLinkLookupKey {
   query: string;
@@ -166,7 +188,116 @@ export function useAssistantFileLinkActions(): AssistantFileLinkActions {
     [context.configRef],
   );
 
-  return useMemo(() => ({ open, canOpen, canResolveFile }), [open, canOpen, canResolveFile]);
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+  const inspect = useStableEvent((source: AssistantFileLinkSource) =>
+    inspectAssistantFileLink({
+      source,
+      context,
+      queryClient,
+      formatNoFileFoundMessage: (token) => t("common.errors.noFileFound", { token }),
+    }),
+  );
+
+  return useMemo(
+    () => ({ open, canOpen, canResolveFile, inspect }),
+    [open, canOpen, canResolveFile, inspect],
+  );
+}
+
+function inspectAssistantFileLink(input: {
+  source: AssistantFileLinkSource;
+  context: AssistantFileLinkResolverContextValue;
+  queryClient: ReturnType<typeof useQueryClient>;
+  formatNoFileFoundMessage: (token: string) => string;
+}): AssistantFileLinkInspection | null {
+  const { serverId, workspaceRoot, relativePathBase, client } = input.context.configRef.current;
+  const resolution = classifyForResolution(input.source, { workspaceRoot, relativePathBase });
+  if (resolution.kind === "resolved" && resolution.value.kind !== "file") {
+    return resolution.value.kind === "external" ? { kind: "url", url: resolution.value.url } : null;
+  }
+  const target =
+    resolution.kind === "needsLookup"
+      ? resolution.target
+      : (resolution.value as { kind: "file"; target: InlinePathTarget }).target;
+  const written = normalizeInlinePathTarget(target.path, workspaceRoot);
+  if (!written) return null;
+
+  const lookup = async (): Promise<AssistantFileLinkPath | null> => {
+    try {
+      const found =
+        resolution.kind === "needsLookup"
+          ? await fetchLookup({
+              resolution,
+              serverId,
+              workspaceRoot,
+              context: input.context,
+              queryClient: input.queryClient,
+            })
+          : target;
+      const destination = await resolveInlinePathDestination({
+        target: found,
+        workspaceRoot: workspaceRoot ?? "",
+        resolveRelativeFiles: true,
+        client: client?.listDirectory
+          ? {
+              listDirectory: client.listDirectory.bind(client),
+              getDirectorySuggestions: input.context.getDirectorySuggestions,
+            }
+          : null,
+      });
+      if (!destination) return null;
+      return destination.kind === "file"
+        ? { path: destination.location.path, kind: "file" }
+        : { path: destination.path, kind: "directory" };
+    } catch {
+      return null;
+    }
+  };
+
+  return {
+    kind: "path",
+    // Parsing drops a trailing slash from the path; the link as written still has it.
+    written: {
+      path: written.file ?? written.directory,
+      kind: written.file && !target.raw.endsWith("/") ? "file" : "directory",
+    },
+    lookup,
+    reportNotFound: () => {
+      void dispatchUnresolvedError({
+        error: null,
+        noFileFoundMessage: input.formatNoFileFoundMessage(
+          resolution.kind === "needsLookup" ? resolution.token : target.raw,
+        ),
+        capturedServerId: serverId,
+        capturedWorkspaceRoot: workspaceRoot,
+        context: input.context,
+      });
+    },
+  };
+}
+
+function fetchLookup(input: {
+  resolution: Extract<AssistantFileLinkResolution, { kind: "needsLookup" }>;
+  serverId?: string;
+  workspaceRoot?: string;
+  context: AssistantFileLinkResolverContextValue;
+  queryClient: ReturnType<typeof useQueryClient>;
+}): Promise<InlinePathTarget> {
+  const { resolution, serverId, workspaceRoot } = input;
+  return input.queryClient.fetchQuery({
+    queryKey: assistantFileLinkQueryKey({ serverId, workspaceRoot, resolution }),
+    queryFn: () =>
+      fetchDaemonResolution({
+        ambiguousQuery: resolution.ambiguousQuery,
+        token: resolution.token,
+        target: resolution.target,
+        workspaceRoot,
+        getDirectorySuggestions: input.context.getDirectorySuggestions,
+      }),
+    retry: 0,
+    staleTime: Infinity,
+  });
 }
 
 function openAssistantFileLink(input: {
@@ -193,26 +324,14 @@ function openAssistantFileLink(input: {
     return;
   }
 
-  const capturedQueryKey = assistantFileLinkQueryKey({
-    serverId: capturedConfig.serverId,
-    workspaceRoot: capturedConfig.workspaceRoot,
-    resolution: capturedResolution,
-  });
-
   const run = async () => {
     try {
-      const target = await input.queryClient.fetchQuery({
-        queryKey: capturedQueryKey,
-        queryFn: () =>
-          fetchDaemonResolution({
-            ambiguousQuery: capturedResolution.ambiguousQuery,
-            token: capturedResolution.token,
-            target: capturedResolution.target,
-            workspaceRoot: capturedConfig.workspaceRoot,
-            getDirectorySuggestions: input.context.getDirectorySuggestions,
-          }),
-        retry: 0,
-        staleTime: Infinity,
+      const target = await fetchLookup({
+        resolution: capturedResolution,
+        serverId: capturedConfig.serverId,
+        workspaceRoot: capturedConfig.workspaceRoot,
+        context: input.context,
+        queryClient: input.queryClient,
       });
       await dispatchFileTarget({
         target,
@@ -333,6 +452,14 @@ async function dispatchExternalUrl(input: {
     current.serverId !== input.capturedServerId ||
     current.workspaceRoot !== input.capturedWorkspaceRoot
   ) {
+    return;
+  }
+  if (
+    current.onOpenBrowserUrl &&
+    current.serverId &&
+    shouldRouteWorkspaceUrlToProxiedBrowser({ serverId: current.serverId, url: input.url })
+  ) {
+    current.onOpenBrowserUrl(input.url);
     return;
   }
   await openExternalUrl(input.url);

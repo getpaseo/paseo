@@ -90,6 +90,11 @@ test("fans one fresh observation out to every workspace attached to its exact cw
   await finished;
 
   expect(getSnapshot).toHaveBeenCalledTimes(1);
+  expect(getSnapshot).toHaveBeenCalledWith("/repo/worktree/.", {
+    force: true,
+    afterInFlight: true,
+    reason: "auto-archive-on-merge",
+  });
   expect(calls).toEqual([
     { workspaceId: "workspace-a", pullRequest: freshSnapshot.forge.pullRequest },
     { workspaceId: "workspace-b", pullRequest: freshSnapshot.forge.pullRequest },

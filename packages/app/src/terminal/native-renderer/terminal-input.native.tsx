@@ -2,18 +2,37 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import {
   StyleSheet,
   type NativeSyntheticEvent,
-  type StyleProp,
   type TextInputKeyPressEventData,
-  type TextStyle,
 } from "react-native";
 import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
-import { resolveNativeTerminalKey, type NativeTerminalKey } from "./terminal-key-events";
+import {
+  resolveTerminalInputFocusRequest,
+  TERMINAL_INPUT_HITBOX_SIZE,
+  TERMINAL_INPUT_NATIVE_ID,
+  type TerminalInputHandle,
+  type TerminalInputProps,
+} from "./terminal-input.types";
+import {
+  createNativeTerminalKeyEvent,
+  resolveNativeTerminalKey,
+  type NativeTerminalKey,
+} from "./terminal-key-events";
+
+// iOS. Android resolves `terminal-input.android.tsx`.
+
+export {
+  resolveTerminalInputFocusRequest,
+  TERMINAL_INPUT_HITBOX_SIZE,
+  TERMINAL_INPUT_NATIVE_ID,
+  type TerminalInputFocusRequest,
+  type TerminalInputHandle,
+  type TerminalInputProps,
+} from "./terminal-input.types";
 
 export const TERMINAL_INPUT_CONTEXT_MENU_HIDDEN = true;
-export const TERMINAL_INPUT_HITBOX_SIZE = 1;
 
 export interface TerminalTextInputChange {
   data: string;
@@ -25,22 +44,6 @@ export interface TerminalTextInputState {
   receiveKeyPress: (key: string) => TerminalTextInputChange;
   receiveTextChange: (text: string) => TerminalTextInputChange;
   reset: () => void;
-}
-
-export type TerminalInputFocusRequest = "focus" | "refocus" | "none";
-
-export interface TerminalInputHandle {
-  focus: () => void;
-  showKeyboard: () => void;
-  blur: () => void;
-}
-
-interface TerminalInputProps {
-  isKeyboardVisible: boolean;
-  onFocus?: () => void;
-  onInput?: (data: string) => void;
-  onTerminalKey?: (key: NativeTerminalKey) => void;
-  style?: StyleProp<TextStyle>;
 }
 
 // Scripts produced by CJK IMEs when they commit or update a candidate. The
@@ -90,16 +93,6 @@ function resolveCompositionEdit(previousText: string, text: string): string {
     return "";
   }
   return `${"\x7f".repeat(removed.length)}${inserted}`;
-}
-
-export function resolveTerminalInputFocusRequest(input: {
-  isInputFocused: boolean;
-  isKeyboardVisible: boolean;
-}): TerminalInputFocusRequest {
-  if (!input.isInputFocused) {
-    return "focus";
-  }
-  return input.isKeyboardVisible ? "none" : "refocus";
 }
 
 export function createTerminalTextInputState(): TerminalTextInputState {
@@ -293,7 +286,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
       (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
         const change = inputState.receiveKeyPress(event.nativeEvent.key);
         if (change.key) {
-          onTerminalKey?.(change.key);
+          onTerminalKey?.(createNativeTerminalKeyEvent(change.key));
         }
         if (change.data.length > 0) {
           onInput?.(change.data);
@@ -321,6 +314,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         blurOnSubmit={false}
         importantForAutofill="no"
         multiline={true}
+        nativeID={TERMINAL_INPUT_NATIVE_ID}
         onChangeText={handleChangeText}
         onBlur={handleBlur}
         onFocus={handleFocus}

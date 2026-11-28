@@ -1,0 +1,1 @@
+{"version":3,"file":"normalizeMarkdownShortcuts.d.ts","sourceRoot":"","sources":["../../../src/normalizeMarkdownShortcuts.ts"],"names":[],"mappings":"AAAA,MAAM,MAAM,2BAA2B,GAAG;IACxC,OAAO,EAAE,OAAO,CAAC;IACjB,aAAa,EAAE,OAAO,CAAC;IACvB,WAAW,EAAE,OAAO,CAAC;CACtB,CAAC;AAcF,eAAO,MAAM,0BAA0B,GACrC,KAAK,OAAO,KACX,2BAiBF,CAAC"}

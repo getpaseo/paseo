@@ -389,6 +389,46 @@ export type Value = string;`,
     },
   );
 
+  it.each([
+    { name: "import 'node' with Node types installed", source: 'import "node";', nodeTypes: true },
+    { name: "import 'node' without Node types", source: 'import "node";', nodeTypes: false },
+    {
+      name: "a node: builtin unknown to the host",
+      source: 'import type { Future } from "node:paseo-future-builtin";',
+      nodeTypes: false,
+    },
+  ])("treats Node declarations as host types in server dependencies: $name", async (fixture) => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules/image-codec");
+    await mkdir(dependency, { recursive: true });
+    await writeFile(
+      path.join(dependency, "package.json"),
+      JSON.stringify({ name: "image-codec", main: "index.js", types: "index.d.ts" }),
+    );
+    await writeFile(path.join(dependency, "index.js"), 'module.exports = "decoded";');
+    await writeFile(
+      path.join(dependency, "index.d.ts"),
+      `${fixture.source}\ndeclare const value: string;\nexport = value;`,
+    );
+    if (fixture.nodeTypes) {
+      const nodeTypes = path.join(entries.directory, "node_modules/@types/node");
+      await mkdir(nodeTypes, { recursive: true });
+      await writeFile(
+        path.join(nodeTypes, "package.json"),
+        JSON.stringify({ name: "@types/node", types: "index.d.ts" }),
+      );
+      await writeFile(
+        path.join(nodeTypes, "index.d.ts"),
+        'declare module "node:paseo-future-builtin" { export * from "node:stream"; }\nimport type { Future } from "node:paseo-future-builtin";',
+      );
+    }
+    await writeFile(entries.server, 'import value from "image-codec"; export default value;');
+
+    await expect(compilePlugin({ client: null, server: entries.server })).resolves.toMatchObject({
+      serverBundle: expect.stringContaining("decoded"),
+    });
+  });
+
   it("checks the physical owner of type-only symlinks", async () => {
     const entries = await createSplitPlugin();
     await writeFile(
@@ -643,26 +683,37 @@ export default function contribute() { return title(" plugin "); }`;
     expect(Buffer.byteLength(clientBundle)).toBeLessThan(Buffer.byteLength(serverBundle) * 0.9);
   });
 
-  it("keeps distinct host exports eager when minifying in the worker", async () => {
+  it("keeps distinct host exports lazy with per-key closures when minifying in the worker", async () => {
     const entries = await createSplitPlugin();
     await writeFile(
       entries.client,
-      `import * as host from "zod";
+      `import * as host from "react-native";
 export default function contribute() { return [host.first, host.second]; }`,
     );
     const { clientBundle } = await compilePlugin({ client: entries.client, server: null });
-    const host = { first: "first export", second: "second export" };
+    expect(clientBundle).toContain("(k=>()=>from[k])(key)");
+    expect(clientBundle).not.toContain("value:from[key]");
+
+    let throwingReads = 0;
+    const host = {
+      first: "first export",
+      second: "second export",
+      get PushNotificationIOS() {
+        throwingReads += 1;
+        throw new Error("`new NativeEventEmitter()` requires a non-null argument.");
+      },
+    };
     const factory = new Function(`return ${clientBundle}`)() as (
       require: (specifier: string) => typeof host,
     ) => { default: () => unknown };
     function requireHost(specifier: string): typeof host {
-      expect(specifier).toBe("zod");
+      expect(specifier).toBe("react-native");
       return host;
     }
     const exports = factory(requireHost);
-    host.first = "changed first export";
-    host.second = "changed second export";
+    expect(throwingReads).toBe(0);
     expect(exports.default()).toEqual(["first export", "second export"]);
+    expect(throwingReads).toBe(0);
   });
 
   it("rejects node imports from the client entry", async () => {

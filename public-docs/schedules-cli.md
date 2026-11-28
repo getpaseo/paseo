@@ -10,7 +10,7 @@ category: Schedules
 
 `paseo schedule` creates and manages new-agent [schedules](/docs/schedules) from your terminal, useful for headless boxes and scripts. Every run starts a fresh agent.
 
-Run workspaces are archived when each run ends by default. The CLI has no **Archive on finish** flag; [change the option in the app](/docs/schedules#keep-run-workspaces) to keep subsequent run workspaces active.
+Run workspaces are archived when each run ends by default. Pass `--no-archive-on-finish` to `paseo schedule create` or `paseo schedule update` to [keep subsequent run workspaces](/docs/schedules#keep-run-workspaces) active; it is the **Archive on finish** option in the app.
 
 ## Create
 
@@ -96,6 +96,7 @@ paseo schedule pause <id>
 paseo schedule resume <id>
 paseo schedule run-once <id>
 paseo schedule update <id> --every 10m --max-runs 6
+paseo schedule update <id> --no-archive-on-finish
 paseo schedule delete <id>
 ```
 

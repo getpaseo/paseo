@@ -1,3 +1,4 @@
+import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { createTerminalSerializer } from "./terminal-serializer.js";
 import { readTerminalState } from "./test-utils/terminal-state.js";
@@ -9,7 +10,6 @@ import {
   assertTerminalCommandCanStart,
   createTerminal,
   ensureNodePtySpawnHelperExecutableForCurrentPlatform,
-  resolveDefaultTerminalShell,
   resolveTerminalSpawnCommand,
   humanizeProcessTitle,
   normalizeProcessTitle,
@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
@@ -308,16 +309,18 @@ describe("createTerminal", () => {
       resolveExecutable: async () => "C:\\npm\\claude.cmd",
     });
 
-    // The `.cmd` branch now hands node-pty a single pre-escaped command line
-    // (string) instead of an argv array, so that node-pty's own
-    // MSVCRT-style array quoting never runs a second time over an already
-    // cmd.exe-escaped argument. See escapeCmdExeArgument in terminal.ts.
+    // The `.cmd` branch hands node-pty one cmd.exe command line (a string) instead of an argv
+    // array, so node-pty's own array quoting never runs over it. An argument without a cmd.exe
+    // metacharacter stays as given.
     expect(resolved).toEqual({
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: '/d /s /c "C:\\npm\\claude.cmd ^^^"--foo^^^""',
+      args: '/d /s /c "C:\\npm\\claude.cmd --foo"',
     });
   });
 
+  // The escaping itself is the SDK's shared cmd.exe dialect, tested in
+  // packages/plugin/src/server/process-internal/windows-command.test.ts. These cases pin what a
+  // terminal adds: a prompt line break becomes a space, and a `.cmd` shim counts as a batch script.
   describe(".cmd shim argument escaping on Windows", () => {
     async function resolveCmdShimArgs(promptArg: string): Promise<string> {
       const resolved = await resolveTerminalSpawnCommand("claude", [promptArg], {
@@ -325,10 +328,6 @@ describe("createTerminal", () => {
         env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
         resolveExecutable: async () => "C:\\npm\\claude.cmd",
       });
-      // A real narrow rather than a cast: the `.cmd` branch is the one case
-      // that returns a pre-escaped command line instead of argv, so if that
-      // contract ever changes these tests should fail loudly here rather than
-      // assert against a stringified array.
       const { args } = resolved;
       if (typeof args !== "string") {
         throw new Error(`expected a cmd.exe command line, got ${JSON.stringify(args)}`);
@@ -336,21 +335,20 @@ describe("createTerminal", () => {
       return args;
     }
 
-    // Each expected string is the exact cmd.exe command line the escaping
-    // must produce so a real `cmd.exe /c` invocation reconstructs the
-    // original prompt as a single argv element for the target process
-    // (modulo the documented newline-to-space normalization below).
-    it("neutralizes cmd.exe's own metacharacters instead of letting them execute", async () => {
+    it("escapes cmd.exe metacharacters so they reach the shim as text", async () => {
       expect(await resolveCmdShimArgs("a & b | c")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"a^^^ ^^^&^^^ b^^^ ^^^|^^^ c^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"a^ ^&^ b^ ^|^ c^""',
       );
+      // A caret before each `%` keeps cmd.exe from expanding %PATH%.
       expect(await resolveCmdShimArgs("100% done %PATH%")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"100^^^%^^^ done^^^ ^^^%PATH^^^%^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"100^%^ done^ ^%PATH^%^""',
       );
-      expect(await resolveCmdShimArgs("a^b")).toBe('/d /s /c "C:\\npm\\claude.cmd ^^^"a^^^^b^^^""');
+      expect(await resolveCmdShimArgs("a^b")).toBe('/d /s /c "C:\\npm\\claude.cmd ^"a^^b^""');
     });
 
-    it("escapes embedded double quotes and backslash runs preceding them", async () => {
+    // The shim reads its arguments again when it forwards `%*`, so an argument with a quote is
+    // escaped twice; its quotes would otherwise leave the rest of the line outside a quoted region.
+    it("escapes an argument with a double quote twice for the shim", async () => {
       expect(await resolveCmdShimArgs('say "hello" now')).toBe(
         '/d /s /c "C:\\npm\\claude.cmd ^^^"say^^^ \\^^^"hello\\^^^"^^^ now^^^""',
       );
@@ -359,18 +357,14 @@ describe("createTerminal", () => {
       );
     });
 
-    // cmd.exe has no way to escape a literal CR/LF inside one command line
-    // -- its parser treats newlines as command separators regardless of
-    // quoting -- so a raw newline is normalized to a space before escaping.
-    // This is a deliberate choice, not an oversight: it avoids the prompt
-    // ever splitting into a second, attacker-controlled cmd.exe command, at
-    // the cost of losing the original line breaks.
-    it("normalizes embedded newlines to spaces instead of letting them split the command", async () => {
+    // cmd.exe ends a command at a line break whatever the quoting. A terminal prompt often has
+    // several lines, so the terminal starts with each line break as a space instead of refusing.
+    it("joins the lines of a prompt with spaces", async () => {
       expect(await resolveCmdShimArgs("line one\nline two")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"line^^^ one^^^ line^^^ two^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
       );
       expect(await resolveCmdShimArgs("line one\r\nline two")).toBe(
-        '/d /s /c "C:\\npm\\claude.cmd ^^^"line^^^ one^^^ line^^^ two^^^""',
+        '/d /s /c "C:\\npm\\claude.cmd ^"line^ one^ line^ two^""',
       );
     });
 
@@ -410,7 +404,12 @@ describe("createTerminal", () => {
           cwd: realpathSync(tmpdir()),
           cols: 500,
           command: process.execPath,
-          args: ["-e", "process.stdout.write(JSON.stringify(process.argv.slice(1)))", nastyPrompt],
+          // Keep the PTY alive until the screen assertion; exit disposes its parser.
+          args: [
+            "-e",
+            "process.stdout.write(JSON.stringify(process.argv.slice(1))); setInterval(() => {}, 100000)",
+            nastyPrompt,
+          ],
         }),
       );
 
@@ -561,6 +560,71 @@ describe("createTerminal", () => {
     // The continuation cell must stay empty so the restore path can skip it.
     expect(state.grid[0][0].char).toBe("통");
     expect(state.grid[0][1].char).toBe("");
+  });
+
+  it("reports the cursor column after an emoji cluster in DSR replies", async () => {
+    // Programs that measure the cursor (prompts, TUIs) must see the same
+    // column the client renders: an emoji occupies two cells.
+    const program = `
+      process.stdin.setRawMode(true);
+      process.stdin.once("data", (reply) => {
+        process.stdout.write("\\r\\nREPLY " + JSON.stringify(reply.toString()).slice(2, -1));
+      });
+      process.stdout.write("A😀\\x1b[6n");
+      setInterval(() => {}, 100000);
+    `;
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 40,
+        rows: 5,
+        command: process.execPath,
+        args: ["-e", program],
+      }),
+    );
+
+    const state = await waitForState(session, (current) =>
+      getRowText(current, 1).startsWith("REPLY"),
+    );
+
+    expect(getRowText(state, 1)).toBe("REPLY u001b[1;4R");
+  });
+
+  it("replays emoji clusters at their columns with the cursor after them", async () => {
+    const text = "A😀B❤️C👋🏽D👨‍👩‍👧E";
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: realpathSync(tmpdir()),
+        cols: 40,
+        rows: 5,
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write(${JSON.stringify(text)}); setInterval(() => {}, 100000);`,
+        ],
+      }),
+    );
+
+    const state = await waitForState(session, (current) => rowHasChar(current.grid[0], "E"));
+
+    expect(state.grid[0].slice(0, 13).map((cell) => cell.char)).toEqual([
+      "A",
+      "😀",
+      "",
+      "B",
+      "❤️",
+      "",
+      "C",
+      "👋🏽",
+      "",
+      "D",
+      "👨‍👩‍👧",
+      "",
+      "E",
+    ]);
+    expect(state.cursor).toEqual({ row: 0, col: 13 });
   });
 
   it("captures exit diagnostics from the terminal buffer", async () => {
@@ -1112,6 +1176,88 @@ describe.skipIf(isPlatform("win32"))("terminal title", () => {
     expect(result.stdout.split(/\r?\n/)).toContain("PASEO_CUSTOM_PROMPT> ");
   });
 
+  it.skipIf(!hasZsh || !isPlatform("linux"))(
+    "strips AppImage runtime vars and ARGV0 before spawning zsh terminals",
+    () => {
+      const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-appimage-home-"));
+      temporaryDirs.push(homeDir);
+      writeFileSync(join(homeDir, ".zshrc"), "");
+      const appDir = "/tmp/.mount_Paseo-terminal";
+
+      const env = buildTerminalEnvironment({
+        shell: "/bin/zsh",
+        baseEnv: {
+          HOME: homeDir,
+          PATH: `${appDir}:${appDir}/usr/sbin:/usr/local/bin:/usr/bin:/bin`,
+          APPIMAGE: "/home/user/app/Paseo-x86_64.AppImage",
+          APPDIR: appDir,
+          ARGV0: "/home/user/app/Paseo-x86_64.AppImage",
+          OWD: "/home/user",
+          APPIMAGE_LIBRARY_PATH: `${appDir}/usr/lib`,
+        },
+        paseoCliBinDir: null,
+        paseoHookCliPath: null,
+      });
+
+      expect("APPIMAGE" in env).toBe(false);
+      expect("APPDIR" in env).toBe(false);
+      expect("ARGV0" in env).toBe(false);
+      expect("OWD" in env).toBe(false);
+      expect("APPIMAGE_LIBRARY_PATH" in env).toBe(false);
+      expect(env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
+
+      const result = spawnSync("/bin/zsh", ["-c", 'sh -c "echo \\$0"'], {
+        cwd: homeDir,
+        env,
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe("sh");
+    },
+  );
+
+  it("derives COLORFGBG from defaultColors unless already set in env", () => {
+    const defaultEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: {},
+      baseEnv: { PATH: "/usr/bin:/bin", COLORFGBG: "9;9" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(defaultEnv.COLORFGBG).toBe("15;0");
+
+    const lightEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: {},
+      baseEnv: { PATH: "/usr/bin:/bin", COLORFGBG: "15;0" },
+      defaultColors: { foreground: "#1a1a1e", background: "#ffffff" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(lightEnv.COLORFGBG).toBe("0;15");
+
+    const darkEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: {},
+      baseEnv: { PATH: "/usr/bin:/bin", COLORFGBG: "0;15" },
+      defaultColors: { foreground: "#fafafa", background: "#181b1a" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(darkEnv.COLORFGBG).toBe("15;0");
+
+    const explicitEnv = buildTerminalEnvironment({
+      shell: "/bin/sh",
+      env: { COLORFGBG: "7;0" },
+      baseEnv: { PATH: "/usr/bin:/bin" },
+      defaultColors: { foreground: "#1a1a1e", background: "#ffffff" },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+    expect(explicitEnv.COLORFGBG).toBe("7;0");
+  });
+
   it.skipIf(!hasZsh)("emits zsh shell integration command completion", async () => {
     const homeDir = mkdtempSync(join(tmpdir(), "terminal-zsh-command-finished-home-"));
     temporaryDirs.push(homeDir);
@@ -1435,6 +1581,47 @@ describe("terminal activity interruption", () => {
   });
 });
 
+describe("killAndWait", () => {
+  function isAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // The worker's shutdown and "Restart and close terminals" end every terminal with
+  // killAndWait and then exit, so the program must be gone when it resolves.
+  it("ends a program that survives the soft kill before it resolves", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "terminal-kill-and-wait-"));
+    temporaryDirs.push(dir);
+    const pidFile = join(dir, "program.pid");
+    const session = trackSession(
+      await createTerminal({
+        workspaceId: "ws-test",
+        cwd: dir,
+        name: "Stubborn",
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.on("SIGHUP", () => {});
+           require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+           setInterval(() => {}, 1e9);`,
+        ],
+      }),
+    );
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(pidFile) && Date.now() < deadline) await delay(50);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(isAlive(pid)).toBe(true);
+
+    await session.killAndWait({ gracefulTimeoutMs: 0 });
+
+    expect(isAlive(pid)).toBe(false);
+  });
+});
+
 // The escaping tests above assert the command line we generate. This one runs
 // it: a real cmd.exe launches a real .cmd shim, which echoes the argv it was
 // handed. It is the only check that proves cmd.exe's tokenizer reconstructs
@@ -1631,6 +1818,52 @@ it.each([false, true])(
     }
   },
 );
+
+it.each([
+  { name: "SGR", modes: "\x1b[?1006h", wheel: "\x1b[<64;10;5M" },
+  { name: "SGR pixels", modes: "\x1b[?1016h", wheel: "\x1b[<64;80;90M" },
+  { name: "disabled SGR", modes: "\x1b[?1006h\x1b[?1006l", wheel: "\x1b[M`*%" },
+])("preserves $name wheel reports across repeated terminal replays", async (input) => {
+  const source = new xterm.Terminal({ rows: 10, cols: 80, allowProposedApi: true });
+  const receiver = new xterm.Terminal({ rows: 10, cols: 80, allowProposedApi: true });
+  const serialize = createTerminalSerializer(source);
+  const wheel = {
+    button: 4,
+    action: 0,
+    col: 10,
+    row: 5,
+    x: 80,
+    y: 90,
+    ctrl: false,
+    alt: false,
+    shift: false,
+  };
+  // Mouse encoding is not exposed by xterm's public modes API.
+  const mouse = (
+    receiver as unknown as {
+      _core: {
+        mouseStateService: {
+          encodeMouseEvent(event: typeof wheel): string;
+        };
+      };
+    }
+  )._core.mouseStateService;
+  try {
+    await new Promise<void>((resolve) =>
+      source.write("\x1b[?1049h\x1b[?1002h" + input.modes + "TRANSCRIPT", resolve),
+    );
+    for (let replay = 0; replay < 2; replay++) {
+      receiver.reset();
+      await new Promise<void>((resolve) => receiver.write(serialize(), resolve));
+      expect(receiver.buffer.active.type).toBe("alternate");
+      expect(receiver.modes.mouseTrackingMode).toBe("drag");
+      expect(mouse.encodeMouseEvent(wheel)).toBe(input.wheel);
+    }
+  } finally {
+    receiver.dispose();
+    source.dispose();
+  }
+});
 
 it.each([
   { name: "unset", presentation: "", style: undefined, visible: true },

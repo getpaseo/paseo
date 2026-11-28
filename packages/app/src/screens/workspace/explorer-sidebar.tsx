@@ -23,7 +23,6 @@ interface ExplorerSidebarDockProps extends Pick<
   | "onCopyResumeCommand"
   | "onCopyAgentId"
   | "onCopyTerminalId"
-  | "onCopyFilePath"
   | "onReloadAgent"
   | "onRenameTab"
   | "onCreateNewTab"
@@ -38,6 +37,7 @@ interface ExplorerSidebarDockProps extends Pick<
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   isWorkspaceFocused: boolean;
+  paneFocusSuspended: boolean;
   closingTabIds: Set<string>;
   onSelectTab: (paneId: string, tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -56,6 +56,7 @@ export function ExplorerSidebarDock({
   normalizedServerId,
   normalizedWorkspaceId,
   isWorkspaceFocused,
+  paneFocusSuspended,
   closingTabIds,
   onSelectTab,
   onCloseTab,
@@ -65,7 +66,6 @@ export function ExplorerSidebarDock({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
-  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -133,7 +133,6 @@ export function ExplorerSidebarDock({
                 onCopyResumeCommand={onCopyResumeCommand}
                 onCopyAgentId={onCopyAgentId}
                 onCopyTerminalId={onCopyTerminalId}
-                onCopyFilePath={onCopyFilePath}
                 onReloadAgent={onReloadAgent}
                 onRenameTab={onRenameTab}
                 onCloseTabsToLeft={handleCloseTabsToLeft}
@@ -167,7 +166,7 @@ export function ExplorerSidebarDock({
               normalizedServerId={normalizedServerId}
               normalizedWorkspaceId={normalizedWorkspaceId}
               isWorkspaceFocused={isWorkspaceFocused}
-              isPaneFocused
+              isPaneFocused={!paneFocusSuspended}
               buildPaneContentModel={buildPaneContentModel}
             />
           </View>

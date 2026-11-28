@@ -164,7 +164,7 @@ describe("mapOmpModel thinking options", () => {
 
     expect(result.provider).toBe("omp");
     expect(result.id).toBe("pioneer/canada-quant/glm-5.2");
-    expect(result.label).toBe("pioneer/GLM-5.2");
+    expect(result.label).toBe("GLM-5.2");
     expect(result.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
   });
 });

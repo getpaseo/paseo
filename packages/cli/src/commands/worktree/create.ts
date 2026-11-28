@@ -27,10 +27,21 @@ export async function runCreateCommand(
   options: WorktreeCreateOptions,
   _command: Command,
 ): Promise<SingleResult<WorktreeCreateResult>> {
+  return runCreateCommandWithDeps(options, { connectToDaemon });
+}
+
+export async function runCreateCommandWithDeps(
+  options: WorktreeCreateOptions,
+  deps: {
+    connectToDaemon(
+      options: Parameters<typeof connectToDaemon>[0],
+    ): Promise<Pick<Awaited<ReturnType<typeof connectToDaemon>>, "createPaseoWorktree" | "close">>;
+  },
+): Promise<SingleResult<WorktreeCreateResult>> {
   const cwd = options.cwd ?? process.cwd();
   const request = buildCreateWorktreeRequest(options, cwd);
 
-  const client = await connectToDaemon({ target: options.daemonTarget });
+  const client = await deps.connectToDaemon({ target: options.daemonTarget });
 
   try {
     const response = await client.createPaseoWorktree(request);

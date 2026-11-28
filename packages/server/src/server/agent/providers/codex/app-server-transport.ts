@@ -9,6 +9,7 @@ import { ProviderLineReader, ProviderStreamLimitError } from "../jsonl-frame-dec
 // A measured long-thread resume was 19.75 MB; preserve the existing 32 MiB fixture
 // with 4x margin for longer threads. This is provider stdout, not the client protocol.
 export const CODEX_PROVIDER_LINE_BYTES = 128 * 1024 * 1024;
+export const CODEX_MCP_STARTUP_STATUS_METHOD = "mcpServer/startupStatus/updated";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -61,6 +62,39 @@ export class CodexAppServerRpcError extends Error {
   ) {
     super(message);
     this.name = "CodexAppServerRpcError";
+  }
+}
+
+interface CodexAppServerExitDetails {
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  stderr: string;
+}
+
+export class CodexAppServerExitError extends Error {
+  readonly reason: "sqlite_state_initialization" | "other";
+  readonly exitCode: number | null;
+  readonly exitSignal: NodeJS.Signals | null;
+  readonly stderr: string;
+
+  constructor(details: CodexAppServerExitDetails) {
+    const message =
+      details.exitCode === 0 && !details.exitSignal
+        ? "Codex app-server exited"
+        : `Codex app-server exited with code ${details.exitCode ?? "null"} and signal ${details.exitSignal ?? "null"}`;
+    super(`${message}\n${details.stderr}`.trim());
+    this.name = "CodexAppServerExitError";
+    this.exitCode = details.exitCode;
+    this.exitSignal = details.exitSignal;
+    this.stderr = details.stderr;
+    // Codex reports this pre-initialize failure only on stderr, not as a
+    // JSON-RPC error. Classify it here so callers branch on a typed reason.
+    this.reason =
+      details.exitCode === 1 &&
+      !details.exitSignal &&
+      details.stderr.includes("failed to initialize sqlite state runtime")
+        ? "sqlite_state_initialization"
+        : "other";
   }
 }
 
@@ -234,14 +268,24 @@ export class CodexAppServerClient {
       this.handleUnexpectedTermination(err);
     });
 
+    const reportExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      this.handleUnexpectedTermination(
+        new CodexAppServerExitError({
+          exitCode: code,
+          exitSignal: signal,
+          stderr: this.stderrBuffer,
+        }),
+      );
+    };
     child.on("exit", (code, signal) => {
-      const message =
-        code === 0 && !signal
-          ? "Codex app-server exited"
-          : `Codex app-server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`;
-      const error = new Error(`${message}\n${this.stderrBuffer}`.trim());
-      this.handleUnexpectedTermination(error);
+      // Startup retries need complete diagnostics. Node drains the child's
+      // stdio before close, but exit can precede the final stderr data.
+      const initializing = Array.from(this.pending.values()).some(
+        (request) => request.method === "initialize",
+      );
+      if (!initializing) reportExit(code, signal);
     });
+    child.on("close", reportExit);
   }
 
   setUnexpectedTerminationHandler(handler: UnexpectedTerminationHandler): void {
@@ -435,7 +479,11 @@ export class CodexAppServerClient {
     }
 
     if (isJsonRpcNotification(raw)) {
-      this.traceRawEvent(raw);
+      // Startup errors can include credentials and remote response bodies.
+      // The session logs a safe summary for this method.
+      if (raw.method !== CODEX_MCP_STARTUP_STATUS_METHOD) {
+        this.traceRawEvent(raw);
+      }
       this.notificationHandler?.(raw.method, raw.params);
     }
   }

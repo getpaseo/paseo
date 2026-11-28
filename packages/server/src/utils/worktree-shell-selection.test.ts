@@ -5,16 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const execFileMock = vi.hoisted(() => vi.fn());
 const spawnProcessMock = vi.hoisted(() => vi.fn());
-
-vi.mock("child_process", async () => {
-  const actual = await vi.importActual<typeof import("child_process")>("child_process");
-  return {
-    ...actual,
-    execFile: execFileMock,
-  };
-});
 
 vi.mock("./spawn.js", async () => {
   const actual = await vi.importActual<typeof import("./spawn.js")>("./spawn.js");
@@ -42,19 +33,7 @@ describe("worktree shell selection", () => {
   const originalPlatform = process.platform;
 
   beforeEach(() => {
-    execFileMock.mockReset();
     spawnProcessMock.mockReset();
-    execFileMock.mockImplementation(
-      (
-        _file: string,
-        _args: string[],
-        _options: unknown,
-        callback?: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback?.(null, "", "");
-        return {};
-      },
-    );
     spawnProcessMock.mockImplementation(createSpawnChildStub);
   });
 
@@ -94,8 +73,8 @@ describe("worktree shell selection", () => {
         branchName: "main",
       });
 
-      expect(execFileMock).toHaveBeenCalledTimes(1);
-      expect(execFileMock).toHaveBeenCalledWith(
+      expect(spawnProcessMock).toHaveBeenCalledTimes(1);
+      expect(spawnProcessMock).toHaveBeenCalledWith(
         "powershell",
         [
           "-NoProfile",
@@ -105,11 +84,10 @@ describe("worktree shell selection", () => {
           "-Command",
           "Write-Output 'teardown'",
         ],
-        expect.objectContaining({ cwd: worktreePath }),
-        expect.any(Function),
+        expect.objectContaining({ cwd: worktreePath, shell: false }),
       );
-      const execOptions = execFileMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
-      expect(execOptions.env?.BASH_ENV).toBeUndefined();
+      const spawnOptions = spawnProcessMock.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      expect(spawnOptions.env?.BASH_ENV).toBeUndefined();
     } finally {
       if (originalBashEnv === undefined) {
         delete process.env.BASH_ENV;

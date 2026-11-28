@@ -1,5 +1,5 @@
 import * as pty from "node-pty";
-import xterm, { type Terminal as TerminalType } from "@xterm/headless";
+import type { Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import {
   accessSync,
@@ -11,9 +11,14 @@ import {
   statSync,
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
-import { basename, delimiter, dirname, extname, join, resolve as resolvePath } from "node:path";
+import { basename, delimiter, dirname, join, resolve as resolvePath } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import {
+  isWindowsCommandScript,
+  windowsCommandLine,
+  windowsCommandShell,
+} from "@getpaseo/plugin/internal/windows-command";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import {
   resolveExternalProcessPath,
@@ -25,6 +30,8 @@ import {
   findExecutable,
   findExecutableWithoutProbing,
 } from "../executable-resolution/executable-resolution.js";
+import { signalProcessTree } from "../utils/tree-kill.js";
+import { createHeadlessTerminal } from "./headless-terminal.js";
 import { createTerminalSerializer } from "./terminal-serializer.js";
 import {
   captureTerminalLines,
@@ -32,21 +39,24 @@ import {
   type CaptureTerminalLinesResult,
 } from "./terminal-capture.js";
 import type { TerminalReplayOptions, TerminalReplayMetadata } from "./terminal-replay.js";
+import type { TerminalDefaultColors } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
+import { resolveDefaultTerminalShell } from "./default-terminal-shell.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
+import {
+  formatColorSchemeModeReport,
+  formatColorSchemeReport,
+  resolveTerminalPalette,
+  type ResolvedTerminalPalette,
+} from "./terminal-palette.js";
 
-const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
 let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
-const TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
-  [10, "rgb:e6e6/e6e6/e6e6"],
-  [11, "rgb:0b0b/0b0b/0b0b"],
-  [12, "rgb:e6e6/e6e6/e6e6"],
-]);
+const DEC_COLOR_SCHEME_REPORTING_MODE = 2031;
 
 export interface TerminalExitInfo {
   exitCode: number | null;
@@ -75,7 +85,8 @@ export interface TerminalCommandFinishedInfo {
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
-  | { type: "mouse"; row: number; col: number; button: number; action: "down" | "up" | "move" };
+  | { type: "mouse"; row: number; col: number; button: number; action: "down" | "up" | "move" }
+  | { type: "palette"; defaultColors: TerminalDefaultColors };
 
 export type ServerMessage =
   | { type: "output"; data: string; revision?: number }
@@ -88,6 +99,8 @@ export interface TerminalActivityTransition {
 }
 
 export interface TerminalSession {
+  /** Absent on terminal workers started before creation timestamps were tracked. */
+  createdAt?: string;
   id: string;
   name: string;
   cwd: string;
@@ -99,6 +112,7 @@ export interface TerminalSession {
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
   getSize(): { rows: number; cols: number };
+  getDefaultColors?(): TerminalDefaultColors | undefined;
   hasOutput(): boolean;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
@@ -142,6 +156,7 @@ export interface CreateTerminalOptions {
   id?: string;
   cwd: string;
   workspaceId: string;
+  defaultColors?: TerminalDefaultColors;
   shell?: string;
   env?: Record<string, string>;
   activityEnv?: Record<string, string>;
@@ -184,6 +199,7 @@ function isTerminalActivityInterruptInput(data: string): boolean {
 interface BuildTerminalEnvironmentInput {
   shell: string;
   env: Record<string, string>;
+  defaultColors?: TerminalDefaultColors;
   baseEnv?: Record<string, string>;
   zshShellIntegrationDir?: string;
   paseoCliBinDir?: string | null;
@@ -261,19 +277,6 @@ export function ensureNodePtySpawnHelperExecutableForCurrentPlatform(
   }
 }
 
-export function resolveDefaultTerminalShell(
-  options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {},
-): string {
-  const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
-
-  if (platform === "win32") {
-    return env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
-  }
-
-  return env.SHELL || "/bin/sh";
-}
-
 export interface ResolvedTerminalCommand {
   command: string;
   // `.cmd`/`.bat` targets resolve to a single pre-escaped `cmd.exe` command
@@ -293,64 +296,11 @@ export interface ResolveTerminalSpawnCommandOptions {
   resolveExecutable?: (name: string) => Promise<string | null>;
 }
 
-// cmd.exe treats these characters specially even inside a double-quoted
-// argument, unlike a POSIX shell — quoting alone does not neutralize them.
-// Prefixing each with `^`, cmd.exe's own escape character, does. Mirrors the
-// `escape.command` metachar list in the `cross-spawn` npm package (already a
-// dependency of this repo), which solves this exact `.cmd`/`.bat` spawning
-// problem — see http://www.robvanderwoude.com/escapechars.php.
-const CMD_EXE_METACHAR_PATTERN = /([()%!^"`<>&|;, *?])/g;
-
-function escapeCmdExeMetaChars(text: string): string {
-  return text.replace(CMD_EXE_METACHAR_PATTERN, "^$1");
-}
-
-/**
- * Escape one argument for safe inclusion in a `cmd.exe /c "..."` command
- * line that is about to invoke a `.cmd`/`.bat` shim.
- *
- * node-pty builds an MSVCRT/`CommandLineToArgvW`-style quoted command line
- * for whatever `command` it is given (double-quote wrap on whitespace,
- * backslash-escape only backslash runs immediately before a quote). That
- * quoting is correct for a normal executable, which parses its own argv via
- * that same convention. It is not correct here: the `command` node-pty
- * launches for a `.cmd`/`.bat` target is `cmd.exe` itself, and cmd.exe
- * re-parses the whole line with its *own* tokenizer before ever handing
- * arguments to the batch script — a tokenizer that treats `&`, `|`, `^`,
- * `%` (environment-variable expansion), `<`, `>` etc. as live syntax even
- * inside double quotes. A prompt containing any of those characters would
- * therefore be interpreted by cmd.exe, not passed through as text — the
- * same class of hazard tracked upstream as Node's CVE-2024-27980
- * ("batBadBadging").
- *
- * The escaping below is the "qntm" algorithm (https://qntm.org/cmd): double
- * every backslash run that immediately precedes a quote (or the end of the
- * argument, since a closing quote is appended next) and escape that quote,
- * wrap the whole argument in quotes, then caret-escape cmd.exe's
- * metacharacters — including the quotes just added, because cmd.exe's own
- * tokenizer runs first and would otherwise treat them as toggling a quoted
- * region. It is the same algorithm `cross-spawn` uses for its `.cmd`/`.bat`
- * auto-shell path (`lib/util/escape.js`). Command shims forward `%*`, which
- * adds a second cmd.exe parse, so metacharacters need a second escape pass to
- * survive as literal argv in the Node process behind an npm-generated shim.
- *
- * cmd.exe has no escape for a literal CR or LF inside a single command
- * line — its parser treats them as command separators regardless of
- * quoting, so passing one through verbatim would let a crafted prompt
- * inject a second, attacker-chosen command after the newline. There is no
- * fidelity-preserving option for that case, so newlines are normalized to
- * spaces before quoting: the target process still receives the full text,
- * just without the original line breaks, instead of cmd.exe splitting the
- * prompt into multiple commands.
- */
-function escapeCmdExeArgument(rawArg: string): string {
-  const arg = rawArg.replace(/\r\n|\r|\n/g, " ");
-
-  let escaped = arg.replace(/(\\*)"/g, '$1$1\\"');
-  escaped = escaped.replace(/(\\*)$/, "$1$1");
-  escaped = `"${escaped}"`;
-
-  return escapeCmdExeMetaChars(escapeCmdExeMetaChars(escaped));
+// cmd.exe ends a command at a line break whatever the quoting, so the shared line builder refuses
+// one. A terminal agent's initial prompt arrives as an argument and often spans lines; it still
+// starts, with each line break as a space.
+function joinPromptLines(argument: string): string {
+  return argument.replace(/\r\n|\r|\n/g, " ");
 }
 
 /**
@@ -387,28 +337,15 @@ export async function resolveTerminalSpawnCommand(
 
   // `.cmd`/`.bat` shims are batch scripts that conpty's CreateProcess cannot
   // launch directly; they must run through cmd.exe (node-pty has no `shell`
-  // option, so build the `cmd /c` invocation ourselves). Checked by extension
-  // rather than isWindowsCommandScript() because that helper gates on the live
-  // process.platform, which is wrong once we're already on the win32 branch.
-  const extension = extname(resolved).toLowerCase();
-  if (extension === ".cmd" || extension === ".bat") {
-    const env = options.env ?? process.env;
-    const comSpec = env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
-    // Build the `/c` command line ourselves — as a single pre-escaped
-    // string, not an argv array — so node-pty's own array quoting never
-    // runs over these values; see escapeCmdExeArgument for why that
-    // quoting alone is not safe once cmd.exe re-parses the line. `resolved`
-    // gets the same metachar (not quote-wrap) treatment as the args: it
-    // isn't attacker-controlled, but it now sits inside the same joined
-    // command line and needs to survive cmd.exe's tokenizer too (e.g. a
-    // space in the install path).
-    const commandLine = [
-      "/d",
-      "/s",
-      "/c",
-      `"${[escapeCmdExeMetaChars(resolved), ...args.map(escapeCmdExeArgument)].join(" ")}"`,
-    ].join(" ");
-    return { command: comSpec, args: commandLine };
+  // option, so build the `cmd /c` invocation ourselves).
+  if (isWindowsCommandScript(resolved, platform)) {
+    // node-pty quotes an argv array for a program's own parser, which cmd.exe does not use, so the
+    // `/c` line goes to it as one string that the shared cmd.exe dialect has already quoted.
+    const line = windowsCommandLine(resolved, args.map(joinPromptLines), { commandScript: true });
+    return {
+      command: windowsCommandShell(options.env ?? process.env),
+      args: `/d /s /c ${line}`,
+    };
   }
 
   return { command: resolved, args };
@@ -449,13 +386,20 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
+  const hasExplicitColorFgBg = Object.keys(input.env).some(
+    (key) => key.toLowerCase() === "colorfgbg" && input.env[key] !== undefined,
+  );
+  const terminalOverrides: Record<string, string> = {
+    TERM: "xterm-256color",
+    TERM_PROGRAM: "kitty",
+    ...(hasExplicitColorFgBg
+      ? {}
+      : { COLORFGBG: resolveTerminalPalette(input.defaultColors).colorFgBg }),
+  };
   const baseEnv: Record<string, string> = createExternalProcessEnv(
     input.baseEnv ?? process.env,
     input.env,
-    {
-      TERM: "xterm-256color",
-      TERM_PROGRAM: "kitty",
-    },
+    terminalOverrides,
   );
   const envWithAgentHooks = prependPaseoCliToPath(
     baseEnv,
@@ -753,6 +697,7 @@ export async function createTerminal(
   const {
     cwd,
     workspaceId,
+    defaultColors,
     shell,
     env = {},
     activityEnv = {},
@@ -768,6 +713,9 @@ export async function createTerminal(
   const resolvedShell = shell ?? resolveDefaultTerminalShell({ env: baseEnv });
 
   const id = options.id ?? randomUUID();
+  let activeDefaultColors: TerminalDefaultColors | undefined = defaultColors;
+  let activePalette: ResolvedTerminalPalette = resolveTerminalPalette(defaultColors);
+  let colorSchemeReportingEnabled = false;
   const listeners = new Set<(msg: ServerMessage) => void>();
   const exitListeners = new Set<(info: TerminalExitInfo) => void>();
   const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
@@ -796,13 +744,7 @@ export async function createTerminal(
   const activityChangeListeners = new Set<(transition: TerminalActivityTransition) => void>();
   let titleChangeSubscription: { dispose(): void } | null = null;
 
-  // Create xterm.js headless terminal
-  const terminal = new Terminal({
-    rows,
-    cols,
-    scrollback: 10000,
-    allowProposedApi: true,
-  });
+  const terminal = createHeadlessTerminal({ rows, cols, scrollback: 10000 });
 
   const serialize = createTerminalSerializer(terminal);
 
@@ -819,6 +761,7 @@ export async function createTerminal(
       ...activityEnv,
       PASEO_WORKSPACE_ID: workspaceId,
     },
+    ...(defaultColors ? { defaultColors } : {}),
     ...resolveTerminalEnvironmentSource({ baseEnv, paseoCliPath }),
   });
 
@@ -909,17 +852,51 @@ export async function createTerminal(
     }
     return false;
   });
+  terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
+    if (params.includes(DEC_COLOR_SCHEME_REPORTING_MODE)) {
+      colorSchemeReportingEnabled = true;
+    }
+    return false;
+  });
+  terminal.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+    if (params.includes(DEC_COLOR_SCHEME_REPORTING_MODE)) {
+      colorSchemeReportingEnabled = false;
+    }
+    return false;
+  });
+  terminal.parser.registerEscHandler({ final: "c" }, () => {
+    colorSchemeReportingEnabled = false;
+    return false;
+  });
+  terminal.parser.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, (params) => {
+    if (params.length === 1 && params[0] === DEC_COLOR_SCHEME_REPORTING_MODE) {
+      ptyProcess.write(formatColorSchemeModeReport(colorSchemeReportingEnabled));
+      return true;
+    }
+    return false;
+  });
   terminal.parser.registerCsiHandler({ prefix: "?", final: "n" }, (params) => {
-    if (params.length !== 1 || params[0] !== 6) {
+    if (params.length !== 1) {
       return false;
     }
-    const buffer = terminal.buffer.active;
-    ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
-    return true;
+    if (params[0] === 6) {
+      const buffer = terminal.buffer.active;
+      ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
+      return true;
+    }
+    if (params[0] === 996) {
+      ptyProcess.write(formatColorSchemeReport(activePalette.colorScheme));
+      return true;
+    }
+    return false;
   });
-  for (const [code, response] of TERMINAL_OSC_COLOR_QUERY_RESPONSES) {
+  for (const code of [10, 11, 12] as const) {
     terminal.parser.registerOscHandler(code, (data) => {
       if (data.trim() !== "?") {
+        return false;
+      }
+      const response = activePalette.oscResponses.get(code);
+      if (!response) {
         return false;
       }
       ptyProcess.write(`\x1b]${code};${response}\x1b\\`);
@@ -1184,6 +1161,20 @@ export async function createTerminal(
         // Mouse events can be sent as escape sequences if terminal supports it
         // For now, we'll just ignore them - can be implemented later
         break;
+      case "palette": {
+        const previousScheme = activePalette.colorScheme;
+        activeDefaultColors = msg.defaultColors;
+        activePalette = resolveTerminalPalette(msg.defaultColors);
+        if (
+          colorSchemeReportingEnabled &&
+          activePalette.colorScheme !== previousScheme &&
+          !disposed
+        ) {
+          flushPendingInput();
+          ptyProcess.write(formatColorSchemeReport(activePalette.colorScheme));
+        }
+        break;
+      }
     }
   }
 
@@ -1313,12 +1304,20 @@ export async function createTerminal(
     void waitForProcessExit(1000).finally(disposeResources);
   }
 
-  function killPtyProcess(signal?: NodeJS.Signals): void {
-    if (process.platform === "win32") {
-      ptyProcess.kill();
+  function killPtyProcess(): void {
+    ptyProcess.kill();
+  }
+
+  // On Windows, node-pty's kill only closes the pseudoconsole and kills the console's
+  // processes after a helper process it forks reports them. A worker that exits right after
+  // killAndWait drops that kill, and the program keeps running. Kill the tree ourselves.
+  async function forceKillPtyProcess(): Promise<void> {
+    if (process.platform !== "win32") {
+      ptyProcess.kill("SIGKILL");
       return;
     }
-    ptyProcess.kill(signal);
+    const pid = ptyProcess.pid;
+    await signalProcessTree({ pid, kill: (signal) => process.kill(pid, signal) }, "SIGKILL");
   }
 
   function waitForProcessExit(timeoutMs: number): Promise<boolean> {
@@ -1366,7 +1365,7 @@ export async function createTerminal(
     const exitedGracefully = await waitForProcessExit(gracefulTimeoutMs);
     if (!exitedGracefully) {
       try {
-        killPtyProcess("SIGKILL");
+        await forceKillPtyProcess();
       } catch {
         // process may already be gone
       }
@@ -1384,6 +1383,7 @@ export async function createTerminal(
 
   return {
     id,
+    createdAt: new Date().toISOString(),
     pid: ptyProcess.pid,
     name,
     cwd,
@@ -1395,6 +1395,7 @@ export async function createTerminal(
     onTitleChange,
     onActivityChange,
     getSize,
+    getDefaultColors: () => activeDefaultColors,
     serializeReplay,
     captureLines: (captureOptions) => captureTerminalLines(terminal.buffer.active, captureOptions),
     hasOutput: () => {

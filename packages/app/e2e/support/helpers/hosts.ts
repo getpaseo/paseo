@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { identityForeground, type IdentityColorName } from "@/styles/identity-colors";
 import { openSettings } from "./app";
 import { buildSeededHost } from "./daemon-registry";
-import { clickSettingsBackToWorkspace, openHostSection, selectSettingsHost } from "./settings";
+import { clickSettingsBackToWorkspace, openClientHostSettings } from "./settings";
 
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
@@ -22,15 +22,27 @@ export async function addOfflineHostAndReload(
   page: Page,
   input: { serverId: string; label: string; primaryLabel?: string },
 ): Promise<void> {
-  const offlineHost = buildSeededHost({
-    serverId: input.serverId,
-    label: input.label,
-    endpoint: "127.0.0.1:59999",
-    nowIso: new Date().toISOString(),
-  });
+  await addOfflineHostsAndReload(page, [input], { primaryLabel: input.primaryLabel });
+}
+
+/** Adds several unreachable hosts with one reload. See `addOfflineHostAndReload`. */
+export async function addOfflineHostsAndReload(
+  page: Page,
+  hosts: Array<{ serverId: string; label: string }>,
+  options: { primaryLabel?: string } = {},
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const offlineHosts = hosts.map((host) =>
+    buildSeededHost({
+      serverId: host.serverId,
+      label: host.label,
+      endpoint: "127.0.0.1:59999",
+      nowIso,
+    }),
+  );
 
   await page.evaluate(
-    ({ host, keys, primaryLabel }) => {
+    ({ hosts: added, keys, primaryLabel }) => {
       const nonce = localStorage.getItem(keys.nonce);
       if (!nonce) {
         throw new Error("Expected the e2e seed nonce before overriding the host registry.");
@@ -40,20 +52,22 @@ export async function addOfflineHostAndReload(
       if (primaryLabel && registry[0]) {
         registry[0].label = primaryLabel;
       }
-      if (!registry.some((entry) => entry.serverId === host.serverId)) {
-        registry.push(host);
+      for (const host of added) {
+        if (!registry.some((entry) => entry.serverId === host.serverId)) {
+          registry.push(host);
+        }
       }
       localStorage.setItem(keys.registry, JSON.stringify(registry));
       localStorage.setItem(keys.disableSeedOnce, nonce);
     },
     {
-      host: offlineHost,
+      hosts: offlineHosts,
       keys: {
         registry: REGISTRY_KEY,
         nonce: SEED_NONCE_KEY,
         disableSeedOnce: DISABLE_DEFAULT_SEED_ONCE_KEY,
       },
-      primaryLabel: input.primaryLabel,
+      primaryLabel: options.primaryLabel,
     },
   );
 
@@ -118,7 +132,10 @@ export async function waitForConnectedHost(
 ): Promise<void> {
   await page.getByTestId("sidebar-hosts-trigger").click();
   const host = page.getByTestId(`sidebar-host-row-${input.serverId}`);
-  await expect(host).toContainText(input.endpoint, { timeout: 30_000 });
+  const escapedEndpoint = input.endpoint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Local daemons render "Local" without repeating localhost:<port>; remote hosts render the endpoint.
+  await expect(host).toContainText(new RegExp(`${escapedEndpoint}|Local`), { timeout: 30_000 });
+  await expect(host).toContainText(/\d+(?:\.\d+)?(?:µs|ms|s)/, { timeout: 30_000 });
   await page.keyboard.press("Escape");
   await expect(host).not.toBeVisible();
 }
@@ -153,8 +170,7 @@ export async function selectAllHostsFilter(page: Page): Promise<void> {
 
 export async function openHostAppearanceSettings(page: Page, serverId: string): Promise<void> {
   await openSettings(page);
-  await selectSettingsHost(page, serverId);
-  await openHostSection(page, serverId, "host");
+  await openClientHostSettings(page, serverId);
   await expect(page.getByTestId("host-appearance-preview")).toBeVisible({ timeout: 15_000 });
 }
 
@@ -179,6 +195,12 @@ export async function chooseHostColor(page: Page, colorName: string): Promise<vo
   await page.getByRole("button", { name: /^Color, / }).click();
   await page.getByRole("menuitem", { name: colorName, exact: true }).click();
   await expect(page.getByRole("button", { name: `Color, ${colorName}` })).toBeVisible();
+}
+
+export async function chooseHostIcon(page: Page, iconName: string): Promise<void> {
+  await page.getByTestId("host-appearance-icon").click();
+  await page.getByRole("menuitem", { name: iconName, exact: true }).click();
+  await expect(page.getByRole("button", { name: `Icon, ${iconName}` })).toBeVisible();
 }
 
 export async function chooseHostBadgeDisplay(
@@ -270,6 +292,28 @@ export async function reloadPreservingHostRegistry(page: Page): Promise<void> {
       localStorage.setItem(keys.disableSeedOnce, nonce);
     },
     { nonce: SEED_NONCE_KEY, disableSeedOnce: DISABLE_DEFAULT_SEED_ONCE_KEY },
+  );
+  await page.reload();
+}
+
+export async function disconnectAllHostsAndReload(page: Page): Promise<void> {
+  await page.evaluate(
+    ({ registryKey, nonceKey, disableSeedKey }) => {
+      const nonce = localStorage.getItem(nonceKey);
+      if (!nonce) throw new Error("Expected the e2e seed nonce");
+      const hosts = JSON.parse(localStorage.getItem(registryKey) ?? "[]");
+      for (const host of hosts) {
+        host.connections = [{ id: "offline", type: "directTcp", endpoint: "127.0.0.1:59999" }];
+        host.preferredConnectionId = "offline";
+      }
+      localStorage.setItem(registryKey, JSON.stringify(hosts));
+      localStorage.setItem(disableSeedKey, nonce);
+    },
+    {
+      registryKey: REGISTRY_KEY,
+      nonceKey: SEED_NONCE_KEY,
+      disableSeedKey: DISABLE_DEFAULT_SEED_ONCE_KEY,
+    },
   );
   await page.reload();
 }

@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const ACPProviderOptionsSchema = z
   .object({
+    // Composer control: approves permission prompts without asking.
+    auto_accept: z.boolean().optional(),
     supportsMcpServers: z.boolean().optional(),
     clientCapabilities: z
       .object({

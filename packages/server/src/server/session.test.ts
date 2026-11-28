@@ -28,7 +28,7 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { UsageReportEntry, WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -36,6 +36,8 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { createAgentMessageDelivery } from "./agent/agent-messages/index.js";
+import { MessageReceipts } from "./message-receipts/index.js";
 import {
   terminalCleanupRecordPath,
   terminalWorkerDirectory,
@@ -48,7 +50,10 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
-import { createPersistedProjectRecord } from "./workspace-registry.js";
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+} from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
@@ -348,9 +353,12 @@ interface SessionForTestOptions {
   messages?: unknown[];
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
+  clientCapabilities?: SessionOptions["clientCapabilities"];
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  agentMessages?: SessionOptions["agentMessages"];
+  messageReceipts?: SessionOptions["messageReceipts"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -387,8 +395,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     workspaceRuntimeStore: options.workspaceRuntimeStore ?? createWorkspaceRuntimeStore(),
-    messageReceipts: createMessageReceiptsStub(),
-    agentMessages: createAgentMessageDeliveryStub(),
+    messageReceipts: options.messageReceipts ?? createMessageReceiptsStub(),
+    agentMessages: options.agentMessages ?? createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
@@ -402,6 +410,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
             messages.push(message),
         }),
     onBinaryMessage: createBinaryMessageHandler(options.binaryMessages),
+    clientCapabilities: options.clientCapabilities,
     logger,
     downloadTokenStore: options.downloadTokenStore ?? asDownloadTokenStore(),
     pushNotifications: options.pushNotifications ?? asPushNotifications(),
@@ -409,6 +418,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
+      getAgentBackgroundWorkSummary: () => undefined,
       subscribe: vi.fn(() => () => {}),
       ...options.agentManager,
     }),
@@ -523,6 +533,10 @@ test("routes plugin requests and releases its owned catalog subscription on clea
       return request;
     },
     emit: () => {},
+    hasWorktreeManager: () => false,
+    createWorktree: async () => null,
+    removeWorktree: async () => null,
+    restoreWorktree: async () => null,
     listPlugins: async () => [plugin],
     getLogs: () => [
       {
@@ -601,11 +615,115 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
 });
 
+test("pushes reports the daemon updates on its own only while a source asks for them", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const listeners = new Set<(report: UsageReportEntry) => void>();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    subscribeUsageReports: (listener: (report: UsageReportEntry) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({ messages, pluginRuntime });
+  const report: UsageReportEntry = {
+    id: "claude:account",
+    account: {},
+    fetchedAt: "2026-11-27T12:00:00.000Z",
+    sourceId: "claude",
+    sourceLabel: "Claude",
+    report: { status: "available", windows: [{ id: "five_hour", label: "Session", usedPct: 73 }] },
+  };
+
+  expect(listeners.size).toBe(0);
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "usage",
+    events: ["status.usage_report_changed"],
+  });
+  expect(listeners.size).toBe(1);
+  messages.length = 0;
+  for (const listener of listeners) listener(report);
+  expect(messages).toEqual([
+    { type: "status", payload: { status: "usage_report_changed", report } },
+  ]);
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "none",
+    events: [],
+  });
+  expect(listeners.size).toBe(0);
+  await session.cleanup();
+});
+
+test("losing daemon.manage releases the session's plugin subscriptions", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const release = vi.fn();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    subscribePluginRpc: () => ({ ready: Promise.resolve(), attach: () => {}, release }),
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({ messages, pluginRuntime });
+
+  await session.handleMessage({
+    type: "plugin.rpc.subscribe.request",
+    requestId: "watch",
+    pluginId: "example",
+    method: "screen.capture",
+    input: {},
+  });
+  expect(messages.map((message) => message.type)).toContain("plugin.rpc.subscribe.response");
+  session.setPermissions(["daemon.read"]);
+
+  // Bytes have no outbound permission check, so the stream itself has to end.
+  await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+});
+
+test("losing daemon.manage during a plugin RPC withholds its JSON and binary results", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const binaryMessages: Uint8Array[] = [];
+  const outputs = new Map<string, (output: unknown) => void>();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    invokePluginRpc: (_pluginId: string, method: string) =>
+      new Promise((resolve) => outputs.set(method, resolve)),
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({
+    messages,
+    binaryMessages,
+    pluginRuntime,
+    clientCapabilities: { [CLIENT_CAPS.pluginBinaryPayloads]: true },
+  });
+  const invoke = (method: string) =>
+    session.handleMessage({
+      type: "plugin.rpc.invoke.request",
+      requestId: method,
+      pluginId: "example",
+      method,
+      input: {},
+    });
+
+  const pending = [invoke("capture.json"), invoke("capture.bytes")];
+  await vi.waitFor(() => expect(outputs.size).toBe(2));
+  session.setPermissions(["daemon.read"]);
+  outputs.get("capture.json")?.({ width: 1 });
+  outputs.get("capture.bytes")?.(new Uint8Array([1, 2, 3]));
+  await Promise.all(pending);
+
+  expect(messages.filter((message) => message.type === "plugin.rpc.invoke.response")).toEqual([]);
+  expect(binaryMessages).toEqual([]);
+});
+
 test("leaves out the client bundles a catalog request already holds", async () => {
   const messages: SessionOutboundMessage[] = [];
   const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
     before: async (_name, request) => request,
     emit: () => {},
+    hasWorktreeManager: () => false,
+    createWorktree: async () => null,
+    removeWorktree: async () => null,
+    restoreWorktree: async () => null,
     listPlugins: async () => [],
     getLogs: () => [],
     installDirectory: async () => {
@@ -1599,6 +1717,37 @@ describe("plugin timeline append RPC", () => {
       }),
     );
   });
+
+  test.each(["repro.card", "Review", "review_card", "1review", ""])(
+    "rejects the kind %j that no client renderer can register",
+    async (kind) => {
+      const messages: SessionOutboundMessage[] = [];
+      const appendTimelineItem = vi.fn();
+      const session = createSessionForTest({
+        clientId: "plugin:review",
+        messages,
+        agentManager: { appendTimelineItem },
+      });
+
+      await session.handleMessage({
+        type: "agent.timeline.append.request",
+        requestId: "append-kind",
+        agentId: "agent-1",
+        item: { type: "plugin", id: "review-1", kind, version: 1, data: {} },
+      });
+
+      expect(appendTimelineItem).not.toHaveBeenCalled();
+      expect(messages).toContainEqual({
+        type: "rpc_error",
+        payload: {
+          requestId: "append-kind",
+          requestType: "agent.timeline.append.request",
+          error: `Request failed: Plugin timeline item kind must start with a lowercase letter and contain only lowercase letters, digits, and dashes: ${JSON.stringify(kind)}`,
+          code: "handler_error",
+        },
+      });
+    },
+  );
 });
 
 describe("agent detach RPC", () => {
@@ -1988,6 +2137,43 @@ test("push token registration can be revoked by the connected client", async () 
     {
       type: "push.unregister.response",
       payload: { requestId: "revoke-1" },
+    },
+  ]);
+});
+
+test("push token registration forwards notification preferences to pushNotifications.renew", async () => {
+  const renewed: Array<{ token: string; preferences: unknown }> = [];
+  const session = createSessionForTest({
+    pushNotifications: asPushNotifications({
+      renew: (token: string, preferences?: unknown) => renewed.push({ token, preferences }),
+    }),
+  });
+
+  const preferences = {
+    enabled: true,
+    events: {
+      agentPermission: true,
+      agentError: true,
+      agentFinished: true,
+      terminalNeedsInput: true,
+      terminalFinished: false,
+    },
+    plugins: {
+      enabled: true,
+      muted: ["review-bot"],
+    },
+  };
+
+  await session.handleMessage({
+    type: "register_push_token",
+    token: "ExponentPushToken[prefs-device]",
+    preferences,
+  });
+
+  expect(renewed).toEqual([
+    {
+      token: "ExponentPushToken[prefs-device]",
+      preferences,
     },
   ]);
 });
@@ -3972,7 +4158,11 @@ describe("session checkout pull and push handling", () => {
       requestId: "request-push",
     });
 
-    expect(checkoutGitMocks.pushCurrentBranch).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(checkoutGitMocks.pushCurrentBranch).toHaveBeenCalledWith(
+      "/tmp/request-worktree",
+      undefined,
+      { paseoHome: "/tmp/paseo-home", worktreesRoot: undefined },
+    );
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
       force: true,
       reason: "push",
@@ -4179,7 +4369,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: {
         list: vi.fn().mockResolvedValue([project]),
         get: vi.fn().mockResolvedValue(project),
@@ -4259,7 +4449,7 @@ describe("session workspace descriptors", () => {
         ),
       },
       messages,
-      workspaceRegistry: { get: vi.fn(), list: vi.fn().mockResolvedValue([workspace]) },
+      workspaceRegistry: { get: vi.fn(), listActive: vi.fn().mockResolvedValue([workspace]) },
       projectRegistry: { list: vi.fn().mockResolvedValue([project]), get: vi.fn() },
       workspaceGitService: {
         getSnapshot: vi.fn(),
@@ -5816,7 +6006,7 @@ describe("agent config setters", () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
       messages,
-      agentManager: liveAgentManager({ setAgentFeature: vi.fn().mockResolvedValue(undefined) }),
+      agentManager: liveAgentManager({ setAgentOptions: vi.fn().mockResolvedValue(undefined) }),
     });
 
     await session.handleMessage({
@@ -5840,7 +6030,7 @@ describe("agent config setters", () => {
     const session = createSessionForTest({
       messages,
       agentManager: liveAgentManager({
-        setAgentFeature: vi.fn().mockRejectedValue(new Error("feature boom")),
+        setAgentOptions: vi.fn().mockRejectedValue(new Error("feature boom")),
       }),
     });
 
@@ -6044,4 +6234,726 @@ test("a failing direct source observes fire-and-forget file replies without unha
     await session.cleanup();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("answers an agent background work list request", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    permissions: ["workspace.read", "workspace.write"],
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => ({ id: "agent-a" })),
+      getAgentBackgroundWorkSummary: () => ({ count: 1 }),
+      listAgentBackgroundWork: vi.fn(() => [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          canStop: true,
+          stopToken: "provider-token",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ]),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-1",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: {
+      requestId: "list-1",
+      agentId: "agent-a",
+      items: [
+        {
+          id: "bash-1",
+          kind: "shell",
+          description: "sleep 20",
+          canStop: true,
+          stopToken: "provider-token",
+          startedAt: "2026-10-06T10:00:00.000Z",
+        },
+      ],
+      error: null,
+    },
+  });
+});
+
+const heartbeatBackgroundWork = {
+  id: "heartbeat:heartbeat-a",
+  kind: "heartbeat",
+  description: "Check progress",
+  startedAt: "2026-10-06T10:00:00.000Z",
+  canStop: true,
+  stopToken: "heartbeat-token",
+};
+
+const changeRequestBackgroundWork = {
+  id: "daemon:change-request-watch:https://github.com/owner/repo/pull/42",
+  kind: "monitor",
+  description: "owner/repo #42",
+  startedAt: heartbeatBackgroundWork.startedAt,
+  canStop: true,
+  stopToken: "watch-token",
+};
+
+test.each([
+  { permissions: ["workspace.read"], canStop: false },
+  { permissions: ["workspace.read", "automation.manage"], canStop: false },
+  { permissions: ["workspace.read", "workspace.write"], canStop: false },
+  { permissions: ["workspace.read", "hub.execute", "automation.manage"], canStop: true },
+] satisfies Array<{ permissions: DaemonPermission[]; canStop: boolean }>)(
+  "filters dormant daemon controls for $permissions on list and update",
+  async ({ permissions, canStop }) => {
+    const messages: SessionOutboundMessage[] = [];
+    const inventory = [heartbeatBackgroundWork, changeRequestBackgroundWork];
+    let listener: ((event: AgentManagerEvent) => void) | undefined;
+    const record = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo" });
+    const session = createSessionForTest({
+      messages,
+      permissions,
+      agentManager: {
+        getAgent: () => undefined,
+        getAgentBackgroundWorkSummary: () => ({ count: inventory.length }),
+        listAgentBackgroundWork: () => inventory,
+        subscribe: (callback: (event: AgentManagerEvent) => void) => {
+          listener = callback;
+          return () => {};
+        },
+      },
+      agentStorage: { get: async () => record },
+    });
+    await session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId: "subscribe-heartbeat",
+      events: ["agent.background_work.update"],
+    });
+    await session.handleMessage({
+      type: "agent.background_work.list.request",
+      requestId: "list-heartbeat",
+      agentId: record.id,
+    });
+    if (!listener) throw new Error("Agent event listener was not installed");
+    listener({
+      type: "background_work",
+      agentId: record.id,
+      items: inventory,
+    });
+
+    const items = canStop
+      ? inventory
+      : inventory.map(({ canStop: _canStop, stopToken: _token, ...item }) => item);
+    expect(findByType(messages, "agent.background_work.list.response")?.payload).toEqual({
+      requestId: "list-heartbeat",
+      agentId: record.id,
+      items,
+      error: null,
+    });
+    await expect
+      .poll(() => findByType(messages, "agent.background_work.update")?.payload)
+      .toEqual({ agentId: record.id, items });
+
+    await session.cleanup();
+  },
+);
+
+test("publishes the current dormant inventory when an older update waits on storage", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const record = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo" });
+  const pendingRecord = deferred<StoredAgentRecord>();
+  let firstRead = true;
+  let listener: ((event: AgentManagerEvent) => void) | undefined;
+  let items = [heartbeatBackgroundWork];
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: () => null,
+      getAgentBackgroundWorkSummary: () => (items.length ? { count: items.length } : undefined),
+      listAgentBackgroundWork: () => items,
+      subscribe: (callback: (event: AgentManagerEvent) => void) => {
+        listener = callback;
+        return () => {};
+      },
+    },
+    agentStorage: {
+      get: async () => {
+        if (!firstRead) return record;
+        firstRead = false;
+        return pendingRecord.promise;
+      },
+    },
+  });
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "subscribe-delayed-inventory",
+    events: ["agent.background_work.update"],
+  });
+
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({ type: "background_work", agentId: record.id, items });
+  items = [];
+  listener({ type: "background_work", agentId: record.id, items });
+  await expect
+    .poll(() => findByType(messages, "agent.background_work.update")?.payload.items)
+    .toEqual([]);
+
+  pendingRecord.resolve(record);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const updates = messages.filter((message) => message.type === "agent.background_work.update");
+  expect(updates.every((message) => message.payload.items.length === 0)).toBe(true);
+  await session.cleanup();
+});
+
+test("passes the automation grant to the dormant background work stop operation", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const stops: Parameters<SessionOptions["agentManager"]["stopAgentBackgroundWork"]>[0][] = [];
+  const record = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo" });
+  const session = createSessionForTest({
+    messages,
+    permissions: ["workspace.read", "automation.manage"],
+    agentManager: {
+      getAgent: () => undefined,
+      stopAgentBackgroundWork: async (
+        request: Parameters<SessionOptions["agentManager"]["stopAgentBackgroundWork"]>[0],
+      ) => {
+        stops.push(request);
+      },
+    },
+    agentStorage: { get: async () => record },
+  });
+  const request = {
+    type: "agent.background_work.stop.request",
+    requestId: "stop-heartbeat",
+    agentId: record.id,
+    itemId: heartbeatBackgroundWork.id,
+    stopToken: heartbeatBackgroundWork.stopToken,
+  } as const;
+  await session.handleMessage({ ...request, requestId: "stop-heartbeat-read-only" });
+  expect(findByType(messages, "rpc_error")?.payload.code).toBe("access_denied");
+  session.setPermissions(["workspace.read", "workspace.write"]);
+  await session.handleMessage(request);
+  session.setPermissions(["workspace.read", "workspace.write", "automation.manage"]);
+  await session.handleMessage({ ...request, requestId: "stop-heartbeat-owner" });
+
+  const { agentId, itemId, stopToken } = request;
+  expect(stops).toEqual([
+    { agentId, itemId, stopToken, canManageAutomation: false },
+    { agentId, itemId, stopToken, canManageAutomation: true },
+  ]);
+  expect(findByType(messages, "agent.background_work.stop.response")?.payload.error).toBeNull();
+  await session.cleanup();
+});
+
+test("projects dormant heartbeat counts in directory snapshots and live updates", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  let listener: ((event: AgentManagerEvent) => void) | undefined;
+  let count = 1;
+  const record = createStoredAgentRecord({
+    id: "agent-a",
+    workspaceId: "workspace-a",
+    cwd: "/tmp/repo",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "workspace-a",
+    projectId: "project-a",
+    cwd: record.cwd,
+    kind: "directory",
+    displayName: "Workspace",
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  });
+  const project = createPersistedProjectRecord({
+    projectId: workspace.projectId,
+    rootPath: workspace.cwd,
+    kind: "non_git",
+    displayName: "Project",
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  });
+  const providers = createProviderSnapshotManagerStub();
+  providers.listRegisteredProviderIds.mockReturnValue([record.provider]);
+  const session = createSessionForTest({
+    messages,
+    providerSnapshotManager: providers.manager,
+    permissions: ["workspace.read"],
+    agentManager: {
+      getAgent: () => undefined,
+      getAgentBackgroundWorkSummary: () => (count ? { count } : undefined),
+      subscribe: (callback: (event: AgentManagerEvent) => void) => {
+        listener = callback;
+        return () => {};
+      },
+    },
+    agentStorage: { get: async () => record, listAll: async () => [record] },
+    workspaceRegistry: { get: vi.fn(async () => workspace) },
+    projectRegistry: { get: async () => project },
+  });
+
+  await session.handleMessage({
+    type: "fetch_agents_request",
+    requestId: "list-heartbeat-agents",
+    subscribe: { subscriptionId: "heartbeat-agents" },
+  });
+  expect(findByType(messages, "fetch_agents_response")?.payload.entries).toMatchObject([
+    { agent: { id: record.id, backgroundWork: { count: 1 } } },
+  ]);
+
+  if (!listener) throw new Error("Agent event listener was not installed");
+  count = 0;
+  listener({ type: "background_work", agentId: record.id, items: [] });
+  await expect
+    .poll(() => findByType(messages, "agent_update")?.payload)
+    .toMatchObject({
+      kind: "upsert",
+      agent: { id: record.id },
+    });
+  const update = findByType(messages, "agent_update")?.payload;
+  expect(update?.kind === "upsert" && update.agent.backgroundWork).toBeUndefined();
+  await session.cleanup();
+});
+
+test("reports an unavailable inventory for a stored agent without loading it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const resumeAgentFromPersistence = vi.fn();
+  const createAgent = vi.fn();
+  const listAgentBackgroundWork = vi.fn(() => []);
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: () => undefined,
+      getRegisteredProviderIds: vi.fn(() => ["claude"]),
+      resumeAgentFromPersistence,
+      createAgent,
+      listAgentBackgroundWork,
+    },
+    agentStorage: {
+      get: vi.fn().mockResolvedValue(
+        createStoredAgentRecord({
+          id: "agent-a",
+          cwd: "/tmp/repo",
+          provider: "claude",
+          persistence: { provider: "claude", sessionId: "session-a" },
+        }),
+      ),
+    },
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-stored",
+  });
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: {
+      requestId: "list-stored",
+      agentId: "agent-a",
+      items: [],
+      error: "Background work inventory is unavailable",
+    },
+  });
+  expect(resumeAgentFromPersistence).not.toHaveBeenCalled();
+  expect(createAgent).not.toHaveBeenCalled();
+  expect(listAgentBackgroundWork).not.toHaveBeenCalled();
+});
+
+test.each([
+  {
+    name: "an archived agent",
+    record: createStoredAgentRecord({
+      id: "agent-a",
+      cwd: "/tmp/repo",
+      archivedAt: "2026-10-06T10:00:00.000Z",
+    }),
+    error: "Agent is archived: agent-a",
+  },
+  { name: "an unknown agent", record: undefined, error: "Unknown agent 'agent-a'" },
+  {
+    name: "an internal agent",
+    record: createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo", internal: true }),
+    error: "Unknown agent 'agent-a'",
+  },
+])("rejects background work control and updates for $name that is not loaded", async (scenario) => {
+  const messages: SessionOutboundMessage[] = [];
+  let listener: ((event: AgentManagerEvent) => void) | undefined;
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: () => undefined,
+      getRegisteredProviderIds: vi.fn(() => ["codex"]),
+      resumeAgentFromPersistence: vi.fn(),
+      createAgent: vi.fn(),
+      subscribe: (callback: (event: AgentManagerEvent) => void) => {
+        listener = callback;
+        return () => {};
+      },
+    },
+    agentStorage: { get: vi.fn().mockResolvedValue(scenario.record) },
+  });
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "subscribe-background-work",
+    events: ["agent.background_work.update"],
+  });
+  await session.handleMessage({
+    type: "agent.background_work.list.request",
+    agentId: "agent-a",
+    requestId: "list-rejected",
+  });
+
+  await session.handleMessage({
+    type: "agent.background_work.stop.request",
+    requestId: "stop-rejected",
+    agentId: "agent-a",
+    itemId: heartbeatBackgroundWork.id,
+    stopToken: heartbeatBackgroundWork.stopToken,
+  });
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({ type: "background_work", agentId: "agent-a", items: [heartbeatBackgroundWork] });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  expect(messages).toContainEqual({
+    type: "agent.background_work.list.response",
+    payload: { requestId: "list-rejected", agentId: "agent-a", items: [], error: scenario.error },
+  });
+  expect(findByType(messages, "agent.background_work.stop.response")?.payload.error).toBe(
+    scenario.error,
+  );
+  expect(findByType(messages, "agent.background_work.update")).toBeUndefined();
+  await session.cleanup();
+});
+
+test("never pushes background work to an old app", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const session = createSessionForTest({
+    messages,
+    targetedMessages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+    agentStorage: { get: async () => createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo" }) },
+  });
+  // provider_subagents makes subagent updates flow to this legacy socket, so the
+  // manager listener is installed for it.
+  const legacySocket = {};
+  session.updateClientCapabilities({ provider_subagents: true }, legacySocket);
+  const listener = agentEventListeners[0];
+  if (!listener) throw new Error("Agent event listener was not installed");
+
+  listener({
+    type: "background_work",
+    agentId: "agent-a",
+    items: [
+      { id: "bash-1", kind: "shell", description: null, startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const pushed = [...messages, ...targetedMessages.map((entry) => entry.message)];
+  expect(pushed.some((message) => message.type === "agent.background_work.update")).toBe(false);
+});
+
+test("pushes background work only to clients that subscribed to it", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];
+  const event: AgentManagerEvent = {
+    type: "background_work",
+    agentId: "agent-a",
+    items: [
+      { id: "bash-1", kind: "shell", description: null, startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  };
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: vi.fn(() => undefined),
+      getAgentBackgroundWorkSummary: () => ({ count: event.items.length }),
+      listAgentBackgroundWork: () => event.items,
+      subscribe: vi.fn((listener: (event: AgentManagerEvent) => void) => {
+        agentEventListeners.push(listener);
+        return () => {};
+      }),
+    },
+    agentStorage: { get: async () => createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo" }) },
+  });
+  const forward = () => {
+    for (const listener of agentEventListeners) listener(event);
+  };
+
+  // Subscribe to an unrelated event so the manager listener is installed, then prove
+  // a client that did not ask for background work never receives it.
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-1",
+    events: ["agent.provider_subagents.update"],
+  });
+  if (agentEventListeners.length === 0) throw new Error("Agent event listener was not installed");
+  forward();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "events-2",
+    events: ["agent.background_work.update"],
+  });
+  messages.length = 0;
+
+  forward();
+
+  await expect
+    .poll(() => messages)
+    .toContainEqual(
+      expect.objectContaining({
+        type: "agent.background_work.update",
+        payload: expect.objectContaining({ agentId: "agent-a", items: event.items }),
+      }),
+    );
+});
+
+test("does not publish internal agents' background work to subscribed clients", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  let listener: ((event: AgentManagerEvent) => void) | undefined;
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent: () => ({ id: "internal-agent", internal: true }) as never,
+      subscribe: (callback: (event: AgentManagerEvent) => void) => {
+        listener = callback;
+        return () => {};
+      },
+    },
+  });
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "subscribe-internal-background",
+    events: ["agent.background_work.update"],
+  });
+  messages.length = 0;
+  if (!listener) throw new Error("Agent event listener was not installed");
+  listener({
+    type: "background_work",
+    agentId: "internal-agent",
+    items: [
+      { id: "work", kind: "shell", description: "private", startedAt: "2026-10-06T10:00:00.000Z" },
+    ],
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
+});
+
+test("deduplicates repeated command names in list_commands_response for live agents and drafts", async () => {
+  const duplicateCommands = [
+    {
+      name: "goal",
+      description: "Run until goal is finished",
+      argumentHint: "",
+      kind: "command" as const,
+    },
+    {
+      name: "plan",
+      description: "Plan carefully before executing a task.",
+      argumentHint: "",
+      kind: "command" as const,
+    },
+    {
+      name: "plan",
+      description: "Local plan skill description",
+      argumentHint: "",
+      kind: "skill" as const,
+    },
+  ];
+  const expected = [duplicateCommands[0], duplicateCommands[1]];
+
+  const liveMessages: SessionOutboundMessage[] = [];
+  const liveSession = createSessionForTest({
+    messages: liveMessages,
+    agentManager: {
+      waitForAgentClose: async () => undefined,
+      getAgent: () =>
+        ({
+          id: "agent-1",
+          session: { listCommands: async () => duplicateCommands },
+        }) as never,
+    },
+  });
+  await liveSession.handleMessage({
+    type: "list_commands_request",
+    agentId: "agent-1",
+    requestId: "req-live",
+  });
+  expect(findByType(liveMessages, "list_commands_response")).toMatchObject({
+    payload: {
+      agentId: "agent-1",
+      requestId: "req-live",
+      error: null,
+      commands: expected,
+    },
+  });
+
+  const draftMessages: SessionOutboundMessage[] = [];
+  const draftSession = createSessionForTest({
+    messages: draftMessages,
+    agentManager: {
+      getAgent: () => undefined,
+      listDraftCommands: async () => duplicateCommands,
+    },
+    agentStorage: { get: async () => null },
+  });
+  await draftSession.handleMessage({
+    type: "list_commands_request",
+    agentId: "draft-1",
+    requestId: "req-draft",
+    draftConfig: { provider: "antigravity", cwd: "/tmp/repo" },
+  });
+  expect(findByType(draftMessages, "list_commands_response")).toMatchObject({
+    payload: {
+      agentId: "draft-1",
+      requestId: "req-draft",
+      error: null,
+      commands: expected,
+    },
+  });
+});
+
+describe("non-agent activeTurnBehavior queue in Session", () => {
+  test("queues behind a running turn, preserves title/mode/attachments/dedup, and dispatches unwrapped", async () => {
+    const receiptDir = mkdtempSync(join(tmpdir(), "paseo-session-queue-"));
+    let running = true;
+    const listeners = new Set<(id: string) => void>();
+    const dispatched: Array<{
+      prompt: unknown;
+      sessionMode?: string;
+      clearPendingPermissions: boolean;
+      idleOnly: boolean;
+    }> = [];
+    const setTitles: Array<[string, string]> = [];
+    const agentMessages = createAgentMessageDelivery({
+      isRunning: () => running,
+      canSteer: () => true,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      dispatch: async (request) => {
+        dispatched.push({
+          prompt: request.prompt,
+          sessionMode: request.sessionMode,
+          clearPendingPermissions: request.clearPendingPermissions,
+          idleOnly: request.idleOnly,
+        });
+        return "turn_started";
+      },
+      onError: (error) => {
+        throw error;
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentMessages,
+      messageReceipts: new MessageReceipts(receiptDir),
+      agentManager: {
+        waitForAgentClose: async () => undefined,
+        getAgent: (id: string) =>
+          id === "agent-1"
+            ? ({
+                id: "agent-1",
+                status: running ? "running" : "idle",
+                config: { title: null },
+              } as never)
+            : undefined,
+        setTitle: async (id: string, title: string) => {
+          setTitles.push([id, title]);
+        },
+      },
+      agentStorage: {
+        get: async (id: string) =>
+          id === "agent-1"
+            ? ({ id: "agent-1", title: null, lastUserMessageAt: null } as never)
+            : null,
+      },
+    });
+
+    try {
+      await session.handleMessage({
+        type: "send_agent_message_request",
+        requestId: "req-1",
+        agentId: "agent-1",
+        text: "Approve decision D4",
+        messageId: "msg-d4",
+        sessionMode: "plan",
+        activeTurnBehavior: "queue",
+        images: [{ data: "aW1n", mimeType: "image/png" }],
+      });
+
+      expect(findByType(messages, "send_agent_message_response")).toMatchObject({
+        payload: {
+          requestId: "req-1",
+          agentId: "agent-1",
+          accepted: true,
+          deliveryStatus: "queued",
+          activeTurnBehavior: "queue",
+          error: null,
+        },
+      });
+      expect(dispatched).toEqual([]);
+      expect(setTitles).toEqual([["agent-1", "Approve decision D4"]]);
+
+      // Finish the active turn so the queued non-agent message dispatches.
+      running = false;
+      for (const listener of listeners) listener("agent-1");
+      await expect.poll(() => dispatched.length).toBe(1);
+
+      expect(dispatched[0]).toEqual({
+        prompt: [
+          { type: "text", text: "Approve decision D4" },
+          { type: "image", data: "aW1n", mimeType: "image/png" },
+        ],
+        sessionMode: "plan",
+        clearPendingPermissions: false,
+        idleOnly: true,
+      });
+
+      // Replaying the same messageId deduplicates without dispatching a second turn.
+      messages.length = 0;
+      await session.handleMessage({
+        type: "send_agent_message_request",
+        requestId: "req-2",
+        agentId: "agent-1",
+        text: "Approve decision D4",
+        messageId: "msg-d4",
+        sessionMode: "plan",
+        activeTurnBehavior: "queue",
+        images: [{ data: "aW1n", mimeType: "image/png" }],
+      });
+      expect(findByType(messages, "send_agent_message_response")).toMatchObject({
+        payload: {
+          requestId: "req-2",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+        },
+      });
+      expect(dispatched).toHaveLength(1);
+    } finally {
+      await agentMessages.close();
+      rmSync(receiptDir, { recursive: true, force: true });
+    }
+  });
 });

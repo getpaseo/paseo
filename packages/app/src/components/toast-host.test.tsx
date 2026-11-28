@@ -32,4 +32,32 @@ describe("useToastHost", () => {
     act(() => dismissUploading());
     expect(result.current.toast?.content).toBe("Image uploaded");
   });
+
+  it("ends each toast's undo opportunity once, including replacement", () => {
+    const { result } = renderHook(() => useToastHost());
+    const dismissed: string[] = [];
+    let dismissFirst = () => {};
+    let dismissSecond = () => {};
+    act(() => {
+      dismissFirst = result.current.api.show("First archive", {
+        onDismiss: () => dismissed.push("first"),
+      });
+    });
+    act(() => {
+      dismissSecond = result.current.api.show("Second archive", {
+        onDismiss: () => dismissed.push("second"),
+      });
+    });
+    expect(dismissed).toEqual(["first"]);
+    act(() => dismissFirst());
+    expect(result.current.toast?.content).toBe("Second archive");
+    expect(dismissed).toEqual(["first"]);
+    act(() => {
+      dismissSecond();
+      dismissSecond();
+      result.current.dismiss();
+    });
+    expect(result.current.toast).toBeNull();
+    expect(dismissed).toEqual(["first", "second"]);
+  });
 });

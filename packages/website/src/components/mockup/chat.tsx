@@ -1,29 +1,33 @@
 import {
   AudioLines,
-  BookOpen,
   Brain,
   ChevronDown,
   CircleDot,
   Copy,
-  FilePenLine,
+  Eye,
   LoaderCircle,
   ListTodo,
   Mic,
+  Pencil,
   Plus,
   ShieldOff,
   Split,
   SquareTerminal,
   Zap,
 } from "lucide-react";
+import { motion } from "framer-motion";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
-import { DiffStat } from "./atoms";
-import { CodexIcon } from "./icons";
-
-// Icons passed as props are hoisted so they are not rebuilt on every render.
-const MODEL_ICON = <CodexIcon size={13} />;
-const EFFORT_ICON = <Brain size={13} />;
-const ACCESS_ICON = <ShieldOff size={13} />;
+import { Caret, DiffStat } from "./atoms";
+import { HostBadge } from "./hosts";
+import { PaseoMark } from "./icons";
+import { FADE_IN, FADE_OUT } from "./motion";
+import { DELEGATED_TASKS, SUBAGENTS_CLICK, tasksDelegated } from "./orchestration";
+import { useSceneClock } from "./player";
+import { Pointer } from "./pointer";
+import { PROVIDERS, type ProviderId } from "./providers";
+import { COMPOSER, type SceneScript, type ToolCall, type TranscriptEntry } from "./script";
+import type { MockupStateId } from "./states";
 
 // --- transcript -------------------------------------------------------------
 
@@ -62,6 +66,38 @@ function TurnFooter({ duration }: { duration: string }) {
   );
 }
 
+const BUILT_IN_LABELS = { read: "Read", write: "Write", shell: "Shell" } as const;
+
+function toolCallLabel(call: ToolCall): string {
+  return call.kind === "paseo" ? call.label : BUILT_IN_LABELS[call.kind];
+}
+
+function ToolCallIcon({ kind }: { kind: ToolCall["kind"] }) {
+  if (kind === "read") return <Eye size={14} />;
+  if (kind === "write") return <Pencil size={14} />;
+  if (kind === "paseo") return <PaseoMark size={14} />;
+  return <SquareTerminal size={14} />;
+}
+
+/**
+ * One tool call row, drawn like the app's collapsed timeline item
+ * (`packages/app/src/components/message.tsx`): icon, label, then the summary,
+ * all muted and in the UI font. A Paseo call that targets another machine ends
+ * with that host's badge, which the app's row does not draw.
+ */
+export function ToolCallRow({ call }: { call: ToolCall }) {
+  return (
+    <div className="flex items-center gap-[8px] py-[5px] text-[12.5px] leading-[18px] text-mock-fg-muted">
+      <span className="shrink-0">
+        <ToolCallIcon kind={call.kind} />
+      </span>
+      <span className="shrink-0">{toolCallLabel(call)}</span>
+      {call.detail ? <span className="min-w-0 truncate">{call.detail}</span> : null}
+      {call.kind === "paseo" && call.host ? <HostBadge host={call.host} glyph={13} /> : null}
+    </div>
+  );
+}
+
 export function AgentTranscript() {
   return (
     <div className="space-y-[13px] pt-[2px]">
@@ -88,123 +124,212 @@ export function AgentTranscript() {
         <Bullet>Includes responsive mobile proof and the supporting homepage story.</Bullet>
         <Bullet>Formatting, typecheck, and lint are clean.</Bullet>
       </div>
-      <Para>Ready for review.</Para>
       <TurnFooter duration="1m 18s" />
     </div>
   );
 }
 
-interface PluginToolCall {
-  kind: "read" | "shell" | "write";
-  label: string;
-  detail: string;
-}
-
-const PLUGIN_TOOL_CALLS: PluginToolCall[] = [
-  { kind: "read", label: "Read", detail: "paseo-plugin/SKILL.md" },
-  {
-    kind: "shell",
-    label: "Shell",
-    detail: "paseo plugin init ~/dev/release-radar",
-  },
-  {
-    kind: "write",
-    label: "Write",
-    detail: "~/dev/release-radar/index.ts",
-  },
-  {
-    kind: "write",
-    label: "Write",
-    detail: "~/dev/release-radar/release-radar.client.tsx",
-  },
-  {
-    kind: "shell",
-    label: "Shell",
-    detail: "npm install && npm run typecheck",
-  },
-  {
-    kind: "shell",
-    label: "Shell",
-    detail: "paseo plugin install ~/dev/release-radar",
-  },
-];
-
-const PLUGIN_DISCOVERY_CALLS = PLUGIN_TOOL_CALLS.slice(0, 1);
-const PLUGIN_BUILD_CALLS = PLUGIN_TOOL_CALLS.slice(1, 4);
-const PLUGIN_INSTALL_CALLS = PLUGIN_TOOL_CALLS.slice(4);
-
-function PluginToolIcon({ kind }: { kind: PluginToolCall["kind"] }) {
-  if (kind === "read") return <BookOpen size={14} />;
-  if (kind === "write") return <FilePenLine size={14} />;
-  return <SquareTerminal size={14} />;
-}
-
-function PluginToolRow({ call }: { call: PluginToolCall }) {
+/** Something that fades in when the script reaches it. */
+function Entering({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-[9px] py-[5px] text-[12.5px] leading-[18px]">
-      <span className="text-mock-fg-muted">
-        <PluginToolIcon kind={call.kind} />
-      </span>
-      <span className="shrink-0 text-mock-fg">{call.label}</span>
-      <span className="min-w-0 truncate font-mono text-[11.5px] text-mock-fg-muted">
-        {call.detail}
-      </span>
-    </div>
+    <motion.div initial={FADE_OUT} animate={FADE_IN}>
+      {children}
+    </motion.div>
   );
 }
 
-function PluginToolGroup({ calls }: { calls: PluginToolCall[] }) {
+interface ScriptedProps {
+  scene: MockupStateId;
+  script: SceneScript;
+}
+
+function StreamedText({ scene, script, entry }: ScriptedProps & { entry: TranscriptEntry }) {
+  const text = useSceneClock(scene, (ms) => script.streamed(entry, ms));
+  return <Para>{text}</Para>;
+}
+
+function LandedTools({
+  scene,
+  script,
+  entry,
+  calls,
+}: ScriptedProps & { entry: TranscriptEntry; calls: ToolCall[] }) {
+  const landed = useSceneClock(scene, (ms) => script.landed(entry, ms));
   return (
     <div>
-      {calls.map((call) => (
-        <PluginToolRow key={`${call.label}:${call.detail}`} call={call} />
+      {calls.slice(0, landed).map((call) => (
+        <Entering key={`${call.kind}:${call.detail}`}>
+          <ToolCallRow call={call} />
+        </Entering>
       ))}
     </div>
   );
 }
 
-export function PluginBuildTranscript() {
+function TranscriptEntryView({ scene, script, entry }: ScriptedProps & { entry: TranscriptEntry }) {
+  const { beat } = entry;
+  if (beat.kind === "agent") return <StreamedText scene={scene} script={script} entry={entry} />;
+  if (beat.kind === "tools") {
+    return <LandedTools scene={scene} script={script} entry={entry} calls={beat.calls} />;
+  }
+  if (beat.kind === "user") {
+    return (
+      <Entering>
+        <UserBubble>{beat.text}</UserBubble>
+      </Entering>
+    );
+  }
+  return (
+    <Entering>
+      <TurnFooter duration={beat.worked} />
+    </Entering>
+  );
+}
+
+/** The transcript of a scripted scene, as far as its script has played. */
+export function ScriptedTranscript({ scene, script }: ScriptedProps) {
+  const entered = useSceneClock(scene, script.entered);
   return (
     <div className="space-y-[13px] pt-[2px]">
-      <UserBubble>
-        Build me a release radar for Paseo. I want an explorer panel showing merged PRs, changes in
-        review, failing checks, and seven-day activity, accessible from the sidebar.
-      </UserBubble>
-      <Para>
-        I&rsquo;ll scaffold a local plugin, add the explorer surface, and wire it into the sidebar.
-      </Para>
-      <PluginToolGroup calls={PLUGIN_DISCOVERY_CALLS} />
-      <Para>
-        The plugin API exposes Paseo&rsquo;s live project and workspace state, so the radar
-        doesn&rsquo;t need a separate service.
-      </Para>
-      <PluginToolGroup calls={PLUGIN_BUILD_CALLS} />
-      <Para>The surface is wired. I&rsquo;m checking the project and installing it now.</Para>
-      <PluginToolGroup calls={PLUGIN_INSTALL_CALLS} />
-      <Para>Release Radar is live. It should now be visible in the right sidebar.</Para>
-      <TurnFooter duration="2m 14s" />
+      {script.entries.slice(0, entered).map((entry) => (
+        <TranscriptEntryView key={entry.id} scene={scene} script={script} entry={entry} />
+      ))}
     </div>
   );
 }
 
 // --- composer ---------------------------------------------------------------
 
-function ControlPill({ icon, label }: { icon: React.ReactNode; label: string }) {
+/** One composer control: its icon as the child, then the current value. */
+function ControlPill({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <span className="flex items-center gap-[6px] text-[12px] text-mock-fg-muted">
-      {icon}
+    <span className="flex items-center gap-[6px] whitespace-nowrap text-[12px] text-mock-fg-muted">
+      {children}
       {label}
       <ChevronDown size={11} className="text-mock-fg-xmuted" />
     </span>
   );
 }
 
-/** A rounded pill that floats above the composer — task tracker, subagents, diff. */
-function ComposerPill({ children }: { children: React.ReactNode }) {
+/**
+ * A rounded pill that floats above the composer — task tracker, subagents, diff. An open pill is
+ * the one whose panel is showing.
+ */
+function ComposerPill({ children, open = false }: { children: React.ReactNode; open?: boolean }) {
   return (
-    <span className="flex items-center gap-[6px] rounded-full border border-mock-border-accent px-[11px] py-[4px] text-[11.5px] text-mock-fg-muted">
+    <span
+      className={`flex items-center gap-[6px] rounded-full border border-mock-border-accent px-[11px] py-[4px] text-[11.5px] ${
+        open ? "bg-mock-surface2 text-mock-fg" : "text-mock-fg-muted"
+      }`}
+    >
       {children}
     </span>
+  );
+}
+
+function SubagentsPill({ count, open = false }: { count: number; open?: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <ComposerPill open={open}>
+      <CircleDot size={12} className="text-mock-dot-running" />
+      {t("landing.mockup.app.subagents", { count })}
+    </ComposerPill>
+  );
+}
+
+/** The row of pills above the composer input. */
+function ComposerTrack({ children }: { children: React.ReactNode }) {
+  return <div className="pb-[13px]">{children}</div>;
+}
+
+/** The trackers of a turn in progress: tasks, subagents, and the diff so far. */
+export function ProgressTrack() {
+  const { t } = useTranslation();
+  return (
+    <ComposerTrack>
+      <div className="flex items-center gap-[8px]">
+        <ComposerPill>
+          {t("landing.mockup.app.tasksProgress", { completed: 6, total: 6 })}
+        </ComposerPill>
+        <SubagentsPill count={DELEGATED_TASKS.length} />
+        <ComposerPill>
+          <DiffStat add="1.9k" remove="684" />
+        </ComposerPill>
+      </div>
+    </ComposerTrack>
+  );
+}
+
+function SubagentRow({ task }: { task: (typeof DELEGATED_TASKS)[number] }) {
+  const provider = PROVIDERS[task.provider];
+  return (
+    <div className="flex items-start gap-[9px] px-[12px] py-[6px]">
+      <span className="relative mt-[2px] block size-[14px] shrink-0 text-mock-fg-muted">
+        <provider.Icon size={14} />
+        <span className="absolute -right-[2px] -bottom-[2px] size-[6px] rounded-full bg-mock-dot-running ring-[1.5px] ring-mock-surface1" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] leading-[18px] text-mock-fg">{task.title}</span>
+        <span className="flex items-center gap-[6px] text-[11.5px] leading-[16px] text-mock-fg-muted">
+          <span>
+            {provider.name} · {provider.model}
+          </span>
+          {task.host ? (
+            <>
+              <span className="text-mock-fg-xmuted">·</span>
+              <HostBadge host={task.host} />
+            </>
+          ) : null}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+// Where the pointer sets off from, in design pixels from the spot it clicks.
+const POINTER_TO_PILL = { x: 236, y: -128 };
+const POINTER_TO_COMPOSER = { x: 230, y: -140 };
+
+const ROSTER_CLOSED = { opacity: 0, scale: 0.97, y: 6 };
+const ROSTER_OPEN = { opacity: 1, scale: 1, y: 0 };
+
+/**
+ * The Subagents track of the orchestration scene. Its pill appears with the first subagent and
+ * counts each one the orchestrator launches. When the pointer clicks the pill, the roster opens:
+ * one row per agent, drawn like the app's track rows (`packages/app/src/subagents/track.tsx`).
+ * The title is the task and the line under it names the provider and model. An agent on another
+ * machine ends that line with the host's badge, where the app writes the host's name in plain text.
+ */
+export function SubagentsTrack() {
+  const launched = useSceneClock("orchestrate", tasksDelegated);
+  const pressed = useSceneClock("orchestrate", SUBAGENTS_CLICK.pressed);
+  const open = useSceneClock("orchestrate", SUBAGENTS_CLICK.done);
+  if (launched === 0) return null;
+  return (
+    <ComposerTrack>
+      {open ? (
+        <motion.div
+          initial={ROSTER_CLOSED}
+          animate={ROSTER_OPEN}
+          className="mb-[6px] w-fit min-w-[280px] origin-bottom-left rounded-[11px] border border-mock-border-accent bg-mock-surface1 py-[4px] shadow-[0_8px_24px_rgba(0,0,0,0.4)]"
+        >
+          {DELEGATED_TASKS.map((task) => (
+            <SubagentRow key={task.id} task={task} />
+          ))}
+        </motion.div>
+      ) : null}
+      <Entering>
+        <span className="relative flex w-fit">
+          <SubagentsPill count={launched} open={pressed || open} />
+          <Pointer
+            scene="orchestrate"
+            click={SUBAGENTS_CLICK}
+            from={POINTER_TO_PILL}
+            className="top-[58%] left-[91%]"
+          />
+        </span>
+      </Entering>
+    </ComposerTrack>
   );
 }
 
@@ -214,43 +339,58 @@ function BusyRing() {
 }
 
 export function Composer({
-  showProgress = true,
-  busy = true,
+  track,
+  agent = "codex",
+  busy = false,
+  draft = "",
+  focused = false,
+  children,
 }: {
-  showProgress?: boolean;
+  /** The composer track shown above the input, such as `ProgressTrack`. It brings its own spacing. */
+  track?: React.ReactNode;
+  /** Which provider's agent this composer talks to. */
+  agent?: ProviderId;
   busy?: boolean;
+  /** What the user has typed and not yet sent. Empty shows the placeholder. */
+  draft?: string;
+  /** Whether the caret is in the input. */
+  focused?: boolean;
+  /** Something drawn over the input box, such as the pointer that clicks it. */
+  children?: React.ReactNode;
 }) {
   const { t } = useTranslation();
+  const provider = PROVIDERS[agent];
   return (
     <div className="shrink-0 px-[27px] pt-[16px] pb-[17px]">
-      <div className={showProgress ? "pb-[13px]" : ""}>
-        {showProgress ? (
-          <div className="flex items-center gap-[8px]">
-            <ComposerPill>
-              {t("landing.mockup.app.tasksProgress", { completed: 6, total: 6 })}
-            </ComposerPill>
-            <ComposerPill>
-              <CircleDot size={12} className="text-mock-dot-running" />
-              {t("landing.mockup.app.subagents", { count: 3 })}
-            </ComposerPill>
-            <ComposerPill>
-              <DiffStat add="1.9k" remove="684" />
-            </ComposerPill>
-          </div>
-        ) : null}
-      </div>
-      <div className="rounded-[11px] border border-mock-border-accent bg-mock-surface1">
+      {track}
+      <div className="relative rounded-[11px] border border-mock-border-accent bg-mock-surface1">
+        {children}
         <div className="px-[14px] pt-[13px] pb-[12px]">
           <div className="flex items-start gap-[10px]">
-            <span className="min-w-0 flex-1 text-[13px] text-mock-surface4">
-              {t("landing.mockup.app.composerPlaceholder")}
-            </span>
+            {draft ? (
+              <span className="min-w-0 flex-1 text-[13px] text-mock-fg">
+                {draft}
+                <Caret className="ml-px" />
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1 text-[13px] text-mock-surface4">
+                {/* The caret takes no room, so the placeholder does not move when it appears. */}
+                {focused ? <Caret className="-mr-px" /> : null}
+                {t("landing.mockup.app.composerPlaceholder")}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-[17px] pt-[26px]">
             <Plus size={15} className="text-mock-fg-muted" />
-            <ControlPill icon={MODEL_ICON} label="GPT-5.6-Sol" />
-            <ControlPill icon={EFFORT_ICON} label="Medium" />
-            <ControlPill icon={ACCESS_ICON} label="Full access" />
+            <ControlPill label={provider.model}>
+              <provider.Icon size={13} />
+            </ControlPill>
+            <ControlPill label="Medium">
+              <Brain size={13} />
+            </ControlPill>
+            <ControlPill label="Full access">
+              <ShieldOff size={13} />
+            </ControlPill>
             <Zap size={14} className="text-mock-fg-muted" />
             <ListTodo size={14} className="text-mock-fg-muted" />
             <span className="flex-1" />
@@ -261,5 +401,31 @@ export function Composer({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The composer of a scripted scene. The pointer clicks it, which puts the caret in it. Then the
+ * script types into it and says when a turn is running.
+ */
+export function ScriptedComposer({
+  scene,
+  script,
+  agent,
+  track,
+}: ScriptedProps & { agent: ProviderId; track?: React.ReactNode }) {
+  const click = script.click(COMPOSER);
+  const draft = useSceneClock(scene, script.draft);
+  const busy = useSceneClock(scene, script.busy);
+  const focused = useSceneClock(scene, (ms) => click.pressed(ms) || click.done(ms));
+  return (
+    <Composer agent={agent} track={track} busy={busy} draft={draft} focused={focused}>
+      <Pointer
+        scene={scene}
+        click={click}
+        from={POINTER_TO_COMPOSER}
+        className="top-[22px] left-[168px]"
+      />
+    </Composer>
   );
 }

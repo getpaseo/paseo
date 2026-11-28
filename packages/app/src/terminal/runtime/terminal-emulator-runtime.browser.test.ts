@@ -115,6 +115,26 @@ interface CreateTerminalHostInput {
   isMac?: boolean;
 }
 
+/** Text typed into xterm's textarea, as the browser reports a typed character. */
+function typeText(mounted: MountedTerminal, text: string): void {
+  mounted.host
+    .querySelector(".xterm-helper-textarea")
+    ?.dispatchEvent(
+      new InputEvent("input", { data: text, inputType: "insertText", bubbles: true }),
+    );
+}
+
+/** A native paste of plain text into xterm's textarea. */
+function pasteText(mounted: MountedTerminal, text: string): void {
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", text);
+  mounted.host
+    .querySelector(".xterm-helper-textarea")
+    ?.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+    );
+}
+
 function createTerminalHost(input: CreateTerminalHostInput): MountedTerminal {
   const root = document.createElement("div");
   root.style.width = `${input.width}px`;
@@ -717,11 +737,15 @@ describe("terminal emulator runtime in a real browser", () => {
     { name: "DA1-zero", bytes: "\x1b[0c" },
     { name: "DA2", bytes: "\x1b[>c" },
     { name: "DA3", bytes: "\x1b[=c" },
+    { name: "XTVERSION", bytes: "\x1b[>q" },
     { name: "DSR-5", bytes: "\x1b[5n" },
     { name: "DSR-6", bytes: "\x1b[6n" },
     { name: "DSR-?6", bytes: "\x1b[?6n" },
+    { name: "DSR-?996-color-scheme", bytes: "\x1b[?996n" },
     { name: "DECRQM", bytes: "\x1b[1$p" },
     { name: "DECRQM-?", bytes: "\x1b[?1$p" },
+    { name: "DECRQM-?2031", bytes: "\x1b[?2031$p" },
+    { name: "DECRQSS", bytes: "\x1bP$qm\x1b\\" },
     { name: "OSC-10-foreground-color", bytes: "\x1b]10;?\x07" },
     { name: "OSC-11-background-color", bytes: "\x1b]11;?\x07" },
     { name: "OSC-12-cursor-color", bytes: "\x1b]12;?\x07" },
@@ -820,6 +844,84 @@ describe("incremental replay lifecycle", () => {
     );
     expect(mounted.inputs).toHaveLength(1);
     expect(mounted.inputs[0]?.startsWith("\x1b]4;1;rgb:")).toBe(true);
+  });
+
+  it("keeps what the user types, but not pastes, while a replay is still parsing", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+    mounted.runtime.replay({ type: "begin" });
+    mounted.runtime.replay({ type: "data", data: terminalOutput("\x1b]4;1;?\x07restored") });
+    mounted.runtime.replay({ type: "end" });
+
+    typeText(mounted, "a");
+    pasteText(mounted, "echo one\necho two\n");
+    typeText(mounted, "f");
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput("live"), onCommitted: resolve }),
+    );
+
+    expect(mounted.inputs).toEqual(["a", "f"]);
+  });
+
+  it("measures emoji clusters with the daemon's grapheme widths and copies them intact", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const text = "A😀B❤️C👋🏽D👨‍👩‍👧E";
+    await new Promise<void>((resolve) =>
+      mounted.runtime.write({ data: terminalOutput(text), onCommitted: resolve }),
+    );
+
+    const terminal = window.__paseoTerminal;
+    if (!terminal) {
+      throw new Error("Expected the browser terminal to be mounted");
+    }
+    const line = terminal.buffer.active.getLine(terminal.buffer.active.cursorY);
+    const cells = Array.from({ length: 13 }, (_, col) => {
+      const cell = line?.getCell(col);
+      return { chars: cell?.getChars(), width: cell?.getWidth() };
+    });
+
+    expect(cells).toEqual([
+      { chars: "A", width: 1 },
+      { chars: "😀", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "B", width: 1 },
+      { chars: "❤️", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "C", width: 1 },
+      { chars: "👋🏽", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "D", width: 1 },
+      { chars: "👨‍👩‍👧", width: 2 },
+      { chars: "", width: 0 },
+      { chars: "E", width: 1 },
+    ]);
+    expect(terminal.buffer.active.cursorX).toBe(13);
+
+    terminal.select(0, terminal.buffer.active.cursorY, 13);
+    expect(terminal.getSelection()).toBe(text);
+  });
+
+  // A host without grapheme widths answers cursor reports and replays with its
+  // own table. The web client keeps the Unicode 11 table it used before.
+  it("measures with the legacy table for hosts without grapheme widths", async () => {
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const terminal = window.__paseoTerminal;
+    if (!terminal) {
+      throw new Error("Expected the browser terminal to be mounted");
+    }
+    const buffer = terminal.buffer;
+    async function cursorAfter(text: string): Promise<number> {
+      await new Promise<void>((resolve) =>
+        mounted.runtime.write({ data: terminalOutput(`\r\n${text}`), onCommitted: resolve }),
+      );
+      return buffer.active.cursorX;
+    }
+
+    mounted.runtime.setCharacterWidths({ widths: "legacy" });
+    expect([await cursorAfter("A😀B"), await cursorAfter("A❤️B")]).toEqual([4, 3]);
+
+    mounted.runtime.setCharacterWidths({ widths: "graphemes" });
+    expect([await cursorAfter("A😀B"), await cursorAfter("A❤️B")]).toEqual([4, 4]);
   });
 });
 

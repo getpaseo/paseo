@@ -330,6 +330,27 @@ test.each([401, 403] as const)(
   },
 );
 
+test("repeated permission mismatch closes back off until the Hub accepts the permissions", async () => {
+  const mismatch = {
+    closeCode: 4403,
+    reason: "daemon session permissions do not match enrollment",
+  };
+  const hub = await UpgradeRejectingHub.start([
+    mismatch,
+    mismatch,
+    { closeCode: 1001, reason: "shutdown" },
+  ]);
+  const clock = new ManualRelationshipClock();
+  const controller = await connectController(hub, clock);
+  await expect.poll(() => clock.scheduledAttempts()).toEqual([0]);
+  clock.runNext();
+  await expect.poll(() => clock.scheduledAttempts()).toEqual([0, 1]);
+  expect(controller.status().state).toBe("reconnecting");
+  clock.runNext();
+  await expect.poll(() => clock.scheduledAttempts()).toEqual([0, 1, 0]);
+  await controller.stop();
+});
+
 test("controller redials after a transient socket response and releases both failed upgrades", async () => {
   const hub = await UpgradeRejectingHub.start([503, 401]);
   const clock = new ManualRelationshipClock();
@@ -475,6 +496,8 @@ class SocketOutcomes {
   }
 }
 
+type UpgradeOutcome = number | "stall" | { closeCode: number; reason: string };
+
 class UpgradeRejectingHub {
   private readonly server = createServer(async (request, response) => {
     let body = "";
@@ -493,8 +516,8 @@ class UpgradeRejectingHub {
   private attemptObserved = deferred<void>();
   private attempts = 0;
 
-  private constructor(private readonly statuses: Array<number | "stall">) {
-    this.server.on("upgrade", (_request, socket) => {
+  private constructor(private readonly statuses: UpgradeOutcome[]) {
+    this.server.on("upgrade", (request, socket, head) => {
       const attempt = ++this.attempts;
       this.attemptObserved.resolve();
       this.attemptObserved = deferred<void>();
@@ -506,6 +529,14 @@ class UpgradeRejectingHub {
         released.resolve();
       });
       const status = this.statuses[attempt - 1] ?? this.statuses.at(-1) ?? 503;
+      if (typeof status === "object") {
+        const ws = new WebSocketServer({ noServer: true });
+        ws.handleUpgrade(request, socket, head, (peer) =>
+          peer.close(status.closeCode, status.reason),
+        );
+        ws.close();
+        return;
+      }
       if (status === "stall") {
         socket.resume();
         return;
@@ -520,7 +551,7 @@ class UpgradeRejectingHub {
     });
   }
 
-  static async start(statuses: Array<number | "stall">): Promise<UpgradeRejectingHub> {
+  static async start(statuses: UpgradeOutcome[]): Promise<UpgradeRejectingHub> {
     const hub = new UpgradeRejectingHub(statuses);
     openUpgradeHubs.push(hub);
     openServers.push(hub.server);

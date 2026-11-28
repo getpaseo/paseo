@@ -46,3 +46,12 @@ export async function downloadFileFromExplorer(page: Page, fileName: string): Pr
   await page.getByRole("menuitem", { name: "Download", exact: true }).click();
   return downloaded;
 }
+
+export async function downloadFileFromPreview(page: Page): Promise<Download> {
+  await expect(page.getByText("Binary preview unavailable", { exact: true })).toBeVisible();
+  const button = page.getByRole("button", { name: "Download", exact: true });
+  await expect(button).toBeVisible();
+  const downloaded = page.waitForEvent("download");
+  await button.click();
+  return downloaded;
+}

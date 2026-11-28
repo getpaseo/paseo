@@ -1,5 +1,5 @@
+import type { PiTranscript } from "./transcript.js";
 import type {
-  PiAgentMessage,
   PiModel,
   PiPromptAck,
   PiRpcSlashCommand,
@@ -13,6 +13,8 @@ export interface PiRuntimeLaunch {
   cwd: string;
   argv: string[];
   env?: Record<string, string>;
+  /** Start Pi as `[...wrap, ...argv]`. */
+  wrap?: readonly [string, ...string[]];
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -28,6 +30,8 @@ export interface PiStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
   env?: Record<string, string>;
+  /** The agent's launch wrap; every Pi process started for the agent runs behind it. */
+  wrap?: readonly [string, ...string[]];
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;
@@ -55,7 +59,7 @@ export interface PiRuntimeSession {
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
   getState(): Promise<PiSessionState>;
-  getMessages(): Promise<PiAgentMessage[]>;
+  getHistory(): Promise<PiTranscript>;
   getAvailableModels(timeoutMs?: number | null): Promise<PiModel[]>;
   setModel(provider: string, modelId: string): Promise<PiModel>;
   setThinkingLevel(level: string): Promise<void>;
@@ -102,6 +106,7 @@ export function buildPiLaunch(input: {
             ...input.session.env,
           }
         : undefined,
+    wrap: input.session.wrap,
     model: input.session.model,
     thinkingOptionId: input.session.thinkingOptionId,
     protocolMode,

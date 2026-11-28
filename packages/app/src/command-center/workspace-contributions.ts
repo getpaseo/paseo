@@ -29,12 +29,14 @@ export interface WorkspaceCommandCenterLabels {
   previousTab: string;
   nextTab: string;
   closeCurrentTab: string;
-  renameTab: string;
+  renameAgent: string;
+  renameTerminal: string;
   reloadAgent: string;
   copyResumeCommand: string;
   copyAgentId: string;
   copyTerminalId: string;
   copyFilePath: string;
+  revealInFiles: string;
   closeTabsLeft: string;
   closeTabsRight: string;
   closeOtherTabs: string;
@@ -50,6 +52,7 @@ export interface WorkspaceCommandCenterLabels {
   toggleFocusMode: string;
   toggleExplorerSidebar: string;
   // Workspace management actions
+  archiveWorkspace: string;
   rename: string;
   copyPath: string;
   copyBranchName: string;
@@ -79,6 +82,7 @@ export interface WorkspaceCommandCenterIcons {
   focusMode?: CommandCenterIcon;
   explorerSidebar?: CommandCenterIcon;
   // Workspace management action icons
+  archiveWorkspace?: CommandCenterIcon;
   copyPath?: CommandCenterIcon;
   copyBranchName?: CommandCenterIcon;
   pin?: CommandCenterIcon;
@@ -131,6 +135,8 @@ export interface WorkspaceCommandCenterSource {
   labelCatalog: readonly WorkspaceCommandCenterLabelChoice[] | null;
   dispatch(action: KeyboardActionDefinition): void;
   runGitAction(action: GitAction): void;
+  /** Null while the workspace cannot be archived. A Git workspace archives through `gitActions`. */
+  archiveWorkspace: (() => void) | null;
   copyPath(): void;
   copyBranchName(): void;
   toggleLabel(name: string, assigned: boolean): void | Promise<void>;
@@ -295,7 +301,10 @@ function buildActiveTabContributions(
       buildQueryAction(source, {
         id: "tab:rename-current",
         rank: 33,
-        title: source.labels.renameTab,
+        title:
+          source.activeTabKind === "agent"
+            ? source.labels.renameAgent
+            : source.labels.renameTerminal,
         keywords: ["tab", "rename", "current"],
         icon: source.icons.rename,
         action: { id: "workspace.tab.rename-current", scope: "workspace" },
@@ -342,6 +351,14 @@ function buildActiveTabContributions(
         keywords: ["tab", "file", "copy", "path"],
         icon: source.icons.copy,
         action: { id: "workspace.tab.copy-file-path", scope: "workspace" },
+      }),
+      buildQueryAction(source, {
+        id: "tab:reveal-in-files",
+        rank: 37,
+        title: source.labels.revealInFiles,
+        keywords: ["tab", "file", "reveal", "files", "explorer"],
+        icon: source.icons.files,
+        action: { id: "workspace.tab.reveal-in-files", scope: "workspace" },
       }),
     );
   }
@@ -583,6 +600,23 @@ export function buildWorkspaceCommandCenterContributions(
 
   for (const [index, action] of actionsWithoutPrimary(source.gitActions).entries()) {
     contributions.push(buildGitContribution(source, action, 100 + index, "query"));
+  }
+
+  // A Git workspace lists archive among its Git actions; any other workspace archives here.
+  if (!source.capabilities.isGit && source.archiveWorkspace) {
+    contributions.push(
+      buildWorkspaceCallback({
+        source,
+        id: "workspace:archive",
+        rank: 100,
+        title: source.labels.archiveWorkspace,
+        keywords: ["archive", "workspace"],
+        icon: source.icons.archiveWorkspace,
+        shortcutKeys: source.shortcuts.archiveWorkspace,
+        run: source.archiveWorkspace,
+        visibility: "query",
+      }),
+    );
   }
 
   if (source.capabilities.canPin) {

@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -163,6 +166,63 @@ describe("PiCliRuntime", () => {
         argv: ["pi", "--mode", "rpc"],
       }),
     ]);
+  });
+
+  test("starts Pi behind the session's launch wrap and talks to it through the wrap", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "pi-launch-wrap-"));
+    try {
+      const fakePi = path.join(root, "fake-pi.mjs");
+      await writeFile(
+        fakePi,
+        [
+          'import { createInterface } from "node:readline";',
+          'createInterface({ input: process.stdin }).on("line", (line) => {',
+          "  const command = JSON.parse(line);",
+          '  const data = { sessionId: "wrapped", argv: process.argv.slice(2) };',
+          '  process.stdout.write(JSON.stringify({ type: "response", id: command.id, command: command.type, success: true, data }) + "\\n");',
+          "});",
+          "",
+        ].join("\n"),
+      );
+      const launcher = path.join(root, "launcher.mjs");
+      await writeFile(
+        launcher,
+        [
+          'import { spawn } from "node:child_process";',
+          'import { writeFileSync } from "node:fs";',
+          "const [command, ...args] = process.argv.slice(2);",
+          'writeFileSync(new URL("./wrapped.json", import.meta.url), JSON.stringify([command, ...args]));',
+          'const child = spawn(command, args, { stdio: "inherit" });',
+          'child.on("exit", (code) => process.exit(code ?? 1));',
+          "",
+        ].join("\n"),
+      );
+      const runtime = new PiCliRuntime({
+        logger: pino({ level: "silent" }),
+        command: [process.execPath, fakePi],
+      });
+
+      const session = await runtime.startSession({
+        cwd: root,
+        wrap: [process.execPath, launcher],
+      });
+      try {
+        await expect(session.getState()).resolves.toMatchObject({
+          sessionId: "wrapped",
+          argv: ["--mode", "rpc"],
+        });
+        expect(JSON.parse(await readFile(path.join(root, "wrapped.json"), "utf8"))).toEqual([
+          process.execPath,
+          fakePi,
+          "--mode",
+          "rpc",
+        ]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("passes an MCP config path to Pi", async () => {
@@ -385,6 +445,26 @@ describe("PiCliRuntime", () => {
     expect(child.killedSignals).toContain("SIGTERM");
   });
 
+  test("queues a prompt that arrives while Pi runs a turn it started itself", async () => {
+    // Pi starts runs on its own (an extension message, a background result) and reports
+    // them only at agent_start. Until then it rejects a prompt without streamingBehavior.
+    const child = createPiChild();
+    replyToCommands(child, (command) => {
+      if (command.type !== "prompt") return {};
+      if (!command.streamingBehavior) {
+        throw new Error(
+          "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+        );
+      }
+      return { disposition: "queued" };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.prompt("check the build")).resolves.toMatchObject({
+      requestId: expect.any(String),
+    });
+  });
+
   test("sends the steer RPC frame", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));
@@ -544,4 +624,103 @@ describe("PiCliRuntime", () => {
 
     await expect(session.abort()).resolves.toBeUndefined();
   });
+});
+
+async function createHistoryTestDirectory(prefix: string): Promise<string> {
+  const artifacts = path.resolve(".artifacts/pi-timeline");
+  await mkdir(artifacts, { recursive: true });
+  return mkdtemp(path.join(artifacts, prefix));
+}
+
+test("reads complete persisted history instead of compacted RPC context", async () => {
+  const root = await createHistoryTestDirectory("runtime-");
+  const file = path.join(root, "session.jsonl");
+  const records = [
+    { type: "session", version: 3, id: "session" },
+    {
+      type: "message",
+      id: "old-user",
+      parentId: "system",
+      message: { role: "user", content: "before compaction" },
+    },
+    {
+      type: "message",
+      id: "old-answer",
+      parentId: "old-user",
+      message: { role: "assistant", content: [{ type: "text", text: "old answer" }] },
+    },
+    { type: "compaction", id: "compact", parentId: "old-answer", summary: "summary" },
+    {
+      type: "message",
+      id: "new-user",
+      parentId: "compact",
+      message: { role: "user", content: "after compaction" },
+    },
+  ];
+  records.splice(1, 0, {
+    type: "message",
+    id: "system",
+    parentId: null,
+    message: { role: "system", content: "private instructions" },
+  });
+  const contents = records.map((row) => JSON.stringify(row)).join("\n");
+  await writeFile(file, contents);
+  const child = createPiChild();
+  onPiCommand(child, (command) =>
+    writePiResponse(
+      child,
+      command,
+      command.type === "get_state" ? { sessionFile: file } : { messages: [records[5].message] },
+    ),
+  );
+  const runtime = await createRuntime(child).startSession({ cwd: root });
+  try {
+    const history = await runtime.getHistory();
+    expect(history.userEntries.map((entry) => entry.id)).toEqual(["old-user", "new-user"]);
+    expect(history.messages).toEqual([records[2].message, records[3].message, records[5].message]);
+    expect(await readFile(file, "utf8")).toBe(contents);
+    await writeFile(
+      file,
+      contents +
+        '\n{"type":"custom","id":"rewind","parentId":"old-answer","customType":"paseo_rewind"}',
+    );
+    expect((await runtime.getHistory()).userEntries.map((entry) => entry.id)).toEqual(["old-user"]);
+    await writeFile(
+      file,
+      contents + '\n{"type":"custom","id":"rewind","parentId":null,"customType":"paseo_rewind"}',
+    );
+    expect((await runtime.getHistory()).messages).toEqual([]);
+    await writeFile(file, contents + '\n{"type":"custom","id":"bad","parentId":"missing"}');
+    await expect(runtime.getHistory()).rejects.toThrow("Missing Pi transcript ancestor");
+  } finally {
+    await runtime.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("permits the unpersisted empty new session but refuses a missing resumed transcript", async () => {
+  const root = await createHistoryTestDirectory("empty-");
+  const file = path.join(root, "not-created.jsonl");
+  const child = createPiChild();
+  onPiCommand(child, (command) =>
+    writePiResponse(child, command, { sessionFile: file, messageCount: 0 }),
+  );
+  const runtime = createRuntime(child);
+  const fresh = await runtime.startSession({ cwd: root });
+  try {
+    expect(await fresh.getHistory()).toEqual({ messages: [], userEntries: [] });
+  } finally {
+    await fresh.close();
+  }
+  const resumedChild = createPiChild();
+  onPiCommand(resumedChild, (command) =>
+    writePiResponse(resumedChild, command, { sessionFile: file, messageCount: 0 }),
+  );
+  const resumed = await createRuntime(resumedChild).startSession({ cwd: root, session: file });
+  try {
+    await expect(resumed.getHistory()).rejects.toThrow("ENOENT");
+  } finally {
+    await resumed.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });

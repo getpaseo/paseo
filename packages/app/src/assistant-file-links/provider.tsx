@@ -16,14 +16,19 @@ import type { AssistantFileLinkContext, GetDirectorySuggestions } from "./resolv
 export interface AssistantFileLinkDaemonClient {
   readFile?: import("@getpaseo/client/internal/daemon-client").DaemonClient["readFile"];
   getDirectorySuggestions: GetDirectorySuggestions;
+  /** Without it, a link to a folder is taken for a file. */
+  listDirectory?: (root: string, path: string) => Promise<unknown>;
 }
 
 export interface AssistantFileLinkResolverConfig {
   client?: AssistantFileLinkDaemonClient | null;
   serverId?: string;
+  /** The workspace the Markdown belongs to, for actions that change its panes. */
+  workspaceId?: string;
   workspaceRoot?: string;
   relativePathBase?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
+  onOpenBrowserUrl?: (url: string) => void;
   toast?: ToastApi | null;
 }
 
@@ -54,26 +59,32 @@ export function useAssistantFileLinkEnvironmentBridge() {
 export function AssistantFileLinkResolverProvider({
   client,
   serverId,
+  workspaceId,
   workspaceRoot,
   relativePathBase,
   onOpenWorkspaceFile,
+  onOpenBrowserUrl,
   toast,
   children,
 }: AssistantFileLinkResolverProviderProps) {
   const configRef = useRef<AssistantFileLinkResolverConfig>({
     client,
     serverId,
+    workspaceId,
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
+    onOpenBrowserUrl,
     toast,
   });
   configRef.current = {
     client,
     serverId,
+    workspaceId,
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
+    onOpenBrowserUrl,
     toast,
   };
 

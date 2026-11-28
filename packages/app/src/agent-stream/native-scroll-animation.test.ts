@@ -4,31 +4,48 @@ import { shouldAnimateNativeScrollToBottom } from "./native-scroll-animation";
 describe("native scroll-to-bottom animation", () => {
   it("jumps across unmounted history instead of animating through blank rows", () => {
     expect(
-      shouldAnimateNativeScrollToBottom({ offsetY: 60_000, viewportHeight: 600, windowSize: 10 }),
+      shouldAnimateNativeScrollToBottom({
+        distanceFromEnd: 60_000,
+        viewportHeight: 600,
+        drawDistance: 2000,
+      }),
     ).toBe(false);
   });
 
-  it("keeps near-bottom movement eligible for animation", () => {
+  it("keeps near-end movement eligible for animation", () => {
     expect(
-      shouldAnimateNativeScrollToBottom({ offsetY: 300, viewportHeight: 600, windowSize: 10 }),
+      shouldAnimateNativeScrollToBottom({
+        distanceFromEnd: 300,
+        viewportHeight: 600,
+        drawDistance: 2000,
+      }),
     ).toBe(true);
   });
 
-  it("bounds travel by the bottom-side overscan, not the whole window", () => {
+  it("bounds travel by the rows mounted below the viewport", () => {
     expect(
-      shouldAnimateNativeScrollToBottom({ offsetY: 2700, viewportHeight: 600, windowSize: 10 }),
+      shouldAnimateNativeScrollToBottom({
+        distanceFromEnd: 1000,
+        viewportHeight: 600,
+        drawDistance: 2000,
+      }),
     ).toBe(true);
     expect(
-      shouldAnimateNativeScrollToBottom({ offsetY: 2701, viewportHeight: 600, windowSize: 10 }),
-    ).toBe(false);
-    expect(
-      shouldAnimateNativeScrollToBottom({ offsetY: 1500, viewportHeight: 600, windowSize: 5 }),
+      shouldAnimateNativeScrollToBottom({
+        distanceFromEnd: 1001,
+        viewportHeight: 600,
+        drawDistance: 2000,
+      }),
     ).toBe(false);
   });
 
   it("does not animate before the viewport has been measured", () => {
     expect(
-      shouldAnimateNativeScrollToBottom({ offsetY: 0, viewportHeight: 0, windowSize: 10 }),
+      shouldAnimateNativeScrollToBottom({
+        distanceFromEnd: 0,
+        viewportHeight: 0,
+        drawDistance: 2000,
+      }),
     ).toBe(false);
   });
 });

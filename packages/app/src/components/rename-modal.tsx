@@ -145,7 +145,6 @@ export function AdaptiveRenameModal({
         <View style={styles.actions}>
           <Button
             variant="secondary"
-            size="sm"
             style={styles.actionButton}
             onPress={handleCancel}
             disabled={isPending}
@@ -155,7 +154,6 @@ export function AdaptiveRenameModal({
           </Button>
           <Button
             variant="default"
-            size="sm"
             style={styles.actionButton}
             onPress={handleSubmitVoid}
             disabled={submitDisabled}

@@ -13,6 +13,6 @@ export function orderCheckoutDiffFiles(files: ParsedDiffFile[]): ParsedDiffFile[
   // chains, so it is skipped; the collapsed set is empty because the flat list
   // always carries every file, whatever the rail has collapsed.
   return flattenDiffTree(buildDiffTree(files), new Set()).flatMap((row) =>
-    row.kind === "file" ? [row.file] : [],
+    row.kind === "file" ? [files[row.fileIndex]] : [],
   );
 }

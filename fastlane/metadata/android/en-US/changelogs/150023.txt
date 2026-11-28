@@ -1,0 +1,8 @@
+Added
+- Added a first-run setup on Paseo Desktop and web that walks new users through theme, providers, projects, agent orchestration and the mobile app, with Settings → General → Show setup again to reopen it
+- Added project suggestions from the folders where you ran Claude Code, Codex, OpenCode or Pi, shown in the setup Projects step
+
+Improved
+- Changed the theme picker to a grid of tiles with a preview of each theme
+
+Full notes: https://paseo.sh/changelog

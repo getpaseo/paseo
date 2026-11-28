@@ -1,5 +1,6 @@
 import type { Page, TestInfo } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
+import { pauseWorkspaceTerminalWorker } from "../support/helpers/workspace-setup";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
@@ -186,6 +187,52 @@ test("compact header menu runs, shows, and stops workspace scripts", async ({ pa
       await goBackInMenu(page);
       await expect(scriptsMenuRow(page)).toHaveAccessibleName(/^Scripts\s*lint$/);
     });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+async function restartScriptAcrossHeaderRemoval(page: Page, terminalId: string) {
+  await openRunningScriptPage(page, "lint");
+  const resumeWorker = await pauseWorkspaceTerminalWorker(terminalId);
+  try {
+    await menuRow(page, "Restart").click();
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await expect(page.getByRole("button", { name: /Switch tabs/ })).toHaveCount(0);
+    await expect(page.getByTestId("workspace-scripts-button")).toBeVisible();
+  } finally {
+    resumeWorker();
+  }
+}
+
+async function expectScriptTerminalReplaced(
+  workspace: Awaited<ReturnType<typeof openWorkspaceWithScripts>>,
+  previousId: string,
+) {
+  await expect
+    .poll(
+      async () => {
+        const after = await workspace.client.listTerminals(undefined, undefined, {
+          workspaceId: workspace.workspaceId,
+        });
+        return after.terminals.filter((terminal) => terminal.id !== previousId).length;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(1);
+}
+
+test("pending script restart survives removal of the compact header", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const workspace = await openWorkspaceWithScripts(page);
+  try {
+    await runScriptFromScriptsPage(page, "lint");
+    const before = await workspace.client.listTerminals(undefined, undefined, {
+      workspaceId: workspace.workspaceId,
+    });
+    expect(before.terminals).toHaveLength(1);
+    await restartScriptAcrossHeaderRemoval(page, before.terminals[0]!.id);
+    await expectScriptTerminalReplaced(workspace, before.terminals[0]!.id);
   } finally {
     await workspace.cleanup();
   }

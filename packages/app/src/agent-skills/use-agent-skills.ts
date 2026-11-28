@@ -10,6 +10,9 @@ import { useToast } from "@/contexts/toast-context";
 import { useFetchQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { confirmDialog } from "@/utils/confirm-dialog";
+
+export type AgentSkillsController = ReturnType<typeof useAgentSkills>;
 
 export function useAgentSkills(serverId: string) {
   const { t } = useTranslation();
@@ -83,12 +86,30 @@ export function useAgentSkills(serverId: string) {
   const refresh = useCallback(async () => {
     await refetch();
   }, [refetch]);
-  const runReconcile = useCallback(async () => {
-    await reconcileAsync().catch(() => undefined);
-  }, [reconcileAsync]);
+  // Both resolve to whether the host ended in the asked-for state; failures are already toasted.
+  const runReconcile = useCallback(
+    () =>
+      reconcileAsync().then(
+        (status) => status.state !== "not-installed",
+        () => false,
+      ),
+    [reconcileAsync],
+  );
+  // Uninstalling deletes whole skill folders, including anything the user added inside them, so
+  // it always asks first. Declining resolves false, as a failure does.
   const runUninstall = useCallback(async () => {
-    await uninstallAsync().catch(() => undefined);
-  }, [uninstallAsync]);
+    const confirmed = await confirmDialog({
+      title: t("settings.host.skills.uninstallTitle"),
+      message: t("settings.host.skills.uninstallMessage"),
+      confirmLabel: t("settings.host.skills.actions.uninstall"),
+      destructive: true,
+    });
+    if (!confirmed) return false;
+    return uninstallAsync().then(
+      (status) => status.state === "not-installed",
+      () => false,
+    );
+  }, [t, uninstallAsync]);
   const saveSelection = useCallback(
     (selection: AgentSkillSelection, confirmedRemovals: readonly string[] = []) =>
       saveAsync({ selection, confirmedRemovals }),

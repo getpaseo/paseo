@@ -8,6 +8,10 @@ const DICTATION_DRAIN_IDLE_TIMEOUT_MS = 30_000;
 const waitForNextFlushTurn = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 type DictationStreamAckMessage = Extract<SessionOutboundMessage, { type: "dictation_stream_ack" }>;
+type DictationStreamErrorMessage = Extract<
+  SessionOutboundMessage,
+  { type: "dictation_stream_error" }
+>;
 
 interface DrainWaitResult {
   kind: "signaled" | "timed-out";
@@ -64,6 +68,7 @@ export class DictationStreamSender {
 
   private startGeneration = 0;
   private startPromise: Promise<void> | null = null;
+  private streamError: Error | null = null;
 
   constructor(params: DictationStreamSenderParams) {
     this.format = params.format;
@@ -88,10 +93,11 @@ export class DictationStreamSender {
     }
 
     this.clientCleanup = client.subscribeRawMessages((message) => {
-      if (message.type !== "dictation_stream_ack") {
-        return;
+      if (message.type === "dictation_stream_ack") {
+        this.handleAck(message);
+      } else if (message.type === "dictation_stream_error") {
+        this.handleStreamError(message);
       }
-      this.handleAck(message);
     });
   }
 
@@ -127,6 +133,7 @@ export class DictationStreamSender {
     this.acknowledgedSeq = -1;
     this.streamReady = false;
     this.startPromise = null;
+    this.streamError = null;
     this.startGeneration += 1;
     this.resolveDrainWaiters();
   }
@@ -197,6 +204,7 @@ export class DictationStreamSender {
     this.sendSeq = 0;
     this.acknowledgedSeq = -1;
     this.streamReady = false;
+    this.streamError = null;
 
     const start = (async () => {
       await client.startDictationStream(dictationId, this.format);
@@ -285,6 +293,25 @@ export class DictationStreamSender {
     this.resolveDrainWaiters();
   }
 
+  // The daemon drops a stream after an error and answers later chunks with
+  // errors instead of acks, so waiting for delivery can only time out.
+  private handleStreamError(message: DictationStreamErrorMessage): void {
+    if (message.payload.dictationId !== this.dictationId || this.streamError) {
+      return;
+    }
+    this.streamError = new Error(message.payload.error);
+    this.resolveDrainWaiters();
+  }
+
+  private throwStreamError(): void {
+    const error = this.streamError;
+    if (!error) {
+      return;
+    }
+    this.invalidateStream();
+    throw error;
+  }
+
   private invalidateStream(): void {
     this.resetStreamForReplay();
   }
@@ -309,11 +336,13 @@ export class DictationStreamSender {
 
   private async waitForFlushDrain(finalSeq: number): Promise<void> {
     while (this.hasPendingDelivery(finalSeq)) {
+      this.throwStreamError();
       const client = this.client;
       if (!client?.isConnected || !this.dictationId || !this.streamReady) {
         throw new Error("Failed to flush dictation stream");
       }
       const result = await this.waitForDrainSignal();
+      this.throwStreamError();
       if (result.kind === "timed-out") {
         this.invalidateStream();
         throw new Error("Timed out waiting for dictation stream delivery");

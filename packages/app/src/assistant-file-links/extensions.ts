@@ -7,6 +7,7 @@ export const ASSISTANT_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
   "cpp",
   "cs",
   "css",
+  "csv",
   "cts",
   "cxx",
   "env",

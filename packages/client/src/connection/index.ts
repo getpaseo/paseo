@@ -11,6 +11,7 @@ import {
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import type { DaemonProtocolCodec } from "../daemon-protocol-codec.js";
 
 export class ConnectionSubscriptions extends OwnedSubscriptions {
   private legacy: LegacySubscriptions | null = null;
@@ -18,6 +19,10 @@ export class ConnectionSubscriptions extends OwnedSubscriptions {
   constructor(
     private readonly connection: OwnedSubscriptionsHost & {
       send(message: ObservationRequest): Promise<void>;
+      codec: Pick<
+        DaemonProtocolCodec,
+        "parseInbound" | "parseAgentSnapshot" | "matchesBrowserRegistration"
+      >;
     },
   ) {
     super({
@@ -45,6 +50,7 @@ export class ConnectionSubscriptions extends OwnedSubscriptions {
           info,
           this.connection.send,
           capabilities?.[CLIENT_CAPS.browserHost],
+          this.connection.codec,
         );
       }
     }
@@ -125,6 +131,7 @@ export class ConnectionSubscriptions extends OwnedSubscriptions {
 // Protocol support belongs to the installed client. Only browser hosting needs
 // a resource supplied by the caller. Keep this exhaustive as the protocol evolves.
 export const DEFAULT_CLIENT_CAPABILITIES = {
+  [CLIENT_CAPS.agentActiveTurnBehaviors]: true,
   [CLIENT_CAPS.terminalChunkedReplay]: true,
   [CLIENT_CAPS.binaryChunkingV1]: true,
   [CLIENT_CAPS.helloRejection]: true,
@@ -144,6 +151,8 @@ export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.pluginTimelineItems]: true,
   [CLIENT_CAPS.workspaceSetupBlocked]: true,
   [CLIENT_CAPS.workspaceSetupObservation]: true,
+  [CLIENT_CAPS.pluginBinaryPayloads]: true,
+  [CLIENT_CAPS.backgroundAgents]: true,
   [CLIENT_CAPS.explicitEventSubscriptions]: true,
 } satisfies Record<Exclude<ClientCapability, typeof CLIENT_CAPS.browserHost>, true>;
 

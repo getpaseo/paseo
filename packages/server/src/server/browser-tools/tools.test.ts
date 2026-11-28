@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
-import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "./broker.js";
+import type { BrowserToolsExecuteInput } from "./broker.js";
 import type { BrowserToolsResponsePayload } from "./errors.js";
 import { registerBrowserTools, type RegisterBrowserToolsOptions } from "./tools.js";
 import type {
@@ -10,6 +10,11 @@ import type {
 } from "../agent/tools/types.js";
 
 const BROWSER_ID = "11111111-1111-4111-8111-111111111111";
+const BROWSER_HOST = {
+  browserHostId: "22222222-2222-4222-8222-222222222222",
+  label: "MacBook Pro · Window 1",
+  canOpenTabs: true,
+};
 const BROWSER_ID_MESSAGE =
   "browserId must be a real id returned by browser_new_tab or browser_list_tabs";
 const WAIT_CONDITION_MESSAGE = "browser_wait requires exactly one of text or url";
@@ -26,6 +31,10 @@ class FakeBrowserBroker {
   public readonly calls: BrowserToolsExecuteInput[] = [];
 
   public constructor(private response: BrowserToolsResponsePayload = listTabsPayload()) {}
+
+  public listBrowserHosts() {
+    return [BROWSER_HOST];
+  }
 
   public setResponse(response: BrowserToolsResponsePayload): void {
     this.response = response;
@@ -53,7 +62,7 @@ class BrowserToolHarness {
       registerTool: (name, config, handler) => {
         this.tools.set(name, { config, handler });
       },
-      broker: this.broker as Pick<BrowserToolsBroker, "execute">,
+      broker: this.broker,
       ...(this.callerAgentId ? { callerAgentId: this.callerAgentId } : {}),
       resolveCallerAgent: () => this.callerAgent,
     });
@@ -100,6 +109,7 @@ function listTabsPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
       tabs: [
         {
           browserId: BROWSER_ID,
+          browserHost: BROWSER_HOST,
           url: "https://example.com",
           title: "Example",
           isActive: true,
@@ -117,6 +127,7 @@ function newTabPayload(): Extract<BrowserToolsResponsePayload, { ok: true }> {
     result: {
       command: "new_tab",
       browserId: BROWSER_ID,
+      browserHost: BROWSER_HOST,
       workspaceId: "wks_workspace_a",
       url: "https://example.com",
     },
@@ -481,14 +492,41 @@ const brokerErrorCases = [
       ok: false,
       error: {
         code: "browser_timeout",
-        message: "Browser automation timed out after 15000ms.",
+        message:
+          "The browser host did not respond within 15000ms. Try again or check the browser host.",
         retryable: true,
       },
     },
     content: [
       {
         type: "text",
-        text: "The browser did not respond before the timeout. Try again or check the browser host.",
+        text: "The browser host did not respond within 15000ms. Try again or check the browser host.",
+      },
+    ],
+    context: {
+      agentId: "agent-1",
+      cwd: "/repo",
+      workspaceId: "wks_workspace_a",
+      browserId: BROWSER_ID,
+    },
+  },
+  {
+    name: "expired wait conditions",
+    toolName: "browser_wait",
+    input: { browserId: BROWSER_ID, text: "Example Domain" },
+    payload: {
+      requestId: "req-wait",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser text: Example Domain",
+        retryable: true,
+      },
+    },
+    content: [
+      {
+        type: "text",
+        text: "Timed out waiting for browser text: Example Domain",
       },
     ],
     context: {
@@ -538,6 +576,7 @@ describe("registerBrowserTools", () => {
     const harness = new BrowserToolHarness();
 
     expect(harness.toolNames()).toEqual([
+      "browser_list_hosts",
       "browser_list_tabs",
       "browser_new_tab",
       "browser_snapshot",
@@ -579,7 +618,7 @@ describe("registerBrowserTools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: `Found 1 Paseo browser tab. Use these browserId values for tab-scoped browser tools.\n- browserId=${BROWSER_ID} active title="Example" url=https://example.com`,
+        text: `Found 1 Paseo browser tab. Use these browserId values for tab-scoped browser tools.\n- browserId=${BROWSER_ID} active title="Example" url=https://example.com host="${BROWSER_HOST.label}"`,
       },
     ]);
   });
@@ -601,9 +640,46 @@ describe("registerBrowserTools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: `Created browser tab browserId=${BROWSER_ID} url=https://example.com. Use this browserId for tab-scoped browser tools.`,
+        text: `Created browser tab browserId=${BROWSER_ID} url=https://example.com on ${BROWSER_HOST.label}. Use this browserId for tab-scoped browser tools.`,
       },
     ]);
+  });
+
+  test("lists labeled browser hosts and passes the selected ID for new tabs", async () => {
+    const harness = new BrowserToolHarness();
+    const [host] = harness.broker.listBrowserHosts();
+    const hosts = await harness.execute("browser_list_hosts", {});
+    expect(hosts.structuredContent).toEqual({ browserHosts: [host] });
+    expect(hosts.content).toEqual([
+      { type: "text", text: `Connected browser hosts\n- ${host.label} (${host.browserHostId})` },
+    ]);
+    expect(harness.broker.calls).toEqual([]);
+
+    harness.broker.setResponse({
+      requestId: "ambiguous",
+      ok: false,
+      error: {
+        code: "browser_host_ambiguous",
+        message: "Choose a browser host.",
+        retryable: false,
+        browserHosts: [host],
+      },
+    });
+    const ambiguous = await harness.execute("browser_new_tab", {});
+    expect(ambiguous.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "browser_host_ambiguous", browserHosts: [host] },
+    });
+    expect(ambiguous.content).toEqual([
+      { type: "text", text: `Choose a browser host.\n- ${host.label} (${host.browserHostId})` },
+    ]);
+
+    harness.broker.setResponse(newTabPayload());
+    await harness.execute("browser_new_tab", { browserHostId: host.browserHostId });
+    expect(harness.broker.calls.at(-1)).toMatchObject({
+      browserHostId: host.browserHostId,
+      command: { command: "new_tab", args: {} },
+    });
   });
 
   test.each([
@@ -897,7 +973,7 @@ describe("registerBrowserTools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: 'The browser did not respond before the timeout. Try again or check the browser host.\nHandled browser dialog: dismissed beforeunload "Leave site?".',
+        text: 'Timed out waiting for browser URL: /next\nHandled browser dialog: dismissed beforeunload "Leave site?".',
       },
     ]);
     expect(response.structuredContent).toEqual({

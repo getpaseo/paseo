@@ -690,6 +690,7 @@ describe("commit file diffs", () => {
     expect(result).toEqual({
       file: {
         path: filePath,
+        status: "ok",
         isNew: false,
         isDeleted: false,
         additions: 1,

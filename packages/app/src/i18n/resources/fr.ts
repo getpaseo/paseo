@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  pluginCombobox: {
+    searching: "Recherche…",
+    empty: "Aucun résultat",
+    failed: "Échec de la recherche : {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
@@ -86,14 +91,23 @@ export const fr: TranslationResources = {
       close: "Fermer le menu",
     },
     commandCenter: {
-      placeholder: "Rechercher des commandes, fichiers, espaces de travail et agents…",
+      placeholder: "Rechercher des espaces de travail, fichiers et actions…",
+      placeholderWithoutFiles: "Rechercher des espaces de travail et des actions…",
       filePlaceholder: "Rechercher des fichiers…",
+      workspacePlaceholder: "Rechercher des espaces de travail…",
+      actionPlaceholder: "Rechercher des actions…",
       searchingFiles: "Recherche de fichiers…",
       noMatches: "Aucun résultat",
       actions: "Actions",
       files: "Fichiers",
       workspaces: "Espaces de travail",
-      agents: "Agents",
+      recentWorkspaces: "Espaces de travail récents",
+      tabs: {
+        all: "Tout",
+        workspaces: "Espaces de travail",
+        files: "Fichiers",
+        actions: "Actions",
+      },
       newAgent: "Nouvel agent",
       open: "Ouvrir {{name}}",
       openInSidePane: "Ouvrir {{name}} dans le panneau latéral",
@@ -102,6 +116,9 @@ export const fr: TranslationResources = {
       home: "Accueil",
       groupByProject: "Grouper par projet",
       groupByStatus: "Grouper par statut",
+      copyBrowserHostName: "Copier le nom de l’hôte du navigateur",
+      profileGroupLabel: "Profil",
+      profileSearchKeywords: "profil appliquer un profil profil d'agent préréglage",
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle model",
@@ -259,7 +276,7 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agent introuvable",
       failedToLoad: "Impossible de charger l’agent",
-      reconnecting: "Reconnexion à l’hôte…",
+      reconnecting: "Reconnexion…",
       updating: "Mise à jour des messages…",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent.",
       timelineSyncRetrying: "Nouvelle tentative…",
@@ -282,6 +299,7 @@ export const fr: TranslationResources = {
     archived: {
       callout: "Cet agent est archivé",
       unarchive: "Désarchiver",
+      unarchiving: "Désarchivage...",
     },
   },
   sessions: {
@@ -335,10 +353,12 @@ export const fr: TranslationResources = {
       viewDiagram: "Afficher le diagramme",
     },
     actions: {
+      copyQuote: "Copier la citation",
       copyCode: "Copier le code",
       copyTurn: "Copier l’échange",
       copyMessage: "Copier le message",
       forkMenu: "Forker la conversation à partir d’ici",
+      turnStats: "Statistiques de l’échange",
       forkInNewTab: "Forker dans un nouvel onglet",
       forkInNewWorkspace: "Forker dans un nouvel espace de travail",
       forkUnavailable: "Mettez à jour l’hôte pour utiliser cette fonction.",
@@ -368,6 +388,11 @@ export const fr: TranslationResources = {
       details: "Détails",
     },
     dictation: {
+      insecureContext: "Ouvrez Paseo via HTTPS ou sur localhost pour utiliser le microphone.",
+      unsupported: "La dictée est indisponible dans ce navigateur.",
+      noMicrophone: "Connectez un microphone, puis réessayez.",
+      permissionDenied: "Autorisez l’accès au microphone, puis réessayez.",
+      startFailed: "Impossible de lancer la dictée. Réessayez.",
       paused: "Microphone interrompu. En attente de reprise…",
       start: "Démarrer la dictée vocale",
       cancel: "Annuler la dictée",
@@ -383,6 +408,25 @@ export const fr: TranslationResources = {
       next: "Suivant",
       answerPlaceholder: "Saisissez votre réponse…",
       otherPlaceholder: "Autre…",
+    },
+    backgroundWork: {
+      heartbeat: "Battement périodique",
+      pillOne: "1 tâche en arrière-plan",
+      pillMany: "{{count}} tâches en arrière-plan",
+      notRunning: "N’est plus en cours",
+      dismiss: "Fermer",
+      stop: "Arrêter",
+      stopping: "Arrêt…",
+      stopError: "Impossible de confirmer l’arrêt.",
+      label: "Arrière-plan",
+      title: "Travail en arrière-plan",
+      waiting: "En attente des détails",
+      error: "Impossible de charger le travail en arrière-plan",
+      retry: "Réessayer",
+      running: "Travail en arrière-plan en cours",
+      shell: "Shell",
+      monitor: "Surveillance",
+      other: "Autre travail",
     },
     todo: {
       title: "Tâches",
@@ -457,8 +501,7 @@ export const fr: TranslationResources = {
         archivedTitle: "Espace de travail archivé",
         restoreDescription:
           "Restaurez {{workspaceName}} pour retrouver ses agents. Son worktree utilisera la branche {{branch}}.",
-        restoreWithoutBranchDescription:
-          "Restaurez {{workspaceName}} pour retrouver ses agents. Une nouvelle branche partira de la base enregistrée ou de la branche par défaut du dépôt.",
+        restoreWithoutBranchDescription: "Restaurez {{workspaceName}} pour retrouver ses agents.",
         unarchiveDescription: "{{workspaceName}} est archivé. Désarchivez-le pour le rouvrir.",
         restoreAction: "Restaurer",
         unarchiveAction: "Désarchiver",
@@ -474,7 +517,20 @@ export const fr: TranslationResources = {
       copyBranchName: "Copier le nom de la branche",
       copied: "Copié",
     },
+    linkActions: {
+      openInPaseo: "Ouvrir dans Paseo",
+      openInDefaultBrowser: "Ouvrir dans le navigateur par défaut",
+      copyLink: "Copier le lien",
+      linkCopiedLabel: "Lien",
+    },
     fileActions: {
+      revealInFiles: "Afficher dans Fichiers",
+      openInDefaultApp: "Ouvrir avec l’application par défaut",
+      pathCopiedLabel: "Chemin",
+      relativePathCopiedLabel: "Chemin relatif",
+      openInDefaultAppFailed: "Impossible d’ouvrir le fichier avec son application par défaut",
+      outsideWorkspace: "Ce fichier est en dehors de l’espace de travail",
+      notFoundInFiles: "Fichier introuvable dans Fichiers",
       openFile: "Ouvrir le fichier",
       openIn: "Ouvrir dans {{target}}",
       openToSide: "Ouvrir sur le côté",
@@ -507,6 +563,12 @@ export const fr: TranslationResources = {
       },
     },
     fileExplorer: {
+      filter: {
+        placeholder: "Rechercher des fichiers",
+        clear: "Effacer la recherche",
+        loading: "Recherche de fichiers...",
+        empty: "Aucun fichier correspondant",
+      },
       sort: {
         name: "Nom",
         modified: "Date de modification",
@@ -619,6 +681,24 @@ export const fr: TranslationResources = {
         invalidUrl: "URL du navigateur invalide",
         unsupportedProtocol: "URL bloquée, protocole non pris en charge : {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Navigation via {{hostName}}. Cliquez pour naviguer en local.",
+        tooltipLocal: "Navigation locale. Cliquez pour naviguer via {{hostName}}.",
+        switchToLocal: "Basculer le routage du navigateur de {{hostName}} vers Local",
+        switchToHost: "Basculer le routage du navigateur de Local vers {{hostName}}",
+      },
+      proxy: {
+        connecting: "Connexion à {{hostName}}...",
+        reconnecting: "Reconnexion à {{hostName}}...",
+        updateTitle: "Mettez à jour {{hostName}} pour naviguer via cet hôte",
+        updateDescription: "Cet hôte ne prend pas encore en charge le proxy du navigateur.",
+        routedTitle: "Le proxy du navigateur n’est pas disponible pour les hôtes routés",
+        routedDescription: "Connectez-vous directement à cet hôte ou naviguez en local.",
+        offlineTitle: "{{hostName}} est hors ligne",
+        offlineDescription: "Attendez la reconnexion de l’hôte ou naviguez en local.",
+        errorTitle: "Impossible de connecter le proxy du navigateur",
+        browseLocally: "Naviguer en local",
+      },
     },
     terminal: {
       hostDisconnected: "L’hôte n’est pas connecté",
@@ -701,7 +781,6 @@ export const fr: TranslationResources = {
         agentIdCopiedLabel: "ID de l’agent",
         terminalIdCopiedLabel: "ID du terminal",
         resumeCommandCopiedLabel: "Commande de reprise",
-        filePathCopiedLabel: "Chemin du fichier",
         resumeIdUnavailable: "ID de reprise indisponible",
         resumeCommandUnavailable: "Commande de reprise indisponible",
         reloadingAgent: "Rechargement de l’agent…",
@@ -887,6 +966,7 @@ export const fr: TranslationResources = {
           pushBehind:
             "Push indisponible pour l’instant : des modifications plus récentes doivent d’abord être récupérées",
           pushNothing: "Push indisponible : il n’y a rien de nouveau à pousser",
+          pushUpstreamGone: "Push indisponible : la branche suivie par cette branche n’existe plus",
           pullAndPushNoRemote:
             "Pull et push indisponibles : cette branche n’est pas encore liée à un dépôt distant",
           pullAndPushDirty:
@@ -943,6 +1023,8 @@ export const fr: TranslationResources = {
         },
         archiveWarning: {
           title: "Archiver « {{workspaceName}} » ?",
+          bulkTitle: "Archiver {{count}} espaces de travail ?",
+          bulkWorkspaceReason: "{{workspaceName}} : {{reason}}",
           confirm: "Archiver",
           cancel: "Annuler",
           uncommittedChanges: "Modifications non commitées",
@@ -956,6 +1038,9 @@ export const fr: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "Branche de base",
+        },
         openChangesTab: "Ouvrir l’onglet Modifications",
         openDiffTab: "Ouvrir l’onglet Diff",
         closeChangesTab: "Fermer l’onglet Modifications",
@@ -1180,6 +1265,8 @@ export const fr: TranslationResources = {
     title: "Nouveautés",
     installed: "Installée",
     showMore: "Afficher plus",
+    showAllChanges: "Afficher toutes les modifications",
+    hideAllChanges: "Masquer toutes les modifications",
     openWebsite: "Journal des modifications complet",
     error: {
       title: "Impossible de charger le journal des modifications",
@@ -1187,6 +1274,14 @@ export const fr: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Impossible de charger la vue de la barre latérale.",
+      useDefault: "Utiliser la vue par défaut",
+      readFailed: "Impossible de charger votre préférence de vue de la barre latérale.",
+      agentUnavailable: "Cet agent n’est plus disponible",
+      terminalUnavailable: "Ce terminal n’est plus disponible",
+      projectUnavailable: "Ce projet n’est plus disponible",
+    },
     statusGroupAccessibility: "Groupe {{label}}",
     statusBucket: {
       needsInput: "Attend une réponse",
@@ -1263,6 +1358,7 @@ export const fr: TranslationResources = {
       hosts: "Hôtes",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
+      moreActions: "Plus d’actions",
     },
     footer: {
       usage: "Utilisation",
@@ -1342,6 +1438,7 @@ export const fr: TranslationResources = {
         rename: "Renommer l’espace de travail",
         pin: "Épingler en haut",
         unpin: "Désépingler",
+        select: "Sélectionner",
         archive: "Archiver",
         archiveWorkspace: "Archiver l’espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",
@@ -1360,6 +1457,10 @@ export const fr: TranslationResources = {
         submit: "Renommer",
         invalidBranchName: "Nom de branche invalide",
       },
+      selection: {
+        count: "{{count}} sélectionnés",
+        exit: "Quitter la sélection",
+      },
       toasts: {
         workspacePathUnavailable: "Chemin de l’espace de travail indisponible",
         pathCopied: "Chemin copié",
@@ -1367,6 +1468,11 @@ export const fr: TranslationResources = {
         hostDisconnected: "L’hôte n’est pas connecté",
         hideFailed: "Impossible de masquer l’espace de travail",
         archiveFailed: "Impossible d’archiver l’espace de travail",
+        archiveMultipleFailed: "Impossible d’archiver {{count}} espaces de travail",
+        archived: "Espace de travail archivé",
+        archivedCount: "{{count}} espaces de travail archivés",
+        undoArchive: "Annuler",
+        undoArchiveFailed: "Impossible d’annuler l’archivage",
       },
     },
   },
@@ -1374,8 +1480,9 @@ export const fr: TranslationResources = {
     title: "Nouvel espace de travail",
     create: "Créer",
     isolation: {
-      local: "Local",
+      local: "Répertoire du projet",
       worktree: "Nouveau worktree",
+      existing: "Worktree existant",
       label: "Isolation",
     },
     fields: {
@@ -1390,12 +1497,17 @@ export const fr: TranslationResources = {
       createWorktreeFailed: "Impossible de créer le worktree",
       composerStateRequired: "L’état de la zone de saisie est requis",
       selectModel: "Sélectionnez un modèle",
+      branchInProjectDirectory:
+        "{{branch}} est extraite dans le répertoire du projet. Choisissez Répertoire du projet pour y travailler, ou créez une branche à partir d’elle.",
+      branchInWorktree:
+        "{{branch}} est extraite dans {{path}}. Choisissez ce worktree dans Worktree existant, ou créez une branche à partir d’elle.",
     },
     tooltips: {
       project: "Choisir le projet",
       host: "Choisir l’hôte",
       isolation: "Choisir le niveau d’isolation",
       startingRef: "Choisir le point de départ",
+      worktree: "Choisir le worktree où travailler",
       launch: "Choisir quoi lancer",
     },
     refPicker: {
@@ -1403,8 +1515,31 @@ export const fr: TranslationResources = {
       intoBase: "vers {{baseRef}}",
       searching: "Recherche…",
       noMatchingRefs: "Aucune référence correspondante.",
-      searchPlaceholder: "Rechercher des branches et des PR",
+      searchBranches: "Rechercher des branches",
+      searchPullRequests: "Rechercher des PR",
+      searchPullRequests_mr: "Rechercher des MR",
+      branches: "Branches",
+      pullRequests: "Pull requests",
+      pullRequests_mr: "Merge requests",
+      pullRequestsShort: "PR",
+      pullRequestsShort_mr: "MR",
+      branchOff: "Nouvelle branche",
+      checkout: "Extraire",
+      branchOffHint: "Crée une nouvelle branche à partir de celle-ci",
+      checkoutHint: "Travaille directement dessus",
+      base: "Base",
+      from: "depuis",
+      branch: "Branche",
+      pullRequest: "Pull request",
+      pullRequest_mr: "Merge request",
+      inProjectDirectory: "Dans le répertoire du projet",
+      inWorktree: "Dans un worktree",
       title: "Partir de",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Rechercher des worktrees",
+      empty: "Aucun worktree correspondant.",
     },
     launch: {
       title: "Que lancer ?",
@@ -1482,6 +1617,8 @@ export const fr: TranslationResources = {
       status: {
         checking: "Recherche de mises à jour de l’application…",
         installing: "Installation de la mise à jour de l’application…",
+        downloadingVersionProgress: "Téléchargement de {{version}}… {{percent}} %",
+        downloadingProgress: "Téléchargement de la mise à jour… {{percent}} %",
         upToDate: "L’application est à jour.",
         upToDateWithLastChecked: "À jour. Dernière vérification à {{time}}.",
         pending: "Nous vous préviendrons quand la mise à jour sera prête.",
@@ -1490,6 +1627,16 @@ export const fr: TranslationResources = {
         pendingWithVersion: "Mise à jour trouvée : {{version}}. Téléchargement…",
         pendingWithVersionAndLastChecked:
           "Mise à jour trouvée : {{version}}. Téléchargement… Dernière vérification à {{time}}.",
+        pendingWithVersionProgress:
+          "Mise à jour trouvée : {{version}}. Téléchargement… {{percent}} %",
+        pendingWithVersionProgressAndLastChecked:
+          "Mise à jour trouvée : {{version}}. Téléchargement… {{percent}} % Dernière vérification à {{time}}.",
+        downloadAvailableWithVersion: "Mise à jour disponible : {{version}}",
+        downloadAvailableWithVersionAndLastChecked:
+          "Mise à jour disponible : {{version}}. Dernière vérification à {{time}}.",
+        downloadAvailable: "Une mise à jour de l’application est disponible.",
+        downloadAvailableWithLastChecked:
+          "Une mise à jour de l’application est disponible. Dernière vérification à {{time}}.",
         availableWithVersion: "Mise à jour prête : {{version}}",
         availableWithVersionAndLastChecked:
           "Mise à jour prête : {{version}}. Dernière vérification à {{time}}.",
@@ -1502,14 +1649,21 @@ export const fr: TranslationResources = {
       },
       installError: "Impossible d’installer la mise à jour de l’application de bureau.",
       callout: {
+        downloadingTitle: "Téléchargement de la mise à jour",
         installingTitle: "Installation de la mise à jour",
         failedTitle: "Échec de la mise à jour",
         availableTitle: "Mise à jour disponible",
         genericError: "Une erreur s’est produite.",
         whatsNew: "Nouveautés",
+        downloadingAction: "Téléchargement…",
         installingAction: "Installation…",
+        downloadAndRestart: "Télécharger",
         installAndRestart: "Installer et redémarrer",
+        downloadingVersionDescription: "Téléchargement de {{version}}… {{percent}} %",
+        downloadingDescription: "Téléchargement de la mise à jour… {{percent}} %",
         installingDescription: "Installation et redémarrage…",
+        versionAvailable: "La version {{version}} est disponible au téléchargement.",
+        newVersionAvailable: "Une nouvelle version est disponible au téléchargement.",
         versionReady: "La version {{version}} est prête à être installée.",
         newVersionReady: "Une nouvelle version est prête à être installée.",
         restartWarning:
@@ -1582,6 +1736,9 @@ export const fr: TranslationResources = {
       cli: {
         statusFailed: "Impossible de vérifier l’installation de la CLI.",
         installFailed: "Impossible d’installer la CLI Paseo.",
+        uninstallFailed: "Impossible de désinstaller la CLI Paseo.",
+        keptForeign:
+          "Une commande paseo qui n’a pas été installée par Paseo a été conservée. Supprimez-la vous-même pour la désinstaller.",
       },
     },
   },
@@ -1633,6 +1790,7 @@ export const fr: TranslationResources = {
     openPath: "Ouvrir le chemin",
   },
   branchSwitcher: {
+    failedToLoad: "Impossible de charger les branches. Rouvrez le sélecteur pour réessayer.",
     triggerTooltip: "Changer la branche de l’espace de travail",
     currentBranch: "Branche actuelle : {{branchName}}. Appuyez pour changer de branche.",
     placeholder: "Changer de branche…",
@@ -1657,7 +1815,11 @@ export const fr: TranslationResources = {
     loadingCommands: "Chargement des commandes…",
     noFiles: "Aucun fichier ou répertoire trouvé",
     noCommands: "Aucune commande trouvée",
-    failedToLoad: "Échec du chargement",
+    loadingProviderCommands: "Chargement des commandes {{provider}}…",
+    commandsFailed: "Impossible de charger les commandes",
+    providerCommandsFailed: "Impossible de charger les commandes {{provider}}",
+    filesFailed: "Impossible de rechercher les fichiers",
+    skillTag: "Skill",
     chooseProjectForCommands: "Choisissez un projet pour afficher les commandes",
     chooseModelForCommands: "Sélectionnez un modèle pour afficher les commandes",
   },
@@ -1685,6 +1847,55 @@ export const fr: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "Étape {{current}} sur {{total}}",
+      skip: "Passer la configuration",
+      continue: "Continuer",
+      finish: "Terminer",
+      steps: {
+        appearance: {
+          label: "Apparence",
+          title: "Bienvenue dans Paseo",
+          description: "Commençons par choisir une apparence",
+        },
+        providers: {
+          label: "Fournisseurs",
+          title: "Vos fournisseurs",
+          description: "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur",
+        },
+        projects: {
+          label: "Projets",
+          title: "Ajoutez vos projets",
+          description: "Où voulez-vous que vos agents travaillent",
+          addProject: "Ajouter un projet",
+          added: "Ajouté",
+          suggestions: {
+            loading: "Recherche des dossiers dans lesquels vous avez travaillé",
+            empty: "Aucun projet récent trouvé",
+            lastUsed: "Dernière utilisation {{time}}",
+            addSelected_one: "Ajouter {{count}} projet",
+            addSelected_other: "Ajouter {{count}} projets",
+            adding: "Ajout…",
+            addFailed: "Impossible d'ajouter ce dossier",
+          },
+        },
+        orchestration: {
+          label: "Orchestration",
+          title: "Laissez les agents utiliser Paseo",
+          description:
+            "Laissez vos agents créer des espaces de travail et parler à d'autres agents",
+        },
+        phone: {
+          label: "Mobile",
+          title: "Emportez vos agents partout",
+          description:
+            "L'application mobile native complète vous permet de contrôler n'importe quel ordinateur Paseo depuis votre téléphone",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+        },
+      },
+    },
     title: "Bienvenue dans Paseo",
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
@@ -1702,11 +1913,15 @@ export const fr: TranslationResources = {
     defaultModel: "Par défaut",
     profiles: "Profils",
     providers: "Fournisseurs",
+    models: "Modèles",
     model: "Modèle",
     editProfiles: "Modifier",
     editProfilesLabel: "Modifier les profils d’agent",
     createProfile: "Créer un profil",
     createProfileFromModel: "Créer un profil à partir de ce modèle",
+    profileSaved: "« {{name}} » enregistré",
+    undo: "Annuler",
+    undoProfileSave: "Annuler l’enregistrement du profil",
     editProfileLabel: "Modifier {{name}}",
     editProfilesCount: "Modifier les profils ({{count}})",
     modelCount: "{{count}} modèle",
@@ -1754,6 +1969,36 @@ export const fr: TranslationResources = {
       noModelAvailable: "Aucun modèle disponible pour le fournisseur sélectionné",
       workspaceDirectoryNotFound: "Répertoire de l’espace de travail introuvable",
       hostDisconnected: "L’hôte n’est pas connecté",
+    },
+  },
+  devices: {
+    title: "Appareils",
+    waysToConnect: "Moyens de connexion",
+    docs: "Docs",
+    docsAccessibility: "Ouvrir la documentation sur la connectivité",
+    relay: {
+      title: "Relais",
+      hint: "Aucune configuration, chiffré de bout en bout, scannez un QR code",
+    },
+    tailscale: {
+      hint: "Connexion directe via votre tailnet, saisissez une adresse",
+      unavailable: "Tailscale ne fonctionne pas sur cet hôte",
+      install: "Obtenir Tailscale",
+      refresh: "Actualiser",
+      refreshing: "Actualisation...",
+      waiting: "En attente du démarrage de Tailscale sur cet hôte",
+      alwaysOn: "Toujours activé, car cet hôte accepte déjà les connexions Tailscale",
+      socket: "Désactivé, car cet hôte écoute sur un socket local",
+      launch: "Contrôlé par la commande qui démarre cet hôte",
+      update: "Mettez cet hôte à jour pour utiliser Tailscale",
+      updateDocs: "Comment mettre à jour",
+      address: "Sur un téléphone avec Tailscale, ajoutez un hôte à cette adresse",
+      statusError: "Impossible de vérifier Tailscale",
+      turnOnError: "Impossible d’activer Tailscale",
+      turnOffError: "Impossible de désactiver Tailscale",
+      confirmTitle: "Désactiver Tailscale ?",
+      confirmMessage: "Cet appareil est connecté via Tailscale et perdra sa connexion à l’hôte.",
+      confirmAction: "Désactiver",
     },
   },
   pairing: {
@@ -1905,6 +2150,8 @@ export const fr: TranslationResources = {
       notNow: "Pas maintenant",
       directConnectionHint:
         "Sans relais, connectez-vous directement via TCP, Tailscale ou un autre VPN. Aucun code QR n’est créé.",
+      tailscaleDocs: "Configurer Tailscale",
+      tailscaleDocsAccessibility: "Lire comment se connecter via Tailscale",
       updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre d’association indisponible.",
       hint: "Scannez ce code QR avec Paseo sur votre téléphone, ou copiez le lien ci-dessous.",
@@ -1951,6 +2198,7 @@ export const fr: TranslationResources = {
     hostUnavailable: "L’hôte de téléchargement est indisponible.",
     cancelled: "Téléchargement annulé.",
     failed: "Impossible de télécharger le fichier.",
+    httpFailed: "Impossible de télécharger le fichier (HTTP {{status}}).",
     shareFile: "Partager le fichier",
     shareFileNamed: "Partager {{fileName}}",
   },
@@ -2146,6 +2394,7 @@ export const fr: TranslationResources = {
     turnOn: "Activer",
 
     options: "Paramètres",
+    host: "Hôte",
     refreshFailed: "Impossible d’actualiser l’utilisation",
     noHosts: "Aucun hôte connecté",
     agentError: "Impossible de charger l’utilisation : {{reason}}",
@@ -2162,6 +2411,12 @@ export const fr: TranslationResources = {
     loginExpired: "Connexion expirée {{relativeTime}}. {{remedy}}",
     title: "Utilisation du forfait",
     refresh: "Actualiser",
+    reorderCard: "Réorganiser {{source}}",
+    sources: "Sources",
+    sourcesCount: "{{shown}} sur {{total}}",
+    providerInactive: "Fournisseur inactif",
+    allSourcesHidden: "Aucune source d'utilisation affichée",
+    chooseSources: "Choisir les sources",
     refreshAll: "Tout actualiser",
     refreshing: "Actualisation...",
     loading: "Chargement de l’utilisation...",
@@ -2202,8 +2457,9 @@ export const fr: TranslationResources = {
       resetsIn: "se réinitialise dans {{duration}}",
       resetsAtWeekday: "{{weekday}} {{time}}",
       resetsAtDate: "{{date}}, {{time}}",
-      runsOutNow: "s’épuise maintenant",
-      runsOutIn: "s’épuise dans {{duration}}",
+      limitReached: "Limite atteinte",
+      mayHaveRunOut: "Le quota est peut-être épuisé",
+      runsOutAt: "épuisement prévu {{time}}",
       justNow: "à l’instant",
       daysAgo: "il y a {{value}} j",
       hoursAgo: "il y a {{value}} h",
@@ -2215,7 +2471,7 @@ export const fr: TranslationResources = {
     title: "Paramètres",
     loading: "Chargement des paramètres…",
     groups: {
-      app: "Application",
+      app: "Cet appareil",
       host: "Hôte",
     },
     hostPicker: {
@@ -2233,7 +2489,9 @@ export const fr: TranslationResources = {
     groupInfo: "À propos de {{title}}",
     sections: {
       general: "Général",
+      hosts: "Hôtes",
       chat: "Discussion",
+      chatAndPanes: "Chat et panneaux",
       appearance: "Apparence",
       sidebar: "Barre latérale",
       terminal: "Terminal",
@@ -2246,6 +2504,16 @@ export const fr: TranslationResources = {
       permissions: "Autorisations",
       diagnostics: "Diagnostic",
       about: "À propos",
+    },
+    clientHosts: {
+      title: "Hôtes enregistrés",
+      info: "Hôtes auxquels cet appareil se connecte. Les noms, icônes, badges et routes ici ne concernent que cet appareil.",
+      backToHosts: "Retour aux hôtes",
+      routesTitle: "Comment cet appareil se connecte",
+      routesInfo:
+        "Routes enregistrées utilisées par cet appareil pour joindre cet hôte. Paseo choisit la plus rapide disponible.",
+      addRoute: "Ajouter une route",
+      activeRoute: "Active",
     },
     layout: en.settings.layout,
     editor: {
@@ -2263,6 +2531,50 @@ export const fr: TranslationResources = {
     },
     notifications: {
       title: "Notifications",
+      enabled: {
+        label: "Activer les notifications",
+        description: "Recevoir les notifications des agents, terminaux et plugins sur cet appareil",
+        pausedDescription:
+          "Toutes les notifications, y compris celles des plugins, sont suspendues sur cet appareil",
+      },
+      events: {
+        title: "Événements",
+        agentPermission: {
+          label: "L’agent demande une autorisation",
+          description: "Approbations, plans et questions",
+        },
+        agentError: {
+          label: "Erreur de l’agent",
+          description: "Quand un agent s’arrête avec une erreur",
+        },
+        agentFinished: {
+          label: "L’agent a terminé",
+          description: "Quand un agent termine un tour",
+        },
+        terminalNeedsInput: {
+          label: "Le terminal attend une saisie",
+          description: "Quand une commande de terminal attend une saisie",
+        },
+        terminalFinished: {
+          label: "Le terminal a terminé",
+          description: "Quand une commande de terminal se termine",
+        },
+      },
+      plugins: {
+        title: "Plugins",
+        enabled: {
+          label: "Notifications des plugins",
+          description: "Autoriser les plugins installés à envoyer des notifications",
+        },
+        empty:
+          "Les plugins installés apparaissent ici pour les mettre en sourdine individuellement",
+      },
+      legacyHostTitle: "Mettez à jour l’hôte pour les préférences push",
+      legacyHostHint:
+        "Mettez à jour les hôtes connectés pour synchroniser les préférences de notifications push de cet appareil",
+      desktop: {
+        title: "Système",
+      },
       permission: "Autorisation des notifications",
       refreshAccessibility: "Actualiser l’autorisation des notifications",
       playSound: "Émettre un son",
@@ -2280,6 +2592,8 @@ export const fr: TranslationResources = {
       projects: "Projets",
       connections: "Connexions",
       agents: "Agents",
+      tools: "Outils et instructions",
+      agentProfiles: "Profils d’agent",
       metadata: "Métadonnées",
       voice: "Voix",
       workspaces: "Espaces de travail",
@@ -2288,12 +2602,13 @@ export const fr: TranslationResources = {
       terminals: "Terminaux",
       plugins: "Plugins",
       host: "Aperçu",
+      daemon: "Daemon",
     },
     plugins: pluginSettings.fr,
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:
-        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
+        "Choisissez le modèle et les instructions utilisés par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
       selection: "Sélection du modèle",
       automatic: "Automatique",
       preferred: "Manuel",
@@ -2301,6 +2616,10 @@ export const fr: TranslationResources = {
       preferredHint: "Choisissez le modèle utilisé par Paseo",
       model: "Modèle",
       modelHint: "Seul ce modèle est utilisé. S’il échoue, Paseo n’essaie pas d’autre modèle",
+      instructions: "Instructions",
+      instructionsHint: "Appliquées à toutes les métadonnées générées sur cet hôte",
+      instructionsPlaceholder:
+        "Exemple : Écrire en français. Garder une formulation cohérente entre les titres et les commits. Ne pas utiliser de tirets cadratins.",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
     },
@@ -2370,6 +2689,12 @@ export const fr: TranslationResources = {
     general: {
       title: "Général",
       sending: "Envoi",
+      setup: {
+        label: "Configuration initiale",
+        description:
+          "Reprendre l'apparence, les fournisseurs, les projets et l'appairage du téléphone",
+        action: "Afficher la configuration",
+      },
       browserData: {
         title: "Données du navigateur",
         siteData: "Cookies et données des sites",
@@ -2494,9 +2819,28 @@ export const fr: TranslationResources = {
         stable: "Stable",
         beta: "Bêta",
       },
+      autoUpdate: {
+        label: "Mises à jour automatiques",
+        options: {
+          automatic: "Auto",
+          notify: "Notifier",
+          off: "Désactivé",
+        },
+        descriptions: {
+          automatic: "Vérifier et télécharger les mises à jour en arrière-plan",
+          notify: "Vérifier les mises à jour, mais ne télécharger que lorsque vous choisissez",
+          off: "Ne jamais vérifier automatiquement. Vérifier uniquement sur clic sur Vérifier",
+        },
+      },
       updates: {
         label: "Mises à jour de l’application",
         readyToInstall: "Prête à installer : {{version}}",
+        downloadTitle: "Télécharger la mise à jour de l’app de bureau",
+        downloadMessage: "La mise à jour de Paseo sera téléchargée et installée sur cet ordinateur",
+        downloadConfirm: "Télécharger et installer",
+        download: "Télécharger",
+        downloadTo: "Télécharger {{version}}",
+        downloading: "Téléchargement…",
         installTitle: "Installer la mise à jour de l’app de bureau",
         installMessage: "Paseo sera mis à jour sur cet ordinateur",
         installConfirm: "Installer la mise à jour",
@@ -2532,6 +2876,13 @@ export const fr: TranslationResources = {
         description: "Afficher un plan pour naviguer entre les prompts",
       },
       sidebar: {
+        view: {
+          title: "Vue de la barre latérale",
+          label: "Vue",
+          default: "Vue par défaut",
+          unavailable:
+            "La vue sélectionnée est indisponible ou désactivée. La vue par défaut est affichée.",
+        },
         header: {
           title: "En-tête",
           description:
@@ -2569,11 +2920,11 @@ export const fr: TranslationResources = {
       layout: {
         title: "Mise en page",
         contentWidth: "Largeur du contenu",
-        contentWidthHint:
-          "Largeur maximale de la discussion et des fichiers Markdown sur les grands écrans",
-        contentWidthAccessibility: "Largeur du contenu en pixels",
-        reset: "Réinitialiser",
-        resetAccessibility: "Réinitialiser la largeur du contenu",
+        contentWidthHint: "Largeur du chat, de la zone de saisie et des aperçus Markdown",
+        contentWidthDefault: "Par défaut",
+        contentWidthWide: "Large",
+        contentWidthFull: "Pleine largeur",
+        contentWidthCustom: "Largeur personnalisée · {{width}} px",
       },
       syntax: {
         title: "Syntaxe",
@@ -2644,6 +2995,8 @@ export const fr: TranslationResources = {
         toggleFocusMode: "Activer/désactiver le mode focus",
         cycleTheme: "Parcourir les thèmes",
         focusMessageInput: "Aller à la zone de saisie",
+        toggleModelPicker: "Ouvrir ou fermer le sélecteur de modèle",
+        cycleEffort: "Parcourir les niveaux d’effort",
         cycleAgentMode: "Parcourir les modes de l’agent",
         toggleVoiceMode: "Activer/désactiver le mode vocal",
         startStopDictation: "Démarrer/arrêter la dictée",
@@ -2667,11 +3020,7 @@ export const fr: TranslationResources = {
       commandLine: {
         title: "Ligne de commande",
         description: "Pilotez et scriptez vos agents depuis votre terminal",
-      },
-      actions: {
-        install: "Installer",
-        installing: "Installation…",
-        installed: "Installé",
+        accessibilityLabel: "Installer la CLI Paseo",
       },
     },
     permissions: {
@@ -2695,6 +3044,23 @@ export const fr: TranslationResources = {
         title: "Apparence",
         name: {
           label: "Nom",
+        },
+        icon: {
+          label: "Icône",
+          accessibilityLabel: "Icône, {{value}}",
+          auto: "Auto",
+          autoDetected: "Auto ({{icon}})",
+          options: {
+            server: "Serveur",
+            laptop: "Portable",
+            desktop: "Bureau",
+            mini: "Mini",
+            workstation: "Station de travail",
+            cloud: "Cloud",
+            container: "Conteneur",
+            board: "Ordinateur monocarte",
+            terminal: "Terminal",
+          },
         },
         color: {
           label: "Couleur",
@@ -2732,6 +3098,14 @@ export const fr: TranslationResources = {
         local: "Local",
         remoteSsh: "SSH distant",
       },
+      connectionKinds: {
+        local: "Local",
+        relay: "Relais",
+        tailscale: "Tailscale",
+        ssh: "SSH",
+        direct: "Direct",
+        routed: "Via",
+      },
       connections: {
         title: "Connexions",
         removeTitle: "Supprimer la connexion",
@@ -2742,21 +3116,18 @@ export const fr: TranslationResources = {
         timeout: "Délai dépassé",
       },
       pairDevices: {
-        title: "Associer des appareils",
         rowTitle: "Associer un appareil",
-        rowHint: "Scannez un QR code ou copiez un lien pour connecter votre téléphone à cet hôte",
       },
       skills: {
         ...en.settings.host.skills,
         sectionTitle: "Skills d’orchestration",
         title: "Skills d’orchestration",
-        description: "Apprenez à vos agents à orchestrer via la CLI",
+        description: "Apprenez à vos agents à utiliser les outils Paseo",
         updateAvailable: "Mise à jour disponible",
         updateTitle: "Mettre à jour les skills Paseo ?",
-        updateFallback: "Synchronisez les skills fournis sur cet hôte.",
         uninstallTitle: "Désinstaller les skills Paseo ?",
         uninstallMessage:
-          "Supprime tous les skills d’orchestration Paseo de ~/.agents, ~/.claude et ~/.codex sur cet hôte.",
+          "Supprime tous les skills d’orchestration Paseo de ~/.agents, ~/.claude, ~/.codex et ~/.gemini/config sur cet hôte.",
         choose: "Choisir les skills",
         chooseAll: "Tous les skills",
         chooseAllHint:
@@ -2765,16 +3136,13 @@ export const fr: TranslationResources = {
         chooseEmpty: "Cet hôte ne fournit aucun skill.",
         removeTitle: "Supprimer les skills décochés ?",
         removeMessage:
-          "{{skills}} seront supprimés de ~/.agents, ~/.claude et ~/.codex sur cet hôte. Tout ce que vous avez ajouté dans ces dossiers de skills sera également supprimé.",
+          "{{skills}} seront supprimés de ~/.agents, ~/.claude, ~/.codex et ~/.gemini/config sur cet hôte. Tout ce que vous avez ajouté dans ces dossiers de skills sera également supprimé.",
         saveFailed: "Impossible d’enregistrer votre sélection de skills.",
         statusFailed: "Impossible de vérifier l’état des skills d’orchestration.",
         updateFailed: "Impossible de mettre à jour les skills d’orchestration.",
         uninstallFailed: "Impossible de désinstaller les skills d’orchestration.",
         saveSelectionFailed: "Impossible d’enregistrer la sélection des skills d’orchestration.",
         actions: {
-          install: "Installer",
-          installing: "Installation…",
-          installed: "Installé",
           update: "Mettre à jour",
           working: "En cours…",
           remove: "Supprimer",
@@ -2789,6 +3157,10 @@ export const fr: TranslationResources = {
           delete: "Supprimer le skill",
         },
       },
+      tools: {
+        instructionsTitle: "Instructions",
+        toolsTitle: "Outils des agents",
+      },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connectez-vous à cet hôte pour gérer l’orchestration",
@@ -2796,6 +3168,7 @@ export const fr: TranslationResources = {
           title: "Activer les outils Paseo",
           hint: "Les agents pourront gérer les worktrees, les agents et les planifications",
           accessibilityLabel: "Injecter les outils Paseo",
+          updateFailed: "Impossible de mettre à jour les outils Paseo.",
         },
         systemPrompt: {
           title: "Prompt système",
@@ -2855,6 +3228,8 @@ export const fr: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Profils d’agent",
+        sectionDescription:
+          "Enregistrez des réglages d’agent à sélectionner rapidement et utilisables par les agents pour déléguer du travail",
         unavailable: "Connectez-vous à cet hôte pour gérer les profils d’agent",
         unsupported: "Le daemon de cet hôte ne prend pas encore en charge les profils d’agent",
         emptyState:
@@ -2879,6 +3254,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Fonctionnalités",
         featureCount: "{{count}} fonctionnalités",
         featureCountOne: "{{count}} fonctionnalité",
+        systemPromptLabel: "Prompt système",
+        systemPromptPlaceholder:
+          "Concentre-toi sur la mise en page, l’accessibilité et les jetons de design.",
+        systemPromptHint: "S’applique uniquement aux nouveaux agents",
         notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l’UI : composants, mise en page et design tokens.",
@@ -2890,8 +3269,34 @@ export const fr: TranslationResources = {
         removeConfirmMessage: "Supprimer « {{name}} » ?",
         moveUp: "Monter",
         moveDown: "Descendre",
+        searchPlaceholder: "Rechercher des profils",
+        clearSearch: "Effacer la recherche",
+        noSearchMatches: "Aucun profil ne correspond à « {{query}} »",
+        noRoutingNote: "Aucune note",
+        duplicate: "Dupliquer",
+        copyName: "{{name}} (copie)",
+        moveToTop: "Placer en haut",
+        profileActions: "Actions pour {{name}}",
+        reorderProfile: "Réorganiser {{name}}",
+        previousProfile: "Profil précédent",
+        nextProfile: "Profil suivant",
+        chooseModelPlaceholder: "Sélectionner un modèle",
+        searchModelsPlaceholder: "Rechercher des modèles",
+        chooseModelSubtitle: "Sélectionner un modèle",
+        customizeSettings: "Personnaliser les réglages",
+        addRoutingNoteShort: "Ajouter une note",
+        providerOptionsLabel: "Options {{provider}}",
+        discardTitle: "Ignorer les modifications ?",
+        discardMessage: "Vous avez des modifications non enregistrées pour ce profil.",
+        discardConfirm: "Ignorer",
+        columns: {
+          profile: "Profil",
+          runtime: "Modèle et exécution",
+          whenToUse: "Quand l’utiliser",
+        },
       },
       daemon: {
+        runtimeTitle: "Exécution des agents",
         rename: {
           editLabel: "Modifier le libellé",
           title: "Renommer l’hôte",
@@ -2972,6 +3377,23 @@ export const fr: TranslationResources = {
     providers: {
       title: "Fournisseurs",
       addProvider: "Ajouter un fournisseur",
+      list: {
+        add: "Fournisseur",
+        updatingTo: "Mise à jour vers {{version}}…",
+      },
+      detail: {
+        backToProviders: "Retour aux fournisseurs",
+        notOnHost: "Ce fournisseur n'est pas sur cet hôte",
+        enabled: "Activé",
+        unavailableTitle: "{{name}} n'est pas disponible",
+        troubleshooting: "Dépannage",
+        status: "État du fournisseur",
+        checked: "Vérifié {{time}}",
+        diagnosticReport: "Rapport de diagnostic",
+        docs: "Documentation",
+        dangerZone: "Zone de danger",
+        removeHint: "Supprime ce fournisseur de config.json",
+      },
       providerDetails: "Détails du fournisseur {{name}}",
       enableProvider: "Activer {{name}}",
       unavailable: "Connectez-vous à cet hôte pour voir les fournisseurs",
@@ -3014,9 +3436,30 @@ export const fr: TranslationResources = {
         retrying: "Nouvelle tentative…",
         noSearchMatches: "Aucun modèle ne correspond à votre recherche",
         noneDetected: "Aucun modèle détecté",
-        discovered: "Détectés",
+        noCustom: "Aucun modèle personnalisé",
+        title: "Modèles",
         custom: "Modèles personnalisés",
         updated: "Mis à jour {{time}}",
+      },
+      installation: {
+        title: "Installation",
+        version: "Version",
+        installed: "Installé",
+        notInstalled: "Non installé",
+        install: "Installer",
+        checking: "Vérification...",
+        failed: "Impossible de vérifier l'installation",
+        updates: "Mises à jour",
+        upToDate: "À jour",
+        updateAvailable: "Mise à jour disponible",
+        updateInstructions: "Instructions de mise à jour",
+        update: "Mettre à jour",
+        updating: "Mise à jour...",
+        updated: "Mis à jour",
+        updateFailed: "Échec de la mise à jour",
+        outputTruncated: "La sortie précédente a été supprimée.",
+        updatesFailed: "Impossible de vérifier les mises à jour",
+        installInstructions: "Instructions d'installation",
       },
       diagnostic: {
         title: "Diagnostic",

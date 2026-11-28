@@ -12,7 +12,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { PaneFind, findShortcutPlatform, isFindShortcut, type PaneFindHandle } from "@/pane-find";
 import { isWeb } from "@/constants/platform";
-import { hasActiveWebOverlay } from "@/lib/overlay-root";
+import { hasActiveOverlay } from "@/keyboard";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import type { TerminalEmulatorHandle } from "@/components/terminal-emulator-contract";
 import type { TerminalFindResult } from "../runtime/terminal-emulator-runtime";
@@ -62,7 +62,7 @@ export const TerminalFind = forwardRef<
   useEffect(() => {
     if (!isWeb || !active) return;
     function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || hasActiveWebOverlay() || isImeComposingKeyboardEvent(event))
+      if (event.defaultPrevented || hasActiveOverlay() || isImeComposingKeyboardEvent(event))
         return;
       if (isFindShortcut(event, findShortcutPlatform()) && terminal.current?.find) {
         event.preventDefault();

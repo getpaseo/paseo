@@ -1,5 +1,6 @@
 import { TerminalFind, type TerminalPaneFindHandle } from "@/terminal/find";
 import type { TerminalFindResult } from "@/terminal/runtime/terminal-emulator-runtime";
+import type { TerminalCharacterWidths } from "@/terminal/character-widths";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -61,11 +62,17 @@ import { prepareDroppedPathsForTerminal } from "@/terminal/drop/terminal-path";
 import { toErrorMessage } from "@/utils/error-messages";
 import {
   EMPTY_FOCUS_CLAIM_STATE,
+  EMPTY_PALETTE_SYNC_STATE,
   canRequestFocusClaim,
   reconcileFocusClaim,
+  resolveTerminalPaletteSync,
   resolveTerminalResizeClaim,
   settleFocusClaim,
 } from "./terminal-pane-focus-claim";
+import {
+  terminalDefaultColorsFromTheme,
+  terminalDefaultColorsKey,
+} from "@/utils/terminal-default-colors";
 import {
   TerminalStreamController,
   type TerminalStreamControllerStatus,
@@ -83,6 +90,7 @@ import {
 } from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
+import { useKeyboardFocusSurface } from "@/keyboard";
 import {
   applyTerminalRendererReadyChange,
   resolveTerminalStreamTarget,
@@ -100,6 +108,8 @@ import {
   type OpenFileDisposition,
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
+import { shouldRouteWorkspaceUrlToProxiedBrowser } from "@/desktop/browser/proxy";
+import { openExternalUrl } from "@/utils/open-external-url";
 
 interface TerminalPaneProps {
   serverId: string;
@@ -109,6 +119,7 @@ interface TerminalPaneProps {
   isPaneFocused: boolean;
   onOpenFileExplorer: () => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
+  onOpenBrowserUrl?: (url: string) => void;
 }
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
@@ -263,6 +274,7 @@ export function TerminalPane({
   isPaneFocused,
   onOpenFileExplorer,
   onOpenWorkspaceFile,
+  onOpenBrowserUrl,
 }: TerminalPaneProps) {
   const { t } = useTranslation();
   const retainedPanelActive = useRetainedPanelActive();
@@ -270,6 +282,24 @@ export function TerminalPane({
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const {
+    foreground: terminalForeground,
+    background: terminalBackground,
+    cursor: terminalCursor,
+  } = theme.colors.terminal;
+  const terminalDefaultColors = useMemo(
+    () =>
+      terminalDefaultColorsFromTheme({
+        foreground: terminalForeground,
+        background: terminalBackground,
+        cursor: terminalCursor,
+      }),
+    [terminalBackground, terminalCursor, terminalForeground],
+  );
+  const terminalPaletteKey = useMemo(
+    () => terminalDefaultColorsKey(terminalDefaultColors),
+    [terminalDefaultColors],
+  );
   const terminalFontFamily = useMemo(() => {
     const trimmed = settings.monoFontFamily.trim();
     return trimmed.length > 0 ? trimmed : undefined;
@@ -303,6 +333,15 @@ export function TerminalPane({
   );
   const supportsTerminalSizeOwnership = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-size-ownership"] === true,
+  );
+  const supportsTerminalPaletteOwnership = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.serverInfo?.features?.["terminal-palette-ownership"] === true,
+  );
+  const characterWidths: TerminalCharacterWidths = useSessionStore((state) =>
+    state.sessions[serverId]?.serverInfo?.features?.["terminal-grapheme-widths"] === true
+      ? "graphemes"
+      : "legacy",
   );
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
 
@@ -376,6 +415,7 @@ export function TerminalPane({
   const keyboardRefitTimeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const lastAutoFocusKeyRef = useRef<string | null>(null);
   const paneFocusResizeClaimRef = useRef(EMPTY_FOCUS_CLAIM_STATE);
+  const panePaletteSyncRef = useRef(EMPTY_PALETTE_SYNC_STATE);
 
   useEffect(() => {
     terminalIdRef.current = terminalId;
@@ -452,6 +492,8 @@ export function TerminalPane({
     }
   }, [isMobile, isPaneFocused, isWorkspaceFocused, requestTerminalFocus, scopeKey, terminalId]);
 
+  useKeyboardFocusSurface("terminal", isTerminalPresented && isPaneFocused && terminalId != null);
+
   useEffect(() => {
     const canRequest = canRequestFocusClaim({
       isWorkspaceFocused: isTerminalPresented,
@@ -484,11 +526,51 @@ export function TerminalPane({
     terminalStreamKey,
   ]);
 
+  const syncTerminalPalette = useStableEvent((options?: { forceClaim?: boolean }) => {
+    const step = resolveTerminalPaletteSync(panePaletteSyncRef.current, {
+      terminalKey: terminalId ? `${scopeKey}:${terminalId}` : null,
+      paletteKey: terminalPaletteKey,
+      forceClaim: options?.forceClaim,
+      supportsTerminalPaletteOwnership,
+      readiness: {
+        isWorkspaceFocused: isTerminalPresented,
+        isPaneFocused,
+        isAppActivelyVisible,
+        isClientReady: client !== null,
+        isConnected,
+      },
+    });
+    panePaletteSyncRef.current = step.state;
+    if (step.shouldSend && client && terminalId) {
+      client.sendTerminalInput(terminalId, {
+        type: "palette",
+        defaultColors: terminalDefaultColors,
+        intent: step.intent,
+      });
+    }
+  });
+
+  useEffect(() => {
+    syncTerminalPalette();
+  }, [
+    client,
+    isAppActivelyVisible,
+    isConnected,
+    isPaneFocused,
+    isTerminalPresented,
+    scopeKey,
+    supportsTerminalPaletteOwnership,
+    syncTerminalPalette,
+    terminalId,
+    terminalPaletteKey,
+  ]);
+
   const handleTerminalFocus = useCallback(() => {
     if (isWorkspaceFocused && isPaneFocused) {
       setFocusedTerminalId(serverId, terminalId);
     }
     lastSentTerminalSizeRef.current = null;
+    syncTerminalPalette({ forceClaim: true });
     requestTerminalReflow();
     emulatorRef.current?.claimSize();
   }, [
@@ -497,6 +579,7 @@ export function TerminalPane({
     requestTerminalReflow,
     serverId,
     setFocusedTerminalId,
+    syncTerminalPalette,
     terminalId,
   ]);
 
@@ -1153,6 +1236,17 @@ export function TerminalPane({
     terminalStreamKey,
   });
 
+  const handleOpenExternalUrl = useCallback(
+    async (url: string) => {
+      if (onOpenBrowserUrl && shouldRouteWorkspaceUrlToProxiedBrowser({ serverId, url })) {
+        onOpenBrowserUrl(url);
+        return;
+      }
+      await openExternalUrl(url);
+    },
+    [onOpenBrowserUrl, serverId],
+  );
+
   if (!client || !isConnected) {
     return (
       <View style={styles.centerState}>
@@ -1171,6 +1265,7 @@ export function TerminalPane({
             dom={TERMINAL_EMULATOR_DOM_PROPS}
             streamKey={terminalStreamKey}
             supportsTerminalInputModeReplay={supportsTerminalInputModeReplay}
+            characterWidths={characterWidths}
             testId="terminal-surface"
             xtermTheme={xtermTheme}
             scrollbackLines={settings.terminalScrollbackLines}
@@ -1193,6 +1288,7 @@ export function TerminalPane({
             onSelectionChange={handleSelectionChange}
             onResolveLocalFileLink={handleResolveLocalFileLink}
             onOpenLocalFileLink={handleOpenLocalFileLink}
+            onOpenExternalUrl={handleOpenExternalUrl}
             onPendingModifiersConsumed={handlePendingModifiersConsumed}
             pendingModifiers={modifiers}
             focusRequestToken={focusRequestToken}

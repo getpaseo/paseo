@@ -275,6 +275,28 @@ test("preserves the standalone 0.1.96 Android notice", () => {
   assert.equal(contents.includes("_This release"), false);
 });
 
+test("leads with an entry's highlights and spends the budget on them first", () => {
+  const highlight = (name) =>
+    `- **${name}:** ${"A highlight a user would name first. ".repeat(4).trim()} ([#1](https://github.com/getpaseo/paseo/pull/1))`;
+  const contents = formatFdroidChangelog(
+    [
+      highlight("First"),
+      highlight("Second"),
+      highlight("Third"),
+      "",
+      "### Fixed",
+      "",
+      "- Fixed a crash",
+    ],
+    { limit: CHANGELOG_CHARACTER_LIMIT },
+  );
+
+  assert.match(contents, /^- First: A highlight a user would name first\./);
+  assert.match(contents, /\n- Second: /);
+  assert.equal(contents.includes("Fixed a crash"), false);
+  assert.ok(contents.length <= CHANGELOG_CHARACTER_LIMIT);
+});
+
 test("--check fails when the generated files are missing or stale", () => {
   const changelog = "## 0.2.3 - 2026-07-27\n\n### Fixed\n\n- Something broke.\n";
   withTempRepo(

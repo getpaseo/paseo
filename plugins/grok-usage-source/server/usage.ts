@@ -8,6 +8,7 @@ import {
   usedPctOf,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -157,12 +158,37 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
     return undefined;
   }
 }
-export async function discover(): Promise<UsageAccount[]> {
-  const candidates: UsageInput[] = ["GROK_API_KEY", "GROK_TOKEN"].map((locator) => ({
-    store: "env",
-    locator,
-  }));
-  candidates.push({ store: "file", locator: join(homedir(), ".grok", "auth.json") });
+const OPENCODE_GROK_PROVIDERS = new Set(["xai", "grok"]);
+
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
+  const candidates: UsageInput[] = [];
+  for (const locator of ["GROK_API_KEY", "GROK_TOKEN"]) {
+    const value = env[locator];
+    if (value && (!matchHostEnv || value === process.env[locator])) {
+      candidates.push({ store: "env", locator });
+    }
+  }
+  // File store reflects the host CLI login (matching Host -> Usage).
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
+  candidates.push({ store: "file", locator: join(home, ".grok", "auth.json") });
   for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
+    scope.provider === "grok" ||
+    (scope.provider === "opencode" && OPENCODE_GROK_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }

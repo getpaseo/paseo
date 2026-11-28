@@ -93,6 +93,10 @@ function createLogger(): pino.Logger {
   } as unknown as pino.Logger;
 }
 
+function decodedTerminalFrames(frames: TerminalStreamFrame[]): string {
+  return frames.map((frame) => new TextDecoder().decode(frame.payload)).join("");
+}
+
 describe("terminal-session-controller restore", () => {
   test("delivers output produced while restore is in flight after the restore frame", async () => {
     let terminalListener: ((message: ServerMessage) => void) | null = null;
@@ -172,7 +176,10 @@ describe("terminal-session-controller restore", () => {
     terminalListener?.({ type: "output", data: "restore-after\n", revision: 2 });
     snapshot.resolve(terminalReplay("restore-before", 1, "\x1b[?1h\x1b[?2004h"));
     await snapshot.promise;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await vi.waitFor(() => {
+      const output = decodedTerminalFrames(binaryFrames.slice(1));
+      expect(output).toBe("\x1b[?1h\x1b[?2004hrestore-after\n");
+    });
 
     expect(outboundMessages).toContainEqual({
       type: "subscribe_terminal_response",
@@ -183,14 +190,12 @@ describe("terminal-session-controller restore", () => {
         requestId: "req-1",
       },
     });
-    expect(binaryFrames.map((frame) => frame.opcode)).toEqual([
-      TerminalStreamOpcode.Restore,
-      TerminalStreamOpcode.Output,
-    ]);
+    expect(binaryFrames[0]?.opcode).toBe(TerminalStreamOpcode.Restore);
+    const outputFrames = binaryFrames.slice(1);
+    expect(outputFrames.length).toBeGreaterThan(0);
+    expect(outputFrames.every((frame) => frame.opcode === TerminalStreamOpcode.Output)).toBe(true);
     expect(new TextDecoder().decode(binaryFrames[0]?.payload)).toContain("restore-before");
-    expect(new TextDecoder().decode(binaryFrames[1]?.payload)).toBe(
-      "\x1b[?1h\x1b[?2004hrestore-after\n",
-    );
+    expect(decodedTerminalFrames(outputFrames)).toBe("\x1b[?1h\x1b[?2004hrestore-after\n");
   });
 });
 
@@ -387,8 +392,25 @@ describe("terminal-session-controller with terminals held by a newer Paseo", () 
     };
   }
 
+  test("reports incompatible workers to a legacy subscription without a request id", async () => {
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const controller = createController({
+      terminalManager: incompatibleManager(),
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: () => {},
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+    });
+    await controller.dispatch({ type: "subscribe_terminals_request" });
+    expect(outboundMessages).toEqual([
+      { type: "status", payload: { status: "error", message: incompatible.message } },
+    ]);
+  });
+
   test.each([
     { type: "list_terminals_request" as const, requestId: "req-list" },
+    { type: "subscribe_terminals_request" as const, requestId: "req-observe" },
     { type: "list_terminals_request" as const, requestId: "req-list-cwd", cwd: "/work/repo" },
     {
       type: "create_terminal_request" as const,
@@ -500,8 +522,22 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: rootCwd,
           terminals: [
-            { id: "root-term", name: "Terminal 1", workspaceId: "ws-test", activity: null },
-            { id: "subdir-term", name: "Mobile", workspaceId: "ws-test", activity: null },
+            {
+              id: "root-term",
+              name: "Terminal 1",
+              workspaceId: "ws-test",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
+            {
+              id: "subdir-term",
+              name: "Mobile",
+              workspaceId: "ws-test",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
           ],
         },
       },
@@ -571,6 +607,8 @@ describe("terminal-session-controller subdirectory aggregation", () => {
               cwd: rootCwd,
               workspaceId: "ws-test",
               activity: null,
+              createdAt: null,
+              isScript: false,
             },
           ],
           requestId: "req-root",
@@ -587,6 +625,8 @@ describe("terminal-session-controller subdirectory aggregation", () => {
               cwd: worktreeCwd,
               workspaceId: "ws-test",
               activity: null,
+              createdAt: null,
+              isScript: false,
             },
           ],
           requestId: "req-worktree",
@@ -672,10 +712,87 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
         type: "terminals_changed",
         payload: {
           cwd,
-          terminals: [{ id: "a", name: "A", workspaceId: "ws-a", activity: null }],
+          terminals: [
+            {
+              id: "a",
+              name: "A",
+              workspaceId: "ws-a",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
+          ],
         },
       },
     ]);
+  });
+});
+
+describe("terminal-session-controller script ownership", () => {
+  test("reports a terminal as a script when its runtime registers right after the creation snapshot", async () => {
+    const cwd = "/work/repo";
+    const terminal = listSession({ id: "script", name: "sleeper", cwd, workspaceId: "ws-a" });
+    const scriptTerminalIds = new Set<string>();
+    let changedListener: ((event: TerminalsChangedEvent) => void) | null = null;
+    let metadataListener: (() => void) | null = null;
+    const terminalManager: TerminalManager = {
+      getTerminals: vi.fn(async () => [terminal]),
+      createTerminal: vi.fn(),
+      registerCwdEnv: vi.fn(),
+      validateTerminalActivityToken: vi.fn(() => "unknown"),
+      getTerminal: vi.fn(),
+      replayTerminal: async () => null,
+      setTerminalTitle: vi.fn(),
+      setTerminalActivity: vi.fn(),
+      killTerminal: vi.fn(),
+      killTerminalAndWait: vi.fn(),
+      captureTerminal: vi.fn(),
+      listDirectories: vi.fn(() => [cwd]),
+      killAll: vi.fn(),
+      subscribeTerminalsChanged: vi.fn((listener) => {
+        changedListener = listener;
+        return vi.fn();
+      }),
+      subscribeTerminalActivity: vi.fn(() => vi.fn()),
+      subscribeTerminalWorkspaceContributionChanged: vi.fn(() => vi.fn()),
+    };
+    const reported: boolean[] = [];
+    let registerAfterNextSnapshot = false;
+    const controller = createController({
+      terminalManager,
+      emit: (message) => {
+        if (message.type !== "terminals_changed") return;
+        reported.push(message.payload.terminals.some((item) => item.isScript));
+        if (!registerAfterNextSnapshot) return;
+        registerAfterNextSnapshot = false;
+        // The script service registers its runtime in a continuation that runs right after the
+        // snapshot for the new terminal goes out, before that snapshot's refresh has settled.
+        queueMicrotask(() => {
+          scriptTerminalIds.add(terminal.id);
+          metadataListener?.();
+        });
+      },
+      emitBinary: vi.fn(),
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+      isScriptTerminal: (item) => scriptTerminalIds.has(item.id),
+      subscribeTerminalMetadata: (listener) => {
+        metadataListener = listener;
+        return () => {
+          metadataListener = null;
+        };
+      },
+    });
+    controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-a" });
+    await flushMicrotasks();
+    reported.length = 0;
+
+    registerAfterNextSnapshot = true;
+    changedListener?.({ cwd, terminals: [{ id: terminal.id, name: terminal.name, cwd }] });
+    await flushMicrotasks();
+
+    expect(reported.at(-1)).toBe(true);
   });
 });
 

@@ -3,8 +3,12 @@ import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
   clearWorkspaceArchivePending,
   isWorkspaceArchivePending,
+  isWorkspaceArchiveUndoRestoringAgent,
   markWorkspaceArchivePending,
+  markWorkspaceArchiveUndoPending,
   shouldSuppressWorkspaceForLocalArchive,
+  settleWorkspaceArchiveIntent,
+  shouldSuppressWorkspaceRemovalForLocalUndo,
 } from "@/contexts/session-workspace-upserts";
 
 const baseWorkspace: WorkspaceDescriptor = {
@@ -114,5 +118,63 @@ describe("workspace archive pending suppression", () => {
     ).toBe(true);
 
     clearWorkspaceArchivePending({ serverId: "server-1", workspaceId: "/repo/worktree" });
+  });
+});
+
+describe("workspace archive undo intent", () => {
+  const target = { serverId: "server-1", workspaceId: "/repo/worktree" };
+
+  it("lets host upserts through and holds host removes while an undo is pending", () => {
+    markWorkspaceArchivePending(target);
+    const undo = markWorkspaceArchiveUndoPending(target);
+
+    expect({
+      upsertSuppressed: shouldSuppressWorkspaceForLocalArchive({
+        serverId: target.serverId,
+        workspace: workspace({ archivingAt: null }),
+      }),
+      removeSuppressed: shouldSuppressWorkspaceRemovalForLocalUndo(target),
+    }).toEqual({ upsertSuppressed: false, removeSuppressed: true });
+
+    settleWorkspaceArchiveIntent(undo);
+    expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(false);
+  });
+
+  it("keeps a newer intent when the request behind an older one settles late", () => {
+    const firstArchive = markWorkspaceArchivePending(target);
+    const firstUndo = markWorkspaceArchiveUndoPending(target);
+    settleWorkspaceArchiveIntent(firstArchive);
+    clearWorkspaceArchivePending(target);
+    expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(true);
+
+    markWorkspaceArchivePending(target);
+    settleWorkspaceArchiveIntent(firstUndo);
+    expect(isWorkspaceArchivePending(target)).toBe(true);
+
+    const secondUndo = markWorkspaceArchiveUndoPending(target);
+    settleWorkspaceArchiveIntent(firstUndo);
+    expect(shouldSuppressWorkspaceRemovalForLocalUndo(target)).toBe(true);
+
+    settleWorkspaceArchiveIntent(secondUndo);
+  });
+
+  it("marks only agents that were active at archive time as restoring during undo", () => {
+    const activeTarget = { serverId: "server-1", workspaceId: "/repo/worktree-agents" };
+    const undo = markWorkspaceArchiveUndoPending({
+      ...activeTarget,
+      archivedAgentIds: new Set(["agent-active"]),
+    });
+
+    expect(isWorkspaceArchiveUndoRestoringAgent({ ...activeTarget, agentId: "agent-active" })).toBe(
+      true,
+    );
+    expect(
+      isWorkspaceArchiveUndoRestoringAgent({ ...activeTarget, agentId: "agent-pre-archived" }),
+    ).toBe(false);
+
+    settleWorkspaceArchiveIntent(undo);
+    expect(isWorkspaceArchiveUndoRestoringAgent({ ...activeTarget, agentId: "agent-active" })).toBe(
+      false,
+    );
   });
 });

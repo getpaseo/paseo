@@ -88,6 +88,18 @@ describe("bottom sheet visibility tracker", () => {
     expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
   });
 
+  it("dismisses again when a sheet hidden while opening finishes opening anyway", () => {
+    const { sheet, tracker } = setup();
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+
+    // The owner hides the sheet before its open animation reports in; the sheet still lands open.
+    tracker.syncDesired({ visible: false });
+    tracker.handleSheetIndexChange(0);
+
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }, { type: "dismiss" }]);
+  });
+
   it("waits to present until the sheet controller becomes available", () => {
     const { sheet, tracker } = setup();
     tracker.syncDesired({ visible: true });

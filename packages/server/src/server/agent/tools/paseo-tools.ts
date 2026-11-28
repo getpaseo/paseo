@@ -1,3 +1,5 @@
+import type { ChangeRequestWatches } from "../change-request-watches/index.js";
+import { changeRequestStatusSchema } from "../../../services/change-request-source.js";
 import { registerPluginTools } from "./plugin-tools.js";
 import type { FinishSubscriptions, FinishRegistration } from "../finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
@@ -11,13 +13,20 @@ import {
 import { AgentDirectory } from "../directory.js";
 import { stat } from "node:fs/promises";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { ensureValidJson } from "../../json-utils.js";
+import { applyRecordPatch } from "../../record-patch.js";
 import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
-import type { AgentManager } from "../agent-manager.js";
-import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
+import type { AgentManager, ManagedAgent } from "../agent-manager.js";
+import {
+  ActiveTurnBehaviorSchema,
+  AgentActiveTurnBehaviorSchema,
+  AgentProfileSchema,
+} from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
+import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
   AgentFeatureSchema,
   AgentPermissionRequestPayloadSchema,
@@ -32,7 +41,7 @@ import {
   toAgentPayload,
 } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
-import type { AgentStorage } from "../agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "../agent-storage.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
@@ -42,6 +51,7 @@ import {
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
 import { createAgentCommand } from "../create-agent/create.js";
+import { inheritWorkspaceBackground } from "../create-agent/intent.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
@@ -118,6 +128,7 @@ import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 
 export interface PaseoToolHostDependencies {
   agentMessages?: () => AgentMessageDelivery;
+  changeRequestWatches?: ChangeRequestWatches;
   finishSubscriptions?: () => FinishSubscriptions;
   serverId?: string;
   hosts?: () => ToolHosts;
@@ -134,26 +145,35 @@ export interface PaseoToolHostDependencies {
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot" | "invalidateWorktrees"
   >;
   findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
+  worktreeManagers?: ArchiveDependencies["worktreeManagers"];
+  workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
+  assertWorkspaceAutomationAllowed?: ArchiveDependencies["assertWorkspaceAutomationAllowed"];
+  isCheckoutUntrusted?: ArchiveDependencies["isCheckoutUntrusted"];
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
-  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert" | "update">;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { background?: boolean; callerWorkspaceId?: string },
+    context?: {
+      background?: boolean;
+      callerWorkspaceId?: string;
+      metadata?: Record<string, JsonValue>;
+    },
   ) => Promise<PersistedWorkspaceRecord>;
   workspaceScripts?: Pick<WorkspaceScriptsService, "list" | "launch" | "stop">;
   markWorkspaceArchiving?: ArchiveDependencies["markWorkspaceArchiving"];
   clearWorkspaceArchiving?: ArchiveDependencies["clearWorkspaceArchiving"];
+  lifecycle?: ArchiveDependencies["lifecycle"];
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
-    context?: { callerWorkspaceId?: string },
+    context?: { background?: boolean; callerWorkspaceId?: string },
   ) => Promise<string>;
   browserToolsEnabled?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
@@ -187,6 +207,7 @@ interface ProviderSummary {
 }
 
 const WorkspaceAutomationSummarySchema = z.object({
+  parentWorkspaceId: z.string().optional(),
   workspaceId: z.string(),
   projectId: z.string(),
   cwd: z.string(),
@@ -194,6 +215,7 @@ const WorkspaceAutomationSummarySchema = z.object({
   kind: z.enum(["directory", "local_checkout", "worktree"]),
   title: z.string().nullable(),
   background: z.boolean().optional(),
+  metadata: z.record(z.string(), z.unknown()),
 });
 
 function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
@@ -205,7 +227,36 @@ function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
     kind: workspace.kind,
     title: workspace.title,
     background: workspace.background,
+    parentWorkspaceId: workspace.parentWorkspaceId,
+    metadata: workspace.metadata ?? {},
   };
+}
+
+function validateWorkspaceMetadataPatch(
+  metadata: Record<string, unknown>,
+): Record<string, JsonValue> {
+  try {
+    const serialized = JSON.stringify(metadata, (_key, value) => {
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        throw new PaseoToolInputError("Invalid metadata value: numbers must be finite");
+      }
+      if (
+        value === undefined ||
+        typeof value === "function" ||
+        typeof value === "symbol" ||
+        typeof value === "bigint"
+      ) {
+        throw new PaseoToolInputError("Invalid metadata value: values must be JSON-serializable");
+      }
+      return value;
+    });
+    return JSON.parse(serialized) as Record<string, JsonValue>;
+  } catch (error) {
+    if (error instanceof PaseoToolInputError) throw error;
+    throw new PaseoToolInputError(
+      `Invalid metadata value: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 type WorkspaceWorktreeMode = "branch-off" | "checkout-branch" | "checkout-pr";
@@ -396,6 +447,7 @@ interface ScheduleUpdateToolInput {
   model?: string | null;
   mode?: string | null;
   cwd?: string;
+  archiveOnFinish?: boolean;
   expiresIn?: string;
   clearExpires?: boolean;
 }
@@ -529,6 +581,7 @@ function buildScheduleUpdateInput(input: ScheduleUpdateToolInput): UpdateSchedul
     ...(providerModelPatch.model !== undefined ? { model: providerModelPatch.model } : {}),
     ...(input.mode !== undefined ? { modeId: input.mode } : {}),
     ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
+    ...(input.archiveOnFinish !== undefined ? { archiveOnFinish: input.archiveOnFinish } : {}),
   };
 
   return {
@@ -710,6 +763,7 @@ function createToolCatalog(
     ["create_agent", "createAgent"],
     ["create_workspace", "createWorkspace"],
     ["list_workspaces", "listWorkspaces"],
+    ["update_workspace", "updateWorkspace"],
     ["send_agent_prompt", "sendPrompt"],
     ["get_agent_status", "getStatus"],
     ["get_agent_activity", "getActivity"],
@@ -718,6 +772,7 @@ function createToolCatalog(
   const hostResolver = createHostResolver({
     serverId: options.serverId ?? "self",
     callerAgentId,
+    caller: () => resolveCallerAgent(),
     lockedCwd: callerContext?.lockedCwd,
     hosts: () => {
       if (!options.hosts) throw new Error("Connected hosts are not configured");
@@ -728,6 +783,8 @@ function createToolCatalog(
       createWorkspace: (args, context) =>
         localHostOperations.get("create_workspace")!(args, context),
       listWorkspaces: (args, context) => localHostOperations.get("list_workspaces")!(args, context),
+      updateWorkspace: (args, context) =>
+        localHostOperations.get("update_workspace")!(args, context),
       sendPrompt: (args, context) => localHostOperations.get("send_agent_prompt")!(args, context),
       getStatus: (args, context) => localHostOperations.get("get_agent_status")!(args, context),
       getActivity: (args, context) => localHostOperations.get("get_agent_activity")!(args, context),
@@ -860,6 +917,29 @@ function createToolCatalog(
     return parentAgent;
   };
 
+  const workspaceBackgroundIntent = (background: boolean | undefined) => {
+    const caller = resolveCallerAgent();
+    return {
+      background: inheritWorkspaceBackground(background, caller),
+      callerWorkspaceId: caller?.workspaceId,
+    };
+  };
+
+  const resolveCreateAgentConfig = (
+    selectedProvider: string,
+    rawSystemPrompt?: string,
+  ): Partial<AgentSessionConfig> | undefined => {
+    const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+    const systemPrompt = rawSystemPrompt?.trim();
+    if (!inheritedConfig && !systemPrompt) {
+      return undefined;
+    }
+    return {
+      ...inheritedConfig,
+      ...(systemPrompt ? { systemPrompt } : {}),
+    };
+  };
+
   const resolveInheritedProviderConfig = (
     selectedProvider: string,
   ): Pick<AgentSessionConfig, "providerOptions"> | undefined => {
@@ -939,9 +1019,6 @@ function createToolCatalog(
       ...(callerAgent.provider === resolvedProvider && callerAgent.config.providerOptions
         ? { providerOptions: callerAgent.config.providerOptions }
         : {}),
-      ...(callerAgent.config.featureValues
-        ? { featureValues: callerAgent.config.featureValues }
-        : {}),
       ...(callerAgent.config.systemPrompt ? { systemPrompt: callerAgent.config.systemPrompt } : {}),
       ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
     };
@@ -982,7 +1059,10 @@ function createToolCatalog(
     provider?: string;
     cwd?: string;
     isolation?: "local" | "worktree";
+    archiveOnFinish?: boolean;
   }) => {
+    const archiveOnFinish =
+      params?.archiveOnFinish === undefined ? {} : { archiveOnFinish: params.archiveOnFinish };
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
       return {
@@ -990,6 +1070,7 @@ function createToolCatalog(
         config: {
           ...buildCallerAgentScheduleConfig(callerAgent, params),
           ...(params?.isolation ? { isolation: params.isolation } : {}),
+          ...archiveOnFinish,
         },
       };
     }
@@ -1009,6 +1090,7 @@ function createToolCatalog(
         cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(params?.isolation ? { isolation: params.isolation } : {}),
+        ...archiveOnFinish,
       },
     };
   };
@@ -1097,6 +1179,10 @@ function createToolCatalog(
         .record(z.string(), z.unknown())
         .optional()
         .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+      systemPrompt: z
+        .string()
+        .optional()
+        .describe("Optional system prompt applied to the new agent."),
     })
     .strict();
   const UpdateAgentSettingsInputSchema = z
@@ -1191,6 +1277,12 @@ function createToolCatalog(
       .trim()
       .min(1, "initialPrompt is required")
       .describe("Required first task to run immediately after creation."),
+    background: z
+      .boolean()
+      .optional()
+      .describe(
+        "Hide the agent from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
+      ),
   };
   const legacyCreateAgentPlacementFields = {
     relationship: AgentRelationshipInputSchema.describe(
@@ -1264,15 +1356,15 @@ function createToolCatalog(
     .object(legacyTopLevelCreateAgentInputSchema)
     .strict();
   const commonSendAgentPromptInputSchema = {
-    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
-      'How to send into a running turn: "steer" joins it, falling back to interrupt when unavailable; "interrupt" replaces it. Defaults to steer for agent callers and interrupt otherwise.',
-    ),
     agentId: z.string(),
     prompt: z.string(),
     sessionMode: z.string().optional().describe("Optional mode to set before running the prompt."),
   };
   const agentToAgentSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional().describe(
+      'Leave this out unless the message cannot wait. Default "queue": the message waits until the agent\'s running turn ends. "steer": the message joins the running turn; a provider that cannot steer interrupts the turn instead. "interrupt": the running turn stops and a new turn starts with the message. A steer or interrupt carries the messages you queued before it, in order.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1283,6 +1375,9 @@ function createToolCatalog(
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
+    activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
+      'Default "interrupt": the running turn stops and a new turn starts with the prompt. "steer": the prompt joins the running turn; a provider that cannot steer interrupts the turn instead.',
+    ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1397,7 +1492,7 @@ function createToolCatalog(
           .boolean()
           .optional()
           .describe(
-            "True hides the workspace from default lists and the sidebar while its contents remain durable and accessible; omit background to inherit your current workspace’s value (false without a caller), and override it only when the user explicitly asks.",
+            "Hide the workspace from the UI. Inherits your visibility when omitted. Omit unless the user asks for a specific value.",
           ),
         mode: z
           .enum(["branch-off", "checkout-branch", "checkout-pr"])
@@ -1429,6 +1524,12 @@ function createToolCatalog(
           .min(1)
           .optional()
           .describe("Forge for checkout-pr mode. Defaults to the source checkout."),
+        metadata: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            "Optional structured metadata to attach to the workspace (top-level JSON keys; null values are omitted). Common keys include issues (array of issue URLs or refs) and body/summary/notes; any JSON-serializable custom keys are allowed.",
+          ),
       },
       outputSchema: WorkspaceAutomationSummarySchema.shape,
     },
@@ -1445,7 +1546,12 @@ function createToolCatalog(
       branch,
       prNumber,
       forge,
+      metadata,
     }) => {
+      const initialMetadata =
+        metadata !== undefined
+          ? applyRecordPatch<JsonValue>({}, validateWorkspaceMetadataPatch(metadata))
+          : undefined;
       let workspace: PersistedWorkspaceRecord;
       if (isolation === "local") {
         const cwd = resolveScopedCwd(path, { required: true });
@@ -1468,8 +1574,8 @@ function createToolCatalog(
           throw new Error("Workspace provisioning is not configured");
         }
         workspace = await options.createDirectoryWorkspace(cwd, title, projectId, {
-          background,
-          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
+          ...workspaceBackgroundIntent(background),
+          ...(initialMetadata !== undefined ? { metadata: initialMetadata } : {}),
         });
       } else {
         let cwd =
@@ -1501,8 +1607,8 @@ function createToolCatalog(
             ...(worktreeSlug ? { worktreeSlug } : {}),
             ...worktreeTarget,
             ...(title ? { title } : {}),
-            background,
-            callerWorkspaceId: resolveCallerAgent()?.workspaceId,
+            ...(initialMetadata !== undefined ? { metadata: initialMetadata } : {}),
+            ...workspaceBackgroundIntent(background),
           },
         );
         if (!result.ok) {
@@ -1530,7 +1636,7 @@ function createToolCatalog(
       if (!options.workspaceRegistry) {
         throw new Error("Workspace registry is not configured");
       }
-      const workspaces = (await options.workspaceRegistry.list())
+      const workspaces = (await options.workspaceRegistry.listActive())
         .filter(
           (workspace) => !workspace.archivedAt && (includeBackground || !workspace.background),
         )
@@ -1590,7 +1696,7 @@ function createToolCatalog(
     {
       title: "Create agent",
       description:
-        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
+        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. For a different provider, set settings.modeId from inspect_provider; omission is accepted for targets with no modes and for unattended execution supported by the target. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1613,7 +1719,10 @@ function createToolCatalog(
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const createConfig = resolveCreateAgentConfig(
+        selectedProvider,
+        parsedArgs.settings?.systemPrompt,
+      );
       const { snapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager,
@@ -1634,11 +1743,11 @@ function createToolCatalog(
           provider: parsedArgs.provider,
           title: parsedArgs.title,
           initialPrompt: parsedArgs.initialPrompt,
-          config: inheritedConfig,
+          config: createConfig,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,
-          features: parsedArgs.settings?.features,
+          providerOptions: parsedArgs.settings?.features,
           labels: {
             ...parsedArgs.labels,
             ...(callerAgentId && !resolvedArgs.detached && options.serverId
@@ -1648,6 +1757,7 @@ function createToolCatalog(
           mode: parsedArgs.settings?.modeId,
           promptFailure: "throw",
           notifyOnFinish,
+          background: parsedArgs.background,
           detached: resolvedArgs.detached,
           callerAgentId,
           callerContext,
@@ -1821,9 +1931,11 @@ function createToolCatalog(
       const cwd = process.cwd();
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
-          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
-        }),
+        workspaceId: await options.ensureWorkspaceForCreate(
+          cwd,
+          firstAgentContext,
+          workspaceBackgroundIntent(undefined),
+        ),
       };
     }
     const caller = resolveCallerAgent();
@@ -1927,9 +2039,11 @@ function createToolCatalog(
       }
       return {
         cwd,
-        workspaceId: await options.ensureWorkspaceForCreate(cwd, firstAgentContext, {
-          callerWorkspaceId: resolveCallerAgent()?.workspaceId,
-        }),
+        workspaceId: await options.ensureWorkspaceForCreate(
+          cwd,
+          firstAgentContext,
+          workspaceBackgroundIntent(undefined),
+        ),
       };
     }
 
@@ -1946,13 +2060,16 @@ function createToolCatalog(
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        scope === "agent"
+          ? "Send a message to another agent. The response returns at once. Its guidance says whether the message waits for the running turn to end, joins it, or interrupts it, and how to deliver a waiting message now. Leave activeTurnBehavior out unless the message cannot wait. The recipient reads your messages in the order you sent them. A steer the recipient has not read is lost if its turn stops or is interrupted, along with the messages it carried. Completion reports include the target’s last response by default. Paseo supplies caller identity."
+          : "Send a prompt to an agent. A running turn is interrupted unless activeTurnBehavior is steer.",
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
         disposition: z.enum(["turn_started", "out_of_band", "steered"]).optional(),
         deliveryStatus: z.literal("queued").optional(),
         messageId: z.string().optional(),
+        activeTurnBehavior: AgentActiveTurnBehaviorSchema.optional(),
         status: AgentStatusEnum,
         guidance: z.string().optional(),
       },
@@ -1962,7 +2079,7 @@ function createToolCatalog(
       prompt,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
-      activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
+      activeTurnBehavior,
     }) => {
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
@@ -2021,15 +2138,17 @@ function createToolCatalog(
             success: true,
             deliveryStatus: receipt.status,
             messageId: receipt.messageId,
+            activeTurnBehavior: receipt.activeTurnBehavior,
             status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
             guidance: notifying
-              ? `Queued for delivery after two quiet seconds. ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
-              : "Queued for delivery after two quiet seconds; provider dispatch has not occurred.",
+              ? `${receipt.guidance} ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
+              : receipt.guidance,
           },
         };
       }
 
-      const { disposition } = await sendPromptToAgent({
+      const dispatch = await sendPromptToAgent({
+        agentMessages: agentMessages(),
         agentManager,
         agentStorage,
         agentId,
@@ -2048,11 +2167,14 @@ function createToolCatalog(
       });
 
       // Return once the provider has accepted the turn, so the status reports it running.
-      if (disposition === "turn_started") {
-        await waitForAgentRunStartWithTimeout(agentManager, agentId).catch((error) => {
-          rejectNotification();
-          throw error;
-        });
+      const { disposition } = dispatch;
+      if (dispatch.disposition === "turn_started") {
+        await waitForAgentRunStartWithTimeout(agentManager, agentId, dispatch.started).catch(
+          (error) => {
+            rejectNotification();
+            throw error;
+          },
+        );
       }
       const currentSnapshot = agentManager.getAgent(agentId);
 
@@ -2074,6 +2196,22 @@ function createToolCatalog(
     },
   );
 
+  // Match the WebSocket snapshot: idle agents can still own background work.
+  async function projectLiveAgent(agent: ManagedAgent) {
+    const snapshot = await serializeSnapshotWithMetadata(agentStorage, agent, childLogger);
+    const backgroundWork = agentManager.getAgentBackgroundWorkSummary(agent.id);
+    return backgroundWork ? { ...snapshot, backgroundWork } : snapshot;
+  }
+
+  function projectStoredAgent(record: StoredAgentRecord) {
+    return buildStoredAgentPayload(
+      record,
+      new Set(providerSnapshotManager.listRegisteredProviderIds()),
+      (provider, own) => agentManager.effectiveOptionsFor(provider, own),
+      agentManager.getAgentBackgroundWorkSummary(record.id),
+    );
+  }
+
   registerTool(
     "get_agent_status",
     {
@@ -2091,11 +2229,7 @@ function createToolCatalog(
     async ({ agentId }) => {
       const snapshot = agentManager.getAgent(agentId);
       if (snapshot) {
-        const structuredSnapshot = await serializeSnapshotWithMetadata(
-          agentStorage,
-          snapshot,
-          childLogger,
-        );
+        const structuredSnapshot = await projectLiveAgent(snapshot);
         return {
           content: [],
           structuredContent: ensureValidJson({
@@ -2110,10 +2244,7 @@ function createToolCatalog(
         throw new PaseoToolInputError(`Agent ${agentId} not found`);
       }
 
-      const structuredSnapshot = buildStoredAgentPayload(
-        record,
-        new Set(providerSnapshotManager.listRegisteredProviderIds()),
-      );
+      const structuredSnapshot = projectStoredAgent(record);
       return {
         content: [],
         structuredContent: ensureValidJson({
@@ -2162,13 +2293,8 @@ function createToolCatalog(
         manager: agentManager,
         storage: agentStorage,
         workspaces: options.workspaceRegistry,
-        projectLive: (snapshot) =>
-          serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
-        projectStored: (record) =>
-          buildStoredAgentPayload(
-            record,
-            new Set(providerSnapshotManager.listRegisteredProviderIds()),
-          ),
+        projectLive: projectLiveAgent,
+        projectStored: projectStoredAgent,
         isProviderVisible: () => true,
         isStoredProviderAvailable: (record) =>
           isStoredAgentProviderAvailable(
@@ -2290,9 +2416,7 @@ function createToolCatalog(
         await agentManager.setAgentThinkingOption(agentId, settings.thinkingOptionId);
       }
       if (settings?.features) {
-        for (const [featureId, value] of Object.entries(settings.features)) {
-          await agentManager.setAgentFeature(agentId, featureId, value);
-        }
+        await agentManager.setAgentOptions(agentId, settings.features);
       }
 
       await updateAgentCommand({ agentManager }, { agentId, name, labels });
@@ -2360,6 +2484,76 @@ function createToolCatalog(
           workspaceId,
           title,
         }),
+      };
+    },
+  );
+
+  registerTool(
+    "update_workspace",
+    {
+      title: "Update workspace",
+      description:
+        "Update a workspace's title and/or structured metadata. Omit workspaceId to update your current workspace. Metadata is a top-level patch where keys replace their values and null removes a key. Common keys include issues (array of issue URLs or refs) and body/summary/notes; any JSON-serializable custom keys are allowed.",
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Workspace id to update. Omit to update your current workspace."),
+        title: z
+          .string()
+          .trim()
+          .min(1, "title cannot be empty")
+          .nullable()
+          .optional()
+          .describe(
+            "New user-visible workspace title. Pass null to clear and revert to the derived name.",
+          ),
+        metadata: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            "Structured metadata patch (top-level keys replace; null removes a key). Common keys include issues (array of issue URLs or refs) and body/summary/notes; any JSON-serializable custom keys are allowed.",
+          ),
+      },
+      outputSchema: WorkspaceAutomationSummarySchema.shape,
+    },
+    async ({ workspaceId: requestedWorkspaceId, title, metadata }) => {
+      if (title === undefined && metadata === undefined) {
+        throw new PaseoToolInputError("Specify at least one field to update: title or metadata");
+      }
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry is required to update workspaces");
+      }
+      if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
+        throw new Error("Workspace update emitter is required to update workspaces");
+      }
+
+      const validatedPatch =
+        metadata !== undefined ? validateWorkspaceMetadataPatch(metadata) : undefined;
+      const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
+      const updated = await options.workspaceRegistry.update(workspaceId, (existing) => {
+        if (existing.archivedAt) {
+          throw new PaseoToolInputError(`Workspace ${workspaceId} is archived`);
+        }
+        return {
+          ...existing,
+          ...(title !== undefined ? { title } : {}),
+          ...(validatedPatch !== undefined
+            ? { metadata: applyRecordPatch<JsonValue>(existing.metadata, validatedPatch) }
+            : {}),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      if (!updated) {
+        throw new PaseoToolInputError(`Workspace ${workspaceId} not found`);
+      }
+      await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+      return {
+        content: [],
+        structuredContent: ensureValidJson(toWorkspaceAutomationSummary(updated)),
       };
     },
   );
@@ -2512,6 +2706,7 @@ function createToolCatalog(
       const workspaceId = await resolveTerminalWorkspaceId(resolvedCwd);
 
       const terminal = await terminalManager.createTerminal({
+        origin: { source: "agent" },
         cwd: resolvedCwd,
         workspaceId,
         ...(name?.trim() ? { name: name.trim() } : {}),
@@ -2665,13 +2860,30 @@ function createToolCatalog(
           ),
           cwd: z.string().optional(),
           isolation: z.enum(["local", "worktree"]).optional(),
+          archiveOnFinish: z
+            .boolean()
+            .optional()
+            .describe(
+              "Archive each run's workspace and agent when the run ends. Defaults to true; pass false to keep them active.",
+            ),
           maxRuns: z.number().int().positive().optional(),
           expiresIn: scheduleDurationInputSchema.optional(),
         })
         .superRefine(addScheduleCadenceIssue),
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
+    async ({
+      prompt,
+      cron,
+      timezone,
+      name,
+      provider,
+      cwd,
+      isolation,
+      archiveOnFinish,
+      maxRuns,
+      expiresIn,
+    }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2683,7 +2895,7 @@ function createToolCatalog(
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation, archiveOnFinish }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
@@ -2695,6 +2907,67 @@ function createToolCatalog(
       };
     },
   );
+
+  if (options.changeRequestWatches) {
+    const watches = options.changeRequestWatches;
+    const inputSchema = {
+      url: z
+        .string()
+        .trim()
+        .min(1)
+        .describe("URL of a pull request or merge request on a supported forge."),
+    };
+    registerTool(
+      "subscribe_change_request",
+      {
+        title: "Watch change request",
+        description:
+          "Watch a pull request or merge request for check failures, passing checks, new comments, reviews, approvals, and closure. Returns the current state and sends future updates after your current turn.",
+        inputSchema,
+        outputSchema: {
+          url: z.string(),
+          ...changeRequestStatusSchema.shape,
+          subscribed: z.boolean(),
+          stale: z
+            .boolean()
+            .describe("The last stored status is shown because a fresh read is pending or failed."),
+        },
+      },
+      async ({ url }) => {
+        if (!callerAgentId) {
+          throw new PaseoToolInputError(
+            "subscribe_change_request requires an agent-scoped session",
+          );
+        }
+        resolveCallerAgent();
+        return {
+          content: [],
+          structuredContent: ensureValidJson(await watches.subscribe(callerAgentId, url)),
+        };
+      },
+    );
+    registerTool(
+      "unsubscribe_change_request",
+      {
+        title: "Stop watching change request",
+        description: "Stop your watch and discard its unsent updates.",
+        inputSchema,
+        outputSchema: { url: z.string(), removed: z.boolean() },
+      },
+      async ({ url }) => {
+        if (!callerAgentId) {
+          throw new PaseoToolInputError(
+            "unsubscribe_change_request requires an agent-scoped session",
+          );
+        }
+        resolveCallerAgent();
+        return {
+          content: [],
+          structuredContent: ensureValidJson(await watches.unsubscribe(callerAgentId, url)),
+        };
+      },
+    );
+  }
 
   registerTool(
     "create_heartbeat",
@@ -2942,6 +3215,10 @@ function createToolCatalog(
             .optional()
             .describe("New mode for new-agent target (null to clear)."),
           cwd: z.string().trim().min(1).optional().describe("New cwd for new-agent target."),
+          archiveOnFinish: z
+            .boolean()
+            .optional()
+            .describe("Archive the workspace and agent of later runs when each run ends."),
           expiresIn: scheduleDurationInputSchema
             .optional()
             .describe("New relative expiry duration (for example: 1h, 2d)."),
@@ -3069,9 +3346,10 @@ function createToolCatalog(
       description:
         "List agent profiles: named provider/model/mode bundles a human configured for specific " +
         "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
-        "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, and " +
-        "`featureValues` into create_agent (there is no `profile` parameter). Returns an empty " +
-        "list if none are configured.",
+        "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, " +
+        "`systemPrompt` (as `settings.systemPrompt`), and `options` (as `settings.features`) " +
+        "into create_agent (there is no `profile` parameter). " +
+        "Returns an empty list if none are configured.",
       inputSchema: {},
       outputSchema: {
         profiles: z.array(AgentProfileSchema),
@@ -3124,13 +3402,13 @@ function createToolCatalog(
         throw new PaseoToolInputError(entry.error ?? `Provider '${providerId}' is unavailable`);
       }
       const selectedModel = settings?.model ?? resolvedProviderModel.model;
-      const features = await agentManager.listDraftFeatures({
+      const { controls, options: effectiveOptions } = await agentManager.listDraftControls({
         provider: providerId,
         cwd: resolvedCwd,
         ...(settings?.modeId ? { modeId: settings.modeId } : {}),
         ...(selectedModel ? { model: selectedModel } : {}),
         ...(settings?.thinkingOptionId ? { thinkingOptionId: settings.thinkingOptionId } : {}),
-        ...(settings?.features ? { featureValues: settings.features } : {}),
+        ...(settings?.features ? { providerOptions: settings.features } : {}),
       });
       return {
         content: [],
@@ -3142,7 +3420,7 @@ function createToolCatalog(
           status: summary.status,
           modes: summary.modes,
           selectedModel: selectedModel ?? null,
-          features,
+          features: featuresFromControls({ controls, options: effectiveOptions }),
         }),
       };
     },
@@ -3321,14 +3599,28 @@ function archiveWorktreeDependencies(
   if (!options.clearWorkspaceArchiving) {
     throw new Error("Workspace archiving clearer is required to archive worktrees");
   }
+  if (!options.assertWorkspaceAutomationAllowed) {
+    throw new Error("Workspace automation gate is required to archive worktrees");
+  }
+  if (!options.isCheckoutUntrusted) {
+    throw new Error("Checkout trust lookup is required to archive worktrees");
+  }
   return {
+    lifecycle: options.lifecycle ?? null,
     paseoHome: options.paseoHome,
     paseoWorktreesBaseRoot: options.worktreesRoot,
+    worktreeManagers: options.worktreeManagers,
+    workspaceArchiveOperations: options.workspaceArchiveOperations,
+    assertWorkspaceAutomationAllowed: options.assertWorkspaceAutomationAllowed,
+    isCheckoutUntrusted: options.isCheckoutUntrusted,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
     findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+    ...(options.workspaceRegistry
+      ? { getWorkspace: (workspaceId: string) => options.workspaceRegistry!.get(workspaceId) }
+      : {}),
     listActiveWorkspaces: options.listActiveWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,

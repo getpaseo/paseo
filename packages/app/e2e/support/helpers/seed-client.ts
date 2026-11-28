@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import type { TerminalDefaultColors } from "@getpaseo/protocol/messages";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { withProjectOwnership } from "./project-ownership";
@@ -32,6 +33,12 @@ export interface SeedDaemonClient {
     config: import("@getpaseo/protocol/messages").MutableDaemonConfigPatch,
   ): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
   getDaemonConfig(): Promise<{ config: import("@getpaseo/protocol/messages").MutableDaemonConfig }>;
+  installDirectoryPlugin(
+    directoryPath: string,
+    id?: string,
+  ): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
+  removePlugin(pluginId: string): Promise<void>;
+  invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{
@@ -88,7 +95,13 @@ export interface SeedDaemonClient {
     cwd: string,
     name?: string,
     requestId?: string,
-    options?: { agentId?: string; command?: string; args?: string[]; workspaceId?: string },
+    options?: {
+      agentId?: string;
+      command?: string;
+      args?: string[];
+      workspaceId?: string;
+      defaultColors?: TerminalDefaultColors;
+    },
   ): Promise<{
     terminal: { id: string; name: string; cwd: string; activity?: TerminalActivity | null } | null;
     error: string | null;
@@ -118,6 +131,7 @@ export interface SeedDaemonClient {
     featureValues?: Record<string, unknown>;
     initialPrompt?: string;
     labels?: Record<string, string>;
+    background?: boolean;
   }): Promise<{ id: string; status: string }>;
   fetchAgents(options?: { scope?: "active" }): Promise<{
     entries: Array<{
@@ -130,6 +144,7 @@ export interface SeedDaemonClient {
         currentModeId: string | null;
         status: string;
         title?: string | null;
+        metadata?: Record<string, unknown>;
       };
     }>;
   }>;
@@ -156,8 +171,11 @@ export interface SeedDaemonClient {
   sendAgentMessage(
     agentId: string,
     text: string,
-    options?: { sourceAgentId?: string },
+    options?: { sourceAgentId?: string; activeTurnBehavior?: "interrupt" | "steer" | "queue" },
   ): Promise<void>;
+  listAgentBackgroundWork(
+    agentId: string,
+  ): Promise<import("@getpaseo/client").PaseoAgentBackgroundWorkItem[]>;
   waitForFinish(
     agentId: string,
     timeout?: number,

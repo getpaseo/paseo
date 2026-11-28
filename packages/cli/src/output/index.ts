@@ -49,14 +49,15 @@ export type {
   CommandError,
 } from "./types.js";
 
-// Renderers
-export { renderTable, renderTableHeader, renderTableRow } from "./table.js";
+// Zero-dep renderers and lazy runtime renderers (avoid importing yaml/chalk on --json)
 export { renderJson, renderJsonLine } from "./json.js";
-export { renderYaml, renderYamlDoc } from "./yaml.js";
 export { renderQuiet } from "./quiet.js";
-
-// Main render function
-export { render, renderError, toCommandError, defaultOutputOptions } from "./render.js";
+export {
+  renderAsync,
+  renderErrorAsync,
+  toCommandError,
+  defaultOutputOptions,
+} from "./render-async.js";
 
 // Command wrapper
 export { withOutput, createOutputOptions, type CommandOptions } from "./with-output.js";

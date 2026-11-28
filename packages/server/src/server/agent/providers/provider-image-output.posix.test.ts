@@ -1,24 +1,71 @@
-import { existsSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { materializeProviderImage } from "./provider-image-output.js";
+let materializeProviderImage: typeof import("./provider-image-output.js").materializeProviderImage;
 
 describe.skipIf(process.platform === "win32")("materializeProviderImage", () => {
-  test("writes image attachments under a private temp directory", async () => {
+  const originalPaseoHome = process.env.PASEO_HOME;
+  let testHome: string | null = null;
+
+  beforeEach(async () => {
+    testHome = mkdtempSync(path.join(os.tmpdir(), "paseo-provider-images-posix-"));
+    process.env.PASEO_HOME = testHome;
+    vi.resetModules();
+    ({ materializeProviderImage } = await import("./provider-image-output.js"));
+  });
+
+  afterEach(() => {
+    if (originalPaseoHome === undefined) {
+      delete process.env.PASEO_HOME;
+    } else {
+      process.env.PASEO_HOME = originalPaseoHome;
+    }
+    if (testHome) {
+      rmSync(testHome, { recursive: true, force: true });
+      testHome = null;
+    }
+  });
+
+  test("writes image attachments under a private directory in the paseo home", async () => {
     const materialized = await materializeProviderImage({
       data: "YWJjMTIz",
       mimeType: "image/png",
     });
     const attachmentDir = path.dirname(materialized.path);
 
+    // Exactly "paseo-attachments" — no mkdtemp suffix. The old per-process temp
+    // directory is what let the OS reap these images out from under the app.
+    expect(path.basename(attachmentDir)).toBe("paseo-attachments");
+    expect(attachmentDir).toBe(path.join(testHome as string, "paseo-attachments"));
+    expect(existsSync(materialized.path)).toBe(true);
+    expect(statSync(attachmentDir).mode & 0o777).toBe(0o700);
+    expect(statSync(materialized.path).mode & 0o777).toBe(0o600);
+  });
+  test("rejects a cached attachment directory replaced with a symlink", async () => {
+    const image = { data: "c3ltbGluayByZWdyZXNzaW9u", mimeType: "image/png" };
+    const first = await materializeProviderImage(image);
+    const dir = path.dirname(first.path);
+    const target = mkdtempSync(path.join(os.tmpdir(), "paseo-image-symlink-test-"));
+    const targetFile = path.join(target, path.basename(first.path));
     try {
-      expect(path.basename(attachmentDir)).toMatch(/^paseo-attachments-/);
-      expect(existsSync(materialized.path)).toBe(true);
-      expect(statSync(attachmentDir).mode & 0o777).toBe(0o700);
-      expect(statSync(materialized.path).mode & 0o777).toBe(0o600);
+      rmSync(dir, { recursive: true });
+      writeFileSync(targetFile, "symlink target");
+      symlinkSync(target, dir, "dir");
+
+      await expect(materializeProviderImage(image)).rejects.toThrow();
+      expect(readFileSync(targetFile, "utf8")).toBe("symlink target");
     } finally {
-      rmSync(attachmentDir, { recursive: true, force: true });
+      rmSync(target, { recursive: true, force: true });
     }
   });
 });

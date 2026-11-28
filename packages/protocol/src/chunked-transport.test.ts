@@ -390,3 +390,65 @@ it("unpaced transports retain ordinary outbound admission and accept inbound chu
   expect(delivered).toEqual(["A"]);
   await transport.send("small");
 });
+
+it("fills an ordered writer's window while keeping chunk sequences contiguous", async () => {
+  const delivered: (string | Uint8Array)[] = [];
+  const receiver = new ChunkedTransport({
+    frameBytes: 8,
+    send() {},
+    deliver: (frame) => {
+      delivered.push(frame);
+    },
+  });
+  receiver.enabled = true;
+  const drain = Promise.withResolvers<void>();
+  const frames: (string | Uint8Array)[] = [];
+  const sender = new ChunkedTransport({
+    frameBytes: 8,
+    supportsConcurrentWrites: true,
+    send: (frame) => {
+      frames.push(frame);
+      receiver.receive(frame);
+      return drain.promise;
+    },
+    deliver() {},
+  });
+  sender.enabled = true;
+  const first = sender.send("one");
+  const second = sender.send("two");
+  expect(delivered).toEqual(["one", "two"]);
+  expect(sender.queuedByteLength).toBe(0);
+  const large = sender.send("large message");
+  const after = sender.send("after");
+  expect(frames).toHaveLength(3);
+  expect(sender.queuedByteLength).toBe(5);
+  drain.resolve();
+  await Promise.all([first, second, large, after]);
+  expect(delivered).toEqual(["one", "two", "large message", "after"]);
+  expect(sender.queuedByteLength).toBe(0);
+});
+
+it("accounts for independently draining writes and a rejected admission", async () => {
+  const firstDrain = Promise.withResolvers<void>();
+  const secondDrain = Promise.withResolvers<void>();
+  const sender = new ChunkedTransport({
+    frameBytes: 8,
+    supportsConcurrentWrites: true,
+    send: (frame) => {
+      if (frame === "reject") throw new Error("capacity");
+      return frame === "one" ? firstDrain.promise : secondDrain.promise;
+    },
+    deliver() {},
+  });
+  const first = sender.send("one");
+  const second = sender.send("two");
+  expect(() => sender.send("reject")).toThrow("capacity");
+  expect(sender.queuedByteLength).toBe(0);
+  secondDrain.resolve();
+  await second;
+  expect(sender.queuedByteLength).toBe(0);
+  firstDrain.resolve();
+  await first;
+  expect(sender.queuedByteLength).toBe(0);
+  await sender.send("usable");
+});

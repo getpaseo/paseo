@@ -2,7 +2,7 @@
 title: Plugin hooks
 description: Register hooks to change requests or observe agent and workspace operations.
 nav: Hooks
-order: 48
+order: 49
 category: Plugins
 ---
 
@@ -24,14 +24,14 @@ export default function contribute(server: PluginServerContext) {
 
 ## Naming and timing
 
-Names follow `subject.operation.position`: the subject, the operation, then `before` or `after`. The name identifies a lifecycle position. Whether Paseo waits is a per-hook property shown in the table below. `workspace` covers every workspace; `worktree` covers only git worktrees.
+Names follow `subject.operation.position`: the subject, the operation, then `before` or `after`. The name identifies a lifecycle position. Whether Paseo waits is a per-hook property shown in the table below. `workspace` covers every workspace; `worktree` covers only git worktrees. `terminal` covers every terminal Paseo starts in a workspace; `command` covers worktree setup and teardown commands.
 
 - Waiting hooks finish before Paseo continues. Throwing, returning invalid data, or exceeding 30 seconds fails the operation with `Plugin <id> <hook> failed: …`. Request-changing hooks receive `{ request }` and may return a complete replacement request or `undefined`.
 - Notifications receive the event object and return `Promise<void>`. Paseo does not wait; errors are logged against the plugin and the operation continues. `agent.turn.before` and `agent.permission.before` are notifications fired when a turn starts or a permission becomes pending.
 
 All handlers must be async. Turn completion includes success, failure, and cancellation; inspect `outcome`. Permission completion includes every resolution; inspect `resolution`.
 
-Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
+Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, MCP servers, and a launch wrap each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
 
 `worktree.create.after` runs before the workspace is registered. It precedes `workspace.create.after`, and both precede the first agent's `agent.create.before` / `agent.open.before`.
 
@@ -49,22 +49,24 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                | Handler may change                             |
-| ------------------------- | ----- | -------------------------------------- | ---------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                          | Entire create request                          |
-| `workspace.create.after`  | no    | `{ workspace }`                        |                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                        |                                                |
-| `worktree.create.before`  | yes   | `{ request }`                          | Creation options and destination               |
-| `worktree.create.after`   | yes   | `{ worktree }`                         | Files in the worktree; throw to abort creation |
-| `agent.create.before`     | yes   | `{ request: { config, env? } }`        | Saved config except `cwd`; `env`               |
-| `agent.create.after`      | no    | `{ agent }`                            |                                                |
-| `agent.open.before`       | yes   | `{ request }`                          | Launch-only `env`, `tools`, `mcpServers`       |
-| `agent.close.after`       | no    | `{ agent }`                            |                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                |                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                    |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }` |                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                   |                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`     |                                                |
+| Hook                      | Waits | Payload                                                | Handler may change                                                     |
+| ------------------------- | ----- | ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `workspace.create.before` | yes   | `{ request }`                                          | Entire create request                                                  |
+| `workspace.create.after`  | no    | `{ workspace }`                                        |                                                                        |
+| `workspace.archive.after` | no    | `{ workspace }`                                        |                                                                        |
+| `worktree.create.before`  | yes   | `{ request }`                                          | Creation options and destination                                       |
+| `worktree.create.after`   | yes   | `{ worktree }`                                         | Files in the worktree; throw to abort creation                         |
+| `agent.create.before`     | yes   | `{ request: { config, env?, metadata, workspaceId } }` | Saved config except `cwd`; `env`; `metadata`                           |
+| `agent.create.after`      | no    | `{ agent }`                                            |                                                                        |
+| `agent.open.before`       | yes   | `{ request }`                                          | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers`, `wrap` |
+| `agent.close.after`       | no    | `{ agent }`                                            |                                                                        |
+| `agent.archive.after`     | no    | `{ agent, archivedAt }`                                |                                                                        |
+| `agent.turn.before`       | no    | `{ agent, turnId }`                                    |                                                                        |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`                           |                                                                        |
+| `agent.permission.before` | no    | `{ agent, request }`                                   |                                                                        |
+| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`                     |                                                                        |
+| `terminal.create.before`  | yes   | `{ request }`                                          | `env`, `wrap`; throw to refuse                                         |
+| `command.run.before`      | yes   | `{ request }`                                          | `env`, `wrap`; throw to refuse                                         |
 
 ## Shared payloads
 
@@ -76,6 +78,8 @@ interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  readonly background: boolean;
+  metadata: Record<string, JsonValue>;
 }
 
 interface PluginHookWorkspace {
@@ -84,6 +88,7 @@ interface PluginHookWorkspace {
   cwd: string;
   name: string | null;
   archivedAt: string | null;
+  metadata: Record<string, JsonValue>;
 }
 
 type PluginTurnOutcome =
@@ -94,15 +99,53 @@ type PluginTurnOutcome =
 
 | Field        | Shape / meaning                                                                        |
 | ------------ | -------------------------------------------------------------------------------------- |
-| `turnId`     | Provider-reported `string` or `null`; can repeat after a session reopens               |
+| `background` | `true` for a [background agent](#background-agents)                                    |
+| `turnId`     | Provider-reported `string` or `null`; unique across resumed sessions                   |
 | `timeline`   | Deprecated, always `[]`; fetch history with the SDK.                                   |
 | `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other` |
 | `resolution` | SDK `AgentPermissionResponse`                                                          |
 | `archivedAt` | Timestamp string                                                                       |
 
+## Metadata
+
+Agents and workspaces carry a `metadata` record for plugin data. Keys are strings, values are any JSON value, and Paseo stores the record without reading a key. Prefix keys with your plugin id so plugins do not collide. Labels stay strings for filtering and tagging; use metadata for structured data.
+
+Set metadata when you create the agent or workspace, or change it later. `null` removes a key, and any other value replaces the key's whole value:
+
+```ts
+const agent = await paseo.agents.create({
+  config: { provider: "codex/gpt-5.5" },
+  cwd: "/projects/shop",
+  metadata: { "linear.issue": { id: "ENG-123" } },
+});
+
+agent.metadata; // { "linear.issue": { id: "ENG-123" } }
+await agent.setMetadata({ "linear.issue": null });
+await paseo.workspaces.ref(workspaceId).setMetadata({ "linear.issue": { id: "ENG-123" } });
+```
+
+Metadata survives a daemon restart. Every hook payload carries it: `workspace.create.before` and `agent.create.before` receive the metadata the caller sent, and the `after` hooks and `agent.open.before` receive what is stored. Against a host that predates metadata, these calls throw "Update the host to use metadata."
+
+## Launch wraps {#launch-wraps}
+
+`agent.open.before`, `terminal.create.before`, and `command.run.before` can return `wrap: [executable, ...args]`, a `PluginLaunchWrap`. Paseo then starts the process as `[...wrap, command, ...args]`, for example under a sandbox:
+
+```ts
+import type { PluginLaunchWrap } from "@getpaseo/plugin/server";
+
+const sandbox: PluginLaunchWrap = ["/usr/local/bin/sandbox-run", "--profile", "agent"];
+```
+
+- The executable must be an absolute path on the daemon host. Paseo runs it without a shell, except Windows `.cmd` and `.bat` launchers, which go through cmd.exe. Each element stays one argument.
+- The first hook that returns a wrap selects it. A later hook, in the same plugin or a later one, may omit `wrap` or return the same value. A different value fails the operation.
+- A wrap is never saved. Every launch asks the hooks again.
+- A host that predates `wrap` rejects the field, so the operation fails instead of running unwrapped.
+
+Each hook section below lists what its wrap covers.
+
 ## workspace.create.before
 
-Receives `{ request }` with `source`, optional `title`, and `firstAgentContext`. You may replace the entire explicit create request; a throw, invalid result, or timeout fails creation. Existing workspaces and directory lookup/import are unaffected.
+Receives `{ request }` with `source`, optional `title`, optional `metadata`, and `firstAgentContext`. You may replace the entire explicit create request; a throw, invalid result, or timeout fails creation. Existing workspaces and directory lookup/import are unaffected.
 
 ### Choose workspace isolation
 
@@ -184,7 +227,7 @@ Every field except `repoRoot` and `sourceCheckout` is transformable. Return all 
 
 Paseo resolves symlinked parents and validates the returned path. It must be absolute, must not exist, and must not be the filesystem root, your home directory, the repository root, inside a `.git` directory, or an ancestor of the repository. An existing destination fails creation; Paseo never adds a suffix to a plugin-chosen path. The plugin must leave directory creation to Paseo.
 
-Ordering: `worktree.create.before` → `git worktree add` → `worktree.create.after` → workspace registration. Restoring a missing worktree recreates it at its recorded path without running either worktree creation hook.
+Ordering: `worktree.create.before` → worktree manager `create` (or `git worktree add`) → `worktree.create.after` → workspace registration. To delegate `git worktree add`, removal, and restoration to an external tool such as Worktrunk, register a [worktree manager](/docs/plugins/reference#worktree-managers) with `server.registerWorktreeManager()` instead of creating directories inside `worktree.create.before`. Restoring a missing worktree recreates it at its recorded path without running creation hooks, delegating to the owning manager's optional `restore` handler when present.
 
 ## worktree.create.after
 
@@ -200,20 +243,74 @@ server.addHook("worktree.create.after", async ({ worktree }) => {
 });
 ```
 
+## terminal.create.before {#terminalcreatebefore}
+
+Paseo waits for this hook before it starts a terminal in a workspace:
+
+- **New terminal** and terminal profiles in the app, and terminals created through the CLI, SDK, and plugins
+- terminals agents open with Paseo tools
+- the terminals `paseo.json` scripts, services, and worktree terminals run in
+
+Receives `{ request }`; return a replacement request or `undefined`. Only `env` and `wrap` may change. Throwing refuses the terminal, and whoever asked for it gets `Plugin <id> terminal.create.before failed: …`.
+
+```ts
+server.addHook("terminal.create.before", async ({ request }) => {
+  if (!sandboxed.has(request.workspaceId)) return;
+  return { ...request, wrap: ["/usr/local/bin/sandbox-run", "--profile", "terminal"] };
+});
+```
+
+| Request field     | Meaning                                                                                                                                                                       |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId`     | Read-only; the terminal's workspace                                                                                                                                           |
+| `cwd`             | Read-only; where the terminal starts                                                                                                                                          |
+| `source`          | Read-only. `agent`: an agent's Paseo tool. `script`: a `paseo.json` script or service. `worktree`: a `paseo.json` worktree terminal. `client`: the app, CLI, SDK, or a plugin |
+| `name`            | Read-only; the tab name, or null                                                                                                                                              |
+| `input`           | Read-only. For `script` and `worktree`, the command Paseo types into the shell once it starts; otherwise null                                                                 |
+| `command`, `args` | Read-only; the program and its arguments. `command` is null for the default shell                                                                                             |
+| `env`             | Variables Paseo adds to the terminal's environment                                                                                                                            |
+| `wrap`            | Optional [launch wrap](#launch-wraps). Paseo starts `[...wrap, command, ...args]`; with no `command`, it puts the default shell after the wrap                                |
+
+Scripts, services, and worktree terminals start the default shell and then type their command into it, so a wrap on the shell also covers what they run. A wrapped shell starts without Paseo's shell integration, so a wrapped `paseo.json` script does not report when its command finishes. A terminal that survives a daemon restart is adopted, not created again, and doesn't run the hook again. A plugin that creates a terminal from inside this hook runs the hook for that terminal too.
+
+## command.run.before {#commandrunbefore}
+
+Paseo waits for this hook before each `paseo.json` worktree `setup` and `teardown` command. Receives `{ request }`; return a replacement request or `undefined`. Only `env` and `wrap` may change. Throwing refuses the command: setup stops and reports the plugin's error, and teardown stops and keeps the worktree directory, as a failing command does.
+
+```ts
+server.addHook("command.run.before", async ({ request }) => ({
+  ...request,
+  wrap: ["/usr/local/bin/sandbox-run", "--profile", request.purpose],
+}));
+```
+
+| Request field | Meaning                                                                                                                                         |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | Read-only; the workspace, or null when a worktree is archived by path and no workspace record remains                                           |
+| `cwd`         | Read-only; where the command runs                                                                                                               |
+| `purpose`     | Read-only; `setup` or `teardown`                                                                                                                |
+| `command`     | Read-only; the command as written in `paseo.json`. Paseo runs it with `bash -c` on macOS and Linux, and with PowerShell or `cmd.exe` on Windows |
+| `env`         | Variables Paseo adds to the daemon's environment: `PASEO_SOURCE_CHECKOUT_PATH`, `PASEO_WORKTREE_PATH`, `PASEO_BRANCH_NAME`, and the rest        |
+| `wrap`        | Optional [launch wrap](#launch-wraps). Paseo starts the shell behind it: `[...wrap, "bash", "-c", command]` on macOS and Linux                  |
+
+Setup starts after the workspace is registered and `workspace.create.after` is emitted, and runs alongside the first agent. When setup runs again, such as from **Run setup** on a worktree whose setup was blocked, each command runs the hook again. Teardown runs when the last workspace on a worktree is archived, before Paseo removes the directory.
+
 ## agent.create.before
 
-Receives `{ request: { config, env? } }`. Config changes are saved and remain after the plugin is disabled or removed; `env` applies to the initial launch and is not saved. You cannot change `config.cwd`. A throw, invalid result, or timeout fails creation.
+Receives `{ request: { config, env?, metadata, workspaceId } }`. Config and `metadata` changes are saved and remain after the plugin is disabled or removed; `env` applies to the initial launch and is not saved. You cannot change `config.cwd` or `workspaceId`. A throw, invalid result, or timeout fails creation.
+
+`workspaceId` is the workspace the agent is created in, or null. Use it rather than `config.cwd` to find the workspace: several workspaces can share a directory, and an agent can be created in one workspace with a directory inside another.
 
 **`agent.create.before.config`** uses `AgentSessionConfig`:
 
-| Fields                                        | Constraint                                                                 |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
-| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
-| `title`, `systemPrompt`                       | Agent configuration                                                        |
-| `providerOptions`                             | Opaque provider-specific options                                           |
-| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
-| `cwd`                                         | Cannot change                                                              |
+| Fields                       | Constraint                                                                 |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `provider`, `model`          | Separate fields; changing provider may require changing model/mode/options |
+| `modeId`, `thinkingOptionId` | Provider-specific selections                                               |
+| `title`, `systemPrompt`      | Agent configuration                                                        |
+| `providerOptions`            | Provider options, including speed and auto-accept selections               |
+| `mcpServers`, `toolPolicy`   | MCP configuration and exact-tool preapprovals                              |
+| `cwd`                        | Cannot change                                                              |
 
 ### Change saved configuration
 
@@ -259,7 +356,18 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 ## agent.open.before
 
-Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
+Receives `{ request }`; only `env`, `appendSystemPrompt`, `tools`, `mcpServers`, and `wrap` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
+
+Do not await a write to the agent being opened: `setMetadata`, `setLabels`, or an option, model, thinking or mode change. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
+
+```ts
+server.addHook("agent.open.before", async ({ request }, { paseo }) => {
+  void paseo.agents
+    .ref(request.agentId)
+    .setMetadata({ "my.plugin": { openedBy: "hook" } })
+    .catch((error) => console.error(error));
+});
+```
 
 **`agent.open.before` request example:**
 
@@ -270,7 +378,9 @@ Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for th
   "provider": "codex",
   "cwd": "/projects/shop",
   "title": "Workspace notes",
+  "background": false,
   "labels": { "notes/enabled": "true" },
+  "metadata": { "linear.issue": { "id": "ENG-123" } },
   "tools": [],
   "mcpServers": {},
   "reason": "resume",
@@ -279,16 +389,50 @@ Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for th
 }
 ```
 
-| Field         | Values                                                                                                                  |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `workspaceId` | String or `null`                                                                                                        |
-| `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
-| `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
-| `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
-| `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                   |
-| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
-| `purpose`     | `interactive`, `history`                                                                                                |
-| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
+| Field         | Values                                                                                                                                                |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspaceId` | String or `null`                                                                                                                                      |
+| `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                                                         |
+| `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                                                     |
+| `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                                                             |
+| `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                                                    |
+| `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).                                        |
+| `mcpServers`  | Editable launch-only server map, local to this plugin. See [Inject MCP servers](#inject-mcp-servers).                                                 |
+| `reason`      | `create`, `resume`, `refresh`, `import`                                                                                                               |
+| `purpose`     | `interactive`, `history`                                                                                                                              |
+| `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides.                               |
+| `wrap`        | Optional [launch wrap](#launch-wraps) to start the harness behind. See [Run the harness behind a launch wrap](#run-the-harness-behind-a-launch-wrap). |
+
+### Run the harness behind a launch wrap
+
+Return a [launch wrap](#launch-wraps) to start the provider's harness as `[...wrap, command, ...args]`:
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => ({
+  ...request,
+  wrap: ["/usr/local/bin/sandbox-run", "--profile", "agent"],
+}));
+```
+
+- A provider applies a wrap when its provider snapshot entry has `launchWrap: true`. Every built-in provider and every custom ACP provider does. A plugin provider does when it declares support, as Muse Code and the ACP plugin providers such as Antigravity do. Read the field with `paseo.providers.snapshot()` in `agent.create.before` and choose a provider there. A wrap for any other provider fails the open; it is never dropped.
+- History opens keep the wrap.
+- A wrapped OpenCode session gets its own OpenCode server, which starts behind the wrap. An OpenCode provider configured to use an existing server cannot start one, so a wrapped open fails.
+- The harness does not always start in the agent's directory. Codex starts it in the daemon's directory, and OpenCode starts its server in the `opencode-home` directory under the Paseo home. Both send the session directory over their protocol. If your launcher needs the directory, put `request.cwd` in the wrap's arguments.
+- Keep the system temp directory visible inside the wrap. Paseo writes the Pi extension there before it starts Pi, and Claude Code writes its tool output there. A launcher that hides it behind an empty private directory breaks those sessions.
+- The wrap covers the processes that Paseo starts for the session: the harness, the stdio MCP servers that Paseo hosts for the agent, and the terminals that an ACP agent asks Paseo to run. Paseo's host terminal tools, provider availability and catalog probes, and draft discovery run outside it.
+
+### Append instructions on every session opening
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => ({
+  ...request,
+  appendSystemPrompt: [...(request.appendSystemPrompt ?? []), "Follow the team engineering guide."],
+}));
+```
+
+Instructions follow the saved agent prompt and daemon instructions, in plugin order. They are not saved in the agent configuration and are ignored for history opens. Reload the plugin after changing its data to apply new instructions on the next reopen. Running turns continue; removing an instruction does not remove conversation history. Internal agents also receive these instructions. The ACP adapter does not send system instructions to its providers. Plugin providers receive the composed prompt, but must apply it themselves.
+
+Codex instruction updates require Codex 0.121.0 or newer with a recognizable version reported by the app server. Source builds reporting `0.0.0` must use a versioned build. Paseo adds a current instruction snapshot to existing threads; earlier snapshots remain in the conversation. A crash during an update or rewinding a thread can repeat a snapshot.
 
 ### Inject environment variables on every session opening
 
@@ -315,7 +459,7 @@ the placeholder URL with your MCP endpoint:
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
-  if (request.provider !== "codex") return;
+  if (request.provider !== "codex" || request.background) return;
 
   return {
     ...request,
@@ -391,6 +535,7 @@ Select agents using any of the session-open request fields:
 | Provider         | `request.provider === "codex"`               |
 | Workspace        | `request.workspaceId === "workspace-456"`    |
 | Individual agent | `request.agentId === chosenAgentId`          |
+| Background agent | `request.background`                         |
 
 `request.tools` starts empty for each plugin. Each callback sees the tools returned by earlier
 callbacks in that plugin; replace the array to add or remove tools. Returning `undefined` preserves
@@ -445,12 +590,42 @@ target are unaffected.
 
 | Change                                                        | When the agent receives it                                                                                                                                                                                 |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Start, stop, or reload a plugin declaring `agent.open.before` | Open sessions become stale. Each reopens before its next idle prompt; a running turn continues without interruption. The next prompt after that reopen reuses the session.                                 |
+| Start, stop, or reload a plugin declaring `agent.open.before` | Before the session's next agent tool call or prompt, as described below.                                                                                                                                   |
 | Change which agents the callback targets                      | Run `paseo plugin reload agent-tools` after editing this example, then send the agent a prompt when it is idle.                                                                                            |
 | Apply immediately                                             | Call `await paseo.agents.ref(id).reload({ requestId: "reload-notes" })`. `requestId` is optional. This reopens the provider session, reruns hooks with `reason: "refresh"`, and interrupts a running turn. |
 | Read the current snapshot                                     | Call `await paseo.agents.ref(id).refresh()`. This reads state without reopening the session.                                                                                                               |
 
-If an automatic reopen fails, the triggering prompt fails with that error. See the
+When a plugin declaring `agent.open.before` starts, stops, or reloads, Paseo reruns that plugin's
+callback for each open session, before the session's next agent tool call or prompt. The callback
+gets the request it saw at the session's last open, with `reason: "refresh"` and the agent's current
+title, workspace, labels, and metadata. A later plugin in the chain also reruns when the env or
+instructions it receives change. Other callbacks do not run.
+
+A reload counts as one change. A tool call or prompt during the reload waits for the plugin to
+start, so the session does not lose the plugin's tools in between. If the plugin fails to start,
+the session continues as if the plugin stopped.
+
+- The tools the callback returns replace its old tools at once, also during a running turn. The new
+  plugin instance answers the calls.
+- If the env, instructions, MCP servers, tool definitions, or the plugin that provides a tool
+  differ from what the session launched with, the session reopens before its next idle prompt. A running turn continues without interruption.
+  A callback whose result depends on `reason` always differs from a `create` open. Reverting the
+  change before that prompt cancels the reopen.
+- If nothing differs, the session keeps running with its background work and subagents. A plugin
+  that does not target the agent leaves it as it is.
+- If the callback throws or times out, its tools stay off, and the session reopens before its next
+  idle prompt. Paseo does not rerun it for the same plugin instance.
+- If a returned tool collides with a Paseo tool or another plugin's tool, that plugin's tools stay
+  off, and the session reopens before its next idle prompt.
+- If two plugins return the same MCP server name, both plugins keep their agent tools, but the reopen
+  before the next idle prompt fails with the collision error.
+
+Agents that receive Paseo tools natively (OpenCode with the bridge, OMP) keep the tool list they
+launched with until the reopen. Their calls to a listed tool reach the new instance of the plugin
+that attached it, and fail if that plugin no longer attaches it.
+
+If an automatic reopen fails, the triggering prompt fails with that error. The session keeps
+running with the tools it had, and each later idle prompt tries the reopen again. See the
 [complete agent-tools example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools).
 
 ## agent.close.after
@@ -485,7 +660,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after
 
-A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome, timeline }`. `outcome.kind` is `completed`, `failed`, or `canceled`. `timeline` is deprecated and always empty; fetch history through the SDK as below.
+A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history. Read the turn from the agent's timeline: `refetch({ direction: "tail", limit: 1, wholeTurns: true })` returns the latest turn whole, as below. Keep the entries whose `turnId` equals `event.turnId`, because a turn that starts before your read, such as a follow-up another plugin sent, replaces this one as the latest. The filtered list is empty in that case, and when `event.turnId` is `null`. Plugins built against an older SDK that read `event.timeline` get an empty array.
 
 ### Send a follow-up when a turn ends
 
@@ -505,8 +680,9 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries.filter((entry) => entry.turnId === event.turnId);
+    const text = latestOutputText(turn.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }
@@ -521,9 +697,6 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
-
-The handler fetches only the last 20 timeline items. Output before that page is not inspected.
-Use `cursor` and `direction` to page further when your plugin needs more history.
 
 This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
 add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
@@ -588,7 +761,20 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
-Agent hooks exclude the daemon's private disposable helpers. Public background workspaces and their ordinary agents use the same hooks.
+## Background agents
+
+Agent hooks exclude the daemon's private disposable helpers. Background agents and the agents in background workspaces use the same hooks.
+
+A [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) is a helper hidden from tabs, lists and attention. Every hook's `agent.background` and the `agent.open.before` request's `background` are `true` for one, so you can skip it without a lookup:
+
+```ts
+server.addHook("agent.turn.after", async ({ agent }) => {
+  if (agent.background) return; // A helper reports to the agent that created it.
+  await notifyTeam(agent);
+});
+```
+
+`background` is fixed when the agent is created and a hook cannot change it. An agent created in a background workspace without `background: true` reads `false`. Hosts older than 0.16.0 omit the field, so it reads as `undefined`.
 
 ## Ordering and returned values
 
@@ -598,7 +784,7 @@ Creation request
   → resolve defaults and validate provider configuration
   → derive launch configuration with Paseo runtime tools and daemon prompt
   → agent.open.before hooks (same ordering; env and plugin-local tools and MCP servers)
-  → set PASEO_AGENT_ID and PASEO_AGENT_CWD
+  → set PASEO_AGENT_ID, PASEO_AGENT_CWD, and PASEO_WORKSPACE_ID when the agent has a workspace
   → open provider session and save agent configuration
 ```
 
@@ -630,12 +816,13 @@ replaces that scope's prior value.
 
 ## Complete examples
 
-| Plugin                                                                                                 | Includes                                                                         |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent, workspace, and worktree hooks; JSON logs with environment values redacted |
-| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection     |
-| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                                 |
-| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process                   |
+| Plugin                                                                                                 | Includes                                                                                            |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| [lifecycle-logger](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-logger)       | Agent, workspace, worktree, terminal, and command hooks; JSON logs with environment values redacted |
+| [lifecycle-actions](https://github.com/getpaseo/paseo/tree/main/plugin-examples/lifecycle-actions)     | Follow-ups, permissions, environment, provider switching, worktree selection                        |
+| [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) | MCP injection and Codex sandbox/approval options                                                    |
+| [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 | Label-targeted tools and file operations in the plugin process                                      |
+| [worktrunk](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)                     | Worktree manager (`create`, `remove`, `restore`) and agent activity markers                         |
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 

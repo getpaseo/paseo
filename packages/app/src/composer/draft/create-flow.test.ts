@@ -4,7 +4,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import type { UserMessageImageAttachment } from "@/types/stream";
+import type { AttachmentMetadata } from "@/attachments/types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "./create-flow";
 
@@ -14,7 +14,7 @@ describe("useDraftAgentCreateFlow", () => {
   });
 
   it("renders a prepared new-workspace submission before continuing it", async () => {
-    const image: UserMessageImageAttachment = {
+    const image: AttachmentMetadata = {
       id: "image-1",
       mimeType: "image/png",
       storageType: "web-indexeddb",
@@ -37,7 +37,7 @@ describe("useDraftAgentCreateFlow", () => {
       async (ctx: {
         attempt: DraftCreateAttempt;
         text: string;
-        images?: UserMessageImageAttachment[];
+        images?: AttachmentMetadata[];
         attachments?: AgentAttachment[];
         cwd: string;
       }) => ({
@@ -60,17 +60,6 @@ describe("useDraftAgentCreateFlow", () => {
 
     expect(result.current.isSubmitting).toBe(true);
     expect(result.current.draftAgent).toEqual({ currentAttempt: attempt });
-    expect(result.current.submittedStreamItems).toEqual([
-      {
-        kind: "user_message",
-        id: "msg-prepared",
-        clientMessageId: "msg-prepared",
-        text: "build this",
-        timestamp: attempt.timestamp,
-        images: [image],
-        attachments: [attachment],
-      },
-    ]);
     expect(createRequest).not.toHaveBeenCalled();
 
     await act(async () => {

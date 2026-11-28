@@ -45,6 +45,9 @@ export class ComposerEditingSession {
       if (this.editor === editor) this.editor = null;
     };
   }
+  focus() {
+    this.editor?.focus();
+  }
   insertCommand(command: string) {
     const editor = this.editor;
     if (!editor) return;

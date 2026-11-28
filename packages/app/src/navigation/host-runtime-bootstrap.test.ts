@@ -177,6 +177,7 @@ describe("resolveStartupRoute", () => {
     workspaceSelectionStatus: "unknown" as const,
     isWorkspaceSelectionLoaded: true,
     hasGivenUpWaitingForHost: false,
+    isWaitingForSetup: false,
   };
   const baseHostInput = {
     route: { kind: "host" as const, serverId: "server-saved" },
@@ -276,6 +277,28 @@ describe("resolveStartupRoute", () => {
         anyOnlineHostServerId: "srv-desktop",
       }),
     ).toEqual({ kind: "redirect", href: "/h/srv-desktop" });
+  });
+
+  it("holds the splash over the empty home while setup may still open", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "srv-desktop" }],
+        anyOnlineHostServerId: "srv-desktop",
+        isWaitingForSetup: true,
+      }),
+    ).toEqual({ kind: "splash" });
+  });
+
+  it("restores a saved workspace without waiting for setup", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        isWaitingForSetup: true,
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-1" });
   });
 
   it("keeps a known connecting host in app-owned routing instead of showing welcome", () => {

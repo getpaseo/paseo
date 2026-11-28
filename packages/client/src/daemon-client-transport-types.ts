@@ -4,7 +4,7 @@ export interface DaemonTransport {
   maxFrameBytes?: number;
   send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
   close: (code?: number, reason?: string) => void;
-  onMessage: (handler: (data: unknown, isBinary: boolean) => void) => () => void;
+  onMessage: (handler: (data: unknown, isBinary: boolean) => void | Promise<void>) => () => void;
   onOpen: (handler: () => void) => () => void;
   onClose: (handler: (event?: unknown) => void) => () => void;
   onError: (handler: (event?: unknown) => void) => () => void;

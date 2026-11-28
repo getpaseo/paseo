@@ -6,7 +6,12 @@
 
 import type { Command } from "commander";
 import type { AnyCommandResult, CommandError, OutputOptions } from "./types.js";
-import { render, renderError, toCommandError, defaultOutputOptions } from "./render.js";
+import {
+  renderAsync,
+  renderErrorAsync,
+  toCommandError,
+  defaultOutputOptions,
+} from "./render-async.js";
 import { withGlobalOptions } from "../utils/command-options.js";
 
 /** Options that include output settings from global options */
@@ -86,14 +91,14 @@ export function withOutput<T, Args extends unknown[]>(
 
     try {
       const result = await handler(...args);
-      const output = render(result, outputOptions);
+      const output = await renderAsync(result, outputOptions);
 
       if (output) {
         process.stdout.write(output + "\n");
       }
     } catch (error) {
       const commandError = toCommandError(error);
-      const errorOutput = renderError(commandError, outputOptions);
+      const errorOutput = await renderErrorAsync(commandError, outputOptions);
       process.stderr.write(errorOutput + "\n");
       process.exit(1);
     }

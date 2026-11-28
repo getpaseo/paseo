@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UsageReportEntry } from "@getpaseo/protocol/messages";
-import { render } from "../../output/index.js";
-import { createCli } from "../../cli.js";
+import { render } from "../../output/render.js";
+import { createCliForArgv } from "../../cli.js";
 import { runUsageCommand } from "./index.js";
 
 const options = { daemonTarget: { kind: "endpoint" as const, host: "example.test:1234" } };
@@ -269,8 +269,10 @@ it("propagates connection and request failures", async () => {
 });
 
 describe("usage CLI registration", () => {
-  it("registers default, ls and inspect with the accepted selectors", () => {
-    const usage = createCli().commands.find((command) => command.name() === "usage")!;
+  it("registers default, ls and inspect with the accepted selectors", async () => {
+    const usage = (await createCliForArgv(["usage"])).commands.find(
+      (command) => command.name() === "usage",
+    )!;
     expect(usage.commands.map((command) => command.name())).toEqual(["ls", "inspect"]);
     expect(usage.helpInformation()).toContain("--agent <id>");
     expect(usage.commands[0]!.helpInformation()).toContain("--refresh");

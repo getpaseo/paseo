@@ -13,6 +13,10 @@ import {
   type ClaudeWorkflowRun,
 } from "./subagents/workflow-replay-source.js";
 
+const READ_CHUNK_BYTES = 1024 * 1024;
+// Async iteration between reads uses microtasks, including work inside the consumer.
+const REPLAY_SLICE_MS = 10;
+
 interface TranscriptEntry extends ClaudeReplayEntry {
   isSidechain?: unknown;
 }
@@ -43,13 +47,18 @@ async function* locatedRecords(
   let pieces: Buffer[] = [];
   let length = 0;
   while (remaining > 0) {
-    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
+    const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, remaining));
     const { bytesRead: count } = await fd.read(buffer, 0, buffer.length, null);
     if (count === 0) break;
     remaining -= count;
+    let sliceStartedAt = performance.now();
     let start = 0;
     let end: number;
     while ((end = buffer.indexOf(10, start)) !== -1 && end < count) {
+      if (performance.now() - sliceStartedAt >= REPLAY_SLICE_MS) {
+        await setImmediate();
+        sliceStartedAt = performance.now();
+      }
       pieces.push(buffer.subarray(start, end));
       length += end - start;
       const entry = parseRecord(Buffer.concat(pieces, length).toString("utf8"));
@@ -65,8 +74,6 @@ async function* locatedRecords(
       if (entry) yield { entry, location };
       start = end + 1;
     }
-    // Bound parsing work as well as IO; microtasks alone do not service timers or sockets.
-    await setImmediate();
     if (start < count) {
       pieces.push(buffer.subarray(start, count));
       length += count - start;
@@ -96,25 +103,50 @@ function indexedRecords(
     },
   };
   async function* readEntries(): AsyncGenerator<TranscriptEntry> {
+    const chunk = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+    let window: { file: string; offset: number; bytes: Buffer } | undefined;
+    let sliceStartedAt = performance.now();
     for (const location of locations) {
-      const fd = descriptors.get(location.file)!;
-      const buffer = Buffer.allocUnsafe(location.length);
-      let read = 0;
-      while (read < buffer.length) {
-        const { bytesRead: count } = await fd.read(
-          buffer,
-          read,
-          buffer.length - read,
-          location.offset + read,
-        );
-        if (count === 0)
-          throw new Error(`Claude transcript was truncated during replay: ${location.file}`);
-        read += count;
+      if (
+        window?.file !== location.file ||
+        location.offset < window.offset ||
+        location.offset + location.length > window.offset + window.bytes.length
+      ) {
+        const fd = descriptors.get(location.file)!;
+        const buffer = location.length > chunk.length ? Buffer.allocUnsafe(location.length) : chunk;
+        // Read ahead from the next indexed record. The index still owns selection and order,
+        // including sparse sidechains and workflow records sorted across files.
+        window = {
+          file: location.file,
+          offset: location.offset,
+          bytes: await readRecordWindow(fd, buffer, location),
+        };
+        sliceStartedAt = performance.now();
       }
-      const entry = parseRecord(buffer.toString("utf8"));
+      if (performance.now() - sliceStartedAt >= REPLAY_SLICE_MS) {
+        await setImmediate();
+        sliceStartedAt = performance.now();
+      }
+      const start = location.offset - window.offset;
+      const entry = parseRecord(window.bytes.toString("utf8", start, start + location.length));
       if (entry) yield entry;
     }
   }
+}
+
+async function readRecordWindow(
+  fd: FileHandle,
+  buffer: Buffer,
+  location: RecordLocation,
+): Promise<Buffer> {
+  let read = 0;
+  while (read < location.length) {
+    const { bytesRead } = await fd.read(buffer, read, buffer.length - read, location.offset + read);
+    if (bytesRead === 0)
+      throw new Error(`Claude transcript was truncated during replay: ${location.file}`);
+    read += bytesRead;
+  }
+  return buffer.subarray(0, read);
 }
 
 function isToolResult(entry: TranscriptEntry): boolean {

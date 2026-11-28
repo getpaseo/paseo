@@ -1,15 +1,14 @@
-import xterm from "@xterm/headless";
 import type { TerminalState } from "@getpaseo/protocol/messages";
+import { createHeadlessTerminal } from "../headless-terminal.js";
 import type { LocalTerminalSession } from "../terminal.js";
 
 /** Observe the public ANSI replay using a real receiver; no production cell extraction API. */
 export async function readTerminalState(session: LocalTerminalSession): Promise<TerminalState> {
   const { metadata, data } = session.serializeReplay();
-  const terminal = new xterm.Terminal({
+  const terminal = createHeadlessTerminal({
     rows: metadata.rows,
     cols: metadata.cols,
     scrollback: 10000,
-    allowProposedApi: true,
   });
   try {
     await new Promise<void>((resolve) => terminal.write(data, resolve));

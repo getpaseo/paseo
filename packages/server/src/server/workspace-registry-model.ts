@@ -108,7 +108,7 @@ export function initialWorkspacePlacement(
 
 /**
  * Applies live placement facts without rewriting the workspace's durable name
- * or its creation-time base branch.
+ * or its selected base branch.
  *
  * A null checkout is an absence, not an observation: nothing was read at the
  * workspace directory, so the recorded placement stands. Only a directory that

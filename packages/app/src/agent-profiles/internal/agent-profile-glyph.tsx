@@ -31,6 +31,7 @@ import {
   TestTube,
   Wrench,
 } from "lucide-react-native";
+import { useProviderIcon } from "@/components/provider-icons";
 import { identityForeground } from "@/styles/identity-colors";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
@@ -108,21 +109,57 @@ export function agentProfileColorMapping(
   return COLOR_MAPPINGS[color];
 }
 
+function ProviderFallbackIcon({
+  provider,
+  serverId,
+  size,
+  color = "",
+}: {
+  provider: string;
+  serverId?: string | null;
+  size: number;
+  color?: string;
+}) {
+  const Icon = useProviderIcon(provider, serverId);
+  return <Icon size={size} color={color} />;
+}
+
+const ThemedProviderFallbackIcon = withUnistyles(ProviderFallbackIcon);
+
 /**
- * How a profile is drawn everywhere it appears — settings list, model picker,
- * and the picker grid's own cells. One component so the three can't drift.
+ * How a profile is drawn everywhere it appears — settings roster, model picker,
+ * drawer/sheet header, and the picker grid's own cells. When no custom icon is
+ * chosen and a provider is known, it falls back to that provider's mark instead
+ * of repeating identical generic stars across every row.
  */
 export function AgentProfileGlyph({
   icon,
   color,
+  provider,
+  serverId,
   size = ICON_SIZE.md,
 }: {
   icon?: string | undefined;
   color?: string | undefined;
+  provider?: string | undefined;
+  serverId?: string | null | undefined;
   size?: number;
 }) {
   const iconKey = resolveAgentProfileIconKey(icon);
   const mapping = COLOR_MAPPINGS[resolveAgentProfileColor(color)];
-  const Icon = iconKey ? THEMED_ICONS[iconKey] : ThemedDefaultIcon;
-  return <Icon size={size} uniProps={mapping} />;
+  if (iconKey) {
+    const Icon = THEMED_ICONS[iconKey];
+    return <Icon size={size} uniProps={mapping} />;
+  }
+  if (provider) {
+    return (
+      <ThemedProviderFallbackIcon
+        provider={provider}
+        serverId={serverId}
+        size={size}
+        uniProps={mapping}
+      />
+    );
+  }
+  return <ThemedDefaultIcon size={size} uniProps={mapping} />;
 }

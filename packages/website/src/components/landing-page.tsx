@@ -1,4 +1,7 @@
+import { Await } from "@tanstack/react-router";
 import { PLUGINS_LINKED } from "~/plugins/launch";
+import { categoryHref } from "~/plugins/links";
+import type { CategorySlug } from "~/plugins/categories";
 import * as React from "react";
 import { Trans, useTranslation } from "react-i18next";
 import {
@@ -10,7 +13,8 @@ import {
   ExternalLink,
   Gem,
   GitFork,
-  LayoutPanelLeft,
+  GitPullRequest,
+  Globe,
   Laptop,
   Lock,
   Merge,
@@ -19,16 +23,17 @@ import {
   Smartphone,
   Terminal,
   Users,
-  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import {
   motion,
   AnimatePresence,
   useInView,
+  useReducedMotion,
   useScroll,
   useTransform,
   type Transition,
+  type Variants,
 } from "framer-motion";
 
 // Shared motion presets — hoisted so every JSX site receives the same object
@@ -85,82 +90,167 @@ import {
   OpenCodeIcon,
   PiIcon,
 } from "~/components/agent-icons";
-import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
-import { MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
+import { HubLandingFlow } from "~/components/hub-flow";
+import {
+  ChapterBand,
+  ChapterDivider,
+  HairlineGrid,
+  PageHeaderBand,
+  SectionOpener,
+} from "~/components/page-frame";
+import { PaseoHubLockup, PaseoHubMark, PaseoMark } from "~/components/paseo-brand";
+import {
+  MobileChat,
+  MobileDiff,
+  MobileSidebar,
+  PhoneFrame,
+  type ToolCall,
+  ToolCallRow,
+} from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
-import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
-import { SiteHeader } from "~/components/site-header";
+import { HomepageSponsorsSection } from "~/components/sponsorship";
 import "~/styles.css";
 
 interface LandingPageProps {
   title: React.ReactNode;
   subtitle: React.ReactNode;
+  pluginCount: Promise<number | null>;
+  showHubEyebrow?: boolean;
 }
 
-export function LandingPage({ title, subtitle }: LandingPageProps) {
+export function LandingPage({
+  title,
+  subtitle,
+  pluginCount,
+  showHubEyebrow = false,
+}: LandingPageProps) {
   return (
     <CursorFieldProvider>
-      {/* Hero section with background image */}
-      <div className="relative bg-cover bg-center bg-no-repeat">
-        <div className="relative px-6 pt-4 pb-10 md:px-32 md:pt-6 md:pb-12 max-w-7xl mx-auto">
-          <Nav />
-          <Hero title={title} subtitle={subtitle} />
-          <GetStarted />
-        </div>
+      <div className="min-h-screen bg-background">
+        <PageHeaderBand />
 
-        {/* Mockup - inside hero so it's above the gradient, positioned to overflow into black section */}
-        <motion.div
-          initial={FADE_IN_UP_40}
-          animate={FADE_IN}
-          transition={EASE_OUT_08_DELAY_05}
-          className="relative px-6 md:px-8 pt-4 md:pt-8 pb-8 md:pb-16"
-        >
-          <div className="max-w-7xl mx-auto">
-            <HeroMockup />
-          </div>
-        </motion.div>
-      </div>
+        <main>
+          {/* Opening bookend: centered hero, interactive desktop mockup, and phone trio */}
+          <ChapterBand spacing="none" ruled={false} ticks={false} framed={false}>
+            <div className="pt-12 pb-8 md:pt-16 md:pb-10">
+              <Hero title={title} subtitle={subtitle} showHubEyebrow={showHubEyebrow} />
+              <GetStarted />
+            </div>
 
-      {/* Phone showcase */}
-      <PhoneShowcase />
+            <motion.div
+              initial={FADE_IN_UP_40}
+              animate={FADE_IN}
+              transition={EASE_OUT_08_DELAY_05}
+              className="relative pt-4 pb-6 md:pt-6 md:pb-8"
+            >
+              <div>
+                <HeroMockup />
+              </div>
+            </motion.div>
 
-      {/* Content section */}
-      <div className="landing-content bg-background">
-        <main className="p-6 md:p-20 md:pt-40 max-w-5xl mx-auto">
-          <div className="space-y-24">
+            <TrustStrip />
+
+            <PhoneShowcase />
+          </ChapterBand>
+
+          {/* Chapter 1: Community proof */}
+          <ChapterBand spacing="compact">
             <SocialProofWall />
-            <MultiProviderSection />
-            <TurnkeySection />
-            <AutomationSection />
-            <ExtensibleSection />
-            <SponsorsSection placement="page" />
-            <SponsorSection />
-            <PhilosophySection />
+          </ChapterBand>
+
+          {/* Chapter 2: The product (Providers, Deployment, Extensibility, Automation) */}
+          <ChapterBand spacing="none">
+            <div className="py-16 md:py-20">
+              <MultiProviderSection />
+            </div>
+            <ChapterDivider />
+            <div className="py-16 md:py-20">
+              <TurnkeySection />
+            </div>
+            <ChapterDivider />
+            <div className="py-16 md:py-20">
+              <ExtensibleSection pluginCount={pluginCount} />
+            </div>
+            <ChapterDivider />
+            <div className="py-16 md:py-20">
+              <AutomationSection />
+            </div>
+          </ChapterBand>
+
+          {/* Chapter 3: Paseo Hub */}
+          <ChapterBand spacing="chapter" tint="subtle">
+            <HubSection />
+          </ChapterBand>
+
+          {/* Chapter 4: Open source philosophy and consolidated sponsorship */}
+          <ChapterBand spacing="none">
+            <div className="py-16 md:py-20">
+              <PhilosophySection />
+            </div>
+            <ChapterDivider />
+            <div className="py-16 md:py-20">
+              <HomepageSponsorsSection />
+            </div>
+          </ChapterBand>
+
+          {/* Chapter 5: FAQ */}
+          <ChapterBand spacing="section">
             <FAQ />
-          </div>
+          </ChapterBand>
+
+          {/* Closing bookend: centered download CTA */}
+          <ChapterBand spacing="chapter" tint="subtle">
+            <ClosingCtaSection />
+          </ChapterBand>
         </main>
-        <SiteFooter sponsors={false} />
+
+        <SiteFooter width="default" sponsors={false} />
       </div>
     </CursorFieldProvider>
   );
 }
 
-function Nav() {
+function Hero({
+  title,
+  subtitle,
+  showHubEyebrow = false,
+}: {
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+  showHubEyebrow?: boolean;
+}) {
   return (
-    <nav className="mb-20 md:mb-24">
-      <SiteHeader />
-    </nav>
+    <div className="space-y-6 text-center">
+      {showHubEyebrow ? <HubHeroEyebrow /> : null}
+      <h1 className="font-display text-4xl font-semibold tracking-[-0.025em] leading-[1.02] md:text-6xl">
+        {title}
+      </h1>
+      <p className="mx-auto max-w-lg text-base leading-relaxed text-white/70 md:text-lg">
+        {subtitle}
+      </p>
+    </div>
   );
 }
 
-function Hero({ title, subtitle }: { title: React.ReactNode; subtitle: React.ReactNode }) {
+function HubHeroEyebrow() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   return (
-    <div className="space-y-6 text-center">
-      <h1 className="text-4xl md:text-6xl font-medium tracking-tight leading-[0.95]">{title}</h1>
-      <p className="text-base leading-relaxed text-white/70 md:text-lg max-w-lg mx-auto">
-        {subtitle}
-      </p>
+    <div className="flex justify-center">
+      <a
+        href={localize("/hub")}
+        className="group inline-flex max-w-full items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/75 transition-colors hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+      >
+        <PaseoHubMark className="h-3.5 w-3.5 shrink-0 text-white/90" />
+        <span className="font-medium text-white/90">{t("landing.hubEyebrow.product")}</span>
+        <span aria-hidden="true" className="h-3 w-px shrink-0 bg-white/15" />
+        <span className="truncate text-white/65">{t("landing.hubEyebrow.label")}</span>
+        <ArrowRight
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 text-white/45 transition-transform group-hover:translate-x-0.5 group-hover:text-white/80"
+        />
+      </a>
     </div>
   );
 }
@@ -290,14 +380,16 @@ function AgentBadge({ name, Icon }: (typeof FEATURED_AGENTS)[number]) {
 }
 
 function FeatureSection({
+  eyebrow,
   title,
   description,
   badge,
   links,
   children,
 }: {
+  eyebrow?: string;
   title: string;
-  description: string;
+  description: React.ReactNode;
   badge?: string;
   links?: ReadonlyArray<{ href: string; label: string }>;
   children: React.ReactNode;
@@ -309,51 +401,15 @@ function FeatureSection({
       viewport={VIEWPORT_60}
       transition={EASE_OUT_05}
     >
-      <SectionTitle title={title} description={description} badge={badge} links={links} />
+      <SectionOpener
+        eyebrow={eyebrow}
+        title={title}
+        description={description}
+        badge={badge}
+        links={links}
+      />
       {children}
     </motion.section>
-  );
-}
-
-function SectionTitle({
-  title,
-  description,
-  badge,
-  links,
-}: {
-  title: string;
-  description: string;
-  badge?: string;
-  links?: ReadonlyArray<{ href: string; label: string }>;
-}) {
-  return (
-    <div className="mb-12 space-y-2">
-      <div className="flex items-center gap-3">
-        <h2 className="text-3xl font-medium">{title}</h2>
-        {badge && (
-          <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">
-            {badge}
-          </span>
-        )}
-      </div>
-      <p className="text-base text-pretty text-muted-foreground max-w-lg">{description}</p>
-      {links ? (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs">
-          {links.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-extra-muted-foreground transition-colors hover:text-muted-foreground"
-            >
-              {link.label}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          ))}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -366,7 +422,7 @@ function SocialProofWall() {
       viewport={VIEWPORT_60}
       transition={EASE_OUT_05}
     >
-      <SectionTitle
+      <SectionOpener
         title={t("landing.socialProof.title")}
         description={t("landing.socialProof.description")}
       />
@@ -413,7 +469,7 @@ function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: bo
       target="_blank"
       rel="noreferrer"
       tabIndex={inert ? -1 : undefined}
-      className="group flex h-[154px] w-[320px] shrink-0 flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.05] md:w-[420px]"
+      className="group flex h-[154px] w-[300px] shrink-0 flex-col justify-between overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.04] md:w-[380px]"
       aria-label={t("landing.socialProof.readPost", { name: tweet.name })}
     >
       <div>
@@ -442,30 +498,34 @@ function MultiProviderSection() {
   const localize = useLocalizePath();
   return (
     <FeatureSection
+      eyebrow={t("landing.eyebrows.providers")}
       title={t("landing.providers.title")}
       description={t("landing.providers.description")}
     >
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4">
+      <HairlineGrid columns="2-3">
         {FEATURED_AGENTS.map((agent) => (
           <div
             key={agent.name}
-            className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 sm:gap-3 sm:px-5 sm:py-4"
+            className="flex items-center gap-3 bg-background px-5 py-4 transition-colors hover:bg-white/[0.025] sm:px-6 sm:py-5"
           >
             <span className="shrink-0 text-white/80">
-              <agent.Icon className="h-5 w-5 sm:h-7 sm:w-7" />
+              <agent.Icon className="h-5 w-5 sm:h-6 sm:w-6" />
             </span>
-            <span className="truncate text-sm font-medium sm:text-base">{agent.name}</span>
+            <span className="truncate text-sm font-medium text-white/90 sm:text-base">
+              {agent.name}
+            </span>
           </div>
         ))}
         <a
           href={localize("/agents")}
-          className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.01] px-3 py-3 text-white/50 hover:text-white/80 hover:border-white/20 hover:bg-white/[0.03] transition-colors sm:gap-3 sm:px-5 sm:py-4"
+          className="flex items-center justify-between gap-2 bg-background px-5 py-4 text-white/55 transition-colors hover:bg-white/[0.025] hover:text-accent-text sm:px-6 sm:py-5"
         >
           <span className="text-sm font-medium sm:text-base">
             {t("common.more", { count: ADDITIONAL_AGENT_COUNT })}
           </span>
+          <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
         </a>
-      </div>
+      </HairlineGrid>
     </FeatureSection>
   );
 }
@@ -478,13 +538,15 @@ function TurnkeySection() {
       title={t("landing.runAnywhere.title")}
       description={t("landing.runAnywhere.description")}
     >
-      <div className="space-y-8">
-        <ProductLead
-          icon={Monitor}
-          title={t("landing.runAnywhere.desktopTitle")}
-          description={t("landing.runAnywhere.desktopDescription")}
-        />
-        <div className="grid gap-4 md:grid-cols-3">
+      <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.08]">
+        <div className="bg-background p-6 md:p-7">
+          <ProductLead
+            icon={Monitor}
+            title={t("landing.runAnywhere.desktopTitle")}
+            description={t("landing.runAnywhere.desktopDescription")}
+          />
+        </div>
+        <div className="grid gap-px border-t border-white/[0.08] md:grid-cols-3">
           <TurnkeyExtensionCard
             icon={Smartphone}
             title={t("landing.runAnywhere.mobileTitle")}
@@ -505,7 +567,7 @@ function TurnkeySection() {
             description={t("landing.runAnywhere.teamsDescription")}
             ctaHref={localize("/hub")}
             ctaLabel={t("landing.runAnywhere.teamsCta")}
-            showIntegrationIcons
+            ctaIcon={PASEO_HUB_CTA_ICON}
           />
         </div>
       </div>
@@ -513,46 +575,38 @@ function TurnkeySection() {
   );
 }
 
+const PASEO_HUB_CTA_ICON = <PaseoHubMark className="h-4 w-4 shrink-0" />;
+
 function TurnkeyExtensionCard({
   icon: Icon,
   title,
   description,
   ctaHref,
   ctaLabel,
-  showIntegrationIcons = false,
+  ctaIcon,
 }: {
   icon: LucideIcon;
   title: string;
   description: string;
   ctaHref: string;
   ctaLabel: string;
-  showIntegrationIcons?: boolean;
+  ctaIcon?: React.ReactNode;
 }) {
   return (
-    <FeatureCard icon={Icon} title={title} description={description}>
-      <div className="flex items-center justify-between">
-        <a
-          href={ctaHref}
-          className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-2.5 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
-        >
-          {ctaLabel}
-          <ArrowRight className="h-3.5 w-3.5" />
-        </a>
-        {showIntegrationIcons ? INTEGRATION_ICONS : null}
-      </div>
-    </FeatureCard>
+    <FeatureCell icon={Icon} title={title} description={description}>
+      <a
+        href={ctaHref}
+        className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-colors hover:bg-foreground/90"
+      >
+        {ctaIcon}
+        {ctaLabel}
+        <ArrowRight className="h-3.5 w-3.5" />
+      </a>
+    </FeatureCell>
   );
 }
 
-const INTEGRATION_ICONS = (
-  <span className="flex items-center gap-2 text-extra-muted-foreground">
-    <GitHubIcon className="h-4 w-4" />
-    <SlackIcon className="h-4 w-4" />
-    <DiscordIcon className="h-4 w-4" />
-  </span>
-);
-
-/** The lead product of a section: an icon tile and title on the page background. */
+/** The lead product of a section: an icon tile and title. */
 function ProductLead({
   icon: Icon,
   title,
@@ -560,20 +614,20 @@ function ProductLead({
   actions,
 }: {
   icon: LucideIcon;
-  title: string;
+  title: React.ReactNode;
   description?: string;
   actions?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-4">
-        <div className="rounded-xl border border-white/10 bg-white/[0.06] p-3 text-muted-foreground">
-          <Icon className="h-6 w-6" strokeWidth={1.5} />
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.04] p-3 text-accent-text">
+          <Icon className="h-5 w-5" strokeWidth={1.5} />
         </div>
         <div className="space-y-0.5">
-          <h3 className="text-xl font-medium text-white/90">{title}</h3>
+          <h3 className="text-lg font-medium text-white/95">{title}</h3>
           {description ? (
-            <p className="text-sm leading-relaxed text-white/50">{description}</p>
+            <p className="text-sm leading-relaxed text-white/55">{description}</p>
           ) : null}
         </div>
       </div>
@@ -582,8 +636,8 @@ function ProductLead({
   );
 }
 
-/** A small card: icon and title on one line, the blurb below, an optional action last. */
-function FeatureCard({
+/** A hairline grid cell: icon and title on one line, the blurb below, an optional action last. */
+function FeatureCell({
   icon: Icon,
   title,
   description,
@@ -595,12 +649,12 @@ function FeatureCard({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col rounded-xl border border-white/10 bg-white/[0.025] p-5">
-      <div className="flex items-center gap-3">
-        <Icon className="h-5 w-5 shrink-0 text-extra-muted-foreground" strokeWidth={1.5} />
-        <h3 className="font-medium text-white/85">{title}</h3>
+    <div className="flex flex-col bg-background p-6">
+      <div className="flex items-center gap-2.5">
+        <Icon className="h-4 w-4 shrink-0 text-accent-text" strokeWidth={1.5} />
+        <h3 className="text-sm font-medium text-white/90">{title}</h3>
       </div>
-      <p className="mt-3 text-sm leading-relaxed text-white/45">{description}</p>
+      <p className="mt-2.5 text-sm leading-relaxed text-white/55">{description}</p>
       {children ? <div className="mt-auto pt-5">{children}</div> : null}
     </div>
   );
@@ -637,8 +691,11 @@ function AutomationSection() {
       description={t("landing.automation.description")}
       links={links}
     >
-      <div className="grid gap-4 md:grid-cols-[14rem_minmax(0,1fr)]">
-        <div className="grid self-start gap-2" role="tablist">
+      <div className="grid gap-px overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.08] md:grid-cols-[15rem_minmax(0,1fr)]">
+        <div
+          className="grid grid-cols-3 gap-px bg-white/[0.08] md:grid-cols-1 md:content-start md:bg-background"
+          role="tablist"
+        >
           {AUTOMATION_OPTIONS.map((option) => (
             <AutomationSelector
               key={option.kind}
@@ -673,17 +730,22 @@ function AutomationSelector({
       role="tab"
       aria-selected={active}
       onClick={handleClick}
-      className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-colors md:block md:p-4 ${
+      className={`cursor-pointer border-b-2 p-3.5 text-left transition-colors md:border-b md:border-b-white/[0.07] md:border-l-2 md:p-5 ${
         active
-          ? "border-white/20 bg-white/[0.07]"
-          : "border-white/10 bg-white/[0.025] hover:border-white/15 hover:bg-white/[0.04]"
+          ? "border-b-brand-green bg-white/[0.045] md:border-l-brand-green"
+          : "border-b-transparent bg-background hover:bg-white/[0.025] md:border-l-transparent"
       }`}
     >
-      <div className="flex shrink-0 items-center gap-2 text-muted-foreground md:mb-1">
-        <Icon className="h-3 w-3" strokeWidth={1.5} />
-        <span className="text-[10px]">{option.label}</span>
+      <div className="flex shrink-0 items-center gap-2 font-mono md:mb-1.5">
+        <Icon
+          className={`h-3.5 w-3.5 ${active ? "text-accent-text" : "text-muted-foreground"}`}
+          strokeWidth={1.5}
+        />
+        <span className={`text-[11px] ${active ? "text-accent-text" : "text-muted-foreground"}`}>
+          {option.label}
+        </span>
       </div>
-      <p className="text-xs leading-snug text-white/85 md:text-sm">
+      <p className="mt-1 text-xs leading-snug text-white/85 md:mt-0 md:text-sm">
         {t(`landing.automation.${option.kind}Caption`)}
       </p>
     </button>
@@ -694,7 +756,7 @@ function AutomationDetail({ kind }: { kind: AutomationKind }) {
   return (
     <div
       role="tabpanel"
-      className="min-h-80 min-w-0 overflow-hidden rounded-xl border border-white/10 bg-black/20 p-5 md:h-[26rem] md:p-6"
+      className="min-h-80 min-w-0 overflow-hidden bg-[#0c1110] p-5 md:h-[26rem] md:p-6"
     >
       {kind === "mcp" ? <McpAutomationTranscript /> : null}
       {kind === "cli" ? <CliAutomationExample /> : null}
@@ -703,41 +765,50 @@ function AutomationDetail({ kind }: { kind: AutomationKind }) {
   );
 }
 
+const MCP_AGENT_CALLS: ToolCall[] = [
+  { kind: "paseo", label: "Create agent", detail: "Fix #412: relay handshake race" },
+  { kind: "paseo", label: "Create agent", detail: "Fix #417: menu bar icon on macOS" },
+];
+
 function McpAutomationTranscript() {
   const { t } = useTranslation();
   return (
+    <AgentTurn request={t("landing.automation.transcriptRequest")}>
+      <AgentText>{t("landing.automation.transcriptPlan")}</AgentText>
+      <ToolCalls calls={MCP_AGENT_CALLS} />
+      <AgentText>{t("landing.automation.transcriptDone")}</AgentText>
+    </AgentTurn>
+  );
+}
+
+/** A user message and the agent's reply, laid out like the app's timeline. */
+function AgentTurn({ request, children }: { request: string; children: React.ReactNode }) {
+  return (
     <div className="space-y-5">
-      <div className="ml-auto w-fit max-w-xl rounded-xl rounded-tr-none bg-white/[0.07] px-4 py-3">
-        <p className="text-sm leading-relaxed text-white/75">
-          {t("landing.automation.transcriptRequest")}
-        </p>
-      </div>
-      <div className="flex items-start gap-3">
-        <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
-        <div className="min-w-0 flex-1 space-y-4">
-          <p className="text-sm leading-relaxed text-white/55">
-            {t("landing.automation.transcriptPlan")}
-          </p>
-          <div className="space-y-2 font-mono text-[11px]">
-            <McpAgentCall issue="#412" provider="claude/opus-4.6" />
-            <McpAgentCall issue="#417" provider="codex/gpt-5.6-sol" />
-          </div>
-          <p className="text-sm leading-relaxed text-white/55">
-            {t("landing.automation.transcriptDone")}
-          </p>
-        </div>
-      </div>
+      <UserMessage>{request}</UserMessage>
+      <div className="space-y-3">{children}</div>
     </div>
   );
 }
 
-function McpAgentCall({ issue, provider }: { issue: string; provider: string }) {
+function UserMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-white/[0.07] bg-white/[0.025] px-3 py-2">
-      <span className="text-sky-300/80">create_agent</span>
-      <span className="text-white/25">{issue}</span>
-      <span className="text-white/35">{provider}</span>
-      <span className="text-white/25">worktree</span>
+    <div className="ml-auto w-fit max-w-md rounded-xl bg-white/[0.07] px-4 py-3">
+      <p className="text-sm leading-relaxed text-white/80">{children}</p>
+    </div>
+  );
+}
+
+function AgentText({ children }: { children: React.ReactNode }) {
+  return <p className="text-sm leading-relaxed text-white/80">{children}</p>;
+}
+
+function ToolCalls({ calls }: { calls: ReadonlyArray<ToolCall> }) {
+  return (
+    <div>
+      {calls.map((call) => (
+        <ToolCallRow key={`${call.kind}:${call.detail}`} call={call} />
+      ))}
     </div>
   );
 }
@@ -834,41 +905,282 @@ function SdkAutomationExample() {
   );
 }
 
-function ExtensibleSection() {
+function HubSection() {
   const { t } = useTranslation();
-  const pluginActions = React.useMemo(() => <PluginActions />, []);
+  const localize = useLocalizePath();
   return (
-    <FeatureSection
-      title={t("landing.plugins.title")}
-      description={t("landing.plugins.description")}
+    <motion.section
+      initial={FADE_IN_UP}
+      whileInView={FADE_IN}
+      viewport={VIEWPORT_60}
+      transition={EASE_OUT_05}
+      aria-labelledby="hub-section-heading"
     >
+      <div className="mb-10 space-y-3 md:mb-12">
+        <h2 id="hub-section-heading">
+          <PaseoHubLockup size="display" className="h-9 w-auto text-foreground md:h-11" />
+          <span className="sr-only">{t("hub.title")}</span>
+        </h2>
+        <p className="max-w-xl text-base text-pretty text-muted-foreground">
+          {t("landing.hubSection.description")}
+        </p>
+      </div>
+
       <div className="space-y-8">
-        <ProductLead icon={Puzzle} title={t("landing.plugins.lead")} actions={pluginActions} />
-        <div className="grid gap-4 md:grid-cols-3">
-          {PLUGIN_CAPABILITIES.map((capability) => (
-            <FeatureCard
-              key={capability.key}
-              icon={capability.icon}
-              title={t(`landing.plugins.${capability.key}Title`)}
-              description={t(`landing.plugins.${capability.key}Description`)}
-            />
-          ))}
-        </div>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-white/45">{t("landing.plugins.license")}</p>
-          <a
-            href="https://github.com/getpaseo/paseo"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <GitFork className="h-4 w-4" strokeWidth={1.5} />
-            {t("landing.plugins.fork")}
-            <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+        <HubLandingFlow />
+
+        <div className="flex flex-wrap items-center gap-3">
+          <a href={localize("/hub")} className={PRIMARY_CTA_CLASS}>
+            {t("landing.hubSection.exploreCta")}
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </a>
+          <a href={localize("/docs/hub")} className={SECONDARY_CTA_CLASS}>
+            {t("landing.hubSection.docsCta")}
           </a>
         </div>
       </div>
+    </motion.section>
+  );
+}
+
+/** A client that runs plugins, named in the section lede with its icon. */
+function PluginClient({
+  icon: Icon,
+  className,
+  iconClassName = "mr-[0.3em]",
+  children,
+}: {
+  icon: LucideIcon;
+  className: string;
+  iconClassName?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <span className={`whitespace-nowrap ${className}`}>
+      <Icon
+        aria-hidden="true"
+        className={`inline-block size-[1em] align-[-0.15em] ${iconClassName}`}
+        strokeWidth={1.75}
+      />
+      {children}
+    </span>
+  );
+}
+
+const PLUGIN_CLIENT_COMPONENTS = {
+  desktop: <PluginClient icon={Monitor} className="text-sky-300" />,
+  web: <PluginClient icon={Globe} className="text-emerald-300" />,
+  // Optical: the phone glyph is narrower than its box, so pull both sides in.
+  mobile: (
+    <PluginClient
+      icon={Smartphone}
+      className="text-purple-300"
+      iconClassName="-ml-[0.12em] mr-[0.18em]"
+    />
+  ),
+};
+
+function ExtensibleSection({ pluginCount }: { pluginCount: Promise<number | null> }) {
+  const { t } = useTranslation();
+  const pluginActions = React.useMemo(() => <PluginActions />, []);
+  const description = React.useMemo(
+    () => <Trans i18nKey="landing.plugins.description" components={PLUGIN_CLIENT_COMPONENTS} />,
+    [],
+  );
+  const libraryTitle = React.useMemo(() => {
+    const fallback = t("landing.plugins.libraryTitle");
+    return (
+      <Await promise={pluginCount} fallback={fallback}>
+        {(count) =>
+          count && count > 0 ? t("landing.plugins.libraryTitleCount", { count }) : fallback
+        }
+      </Await>
+    );
+  }, [pluginCount, t]);
+  return (
+    <FeatureSection
+      eyebrow={t("landing.eyebrows.plugins")}
+      title={t("landing.plugins.title")}
+      description={description}
+    >
+      <div className="space-y-6">
+        <SelfModifyDemo />
+        <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.08]">
+          <div className="space-y-5 bg-background p-6">
+            <ProductLead
+              icon={Puzzle}
+              title={libraryTitle}
+              description={t("landing.plugins.libraryDescription")}
+              actions={pluginActions}
+            />
+            <PluginCategoryLinks />
+          </div>
+          <div className="flex flex-col gap-3 border-t border-white/[0.08] bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-white/50">{t("landing.plugins.license")}</p>
+            <a
+              href="https://github.com/getpaseo/paseo"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex shrink-0 items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-accent-text"
+            >
+              <GitFork className="h-4 w-4" strokeWidth={1.5} />
+              {t("landing.plugins.fork")}
+              <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+            </a>
+          </div>
+        </div>
+      </div>
     </FeatureSection>
+  );
+}
+
+const PLUGIN_BUILD_CALLS: ToolCall[] = [
+  { kind: "read", detail: "paseo-plugin/SKILL.md" },
+  { kind: "shell", detail: "paseo plugin init review-queue" },
+  { kind: "write", detail: "review-queue/index.ts" },
+  { kind: "write", detail: "review-queue/review-queue.client.tsx" },
+  { kind: "shell", detail: "paseo plugin install ./review-queue" },
+];
+
+// The demo plays once when it scrolls into view: the prompt, then each timeline
+// item in turn, then the panel the agent built slides in and fills.
+const DEMO_STEP_SECONDS = 0.45;
+const DEMO_STEPS = {
+  prompt: 0,
+  plan: 1.4,
+  firstCall: 2.2,
+} as const;
+const DEMO_DONE_STEP = DEMO_STEPS.firstCall + PLUGIN_BUILD_CALLS.length;
+const DEMO_PANEL_STEP = DEMO_DONE_STEP + 1;
+
+const DEMO_ITEM_VARIANTS: Variants = {
+  hidden: { opacity: 0, y: 6 },
+  shown: (step: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: step * DEMO_STEP_SECONDS, duration: 0.35, ease: "easeOut" },
+  }),
+};
+const DEMO_PANEL_VARIANTS: Variants = {
+  hidden: { opacity: 0, x: "100%" },
+  shown: {
+    opacity: 1,
+    x: 0,
+    transition: {
+      delay: DEMO_PANEL_STEP * DEMO_STEP_SECONDS,
+      duration: 0.6,
+      ease: [0.22, 0.61, 0.36, 1],
+    },
+  },
+};
+
+/** One piece of the demo that fades in at its step. */
+function DemoItem({ step, children }: { step: number; children: React.ReactNode }) {
+  return (
+    <motion.div variants={DEMO_ITEM_VARIANTS} custom={step}>
+      {children}
+    </motion.div>
+  );
+}
+
+/** The ask on the left, the panel it produced on the right. */
+function SelfModifyDemo() {
+  const { t } = useTranslation();
+  // Visitors who ask for reduced motion get the finished demo, with no slide or staging.
+  const reduceMotion = useReducedMotion();
+  return (
+    <motion.div
+      initial={reduceMotion ? "shown" : "hidden"}
+      whileInView="shown"
+      viewport={VIEWPORT_60}
+      className="grid min-h-[22rem] grid-cols-[minmax(0,1fr)] overflow-hidden rounded-xl border border-white/[0.08] bg-[#0c1110] md:grid-cols-[minmax(0,1fr)_17rem]"
+    >
+      <div className="space-y-5 p-5 md:p-6">
+        <DemoItem step={DEMO_STEPS.prompt}>
+          <UserMessage>{t("landing.plugins.request")}</UserMessage>
+        </DemoItem>
+        <div className="space-y-3">
+          <DemoItem step={DEMO_STEPS.plan}>
+            <AgentText>{t("landing.plugins.plan")}</AgentText>
+          </DemoItem>
+          <div>
+            {PLUGIN_BUILD_CALLS.map((call, index) => (
+              <DemoItem key={`${call.kind}:${call.detail}`} step={DEMO_STEPS.firstCall + index}>
+                <ToolCallRow call={call} />
+              </DemoItem>
+            ))}
+          </div>
+          <DemoItem step={DEMO_DONE_STEP}>
+            <AgentText>{t("landing.plugins.done")}</AgentText>
+          </DemoItem>
+        </div>
+      </div>
+      <ReviewQueuePreview />
+    </motion.div>
+  );
+}
+
+const REVIEW_QUEUE = [
+  { number: "#418", title: "Retry flaky relay handshake", author: "ana", age: "12m" },
+  { number: "#415", title: "Group schedules by project", author: "kenji", age: "1h" },
+  { number: "#409", title: "Add Gruvbox theme", author: "lea", age: "3h" },
+] as const;
+
+/** The panel the agent just built, docked like a real sidebar panel. */
+function ReviewQueuePreview() {
+  const { t } = useTranslation();
+  return (
+    <motion.div
+      variants={DEMO_PANEL_VARIANTS}
+      className="border-t border-white/10 bg-white/[0.025] p-4 md:border-t-0 md:border-l"
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <GitPullRequest className="h-4 w-4 text-muted-foreground" strokeWidth={1.5} />
+        <span className="text-sm font-medium text-white/85">{t("landing.plugins.panelTitle")}</span>
+        <span className="ml-auto rounded-full bg-white/[0.07] px-2 py-0.5 text-[10px] text-white/55">
+          {REVIEW_QUEUE.length}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {REVIEW_QUEUE.map((pr, index) => (
+          <DemoItem key={pr.number} step={DEMO_PANEL_STEP + 1.2 + index * 0.4}>
+            <div className="rounded-md px-2 py-2 hover:bg-white/[0.04]">
+              <p className="truncate text-xs text-white/80">{pr.title}</p>
+              <p className="mt-0.5 font-mono text-[10px] text-white/35">
+                {pr.number} · {pr.author} · {pr.age}
+              </p>
+            </div>
+          </DemoItem>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
+const SHOWCASE_CATEGORIES = [
+  "themes",
+  "sidebar",
+  "workspaces",
+  "providers",
+  "orchestration",
+  "git",
+] as const satisfies ReadonlyArray<CategorySlug>;
+
+function PluginCategoryLinks() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  return (
+    <div className="flex flex-wrap gap-2">
+      {SHOWCASE_CATEGORIES.map((category) => (
+        <a
+          key={category}
+          href={localize(categoryHref(category))}
+          className="rounded-full border border-white/10 bg-white/[0.025] px-3 py-1.5 text-xs text-white/70 transition-colors hover:border-white/15 hover:bg-white/[0.06] hover:text-white"
+        >
+          {t(`plugins.categories.${category}.label`)}
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -899,12 +1211,6 @@ function PluginActions() {
   );
 }
 
-const PLUGIN_CAPABILITIES = [
-  { icon: LayoutPanelLeft, key: "ui" },
-  { icon: Workflow, key: "lifecycle" },
-  { icon: Bot, key: "providers" },
-] as const;
-
 const PRINCIPLES = [
   { icon: Lock, key: "private" },
   { icon: Compass, key: "independent" },
@@ -918,43 +1224,50 @@ function PhilosophySection() {
   const { t } = useTranslation();
   return (
     <FeatureSection
+      eyebrow={t("landing.eyebrows.openSource")}
       title={t("landing.philosophy.title")}
       description={t("landing.philosophy.description")}
     >
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <HairlineGrid columns="3">
         {PRINCIPLES.map((principle) => (
-          <FeatureCard
+          <FeatureCell
             key={principle.key}
             icon={principle.icon}
             title={t(`landing.philosophy.${principle.key}Title`)}
             description={t(`landing.philosophy.${principle.key}Description`)}
           />
         ))}
-      </div>
+      </HairlineGrid>
     </FeatureSection>
+  );
+}
+
+function DownloadActions() {
+  const platform = useVisitorPlatform();
+  return (
+    <div className="mx-auto flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+      {isMobilePlatform(platform) ? (
+        <StoreButton platform={platform} />
+      ) : (
+        <DesktopDownloadButton platform={platform} />
+      )}
+      <div className="flex items-center justify-center gap-3">
+        {isMobilePlatform(platform) ? <DesktopAppLink /> : <StoreIconLinks />}
+        <ServerInstallButton />
+      </div>
+    </div>
   );
 }
 
 function GetStarted() {
   const { t } = useTranslation();
   const localize = useLocalizePath();
-  const platform = useVisitorPlatform();
   return (
-    <div className="pt-10">
+    <div className="pt-8">
       {/* The primary call to action owns its own row on phones so the small icon
           buttons never wrap and orphan one of themselves onto a line alone. It
           still hugs its label rather than stretching across the row. */}
-      <div className="mx-auto flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-        {isMobilePlatform(platform) ? (
-          <StoreButton platform={platform} />
-        ) : (
-          <DesktopDownloadButton platform={platform} />
-        )}
-        <div className="flex items-center justify-center gap-3">
-          {isMobilePlatform(platform) ? <DesktopAppLink /> : <StoreIconLinks />}
-          <ServerInstallButton />
-        </div>
-      </div>
+      <DownloadActions />
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 pt-6">
         <span className="text-xs text-muted-foreground">{t("landing.getStarted.supports")}</span>
         <div className="flex items-center gap-1">
@@ -964,12 +1277,34 @@ function GetStarted() {
         </div>
         <a
           href={localize("/agents")}
-          className="whitespace-nowrap text-xs text-muted-foreground hover:text-foreground transition-colors"
+          className="whitespace-nowrap text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           {t("common.more", { count: ADDITIONAL_AGENT_COUNT })}
         </a>
       </div>
     </div>
+  );
+}
+
+function ClosingCtaSection() {
+  const { t } = useTranslation();
+  return (
+    <section aria-labelledby="closing-cta-heading" className="text-center">
+      <div className="mb-6 flex justify-center">
+        <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-brand-green/40 bg-brand-green/15 text-accent-text">
+          <PaseoMark className="h-6 w-6" />
+        </span>
+      </div>
+      <SectionOpener
+        align="center"
+        eyebrow={t("landing.closingCta.eyebrow")}
+        headingId="closing-cta-heading"
+        title={t("landing.closingCta.title")}
+        description={t("landing.closingCta.description")}
+        className="mb-8"
+      />
+      <DownloadActions />
+    </section>
   );
 }
 
@@ -1116,7 +1451,7 @@ function PhoneShowcase() {
   const textAnimate = React.useMemo(() => (textInView ? FADE_IN : {}), [textInView]);
 
   return (
-    <div ref={containerRef} className="flex flex-col items-center pt-4 pb-16 gap-20">
+    <div ref={containerRef} className="flex flex-col items-center gap-14 pt-2 pb-12 md:pb-16">
       {/* Arrow + text */}
       <motion.div
         initial={FADE_IN_UP_TINY}
@@ -1208,11 +1543,38 @@ const FAQ_ENTRIES = [
 const FAQ_LINKS = {
   relay: "/docs/security",
   agents: "/agents",
-  muse: "/docs/muse-code",
+  muse: "/docs/supported-providers/muse-code",
   voice: "/docs/voice",
-  configuration: "/docs/configuration",
+  connectivity: "/docs/connectivity",
   worktrees: "/docs/worktrees",
 };
+
+function TrustStrip() {
+  const { t } = useTranslation();
+  return (
+    <div className="pb-10 md:pb-14">
+      <ul className="flex flex-col items-center justify-center gap-y-2 text-xs text-white/60 sm:flex-row sm:flex-wrap sm:gap-x-4 md:text-sm">
+        <li className="flex items-center gap-x-3 sm:gap-x-4">
+          <span>{t("landing.trustStrip.noTelemetry")}</span>
+          <span aria-hidden="true" className="select-none text-white/25">
+            ·
+          </span>
+          <span>{t("landing.trustStrip.e2eeRelay")}</span>
+        </li>
+        <li aria-hidden="true" className="hidden select-none text-white/25 sm:block">
+          ·
+        </li>
+        <li className="flex items-center gap-x-3 sm:gap-x-4">
+          <span>{t("landing.trustStrip.openSource")}</span>
+          <span aria-hidden="true" className="select-none text-white/25">
+            ·
+          </span>
+          <span>{t("landing.trustStrip.independent")}</span>
+        </li>
+      </ul>
+    </div>
+  );
+}
 
 function FAQ() {
   const { t } = useTranslation();
@@ -1228,21 +1590,26 @@ function FAQ() {
     [localize],
   );
   return (
-    <motion.div
+    <motion.section
       initial={FADE_IN_UP}
       whileInView={FADE_IN}
       viewport={VIEWPORT_60}
       transition={EASE_OUT_05}
-      className="space-y-6"
+      aria-labelledby="home-faq-heading"
+      className="grid items-start gap-10 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:gap-16"
     >
-      <h2 className="text-3xl font-medium">{t("landing.faq.title")}</h2>
-      <div className="space-y-6">
+      <SectionOpener
+        headingId="home-faq-heading"
+        title={t("landing.faq.title")}
+        className="mb-0 self-start"
+      />
+      <div className="divide-y divide-white/[0.08] border-y border-white/[0.08]">
         {FAQ_ENTRIES.map((entry) => (
           <FAQItem key={entry} question={t(`landing.faq.${entry}Question`)}>
             <Trans i18nKey={`landing.faq.${entry}Answer`} components={links} />
           </FAQItem>
         ))}
       </div>
-    </motion.div>
+    </motion.section>
   );
 }

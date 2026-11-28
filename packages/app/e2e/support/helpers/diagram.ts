@@ -148,3 +148,59 @@ export async function expectFullscreenDiagram(
 export async function expectFullscreenDiagramClosed(page: Page): Promise<void> {
   await expect(page.getByTestId(FULLSCREEN_VIEWPORT)).toHaveCount(0);
 }
+
+/** Tall diagrams stay within the screen so their controls remain reachable. */
+export async function expectInlineDiagramFitsViewport(page: Page): Promise<void> {
+  const viewport = page.getByTestId("mermaid-viewport").last();
+  const box = await viewport.boundingBox();
+  expect(box, "the inline diagram has measurable layout").not.toBeNull();
+  const screenHeight = page.viewportSize()!.height;
+  expect(box!.height, "the inline diagram fits within the screen").toBeLessThan(screenHeight);
+  const contentHeight = await diagramSvg(page, "mermaid-viewport").evaluate(
+    (svg) => (svg as SVGSVGElement).viewBox.baseVal.height,
+  );
+  expect(box!.height, "a tall diagram is bounded rather than expanding the chat").toBeLessThan(
+    contentHeight,
+  );
+}
+
+/** Exercise pointer toggles and the controls encountered along that same journey. */
+export async function toggleDiagramSourceAndVerifyControls(page: Page): Promise<void> {
+  const viewport = page.getByTestId("mermaid-viewport").last();
+  const iframe = await viewport.locator("iframe").elementHandle();
+  for (let iteration = 0; iteration < 3; iteration++) {
+    await viewport.hover();
+    await page.getByRole("button", { name: "View source" }).last().click();
+    const viewDiagram = page.getByRole("button", { name: "View diagram" }).last();
+    await viewDiagram.click({ timeout: 10_000 });
+    await expect(viewDiagram).toHaveCount(0);
+    await expectFullscreenDiagramClosed(page);
+    expect(
+      await viewport.locator("iframe").evaluate((node, original) => node === original, iframe),
+      "switching views preserves the rendered diagram",
+    ).toBe(true);
+  }
+  await viewport.hover();
+  await page.getByRole("button", { name: "View source" }).last().click();
+  const hiddenFullscreen = viewport.getByRole("button", {
+    name: "Fullscreen",
+    includeHidden: true,
+  });
+  await hiddenFullscreen.focus();
+  await expect(hiddenFullscreen).not.toBeFocused();
+  await page.getByRole("button", { name: "View diagram" }).last().click();
+  await viewport.hover();
+  const fullscreen = viewport.getByRole("button", { name: "Fullscreen", exact: true });
+  const box = await viewport.boundingBox();
+  const control = await fullscreen.boundingBox();
+  expect(box).not.toBeNull();
+  expect(control).not.toBeNull();
+  expect(control!.y, "the toolbar starts inside the preview").toBeGreaterThanOrEqual(box!.y);
+  expect(control!.y + control!.height, "the toolbar fits inside the preview").toBeLessThanOrEqual(
+    box!.y + box!.height,
+  );
+  await viewport.getByRole("button", { name: "Zoom in" }).click();
+  await expect(viewport.getByRole("button", { name: "Reset view" })).toBeEnabled();
+  await viewport.getByRole("button", { name: "Reset view" }).click();
+  await expect(viewport.getByRole("button", { name: "Reset view" })).toBeDisabled();
+}

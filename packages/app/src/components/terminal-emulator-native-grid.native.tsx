@@ -51,14 +51,11 @@ import {
   TERMINAL_SELECTION_GRIP_SIZE,
 } from "../terminal/native-renderer/terminal-selection-controller";
 import { resolveNativeTerminalMountAction } from "../terminal/native-renderer/terminal-mount-policy";
-import {
-  forwardNativeTerminalKey,
-  type NativeTerminalKey,
-} from "../terminal/native-renderer/terminal-key-events";
+import { type NativeTerminalKeyEvent } from "../terminal/native-renderer/terminal-key-events";
 import {
   TerminalInput,
   type TerminalInputHandle,
-} from "../terminal/native-renderer/terminal-input.native";
+} from "../terminal/native-renderer/terminal-input";
 import {
   shouldClaimNativeTerminalSize,
   type NativeTerminalSizeClaimAction,
@@ -93,6 +90,7 @@ function NativeTerminalEmulator({
   testId = "terminal-surface",
   xtermTheme = DEFAULT_XTERM_THEME,
   scrollbackLines,
+  characterWidths,
   fontFamily,
   fontSize,
   keyboardInset = 0,
@@ -373,6 +371,7 @@ function NativeTerminalEmulator({
       rows: size.rows,
       cols: size.cols,
       scrollbackLines,
+      characterWidths,
     });
     terminalRef.current = terminal;
     screenModelRef.current = createNativeTerminalScreenModel({ terminal });
@@ -387,6 +386,7 @@ function NativeTerminalEmulator({
     resetInputModeTracker,
     resolveTerminalScreen,
     scrollbackLines,
+    characterWidths,
     clearSelection,
   ]);
 
@@ -508,9 +508,9 @@ function NativeTerminalEmulator({
   );
 
   const handleNativeTerminalKey = useCallback(
-    (key: NativeTerminalKey) => {
+    (event: NativeTerminalKeyEvent) => {
       claimActiveTerminalSizeForAction("key");
-      forwardNativeTerminalKey({ key, onTerminalKey: callbacksRef.current.onTerminalKey });
+      callbacksRef.current.onTerminalKey?.(event);
     },
     [claimActiveTerminalSizeForAction],
   );

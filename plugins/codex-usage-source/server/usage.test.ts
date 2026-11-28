@@ -117,6 +117,56 @@ test("coerces credit balance and marks a 96 percent window dangerous", async () 
   ]);
 });
 
+test("reports enterprise individual spend limit percentage and reset", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({
+      plan_type: "enterprise",
+      spend_control: {
+        individual_limit: { used_percent: 5, remaining_percent: 95, reset_at: 1795996800 },
+      },
+    }),
+  );
+
+  expect(report).toMatchObject({
+    planLabel: "enterprise",
+    windows: [
+      expect.objectContaining({
+        id: "individual_limit",
+        label: "Individual spend limit",
+        summary: true,
+        usedPct: 5,
+        remainingPct: 95,
+        resetsAt: new Date(1795996800 * 1000).toISOString(),
+      }),
+    ],
+  });
+});
+
+test.each([
+  [{ used_percent: 5 }, 5, 95],
+  [{ remaining_percent: 95 }, 5, 95],
+  [{ used_percent: 5, remaining_percent: 90 }, 5, 90],
+  [{ used_percent: 110 }, 110, 0],
+])(
+  "completes individual spending percentages for %j",
+  async (individual_limit, usedPct, remainingPct) => {
+    const report = await fetchUsage(authInput(fixtureHome), async () =>
+      Response.json({ spend_control: { individual_limit } }),
+    );
+    expect(report).toMatchObject({
+      status: "available",
+      windows: [expect.objectContaining({ id: "individual_limit", usedPct, remainingPct })],
+    });
+  },
+);
+
+test("omits individual spend limit without a percentage", async () => {
+  const report = await fetchUsage(authInput(fixtureHome), async () =>
+    Response.json({ spend_control: { individual_limit: { reset_at: 1795996800 } } }),
+  );
+  expect(report.windows).toEqual([]);
+});
+
 test("summarizes the session and weekly windows by default, not code review", async () => {
   const report = await fetchUsage(
     authInput(fixtureHome),
@@ -328,9 +378,10 @@ test("reports every named additional limit with its own duration identity", asyn
 
 test("a weekly pin means weekly after the provider moves it between slots", async () => {
   const { resolvePinnedUsage } = await import("../../../packages/app/src/usage/pinned.js");
+  const { DEFAULT_USAGE_PREFERENCES } =
+    await import("../../../packages/app/src/usage/preferences.js");
   const preferences = {
-    displayAs: "used" as const,
-    serverId: null,
+    ...DEFAULT_USAGE_PREFERENCES,
     pins: [{ sourceId: "codex", windowId: "weekly" }],
   };
   for (const primaryWeekly of [false, true]) {
@@ -464,4 +515,243 @@ test("#6155: real Codex and OpenCode stores share an account but keep agent fail
     problem: { kind: "rejected", status: 401, refreshedBy: "codex" },
   });
   expect(agent?.loginErrors).toEqual([host!.loginErrors![0]]);
+});
+
+test("OpenCode v2 database login reports usage while the v1 file login expired and follows account switches", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "usage-opencode-v2-"));
+  try {
+    const data = join(directory, "data");
+    const dbPath = join(data, "opencode", "opencode.db");
+    await mkdir(join(data, "opencode"), { recursive: true });
+    await writeFile(
+      join(data, "opencode", "auth.json"),
+      JSON.stringify({ openai: { type: "oauth", access: "fixture-expired", expires: 500 } }),
+    );
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    db.exec(
+      "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT, connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER, time_updated INTEGER)",
+    );
+    const insert = db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    insert.run(
+      "cred_a",
+      "openai",
+      "OpenAI A",
+      JSON.stringify({
+        type: "oauth",
+        access: "fixture-db-a",
+        expires: 2000,
+        metadata: { accountID: "account-a" },
+      }),
+      null,
+      "chatgpt-headless",
+      1,
+      1,
+      1,
+    );
+    insert.run(
+      "cred_b",
+      "openai",
+      "OpenAI B",
+      JSON.stringify({
+        type: "oauth",
+        access: "fixture-db-b",
+        expires: 2000,
+        metadata: { accountID: "account-b" },
+      }),
+      null,
+      "chatgpt-headless",
+      0,
+      2,
+      2,
+    );
+    db.close();
+
+    const env = { HOME: directory, XDG_DATA_HOME: data };
+    const lookup = { home: directory, env, platform: "linux" as const, now: () => 1_000 };
+    const fetchApi: typeof fetch = async (_url, init) => {
+      const token = new Headers(init?.headers).get("Authorization");
+      const used = token === "Bearer fixture-db-b" ? 64 : 18;
+      return Response.json({
+        plan_type: "plus",
+        rate_limit: { primary_window: { used_percent: used, limit_window_seconds: 18000 } },
+      });
+    };
+    const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+      hasAgent: (id) => id === "opencode-agent",
+      usageSession: () => ({
+        provider: "opencode",
+        model: "openai/gpt-5.4",
+        env,
+        sessionKey: "v2-session",
+      }),
+    });
+    registry.register({
+      id: "codex",
+      label: "Codex",
+      discover: (scope) => discover(scope, lookup),
+      fetch: (input) => fetchUsage(inputSchema.parse(input), fetchApi, lookup),
+    });
+
+    const first = await registry.listReports({ agentId: "opencode-agent" });
+    expect(first).toHaveLength(1);
+    expect(first[0]?.id).toBe("codex:account-a");
+    expect(first[0]?.report.status).toBe("available");
+    expect(first[0]?.report.windows[0]?.usedPct).toBe(18);
+
+    // Switch the active login in opencode.db while keeping row A present (inactive).
+    const switcher = new DatabaseSync(dbPath);
+    switcher.exec("UPDATE credential SET active = 0 WHERE id = 'cred_a'");
+    switcher.exec("UPDATE credential SET active = 1 WHERE id = 'cred_b'");
+    switcher.close();
+
+    const switched = await registry.listReports({ agentId: "opencode-agent", forceRefresh: true });
+    expect(switched).toHaveLength(1);
+    expect(switched[0]?.id).toBe("codex:account-b");
+    expect(switched[0]?.report.status).toBe("available");
+    expect(switched[0]?.report.windows[0]?.usedPct).toBe(64);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("suppresses local Codex credentials for env-token overrides and wrapper commands while keeping custom CODEX_HOME profiles", async () => {
+  const home = await mkdtemp(join(tmpdir(), "codex-wrapper-guard-"));
+  const defaultDir = join(home, ".codex");
+  const customDir = join(home, "work-codex");
+  try {
+    await mkdir(defaultDir, { recursive: true });
+    await mkdir(customDir, { recursive: true });
+    await writeFile(
+      join(defaultDir, "auth.json"),
+      JSON.stringify({ tokens: { access_token: "default-token", account_id: "default-acct" } }),
+    );
+    await writeFile(
+      join(customDir, "auth.json"),
+      JSON.stringify({ tokens: { access_token: "work-token", account_id: "work-acct" } }),
+    );
+    const lookup = { home, env: { HOME: home }, platform: "linux" as const };
+
+    // Legitimate custom CODEX_HOME with custom binary path still works.
+    expect(
+      await discover(
+        {
+          kind: "session",
+          provider: "codex",
+          env: { HOME: home, CODEX_HOME: customDir },
+          launch: {
+            command: "/opt/codex-nightly/codex",
+            args: [],
+            env: { HOME: home, CODEX_HOME: customDir },
+          },
+        },
+        lookup,
+      ),
+    ).toEqual([expect.objectContaining({ key: "work-acct" })]);
+
+    // Exporting OPENAI_API_KEY alone does not override Codex ChatGPT login in auth.json.
+    expect(
+      await discover(
+        {
+          kind: "session",
+          provider: "codex",
+          env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" },
+          launch: {
+            command: "codex",
+            args: [],
+            env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" },
+          },
+        },
+        lookup,
+      ),
+    ).toEqual([expect.objectContaining({ key: "default-acct" })]);
+    expect(
+      await discover(
+        {
+          kind: "global",
+          launch: {
+            command: "codex",
+            args: [],
+            env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" },
+          },
+        },
+        { ...lookup, env: { HOME: home, OPENAI_API_KEY: "sk-openai-key" } },
+      ),
+    ).toEqual([expect.objectContaining({ key: "default-acct" })]);
+
+    // Session scope suppresses local disk fallback for Codex login env overrides and wrappers.
+    for (const override of [
+      { env: { CODEX_API_KEY: "sk-codex-key" } },
+      { env: { CODEX_ACCESS_TOKEN: "at-codex-token" } },
+      { env: { OPENAI_BASE_URL: "https://proxy.example.test/v1" } },
+      {
+        env: { OPENAI_BASE_URL: "https://proxy.example.test/v1", OPENAI_API_KEY: "sk-openai-key" },
+      },
+      {
+        launch: {
+          command: "/opt/homebrew/bin/teamcodex",
+          args: ["run", "--"],
+          env: { HOME: home },
+        },
+      },
+      {
+        launch: {
+          command: "/usr/local/bin/codex-proxy-wrapper",
+          args: [],
+          env: { HOME: home, CODEX_HOME: customDir },
+        },
+      },
+    ]) {
+      expect(
+        await discover(
+          {
+            kind: "session",
+            provider: "codex",
+            env: { HOME: home, ...override.env },
+            ...(override.launch ? { launch: override.launch } : {}),
+          },
+          lookup,
+        ),
+      ).toEqual([]);
+    }
+
+    // Global scope suppresses local Codex credentials for wrapper commands and Codex login env overrides.
+    expect(
+      await discover(
+        {
+          kind: "global",
+          launch: {
+            command: "/opt/homebrew/bin/teamcodex",
+            args: ["run", "--"],
+            env: { HOME: home },
+          },
+        },
+        lookup,
+      ),
+    ).toEqual([]);
+    for (const envOverride of [
+      { CODEX_API_KEY: "sk-codex-key" },
+      { CODEX_ACCESS_TOKEN: "at-codex-token" },
+      { OPENAI_BASE_URL: "https://proxy.example.test/v1" },
+    ]) {
+      expect(
+        await discover(
+          {
+            kind: "global",
+            launch: {
+              command: "codex",
+              args: [],
+              env: { HOME: home, ...envOverride },
+            },
+          },
+          lookup,
+        ),
+      ).toEqual([]);
+      expect(
+        await discover({ kind: "global" }, { ...lookup, env: { HOME: home, ...envOverride } }),
+      ).toEqual([]);
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });

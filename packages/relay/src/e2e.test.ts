@@ -56,7 +56,7 @@ function spawnRelayDevServer(port: number): ChildProcess {
       wranglerCliPath,
       "dev",
       "--local",
-      // Exercise the local Durable Object, independent of production cutover routing.
+      // Local execution still inherits production vars; exercise the local Durable Object.
       "--var",
       "PASEO_RELAY_UPSTREAM:",
       "--ip",

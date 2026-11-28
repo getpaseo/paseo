@@ -13,15 +13,19 @@ nav: 参考
 本地插件是安装到某个 Paseo daemon 中的目录来源。插件可以贡献：
 
 - 为 Paseo 客户端添加 React Native 界面，以及侧边栏顶部和底部项；
+- 替换侧边栏列表的[侧边栏视图](/docs/plugins/sidebar-views)，以及工作区行上的[徽标](#workspace-row-badge-items)；
 - 作为工作区标签页打开的工作区面板和 Agent 面板；
 - 用于查看或编辑匹配文件的[文件面板](#file-panels)；
 - Command Center 中的全局、工作区和 Agent 操作；
-- 消息 Composer 中的斜杠命令；
+- 消息 Composer 中的斜杠命令、[控件](#composer-items)、胶囊和可搜索的外部资源；
+- 工作区标题栏中的[按钮](#header-buttons)，以及新建工作区界面上的[字段](#new-workspace-items)；
+- [设置界面](#settings-screens)，以及 **设置 → 外观** 中的浅色和深色主题；
 - 经过转换的、以及由 daemon 推送的 Agent 时间线行；
-- **设置 → 外观** 中的浅色和深色主题；
-- 在 daemon 旁运行、经过 schema 校验的 RPC 处理函数；
-- 通过 TypeScript SDK 执行的普通 Paseo 操作；
-- 消息 Composer 中可搜索的外部资源。
+- 面向活跃客户端或移动推送的[通知](#notifications)以及自定义点击处理函数；
+- 在 daemon 旁运行、经过 schema 校验的 RPC 处理函数和事件流；
+- 修改或观察工作区、worktree 和 Agent 操作的[钩子](/docs/plugins/hooks)；
+- [Agent Provider](/docs/plugins/providers)、[用量来源](#usage-sources)和 [worktree 管理器](#worktree-managers)；
+- 通过 TypeScript SDK 执行的普通 Paseo 操作。
 
 插件代码是受信任的，没有沙盒。客户端界面在 Paseo 应用中运行。后端贡献在一个子进程中运行，可以访问 daemon 所在的机器，包括它的文件、进程、凭据和网络。
 
@@ -73,10 +77,10 @@ my-plugin/
 | 字段           | 是否必填 | 行为                                                                                                       |
 | -------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
 | `id`           | 是       | 默认的安装 ID。                                                                                            |
-| `name`         | 否       | 注册表和网站使用的非空显示名称；与安装 ID 无关。                                                           |
+| `name`         | 否       | 注册表、网站、**设置 → 插件** 中的插件行以及插件设置页标题使用的非空显示名称。没有 `name` 时显示插件 ID。  |
 | `icon`         | 否       | 插件包内 PNG 文件的相对路径。                                                                              |
 | `media`        | 否       | 包内图片或视频路径的数组，或 HTTPS URL。空数组是有效的。                                                   |
-| `description`  | 否       | 在 **设置 → 插件** 中显示在插件 ID 下方的非空摘要。                                                        |
+| `description`  | 否       | 在 **设置 → 插件** 中显示在插件名称下方的非空摘要。                                                        |
 | `translations` | 否       | 其他语言的展示文本，由注册表读取，Paseo 会忽略它。见[其他语言](/docs/plugins/publishing#other-languages)。 |
 | `requirements` | 否       | 支持的 Paseo 版本，见下文。                                                                                |
 | `build`        | 否       | 准备命令，见 CLI 参考。                                                                                    |
@@ -349,23 +353,112 @@ openBrowser({ url, workspaceId: remoteWorkspaceId, serverId: remoteServerId });
 
 ### 服务端运行时 {#server-runtime}
 
-Paseo 为服务端代码提供 `@getpaseo/plugin`、`@getpaseo/plugin/server`、`@getpaseo/plugin/server/provider`、`@getpaseo/plugin/server/acp` 和 `zod`。后端贡献在 daemon 子进程中运行，可以通过 Node 访问宿主机器。请把文件系统、进程、凭据以及其他本机工作放在 `server/` 下。没有 `index.server.ts` 的插件不会启动子进程。
+Paseo 为服务端代码提供 `@getpaseo/plugin`、`@getpaseo/plugin/server`、`@getpaseo/plugin/server/provider`、`@getpaseo/plugin/server/acp`、`@getpaseo/plugin/server/usage` 和 `zod`。后端贡献在 daemon 子进程中运行，可以通过 Node 访问宿主机器。请把文件系统、进程、凭据以及其他本机工作放在 `server/` 下。没有 `index.server.ts` 的插件不会启动子进程。
 
 ### Provider {#providers}
 
-直接实现和 ACP 实现、会话生命周期、Composer 设置、时间线渲染器、测试和分发，见[构建 Provider 插件](/docs/plugins/providers)。
+直接实现和 ACP 实现、会话生命周期、选项控件、时间线渲染器、测试和分发，见[构建 Provider 插件](/docs/plugins/providers)。
 
 使用来自 `@getpaseo/plugin/server/provider` 的 `ProviderRegistration` 调用 `server.registerProvider()`。它的连接通过 `send()` 接收输入，并通过 `onEvent()` 发出完整的状态快照。`send()` 只报告是否接受；提示词的处理结果、轮次、配置、持久化、权限和失败都是事件。
 
-消息、结构化命令、引导和命令副作用都使用同一个 `session.prompt` 输入。在实时的用户时间线条目上重复 `clientMessageId`，并恰好发布一个与之匹配的 `session.prompt_result`。把 Provider 创建的子会话发布为带有 `parentSessionId` 的会话。
+消息、结构化命令、引导和命令副作用都使用同一个 `session.prompt` 输入。在实时的用户时间线条目上重复 `clientMessageId`，并恰好发布一个与之匹配的 `session.prompt_result`。把 Provider 创建的子会话发布为带有 `parentSessionId` 的会话。通过已完成的 `session.turn` 上的 `metrics` 和 `session.metrics` 报告测量数据，见[报告指标](/docs/plugins/providers#report-metrics)。
 
-Provider 设置是 Paseo 在 Composer 中渲染的开关/选择描述符。把 Provider 私有的选项保留在 `session.open` 的 `ProviderSessionConfig.providerOptions` 中。这个记录包含配置的默认值和针对单个 Agent 的覆盖值；请在你的 Provider 中校验并应用它。配置和合并语义见 [Provider 选项](/docs/sdk/provider-options)。宿主工具以 MCP 服务器的形式出现在完整的会话配置中。
+Provider 选项是一个记录，即 `session.open` 中的 `ProviderSessionConfig.providerOptions`。它包含配置的默认值和针对单个 Agent 的覆盖值；请在你的 Provider 中校验并应用它。在 `session.config` 中为需要在 Composer 里显示开关或选择器的顶层键报告 `controls`，并在 `providerOptions` 下报告会话正在使用的值。运行中会话的修改会以 `session.configure` 的形式到达，内容在 `changes.providerOptions` 中。配置和合并语义见 [Provider 选项](/docs/sdk/provider-options)。宿主工具以 MCP 服务器的形式出现在完整的会话配置中。
 
 Paseo 刷新 Agent 的方式是关闭它当前的 Provider 会话，再用当前的配置和持久化值打开它。Provider 在 `session.open` 期间重新读取外部状态。
 
-使用 `@getpaseo/plugin/server/acp` 中的 `runAcpProvider()` 适配一个基于命令的 ACP。只针对厂商在发现、配置、通知或工具调用方面的差异添加转换器钩子。
+使用 `@getpaseo/plugin/server/acp` 中的 `runAcpProvider()` 适配一个基于命令的 ACP。使用转换器钩子处理厂商特有的行为。参见[适配 ACP Agent](/docs/plugins/providers#adapt-an-acp-agent)。
+
+在 `discover` 和 `configure` 中，调用 `context.request(method, params)` 发送 ACP 扩展请求。
+Promise 返回 JSON 值，或以 Agent 的 JSON-RPC 错误拒绝。
+
+在 `toolCall` 中，通过 `context.mcpServerNames` 识别 Paseo 打开 ACP 会话时提供的服务器。
+兼容旧版 SDK 或处理直接在 agent 中配置的服务器时，可以回退到空列表。`toolCall.content` 包含调用的 ACP `content` 块，
+`context.previous` 是 Paseo 上一次展示的调用（经过所有转换器之后）。旧版 SDK 中两者都不存在；调用的第一次更新没有 `previous`。
+标准工具卡片见[适配 ACP Agent](/zh-CN/docs/plugins/providers#adapt-an-acp-agent)。
+
+使用 `config(state, context)` 返回 Paseo 显示的配置快照。
+Paseo 在会话就绪、收到配置通知或提交配置更改时调用此同步钩子。
+使用 `configure` 向 Agent 发送更改。
 
 `ProviderRegistration.icon` 是相对于插件目录的文件路径，例如 `icon.svg`。它必须解析到该目录内一个遵循 [SVG 图标规则](#svg-rules)的普通文件。Paseo 在插件启动时读取并校验该文件；这个字符串从不是内联 SVG 或 URL。
+
+#### Provider 安装 {#provider-installation}
+
+**需要 Paseo 0.17**。较旧的版本会忽略 `installation`。`ProviderRegistration.installation` 填充 Provider 设置中的 **安装** 部分。每个成员都是可选的。`inspect` 和 `installUrl` 都没有声明时，Paseo 会隐藏这个部分。完整示例见[报告安装与更新](/docs/plugins/providers#report-installation-and-updates)。类型从 `@getpaseo/plugin/server/provider` 导入。
+
+```ts
+interface ProviderInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+```
+
+| 成员              | 调用时机                                          | 期限  | 结果保留时间                                    |
+| ----------------- | ------------------------------------------------- | ----- | ----------------------------------------------- |
+| `inspect`         | 打开 Provider 设置时                              | 20 秒 | 30 秒                                           |
+| `checkForUpdates` | `inspect` 回答 `installed` 之后，或没有 `inspect` | 25 秒 | `current` 或 `available` 为一小时，其他为 30 秒 |
+| `update`          | 用户选择 **更新** 时，每个 Provider 同一时间一个  | 无    | `succeeded` 之后 Paseo 重新读取两个结果         |
+
+Provider 设置中的 **刷新** 会跳过保留的结果，并清除失败的更新。Paseo 从不在会话开始前或按计划调用这些成员。超过期限或抛出异常会变成显示该消息的错误。
+
+`installUrl` 和 `updateUrl` 是 Paseo 在浏览器中打开的 `http` 或 `https` 页面。其中任何一个是其他类型的 URL 时，插件无法启动。
+
+上下文：
+
+| 字段               | 类型                                      | 含义                                                                                                                      |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `launch`           | `ProviderInstallationLaunch \| undefined` | 会话将使用的启动配置，带有 `resolved`。注册没有声明 `command` 时不存在。                                                  |
+| `signal`           | `AbortSignal`                             | 当 Paseo 停止等待或 daemon 停止时中止。                                                                                   |
+| `installedVersion` | `string \| undefined`                     | 仅用于 `checkForUpdates`。`inspect` 报告的 `version`，按原样传入。`inspect` 没有报告版本或你没有声明 `inspect` 时不存在。 |
+| `report`           | `(event: ProviderUpdateReport) => void`   | 仅用于 `update`。按顺序向用户显示 `{ type: "stdout" \| "stderr" \| "message", text }`。                                   |
+
+`ProviderInstallationLaunch` 是 `{ command, args, env, resolved }`。`resolved: true` 时，`command` 是可执行文件的路径。`resolved: false` 时，Paseo 没有找到可执行文件，`command` 是配置中写的名称。
+
+结果：
+
+| 类型                   | 取值                                                                                                                                   |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderInspection`   | `{ status: "installed", version?: string }` 或 `{ status: "not_installed" }`                                                           |
+| `ProviderUpdateCheck`  | `{ status: "current" }`、`{ status: "available", versions?: string[], message?: string }` 或 `{ status: "unknown", message?: string }` |
+| `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` 或 `{ status: "failed", message: string }`                                                 |
+
+Paseo 按原样显示 `version`、`versions` 和 `message`，不解析或排序它们。只要 `inspect` 报告的 `version` 不变，Paseo 会在最长一小时内复用 `current` 或 `available` 的结果。它保留 `report` 输出的最后 65,536 个字符。不符合这些结构的结果是错误。只要 `inspect` 报告 CLI 已安装且你声明了 `update`，就会出现 **更新**，与 `checkForUpdates` 的回答以及是否声明它无关；没有 `update` 时，Paseo 在同样条件下提供 `updateUrl`。
+
+#### Provider 故障排查 {#provider-troubleshooting}
+
+**需要 Paseo 0.18**。较旧的版本会忽略 `docsUrl`，并且只显示 `diagnostic` 文本。Provider 设置中有一个 **故障排查** 部分，其中包含 **诊断报告** 和 **文档**。用户会把报告复制到问题反馈中，所以请把能解释错误结果的事实写进报告。
+
+`ProviderRegistration.docsUrl` 是 **文档** 打开的 `http` 或 `https` 页面。请让它指向说明如何设置该 Provider 以及如何解决常见问题的页面。它是其他类型的 URL 时，插件会启动失败。没有声明时，Paseo 会隐藏 **文档**。
+
+报告由 Provider 的 `label` 和若干行组成，每行是一个 `Label: value`。Paseo 会写入以下各行：
+
+| 行                                                             | 显示条件                                                  |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `Command source`、`Configured command`                         | 声明了 `command`                                          |
+| `Daemon PATH`、`Daemon shell`、`PATH matches`、`Resolved path` | 声明了 `command`                                          |
+| `Version`                                                      | Paseo 找到了可执行文件，且你声明了 `installation.inspect` |
+| `Models`、`Status`                                             | 始终显示                                                  |
+
+`status(request)` 会在这些行之后添加你的行。`request.launch` 是会话将使用的启动配置。
+
+```ts
+async status({ launch }) {
+  if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+  const profile = launch.env.EXAMPLE_PROFILE ?? "default";
+  return { available: true, diagnostic: `Profile: ${profile}\nSign-in: ${signInSource(launch.env)}` };
+}
+```
+
+| 结果                               | 效果                                                             |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `{ available: true, diagnostic? }` | `diagnostic` 的每一行是报告中的一行。每行请写成 `Label: value`。 |
+| `{ available: false, diagnostic }` | Provider 不可用。报告在 `Error` 行中显示 `diagnostic`。          |
+
+Paseo 每次检查 Provider 是否可用时都会调用 `status`，不只是在生成报告时。报告不会自动换行，所以每一行请写得简短。
 
 ### 用量来源 {#usage-sources}
 
@@ -419,17 +512,17 @@ type UsageProblem =
 
 内置的会话路由：
 
-| 来源         | 会话                                           | 登录存储                                                                     |
-| ------------ | ---------------------------------------------- | ---------------------------------------------------------------------------- |
-| Claude       | `claude`                                       | `CLAUDE_CONFIG_DIR` 或默认位置；在 macOS 上，该目录对应的钥匙串条目优先      |
-| Claude       | 使用 `anthropic/…` 模型的 `pi`、`omp`          | 该运行环境的 Anthropic 登录存储                                              |
-| Codex        | `codex`                                        | `CODEX_HOME/auth.json` 或默认位置                                            |
-| Codex        | 使用 `openai/…` 模型的 `pi`、`opencode`、`omp` | 该运行环境的 OpenAI 登录存储                                                 |
-| Cursor       | `cursor`                                       | 该会话的 `XDG_CONFIG_HOME`、`APPDATA` 或主目录下 cursor-agent 的 `auth.json` |
-| Muse         | `muse`                                         | 该会话自己的 Muse 启动配置                                                   |
-| 其他内置来源 | 任意                                           | 无会话发现                                                                   |
+| 来源         | 会话                                           | 登录存储                                                                                                                                              |
+| ------------ | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude       | `claude`                                       | `CLAUDE_CONFIG_DIR` 或默认位置；在 macOS 上，该目录对应的钥匙串条目优先                                                                               |
+| Claude       | 使用 `anthropic/…` 模型的 `pi`、`omp`          | 该运行环境的 Anthropic 登录存储                                                                                                                       |
+| Codex        | `codex`                                        | `CODEX_HOME/auth.json` 或默认位置                                                                                                                     |
+| Codex        | 使用 `openai/…` 模型的 `pi`、`opencode`、`omp` | 该运行环境的 OpenAI 登录存储                                                                                                                          |
+| Cursor       | `cursor`                                       | 该会话的 `XDG_CONFIG_HOME`、`APPDATA` 或主目录下 cursor-agent 的 `auth.json`；在 macOS 上默认读取钥匙串，除非设置了 `AGENT_CLI_CREDENTIAL_STORE=file` |
+| Muse         | `muse`                                         | 该会话自己的 Muse 启动配置                                                                                                                            |
+| 其他内置来源 | 任意                                           | 无会话发现                                                                                                                                            |
 
-Claude 会排除 Bedrock、Vertex 以及使用其他 `ANTHROPIC_BASE_URL` 的会话。Codex 会排除设置了 `OPENAI_BASE_URL` 的会话。Cursor 会排除通过 `CURSOR_API_KEY` 或 `CURSOR_AUTH_TOKEN` 验证的会话，以及在 macOS 上把登录保存在钥匙串中的会话（除非设置了 `AGENT_CLI_CREDENTIAL_STORE=file`，否则这是默认行为）。
+Claude 会排除 Bedrock、Vertex 以及使用其他 `ANTHROPIC_BASE_URL` 的会话。Codex 会排除设置了 `OPENAI_BASE_URL` 的会话。Cursor 会排除通过 `CURSOR_API_KEY` 或 `CURSOR_AUTH_TOKEN` 验证的会话。
 
 使用稳定的账号键：由 `[A-Za-z0-9._-]` 中的字符组成，长度为 1–128。它标识被计量配额的账号或组织，并且在 token 轮换后保持不变。不要把凭据或原始邮箱地址用作键。对于敏感的稳定身份，请使用 `hashAccountKey()`；当账号元数据不可用时，使用存储位置标识。标签可以为账号命名，但不会成为账号的身份。
 
@@ -490,6 +583,161 @@ export default function contribute(server: PluginServerContext) {
 
 来源图标是一个文件路径，规则与 Provider 图标相同。
 
+## worktree 管理器 {#worktree-managers}
+
+**需要 Paseo 0.17**。在服务端入口 `index.server.ts` 中调用 `server.registerWorktreeManager()`，可将 Git worktree 的创建、移除和恢复委托给 Worktrunk 等外部工具，而无需由 Paseo 直接运行 `git worktree add` 和 `git worktree remove`。
+
+```ts
+import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerWorktreeManager({
+    async create(request, { signal }) {
+      if (request.kind !== "branch-off") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          request.repoRoot,
+          "switch",
+          "--create",
+          request.branch,
+          "--base",
+          request.startPoint ?? request.baseRef,
+          "--no-cd",
+          request.untrusted ? "--no-hooks" : "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path } = JSON.parse(stdout) as { path: string };
+      return { type: "created", path };
+    },
+    async remove({ repoRoot, path, force, untrusted }, { signal }) {
+      const skipHooks = untrusted || repoRoot === null;
+      await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot ?? path,
+          "remove",
+          "--foreground",
+          "--no-delete-branch",
+          skipHooks ? "--no-hooks" : "--yes",
+          ...(force ? ["--force"] : []),
+          path,
+        ],
+        { signal },
+      );
+      return { type: "removed" };
+    },
+    async restore({ repoRoot, path, target, untrusted }, { signal }) {
+      if (target.type !== "branch") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot,
+          "switch",
+          target.branch,
+          "--path",
+          path,
+          "--no-cd",
+          untrusted ? "--no-hooks" : "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path: restoredPath } = JSON.parse(stdout) as { path: string };
+      return { type: "restored", path: restoredPath };
+    },
+  });
+}
+```
+
+- **Create**：在所有 `worktree.create.before` 钩子之后、`worktree.create.after` 之前运行，超时为 120 秒。返回 `{ type: "created", path }` 表示接管创建，返回 `undefined` 表示放弃并交由下一个管理器或 Paseo 内置 Git 检出处理。创建新分支时，Paseo 会在调用管理器前解析 `baseRef`，并刷新用作起点的远程跟踪引用。如果获取失败，则使用本地缓存的引用。当 `request.untrusted` 为 `true`（例如来自 fork 变更请求）时，请跳过仓库内定义的钩子。Paseo 会验证 `path` 是同一仓库下新建且安全的命名分支 Git worktree，并记录实际检出的 `HEAD` 分支（管理器可自行规范或生成唯一分支名，但在 `branch-off` 时应创建新分支），随后写入基准元数据并生成 `paseo.json`。如果采纳或后续创建步骤失败，Paseo 会根据返回的路径回滚。回调在返回前抛出错误或收到中止信号时，由管理器清理自己创建的 worktree。由管理器创建的 worktree 会跳过首个 Agent 的分支自动重命名。
+- **Remove**：可选。在工作区归档和创建回滚时运行，位于 Paseo 执行 `paseo.json` 清理并保存 `refs/paseo/kept-commits/<sha>` 之后。删除目录后返回 `{ type: "removed" }`，或返回 `undefined` 回退到 Git。当 `untrusted` 为 `true`（例如来自 fork 变更请求）或 `repoRoot` 为 `null` 时，请跳过仓库内定义的钩子，并在可用时从 `repoRoot` 运行。Paseo 会将移除路由到创建该 worktree 的插件；若该插件已停用或移除，则回退到内置 Git。
+- **Restore**：可选。在取消归档且 worktree 目录已被删除时运行，接收必须恢复到的原路径 `path`、目标 `target`（`branch`、`commit` 或 `from-base`）以及 `untrusted`。返回 `{ type: "restored", path }`，或返回 `undefined` 回退到 Git。Paseo 会验证检出结果是否为指定的分支、分离 HEAD 的提交，或位于指定基准提交的新分支。清理规则与 Create 相同。当 `restore` 回退到 Git 时，Paseo 会清除该工作区的管理器归属，后续归档也会使用 Git。
+
+完整插件见 [worktrunk 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)。
+
+## 隧道 Provider {#tunnel-providers}
+
+**需要 Paseo 0.18**。在服务端入口 `index.server.ts` 中调用 `server.registerTunnelProvider()` 注册隧道 Provider，可将本地 HTTP `host:port` 目标转为公网 HTTPS URL。注册返回一个清理函数，调用后会注销该 Provider 并关闭其所有活动的暴露。
+
+```ts
+import {
+  execCommand,
+  spawnProcess,
+  terminateProcess,
+  type PluginServerContext,
+} from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerTunnelProvider({
+    id: "custom-tunnel",
+    label: "Custom Tunnel",
+    description: "Expose local HTTP targets through a custom tunnel binary.",
+    docsUrl: "https://example.com/docs/custom-tunnel",
+    async status({ signal }) {
+      try {
+        const { stdout } = await execCommand("custom-tunnel", ["--version"], {
+          signal,
+          timeout: 5_000,
+        });
+        return { status: "available", detail: stdout.trim() || undefined };
+      } catch {
+        return {
+          status: "unavailable",
+          reason: "custom-tunnel is not installed or not on PATH.",
+          installUrl: "https://example.com/install",
+          fixHint: "Install custom-tunnel and make sure that it is on PATH.",
+        };
+      }
+    },
+    async open(target, { report, signal }) {
+      report({ type: "connecting" });
+      const child = spawnProcess("custom-tunnel", ["http", `${target.host}:${target.port}`], {
+        stdio: "pipe",
+      });
+      signal.addEventListener(
+        "abort",
+        () => {
+          void terminateProcess(child, "SIGTERM").catch(() => undefined);
+        },
+        { once: true },
+      );
+      let ready = false;
+      child.stderr.on("data", (chunk) => {
+        if (ready || signal.aborted) return;
+        const match = /https:\/\/[a-z0-9.-]+/i.exec(String(chunk));
+        if (!match) return;
+        ready = true;
+        report({ type: "ready", url: match[0], stability: "ephemeral" });
+      });
+      await new Promise<void>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", () => resolve());
+      });
+      report({ type: "closed", reason: signal.aborted ? "aborted" : undefined });
+    },
+  });
+}
+```
+
+- `id` 必须匹配 `/^[a-z][a-z0-9._-]*$/`，且在已安装插件和内置插件之间唯一。
+- `status({ paseo, signal })` 检查该 Provider 能否在此主机上打开隧道。返回 `{ status: "available", detail? }` 或 `{ status: "unavailable", reason, installUrl?, fixHint? }`。
+- `open(target, { paseo, signal, report })` 负责一个暴露，直到 `signal` 中止或隧道关闭。`target` 包含 `{ id, host, port, label?, slug? }`。
+- 暴露状态变化时调用 `report(event)`：
+  - `{ type: "connecting", detail? }`
+  - `{ type: "ready", url, stability?: "ephemeral" | "stable", detail? }`
+  - `{ type: "reconnecting", reason? }`
+  - `{ type: "error", message, recoverable?: boolean }`
+  - `{ type: "closed", reason? }`
+- 隧道保持连接期间，`open()` 应保持挂起。`signal` 中止时，停止子进程或移除远程规则，报告 `{ type: "closed" }`，然后返回。如果 `open()` 抛出错误，或在报告 `ready` 之前退出，Paseo 会将该暴露标记为失败并将其完整移除。
+
+完整插件见 [tunnel-provider 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/tunnel-provider)。
+
 ## 入口与清理 {#entry-point-and-cleanup}
 
 每个存在的入口都默认导出一个贡献函数，并返回清理函数。客户端入口接收 `PluginClientContext`；服务端入口接收 `PluginServerContext`。客户端注册方法返回幂等的移除函数，但标题栏按钮和 Composer 标签除外，它们返回 `{ update, remove }` 句柄。入口的清理函数会在 Paseo 移除剩余的注册之前运行。
@@ -506,9 +754,85 @@ export default function contribute(client: PluginClientContext) {
 
 清理函数可以是异步的。请释放插件创建的计时器、监听器、套接字和其他资源。重新加载、停用和移除会销毁受影响的插件安装。停止服务端插件还会关闭它的 daemon 会话并停止其子进程。客户端安装遵循[主机与生命周期](#hosts-and-lifecycle)中的规则，包括在暂时断开连接时保留安装。
 
+## 通知 {#notifications}
+
+**需要 Paseo 0.18**。在服务端钩子、RPC 处理函数或后台监听器中调用 `server.notifications.send()`，可在用户当前活跃的桌面/Web 客户端上发送系统通知，或在用户离开时发送移动端推送通知。
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  const unhook = server.addHook("agent.turn.after", async ({ agent, outcome }) => {
+    if (outcome.kind !== "failed" || agent.background) return;
+    await server.notifications.send({
+      title: agent.title ?? "Agent failed",
+      body: outcome.error.message,
+      key: `agent-failed:${agent.id}`,
+      open: { type: "agent", agentId: agent.id },
+      data: { agentId: agent.id },
+    });
+  });
+  return () => unhook();
+}
+```
+
+### 发送输入与限制 {#send-input-and-limits}
+
+| 字段    | 必填 | 限制 / 行为                                                                                     |
+| ------- | ---- | ----------------------------------------------------------------------------------------------- |
+| `title` | 是   | 去除首尾空白后的非空字符串；超过 160 个字符时自动截断。                                         |
+| `body`  | 是   | 去除首尾空白的字符串；超过 500 个字符时自动截断。                                               |
+| `key`   | 否   | 去除首尾空白的字符串，1–128 个字符。同一插件在 60 秒内发送相同 `key` 会返回 `deduplicated`。    |
+| `open`  | 否   | 声明式点击目标（ID 最多 256 个字符，序列化后不超过 1,024 UTF-8 字节），在未由处理函数处理时用。 |
+| `data`  | 否   | 序列化后不超过 1,024 UTF-8 字节的纯 JSON 对象，点击通知时传递给 `client.onNotificationOpen`。   |
+
+声明式 `open` 目标无需客户端入口：
+
+- `{ type: "agent", agentId: string }` 打开并聚焦该 Agent。若当前活跃可见客户端已聚焦在该 Agent 上，Paseo 会抑制该通知。
+- `{ type: "workspace", workspaceId: string }` 打开该工作区。
+- `{ type: "screen", screenId: string, params?: Record<string, string> }` 携带 URL 参数打开插件界面。
+
+`server.notifications.send()` 会解析为以下结果之一：
+
+- `{ status: "sent", notificationId: string }`：daemon 已受理并进入投递流程（即使某台设备静音了该通知）。
+- `{ status: "deduplicated" }`：`key` 与当前插件在过去 60 秒内发送的通知重复。
+- `{ status: "rate_limited" }`：当前插件超出了单插件令牌桶限制（突发容量 10，每 6 秒补充 1 个）。
+
+字段非法、`title` 为空，或 `open`/`data` 超过 1,024 UTF-8 字节会使返回的 Promise 被拒绝。用户可以在 **设置 → 通知** 中关闭全部插件通知或静音单个插件。
+
+### 在客户端处理通知点击 {#handle-notification-taps-on-the-client}
+
+如需根据 `data` 自定义点击跳转逻辑，请在 `index.client.tsx` 中注册 `client.onNotificationOpen(handler)`：
+
+```tsx
+// index.client.tsx
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+
+export default function contribute(client: PluginClientContext) {
+  const unsub = client.onNotificationOpen(({ event, openScreen, navigation }) => {
+    if (typeof event.data?.agentId === "string") {
+      navigation.openAgent({ agentId: event.data.agentId, focusHost: true });
+    } else {
+      openScreen({
+        screenId: "alert",
+        params: { notificationId: event.notificationId },
+      });
+    }
+  });
+  return () => unsub();
+}
+```
+
+处理函数接收 `PluginCommandCapabilities`（`paseo`、`rpc`、`openScreen`、`composers`、`openSettings`）、`navigation.openAgent`、`navigation.openWorkspace` 以及 `event: { type: "opened", notificationId, data }`。注册 `onNotificationOpen` 后，该处理函数会接管此插件的所有通知点击。通过通知点击冷启动应用时，Paseo 会等待目标主机的插件目录加载完成后再调用你的处理函数；若插件未注册处理函数、所有已注册处理函数均抛出错误，或目录未能在时限内加载完成，Paseo 会回退到通知的声明式 `open` 目标。完整示例见 `plugin-examples/notifications`。
+
 ## 生命周期钩子 {#lifecycle-hooks}
 
 使用 `server.addHook(name, handler)` 注册异步处理函数。请参阅[钩子](/docs/plugins/hooks)，了解命名、载荷、顺序、错误处理和完整示例。
+
+## 侧边栏视图 {#sidebar-views}
+
+`addSidebarView({ id, title, description?, Component })` 注册可替换侧边栏内容区域的视图，并返回清理函数。用户在设置的侧边栏页面中选择视图；注册不会激活它。视图属性、基于引用的查询与操作、设备状态和主题令牌见[构建侧边栏视图](sidebar-views.md)。
 
 ## 界面和侧边栏项 {#screens-and-sidebar-items}
 
@@ -700,6 +1024,51 @@ function hideAlerts() {
   removeAlerts = null;
 }
 ```
+
+### 工作区行徽章项 {#workspace-row-badge-items}
+
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` 在侧边栏每个工作区标题下方的那一行中添加一项，位于该行自带的各项（主机、拉取请求、检查、服务、标签）之后。`title` 和 `icon` 用于标注该项在侧边栏 **Show** 菜单中的开关，插件开关位于分隔线下方的独立分组中。各项默认可见。
+
+`Component` 为插件所在主机上的每个工作区行渲染一次，并接收 `PluginWorkspaceRowBadgeItemProps`：`theme`、`host`、`layout` 和 `workspaceId`。渲染 `@getpaseo/plugin/client/ui` 中的 `WorkspaceRowBadge`；工作区没有需要说明的内容时返回 `null`：
+
+| 属性                 | 含义                                                                  |
+| -------------------- | --------------------------------------------------------------------- |
+| `icon`               | 可选。任意[图标](#icons)形式，以该行的图标尺寸绘制。                  |
+| `label`              | 可选。一个简短的词。既没有 `icon` 也没有 `label` 的徽章不绘制。       |
+| `tone`               | `"muted"`（默认）、`"success"`、`"warning"`、`"danger"` 或 `"info"`。 |
+| `accessibilityLabel` | 默认为 `label`，其次是该项的 `title`。                                |
+
+该行不会在你的徽章周围添加分隔符，返回 `null` 不会留下空隙。可以渲染任意数量的徽章。每一行都会渲染该组件，所以请在各行之间共享一次查询，而不是为每个工作区单独获取：插件的 React Query 客户端由它在某台主机上的所有组件共享。
+
+```tsx
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
+
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
+  const list = useRpc(reviewStates);
+  const { data } = useQuery({
+    queryKey: ["review-states"],
+    queryFn: () => list({}),
+    refetchInterval: 5000,
+  });
+  const state = data?.[workspaceId];
+  if (!state) return null;
+  return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
+}
+
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
+```
+
+早于此 API 的应用没有 `addWorkspaceRowBadgeItem`；调用前请先检查它是否存在。
+
+参见[工作区行徽章示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges)。
 
 ## 宿主 UI {#host-ui}
 
@@ -1011,7 +1380,9 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 | `version` | 正整数     | 是       | 选择渲染器契约的版本。                       |
 | `data`    | 兼容 JSON  | 是       | 渲染器负载，JSON 序列化后最多 64 KiB。       |
 
-daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
+daemon 会根据发起调用的插件会话写入 `pluginId`，并拒绝来自非插件会话的此 RPC。该行会实时出现，在时间线重新获取后依然保留，并且对于同一插件和 `id` 只保留最新的值。如果它的渲染器缺失，Paseo 会显示现有的“不可用”行。
+
+`kind` 以小写字母开头，只包含小写字母、数字或连字符，与 `addTimelineRenderer` 使用的规则相同。daemon 会拒绝其他任何 `kind`。daemon 会拒绝超过限制的 `data`，而不是截断它。支持此操作的 daemon 会声明 `server_info.features.pluginTimelineItems`。
 
 ## 主题与布局 {#theme-and-layout}
 
@@ -1060,6 +1431,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1068,16 +1445,26 @@ export default function contribute(client: PluginClientContext) {
 
 每种颜色都是十六进制字符串；其他格式会导致加载失败。Paseo 会把调色板扩展为内置深色主题所使用的完整令牌集合，因此贡献的主题无需逐一列出，就能覆盖面板、菜单、diff、状态颜色和终端。
 
-| 颜色              | 用作                                              |
-| ----------------- | ------------------------------------------------- |
-| `background`      | 应用、工作区和终端的背景                          |
-| `foreground`      | 主要文字、终端前景色和光标                        |
-| `raised`          | 卡片、弹出框和悬停的行                            |
-| `control`         | 输入框、次要填充以及浅色主题的侧边栏              |
-| `border`          | 边框以及最高层凸起表面的色调                      |
-| `accent`          | 按钮、选中和焦点。可选；省略时使用 `foreground`。 |
-| `mutedForeground` | 次要文字                                          |
-| `ring`            | 焦点环、滚动条以及终端的亮黑色                    |
+| 颜色                   | 用作                                                            |
+| ---------------------- | --------------------------------------------------------------- |
+| `background`           | 应用、工作区和终端的背景                                        |
+| `foreground`           | 主要文字、终端前景色和光标                                      |
+| `raised`               | 卡片和弹出框                                                    |
+| `control`              | 输入框、次要填充，以及未设置 `sidebar` 时浅色主题的侧边栏       |
+| `border`               | 边框                                                            |
+| `accent`               | 按钮、选中和焦点。可选；省略时使用 `foreground`。               |
+| `mutedForeground`      | 次要文字                                                        |
+| `ring`                 | Web 上的键盘焦点轮廓，以及终端的亮黑色                          |
+| `sidebar`              | 侧边栏背景。可选；深色主题默认为 `background`，浅色为 `control` |
+| `sidebarHover`         | 可选的侧边栏行悬停背景                                          |
+| `sidebarSelected`      | 可选的侧边栏行选中背景                                          |
+| `surface3`             | 可选的消息气泡、次要按钮和芯片中性填充                          |
+| `surface4`             | 可选的轨道和其他状态的较强中性填充                              |
+| `foregroundExtraMuted` | 可选的三级文字颜色，包括侧边栏时间戳                            |
+
+可选覆盖颜色按原值使用。省略的状态、填充和三级文字颜色分别由调色板推导。覆盖颜色时，请确保它与对应的背景或文字有足够对比度。
+
+`sidebar` 和以上五个覆盖颜色需要 Paseo 0.16.0 或更高版本。较旧的应用会拒绝包含未知颜色的主题，该插件的其他贡献也会随之加载失败，因此使用其中任何一个时请提高 `requirements.paseo`。
 
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 
@@ -1087,7 +1474,7 @@ export default function contribute(client: PluginClientContext) {
 
 ## 设置界面 {#settings-screens}
 
-在 `index.client.tsx` 中用 `client.addSettingsScreen({ id, title, icon, Component })` 注册一个组件。它会出现在该主机的 **设置 → 插件 → 你的插件** 下。`id` 在同一次安装中唯一；`icon` 可以是任意一种[图标](#icons)形式。注册返回一个幂等的移除函数，插件销毁时会移除剩余的界面。
+在 `index.client.tsx` 中用 `client.addSettingsScreen({ id, title, icon, Component })` 注册一个组件。之后，该主机 **设置 → 插件** 中你的插件行会显示一个设置按钮（齿轮），点击后打开你的第一个界面。注册多个界面时，设置页面会按注册顺序为每个界面显示一个标签页，使用其 `title` 和 `icon`；只有一个界面时不显示标签页。页面标题显示 manifest 中的 `name`；没有 `name` 时显示插件 ID，且从不包含界面标题。`id` 在同一次安装中唯一；`icon` 可以是任意一种[图标](#icons)形式。注册返回一个幂等的移除函数，插件销毁时会移除剩余的界面。
 
 调用 `client.openSettings(id)` 或 Command Center 回调中的 `openSettings(id)` 可以打开你自己的某个界面。即使多台主机安装了同一个插件，每次安装也有各自的值和路由。
 
@@ -1157,13 +1544,13 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-| 定义字段                       | 契约                                                                                          |
-| ------------------------------ | --------------------------------------------------------------------------------------------- |
-| `id`                           | 匹配 `[a-z][a-z0-9_-]*` 的小写标识符；在同一次安装中唯一。                                    |
-| `scope`                        | 必须为 `"host"`。该主机所有获得授权的客户端共享这份文档。没有按用户、设备本地或跨主机的同步。 |
-| `version`                      | 必填的正整数，描述 schema 的版本，与写入修订号无关。                                          |
-| `schema`                       | JSON 值的 Zod schema。请提供默认值，使解析 `{}` 能得到一份完整的文档。                        |
-| `migrate(values, fromVersion)` | 可选的同步或异步函数，从较旧的存储版本转换。它的输出必须通过当前的 schema。                   |
+| 定义字段                       | 契约                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `id`                           | 匹配 `[a-z][a-z0-9_-]*` 的小写标识符；在同一次安装中唯一。                                                              |
+| `scope`                        | 必填 `"host"` 或 `"device"`。主机文档由授权客户端共享。设备文档以插件安装和设置 ID 为键保存在当前设备上，用于布局偏好。 |
+| `version`                      | 必填的正整数，描述 schema 的版本，与写入修订号无关。                                                                    |
+| `schema`                       | JSON 值的 Zod schema。请提供默认值，使解析 `{}` 能得到一份完整的文档。                                                  |
+| `migrate(values, fromVersion)` | 可选的同步或异步函数，从较旧的存储版本转换。它的输出必须通过当前的 schema。                                             |
 
 在任何贡献的组件中调用 `useSettings(preferences)`。它返回一个可区分的状态：
 
@@ -1318,6 +1705,8 @@ const [state, setState] = useTabState(tab, schema, { view: "preview" });
 | `statusEnteredAt`    | ISO 时间戳或 `null`                                               |
 | `archivingAt`        | ISO 时间戳或 `null`                                               |
 | `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+| `parentWorkspace`    | `WorkspaceRef \| null`                                            |
+| `metadata`           | `Readonly<Record<string, JsonValue>>`                             |
 
 Agent 快照字段：
 
@@ -1327,6 +1716,8 @@ Agent 快照字段：
 | `workspaceId`       | `string`                                                       |
 | `provider`          | `string`                                                       |
 | `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `backgroundWork`    | `{ count: number }`                                            |
+| `background`        | `boolean`                                                      |
 | `createdAt`         | ISO 时间戳                                                     |
 | `updatedAt`         | ISO 时间戳                                                     |
 | `lastActivityAt`    | ISO 时间戳                                                     |
@@ -1339,6 +1730,21 @@ Agent 快照字段：
 | `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
+| `metadata`          | `Readonly<Record<string, JsonValue>>`                          |
+
+`backgroundWork.count` 是 Agent 在回合结束后仍在运行的 shell 和监视器数量，没有时为 `0`。Agent 可能处于 `idle` 且 `attentionReason: "finished"`，同时这些工作仍在运行，因此请按插件的需要组合这些字段：
+
+```tsx
+const busy = useAgent(
+  agentId,
+  (agent) => agent.status === "running" || agent.backgroundWork.count > 0,
+);
+if (busy === null) return null; // Agent 不可用。
+```
+
+要列出或停止这些工作本身，使用 [`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle)。
+
+[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) 的 `background` 为 `true`，它是不出现在标签页、列表和提醒中的辅助 Agent，在创建时确定。后台工作区中的 Agent 除非本身以后台 Agent 创建，否则 `background` 为 `false`；要判断工作区，读取工作区自己的 `background`。`backgroundWork` 和 `background` 需要 Paseo 0.16.0 或更高版本。
 
 标签页的焦点、拆分、关闭、持久化、查询状态、API/RPC Provider 以及渲染错误边界都由 Paseo 负责。如果恢复的标签页所对应的插件、面板、上下文、工作区或 Agent 不可用，该标签页会保持打开并显示“不可用”消息，而不会让工作区崩溃。
 
@@ -1363,13 +1769,13 @@ export default function contribute(client: PluginClientContext) {
 
 `addFilePanel` 接收一个 `PluginFilePanelContribution`，并返回一个幂等的清理函数。客户端入口被卸载时，Paseo 也会移除该注册。
 
-| 字段        | 必填 | 含义                                                                 |
-| ----------- | ---- | -------------------------------------------------------------------- |
-| `id`        | 是   | 插件内唯一的 ID，匹配 `^[a-z][a-z0-9-]*$`。                          |
-| `title`     | 是   | 显示在选择器、**打开方式…** 菜单和 **设置 > 文件** 中的非空标签。    |
-| `icon`      | 是   | Lucide 名称、`{ svg }` 或组件。参见[图标](#icons)。                  |
-| `files`     | 是   | `{ extensions: readonly string[]; filenames?: readonly string[] }`。 |
-| `Component` | 是   | 接收 `PluginFilePanelProps` 的组件。                                 |
+| 字段        | 必填 | 含义                                                                           |
+| ----------- | ---- | ------------------------------------------------------------------------------ |
+| `id`        | 是   | 插件内唯一的 ID，匹配 `^[a-z][a-z0-9-]*$`。                                    |
+| `title`     | 是   | 显示在选择器、**打开方式…** 菜单和 **设置 → 聊天与面板 → 文件** 中的非空标签。 |
+| `icon`      | 是   | Lucide 名称、`{ svg }` 或组件。参见[图标](#icons)。                            |
+| `files`     | 是   | `{ extensions: readonly string[]; filenames?: readonly string[] }`。           |
+| `Component` | 是   | 接收 `PluginFilePanelProps` 的组件。                                           |
 
 扩展名不带前导点，匹配时不区分大小写。文件名按完整的 basename 匹配，区分大小写。选择器不包含路径、glob 或通配符。只按文件名选择时，请使用 `extensions: []`。至少需要一个扩展名或文件名。
 
@@ -1450,7 +1856,7 @@ hook 的重新读取会采用磁盘上的版本，因此下一次写入会覆盖
 
 **不再询问** 会在此设备上为该扩展名记住这个选择。当某个候选面板匹配了确切的文件名时，该选择改为应用于那个 basename。不可用的关联在该主机上会被忽略，并为安装了其面板的主机保留。
 
-用户有三种方式选择面板：第一次打开时的选择器、标签页菜单中的 **打开方式…**，以及 **设置 > 文件**。打开方式会切换当前标签页，并且对于这个标签页优先于记住的关联，直到标签页被重新定向；其中的 **始终用于** 会记住当前显示的面板。从链接或搜索结果在某一行打开文件时，标签页会切换到它的内置面板，并在源代码视图中显示该行。没有候选面板的文件显示 **二进制预览不可用**；二进制文件没有源代码面板。
+用户有三种方式选择面板：第一次打开时的选择器、标签页菜单中的 **打开方式…**，以及 **设置 → 聊天与面板 → 文件**（有插件注册文件面板时显示）。打开方式会切换当前标签页，并且对于这个标签页优先于记住的关联，直到标签页被重新定向；其中的 **始终用于** 会记住当前显示的面板。从链接或搜索结果在某一行打开文件时，标签页会切换到它的内置面板，并在源代码视图中显示该行。没有候选面板的文件显示 **二进制预览不可用**；二进制文件没有源代码面板。
 
 ### DocumentFrame {#documentframe}
 
@@ -1600,6 +2006,201 @@ review.remove();
 贡献移入一个共享的溢出菜单。在手机和较窄的窗口中，标题栏没有空间放置插件按钮，因此每个按钮都会成为工作区
 菜单（`···`）中的一行，显示它的图标和标题；它的菜单和弹出框以该底部面板中的页面打开。位置和溢出由宿主决定。
 
+## Composer 项 {#composer-items}
+
+`client.addComposerItem({ id, Component })` 把一个组件放进 composer：Agent composer、为新 Agent 准备的草稿 composer，以及新建工作区界面上的 composer。`useComposer()` 读取并修改 composer 所配置的内容，`@getpaseo/plugin/client/ui` 中的 `Toggle`、`Select` 和 `Action` 负责绘制控件。
+
+```tsx
+import { useComposer, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Action, Select, Toggle } from "@getpaseo/plugin/client/ui";
+
+function ReviewFlag() {
+  const composer = useComposer();
+  return (
+    <Toggle
+      title="Needs review"
+      icon="Flag"
+      value={composer.agent.metadata["review.needsReview"] === true}
+      onValueChange={({ value }) =>
+        composer.setMetadata({ "review.needsReview": value ? true : null })
+      }
+    />
+  );
+}
+
+function Checklist() {
+  const composer = useComposer();
+  return (
+    <Action
+      title="Insert checklist"
+      icon="ListChecks"
+      onPress={() => composer.insertText("- [ ] Tests\n- [ ] Docs\n")}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addComposerItem({ id: "review-flag", Component: ReviewFlag });
+  client.addComposerItem({ id: "checklist", Component: Checklist });
+  return () => {};
+}
+```
+
+`useComposer()` 返回该项所在的 composer：
+
+| 字段或命令                                          | 含义                                                                                                                                                                                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                                                       |
+| `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                                                            |
+| `focus(options?)`                                   | 把光标放进这个 composer，准备输入，光标就位后完成。`selection: { start, end }` 放置光标或选中文本，为 `prompt` 中的偏移量，并限制在其长度内；省略时光标保持原位。参见[聚焦 composer](#focus-a-composer)。                                                    |
+| `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                                                       |
+| `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                                                 |
+| `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                                                |
+| `agent.metadata`                                    | Agent 的[元数据](/docs/plugins/hooks#metadata)。在新建工作区中是第一个 Agent 的元数据。                                                                                                                                                                      |
+| `setProvider`、`setModel`、`setMode`、`setThinking` | 返回 Promise。`setProvider` 会像 Provider 选择器一样重置模型。在 `context: "agent"` 下（运行中的 Agent 保持其 Provider）以及主机不提供该 Provider 时会被拒绝。`setModel` 和 `setThinking` 原样传递该值；对运行中的 Agent，Provider 拒绝时 Promise 会被拒绝。 |
+| `setOptions(patch)`、`setMetadata(patch)`           | 顶层键替换，`null` 删除该键。草稿中设置的元数据在创建 Agent 时发送，发送提示词后清空。                                                                                                                                                                       |
+
+同一个调用在每个 composer 中行为一致，插件不需要选择 composer 的实现。在运行中的 Agent 上调用 `setMetadata` 需要支持元数据的主机；主机过旧时，Promise 会以 “Update the host to use metadata.” 拒绝。
+
+`Toggle` 接收 `value` 和 `onValueChange({ value })`。`Select` 接收 `value`、`options`（`{ value, label, description? }`）和 `onValueChange({ value })`。`Action` 接收 `onPress(event)`。三者都接收 `title`、`icon`（[Lucide 名称、SVG 或组件](#icons)）和 `disabled`。回调可以返回 Promise：在它完成之前控件保持禁用，被拒绝时 Paseo 会像对待自身控件一样，以错误提示向用户显示。控件的位置由 Paseo 决定：composer 空间足够时显示在工具栏中，不够时（手机上始终如此）成为 composer 溢出面板中的一行。`Select` 会就地打开列表，而不是替换面板中的行。`Component` 如果渲染这些控件以外的内容，会在其所在位置绘制；在溢出面板中，该位置就是面板。
+
+每个命令都按运行时 composer 的当前状态执行，而不是按创建回调的那次渲染，所以 `await composer.setProvider("codex")` 之后再 `await composer.setModel("gpt")` 会同时生效。命令的 Promise 在更改生效后完成，`composer.agent` 在下一次渲染时反映它。
+
+新建工作区界面在创建工作区及其 Agent 期间会锁定 composer。你的控件显示为禁用，`setPrompt` 和 `insertText` 会抛出错误，Agent 命令会以 "The composer is locked while the agent is being created." 拒绝。`composer.agent.options` 和 `composer.agent.metadata` 是冻结的副本；请通过 `setOptions` 和 `setMetadata` 修改它们。
+
+在 Paseo 知道渲染结果之前，composer 项就已计入可容纳的数量。不渲染任何内容的项仍可能在窄 composer 上留下空的溢出面板，所以请始终渲染一个控件。
+
+[Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`，还有一个资源管理器面板和一个 Command Center 条目，它们按引用访问 composer。
+
+### 聚焦 composer {#focus-a-composer}
+
+`insertText` 和 `setPrompt` 不会移动光标。在它们之后调用 `focus()`，用户就可以继续输入：
+
+```tsx
+composer.insertText("- [ ] Tests\n");
+await composer.focus();
+```
+
+`await composer.focus({ selection: { start: 0, end: composer.prompt.length } })` 会选中提示词。
+
+你不需要知道用户在哪里。对于运行中 Agent 的 composer，当它不在屏幕上时，Paseo 会导航到该 Agent 的标签页或工作区，关闭手机上遮挡它的 Agent 列表或资源管理器面板，并把焦点移到该 Agent 的窗格，然后聚焦输入框。输入框已在屏幕上且其窗格已聚焦时，`focus()` 只放置光标。每个 composer 也会先关闭它在自身上方打开的面板、菜单、选择器和图片预览，例如手机上放置你的项的控件面板。手机会弹出键盘。
+
+composer 无法获得焦点时 `focus()` 会被拒绝：Agent 已归档、其 composer 未在 15 秒内出现在屏幕上，或输入框拒绝获得焦点（例如手机上正在听写时）。多次调用重叠时，由最后一次决定光标位置，之前的调用随其一起完成。按钮的 `onPress` 或命令中心项的 `onSelect` 返回被拒绝的 promise 时，会向用户显示错误提示。
+
+草稿和新建工作区 composer 只能从其中的项访问，所以 `focus()` 不会导航到它们。composer 在屏幕上时可用，用户已离开时会以 “The composer is not on screen.” 拒绝。锁定的 composer 接受聚焦。
+
+### 按引用访问 composer {#reach-a-composer-by-reference}
+
+运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`、每个命令上下文中的 `composers(selector)`，以及客户端上下文中的 `client.composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent。在不接收上下文的回调中（例如[胶囊的 `onPress`](#composer-pills)）使用 `client.composers`：
+
+```tsx
+import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
+
+function InsertChecklist() {
+  const [focused] = useComposers({ focused: true });
+  return (
+    <Pressable disabled={!focused} onPress={() => focused?.insertText("- [ ] Tests\n")}>
+      <Text>Insert checklist</Text>
+    </Pressable>
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addWorkspacePanel({
+    id: "tools",
+    title: "Tools",
+    icon: "ListChecks",
+    locations: ["explorer"],
+    Component: InsertChecklist,
+  });
+  client.addCommandCenterItem({
+    id: "mark-for-review",
+    title: "Mark for review",
+    icon: "Flag",
+    context: "agent",
+    async onSelect({ agent, composers }) {
+      for (const composer of composers({ agentId: agent.id })) {
+        await composer.setMetadata({ "review.needsReview": true });
+      }
+    },
+  });
+  return () => {};
+}
+```
+
+| 选择器              | 结果                                                                                                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ agentId }`       | 此主机上该 Agent 的 composer。Agent 未知或已归档时为空。                                                                                                                                             |
+| `{ focused: true }` | Command Center 交给 Agent 项的那个 Agent 的 composer：屏幕上工作区中聚焦的 Agent 标签页。当前界面不是工作区（例如插件界面或新建工作区），或聚焦的标签页不是 Agent 时为空，并随用户切换标签页而变化。 |
+
+结果始终是数组，为空或只含一个 composer，所以同一段代码可以读取任一选择器。composer 变化时 `useComposers` 会重新渲染。`composers()` 返回的 composer 是调用时的状态，要获取下一个状态请再次调用 `composers()`。
+
+命令与 [`useComposer()`](#composer-items) 相同，从外部访问时有以下差异：
+
+- Agent 的 composer 在屏幕上时，`insertText` 在光标处插入。不在屏幕上时（例如用户在另一个工作区），它会追加到该 Agent 已保存的提示词，用户回来时文本就在输入框里。`setPrompt` 以同样的方式替换已保存的提示词。
+- 运行中 Agent 的 composer 从不锁定。
+- `setProvider` 会被拒绝，与在 Agent 自己的 composer 内一样。
+- `setModel` 和 `setThinking` 不加检查地把值发给 Provider。Provider 拒绝的值会以 Provider 的消息拒绝。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
+- `focus()` 会先让 composer 显示出来，如[上文所述](#focus-a-composer)。
+- 草稿和新建工作区界面不能按引用访问，只有其中的项能通过 `useComposer()` 访问其 composer。
+
+## 新建工作区项 {#new-workspace-items}
+
+`client.addNewWorkspaceItem({ id, Component })` 在新建工作区界面上放置一个字段，位于项目、主机和分支选择器旁边。`useNewWorkspace()` 读取并修改界面将要创建的内容，`@getpaseo/plugin/client/ui` 中的 `Combobox`、`Select`、`Toggle` 和 `Action` 负责绘制字段。桌面端的项是设置行中的徽章；手机上是整行宽度的字段。
+
+```tsx
+import { useNewWorkspace, useRpc, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Combobox } from "@getpaseo/plugin/client/ui";
+import { searchIssuesRpc } from "../shared/issues";
+
+function IssueField() {
+  const newWorkspace = useNewWorkspace();
+  const searchIssues = useRpc(searchIssuesRpc);
+  const issueId = newWorkspace.metadata["issues.id"];
+  return (
+    <Combobox
+      title="Issue"
+      icon="CircleDot"
+      value={typeof issueId === "string" ? { id: issueId, label: issueId } : null}
+      search={async ({ query }) => (await searchIssues({ query })).issues}
+      onSelect={async ({ item }) => {
+        await newWorkspace.setBranch(item.branch);
+        await newWorkspace.setMetadata({ "issues.id": item.id });
+      }}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addNewWorkspaceItem({ id: "issue", Component: IssueField });
+  return () => {};
+}
+```
+
+`useNewWorkspace()` 返回该项所在的设置：
+
+| 字段或命令                  | 含义                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`、`project`           | 用户的选择，分别是 `{ id, label }` 和 `{ id, name } \| null`。只读：项不能切换主机或项目。                                                                                                                                                                                                                                                                                                                                    |
+| `isolation`、`setIsolation` | `"local"` 或 `"worktree"`。**已有 worktree** 读取为 `"local"`，因为工作区是该 worktree 目录上的本地工作区；调用 `setIsolation` 会离开它。无法创建 worktree 的项目读取为 `"local"`，此时 `setIsolation("worktree")` 会被拒绝。                                                                                                                                                                                                 |
+| `baseRef`、`setBaseRef`     | 新 worktree 的起点：`{ type: "branch", name }`、`{ type: "change-request", number }`，默认值未知时为 `null`。分支的 `name` 是创建时实际使用的完整 ref，例如 `refs/remotes/origin/main`，所以 `setBaseRef(newWorkspace.baseRef)` 不会改变任何内容。`setBaseRef` 接受 Base 选择器提供的任何 ref，或一个裸分支名，Paseo 会按其他地方一贯的方式解析。新 worktree 会从它新建分支，分支列表会切换到新建分支。未选择项目时会被拒绝。 |
+| `branch`、`setBranch`       | 新 worktree 所创建的分支名称。`null` 表示由 Paseo 选择名称。隔离为本地或起点为变更请求时会保留该值，它为任何新建分支的 worktree 命名，起点可以是默认基线或所选分支；检出已有分支或变更请求的 worktree 不适用。                                                                                                                                                                                                                |
+| `metadata`、`setMetadata`   | 所创建工作区的[元数据](/docs/plugins/hooks#metadata)，而不是第一个 Agent 的元数据。顶层键替换，`null` 删除该键。主机不支持元数据时以 “Update the host to use metadata.” 拒绝。                                                                                                                                                                                                                                                |
+
+命令遵循 [Composer 项](#composer-items)的规则：每个命令都按界面运行时的状态执行，所以 `await newWorkspace.setBranch(name)` 之后再调用 `newWorkspace.setMetadata(patch)` 会同时生效，命令的 Promise 在更改生效后完成。命令从组件的第一个 effect 起即可使用，包括挂载时的 effect。载荷是 JSON 值。你的项针对某一台主机上的某一个项目挂载。用户更改其中任何一个时，Paseo 会重新挂载你的项并清除 `branch` 和 `metadata`，因此上一个项目的状态和 `Combobox` 结果不会保留；在挂载 effect 中做初始化的项会针对新项目再次初始化。在其项目或主机已被离开之后才调用的命令（例如用户切换项目时被放弃的查询最终返回）会以 "The New workspace screen moved to another project or host; this item belongs to the previous one." 拒绝，并且不做任何更改；为新项目挂载的项不受影响。`host`、`project`、`baseRef` 和 `metadata` 是冻结的。界面创建工作区期间会被锁定：你的字段显示为禁用，所有命令都会以 "The New workspace screen is locked while the workspace is being created." 拒绝。返回 Promise 的回调在完成之前会让控件保持禁用，被拒绝时会以错误提示向用户显示。
+
+`Combobox` 是带可搜索列表的字段，结果由你的代码提供：
+
+| 属性       | 含义                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `value`    | `{ id, label, description? } \| null`，字段显示的内容。它不必出现在搜索结果中，因此可以显示之前所做的选择。                                       |
+| `search`   | `({ query }) => Promise<Item[]>`。列表打开时以 `""` 调用，之后随用户输入防抖调用。每个 `Item` 是 `{ id, label, description? }` 加上你添加的字段。 |
+| `onSelect` | `({ item }) => void \| Promise<void>`。`item` 就是 `search` 返回的对象。                                                                          |
+
+搜索进行时 Paseo 显示 “Searching…”，搜索被拒绝时显示 “Search failed” 和错误信息，没有结果时显示空状态。新搜索进行期间会保留之前的结果，并忽略已被更新搜索取代的结果，所以 `search` 不需要自己处理取消。`Combobox` 接收与其他控件相同的 `title`、`icon` 和 `disabled`。
+
+[新建工作区 Issue 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/new-workspace-issues)通过守护进程处理器搜索一个固定的 Issue 列表，并根据所选项设置分支和元数据。
+
 ## Composer 胶囊 {#composer-pills}
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` 使用同样的[按钮描述符](#button-descriptor)，
@@ -1619,6 +2220,30 @@ const pill = client.addComposerPill({
       kind: "action",
       onPress() {
         client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+胶囊的 `onPress` 不接收参数。通过 [`client.composers`](#reach-a-composer-by-reference) 访问其 Agent 的 composer：
+
+```tsx
+const pill = client.addComposerPill({
+  id: "hello",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Add HELLO to the composer",
+    icon: "Hand",
+    label: "Hello",
+    behavior: {
+      kind: "action",
+      async onPress() {
+        for (const composer of client.composers({ agentId })) {
+          composer.insertText("HELLO");
+          await composer.focus();
+        }
       },
     },
   },
@@ -1779,6 +2404,8 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 返回的 API 涵盖项目、工作区、Agent、终端、Provider 和 daemon 配置。其方法请参阅 [SDK API 参考](/docs/sdk/reference)。这里刻意没有连接生命周期方法，因为连接由 Paseo 负责。
 
+如果要运行用户不需要看到的辅助任务，例如分类或摘要，请在已有工作区中把它创建为[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent)。
+
 ### 发现主机并指定另一台主机 {#discover-hosts-and-target-another-host}
 
 使用 `useHosts()` 显示已配置的主机，并在操作回调中使用 `getPaseoClient(serverId)` 对其中一台主机
@@ -1923,6 +2550,140 @@ export default function contribute(server: PluginServerContext) {
 输入和输出在两端都会校验。RPC 名称以小写字母开头，由小写字母、数字、点、连字符或下划线组成。`useRpc()` 返回一个带类型的异步函数。请求状态、缓存和变更请使用 TanStack Query。
 
 后端处理函数以 `{ paseo }` 的形式收到同样的 `PaseoApi`。它们的连接属于子进程，并在插件停止时关闭。在插件代码订阅之前，它不会订阅时间线或目录事件。清理和时间线替换请遵循 [SDK 事件契约](/docs/sdk/events)。后端代码可以使用 Node API 以及安装在插件目录中的依赖。
+
+## 从 daemon 推送事件 {#subscriptions}
+
+订阅会在一个客户端监听期间运行 daemon 处理函数，并向该客户端发送带类型的事件。监听文件、追踪日志和实时媒体使用订阅；只需要一次应答时使用插件 RPC。
+
+在 `shared/` 中定义契约：
+
+```ts
+// shared/diff.ts
+import { defineSubscription } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const diffWatch = defineSubscription({
+  name: "diff.watch",
+  input: z.object({ cwd: z.string(), from: z.string() }),
+  event: z.object({ type: z.literal("changes"), files: z.array(z.string()) }),
+});
+```
+
+在 `index.server.ts` 中处理它。处理函数除了 `paseo`，还会收到 `push` 和一个中止 `signal`：
+
+```ts
+server.handle(diffWatch, ({ cwd, from }, { push, signal }) => {
+  const watcher = watchChanges(cwd, from, (files) => void push({ type: "changes", files }));
+  signal.addEventListener("abort", () => watcher.close(), { once: true });
+});
+```
+
+在界面中用 `useSubscription(contract, input, onEvent)` 订阅：
+
+```tsx
+const [files, setFiles] = useState<string[]>([]);
+const subscription = useSubscription(diffWatch, { cwd, from: "HEAD" }, (event) => {
+  setFiles(event.files);
+});
+if (subscription.status === "error") return <Text>{subscription.error.message}</Text>;
+```
+
+在 React 之外，`client.subscribe` 接受同样的参数和一个选项对象，并返回一个移除函数：
+
+```ts
+const stop = client.subscribe(diffWatch, { cwd, from: "HEAD" }, onChanges, { signal });
+await stop.ready; // the daemon accepted the subscription
+stop(); // or await stop.release()
+```
+
+RPC 和订阅共用一个名称空间；同一个名称同时注册为 RPC 和订阅会导致插件加载失败。
+
+### 处理函数的生命周期 {#handler-lifetime}
+
+| 处理函数……               | 结果                                         |
+| ------------------------ | -------------------------------------------- |
+| 同步抛出错误，或输入无效 | 订阅调用失败并返回该错误，不会发送任何事件。 |
+| 不返回任何值             | 订阅保持打开，直到客户端释放它。             |
+| 返回一个兑现的 Promise   | 订阅关闭。                                   |
+| 返回一个拒绝的 Promise   | 订阅关闭并带上该错误。                       |
+
+当客户端释放订阅、卸载 hook、更改输入、断开连接，或者插件停止时，`signal` 会中止。中止之后的推送会被丢弃。`push` 会按契约校验事件，并在事件离开插件进程后兑现；在循环中 await 它可以控制生产者的速度。
+
+每个订阅者运行各自的处理函数。Paseo 不会在多个客户端之间共享同一个处理函数，也不会重放错过的事件：重新连接或重新加载插件之后，已挂载的界面会重新订阅，处理函数从头开始运行。多个订阅者需要同一个昂贵的监听器时，请在插件内部共享它。
+
+`useSubscription` 返回一个以 `status` 区分的联合类型：
+
+| 状态         | 含义                                                     |
+| ------------ | -------------------------------------------------------- |
+| `connecting` | 已发送，daemon 尚未接受。                                |
+| `live`       | 处理函数正在运行，事件通过 `onEvent` 送达。              |
+| `closed`     | 处理函数已结束。                                         |
+| `error`      | 订阅失败、处理函数失败、事件不符合契约，或者插件已停止。 |
+
+`input` 按浅比较发生变化时，hook 会重新订阅。`onEvent` 始终是最近一次渲染的回调，所以内联函数不会导致重新订阅。`client.subscribe` 接受 `{ signal, onClosed }`；`onClosed` 会收到 `{ error? }`。
+
+### 字节 {#bytes}
+
+顶层的 `Uint8Array` 以二进制形式传输，不经过 JSON 或 base64，其他值都是 JSON。这条规则适用于订阅事件、RPC 输出和 RPC 输入。Node 的 `Buffer` 也是 `Uint8Array`。
+
+```ts
+export const thumbnail = defineRpc({
+  name: "thumbnail.render",
+  input: z.object({ path: z.string(), width: z.number() }),
+  output: z.instanceof(Uint8Array),
+});
+
+// index.server.ts
+server.handle(thumbnail, ({ path, width }) => renderPng(path, width));
+
+// client
+const renderThumbnail = useRpc(thumbnail);
+const png = await renderThumbnail({ path, width }); // Uint8Array
+```
+
+用 `z.instanceof(Uint8Array)` 声明字节。事件可以在每次推送时选择字节或 JSON：声明一个联合类型，并用 `event instanceof Uint8Array` 分支。嵌套在对象中的 `Uint8Array` 会在发送端校验失败，错误信息会说明这条规则；把字节作为单独的事件或 RPC 值发送，元数据作为另一个 JSON 事件发送。
+
+一个事件或 RPC 值最多 100 MiB（减去 65 KiB 的帧头）。大载荷请按几百 KiB 分块推送；每次 `push` 都会等待上一次离开插件进程。手机上传的上限更低：一次发送超过 16 MiB 时 Android 会关闭连接，所以较大的上传请拆成多个 RPC。
+
+### 在一个订阅中传输多条流 {#several-streams-on-one-subscription}
+
+在每个载荷前加一个头字节即可复用多条流。把布局放在 `shared/` 中，让处理函数和界面调用有名字的函数：
+
+```ts
+// shared/media-frames.ts
+export const MediaOpcode = { Video: 0x01, Audio: 0x02 } as const;
+
+export function encodeMediaFrame(opcode: number, payload: Uint8Array): Uint8Array {
+  const bytes = new Uint8Array(1 + payload.byteLength);
+  bytes[0] = opcode;
+  bytes.set(payload, 1);
+  return bytes;
+}
+
+export function decodeMediaFrame(bytes: Uint8Array) {
+  return { opcode: bytes[0], payload: bytes.subarray(1) }; // a view, not a copy
+}
+
+export const mediaStream = defineSubscription({
+  name: "media.stream",
+  input: z.object({ source: z.string() }),
+  event: z.instanceof(Uint8Array),
+});
+```
+
+```ts
+useSubscription(mediaStream, { source }, (bytes) => {
+  const frame = decodeMediaFrame(bytes);
+  if (frame.opcode === MediaOpcode.Audio) audio.enqueue(frame.payload);
+  else video.draw(frame.payload);
+});
+```
+
+同一个订阅的事件按推送顺序到达，JSON 和二进制都一样。`plugin-examples/media-stream` 用这种方式传输视频和音频，并通过一个输入为 `Uint8Array` 的 RPC 把一帧上传回去；`plugin-examples/diff-watch` 监听工作树。
+
+### 旧版主机 {#older-hosts}
+
+订阅和二进制 RPC 值需要主机声明支持。连接旧版主机时，`useSubscription` 会报告 `error` 并提示更新主机，`client.subscribe` 的 `ready` 会以同样的信息拒绝，带有 `Uint8Array` 输入或输出的 RPC 会失败。请把插件的 `requirements.paseo` 提高到包含订阅功能的版本。
 
 ## 调试后端输出 {#debug-backend-output}
 

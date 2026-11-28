@@ -1,0 +1,28 @@
+appId: sh.paseo.debug
+---
+- assertVisible:
+    id: workspace-tabs-scroll
+- assertVisible: Scroll probe
+- assertVisible: Input
+- assertNotVisible: SCROLL_REACHED_OUTPUT
+- repeat:
+    times: 7
+    commands:
+      - swipe:
+          start: "600,850"
+          end: "600,670"
+          duration: 600
+- swipe:
+    start: "600,850"
+    end: "600,700"
+    duration: 600
+- assertVisible: Output
+- assertVisible: SCROLL_REACHED_OUTPUT
+- tapOn:
+    point: "600,628"
+- assertNotVisible: Output
+- assertNotVisible: Input
+- tapOn:
+    point: "600,628"
+- assertVisible: Input
+- stopApp

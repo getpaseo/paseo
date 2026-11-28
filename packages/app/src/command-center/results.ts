@@ -1,12 +1,14 @@
-import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import {
-  compareMatchScores,
-  type MatchScore,
-  scoreTextFields,
+  type MatchClass,
+  scoreMatch,
+  textFieldsMatchClass,
+  tokenizeQuery,
 } from "@getpaseo/protocol/search/text-match";
 import type { CommandCenterContribution } from "./contributions";
 import type { CommandCenterListMetrics } from "./list-metrics";
 
+/** Sections pinned above every contribution section. */
+export const LEADING_SECTION_BAND = -1;
 /** Sections that reorder by how well they match the query. */
 export const CONTRIBUTION_SECTION_BAND = 0;
 /** Sections pinned below every contribution section regardless of match quality. */
@@ -17,10 +19,26 @@ const VISIBLE_FIELD_RANK = 0;
 /** At least one token only matched a hidden keyword. */
 const KEYWORD_FIELD_RANK = 1;
 
+/**
+ * Left-edge match ranks for Command Center scoring, best to worst.
+ *
+ * Right-edge promotions (`TIER_EXACT`, `TIER_WHOLE_WORD`) are deliberately excluded here:
+ * whether a word or title happens to end on the latest keystroke flips row order mid-word as
+ * the user types (e.g., `"renam"` → `"rename"` jumping a shorter title ahead of `"Rename
+ * workspace"`, or `"t"` → `"to"` jumping `"Pin to top"` ahead of `"Toggle Explorer sidebar"`).
+ * Left-edge ranks can only stay the same or worsen as characters are appended to a token, so
+ * two rows that keep matching at the same left edge never swap places.
+ */
+const FIELD_START_RANK = 0;
+const WORD_START_RANK = 1;
+const INSIDE_WORD_RANK = 2;
+const SCATTERED_RANK = 3;
+
 export interface CommandCenterScore {
   /** VISIBLE_FIELD_RANK or KEYWORD_FIELD_RANK. Compared before match quality. */
   fieldRank: number;
-  match: MatchScore;
+  /** Sum of per-token left-edge ranks (FIELD_START..SCATTERED). Lower is better. */
+  matchRank: number;
 }
 
 /**
@@ -41,13 +59,20 @@ export function compareCommandCenterScores(
   left: CommandCenterScore,
   right: CommandCenterScore,
 ): number {
-  return left.fieldRank - right.fieldRank || compareMatchScores(left.match, right.match);
+  return left.fieldRank - right.fieldRank || left.matchRank - right.matchRank;
 }
 
 export interface CommandCenterWorkspaceProject {
   viewKey: string;
   name: string;
   iconDataUri: string | null;
+}
+
+/** An agent a workspace can be found by. Agents are never results of their own. */
+export interface CommandCenterWorkspaceAgent {
+  id: string;
+  title: string;
+  provider: string;
 }
 
 export interface CommandCenterWorkspaceResult {
@@ -60,18 +85,19 @@ export interface CommandCenterWorkspaceResult {
   project: CommandCenterWorkspaceProject;
   /** PR/MR number backing this workspace, so a number query can match it exactly. */
   changeRequestNumber: number | null;
+  /** Last activity, or when it was archived for an archived workspace. */
   activityAt: Date | null;
+  /** The workspace's agents, most recent first. Part of what the workspace matches on. */
+  agents: readonly CommandCenterWorkspaceAgent[];
+  /** The agent the query matched better than the workspace's own text. Drawn as a third line. */
+  matchedAgent: CommandCenterWorkspaceAgent | null;
+  archived: boolean;
+  /** Started by automation rather than the user. Found by a query, never listed as recent. */
+  background: boolean;
+  /** Opens the workspace and lets its default tab selection apply. */
   run(): void;
-}
-
-export interface CommandCenterAgentResult {
-  kind: "agent";
-  id: string;
-  agent: AggregatedAgent;
-  title: string;
-  subtitle: string;
-  activityAt: Date | null;
-  run(): void;
+  /** Opens the workspace on this agent's tab. */
+  openAgent(agentId: string): void;
 }
 
 export interface CommandCenterFileResult {
@@ -94,13 +120,12 @@ export interface CommandCenterContributionResult {
 
 export type CommandCenterResult =
   | CommandCenterWorkspaceResult
-  | CommandCenterAgentResult
   | CommandCenterFileResult
   | CommandCenterContributionResult;
 
 export interface CommandCenterResultSection {
   id: string;
-  /** CONTRIBUTION_SECTION_BAND or PINNED_SECTION_BAND. Compared before anything else. */
+  /** LEADING, CONTRIBUTION or PINNED_SECTION_BAND. Compared before anything else. */
   band: number;
   rank: number;
   title?: string;
@@ -138,12 +163,41 @@ export interface CommandCenterSearchFields {
   hidden: readonly string[];
 }
 
+function scoreTokenInField(token: string, field: string): number | null {
+  // Check start-of-field first: `scoreMatch` prefers a later whole word (tier 1) over a leading
+  // prefix (tier 2), which would otherwise demote a field starting with the token when the same
+  // token also appears as a standalone word later in the field.
+  if (field.toLowerCase().startsWith(token)) return FIELD_START_RANK;
+  const score = scoreMatch(token, field);
+  if (!score) return null;
+  if (score.tier <= 3) return WORD_START_RANK;
+  if (score.tier === 4) return INSIDE_WORD_RANK;
+  return SCATTERED_RANK;
+}
+
+function scoreFieldsLeftEdge(tokens: readonly string[], fields: readonly string[]): number | null {
+  let total = 0;
+  for (const token of tokens) {
+    let best: number | null = null;
+    for (const field of fields) {
+      const rank = scoreTokenInField(token, field);
+      if (rank !== null && (best === null || rank < best)) {
+        best = rank;
+        if (best === FIELD_START_RANK) break;
+      }
+    }
+    if (best === null) return null;
+    total += best;
+  }
+  return total;
+}
+
 /**
  * The one definition of "how well did this row match", shared by every scored row kind. Null
  * means the row is filtered out, so scoring and filtering are the same pass — a separate boolean
  * predicate would throw this result away and force the token scan a second time.
  *
- * Matching is per-token (`scoreTextFields` splits on whitespace and every token must land in
+ * Matching is per-token (`tokenizeQuery` splits on whitespace and every token must land in
  * some field), so token order does not matter and `lab des` finds "Label as Design". This can
  * only ever widen the result set: tokens hold no whitespace, so any token that was found in the
  * old space-joined haystack lies entirely within one field and is still found here.
@@ -155,11 +209,20 @@ export function scoreSearchFields(
   query: string,
   fields: CommandCenterSearchFields,
 ): CommandCenterScore | null {
-  const visible = scoreTextFields(query, [...fields.visible]);
-  if (visible) return { fieldRank: VISIBLE_FIELD_RANK, match: visible };
+  const tokens = tokenizeQuery(query);
+  const visible = scoreFieldsLeftEdge(tokens, fields.visible);
+  if (visible !== null) return { fieldRank: VISIBLE_FIELD_RANK, matchRank: visible };
   if (fields.hidden.length === 0) return null;
-  const match = scoreTextFields(query, [...fields.visible, ...fields.hidden]);
-  return match ? { fieldRank: KEYWORD_FIELD_RANK, match } : null;
+  const matchRank = scoreFieldsLeftEdge(tokens, [...fields.visible, ...fields.hidden]);
+  return matchRank !== null ? { fieldRank: KEYWORD_FIELD_RANK, matchRank } : null;
+}
+
+/** How closely the query matched the fields; see `MatchClass`. Null when it does not match. */
+export function searchFieldsMatchClass(
+  query: string,
+  fields: CommandCenterSearchFields,
+): MatchClass | null {
+  return textFieldsMatchClass(query, [...fields.visible, ...fields.hidden]);
 }
 
 /** Join non-empty subtitle parts with " · ", dropping null/undefined/empty. */
@@ -181,12 +244,18 @@ function contributionSearchFields(
   return { visible, hidden: contribution.keywords };
 }
 
-/** Whether the row draws a second, subtitle line under its title. */
-function hasSubtitleLine(result: CommandCenterResult): boolean {
-  if (result.kind === "workspace" || result.kind === "agent") return true;
-  if (result.kind === "file") return false;
+/** How many lines of text the row draws, which decides its height. */
+function resultLineCount(result: CommandCenterResult): 1 | 2 | 3 {
+  if (result.kind === "workspace") return result.matchedAgent ? 3 : 2;
+  if (result.kind === "file") return 1;
   const presentation = result.contribution.presentation;
-  return presentation.kind === "action" && Boolean(presentation.subtitle);
+  return presentation.kind === "action" && presentation.subtitle ? 2 : 1;
+}
+
+function resultHeight(result: CommandCenterResult, metrics: CommandCenterListMetrics): number {
+  const lines = resultLineCount(result);
+  if (lines === 3) return metrics.threeLineRow;
+  return lines === 2 ? metrics.twoLineRow : metrics.singleLineRow;
 }
 
 /**
@@ -211,10 +280,7 @@ function resultScore(result: CommandCenterResult): CommandCenterScore | undefine
   return result.kind === "contribution" ? result.score : undefined;
 }
 
-/** Rows shown when nothing has been typed, per pinned category. */
-const DEFAULT_CATEGORY_RESULT_LIMIT = 5;
-
-/** A built-in row (workspace or agent) that orders by how recently it saw activity. */
+/** A built-in row that orders by how recently it saw activity. */
 export interface CommandCenterRecentRow {
   activityAt: Date | null;
 }
@@ -225,54 +291,20 @@ export function compareByRecency(left: CommandCenterRecentRow, right: CommandCen
 }
 
 /**
- * Rank built-in rows by the kind of match they made: which fields matched, then the matcher's
- * tier. Offset and spread are deliberately left out. They only say where in the title the word
- * happened to sit, so "usage" in "Deliver sidebar usage" and in "expose usage data" would be
- * ordered by sentence position. Leaving them out makes those rows equal, and recency decides.
+ * Group contributions into their sections, ranked by the query. `includeQueryOnly` lists the
+ * contributions that otherwise wait for a query, for a list whose whole job is browsing them.
  */
-export function compareBuiltInScores(left: CommandCenterScore, right: CommandCenterScore): number {
-  return left.fieldRank - right.fieldRank || left.match.tier - right.match.tier;
-}
-
-/**
- * Filter and rank already-built rows. Rows in, rows out — building them needs translations,
- * navigation callbacks and the project tree, none of which matching cares about, so that stays
- * with the caller and this stays testable without mounting React.
- *
- * Rows rank by `compareBuiltInScores`; rows that rank equally, including every row of an empty
- * query, go most recent first.
- */
-export function filterAndRankBuiltInResults<Row extends CommandCenterRecentRow>(
-  rows: readonly Row[],
-  query: string,
-  fieldsOf: (row: Row) => CommandCenterSearchFields,
-): Row[] {
-  if (!query.trim()) {
-    return [...rows].sort(compareByRecency).slice(0, DEFAULT_CATEGORY_RESULT_LIMIT);
-  }
-
-  const scored: { row: Row; score: CommandCenterScore }[] = [];
-  for (const row of rows) {
-    const score = scoreSearchFields(query, fieldsOf(row));
-    if (score) scored.push({ row, score });
-  }
-  scored.sort(
-    (left, right) =>
-      compareBuiltInScores(left.score, right.score) || compareByRecency(left.row, right.row),
-  );
-  return scored.map((entry) => entry.row);
-}
-
 export function buildContributionSections(
   contributions: readonly CommandCenterContribution[],
   query: string,
+  options: { includeQueryOnly?: boolean } = {},
 ): CommandCenterResultSection[] {
   const groups = new Map<string, MutableCommandCenterResultSection>();
   const registryIndexById = new Map<string, number>();
   const hasQuery = Boolean(query.trim());
 
   for (const [index, contribution] of contributions.entries()) {
-    if (contribution.visibility === "query" && !hasQuery) continue;
+    if (contribution.visibility === "query" && !hasQuery && !options.includeQueryOnly) continue;
     let score: CommandCenterScore | undefined;
     if (hasQuery) {
       // The score is the filter: null means no token found a home, so the row is out.
@@ -351,7 +383,7 @@ export function projectCommandCenterRows(
       offset += sectionHeight;
     }
     for (const result of section.results) {
-      const height = hasSubtitleLine(result) ? metrics.twoLineRow : metrics.singleLineRow;
+      const height = resultHeight(result, metrics);
       offsets.push(offset);
       rowIndexByResultId.set(result.id, rows.length);
       rows.push({ kind: "result", key: result.id, result, height });

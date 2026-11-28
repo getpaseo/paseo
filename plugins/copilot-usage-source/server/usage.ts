@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   unavailable,
+  windowFromUsedPct,
+  type UsageWindow,
   type UsageAccount,
+  type UsageScope,
   type UsageReport,
   type UsageDetail,
 } from "@getpaseo/plugin/server/usage";
@@ -18,6 +21,19 @@ const ApiOptionalStringSchema = z.preprocess(
 const CopilotUsageResponseSchema = z.object({
   copilot_plan: ApiOptionalStringSchema,
   quota_reset_date: ApiOptionalStringSchema,
+  quota_reset_date_utc: ApiOptionalStringSchema,
+  quota_snapshots: z
+    .object({
+      premium_interactions: z
+        .object({
+          entitlement: z.number().nonnegative().nullish(),
+          remaining: z.number().nonnegative().nullish(),
+          percent_remaining: z.number().min(0).max(100).nullish(),
+          unlimited: z.boolean().optional(),
+        })
+        .nullish(),
+    })
+    .nullish(),
 });
 
 async function readToken(input: UsageInput): Promise<string | undefined> {
@@ -30,18 +46,44 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
   }
 }
 
-export async function discover(): Promise<UsageAccount[]> {
-  const candidates: UsageInput[] = ["COPILOT_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"].map(
-    (locator) => ({ store: "env", locator }),
-  );
-  if (process.env.APPDATA)
+const OPENCODE_COPILOT_PROVIDERS = new Set(["github-copilot", "github-copilot-enterprise"]);
+
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
+  const candidates: UsageInput[] = [];
+  for (const locator of ["COPILOT_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"]) {
+    const value = env[locator];
+    if (value && (!matchHostEnv || value === process.env[locator])) {
+      candidates.push({ store: "env", locator });
+    }
+  }
+  // File store reflects the host GitHub CLI login (matching Host -> Usage).
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
+  if (env.APPDATA)
     candidates.push({
       store: "file",
-      locator: join(process.env.APPDATA, "GitHub CLI", "hosts.yml"),
+      locator: join(env.APPDATA, "GitHub CLI", "hosts.yml"),
     });
-  candidates.push({ store: "file", locator: join(homedir(), ".config", "gh", "hosts.yml") });
+  candidates.push({ store: "file", locator: join(home, ".config", "gh", "hosts.yml") });
   for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
+    scope.provider === "copilot" ||
+    (scope.provider === "opencode" && OPENCODE_COPILOT_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }
 
 export async function fetchUsage(
@@ -72,10 +114,32 @@ export async function fetchUsage(
     ? [{ id: "reset", label: "Quota reset", value: resp.quota_reset_date }]
     : [];
 
+  const windows: UsageWindow[] = [];
+  const premium = resp.quota_snapshots?.premium_interactions;
+  if (premium && !premium.unlimited) {
+    if (premium.percent_remaining != null) {
+      windows.push(
+        windowFromUsedPct({
+          id: "premium_interactions",
+          label: "Premium requests",
+          utilizationPct: 100 - premium.percent_remaining,
+          resetsAt: resp.quota_reset_date_utc || resp.quota_reset_date,
+        }),
+      );
+    }
+    if (premium.remaining != null && premium.entitlement != null) {
+      details.push({
+        id: "premium_remaining",
+        label: "Premium requests remaining",
+        value: `${premium.remaining} / ${premium.entitlement}`,
+      });
+    }
+  }
+
   return {
     status: "available",
     planLabel: resp.copilot_plan || undefined,
-    windows: [],
+    windows,
     balances: [],
     details,
   };

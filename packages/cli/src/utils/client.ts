@@ -1,10 +1,14 @@
-import { createHostClient, parseHostTarget } from "@getpaseo/client/node";
+import {
+  createLeanHostClient,
+  parseHostTarget,
+  type DaemonClientCore,
+} from "@getpaseo/client/node/lean";
 import {
   waitForDaemonReady,
   resolvePaseoHome,
   type DaemonInstance,
   readLocalCredentialForTarget,
-} from "@getpaseo/server/daemon-control";
+} from "@getpaseo/server/daemon-files";
 import { describeDaemonTarget, type DaemonTarget } from "./daemon-target.js";
 export type { DaemonTarget } from "./daemon-target.js";
 import {
@@ -12,9 +16,10 @@ import {
   normalizeHostPort,
   parseConnectionUri,
 } from "@getpaseo/protocol/daemon-endpoints";
-import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOrCreateCliClientId } from "./client-id.js";
 import { resolveCliVersion } from "../version.js";
+
+type DaemonClient = DaemonClientCore;
 
 export interface ConnectOptions {
   target: DaemonTarget;
@@ -191,7 +196,7 @@ async function connectSelectedDaemon(options: ConnectOptions): Promise<DaemonCli
         ).listen;
   const home = resolveClientPaseoHome(options.target);
   const credential = resolveDaemonCredential(host, home);
-  const client = createHostClient(host, {
+  const client = createLeanHostClient(host, {
     clientId: await getOrCreateCliClientId(home),
     clientType: "cli",
     appVersion: resolveCliVersion(),
@@ -236,6 +241,8 @@ interface AgentLike {
   title?: string | null;
 }
 
+const FULL_AGENT_UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
 /**
  * Resolve an agent ID from a partial ID or name.
  * Supports:
@@ -251,6 +258,11 @@ export function resolveAgentId(idOrName: string, agents: AgentLike[]): string | 
   }
 
   const query = idOrName.toLowerCase();
+
+  // A complete agent UUID is an exact identity, never a name search fallback.
+  if (FULL_AGENT_UUID_PATTERN.test(idOrName)) {
+    return agents.find((a) => a.id.toLowerCase() === query)?.id ?? null;
+  }
 
   // Try exact ID match first
   const exactMatch = agents.find((a) => a.id === idOrName);

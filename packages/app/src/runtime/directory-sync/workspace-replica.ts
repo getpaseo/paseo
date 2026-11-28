@@ -14,6 +14,7 @@ import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import {
   clearWorkspaceArchivePending,
   shouldSuppressWorkspaceForLocalArchive,
+  shouldSuppressWorkspaceRemovalForLocalUndo,
 } from "@/contexts/session-workspace-upserts";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
@@ -33,6 +34,14 @@ export interface WorkspaceDirectorySnapshot {
   touchedProjectIds?: Set<string>;
 }
 
+interface WorkspaceDeltaBatchState {
+  upsertedWorkspaces: Map<string, WorkspaceDescriptor>;
+  removedWorkspaceIds: Set<string>;
+  upsertedProjects: Map<string, ProjectDescriptor>;
+  removedProjectIds: Set<string>;
+  mutationsByKey: Map<string, DirectoryReplicaMutation>;
+}
+
 export class WorkspaceDirectoryReplica {
   private workspaces = new Map<string, WorkspaceDescriptor>();
   private projects = new Map<string, ProjectDescriptor>();
@@ -41,10 +50,192 @@ export class WorkspaceDirectoryReplica {
   constructor(private readonly serverId: string) {}
 
   applyDelta(delta: WorkspaceDirectoryDelta): DirectoryReplicaMutation[] {
-    if (delta.kind === "script_status") return this.applyScriptStatus(delta.update);
-    if ("projectId" in delta || "project" in delta) return this.applyProjectDelta(delta);
-    if (delta.kind === "remove") return this.removeWorkspace(delta);
-    return this.upsertWorkspace(normalizeWorkspaceDescriptor(delta.workspace));
+    return this.applyDeltas([delta]);
+  }
+
+  applyDeltas(deltas: readonly WorkspaceDirectoryDelta[]): DirectoryReplicaMutation[] {
+    if (deltas.length === 0) return [];
+    const batch: WorkspaceDeltaBatchState = {
+      upsertedWorkspaces: new Map(),
+      removedWorkspaceIds: new Set(),
+      upsertedProjects: new Map(),
+      removedProjectIds: new Set(),
+      mutationsByKey: new Map(),
+    };
+    for (const delta of deltas) {
+      this.applyDeltaToBatch(delta, batch);
+    }
+    const store = useSessionStore.getState();
+    for (const projectId of batch.removedProjectIds) store.removeProject(this.serverId, projectId);
+    for (const project of batch.upsertedProjects.values()) {
+      store.upsertProject(this.serverId, project);
+    }
+    for (const workspaceId of batch.removedWorkspaceIds) {
+      store.removeWorkspace(this.serverId, workspaceId);
+    }
+    if (batch.upsertedWorkspaces.size > 0) {
+      store.mergeWorkspaces(this.serverId, batch.upsertedWorkspaces.values());
+    }
+    return Array.from(batch.mutationsByKey.values());
+  }
+
+  private applyDeltaToBatch(delta: WorkspaceDirectoryDelta, batch: WorkspaceDeltaBatchState): void {
+    if (delta.kind === "script_status") {
+      this.applyScriptStatusToBatch(delta.update, batch);
+      return;
+    }
+    if ("projectId" in delta || "project" in delta) {
+      this.applyProjectDeltaToBatch(delta, batch);
+      return;
+    }
+    if (delta.kind === "remove") {
+      this.applyWorkspaceRemoveToBatch(delta, batch);
+      return;
+    }
+    const workspace = normalizeWorkspaceDescriptor(delta.workspace);
+    if (shouldSuppressWorkspaceForLocalArchive({ serverId: this.serverId, workspace })) {
+      if (this.workspaces.has(workspace.id)) this.recordBatchWorkspaceDelete(workspace.id, batch);
+      return;
+    }
+    this.recordBatchWorkspaceUpsert(workspace, batch);
+  }
+
+  private applyScriptStatusToBatch(
+    update: ScriptStatusUpdateMessage["payload"],
+    batch: WorkspaceDeltaBatchState,
+  ): void {
+    const workspaceId = resolveWorkspaceMapKeyByIdentity({
+      workspaces: this.workspaces,
+      workspaceId: update.workspaceId,
+    });
+    const workspace = workspaceId ? this.workspaces.get(workspaceId) : undefined;
+    if (!workspace || equal(workspace.scripts, update.scripts)) return;
+    this.recordBatchWorkspaceUpsert(
+      {
+        ...workspace,
+        scripts: update.scripts.map((script) => ({ ...script })),
+      },
+      batch,
+    );
+  }
+
+  private applyProjectDeltaToBatch(
+    delta: Extract<SessionOutboundMessage, { type: "project.update" }>["payload"],
+    batch: WorkspaceDeltaBatchState,
+  ): void {
+    if (delta.kind === "remove") {
+      this.recordBatchProjectDelete(delta.projectId, batch);
+      for (const workspaceId of Array.from(this.workspaceIdsByProject.get(delta.projectId) ?? [])) {
+        this.recordBatchWorkspaceDelete(workspaceId, batch);
+      }
+      return;
+    }
+    const project = normalizeProjectDescriptor(delta.project);
+    this.recordBatchProjectUpsert(project, batch);
+    for (const workspaceId of this.workspaceIdsByProject.get(project.projectId) ?? []) {
+      const workspace = this.workspaces.get(workspaceId);
+      if (!workspace) continue;
+      this.recordBatchWorkspaceUpsert(
+        {
+          ...workspace,
+          projectDisplayName: project.projectDisplayName,
+          projectCustomName: project.projectCustomName,
+          projectCustomIconRevision: project.projectCustomIconRevision,
+          projectRootPath: project.projectRootPath,
+          projectKind: project.projectKind,
+        },
+        batch,
+      );
+    }
+  }
+
+  private applyWorkspaceRemoveToBatch(
+    delta: Extract<SessionOutboundMessage, { type: "workspace_update" }>["payload"] & {
+      kind: "remove";
+    },
+    batch: WorkspaceDeltaBatchState,
+  ): void {
+    if (
+      shouldSuppressWorkspaceRemovalForLocalUndo({
+        serverId: this.serverId,
+        workspaceId: delta.id,
+      })
+    ) {
+      return;
+    }
+    this.recordBatchWorkspaceDelete(delta.id, batch);
+    if (delta.emptyProject) {
+      this.recordBatchProjectUpsert(normalizeProjectDescriptor(delta.emptyProject), batch);
+    }
+    if (delta.removedProjectId) {
+      this.recordBatchProjectDelete(delta.removedProjectId, batch);
+    }
+    clearWorkspaceArchivePending({ serverId: this.serverId, workspaceId: delta.id });
+    useWorkspaceSetupStore
+      .getState()
+      .removeWorkspace({ serverId: this.serverId, workspaceId: delta.id });
+  }
+
+  private recordBatchWorkspaceUpsert(
+    workspace: WorkspaceDescriptor,
+    batch: WorkspaceDeltaBatchState,
+  ): void {
+    this.applySetupStatus(workspace);
+    const previous = this.workspaces.get(workspace.id);
+    if (previous?.projectId !== workspace.projectId) {
+      this.workspaceIdsByProject.get(previous?.projectId ?? "")?.delete(workspace.id);
+    }
+    this.workspaces.set(workspace.id, workspace);
+    const projectWorkspaces = this.workspaceIdsByProject.get(workspace.projectId) ?? new Set();
+    projectWorkspaces.add(workspace.id);
+    this.workspaceIdsByProject.set(workspace.projectId, projectWorkspaces);
+    batch.removedWorkspaceIds.delete(workspace.id);
+    batch.upsertedWorkspaces.set(workspace.id, workspace);
+    batch.mutationsByKey.set(`workspace:${workspace.id}`, {
+      kind: "workspace",
+      type: "upsert",
+      id: workspace.id,
+      value: workspace,
+    });
+  }
+
+  private recordBatchWorkspaceDelete(workspaceId: string, batch: WorkspaceDeltaBatchState): void {
+    const workspace = this.workspaces.get(workspaceId);
+    if (workspace) this.workspaceIdsByProject.get(workspace.projectId)?.delete(workspaceId);
+    this.workspaces.delete(workspaceId);
+    batch.upsertedWorkspaces.delete(workspaceId);
+    batch.removedWorkspaceIds.add(workspaceId);
+    batch.mutationsByKey.set(`workspace:${workspaceId}`, {
+      kind: "workspace",
+      type: "delete",
+      id: workspaceId,
+    });
+  }
+
+  private recordBatchProjectUpsert(
+    project: ProjectDescriptor,
+    batch: WorkspaceDeltaBatchState,
+  ): void {
+    this.projects.set(project.projectId, project);
+    batch.removedProjectIds.delete(project.projectId);
+    batch.upsertedProjects.set(project.projectId, project);
+    batch.mutationsByKey.set(`project:${project.projectId}`, {
+      kind: "project",
+      type: "upsert",
+      id: project.projectId,
+      value: project,
+    });
+  }
+
+  private recordBatchProjectDelete(projectId: string, batch: WorkspaceDeltaBatchState): void {
+    this.projects.delete(projectId);
+    batch.upsertedProjects.delete(projectId);
+    batch.removedProjectIds.add(projectId);
+    batch.mutationsByKey.set(`project:${projectId}`, {
+      kind: "project",
+      type: "delete",
+      id: projectId,
+    });
   }
 
   commitCached(input: {
@@ -72,7 +263,7 @@ export class WorkspaceDirectoryReplica {
     deltas: readonly WorkspaceDirectoryDelta[],
   ): DirectoryReplicaMutation[] {
     this.replace(snapshot);
-    const mutations = deltas.flatMap((delta) => this.applyDelta(delta));
+    const mutations = this.applyDeltas(deltas);
     useSessionStore.getState().setHasHydratedWorkspaces(this.serverId, true);
     return mutations;
   }
@@ -107,6 +298,15 @@ export class WorkspaceDirectoryReplica {
         workspaces.set(workspaceId, workspace);
       }
     }
+    // A snapshot taken while an undo runs can predate the restore; the host publishes the row.
+    for (const [workspaceId, workspace] of this.workspaces) {
+      if (
+        !workspaces.has(workspaceId) &&
+        shouldSuppressWorkspaceRemovalForLocalUndo({ serverId: this.serverId, workspaceId })
+      ) {
+        workspaces.set(workspaceId, workspace);
+      }
+    }
     for (const workspace of workspaces.values()) this.applySetupStatus(workspace);
     this.workspaces = workspaces;
     this.projects = new Map(snapshot.projects);
@@ -114,84 +314,6 @@ export class WorkspaceDirectoryReplica {
     const store = useSessionStore.getState();
     store.setWorkspaces(this.serverId, this.workspaces);
     store.setProjects(this.serverId, this.projects.values());
-  }
-
-  private applyScriptStatus(
-    update: ScriptStatusUpdateMessage["payload"],
-  ): DirectoryReplicaMutation[] {
-    const workspaceId = resolveWorkspaceMapKeyByIdentity({
-      workspaces: this.workspaces,
-      workspaceId: update.workspaceId,
-    });
-    const workspace = workspaceId ? this.workspaces.get(workspaceId) : undefined;
-    if (!workspace || equal(workspace.scripts, update.scripts)) return [];
-    const next = { ...workspace, scripts: update.scripts.map((script) => ({ ...script })) };
-    this.setWorkspace(next);
-    return [{ kind: "workspace", type: "upsert", id: next.id, value: next }];
-  }
-
-  private applyProjectDelta(
-    delta: Extract<SessionOutboundMessage, { type: "project.update" }>["payload"],
-  ): DirectoryReplicaMutation[] {
-    if (delta.kind === "remove") {
-      const mutations: DirectoryReplicaMutation[] = [
-        { kind: "project", type: "delete", id: delta.projectId },
-      ];
-      this.projects.delete(delta.projectId);
-      useSessionStore.getState().removeProject(this.serverId, delta.projectId);
-      for (const workspaceId of this.workspaceIdsByProject.get(delta.projectId) ?? []) {
-        this.deleteWorkspace(workspaceId);
-        mutations.push({ kind: "workspace", type: "delete", id: workspaceId });
-      }
-      return mutations;
-    }
-
-    const project = normalizeProjectDescriptor(delta.project);
-    this.setProject(project);
-    const mutations: DirectoryReplicaMutation[] = [
-      { kind: "project", type: "upsert", id: project.projectId, value: project },
-    ];
-    for (const workspaceId of this.workspaceIdsByProject.get(project.projectId) ?? []) {
-      const workspace = this.workspaces.get(workspaceId);
-      if (!workspace) continue;
-      const next = {
-        ...workspace,
-        projectDisplayName: project.projectDisplayName,
-        projectCustomName: project.projectCustomName,
-        projectCustomIconRevision: project.projectCustomIconRevision,
-        projectRootPath: project.projectRootPath,
-        projectKind: project.projectKind,
-      };
-      this.setWorkspace(next);
-      mutations.push({ kind: "workspace", type: "upsert", id: next.id, value: next });
-    }
-    return mutations;
-  }
-
-  private removeWorkspace(
-    delta: Extract<SessionOutboundMessage, { type: "workspace_update" }>["payload"] & {
-      kind: "remove";
-    },
-  ): DirectoryReplicaMutation[] {
-    this.deleteWorkspace(delta.id);
-    const mutations: DirectoryReplicaMutation[] = [
-      { kind: "workspace", type: "delete", id: delta.id },
-    ];
-    if (delta.emptyProject) {
-      const project = normalizeProjectDescriptor(delta.emptyProject);
-      this.setProject(project);
-      mutations.push({ kind: "project", type: "upsert", id: project.projectId, value: project });
-    }
-    if (delta.removedProjectId) {
-      this.projects.delete(delta.removedProjectId);
-      useSessionStore.getState().removeProject(this.serverId, delta.removedProjectId);
-      mutations.push({ kind: "project", type: "delete", id: delta.removedProjectId });
-    }
-    clearWorkspaceArchivePending({ serverId: this.serverId, workspaceId: delta.id });
-    useWorkspaceSetupStore
-      .getState()
-      .removeWorkspace({ serverId: this.serverId, workspaceId: delta.id });
-    return mutations;
   }
 
   private upsertWorkspace(workspace: WorkspaceDescriptor): DirectoryReplicaMutation[] {

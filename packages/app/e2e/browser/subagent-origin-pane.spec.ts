@@ -38,8 +38,12 @@ async function openParentInRightPane(page: Page, parentId: string, workspaceId: 
   await expect(left).toBeVisible();
   await expect(right).toBeVisible();
   await expect(right).not.toHaveAttribute("data-testid", "workspace-pane-main");
+  // A later split can replace the parent pane's rail with compact chrome.
+  // Keep the pane identity instead of finding it again through that rail.
+  const rightPaneId = await right.getAttribute("data-testid");
+  expect(rightPaneId).not.toBeNull();
   await left.locator('[data-testid^="workspace-tab-draft_"]').click();
-  return { left, right };
+  return { left, right: page.getByTestId(rightPaneId!) };
 }
 
 test.beforeEach(async ({ page }) => {

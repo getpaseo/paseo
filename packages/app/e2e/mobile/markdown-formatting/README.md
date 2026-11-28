@@ -28,12 +28,13 @@ bounds cannot establish measurement parity.
 compares them with the shipped headers. This catches missing C++ fields in the
 measurement path, which the Kotlin tests cannot exercise.
 
-The package patch contains `InlineCodeFormattingTest`, which exercises actual
-Android spans in Robolectric native graphics mode, covering draw and measurement,
-span order, code inside paragraph/heading sizes, bold/italic composition, and
-links preserving code and emphasized prose fonts.
-It runs in the existing `test:android` CI job. To run only this regression locally,
-from `packages/app/android` after Expo prebuild:
+The vendored library (`packages/react-native-enriched-markdown`) contains
+`InlineCodeFormattingTest`, which exercises actual Android spans in Robolectric
+native graphics mode, covering draw and measurement, span order, code inside
+paragraph/heading sizes, bold/italic composition, and links preserving code and
+emphasized prose fonts. It runs in `npm run test:android`; CI does not run it.
+To run only this regression locally, from `packages/app/android` after Expo
+prebuild:
 
 ```sh
 ./gradlew :react-native-enriched-markdown:testDebugUnitTest \

@@ -14,6 +14,7 @@ import { type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
+import type { TerminalDefaultColors } from "@getpaseo/protocol/messages";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
 
@@ -54,6 +55,16 @@ export type TerminalWorkspaceContributionChangedListener = (
   event: TerminalWorkspaceContributionChangedEvent,
 ) => void;
 
+/**
+ * Who asked for a terminal: an agent's Paseo tool, a `paseo.json` script or service, or a
+ * `paseo.json` worktree terminal; anything else is a client. `input` is the command Paseo types
+ * into the shell once it starts.
+ */
+export interface TerminalOrigin {
+  source: "client" | "agent" | "script" | "worktree";
+  input?: string;
+}
+
 export interface TerminalManager {
   /**
    * Set when this host's terminals cannot be served at all (a worker from a newer Paseo holds
@@ -62,12 +73,15 @@ export interface TerminalManager {
   getUnavailableError?(): Error | null;
   getTerminals(cwd: string, options?: { workspaceId?: string }): Promise<TerminalSession[]>;
   createTerminal(options: {
+    /** Where the terminal comes from, for plugins' `terminal.create.before` hooks. */
+    origin?: TerminalOrigin;
     id?: string;
     cwd: string;
     workspaceId: string;
     name?: string;
     title?: string;
     env?: Record<string, string>;
+    defaultColors?: TerminalDefaultColors;
     command?: string;
     args?: string[];
     rows?: number;
@@ -338,6 +352,7 @@ export function createTerminalManager(
       name?: string;
       title?: string;
       env?: Record<string, string>;
+      defaultColors?: TerminalDefaultColors;
       command?: string;
       args?: string[];
       rows?: number;
@@ -373,6 +388,7 @@ export function createTerminalManager(
             id: terminalId,
             cwd: options.cwd,
             workspaceId: options.workspaceId,
+            defaultColors: options.defaultColors,
             name: options.name ?? defaultName,
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),

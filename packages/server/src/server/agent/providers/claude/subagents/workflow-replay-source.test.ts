@@ -13,6 +13,9 @@ import {
   parseClaudeWorkflowRun,
   type ClaudeWorkflowParentEntry,
 } from "./workflow-replay-source.js";
+import { isolatePaseoHome } from "../../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 const TOOL_CALL_ID = "toolu_01XskpjeASyuFyXC5qsLHYps";
 const RUN_ID = "wf_4a0af4f7-f56";
@@ -41,6 +44,34 @@ function parentEntries(
 }
 
 describe("Claude workflow replay", () => {
+  it("skips parent history when there are no workflow summaries", async () => {
+    const entries = {
+      [Symbol.iterator](): Iterator<ClaudeWorkflowParentEntry> {
+        throw new Error("parent history must not be read");
+      },
+    };
+    await expect(
+      observeReplayWorkflows({ workflows: [], parentEntries: entries }),
+    ).resolves.toEqual([]);
+  });
+
+  it("links workflow results from a single traversal, including results before their calls", async () => {
+    const [call, result] = parentEntries();
+    const entries = (async function* () {
+      yield result!;
+      yield call!;
+    })();
+    const observations = await observeReplayWorkflows({
+      workflows: [{ runId: RUN_ID, status: "completed" }],
+      parentEntries: entries,
+    });
+    expect(observations).toEqual([
+      { kind: "declared", id: TOOL_CALL_ID, toolCallId: TOOL_CALL_ID, title: "Workflow" },
+      { kind: "subtitle", id: TOOL_CALL_ID, subtitle: "Workflow" },
+      { kind: "status", id: TOOL_CALL_ID, status: "completed" },
+    ]);
+  });
+
   it("parses the persisted run summary observed from Claude Code 2.1.220", async () => {
     expect(
       parseClaudeWorkflowRun(

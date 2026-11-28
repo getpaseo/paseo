@@ -1,4 +1,4 @@
-import { runGitCommandBytes } from "./run-git-command.js";
+import { runGitCommandBytes, runGitCommand } from "./run-git-command.js";
 
 // Match the existing git-show ceiling. Oversized batches use bounded per-file reads.
 const MAX_CONTENT_BYTES = 20 * 1024 * 1024;
@@ -45,4 +45,18 @@ export async function readGitFileContents(
   }
   if (offset !== result.stdout.length) throw new Error("Unexpected git object output");
   return contents;
+}
+
+export async function readGitFileContentAtRef(
+  cwd: string,
+  ref: string,
+  path: string,
+): Promise<string | null> {
+  const result = await runGitCommand(["show", `${ref}:${path}`], {
+    cwd,
+    envOverlay: { GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
+    acceptExitCodes: [0, 128],
+  });
+  if (result.exitCode !== 0 || result.truncated) return null;
+  return result.stdout;
 }

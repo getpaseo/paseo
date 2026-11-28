@@ -9,7 +9,7 @@ import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
 import type { DirectorySuggestionResult } from "./resolver";
-import { useFileLink } from "./use-file-link";
+import { useAssistantFileLinkActions, useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 
 vi.mock("@/utils/open-external-url", () => ({
@@ -39,6 +39,21 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+/**
+ * Resolves a pending lookup and waits until React Query has delivered the result. It delivers on a
+ * timer, which would otherwise fire after the test, when jsdom is gone.
+ */
+async function resolveLookupAndDeliver(
+  lookup: ReturnType<typeof createDeferred<DirectorySuggestionResult>>,
+  result: DirectorySuggestionResult,
+): Promise<void> {
+  await act(async () => {
+    lookup.resolve(result);
+    await lookup.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 interface OpenedFile {
   target: InlinePathTarget;
   disposition: OpenFileDisposition;
@@ -53,6 +68,7 @@ interface TestClient {
     matchMode: "suffix";
     limit: number;
   }) => Promise<DirectorySuggestionResult>;
+  listDirectory?: (root: string, path: string) => Promise<unknown>;
 }
 
 function createQueryClient(): QueryClient {
@@ -322,12 +338,89 @@ describe("useFileLink", () => {
     act(() => {
       result.current.setWorkspaceRoot("/Users/test/other");
     });
-    deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
+    await resolveLookupAndDeliver(
+      deferred,
+      resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]),
+    );
 
-    await waitFor(() => {
-      expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
-    });
+    expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
     expect(openedFiles).toEqual([]);
+  });
+});
+
+describe("inspecting a link before acting on it", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  /** A workspace holding `docs/notes.md` and the folder `src/utils`. */
+  function inspectLinks(toast?: ToastApi) {
+    const client: TestClient = {
+      getDirectorySuggestions: async ({ query }) =>
+        resolvedSuggestions(query === "notes.md" ? [{ path: "docs/notes.md", kind: "file" }] : []),
+      listDirectory: async (_root, path) => {
+        if (path !== "src/utils") throw new Error("not a directory");
+        return {};
+      },
+    };
+    return renderHook(() => useAssistantFileLinkActions(), {
+      wrapper: createWrapper({ client, openedFiles: [], toast }),
+    }).result.current;
+  }
+
+  function pathInspection(inspection: ReturnType<ReturnType<typeof inspectLinks>["inspect"]>) {
+    if (inspection?.kind !== "path") throw new Error("Expected a path link");
+    return inspection;
+  }
+
+  it("reports a web link by its URL", () => {
+    const links = inspectLinks();
+
+    expect(links.inspect({ href: "https://example.test/doc" })).toEqual({
+      kind: "url",
+      url: "https://example.test/doc",
+    });
+  });
+
+  it("finds the file a bare name refers to without opening it", async () => {
+    const links = inspectLinks();
+    const report = pathInspection(
+      links.inspect({ href: "notes.md", text: "notes.md", markup: "linkify" }),
+    );
+
+    expect(report.written.kind).toBe("file");
+    await expect(report.lookup()).resolves.toEqual({ path: "docs/notes.md", kind: "file" });
+  });
+
+  it("tells a folder from a file by asking the host", async () => {
+    const links = inspectLinks();
+
+    await expect(pathInspection(links.inspect({ href: "src/utils" })).lookup()).resolves.toEqual({
+      path: "src/utils",
+      kind: "directory",
+    });
+  });
+
+  it("knows a trailing slash names a folder before asking", () => {
+    const links = inspectLinks();
+
+    expect(pathInspection(links.inspect({ href: "src/utils/" })).written.kind).toBe("directory");
+  });
+
+  it("says a name was not found only when asked to", async () => {
+    const toast = createToast();
+    const missing = pathInspection(
+      inspectLinks(toast).inspect({ href: "gone.md", text: "gone.md", markup: "linkify" }),
+    );
+
+    await expect(missing.lookup()).resolves.toBeNull();
+    expect(toast.show).not.toHaveBeenCalled();
+
+    missing.reportNotFound();
+    expect(toast.show).toHaveBeenCalledWith(expect.stringContaining("gone.md"), {
+      variant: "error",
+      testID: "assistant-file-link-not-found-toast",
+    });
   });
 });
 

@@ -7,7 +7,7 @@ import {
   type SidebarResizeEdge,
 } from "@/components/sidebar-resize-handle-layout";
 import { isWeb } from "@/constants/platform";
-import { useHasFinePointer } from "@/hooks/use-fine-pointer";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 
 interface SidebarResizeHandleProps {
   edge: SidebarResizeEdge;
@@ -29,7 +29,7 @@ function edgeOffsetStyle(edge: SidebarResizeEdge, edgeOffset: number) {
 }
 
 export function SidebarResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
-  const finePointer = useHasFinePointer();
+  const { finePointer } = usePointerCapabilities();
 
   if (finePointer) {
     return <PointerResizeHandle edge={edge} gesture={gesture} pressed={pressed} testID={testID} />;

@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
@@ -32,11 +32,13 @@ describe("zai usage source", () => {
     process.env["USERPROFILE"] = homeDir;
     for (const key of [
       "APPDATA",
+      "XDG_CONFIG_HOME",
       "COPILOT_TOKEN",
       "GITHUB_TOKEN",
       "GITHUB_PAT",
       "CURSOR_ACCESS_TOKEN",
       "CURSOR_TOKEN",
+      "Z_AI_API_KEY",
       "ZAI_API_KEY",
       "GLM_API_KEY",
       "GROK_API_KEY",
@@ -116,11 +118,61 @@ describe("zai usage source", () => {
       details: expect.arrayContaining([{ id: "status", label: "Status", value: "VALID" }]),
     });
   });
-});
 
-it("discovery returns a locator when fetch finds zai credentials", async () => {
-  const previous = process.env["ZAI_API_KEY"];
-  try {
+  it("fetches Z.ai usage from Z_AI_API_KEY, the name the glm-acp-agent CLI uses", async () => {
+    process.env["Z_AI_API_KEY"] = "zai_cli_token";
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({ data: [{ productName: "GLM Coding Max", status: "VALID" }] });
+    }) as unknown as typeof fetch;
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(authorization).toBe("Bearer zai_cli_token");
+    expect(zai).toMatchObject({ status: "available", planLabel: "GLM Coding Max" });
+  });
+
+  it("reads Z.ai usage from the credentials file the glm-acp-agent CLI writes", async () => {
+    const configDir = join(homeDir, ".config", "glm-acp-agent");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "credentials.json"),
+      JSON.stringify({ z_ai_api_key: "zai_file_token" }),
+    );
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({ data: [{ productName: "GLM Coding Max", status: "VALID" }] });
+    }) as unknown as typeof fetch;
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(authorization).toBe("Bearer zai_file_token");
+    expect(zai).toMatchObject({ status: "available" });
+  });
+
+  it("honours XDG_CONFIG_HOME for the credentials file", async () => {
+    const configDir = join(homeDir, "xdg", "glm-acp-agent");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, "credentials.json"),
+      JSON.stringify({ z_ai_api_key: "zai_xdg_token" }),
+    );
+    process.env["XDG_CONFIG_HOME"] = join(homeDir, "xdg");
+    let authorization: string | null = null;
+    fetchApi = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.Authorization ?? null;
+      return jsonResponse({ data: [{ productName: "GLM Coding Max", status: "VALID" }] });
+    }) as unknown as typeof fetch;
+
+    const zai = findProvider(await service().listUsage(), "zai");
+
+    expect(authorization).toBe("Bearer zai_xdg_token");
+    expect(zai).toMatchObject({ status: "available" });
+  });
+
+  it("discovery returns a locator when fetch finds zai credentials", async () => {
     process.env["ZAI_API_KEY"] = "fixture-token";
     let requested = false;
     await fetchFirst(async () => {
@@ -131,10 +183,7 @@ it("discovery returns a locator when fetch finds zai credentials", async () => {
     expect(await discover()).toEqual([
       { key: "default", input: { store: "env", locator: "ZAI_API_KEY" } },
     ]);
-  } finally {
-    if (previous === undefined) delete process.env["ZAI_API_KEY"];
-    else process.env["ZAI_API_KEY"] = previous;
-  }
+  });
 });
 
 describe("account discovery", () => {
@@ -176,4 +225,39 @@ it.each([401, 403])("reports an existing login rejected with HTTP %i", async (st
     if (previous === undefined) delete process.env["ZAI_API_KEY"];
     else process.env["ZAI_API_KEY"] = previous;
   }
+});
+
+describe("session discovery", () => {
+  it.each([
+    "zai/glm-4.7",
+    "zai-coding-plan/glm-4.7",
+    "zhipuai/glm-4.7",
+    "zhipuai-coding-plan/glm-4.7",
+  ])("discovers Z.ai accounts for OpenCode model %s", async (model) => {
+    const dir = mkdtempSync(join(tmpdir(), "zai-session-"));
+    const previous = process.env["ZAI_API_KEY"];
+    try {
+      process.env["ZAI_API_KEY"] = "session-zai-key";
+      expect(
+        await discoverSession({
+          kind: "session",
+          provider: "opencode",
+          model,
+          env: { HOME: dir, ZAI_API_KEY: "session-zai-key" },
+        }),
+      ).toEqual([{ key: "default", input: { store: "env", locator: "ZAI_API_KEY" } }]);
+      expect(
+        await discoverSession({
+          kind: "session",
+          provider: "opencode",
+          model: "openai/gpt-5.4",
+          env: { HOME: dir, ZAI_API_KEY: "session-zai-key" },
+        }),
+      ).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env["ZAI_API_KEY"];
+      else process.env["ZAI_API_KEY"] = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

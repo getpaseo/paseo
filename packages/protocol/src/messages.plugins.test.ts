@@ -372,3 +372,43 @@ it("npm metadata leaves legacy plugin rows parseable without extending their clo
     payload: { requestId: "npm", plugins: [plugin] },
   });
 });
+
+describe("plugin subscription protocol", () => {
+  it("parses a subscribe request and its response", () => {
+    const request = {
+      type: "plugin.rpc.subscribe.request",
+      requestId: "r1",
+      pluginId: "diff-watch",
+      method: "diff.watch",
+      input: { a: "main", b: "HEAD" },
+    };
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    const response = {
+      type: "plugin.rpc.subscribe.response",
+      payload: { requestId: "r1", subscriptionId: "s1" },
+    };
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  });
+
+  it("parses JSON events and closes with and without an error", () => {
+    for (const message of [
+      { type: "plugin.rpc.event", payload: { subscriptionId: "s1", event: { path: "a.ts" } } },
+      { type: "plugin.rpc.closed", payload: { subscriptionId: "s1" } },
+      { type: "plugin.rpc.closed", payload: { subscriptionId: "s1", error: "boom" } },
+    ]) {
+      expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+    }
+  });
+
+  it("advertises the feature as an optional flag", () => {
+    const status = {
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv",
+        features: { pluginSubscriptions: true },
+      },
+    };
+    expect(StatusMessageSchema.parse(status)).toMatchObject(status);
+  });
+});

@@ -1,7 +1,9 @@
 import {
   negotiateProviderCapabilities,
   requireProviderCapabilities,
+  type ProviderConfigChanges,
   type ProviderConfigState,
+  type ProviderOptionControl,
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
@@ -19,14 +21,36 @@ const CAPABILITIES = [
   "session.archive",
   "session.configure",
   "session.list",
+  "session.metrics",
   "session.persistence",
   "session.subsession",
   "session.unarchive",
   "timeline.plugin",
 ] as const;
 
+const VOICES = [
+  { value: "calm", label: "Calm" },
+  { value: "direct", label: "Direct" },
+];
+
+// Which option keys get a composer control. The control holds no value: Paseo reads it from
+// `providerOptions`, in a draft as well as on a running session.
+const CONTROLS: ProviderOptionControl[] = [
+  { type: "toggle", key: "concise", label: "Concise responses", icon: "Zap" },
+  {
+    type: "select",
+    key: "voice",
+    label: "Voice",
+    icon: "Mic",
+    defaultValue: "calm",
+    choices: VOICES,
+  },
+];
+
 interface ExampleSession {
   config: ProviderSessionConfig;
+  /** What the session runs with. A key with no value runs its default. */
+  options: { concise?: boolean; voice?: string };
   persistence: ProviderPersistence;
   turn: number;
   activeTurnId: string | null;
@@ -175,8 +199,13 @@ function openSession(
     version: 1,
     data: { nativeSessionId: `example:${input.sessionId}` },
   };
+  const { concise, voice } = input.config.providerOptions ?? {};
   const session: ExampleSession = {
     config: input.config,
+    options: {
+      ...(typeof concise === "boolean" ? { concise } : {}),
+      ...(VOICES.some((candidate) => candidate.value === voice) ? { voice: voice as string } : {}),
+    },
     persistence,
     turn: 0,
     activeTurnId: null,
@@ -281,10 +310,11 @@ function promptSession(
     result: { type: "turn", turnId },
   });
   state.emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "started" });
+  const reply = `Echo: ${text}`;
   state.emit({
     type: "timeline.item",
     sessionId: input.sessionId,
-    item: { type: "assistant_message", id: `assistant-${session.turn}`, text: `Echo: ${text}` },
+    item: { type: "assistant_message", id: `assistant-${session.turn}`, text: reply },
   });
   state.emit({
     type: "timeline.item",
@@ -308,7 +338,25 @@ function promptSession(
     sessionId: input.sessionId,
     persistence: session.persistence,
   });
-  state.emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "completed" });
+  // Values are formatted here: Paseo shows each one as given.
+  state.emit({
+    type: "session.turn",
+    sessionId: input.sessionId,
+    turnId,
+    state: "completed",
+    metrics: [
+      { label: "Model", value: session.config.model ?? "example-1" },
+      { label: "Reply", value: `${reply.length} characters` },
+    ],
+  });
+  // An older Paseo does not offer session metrics and rejects the event.
+  if (state.capabilities.includes("session.metrics")) {
+    state.emit({
+      type: "session.metrics",
+      sessionId: input.sessionId,
+      metrics: [{ label: "Turns", value: String(session.turn) }],
+    });
+  }
   session.activeTurnId = null;
 }
 
@@ -344,6 +392,19 @@ function configureSession(
 ): void {
   const session = requireSession(state, input.sessionId);
   const changes = input.changes;
+  // Work out everything first, so a refused request changes nothing.
+  let options: ExampleSession["options"];
+  try {
+    options = applyOptions(session.options, changes.providerOptions ?? {});
+  } catch (error) {
+    state.emit({
+      type: "request.failed",
+      requestId: input.requestId,
+      error: { message: error instanceof Error ? error.message : String(error) },
+    });
+    return;
+  }
+  session.options = options;
   session.config = {
     ...session.config,
     model: changes.model === null ? undefined : (changes.model ?? session.config.model),
@@ -352,12 +413,29 @@ function configureSession(
       changes.thinkingOption === null
         ? undefined
         : (changes.thinkingOption ?? session.config.thinkingOption),
-    settings: changes.settings
-      ? { ...session.config.settings, ...changes.settings }
-      : session.config.settings,
   };
   state.emit({ type: "session.config", sessionId: input.sessionId, config: configState(session) });
   state.emit({ type: "request.completed", requestId: input.requestId });
+}
+
+/** Apply the whole patch or throw. `null` returns a key to its default. */
+function applyOptions(
+  options: ExampleSession["options"],
+  patch: NonNullable<ProviderConfigChanges["providerOptions"]>,
+): ExampleSession["options"] {
+  const next = { ...options };
+  for (const [key, value] of Object.entries(patch)) {
+    if (key === "concise" && (value === null || typeof value === "boolean")) {
+      if (value === null) delete next.concise;
+      else next.concise = value;
+    } else if (key === "voice" && (value === null || VOICES.some((v) => v.value === value))) {
+      if (value === null) delete next.voice;
+      else next.voice = value as string;
+    } else {
+      throw new Error(`Cannot set ${key} to ${JSON.stringify(value)}`);
+    }
+  }
+  return next;
 }
 
 function configState(session: ExampleSession): ProviderConfigState {
@@ -368,25 +446,9 @@ function configState(session: ExampleSession): ProviderConfigState {
     models: [{ id: "example-1", label: "Example 1" }],
     modes: [{ id: "build", label: "Build" }],
     thinkingOptions: [],
-    settings: [
-      {
-        type: "toggle",
-        id: "concise",
-        label: "Concise responses",
-        value: session.config.settings.concise === true,
-      },
-      {
-        type: "select",
-        id: "voice",
-        label: "Voice",
-        value:
-          typeof session.config.settings.voice === "string" ? session.config.settings.voice : null,
-        options: [
-          { label: "Calm", value: "calm" },
-          { label: "Direct", value: "direct" },
-        ],
-      },
-    ],
+    controls: CONTROLS,
+    // What the session ended up with, so Paseo stores what runs.
+    providerOptions: { ...session.options },
   };
 }
 

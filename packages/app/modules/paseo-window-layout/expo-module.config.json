@@ -1,0 +1,4 @@
+{
+  "platforms": ["ios"],
+  "ios": { "modules": ["PaseoWindowLayoutModule"] }
+}

@@ -193,17 +193,10 @@ test("creates missing beta releases as drafts", () => {
   });
 });
 
-test("converts contributor profile links to mentions in synced release notes", () => {
-  const changelogText = [
-    "## 0.1.60-beta.1 - 2026-04-20",
-    "",
-    "- Beta notes. ([#526](https://github.com/getpaseo/paseo/pull/526) by [@therainisme](https://github.com/therainisme))",
-    "",
-  ].join("\n");
-
+// Syncs the v0.1.60-beta.1 entry of `changelogText` and returns the body GitHub would receive.
+function syncedReleaseBody(changelogText) {
+  let syncedNotes = "";
   withTempChangelog(() => {
-    let syncedNotes = "";
-
     const execFileSync = (command, args) => {
       if (args[0] === "api" && args[1] === "repos/getpaseo/paseo/releases/tags/v0.1.60-beta.1") {
         return JSON.stringify({ id: 311163621, draft: false });
@@ -222,8 +215,76 @@ test("converts contributor profile links to mentions in synced release notes", (
     syncReleaseNotes(["--repo", "getpaseo/paseo", "--tag", "v0.1.60-beta.1"], {
       execFileSync,
     });
-
-    assert.match(syncedNotes, /by @therainisme\)/);
-    assert.doesNotMatch(syncedNotes, /\[@therainisme\]\(https:\/\/github\.com\/therainisme\)/);
   }, changelogText);
+  return syncedNotes;
+}
+
+test("converts contributor profile links to mentions in synced release notes", () => {
+  const syncedNotes = syncedReleaseBody(
+    [
+      "## 0.1.60-beta.1 - 2026-04-20",
+      "",
+      "- Beta notes. ([#526](https://github.com/getpaseo/paseo/pull/526) by [@therainisme](https://github.com/therainisme))",
+      "",
+    ].join("\n"),
+  );
+
+  assert.match(syncedNotes, /by @therainisme\)/);
+  assert.doesNotMatch(syncedNotes, /\[@therainisme\]\(https:\/\/github\.com\/therainisme\)/);
+});
+
+test("leads with the highlights and folds the sections into one collapsed block", () => {
+  const syncedNotes = syncedReleaseBody(
+    [
+      "## 0.1.60-beta.1 - 2026-04-20",
+      "",
+      "- **Faster diffs:** Diffs load sooner.",
+      "",
+      "### Added",
+      "",
+      "- Added a picker",
+      "",
+      "### Fixed",
+      "",
+      "- Fixed a crash",
+      "",
+      "## 0.1.59 - 2026-04-10",
+      "",
+      "### Fixed",
+      "",
+      "- Fixed an older thing",
+      "",
+    ].join("\n"),
+  );
+
+  assert.equal(
+    syncedNotes,
+    [
+      "## 0.1.60-beta.1 - 2026-04-20",
+      "",
+      "- **Faster diffs:** Diffs load sooner.",
+      "",
+      "<details>",
+      "<summary>All changes</summary>",
+      "",
+      "### Added",
+      "",
+      "- Added a picker",
+      "",
+      "### Fixed",
+      "",
+      "- Fixed a crash",
+      "",
+      "</details>",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("keeps the sections in view when an entry has no highlights", () => {
+  const syncedNotes = syncedReleaseBody(
+    "## 0.1.60-beta.1 - 2026-04-20\n\n### Fixed\n\n- Fixed a crash\n",
+  );
+
+  assert.equal(syncedNotes, "## 0.1.60-beta.1 - 2026-04-20\n\n### Fixed\n\n- Fixed a crash\n");
 });

@@ -326,6 +326,10 @@ export async function installCli(): Promise<InstallStatus> {
   return parseInstallStatus(await invokeDesktopCommand("install_cli"));
 }
 
+export async function uninstallCli(): Promise<InstallStatus> {
+  return parseInstallStatus(await invokeDesktopCommand("uninstall_cli"));
+}
+
 // COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
 export function readLegacySkillSelection(): Promise<AgentSkillSelection | null> {
   return invokeDesktopCommand("read_legacy_skill_selection") as Promise<AgentSkillSelection | null>;
