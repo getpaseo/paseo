@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +10,12 @@ import { promisify } from "node:util";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bridgeModule = "packages/server/dist/server/server/agent/providers/opencode/bridge.js";
+const cliEntry = "packages/cli/dist/index.js";
+const terminalModule = "packages/server/dist/server/terminal/terminal.js";
+const sherpaModule =
+  "packages/server/dist/server/server/speech/providers/local/sherpa/sherpa-onnx-node-loader.js";
+const sherpaEnvModule =
+  "packages/server/dist/server/server/speech/providers/local/sherpa/sherpa-runtime-env.js";
 
 // Mirrors nix/package.nix's installPhase: copy every traced path into $out.
 async function installTracedDaemon(outRoot) {
@@ -25,10 +32,29 @@ async function installTracedDaemon(outRoot) {
   }
 }
 
-test("traced daemon closure ships the OpenCode bridge plugin for every OpenCode version", async () => {
+test("traced daemon closure ships runtime dependencies and OpenCode bridge plugins", async () => {
   const outRoot = await mkdtemp(path.join(os.tmpdir(), "trace-daemon-dist-"));
   try {
     await installTracedDaemon(outRoot);
+
+    const { sherpaPlatformPackageName } = await import(
+      pathToFileURL(path.join(outRoot, sherpaEnvModule)).href
+    );
+    const runtimeEdges = [
+      [cliEntry, "@getpaseo/server"],
+      [terminalModule, "@getpaseo/cli/bin/paseo"],
+      [terminalModule, "node-pty/package.json"],
+      [sherpaModule, "sherpa-onnx-node"],
+      [sherpaEnvModule, `${sherpaPlatformPackageName()}/package.json`],
+    ];
+    for (const [importer, specifier] of runtimeEdges) {
+      const resolved = createRequire(path.join(outRoot, importer)).resolve(specifier);
+      assert.ok(
+        resolved.startsWith(outRoot + path.sep),
+        `expected ${importer} -> ${specifier} to resolve inside installed closure, got ${resolved}`,
+      );
+    }
+
     const installedBridgeUrl = pathToFileURL(path.join(outRoot, bridgeModule)).href;
     const { loadOpenCodeBridgePluginArtifact } = await import(installedBridgeUrl);
 
