@@ -145,4 +145,153 @@ describe("agent timeline content", () => {
     });
     expect(limitAgentTimelineItemContent(item)).toBe(item);
   });
+
+  test("preserves a late-file edit in oversized full-file oldString/newString payloads", () => {
+    const lines = Array.from(
+      { length: 800 },
+      (_, index) => `export const row_${index} = "${"x".repeat(70)}";`,
+    );
+    const oldString = `${lines.join("\n")}\n`;
+    const updated = [...lines];
+    updated[760] = 'export const row_760 = "UPDATED_AT_LINE_761";';
+    const newString = `${updated.join("\n")}\n`;
+
+    expect(oldString.length).toBeGreaterThan(64 * 1024);
+
+    const item = limitAgentTimelineItemContent({
+      type: "tool_call",
+      callId: "late-edit",
+      name: "edit",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/repo/src/theoryContentEn.ts",
+        oldString,
+        newString,
+      },
+    });
+
+    if (item.type !== "tool_call" || item.detail.type !== "edit") throw new Error("shape");
+    expect(item.detail.oldString).toContain("row_757");
+    expect(item.detail.oldString).toContain("row_760");
+    expect(item.detail.oldString).toContain("row_763");
+    expect(item.detail.newString).toContain("UPDATED_AT_LINE_761");
+    expect(item.detail.oldString).not.toContain("row_0");
+    expect(item.detail.oldString).not.toContain("…[truncated");
+    expect(item.detail.newString).not.toContain("…[truncated");
+    expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+    expect(AgentTimelineItemPayloadSchema.safeParse(item).success).toBe(true);
+    expect(limitAgentTimelineItemContent(item)).toBe(item);
+  });
+
+  test("compacts far-apart edits in an oversized file into a multi-hunk unifiedDiff", () => {
+    const lines = Array.from(
+      { length: 900 },
+      (_, index) => `const entry_${index} = "${"y".repeat(70)}";`,
+    );
+    const oldString = `${lines.join("\n")}\n`;
+    const updated = [...lines];
+    updated[5] = 'const entry_5 = "EARLY_CHANGE";';
+    updated[850] = 'const entry_850 = "LATE_CHANGE";';
+    const newString = `${updated.join("\n")}\n`;
+
+    const item = limitAgentTimelineItemContent({
+      type: "tool_call",
+      callId: "scattered-edit",
+      name: "edit",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/repo/src/large.ts",
+        oldString,
+        newString,
+      },
+    });
+
+    if (item.type !== "tool_call" || item.detail.type !== "edit") throw new Error("shape");
+    expect(item.detail.oldString).toBeUndefined();
+    expect(item.detail.newString).toBeUndefined();
+    expect(item.detail.unifiedDiff).toContain("@@ -3,7 +3,7 @@");
+    expect(item.detail.unifiedDiff).toContain('+const entry_5 = "EARLY_CHANGE";');
+    expect(item.detail.unifiedDiff).toContain("@@ -848,7 +848,7 @@");
+    expect(item.detail.unifiedDiff).toContain('+const entry_850 = "LATE_CHANGE";');
+    expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+    expect(AgentTimelineItemPayloadSchema.safeParse(item).success).toBe(true);
+    expect(limitAgentTimelineItemContent(item)).toBe(item);
+  });
+
+  test("collapses an identical oversized edit payload to empty strings", () => {
+    const text = Array.from({ length: 800 }, (_, i) => `line ${i}: ${"z".repeat(80)}`).join("\n");
+    const item = limitAgentTimelineItemContent({
+      type: "tool_call",
+      callId: "noop-edit",
+      name: "edit",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/repo/src/same.ts",
+        oldString: text,
+        newString: text,
+      },
+    });
+
+    if (item.type !== "tool_call" || item.detail.type !== "edit") throw new Error("shape");
+    expect(item.detail.oldString).toBe("");
+    expect(item.detail.newString).toBe("");
+    expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+    expect(limitAgentTimelineItemContent(item)).toBe(item);
+  });
+
+  test("bounds massive full-file rewrites past the Myers distance cap without blowing up", () => {
+    const oldString = Array.from({ length: 1000 }, (_, i) => `old ${i}: ${"a".repeat(80)}`).join(
+      "\n",
+    );
+    const newString = Array.from({ length: 1000 }, (_, i) => `new ${i}: ${"b".repeat(80)}`).join(
+      "\n",
+    );
+    const item = limitAgentTimelineItemContent({
+      type: "tool_call",
+      callId: "rewrite-edit",
+      name: "edit",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "edit",
+        filePath: "/repo/src/rewrite.ts",
+        oldString,
+        newString,
+      },
+    });
+
+    if (item.type !== "tool_call" || item.detail.type !== "edit") throw new Error("shape");
+    expect(item.detail.oldString).toContain("old 0:");
+    expect(item.detail.newString).toContain("new 0:");
+    expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+    expect(AgentTimelineItemPayloadSchema.safeParse(item).success).toBe(true);
+    expect(limitAgentTimelineItemContent(item)).toBe(item);
+  });
+
+  test("keeps small edit snippets untouched when an oversized error exceeds the budget", () => {
+    const item = limitAgentTimelineItemContent({
+      type: "tool_call",
+      callId: "small-edit-big-error",
+      name: "edit",
+      status: "failed",
+      error: { message: "e".repeat(100 * 1024) },
+      detail: {
+        type: "edit",
+        filePath: "/repo/src/small.ts",
+        oldString: "a\nb\nc\nd\ne\nf\ng",
+        newString: "a\nb\nc\nd\ne\nf\nG",
+      },
+    });
+
+    if (item.type !== "tool_call" || item.detail.type !== "edit") throw new Error("shape");
+    expect(item.detail.oldString).toBe("a\nb\nc\nd\ne\nf\ng");
+    expect(item.detail.newString).toBe("a\nb\nc\nd\ne\nf\nG");
+    expect(serializedBytes(item)).toBeLessThanOrEqual(64 * 1024);
+  });
 });
