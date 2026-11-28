@@ -89,8 +89,11 @@ async function harness(
   }
   async function open(
     persistence?: Extract<ProviderInput, { type: "session.open" }>["persistence"],
-    mode = "onRequest",
-    model: string | null = "meta/muse-spark-1.3",
+    {
+      mode = "onRequest",
+      model = "meta/muse-spark-1.3",
+      systemPrompt = "Test instructions",
+    }: { mode?: string; model?: string | null; systemPrompt?: string } = {},
   ) {
     await send({
       type: "session.open",
@@ -106,7 +109,7 @@ async function harness(
         mode,
         model: model ?? undefined,
         thinkingOption: "high",
-        systemPrompt: "Test instructions",
+        systemPrompt,
       },
       persistence,
       history: "replay",
@@ -411,7 +414,7 @@ test("multi-stage approvals surface Stage 2 then Stage 3 and send the current re
 });
 test("Full access automatically answers every escalated stage with the published allow-once choice", async () => {
   const h = await harness("multi-stage-approval");
-  await h.open(undefined, "allowAll");
+  await h.open(undefined, { mode: "allowAll" });
   await h.prompt();
   await h.wait((event) => event.type === "session.turn" && event.state === "completed");
   expect(h.events.filter((event) => event.type === "session.permission")).toEqual([]);
@@ -438,8 +441,8 @@ test("interrupt awaits cancelled terminal and reconciles the tool", async () => 
     ),
   ).toBeGreaterThan(terminalIndex);
 });
-test("a fresh connection restores earlier messages from persisted session state", async () => {
-  const original = await harness();
+test("resume restores earlier messages and sends the current system prompt once", async () => {
+  const original = await harness("image-followup");
   const historyPath = path.join(original.root, "native-history.ndjson");
   original.launch.env.MUSE_TEST_HISTORY = historyPath;
   await original.open();
@@ -467,10 +470,12 @@ test("a fresh connection restores earlier messages from persisted session state"
     }),
   );
   await original.connection.close();
-  const reopened = await harness("text-reasoning", { MUSE_TEST_HISTORY: historyPath });
-  expect(await reopened.open(JSON.parse(await readFile(persistencePath, "utf8")))).toMatchObject({
-    type: "session.ready",
-  });
+  const reopened = await harness("image-followup", { MUSE_TEST_HISTORY: historyPath });
+  expect(
+    await reopened.open(JSON.parse(await readFile(persistencePath, "utf8")), {
+      systemPrompt: "Updated instructions",
+    }),
+  ).toMatchObject({ type: "session.ready" });
   const restored = reopened.events
     .filter((event) => event.type === "timeline.item")
     .map((event) => event.item)
@@ -483,6 +488,19 @@ test("a fresh connection restores earlier messages from persisted session state"
   expect(reopened.events.filter((event) => event.type === "session.turn")).toEqual([]);
   await reopened.prompt();
   await reopened.wait((event) => event.type === "session.turn" && event.state === "completed");
+  const from = await reopened.prompt();
+  await reopened.wait(
+    (event) => event.type === "session.turn" && event.state === "completed",
+    from,
+  );
+  const turns = (await reopened.recorded()).filter((frame) => frame.method === "turn/start");
+  expect(turns.map((frame) => frame.params.input)).toEqual([
+    [
+      { type: "text", text: "<system_instructions>\nUpdated instructions\n</system_instructions>" },
+      { type: "text", text: "hello" },
+    ],
+    [{ type: "text", text: "hello" }],
+  ]);
 });
 
 for (const cursor of [undefined, "v:old:7"]) {
@@ -890,7 +908,7 @@ for (const [configuredModel, catalogModels, expectedModel] of [
       MUSE_TEST_NULL_MODEL: "1",
       MUSE_TEST_MODELS: JSON.stringify(catalogModels),
     });
-    expect(await h.open(undefined, "onRequest", configuredModel || null)).toEqual({
+    expect(await h.open(undefined, { model: configuredModel || null })).toEqual({
       type: "session.ready",
       requestId: "open",
       sessionId: "paseo-session",
