@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import {
   applyAgentChanges,
+  updateAgentFeatures,
+  type AgentFeatureUpdateClient,
   toAgentUpdateResult,
   type AgentMetadataChanges,
   type AgentUpdateClient,
@@ -101,8 +103,131 @@ describe("toAgentUpdateResult", () => {
       name: "Renamed agent",
       labels: "team=platform",
       thinkingOptionId: "high",
+      features: "-",
       noticeType: null,
       notice: null,
     });
+  });
+
+  it("reports the agent's current feature values", () => {
+    const result = toAgentUpdateResult(
+      {
+        id: "agent-1",
+        title: null,
+        labels: {},
+        effectiveThinkingOptionId: null,
+        features: [
+          {
+            type: "select",
+            id: "service_tier",
+            label: "Speed",
+            value: "priority",
+            options: [
+              { id: "default", label: "Normal" },
+              { id: "priority", label: "Fast" },
+            ],
+          },
+          { type: "toggle", id: "plan_mode", label: "Plan", value: false },
+        ],
+      },
+      { notice: null },
+    );
+
+    expect(result.features).toBe("service_tier=priority,plan_mode=false");
+  });
+});
+
+interface RecordedFeatureUpdate {
+  agentId: string;
+  featureId: string;
+  value: unknown;
+}
+
+// Records what reached the provider. A failing feature is recorded before the error, the way a
+// provider can apply a setting and then fail, or a response can be lost after the daemon applied it.
+class RecordingFeatureClient implements AgentFeatureUpdateClient {
+  readonly updates: RecordedFeatureUpdate[] = [];
+
+  constructor(private readonly failingFeatureId?: string) {}
+
+  async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
+    this.updates.push({ agentId, featureId, value });
+    if (featureId === this.failingFeatureId) {
+      throw new Error("provider rejected the value");
+    }
+  }
+}
+
+describe("updateAgentFeatures", () => {
+  const agent = {
+    id: "agent-1",
+    features: [
+      {
+        type: "select" as const,
+        id: "service_tier",
+        label: "Speed",
+        value: "default",
+        options: [
+          { id: "default", label: "Normal" },
+          { id: "priority", label: "Fast" },
+        ],
+      },
+      { type: "toggle" as const, id: "plan_mode", label: "Plan", value: false },
+    ],
+  };
+
+  it("sets each feature with its typed value", async () => {
+    const client = new RecordingFeatureClient();
+
+    await updateAgentFeatures(client, {
+      agent,
+      requested: { service_tier: "priority", plan_mode: "true" },
+    });
+
+    expect(client.updates).toEqual([
+      { agentId: "agent-1", featureId: "service_tier", value: "priority" },
+      { agentId: "agent-1", featureId: "plan_mode", value: true },
+    ]);
+  });
+
+  it("sets nothing when any requested value is invalid", async () => {
+    const client = new RecordingFeatureClient();
+
+    await expect(
+      updateAgentFeatures(client, {
+        agent,
+        requested: { service_tier: "priority", plan_mode: "maybe" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_FEATURE" });
+    expect(client.updates).toEqual([]);
+  });
+
+  it("names the confirmed features and leaves the failed one unconfirmed", async () => {
+    const client = new RecordingFeatureClient("plan_mode");
+
+    await expect(
+      updateAgentFeatures(client, {
+        agent,
+        requested: { service_tier: "priority", plan_mode: "true" },
+      }),
+    ).rejects.toMatchObject({
+      code: "FEATURE_UPDATE_FAILED",
+      message: "Failed to set feature plan_mode: provider rejected the value",
+      details:
+        "Confirmed before the failure: service_tier=priority. The state of plan_mode is unconfirmed.",
+    });
+  });
+
+  it("does not claim nothing changed when the first setter fails after reaching the provider", async () => {
+    const client = new RecordingFeatureClient("service_tier");
+
+    await expect(
+      updateAgentFeatures(client, { agent, requested: { service_tier: "priority" } }),
+    ).rejects.toMatchObject({
+      details: "No feature update was confirmed. The state of service_tier is unconfirmed.",
+    });
+    expect(client.updates).toEqual([
+      { agentId: "agent-1", featureId: "service_tier", value: "priority" },
+    ]);
   });
 });

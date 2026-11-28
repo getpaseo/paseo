@@ -2,6 +2,11 @@ import type { Command } from "commander";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import {
+  formatFeatureValues,
+  parseFeatureFlags,
+  resolveFeatureValues,
+} from "../../utils/agent-features.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -15,6 +20,7 @@ export interface AgentUpdateResult {
   name: string | null;
   labels: string;
   thinkingOptionId: string | null;
+  features: string;
   noticeType: AgentProviderNotice["type"] | null;
   notice: string | null;
 }
@@ -27,6 +33,7 @@ export const updateSchema: OutputSchema<AgentUpdateResult> = {
     { header: "NAME", field: "name" },
     { header: "LABELS", field: "labels" },
     { header: "THINKING", field: "thinkingOptionId" },
+    { header: "FEATURES", field: "features" },
     { header: "NOTICE", field: "notice" },
   ],
 };
@@ -35,6 +42,7 @@ export interface AgentUpdateOptions extends CommandOptions {
   name?: string;
   label?: string[];
   thinking?: string;
+  feature?: string[];
   host?: string;
 }
 
@@ -58,16 +66,26 @@ export interface AgentUpdateClient {
   ): Promise<AgentProviderNotice | null>;
 }
 
+export interface AgentFeatureUpdateClient {
+  setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
+}
+
 export type AgentChanges =
   | { type: "metadata"; updates: AgentMetadataChanges }
   | { type: "thinking"; thinkingOptionId: string };
+
+// Feature values are checked against the agent's own features once it is fetched.
+type ParsedAgentChanges = AgentChanges | { type: "features"; requested: Record<string, string> };
 
 export interface AppliedAgentChanges {
   notice: AgentProviderNotice | null;
 }
 
 export function toAgentUpdateResult(
-  agent: Pick<AgentSnapshotPayload, "id" | "title" | "labels" | "effectiveThinkingOptionId">,
+  agent: Pick<
+    AgentSnapshotPayload,
+    "id" | "title" | "labels" | "effectiveThinkingOptionId" | "features"
+  >,
   appliedChanges: AppliedAgentChanges,
 ): AgentUpdateResult {
   return {
@@ -75,6 +93,7 @@ export function toAgentUpdateResult(
     name: agent.title,
     labels: formatLabels(agent.labels),
     thinkingOptionId: agent.effectiveThinkingOptionId ?? null,
+    features: formatFeatureValues(agent.features),
     noticeType: appliedChanges.notice?.type ?? null,
     notice: appliedChanges.notice?.message ?? null,
   };
@@ -98,6 +117,51 @@ export async function applyAgentChanges(
   }
   await client.updateAgent(agentId, changes.updates);
   return { notice: null };
+}
+
+export interface AgentFeatureUpdate {
+  agent: Pick<AgentSnapshotPayload, "id" | "features">;
+  requested: Record<string, string>;
+}
+
+/**
+ * Rejects malformed ids and values absent from the agent's features before setting any, then sets
+ * them one by one. The setters are not a transaction: when one fails, the ones the daemon
+ * confirmed stay applied, and the failed one may or may not have taken effect.
+ */
+export async function updateAgentFeatures(
+  client: AgentFeatureUpdateClient,
+  update: AgentFeatureUpdate,
+): Promise<void> {
+  const values = resolveFeatureValues(update.requested, update.agent.features ?? []);
+  const confirmed: string[] = [];
+  for (const [featureId, value] of Object.entries(values)) {
+    try {
+      await client.setAgentFeature(update.agent.id, featureId, value);
+    } catch (error) {
+      throw featureUpdateFailed({ featureId, confirmed, error });
+    }
+    confirmed.push(`${featureId}=${String(value)}`);
+  }
+}
+
+interface FeatureUpdateFailure {
+  featureId: string;
+  confirmed: string[];
+  error: unknown;
+}
+
+function featureUpdateFailed(failure: FeatureUpdateFailure): CommandError {
+  const reason = failure.error instanceof Error ? failure.error.message : String(failure.error);
+  let confirmed = "No feature update was confirmed.";
+  if (failure.confirmed.length > 0) {
+    confirmed = `Confirmed before the failure: ${failure.confirmed.join(", ")}.`;
+  }
+  return {
+    code: "FEATURE_UPDATE_FAILED",
+    message: `Failed to set feature ${failure.featureId}: ${reason}`,
+    details: `${confirmed} The state of ${failure.featureId} is unconfirmed.`,
+  };
 }
 
 function parseLabelOptions(labels: string[] | undefined): Record<string, string> {
@@ -149,7 +213,7 @@ function formatLabels(labels: Record<string, string>): string {
   return entries.map(([key, value]) => `${key}=${value}`).join(",");
 }
 
-function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
+function parseAgentChanges(options: AgentUpdateOptions): ParsedAgentChanges {
   const name = options.name?.trim();
   if (options.name !== undefined && !name) {
     throw {
@@ -160,6 +224,8 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
   }
 
   const labels = parseLabelOptions(options.label);
+  const requestedFeatures = parseFeatureFlags(options.feature);
+  const hasFeatureUpdates = Object.keys(requestedFeatures).length > 0;
   const thinkingOptionId = options.thinking?.trim();
   if (options.thinking !== undefined && !thinkingOptionId) {
     throw {
@@ -178,14 +244,25 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
       details: "Run separate agent update commands for runtime settings and metadata.",
     } satisfies CommandError;
   }
-  if (!hasMetadataUpdates && !thinkingOptionId) {
+  if (hasFeatureUpdates && (hasMetadataUpdates || thinkingOptionId)) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--feature cannot be combined with --name, --label or --thinking",
+      details: "Run separate agent update commands for features, thinking and metadata.",
+    } satisfies CommandError;
+  }
+  if (!hasMetadataUpdates && !thinkingOptionId && !hasFeatureUpdates) {
     throw {
       code: "NO_CHANGES_PROVIDED",
       message: "Nothing to update",
-      details: "Provide at least one of: --name <name>, --label <key=value>, --thinking <id>",
+      details:
+        "Provide at least one of: --name <name>, --label <key=value>, --thinking <id>, --feature <id=value>",
     } satisfies CommandError;
   }
 
+  if (hasFeatureUpdates) {
+    return { type: "features", requested: requestedFeatures };
+  }
   if (thinkingOptionId) {
     return { type: "thinking", thinkingOptionId };
   }
@@ -229,7 +306,15 @@ export async function runUpdateCommand(
     }
     const agentId = fetchResult.agent.id;
 
-    const appliedChanges = await applyAgentChanges(client, agentId, changes);
+    let appliedChanges: AppliedAgentChanges = { notice: null };
+    if (changes.type === "features") {
+      await updateAgentFeatures(client, {
+        agent: fetchResult.agent,
+        requested: changes.requested,
+      });
+    } else {
+      appliedChanges = await applyAgentChanges(client, agentId, changes);
+    }
 
     const updatedResult = await client.fetchAgent({ agentId });
     if (!updatedResult) {
