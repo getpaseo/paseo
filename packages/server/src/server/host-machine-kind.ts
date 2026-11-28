@@ -151,24 +151,50 @@ export function parseMacIoregProductName(output: string): string | null {
   return modelMatch?.[1]?.trim() ?? null;
 }
 
-async function readMacModel(): Promise<string | null> {
-  // Apple Silicon Macs report generic "Mac15,6" in sysctl hw.model, while IOPlatformExpertDevice
-  // exposes the human product name ("MacBook Pro", "Mac mini", "Mac Studio", etc.).
-  try {
-    const { stdout } = await execFileAsync(
-      "/usr/sbin/ioreg",
-      ["-rd1", "-c", "IOPlatformExpertDevice"],
-      {
-        encoding: "utf8",
-        timeout: PROBE_TIMEOUT_MS,
-      },
-    );
-    const parsed = parseMacIoregProductName(stdout);
+/**
+ * Pick the first probe result that classifies to a known machine kind.
+ *
+ * Apple Silicon Macs report a generic `hw.model` such as `Mac15,7` that
+ * `classifyMacModel` cannot map. The human-readable product name is published
+ * by a different ioreg node on different machines: older Macs put
+ * `product-name` on `IOPlatformExpertDevice`, while current Apple Silicon
+ * models publish it on a child `IOPlatformDevice` (`product`) node. Passing
+ * every probe through here means whichever node carries the name wins, and a
+ * generic identifier that cannot be classified is never treated as final.
+ */
+export function pickClassifiableMacModel(outputs: string[]): string | null {
+  for (const output of outputs) {
+    const parsed = parseMacIoregProductName(output);
     if (parsed && classifyMacModel(parsed)) {
       return parsed;
     }
-  } catch {
-    // Fall back to sysctl below.
+  }
+  return null;
+}
+
+async function readMacModel(): Promise<string | null> {
+  // Collect every node that may carry the marketing name. The expert device
+  // only exposes the generic identifier on current Apple Silicon hardware, so
+  // also read the `IOPlatformDevice` `product-name` node (issue #10997).
+  const probes: string[][] = [
+    ["-rd1", "-c", "IOPlatformExpertDevice"],
+    ["-r", "-c", "IOPlatformDevice", "-k", "product-name", "-d", "1"],
+  ];
+  const outputs: string[] = [];
+  for (const args of probes) {
+    try {
+      const { stdout } = await execFileAsync("/usr/sbin/ioreg", args, {
+        encoding: "utf8",
+        timeout: PROBE_TIMEOUT_MS,
+      });
+      outputs.push(stdout);
+    } catch {
+      // Try the next probe.
+    }
+  }
+  const classifiable = pickClassifiableMacModel(outputs);
+  if (classifiable) {
+    return classifiable;
   }
 
   try {
