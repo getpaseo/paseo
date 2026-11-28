@@ -3118,6 +3118,10 @@ export class HostRuntimeStore {
     await replica.prepare(agentId);
   }
 
+  collectCachedTimelineImageIds(): Promise<ReadonlySet<string>> {
+    return this.replicaCache.collectTimelineImageIds();
+  }
+
   async fetchAgentTimeline(
     serverId: string,
     agentId: string,

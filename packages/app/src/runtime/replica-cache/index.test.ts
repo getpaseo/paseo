@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { AttachmentMetadata } from "@/attachments/types";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -194,6 +195,18 @@ function timelineItem(text = "Cached"): StreamItem {
   };
 }
 
+function userMessage(images?: AttachmentMetadata[]): StreamItem {
+  return {
+    kind: "user_message",
+    id: "user-1",
+    text: "What is in this screenshot?",
+    images,
+    clientMessageId: "client-1",
+    timestamp: new Date("2026-07-18T08:02:00.000Z"),
+    timelineCursor: { epoch: "epoch-1", seq: 12 },
+  };
+}
+
 function directory(
   checkpoint: DirectoryCheckpoint = { agents: { generation: "g", afterSeq: 12 } },
 ) {
@@ -233,6 +246,74 @@ it("keeps the unsettled turn with the cached messages", async () => {
   await writer.flush();
 
   expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toEqual(cached);
+});
+
+it("round-trips user image metadata and collects references from stored and pending timelines", async () => {
+  const storage = new MemoryStorage();
+  const image = {
+    id: "image-1",
+    mimeType: "image/png",
+    storageType: "web-indexeddb" as const,
+    storageKey: "image-1",
+    fileName: "screenshot.png",
+    byteSize: 24,
+    createdAt: 1,
+  };
+  const writer = createCache(storage);
+  writer.commitTimeline(SERVER_ID, "agent-1", {
+    ...timeline(),
+    items: [userMessage([image])],
+  });
+  await writer.flush();
+
+  const reader = createCache(storage);
+  expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([userMessage([image])]);
+  expect(await reader.collectTimelineImageIds()).toEqual(new Set(["image-1"]));
+
+  const coldReader = new ReplicaCache(storage, noLegacyCleanup);
+  expect(await coldReader.collectTimelineImageIds()).toEqual(new Set(["image-1"]));
+
+  reader.commitTimeline(SERVER_ID, "agent-2", {
+    ...timeline(),
+    agentId: "agent-2",
+    items: [userMessage([{ ...image, id: "image-2", storageKey: "image-2" }])],
+  });
+  expect(await reader.collectTimelineImageIds()).toEqual(new Set(["image-1", "image-2"]));
+  expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual({
+    ...timeline(),
+    items: [userMessage([image])],
+  });
+});
+
+it("reads timeline rows written before image metadata was added", async () => {
+  const storage = new MemoryStorage();
+  storage.rows.set("cached-host:timeline:agent-1", {
+    serverId: SERVER_ID,
+    kind: "timeline",
+    id: "agent-1",
+    payload: JSON.stringify({
+      agentId: "agent-1",
+      items: [
+        {
+          kind: "user_message",
+          id: "user-1",
+          text: "Old row",
+          timestamp: "2026-07-18T08:02:00.000Z",
+        },
+      ],
+      range: null,
+      hasOlder: false,
+    }),
+  });
+
+  expect((await createCache(storage).readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+    {
+      kind: "user_message",
+      id: "user-1",
+      text: "Old row",
+      timestamp: new Date("2026-07-18T08:02:00.000Z"),
+    },
+  ]);
 });
 
 function commitDirectory(

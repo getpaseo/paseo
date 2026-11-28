@@ -21,6 +21,7 @@ import {
   expectQueuedMessageButton,
   fillComposerDraft,
   holdSendButton,
+  pasteComposerTestImage,
   sendDraftToQueue,
   startRunningMockAgent,
   submitMessage,
@@ -40,6 +41,7 @@ import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-
 import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { rememberTimelineRequestCounts } from "../support/helpers/timeline-resume";
+import { readReplicaCache } from "../support/helpers/replica-cache-storage";
 import {
   recordPanelToasts,
   switchWorkspaceViaSidebar,
@@ -915,7 +917,64 @@ async function completeDraftCreateSubmission(
   await expectCreatedAgentHandoff(page, pending.prompt, pending.userMessage);
 }
 
+async function expectDecodedUserThumbnail(message: Locator): Promise<void> {
+  const thumbnail = message.getByRole("button", { name: "Open image attachment" });
+  await expect(thumbnail).toBeVisible();
+  const image = thumbnail.locator("img");
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .toBeGreaterThan(0);
+}
+
+async function waitForCachedPrompt(page: Page, agentId: string, prompt: string): Promise<void> {
+  await expect
+    .poll(async () => {
+      const cache = await readReplicaCache(page);
+      const timelines = cache?.hosts?.flatMap((host) => host.timelines);
+      const timeline = timelines?.find((entry) => entry.agentId === agentId);
+      return timeline?.items?.some((item) => item.text === prompt);
+    })
+    .toBe(true);
+}
+
 test.describe("Agent message submission", () => {
+  test("keeps a pasted screenshot in the sent message after reload", async ({ page }, testInfo) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: `submission-pasted-image-${testInfo.workerIndex}-`,
+      title: "Pasted screenshot",
+    });
+    const prompt = "Keep this screenshot with my message.";
+    try {
+      await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+      await expectComposerVisible(page);
+      expect(await pasteComposerTestImage(page)).toBe(true);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+      await submitMessage(page, prompt);
+
+      const sentMessage = page.getByTestId("user-message").filter({ hasText: prompt });
+      await expect(sentMessage).toHaveAttribute("aria-busy", "false");
+      await expectDecodedUserThumbnail(sentMessage);
+      await expectAgentIdle(page);
+      await waitForCachedPrompt(page, agent.agentId, prompt);
+
+      await page.reload();
+      await expect(sentMessage).toHaveCount(1);
+      try {
+        await expectDecodedUserThumbnail(sentMessage);
+      } finally {
+        const screenshot = testInfo.outputPath("sent-message-after-reload.png");
+        await sentMessage.screenshot({ path: screenshot });
+        await testInfo.attach("sent-message-after-reload", {
+          path: screenshot,
+          contentType: "image/png",
+        });
+      }
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("settles an immediately interrupted first prompt", async ({ page }, testInfo) => {
     const workspace = await seedWorkspace({
       repoPrefix: `submission-immediate-interrupt-${testInfo.workerIndex}-`,

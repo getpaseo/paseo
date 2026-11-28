@@ -1,5 +1,6 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { findMountedWindowStart } from "@/agent-stream/history-window";
+import { AttachmentMetadataSchema } from "@/attachments/metadata-schema";
 import { z } from "zod";
 import {
   AgentBackgroundWorkSummarySchema,
@@ -126,6 +127,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     clientMessageId: z.string().optional(),
     messageId: z.string().optional(),
     text: z.string(),
+    images: z.array(AttachmentMetadataSchema).optional(),
   }),
   z.strictObject({
     ...TimelineItemBaseShape,
@@ -482,6 +484,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
+        ...(item.images && item.images.length > 0 ? { images: item.images } : {}),
       };
     case "assistant_message":
       return {
@@ -577,6 +580,7 @@ function deserializeBuiltinTimelineItem(
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId ? { messageId: item.messageId } : {}),
         text: item.text,
+        ...(item.images ? { images: item.images } : {}),
       };
     case "assistant_message":
       return {
@@ -806,7 +810,7 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
 function isTimelineItemStoredLosslessly(item: StreamItem): boolean {
   switch (item.kind) {
     case "user_message":
-      return (item.images?.length ?? 0) === 0 && (item.attachments?.length ?? 0) === 0;
+      return (item.attachments?.length ?? 0) === 0;
     case "tool_call":
       return item.payload.source === "agent";
     default:
@@ -870,6 +874,31 @@ function pendingRowKey(key: ReplicaRowKey): string {
 // immutable once stored, so their size is computed once. The count itself avoids the JS Buffer
 // polyfill, which materialises the whole byte array just to measure it.
 const rowBytesCache = new WeakMap<ReplicaRow, number>();
+const timelineImageIdsCache = new WeakMap<ReplicaRow, ReadonlySet<string>>();
+
+function imageIdsInStoredTimelineRow(row: ReplicaRow): ReadonlySet<string> {
+  const cached = timelineImageIdsCache.get(row);
+  if (cached) return cached;
+  const imageIds = new Set<string>();
+  try {
+    const timeline = parseStoredPayload(StoredTimelineSchema, row.payload);
+    for (const item of timeline.items) {
+      if (item.kind !== "user_message") continue;
+      for (const image of item.images ?? []) imageIds.add(image.id);
+    }
+  } catch {
+    // A row that fails validation cannot restore a timeline.
+  }
+  timelineImageIdsCache.set(row, imageIds);
+  return imageIds;
+}
+
+function collectUserImageIds(items: readonly StreamItem[], imageIds: Set<string>): void {
+  for (const item of items) {
+    if (item.kind !== "user_message") continue;
+    for (const image of item.images ?? []) imageIds.add(image.id);
+  }
+}
 
 function utf8ByteLength(text: string): number {
   let bytes = 0;
@@ -976,6 +1005,7 @@ function matchesReplicaRead(read: ReplicaRead, row: ReplicaRowKey): boolean {
 
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
+  private hostsInitialized = false;
   private readonly activeReads = new Set<ReplicaRead>();
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
@@ -991,6 +1021,7 @@ export class ReplicaCache {
   private writeQueue: Promise<void> = Promise.resolve();
   private preparePromise: Promise<void> | null = null;
   private storedIndexPromise: Promise<void> | null = null;
+  private coldStoredRowsPromise: Promise<ReplicaRow[]> | null = null;
 
   constructor(
     private readonly rowStore: ReplicaRowStore,
@@ -1084,6 +1115,47 @@ export class ReplicaCache {
       await this.deleteInvalidRow(row);
       return undefined;
     }
+  }
+
+  async collectTimelineImageIds(): Promise<ReadonlySet<string>> {
+    await this.prepareStore();
+    await this.writeQueue;
+
+    const images = new Set<string>();
+    const storedRows = await this.storedTimelineRowsForImageCollection();
+    for (const row of storedRows) {
+      if (this.hostsInitialized && !this.activeServerIds.has(row.serverId)) continue;
+      for (const imageId of imageIdsInStoredTimelineRow(row)) images.add(imageId);
+    }
+    for (const upsert of this.pendingUpserts.values()) {
+      if (upsert.kind === "timeline") collectUserImageIds(upsert.value.items, images);
+    }
+
+    return images;
+  }
+
+  private async storedTimelineRowsForImageCollection(): Promise<ReplicaRow[]> {
+    if (this.storedIndexPromise) {
+      await this.storedIndexPromise;
+      this.coldStoredRowsPromise = null;
+      const rows: ReplicaRow[] = [];
+      for (const hostRows of this.storedRows.values()) {
+        for (const row of hostRows.values()) {
+          if (row.kind === "timeline") rows.push(row);
+        }
+      }
+      return rows;
+    }
+
+    // Draft cleanup can run before the host registry has loaded. Read without pruning hosts.
+    this.coldStoredRowsPromise ??= this.rowStore
+      .readAll()
+      .then((hosts) => hosts.flatMap((host) => host.rows.filter((row) => row.kind === "timeline")))
+      .catch((error: unknown) => {
+        this.coldStoredRowsPromise = null;
+        throw error;
+      });
+    return await this.coldStoredRowsPromise;
   }
 
   private async readRows(
@@ -1261,6 +1333,7 @@ export class ReplicaCache {
   }
 
   setHosts(serverIds: Iterable<string>): void {
+    this.hostsInitialized = true;
     const next = new Set(serverIds);
     const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
     const added = [...next].filter((serverId) => !this.activeServerIds.has(serverId));
