@@ -308,6 +308,24 @@ describe("parseAssistantFileLink", () => {
     });
   });
 
+  it.each(["C:/repo", "\\\\host\\share\\repo"])(
+    "leaves Windows variable paths in inline code unlinked in %s",
+    (workspaceRoot) => {
+      expect(classifyAssistantFileLink("%TEMP%\\debug.md", { workspaceRoot })).toBeNull();
+      expect(classifyAssistantFileLink("%LOCALAPPDATA%/debug.md:3", { workspaceRoot })).toBeNull();
+      expect(classifyAssistantFileLink("C:\\Temp\\debug.md", { workspaceRoot })?.kind).toBe(
+        "directFile",
+      );
+    },
+  );
+
+  it("allows a literal percent-delimited directory in an authored file link", () => {
+    expect(
+      parseAssistantFileLink("%TEMP%/notes.md", { workspaceRoot: "C:/repo", explicitLink: true })
+        ?.path,
+    ).toBe("C:/repo/%TEMP%/notes.md");
+  });
+
   it("parses absolute Windows hrefs inside the active workspace", () => {
     expect(
       parseAssistantFileLink("C:/repo/src/app.tsx#L12-L20", {
