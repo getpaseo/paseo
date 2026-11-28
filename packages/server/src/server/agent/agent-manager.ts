@@ -89,6 +89,11 @@ import {
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
+  buildUnattendedHubPermissionDenyResponse,
+  isUnattendedHubExecutionAgent,
+  type UnattendedPermissionPolicyAgent,
+} from "./unattended-permission-policy.js";
+import {
   InMemoryAgentTimelineStore,
   type SeedAgentTimelineOptions,
 } from "./agent-timeline-store.js";
@@ -4254,6 +4259,7 @@ export class AgentManager {
       } catch {
         // Ignore refresh errors - state sync after permission approval is best effort.
       }
+      agent.pendingPermissions.delete(requestId);
 
       this.touchUpdatedAt(agent);
       await this.persistSnapshot(agent);
@@ -5801,8 +5807,7 @@ export class AgentManager {
         this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, flags });
         return undefined;
       case "permission_requested":
-        this.onStreamPermissionRequested(agent, event);
-        return undefined;
+        return this.onStreamPermissionRequested({ agent, event, options, flags });
       case "permission_resolved":
         this.onStreamPermissionResolved({ agent, event, options, flags });
         return undefined;
@@ -6044,10 +6049,65 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private onStreamPermissionRequested(
-    agent: ActiveManagedAgent,
-    event: Extract<AgentStreamEvent, { type: "permission_requested" }>,
-  ): void {
+  private lookupAgentForPermissionPolicy(
+    agentId: string,
+  ): UnattendedPermissionPolicyAgent | null | Promise<UnattendedPermissionPolicyAgent | null> {
+    const live = this.agents.get(agentId);
+    if (live) {
+      return live;
+    }
+    return this.registry?.get(agentId) ?? null;
+  }
+
+  private async onStreamPermissionRequested(params: {
+    agent: ActiveManagedAgent;
+    event: Extract<AgentStreamEvent, { type: "permission_requested" }>;
+    options: HandleStreamEventOptions | undefined;
+    flags: StreamEventFlags;
+  }): Promise<void> {
+    const { agent, event, options, flags } = params;
+    if (
+      !options?.fromHistory &&
+      (await isUnattendedHubExecutionAgent(agent, (agentId) =>
+        this.lookupAgentForPermissionPolicy(agentId),
+      ))
+    ) {
+      const denyResponse = buildUnattendedHubPermissionDenyResponse();
+      try {
+        await this.respondToPermission(agent.id, event.request.id, denyResponse);
+        flags.shouldDispatchEvent = false;
+        flags.shouldNotifyWaiters = false;
+        this.logger.info(
+          {
+            agentId: agent.id,
+            provider: agent.provider,
+            requestId: event.request.id,
+            kind: event.request.kind,
+            name: event.request.name,
+          },
+          "Auto-denied unexpected permission request for unattended Hub execution",
+        );
+        return;
+      } catch (error) {
+        this.logger.warn(
+          {
+            err: error,
+            agentId: agent.id,
+            provider: agent.provider,
+            requestId: event.request.id,
+            kind: event.request.kind,
+            name: event.request.name,
+          },
+          "Failed to auto-deny unexpected permission request for unattended Hub execution",
+        );
+        if (this.agents.get(agent.id) !== agent) {
+          flags.shouldDispatchEvent = false;
+          flags.shouldNotifyWaiters = false;
+          return;
+        }
+      }
+    }
+
     const hadPendingPermissions = agent.pendingPermissions.size > 0;
     agent.pendingPermissions.set(event.request.id, event.request);
     this.refreshSessionPersistence(agent);
