@@ -1,11 +1,14 @@
+import { win32 } from "node:path";
 import type { EditorTarget } from "../target.js";
 
 const launchFileManager: EditorTarget["launch"] = async (input, runtime) => {
+  const path = input.filePath || input.workspacePath;
+  const targetPath = runtime.platform === "win32" ? win32.normalize(path) : path;
   if (input.filePath) {
-    runtime.revealPath(input.filePath);
+    runtime.revealPath(targetPath);
     return;
   }
-  await runtime.openPath(input.workspacePath);
+  await runtime.openPath(targetPath);
 };
 
 export const finderTarget: EditorTarget = {

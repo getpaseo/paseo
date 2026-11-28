@@ -513,8 +513,16 @@ describe("editor target registry", () => {
       runtime,
     );
 
-    expect(runtime.openedPaths).toEqual(["C:/repo"]);
-    expect(runtime.revealedPaths).toEqual(["C:/repo/src/app.ts"]);
+    await explorerTarget.launch(
+      { workspacePath: "//server/share", filePath: "//server/share/some file.txt" },
+      runtime,
+    );
+
+    expect(runtime.openedPaths).toEqual(["C:\\repo"]);
+    expect(runtime.revealedPaths).toEqual([
+      "C:\\repo\\src\\app.ts",
+      "\\\\server\\share\\some file.txt",
+    ]);
   });
 
   it("opens a home-relative folder in the file manager", async () => {
