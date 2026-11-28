@@ -40,6 +40,12 @@ function hasMeaningfulFetchDetail(detail: Extract<ToolCallDetail, { type: "fetch
   return Boolean(detail.url || detail.result || detail.codeText);
 }
 
+function hasMeaningfulSubAgentDetail(
+  detail: Extract<ToolCallDetail, { type: "sub_agent" }>,
+): boolean {
+  return Boolean(detail.prompt || detail.log || (detail.actions?.length ?? 0) > 0);
+}
+
 function hasMeaningfulPlainTextDetail(
   detail: Extract<ToolCallDetail, { type: "plain_text" }>,
 ): boolean {
@@ -69,9 +75,10 @@ export function hasMeaningfulToolCallDetail(detail: ToolCallDetail | undefined):
     case "fetch":
       return hasMeaningfulFetchDetail(detail);
     case "worktree_setup":
-    // A sub-agent card is a launch marker; the child's activity lives in the sub-agent panel.
-    case "sub_agent":
       return false;
+    // A launch marker stays collapsed. A prompt, leftover log, or actions is the expandable detail.
+    case "sub_agent":
+      return hasMeaningfulSubAgentDetail(detail);
     case "plain_text":
       return hasMeaningfulPlainTextDetail(detail);
     case "plan":
