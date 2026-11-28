@@ -40,3 +40,23 @@ export function filterWorkspacesByLabels(
     return labels.some(matches);
   });
 }
+
+export function resolveActiveLabelFilter(input: {
+  filter: SidebarLabelFilter;
+  catalogLabelNames: readonly string[];
+  workspaces: readonly SidebarWorkspaceEntry[];
+}): SidebarLabelFilter {
+  const { filter, catalogLabelNames, workspaces } = input;
+  if (filter.labels.length === 0) return filter;
+  const known = new Set(catalogLabelNames.map(workspaceLabelKey));
+  for (const workspace of workspaces) {
+    for (const name of workspace.labels ?? []) known.add(workspaceLabelKey(name));
+  }
+  const labels = filter.labels.filter(
+    (key) => key === SIDEBAR_UNLABELLED_LABEL_KEY || known.has(key),
+  );
+  if (labels.length === filter.labels.length) return filter;
+  return labels.length > 0 ? { labels } : EMPTY_LABEL_FILTER;
+}
+
+const EMPTY_LABEL_FILTER: SidebarLabelFilter = { labels: [] };
