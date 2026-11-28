@@ -573,6 +573,174 @@ describe("Codex active-turn steering admission", () => {
     );
     await session.close();
   });
+
+  test("correlates untagged steered user_message echoes back to their clientMessageId", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    try {
+      const { turnId } = await session.startTurn("first", { clientMessageId: "client-initial" });
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+
+      const initialEcho = waitForNextTimelineItem(session, "user_message");
+      emitCodexUserMessage(appServer, { id: "codex-msg-1", text: "first", turnId: "native-A" });
+      await expect(initialEcho).resolves.toMatchObject({
+        item: {
+          type: "user_message",
+          messageId: "codex-msg-1",
+          clientMessageId: "client-initial",
+          text: "first",
+        },
+      });
+
+      await expect(
+        session.steerActiveTurn("follow up", {
+          expectedTurnId: turnId,
+          clientMessageId: "client-steer-1",
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+      await expect(
+        session.steerActiveTurn("follow up", {
+          expectedTurnId: turnId,
+          clientMessageId: "client-steer-2",
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+
+      const firstSteerEcho = waitForNextTimelineItem(session, "user_message");
+      emitCodexUserMessage(appServer, {
+        id: "codex-msg-2",
+        text: "follow up",
+        turnId: "native-A",
+      });
+      await expect(firstSteerEcho).resolves.toMatchObject({
+        item: {
+          type: "user_message",
+          messageId: "codex-msg-2",
+          clientMessageId: "client-steer-1",
+          text: "follow up",
+        },
+      });
+
+      const secondSteerEcho = waitForNextTimelineItem(session, "user_message");
+      emitCodexUserMessage(appServer, {
+        id: "codex-msg-3",
+        text: "follow up",
+        turnId: "native-A",
+      });
+      await expect(secondSteerEcho).resolves.toMatchObject({
+        item: {
+          type: "user_message",
+          messageId: "codex-msg-3",
+          clientMessageId: "client-steer-2",
+          text: "follow up",
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("correlates an untagged steer echo that arrives before turn/steer resolves", async () => {
+    const steerAck = deferred<{ turn: { id: string } }>();
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => steerAck.promise,
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    try {
+      const steer = session.steerActiveTurn!("early echo", {
+        expectedTurnId: paseoTurnId,
+        clientMessageId: "client-steer-early",
+      });
+      await appServer.waitForRequest("turn/steer");
+
+      const earlyEcho = waitForNextTimelineItem(session, "user_message");
+      emitCodexUserMessage(appServer, {
+        id: "codex-msg-early",
+        text: "early echo",
+        turnId: "native-A",
+      });
+      await expect(earlyEcho).resolves.toMatchObject({
+        item: {
+          type: "user_message",
+          messageId: "codex-msg-early",
+          clientMessageId: "client-steer-early",
+          text: "early echo",
+        },
+      });
+
+      steerAck.resolve({ turn: { id: "native-A" } });
+      await expect(steer).resolves.toEqual({ status: "accepted" });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("drops pending steer correlation on rejection and turn completion", async () => {
+    let steerAttempts = 0;
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => {
+        steerAttempts += 1;
+        if (steerAttempts === 1) {
+          return {
+            __jsonRpcError: { code: -32600, message: "no active turn to steer" },
+          };
+        }
+        return { turn: { id: "native-A" } };
+      },
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    try {
+      await expect(
+        session.steerActiveTurn!("same text", {
+          expectedTurnId: paseoTurnId,
+          clientMessageId: "client-rejected",
+        }),
+      ).resolves.toEqual({ status: "unavailable" });
+
+      // Accepted steer that never echoes before the turn completes must not leak into the next turn.
+      await expect(
+        session.steerActiveTurn!("same text", {
+          expectedTurnId: paseoTurnId,
+          clientMessageId: "client-unconsumed",
+        }),
+      ).resolves.toEqual({ status: "accepted" });
+
+      appServer.completeTurn();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      await session.startTurn("same text");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "native-B" });
+
+      const nextTurnEcho = waitForNextTimelineItem(session, "user_message");
+      emitCodexUserMessage(appServer, {
+        id: "codex-msg-next",
+        text: "same text",
+        turnId: "native-B",
+      });
+      const event = await nextTurnEcho;
+      expect(event.item).toMatchObject({
+        type: "user_message",
+        messageId: "codex-msg-next",
+        text: "same text",
+      });
+      expect(
+        event.item.type === "user_message" ? event.item.clientMessageId : undefined,
+      ).toBeUndefined();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
 });
 
 async function startCompactionTurnTest(): Promise<{

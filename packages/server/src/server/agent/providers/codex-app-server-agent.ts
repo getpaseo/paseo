@@ -3848,6 +3848,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
+  private pendingSteerClientMessages: Array<{ clientMessageId: string; text: string }> = [];
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   /** The tier the options ask for; `serviceTier` is what the current model can honor. */
   private requestedServiceTier: string | null = null;
@@ -4188,6 +4189,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
+    this.pendingSteerClientMessages.length = 0;
     this.currentTurnId = null;
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
@@ -4941,6 +4943,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       const turnId = this.createTurnId();
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
+      this.pendingSteerClientMessages.length = 0;
       this.currentTurnId = null;
       this.pendingForegroundTurnIdentification?.resolve(null);
       let resolveTurnIdentification!: (identifiedTurnId: string | null) => void;
@@ -4975,6 +4978,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingForegroundTurnIdentification = null;
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
+      this.pendingSteerClientMessages.length = 0;
       throw error;
     } finally {
       if (this.pendingForegroundStart === pendingStart) {
@@ -5012,6 +5016,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.matchesSteerAdmission({ client, threadId, nativeTurnId, foregroundTurnId })) {
       return { status: "unavailable" };
     }
+    const pendingSteer = this.trackPendingSteerClientMessage(options.clientMessageId, input);
     try {
       const response = await client.request(
         "turn/steer",
@@ -5034,6 +5039,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       return { status: "accepted" };
     } catch (error) {
+      this.untrackPendingSteerClientMessage(pendingSteer);
       if (isDefinitiveCodexSteerRejection(error)) return { status: "unavailable" };
       throw error;
     }
@@ -5645,6 +5651,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
+      this.pendingSteerClientMessages.length = 0;
       this.currentTurnId = null;
       this.pendingForegroundTurnIdentification?.resolve(null);
       this.pendingForegroundTurnIdentification = null;
@@ -5828,6 +5835,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.startupEvents = null;
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
+    this.pendingSteerClientMessages.length = 0;
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
     await this.disposeClient();
@@ -7060,6 +7068,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
+    this.pendingSteerClientMessages.length = 0;
     this.currentTurnId = null;
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
@@ -7792,10 +7801,70 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.rememberCodexUserMessageTurn(timelineItem.messageId, parsed.turnId)) {
       return;
     }
-    const clientMessageId = timelineItem.clientMessageId ?? this.activeClientMessageId;
+    const clientMessageId = this.resolveUserMessageClientMessageId(timelineItem);
     const item = clientMessageId ? { ...timelineItem, clientMessageId } : timelineItem;
-    this.activeClientMessageId = null;
     this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
+  }
+
+  private trackPendingSteerClientMessage(
+    clientMessageId: string | undefined,
+    input: unknown,
+  ): { clientMessageId: string; text: string } | null {
+    if (!clientMessageId) {
+      return null;
+    }
+    const entry = { clientMessageId, text: extractUserText(input) ?? "" };
+    this.pendingSteerClientMessages.push(entry);
+    return entry;
+  }
+
+  private untrackPendingSteerClientMessage(
+    entry: { clientMessageId: string; text: string } | null,
+  ): void {
+    if (!entry) {
+      return;
+    }
+    const pendingIndex = this.pendingSteerClientMessages.indexOf(entry);
+    if (pendingIndex >= 0) {
+      this.pendingSteerClientMessages.splice(pendingIndex, 1);
+    }
+  }
+
+  private resolveUserMessageClientMessageId(
+    timelineItem: Extract<AgentTimelineItem, { type: "user_message" }>,
+  ): string | null {
+    if (timelineItem.clientMessageId) {
+      if (this.activeClientMessageId === timelineItem.clientMessageId) {
+        this.activeClientMessageId = null;
+      }
+      const steerIndex = this.pendingSteerClientMessages.findIndex(
+        (entry) => entry.clientMessageId === timelineItem.clientMessageId,
+      );
+      if (steerIndex >= 0) {
+        this.pendingSteerClientMessages.splice(steerIndex, 1);
+      }
+      return timelineItem.clientMessageId;
+    }
+    if (this.activeClientMessageId) {
+      const clientMessageId = this.activeClientMessageId;
+      this.activeClientMessageId = null;
+      return clientMessageId;
+    }
+    return this.consumePendingSteerClientMessageId(timelineItem.text);
+  }
+
+  private consumePendingSteerClientMessageId(text: string): string | null {
+    let matchIndex = this.pendingSteerClientMessages.findIndex((entry) => entry.text === text);
+    if (matchIndex < 0) {
+      const trimmed = text.trim();
+      matchIndex = this.pendingSteerClientMessages.findIndex(
+        (entry) => entry.text.trim() === trimmed,
+      );
+    }
+    if (matchIndex < 0) {
+      return null;
+    }
+    return this.pendingSteerClientMessages.splice(matchIndex, 1)[0]?.clientMessageId ?? null;
   }
 
   private logMcpStartupStatus(params: unknown): void {
