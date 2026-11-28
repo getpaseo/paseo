@@ -125,6 +125,12 @@ import {
   mapOmpRpcUiPermissionRequest,
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
+import {
+  type OmpMountNoticeDeliverer,
+  OmpMountNoticeLedger,
+  OmpMountNoticeLedgers,
+  parseOmpMountNotice,
+} from "./mount-notice.js";
 
 const OMP_PROVIDER = "omp";
 const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
@@ -222,6 +228,10 @@ interface OmpAgentSessionOptions {
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
   providerIdleDeadlineMs?: number;
+  /** Shared by every session of the client so a relaunched agent keeps its ledger. */
+  mountNotices: OmpMountNoticeLedgers;
+  /** The Paseo agent whose projection this session feeds; absent for direct client use. */
+  agentId?: string;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -606,6 +616,8 @@ class OmpHistorySession implements AgentSession {
     private readonly sessionFile: string,
     provider: AgentProvider,
     private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity>,
+    private readonly mountNotices: OmpMountNoticeLedgers,
+    private readonly agentId: string | undefined,
   ) {
     this.provider = provider;
   }
@@ -618,6 +630,8 @@ class OmpHistorySession implements AgentSession {
     throw new Error("OMP history session cannot start a turn");
   }
 
+  private readonly delivererToken: OmpMountNoticeDeliverer = {};
+
   async startTurn(): Promise<{ turnId: string }> {
     throw new Error("OMP history session cannot start a turn");
   }
@@ -627,6 +641,8 @@ class OmpHistorySession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    // This history seeds a fresh projection that holds no live mount notices.
+    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this.delivererToken);
     yield* streamOmpHistory({
       sessionFile: this.sessionFile,
       provider: this.provider,
@@ -705,6 +721,9 @@ export class OmpAgentSession implements AgentSession {
   private readonly subagentIndex = new OmpSubagentIndex();
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
+  private readonly mountNotices: OmpMountNoticeLedgers;
+  private readonly agentId: string | undefined;
+  private readonly sessionMountNotices = new OmpMountNoticeLedger();
   private state: OmpSessionState;
   private currentModeId: string | null;
   private runtimeDead = false;
@@ -749,6 +768,8 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.live = options.live ?? true;
+    this.mountNotices = options.mountNotices;
+    this.agentId = options.agentId;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.providerIdleDeadlineMs = options.providerIdleDeadlineMs ?? OMP_PROVIDER_IDLE_DEADLINE_MS;
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -775,6 +796,8 @@ export class OmpAgentSession implements AgentSession {
       null;
     this.attachRuntime(this.runtimeSession);
   }
+
+  private readonly delivererToken: OmpMountNoticeDeliverer = {};
 
   private attachRuntime(runtime: OmpRuntimeSession): void {
     this.unsubscribeRuntime = runtime.onEvent((event) => {
@@ -1028,6 +1051,10 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    // This history seeds a fresh projection: it keeps the mount notices this session already
+    // delivered into it, and none from earlier sessions.
+    if (this.agentId) this.mountNotices.seedFromHistory(this.agentId, this.delivererToken);
+    else this.sessionMountNotices.retainDeliveredBy(this.delivererToken);
     const replay = yield* streamOmpHistory({
       sessionFile: this.state.sessionFile,
       runtimeSession: this.runtimeSession,
@@ -1053,6 +1080,23 @@ export class OmpAgentSession implements AgentSession {
         item,
       };
     }
+  }
+
+  private mountNoticeLedger(): OmpMountNoticeLedger {
+    return this.agentId ? this.mountNotices.forAgent(this.agentId) : this.sessionMountNotices;
+  }
+
+  /**
+   * Drops a mount notice whose devices already have that state in the projected timeline.
+   * A notice no subscriber can receive is not recorded, so it cannot hide a later one.
+   */
+  private isRedundantMountNotice(event: OmpRuntimeEvent): boolean {
+    const notice = parseOmpMountNotice(event);
+    if (!notice || this.subscribers.size === 0) return false;
+    const ledger = this.mountNoticeLedger();
+    if (!ledger.announces(notice)) return true;
+    ledger.recordDelivered(notice, this.delivererToken);
+    return false;
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -1211,6 +1255,9 @@ export class OmpAgentSession implements AgentSession {
     await this.runtimeSession.branch(target);
     await this.refreshState();
     this.activeToolCalls.clear();
+    // A conversation rewind replaces the whole projection, rows this session delivered included.
+    if (this.agentId) this.mountNotices.forget(this.agentId);
+    else this.sessionMountNotices.clear();
   }
 
   async canStopRuntime(): Promise<boolean> {
@@ -1737,27 +1784,7 @@ export class OmpAgentSession implements AgentSession {
     return true;
   }
 
-  private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
-    if (this.handleThinkingLevelChanged(event)) {
-      return true;
-    }
-    if (event.type === "model_changed") {
-      void this.refreshState()
-        .then(() =>
-          this.emit({
-            type: "model_changed",
-            provider: this.provider,
-            runtimeInfo: this.runtimeInfoFromState(),
-          }),
-        )
-        .catch((error: unknown) =>
-          this.logger.debug({ err: error }, "OMP state unavailable after model change"),
-        );
-      return true;
-    }
-    if (handleOmpHostToolRuntimeEvent(event, this.hostTools, this.runtimeSession, this.logger)) {
-      return true;
-    }
+  private handleSubagentRuntimeEvent(event: OmpRuntimeEvent): boolean {
     if (event.type === "subagent_lifecycle") {
       const payload = (event as Extract<OmpRuntimeEvent, { type: "subagent_lifecycle" }>).payload;
       if (payload.parentToolCallId && this.activeToolCalls.has(payload.parentToolCallId)) {
@@ -1789,6 +1816,33 @@ export class OmpAgentSession implements AgentSession {
       }
       return true;
     }
+    return false;
+  }
+
+  private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if (this.handleThinkingLevelChanged(event)) {
+      return true;
+    }
+    if (event.type === "model_changed") {
+      void this.refreshState()
+        .then(() =>
+          this.emit({
+            type: "model_changed",
+            provider: this.provider,
+            runtimeInfo: this.runtimeInfoFromState(),
+          }),
+        )
+        .catch((error: unknown) =>
+          this.logger.debug({ err: error }, "OMP state unavailable after model change"),
+        );
+      return true;
+    }
+    if (handleOmpHostToolRuntimeEvent(event, this.hostTools, this.runtimeSession, this.logger)) {
+      return true;
+    }
+    if (this.handleSubagentRuntimeEvent(event)) {
+      return true;
+    }
     if (event.type === "todo_reminder") {
       const item = mapOmpTodoReminderEvent(event);
       if (item) {
@@ -1805,6 +1859,10 @@ export class OmpAgentSession implements AgentSession {
       } else {
         this.logger.debug({ event }, "Dropped malformed OMP command update event");
       }
+      return true;
+    }
+    if (this.isRedundantMountNotice(event)) {
+      this.logger.debug({ event }, "Dropped OMP mount notice already shown in this timeline");
       return true;
     }
     const mappedEvent = mapOmpRuntimeEventToTimelineItem(event);
@@ -2388,6 +2446,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
   private readonly providerIdleDeadlineMs?: number;
   private readonly runtime?: OmpRuntime;
+  private readonly mountNotices = new OmpMountNoticeLedgers();
 
   constructor(options: OmpAgentClientOptions) {
     const runtimeSettings = mergeOmpRuntimeSettings(
@@ -2497,6 +2556,8 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         providerIdleDeadlineMs: this.providerIdleDeadlineMs,
+        mountNotices: this.mountNotices,
+        agentId: launchContext?.agentId,
       });
     } catch (error) {
       await hostTools?.close();
@@ -2526,6 +2587,8 @@ export class OmpAgentClient implements AgentClient {
         sessionFile,
         this.provider,
         persistenceMetadata.bridgedTools,
+        this.mountNotices,
+        launchContext?.agentId,
       );
     }
 
@@ -2568,6 +2631,8 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         providerIdleDeadlineMs: this.providerIdleDeadlineMs,
+        mountNotices: this.mountNotices,
+        agentId: launchContext?.agentId,
         live: false,
       });
     } catch (error) {
@@ -2713,6 +2778,9 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
+    if (this.runtime) {
+      return true;
+    }
     try {
       const launch = await this.resolveOmpLaunch();
       const availability = await checkProviderLaunchAvailable(launch);
