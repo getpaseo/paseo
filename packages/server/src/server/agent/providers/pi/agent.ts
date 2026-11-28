@@ -1672,6 +1672,9 @@ export class PiRpcAgentSession implements AgentSession {
       this.interruptingTurn
     )
       return false;
+    // The Pi process exit was observed: getState() would throw "process is closed" on every
+    // idle sweep and the dead runtime would never be collected.
+    if (this.runtimeDead) return true;
     const state = await this.runtimeSession.getState();
     return !state.isStreaming && !state.isCompacting && state.pendingMessageCount === 0;
   }

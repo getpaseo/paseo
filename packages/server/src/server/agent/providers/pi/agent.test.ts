@@ -4430,6 +4430,16 @@ test("pi runtime safety protects queued replies and runtime-owned activity", asy
   await expect(session.canStopRuntime!()).rejects.toThrow("Unable to prove idle");
 });
 
+test("pi runtime safety lets idle cleanup collect a runtime whose process exited", async () => {
+  const runtime = new FakePi();
+  const session = await createClient(runtime).createSession(createConfig());
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  native.getStateError = new Error("Pi RPC process is closed");
+  native.emit({ type: "process_exit", error: "Pi exited" });
+  expect(await session.canStopRuntime!()).toBe(true);
+});
+
 test("reserves the Pi turn while an image prompt is materialized", async () => {
   const { pi, session } = await createSession();
   onTestFinished(() => session.close());
