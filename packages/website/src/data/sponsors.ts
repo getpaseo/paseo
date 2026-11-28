@@ -37,7 +37,7 @@ export const SPONSORS: ReadonlyArray<Sponsor> = [
       onDark: "/sponsors/hoplite-on-dark.svg",
       onLight: "/sponsors/hoplite-on-light.svg",
     },
-    description: "Cloud coding agents",
+    description: "Hoplite runs swarms of coding agents in the cloud.",
   },
   {
     name: "Encore",
