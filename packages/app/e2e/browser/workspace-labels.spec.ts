@@ -1,10 +1,11 @@
-import { expect, test } from "../support/fixtures";
+import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 import { openWorkspaceSidebarKebab } from "../support/helpers/sidebar";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 interface SessionEnvelope {
   type?: string;
@@ -14,9 +15,43 @@ interface SessionEnvelope {
 async function readWorkspaceLabels(seeded: Awaited<ReturnType<typeof seedWorkspace>>) {
   const workspaces = await seeded.client.fetchWorkspaces();
   for (const workspace of workspaces.entries) {
-    if (workspace.id === seeded.workspaceId) return workspace.labels?.slice().sort();
+    if (workspace.id === seeded.workspaceId) return (workspace.labels ?? []).slice().sort();
   }
   return undefined;
+}
+
+async function expectWorkspaceLabels(
+  seeded: Awaited<ReturnType<typeof seedWorkspace>>,
+  labels: string[],
+) {
+  await expect.poll(() => readWorkspaceLabels(seeded)).toEqual(labels);
+}
+
+async function toggleLabelFromWorkspaceHeader(page: Page, interaction: "click" | "tap") {
+  const seeded = await seedWorkspace({ repoPrefix: "workspace-labels-header-" });
+  const label = { name: "Header label", color: "red" } as const;
+  try {
+    await seeded.client.setWorkspaceLabel({
+      workspaceId: seeded.workspaceId,
+      label,
+      assigned: true,
+    });
+    await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+    await page.getByRole("button", { name: "Workspace actions", exact: true })[interaction]();
+    await page.getByRole("menuitem", { name: "Labels", exact: true })[interaction]();
+    await expectAssigned(page, label.name, true);
+
+    const item = page.getByRole("menuitem", { name: label.name, exact: true });
+    await item[interaction]();
+    await expectAssigned(page, label.name, false);
+    await expectWorkspaceLabels(seeded, []);
+
+    await item[interaction]();
+    await expectAssigned(page, label.name, true);
+    await expectWorkspaceLabels(seeded, [label.name]);
+  } finally {
+    await seeded.cleanup();
+  }
 }
 
 async function installWorkspaceLabelMutationFailure(page: import("@playwright/test").Page) {
@@ -337,8 +372,17 @@ test.describe("Workspace labels", () => {
     }
   });
 
+  test("assigns and removes a label from the wide workspace header", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await toggleLabelFromWorkspaceHeader(page, "click");
+  });
+
   test.describe("compact picker", () => {
     test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+    test("assigns and removes a label from the compact workspace header", async ({ page }) => {
+      await toggleLabelFromWorkspaceHeader(page, "tap");
+    });
 
     test("toggles in place and pushes the create page over the list", async ({ page }) => {
       const seeded = await seedWorkspace({ repoPrefix: "workspace-labels-touch-" });

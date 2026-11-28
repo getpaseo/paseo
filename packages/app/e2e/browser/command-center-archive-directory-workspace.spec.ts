@@ -7,6 +7,8 @@ import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-cli
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { getServerId } from "../support/helpers/server-id";
 import { expectWorkspaceAbsentFromSidebar } from "../support/helpers/sidebar";
+import { undoButton } from "../support/helpers/workspace-archive-undo";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 
 async function isWorkspaceListed(seeded: SeededWorkspace): Promise<boolean> {
   const result = await seeded.client.fetchWorkspaces();
@@ -15,6 +17,32 @@ async function isWorkspaceListed(seeded: SeededWorkspace): Promise<boolean> {
 
 async function expectWorkspaceArchivedOnDaemon(seeded: SeededWorkspace): Promise<void> {
   await expect.poll(() => isWorkspaceListed(seeded), { timeout: 30_000 }).toBe(false);
+}
+
+for (const [layout, width] of [
+  ["compact", 390],
+  ["wide", 1280],
+] as const) {
+  test(`archives a plain directory workspace from the ${layout} workspace header`, async ({
+    page,
+  }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "header-archive-dir-", git: false });
+    try {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+      await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Archive workspace", exact: true }).click();
+
+      await expect(page).toHaveURL(/\/new(?:\?|$)/);
+      await expectWorkspaceArchivedOnDaemon(seeded);
+      expect(existsSync(seeded.repoPath)).toBe(true);
+
+      await undoButton(page).click();
+      await expect.poll(() => isWorkspaceListed(seeded)).toBe(true);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
 }
 
 test.describe("Command center archive for a non-Git workspace", () => {

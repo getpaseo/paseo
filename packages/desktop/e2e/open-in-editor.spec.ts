@@ -121,6 +121,38 @@ async function createEditorPreferenceFixture(page: Page, withWorkspace: WithWork
 }
 
 test.describe("Workspace open in editor", () => {
+  test("opens the workspace in the file manager from the workspace header", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const serverId = requireE2EEnv("E2E_SERVER_ID");
+    const recordPath = requireE2EEnv("E2E_EDITOR_RECORD_PATH");
+    await rm(recordPath, { force: true });
+    await installDesktopRuntime(page, {
+      serverId,
+      editorTargets: [
+        {
+          id: "file-manager",
+          label: "File Manager",
+          kind: "file-manager",
+          icon: { kind: "symbol", name: "folder" },
+        },
+      ],
+      editorRecordPath: recordPath,
+    });
+
+    const workspace = await withWorkspace({ prefix: "workspace-header-file-manager-" });
+    await workspace.navigateTo();
+    await page.getByRole("button", { name: "Workspace actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Open in file manager", exact: true }).click();
+    await expectEditorOpened({
+      recordPath,
+      editorId: "file-manager",
+      path: workspace.repoPath,
+      afterCount: 0,
+    });
+  });
+
   test("keeps editor choices per project across switching, reload and worktrees", async ({
     page,
     withWorkspace,

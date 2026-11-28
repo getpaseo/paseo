@@ -1339,14 +1339,18 @@ function WorkspaceRowWithMenu({
     });
   const handleMarkAsRead = useCallback(() => {
     void clearAttention().catch((error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to mark workspace as read");
+      toast.error(
+        error instanceof Error ? error.message : t("sidebar.workspace.toasts.markAsReadFailed"),
+      );
     });
-  }, [clearAttention, toast]);
+  }, [clearAttention, t, toast]);
   const handleMarkAsUnread = useCallback(() => {
     void markUnread().catch((error) => {
-      toast.error(error instanceof Error ? error.message : "Failed to mark workspace as unread");
+      toast.error(
+        error instanceof Error ? error.message : t("sidebar.workspace.toasts.markAsUnreadFailed"),
+      );
     });
-  }, [markUnread, toast]);
+  }, [markUnread, t, toast]);
 
   return (
     <>
