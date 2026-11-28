@@ -2,7 +2,10 @@ import { subscribeMobilePanelSelection } from "@/mobile-panels/selection";
 import { beforeEach, describe, expect, it } from "vitest";
 import { usePanelStore } from ".";
 import {
+  DEFAULT_TAB_RAIL_WIDTH,
   DEFAULT_TREE_RAIL_WIDTH,
+  MAX_TAB_RAIL_WIDTH,
+  MIN_TAB_RAIL_WIDTH,
   migratePanelState,
   selectIsAgentListOpen,
   selectIsCompactFileExplorerOpen,
@@ -123,6 +126,27 @@ it("discards obsolete checkout selection while preserving other panel preference
   expect(state).not.toHaveProperty("explorerTab");
   expect(state).not.toHaveProperty("explorerTabByCheckout");
   expect(state.sidebarWidth).toBe(400);
+});
+
+describe("panel-store tab rail width", () => {
+  beforeEach(() => {
+    usePanelStore.setState({ tabRailWidth: DEFAULT_TAB_RAIL_WIDTH });
+  });
+
+  it("keeps a dragged width inside the rail's limits", () => {
+    usePanelStore.getState().setTabRailWidth(300);
+    expect(usePanelStore.getState().tabRailWidth).toBe(300);
+
+    usePanelStore.getState().setTabRailWidth(10_000);
+    expect(usePanelStore.getState().tabRailWidth).toBe(MAX_TAB_RAIL_WIDTH);
+
+    usePanelStore.getState().setTabRailWidth(10);
+    expect(usePanelStore.getState().tabRailWidth).toBe(MIN_TAB_RAIL_WIDTH);
+  });
+
+  it("survives a migration of the stored panel state", () => {
+    expect(migratePanelState({ tabRailWidth: 300 }, 16).tabRailWidth).toBe(300);
+  });
 });
 
 describe("panel-store wide navigation overlay", () => {

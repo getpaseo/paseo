@@ -2907,6 +2907,11 @@ export const es: TranslationResources = {
         contentWidthWide: "Ancho",
         contentWidthFull: "Completo",
         contentWidthCustom: "Ancho personalizado · {{width}} px",
+        tabPlacement: "Posición de las pestañas",
+        tabPlacementHint: "Posición de las pestañas en un espacio de trabajo en pantallas anchas",
+        tabPlacementTop: "Horizontal (arriba)",
+        tabPlacementLeft: "Vertical (izquierda)",
+        tabPlacementAccessibility: "Posición de las pestañas: {{value}}",
       },
       syntax: {
         title: "Sintaxis",

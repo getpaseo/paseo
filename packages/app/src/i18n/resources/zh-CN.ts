@@ -2809,6 +2809,11 @@ export const zhCN: TranslationResources = {
         contentWidthWide: "宽版",
         contentWidthFull: "全宽",
         contentWidthCustom: "自定义宽度 · {{width}} px",
+        tabPlacement: "标签位置",
+        tabPlacementHint: "宽屏上工作区内标签的位置",
+        tabPlacementTop: "水平（顶部）",
+        tabPlacementLeft: "垂直（左侧）",
+        tabPlacementAccessibility: "标签位置：{{value}}",
       },
       syntax: {
         title: "语法",

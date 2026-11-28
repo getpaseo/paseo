@@ -6,31 +6,40 @@ export interface TabDropPreview {
   indicatorIndex: number;
 }
 
+/** The direction a pane's tab rail runs: across the top, or down the left side. */
+export type TabRailAxis = "horizontal" | "vertical";
+
+interface TabDropRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 interface ComputeTabDropPreviewInput {
   activePaneId: string;
   activeTabId: string;
   overPaneId: string;
   overTabId: string;
   targetTabs: WorkspaceTabDescriptor[];
-  activeRect: {
-    left: number;
-    width: number;
-  };
-  overRect: {
-    left: number;
-    width: number;
-  };
+  /** The axis of the rail being dropped into, which decides the half that means "after". */
+  axis: TabRailAxis;
+  activeRect: TabDropRect;
+  overRect: TabDropRect;
+}
+
+function centerAlongAxis(rect: TabDropRect, axis: TabRailAxis): number {
+  return axis === "vertical" ? rect.top + rect.height / 2 : rect.left + rect.width / 2;
 }
 
 export function computeTabDropPreview(input: ComputeTabDropPreviewInput): TabDropPreview | null {
   const targetIndex = input.targetTabs.findIndex((tab) => tab.tabId === input.overTabId);
-  if (targetIndex < 0 || input.overRect.width <= 0) {
+  if (targetIndex < 0 || input.overRect.width <= 0 || input.overRect.height <= 0) {
     return null;
   }
 
-  const activeCenterX = input.activeRect.left + input.activeRect.width / 2;
-  const overCenterX = input.overRect.left + input.overRect.width / 2;
-  const insertAfterTarget = activeCenterX >= overCenterX;
+  const insertAfterTarget =
+    centerAlongAxis(input.activeRect, input.axis) >= centerAlongAxis(input.overRect, input.axis);
 
   const indicatorIndex = targetIndex + (insertAfterTarget ? 1 : 0);
   let insertionIndex = indicatorIndex;

@@ -45,6 +45,8 @@ export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
 export type PullRequestOpenLocation = "main" | "side" | "explorer";
+/** Where a wide-layout pane draws its tab rail: across the top of its content or down the left. */
+export type TabRailPlacement = "top" | "left";
 /** What a sidebar workspace row shows in the space to the right of its title. */
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 /** How much of an agent's work the chat shows between the user's message and the reply. */
@@ -99,6 +101,7 @@ export interface AppSettings {
   codeFontSize: number; // clamped px, default 12
   /** Numbers preserve widths saved before presets were introduced. */
   contentWidth: ContentWidth;
+  tabRailPlacement: TabRailPlacement;
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
@@ -162,6 +165,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   contentWidth: "default",
+  tabRailPlacement: "top",
   syntaxTheme: "one",
   workspaceTitleSource: "title",
   sidebarWorkspaceTrailing: "timestamp",
@@ -260,6 +264,7 @@ const StoredAppSettingsSchema = z
       .catch(undefined),
     // COMPAT(contentMaxWidth): preserve the previous numeric preference.
     contentMaxWidth: legacyContentMaxWidthSchema.nullish().catch(undefined),
+    tabRailPlacement: z.enum(["top", "left"]).catch("top"),
     syntaxTheme: z.string().refine(isSyntaxThemeId).catch("one"),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
     sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("timestamp"),

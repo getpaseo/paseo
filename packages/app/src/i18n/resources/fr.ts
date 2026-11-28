@@ -2907,6 +2907,11 @@ export const fr: TranslationResources = {
         contentWidthWide: "Large",
         contentWidthFull: "Pleine largeur",
         contentWidthCustom: "Largeur personnalisée · {{width}} px",
+        tabPlacement: "Position des onglets",
+        tabPlacementHint: "Position des onglets dans un espace de travail sur les grands écrans",
+        tabPlacementTop: "Horizontale (en haut)",
+        tabPlacementLeft: "Verticale (à gauche)",
+        tabPlacementAccessibility: "Position des onglets : {{value}}",
       },
       syntax: {
         title: "Syntaxe",

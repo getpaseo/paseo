@@ -12,6 +12,7 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   horizontalListSortingStrategy,
+  verticalListSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -23,7 +24,13 @@ const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
   y: 0,
 });
 
-const DND_MODIFIERS: Modifier[] = [restrictToHorizontalAxis];
+const restrictToVerticalAxis: Modifier = ({ transform }) => ({
+  ...transform,
+  x: 0,
+});
+
+const HORIZONTAL_DND_MODIFIERS: Modifier[] = [restrictToHorizontalAxis];
+const VERTICAL_DND_MODIFIERS: Modifier[] = [restrictToVerticalAxis];
 
 function computeDragOpacity(hasExternalContext: boolean, isDragging: boolean): number {
   if (!isDragging) return 1;
@@ -123,6 +130,7 @@ export function SortableInlineList<T>({
   externalDndContext = false,
   activeId: externalActiveId = null,
   getItemData,
+  axis = "horizontal",
 }: {
   data: T[];
   keyExtractor: (item: T, index: number) => string;
@@ -135,7 +143,9 @@ export function SortableInlineList<T>({
   externalDndContext?: boolean;
   activeId?: string | null;
   getItemData?: (item: T, index: number) => Record<string, unknown>;
+  axis?: "horizontal" | "vertical";
 }): ReactElement {
+  const isVertical = axis === "vertical";
   const {
     activeId: internalActiveId,
     items: managedItems,
@@ -167,7 +177,10 @@ export function SortableInlineList<T>({
   );
 
   const renderedItems = (
-    <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
+    <SortableContext
+      items={ids}
+      strategy={isVertical ? verticalListSortingStrategy : horizontalListSortingStrategy}
+    >
       {items.map((item, index) => {
         const id = keyExtractor(item, index);
         return (
@@ -196,7 +209,7 @@ export function SortableInlineList<T>({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      modifiers={DND_MODIFIERS}
+      modifiers={isVertical ? VERTICAL_DND_MODIFIERS : HORIZONTAL_DND_MODIFIERS}
       onDragStart={handlers.onDragStart}
       onDragCancel={handlers.onDragCancel}
       onDragEnd={handlers.onDragEnd}

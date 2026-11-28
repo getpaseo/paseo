@@ -2893,6 +2893,11 @@ export const ru: TranslationResources = {
         contentWidthWide: "Широкий",
         contentWidthFull: "На всю ширину",
         contentWidthCustom: "Своя ширина · {{width}} пкс",
+        tabPlacement: "Расположение вкладок",
+        tabPlacementHint: "Расположение вкладок в рабочем пространстве на широких экранах",
+        tabPlacementTop: "Горизонтально (сверху)",
+        tabPlacementLeft: "Вертикально (слева)",
+        tabPlacementAccessibility: "Расположение вкладок: {{value}}",
       },
       syntax: {
         title: "Синтаксис",

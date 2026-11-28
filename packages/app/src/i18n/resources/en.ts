@@ -2973,6 +2973,11 @@ export const en = {
         contentWidthWide: "Wide",
         contentWidthFull: "Full",
         contentWidthCustom: "Custom width · {{width}} px",
+        tabPlacement: "Tab placement",
+        tabPlacementHint: "Position of the tabs in a workspace on wide screens",
+        tabPlacementTop: "Horizontal (top)",
+        tabPlacementLeft: "Vertical (left)",
+        tabPlacementAccessibility: "Tab placement: {{value}}",
       },
       syntax: {
         title: "Syntax",

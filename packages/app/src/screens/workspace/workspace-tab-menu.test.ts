@@ -287,6 +287,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
           focusRequestId: 1,
         },
       },
+      axis: "horizontal",
       index: 0,
       tabCount: 1,
       onCopyResumeCommand: vi.fn(),
@@ -305,6 +306,33 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(actions.menuEntries).not.toContainEqual(
       expect.objectContaining({ kind: "item", key: "copy-file-path" }),
     );
+  });
+
+  it("words a column's close entries by what sits above and below the tab", () => {
+    const closeEntryLabels = (axis: "horizontal" | "vertical") =>
+      buildWorkspaceDesktopTabActions({
+        tab: createAgentTab(),
+        axis,
+        index: 1,
+        tabCount: 3,
+        onCopyResumeCommand: vi.fn(),
+        onCopyAgentId: vi.fn(),
+        onCopyTerminalId: vi.fn(),
+        onCopyFilePath: vi.fn(),
+        onReloadAgent: vi.fn(),
+        onRenameTab: vi.fn(),
+        onCloseTab: vi.fn(),
+        onCloseTabsToLeft: vi.fn(),
+        onCloseTabsToRight: vi.fn(),
+        onCloseOtherTabs: vi.fn(),
+      }).menuEntries.flatMap((entry) =>
+        entry.kind === "item" && (entry.key === "close-before" || entry.key === "close-after")
+          ? [entry.label]
+          : [],
+      );
+
+    expect(closeEntryLabels("horizontal")).toEqual(["Close to the left", "Close to the right"]);
+    expect(closeEntryLabels("vertical")).toEqual(["Close tabs above", "Close tabs below"]);
   });
 
   it("uses the same rename entry shape for agent and terminal tabs", () => {
