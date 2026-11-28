@@ -294,15 +294,39 @@ export const OmpSubagentProgressPayloadSchema = z
   })
   .passthrough();
 
+const OmpContentIndexField = { contentIndex: z.number().optional() };
+
 export const OmpAssistantMessageEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text_delta"), delta: z.string().optional() }).passthrough(),
-  z.object({ type: z.literal("thinking_delta"), delta: z.string().optional() }).passthrough(),
+  z
+    .object({
+      type: z.literal("text_delta"),
+      ...OmpContentIndexField,
+      delta: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("thinking_delta"),
+      ...OmpContentIndexField,
+      delta: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("toolcall_delta"),
+      ...OmpContentIndexField,
+      delta: z.string().optional(),
+    })
+    .passthrough(),
   z.object({ type: z.literal("start") }).passthrough(),
-  z.object({ type: z.literal("text_start") }).passthrough(),
-  z.object({ type: z.literal("text_end") }).passthrough(),
-  z.object({ type: z.literal("thinking_start") }).passthrough(),
-  z.object({ type: z.literal("thinking_end") }).passthrough(),
+  z.object({ type: z.literal("text_start"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("text_end"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("thinking_start"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("thinking_end"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("toolcall_start"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("toolcall_end"), ...OmpContentIndexField }).passthrough(),
   z.object({ type: z.literal("done") }).passthrough(),
+  z.object({ type: z.literal("error") }).passthrough(),
 ]);
 
 export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
@@ -313,7 +337,7 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("message_update"),
-      message: OmpAgentMessageSchema,
+      message: OmpAgentMessageSchema.optional(),
       assistantMessageEvent: OmpAssistantMessageEventSchema,
     })
     .passthrough(),

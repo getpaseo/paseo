@@ -1675,6 +1675,270 @@ describe("OMP agent client and session", () => {
     expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
   });
 
+  test("streams OMP content blocks by content index when an earlier thinking delta arrives late", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [
+        { type: "thinking", thinking: "" },
+        { type: "text", text: "" },
+      ],
+    };
+
+    runtime.emit({ type: "message_start", message });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "verify" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "." },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: " complete." },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_end", contentIndex: 1 },
+    });
+
+    expect(omp.timeline()).toEqual([
+      { type: "reasoning", text: "verify" },
+      { type: "reasoning", text: "." },
+      { type: "assistant_message", text: "Answer", messageId: "omp-response-1" },
+      { type: "assistant_message", text: " complete.", messageId: "omp-response-1" },
+    ]);
+  });
+
+  test("keeps OMP answer text and fenced code blocks intact when thinking interleaves mid-word", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("show code");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [],
+    };
+
+    runtime.emit({ type: "message_start", message });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: '```ts\nconst msg = "Validation makes that fail lou',
+      },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 1,
+        delta: "All green. Note: the broker caches this value.",
+      },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: 'dly instead of silently";\n```',
+      },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_end", contentIndex: 0 },
+    });
+
+    expect(omp.timeline()).toEqual([
+      {
+        type: "assistant_message",
+        text: '```ts\nconst msg = "Validation makes that fail lou',
+        messageId: "omp-response-1",
+      },
+      {
+        type: "assistant_message",
+        text: 'dly instead of silently";\n```',
+        messageId: "omp-response-1",
+      },
+      {
+        type: "reasoning",
+        text: "All green. Note: the broker caches this value.",
+      },
+    ]);
+  });
+
+  test("flushes buffered OMP content when Stop interrupts a turn mid-stream", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("stop mid-stream");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [],
+    };
+    runtime.beginTurn();
+    runtime.emit({ type: "message_start", message });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "plan" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "partial answer" },
+    });
+
+    expect(omp.timeline()).toEqual([{ type: "reasoning", text: "plan" }]);
+
+    // OMP aborts without emitting message_end before agent_end.
+    runtime.onAbort = () => {
+      runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+    };
+    await omp.interrupt();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.timeline()).toEqual([
+      { type: "reasoning", text: "plan" },
+      { type: "assistant_message", text: "partial answer", messageId: "omp-response-1" },
+    ]);
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
+  });
+
+  test("does not stall later OMP text blocks behind a non-streamed or toolCall entry at index 0", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello");
+    const runtime = omp.runtime();
+    const message: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [
+        { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+        { type: "text", text: "" },
+      ],
+    };
+
+    const parsedToolStart = OmpRuntimeEventSchema.parse({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+    });
+    runtime.emit({ type: "message_start", message });
+    runtime.emit(parsedToolStart);
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    runtime.emit({
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Immediate" },
+    });
+
+    expect(omp.timeline()).toEqual([
+      { type: "assistant_message", text: "Immediate", messageId: "omp-response-1" },
+    ]);
+  });
+
+  test("flushes indexed OMP blocks under the previous message id when its end event is missing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello");
+    const runtime = omp.runtime();
+    const firstMessage: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-1",
+      content: [],
+    };
+    const secondMessage: OmpAgentMessage = {
+      role: "assistant",
+      responseId: "omp-response-2",
+      content: [],
+    };
+
+    runtime.emit({ type: "message_start", message: firstMessage });
+    runtime.emit({
+      type: "message_update",
+      message: firstMessage,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "think" },
+    });
+    runtime.emit({
+      type: "message_update",
+      message: firstMessage,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "answer" },
+    });
+    runtime.emit({ type: "message_start", message: secondMessage });
+
+    expect(omp.timeline()).toEqual([
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "answer", messageId: "omp-response-1" },
+    ]);
+  });
+
   test("a resumed session does not re-emit replayed events as live timeline items", async () => {
     const omp = new OmpHarness();
     await omp.resume({
