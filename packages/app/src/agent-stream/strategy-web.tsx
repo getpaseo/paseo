@@ -644,6 +644,15 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     lastTouchClientYRef.current = null;
   }, [cancelPendingStickToBottom, clearMouseScrollGesture, clearUpwardInputEvidence, isActive]);
 
+  const stopFollowingOutputFromUserIntent = useStableEvent(() => {
+    finishInitialFill();
+    cancelPendingStickToBottom();
+    if (followOutputRef.current) {
+      setFollowOutput(false);
+    }
+    rearmHistoryStartFromUserIntent();
+  });
+
   const scrollMessagesToBottom = useCallback(
     (behavior: ScrollBehaviorLike = "auto") => {
       const scrollContainer = scrollContainerRef.current;
@@ -657,12 +666,26 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       if (isScrollContainerOverscrolledPastBottom(scrollContainer)) {
         return;
       }
+      // A stream commit can run after the browser moves the viewport but
+      // before the scroll handler sees the new position.
+      if (
+        hasUpwardInputEvidence() &&
+        scrollContainer.scrollTop < lastKnownScrollTopRef.current - USER_SCROLL_DELTA_EPSILON
+      ) {
+        stopFollowingOutputFromUserIntent();
+        return;
+      }
       scrollElementToBottom(scrollContainer, behavior);
       lastKnownScrollTopRef.current = scrollContainer.scrollTop;
       syncNearBottom(scrollContainer, onNearBottomChange);
       evaluateHistoryStart();
     },
-    [evaluateHistoryStart, onNearBottomChange],
+    [
+      evaluateHistoryStart,
+      hasUpwardInputEvidence,
+      onNearBottomChange,
+      stopFollowingOutputFromUserIntent,
+    ],
   );
 
   const scheduleStickToBottom = useCallback(() => {
@@ -794,15 +817,6 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     measureVirtualizedRows,
     reconcileReadingPosition,
   ]);
-
-  const stopFollowingOutputFromUserIntent = useStableEvent(() => {
-    finishInitialFill();
-    cancelPendingStickToBottom();
-    if (followOutputRef.current) {
-      setFollowOutput(false);
-    }
-    rearmHistoryStartFromUserIntent();
-  });
 
   useEffect(() => {
     if (revealInitialHistory) finishInitialFill();
@@ -1055,12 +1069,29 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     };
     const handleWheel = (event: WheelEvent) => {
       if (
-        !event.ctrlKey &&
-        event.deltaY < 0 &&
-        !canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.shiftKey || // Browsers use Shift+wheel to scroll horizontally.
+        event.deltaY >= 0 ||
+        !scrollEnabled ||
+        canNestedScrollerConsumeUpwardInput(event.target, scrollContainer)
       ) {
-        markUpwardViewportInput();
+        return;
       }
+
+      // A vertical wheel gesture can arrive before the browser moves the viewport.
+      // Mixed-axis gestures may move nested content sideways, so wait for an upward scroll.
+      if (
+        event.deltaX === 0 &&
+        followOutputRef.current &&
+        Math.max(scrollContainer.scrollTop, lastKnownScrollTopRef.current) >
+          USER_SCROLL_DELTA_EPSILON
+      ) {
+        stopFollowingOutputFromUserIntent();
+        return;
+      }
+
+      markUpwardViewportInput();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isUpwardViewportScrollKey(event)) {
@@ -1187,12 +1218,16 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     isActive,
     markUpwardInputEvidence,
     rearmHistoryStartFromUserIntent,
+    scrollEnabled,
+    stopFollowingOutputFromUserIntent,
   ]);
 
   useEffect(() => {
     const handle: StreamViewportHandle = {
       focus: () => scrollContainerRef.current?.focus({ preventScroll: true }),
       scrollToBottom: () => {
+        clearMouseScrollGesture();
+        clearUpwardInputEvidence();
         setFollowOutput(true);
         cancelPendingStickToBottom();
         forceStickToBottom();
@@ -1223,6 +1258,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     };
   }, [
     cancelPendingStickToBottom,
+    clearMouseScrollGesture,
+    clearUpwardInputEvidence,
     forceStickToBottom,
     measureRows,
     readingAnchor,
