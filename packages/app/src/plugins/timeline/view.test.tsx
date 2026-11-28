@@ -120,6 +120,45 @@ afterEach(() => {
 });
 
 describe("PluginTimelineItemView", () => {
+  it("passes the workspace browser opener to the renderer and leaves it absent when unavailable", async () => {
+    const browserBundle = bundle.replace(
+      'return React.createElement("span", null, props.item.data.label);',
+      'return React.createElement("button", { disabled: !props.openBrowser, onClick: () => props.openBrowser({ url: "http://127.0.0.1:8731/" }) }, "Open link");',
+    );
+    pluginRegistry.installCatalog(
+      "host-1",
+      [
+        {
+          id: "reports",
+          requirements: { paseo: `>=${appPackage.version}` },
+          clientBundle: browserBundle,
+        },
+      ],
+      { client: daemonClient, audio },
+    );
+    const container = document.createElement("div");
+    containers.push(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const openBrowser = vi.fn();
+    for (const opener of [openBrowser, undefined]) {
+      await act(async () =>
+        root.render(
+          <PluginTimelineItemView
+            serverId="host-1"
+            agentId="agent-1"
+            item={timelineItem}
+            openBrowser={opener}
+          />,
+        ),
+      );
+      const button = container.querySelector("button");
+      expect(button?.disabled).toBe(!opener);
+      await act(async () => button?.click());
+    }
+    expect(openBrowser).toHaveBeenCalledExactlyOnceWith({ url: "http://127.0.0.1:8731/" });
+  });
+
   it("validates and renders the matching plugin component", async () => {
     pluginRegistry.installCatalog(
       "host-1",

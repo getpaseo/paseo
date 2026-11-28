@@ -1,4 +1,4 @@
-import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import type { PluginSurfaceProps, PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 import { parseServerIdFromPathname } from "@/utils/host-routes";
 import { isHttpUrl } from "@/utils/http-url";
@@ -54,4 +54,13 @@ export function createPluginHostNavigation(
         }
       : undefined,
   };
+}
+
+/** Binds the host's browser opener to the workspace a timeline row belongs to. */
+export function bindTimelineBrowser(
+  openBrowser: NonNullable<PluginSurfaceProps["navigation"]>["openBrowser"],
+  workspaceId: string | null | undefined,
+): PluginTimelineItemProps["openBrowser"] {
+  if (!openBrowser || !workspaceId) return undefined;
+  return ({ url }) => openBrowser({ url, workspaceId });
 }

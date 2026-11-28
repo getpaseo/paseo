@@ -352,6 +352,11 @@ export type PluginTimelineTransformerContribution<
 
 export interface PluginTimelineItemProps<Data = unknown> extends PluginHostProps {
   agentId: string;
+  /**
+   * Opens an absolute HTTP(S) URL in a new browser tab of the workspace that owns this stream.
+   * Present only on desktop app clients that support it; use the system browser when absent.
+   */
+  openBrowser?: (input: { readonly url: string }) => void;
   item: {
     type: "plugin";
     kind: string;

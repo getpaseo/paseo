@@ -40,11 +40,13 @@ function PluginTimelineItemBody({
   item,
   serverId,
   theme,
+  openBrowser,
 }: {
   agentId: string;
   item: PluginTimelineStreamItem;
   serverId: string;
   theme: PluginTheme;
+  openBrowser?: PluginTimelineItemProps["openBrowser"];
 }) {
   const plugin = useInstalledPlugin(serverId, item.pluginId);
   const renderer = plugin?.timelineRenderers.find(
@@ -65,6 +67,7 @@ function PluginTimelineItemBody({
   const Component = renderer.Component as ComponentType<PluginTimelineItemProps>;
   const props: PluginTimelineItemProps = {
     agentId,
+    openBrowser,
     theme,
     host,
     layout,
@@ -89,6 +92,7 @@ const ThemedPluginTimelineItemBody = withUnistyles(PluginTimelineItemBody);
 
 export function PluginTimelineItemView(props: {
   agentId: string;
+  openBrowser?: PluginTimelineItemProps["openBrowser"];
   item: PluginTimelineStreamItem;
   serverId: string;
 }) {

@@ -118,6 +118,8 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { usePluginHostNavigation } from "@/plugins/host-navigation";
+import { bindTimelineBrowser } from "@/plugins/host-navigation-model";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -463,6 +465,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       });
     });
     const openInlineOutsideDirectory = useOpenOutsideWorkspaceFolder(resolvedServerId);
+    // Plugin rows open links in a browser tab of the workspace this stream belongs to.
+    const openWorkspaceBrowser = usePluginHostNavigation(resolvedServerId).openBrowser;
+    const streamWorkspaceId = context.workspaceId;
+    const handlePluginOpenBrowser = useMemo(
+      () => bindTimelineBrowser(openWorkspaceBrowser, streamWorkspaceId),
+      [openWorkspaceBrowser, streamWorkspaceId],
+    );
     const inlinePathOpener = useMemo(
       () =>
         createInlinePathOpener({
@@ -943,7 +952,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
           case "plugin":
             return (
-              <PluginTimelineItemView agentId={agentId} item={item} serverId={resolvedServerId} />
+              <PluginTimelineItemView
+                agentId={agentId}
+                item={item}
+                serverId={resolvedServerId}
+                openBrowser={handlePluginOpenBrowser}
+              />
             );
 
           default:
@@ -955,6 +969,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderToolCallItem,
+        handlePluginOpenBrowser,
         setTurnExpanded,
         resolvedServerId,
       ],

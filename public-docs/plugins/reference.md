@@ -1584,6 +1584,11 @@ the source row, so updates to one streaming item do not remount its renderer. Re
 `Text` props (including `style`) and supplies assistant typography and foreground color by default.
 Completion displays the full text immediately; the host owns pacing while streaming. Requires Paseo 0.13 or later.
 
+On the desktop app, renderers also receive an optional `openBrowser({ url })`. It opens an absolute
+HTTP(S) URL in a new browser tab of the workspace that owns this stream, the same tab a surface's
+`navigation.openBrowser` creates, and throws for other schemes. It is absent on mobile, the web app,
+streams without a workspace, and older app clients; open the link with the system browser then.
+
 Chat find (Ctrl or Cmd+F) finds and highlights text in replacement rows when the query also
 matches the original message. The host searches the original prompt text or the assistant reply
 with Markdown syntax removed, then the app counts matches in the text your renderer draws.
