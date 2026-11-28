@@ -26,6 +26,12 @@ import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
+import { isolatePaseoHome } from "../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
+
+// A run Pi starts by itself carries the id the session assigns to it.
+const AUTONOMOUS_TURN_ID = expect.stringMatching(/^autonomous-/);
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -971,6 +977,337 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("streams Pi content blocks by content index when an earlier thinking delta arrives late", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "verify" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "." },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: " complete." },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_end", contentIndex: 1 },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "verify" },
+      { type: "reasoning", text: "." },
+      { type: "assistant_message", text: "Answer", messageId: "response-1" },
+      { type: "assistant_message", text: " complete.", messageId: "response-1" },
+    ]);
+  });
+
+  test("keeps Pi answer text and fenced code blocks intact when thinking interleaves mid-word", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("show code");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-1", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: '```ts\nconst msg = "Validation makes that fail lou',
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 1,
+        delta: "All green. Note: the broker caches this value.",
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: 'dly instead of silently";\n```',
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_end", contentIndex: 0 },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "assistant_message",
+        text: '```ts\nconst msg = "Validation makes that fail lou',
+        messageId: "response-1",
+      },
+      {
+        type: "assistant_message",
+        text: 'dly instead of silently";\n```',
+        messageId: "response-1",
+      },
+      {
+        type: "reasoning",
+        text: "All green. Note: the broker caches this value.",
+      },
+    ]);
+  });
+
+  test("flushes indexed Pi blocks under the previous message id when its end event is missing", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "think" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "answer" },
+    });
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-2", content: [] },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "think" },
+      { type: "assistant_message", text: "answer", messageId: "response-1" },
+    ]);
+  });
+
+  test("flushes buffered Pi content when Stop interrupts a turn mid-stream", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.abort = async () => {
+      // Pi emits an aborted terminal response before acknowledging abort (interruptingTurn path).
+      fakeSession.finishTurn({
+        role: "assistant",
+        responseId: "response-1",
+        stopReason: "aborted",
+        errorMessage: "Interrupted by user",
+        content: [],
+      });
+    };
+
+    const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-1", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "plan" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "partial answer" },
+    });
+
+    // Block 1 is still buffered behind unfinished block 0 before Stop.
+    expect(events.timelineItems()).toEqual([{ type: "reasoning", text: "plan" }]);
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "plan" },
+      { type: "assistant_message", text: "partial answer", messageId: "response-1" },
+    ]);
+    await expect(events.nextTurnCancellation()).resolves.toEqual({
+      type: "turn_canceled",
+      provider: "pi",
+      reason: "interrupted",
+      turnId,
+    });
+  });
+
+  test("flushes buffered Pi content when Stop resolves without an agent_end frame", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: { role: "assistant", responseId: "response-1", content: [] },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "plan" },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "partial answer" },
+    });
+
+    await session.interrupt();
+
+    expect(events.timelineItems()).toEqual([
+      { type: "reasoning", text: "plan" },
+      { type: "assistant_message", text: "partial answer", messageId: "response-1" },
+    ]);
+    await expect(events.nextTurnCancellation()).resolves.toEqual({
+      type: "turn_canceled",
+      provider: "pi",
+      reason: "interrupted",
+      turnId,
+    });
+  });
+
+  test("does not stall later Pi text blocks behind a non-streamed or toolCall entry at index 0", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+          { type: "text", text: "" },
+        ],
+      },
+      assistantMessageEvent: { type: "toolcall_start", contentIndex: 0 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "toolCall", id: "tc-1", name: "bash", arguments: {} },
+          { type: "text", text: "Immediate" },
+        ],
+      },
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Immediate" },
+    });
+
+    // Must stream immediately without waiting for toolcall_end(0) or message_end.
+    expect(events.timelineItems()).toEqual([
+      { type: "assistant_message", text: "Immediate", messageId: "response-1" },
+    ]);
+  });
+
+  test("does not stall later Pi text blocks behind an unstreamed empty placeholder at index 0", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("hello");
+    fakeSession.emit({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "text", text: "" },
+        ],
+      },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    });
+    fakeSession.emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Direct answer" },
+    });
+
+    expect(events.timelineItems()).toEqual([
+      { type: "assistant_message", text: "Direct answer", messageId: "response-1" },
+    ]);
+  });
+
   test("emits live user messages with submitted Pi tree entry ids", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -1131,13 +1468,15 @@ describe("PiRpcAgentSession", () => {
         error: null,
       },
     ]);
-    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+    ]);
 
     fakeSession.settleTurn();
 
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1221,12 +1560,14 @@ describe("PiRpcAgentSession", () => {
 
       const stopping = session.interrupt();
       await turnFinished.promise;
-      expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId: undefined }]);
+      expect(events.turnLifecycleEvents()).toEqual([
+        { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      ]);
       abortFinished.resolve();
       await stopping;
       expect(events.turnLifecycleEvents()).toEqual([
-        { type: "turn_started", turnId: undefined },
-        { type: "turn_canceled", turnId: undefined },
+        { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+        { type: "turn_canceled", turnId: AUTONOMOUS_TURN_ID },
       ]);
 
       const { turnId } = await session.startTurn("follow-up");
@@ -1256,10 +1597,10 @@ describe("PiRpcAgentSession", () => {
     fakeSession.finishTurn({ role: "assistant", stopReason: "stop", content: [] });
 
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_completed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_completed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1285,8 +1626,8 @@ describe("PiRpcAgentSession", () => {
     expect(events.turnLifecycleEvents()).toEqual([
       { type: "turn_started", turnId },
       { type: "turn_completed", turnId },
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -1308,8 +1649,8 @@ describe("PiRpcAgentSession", () => {
 
     await expect(session.interrupt()).rejects.toThrow("Pi process exited");
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
     await expect(events.nextTurnFailure()).resolves.toMatchObject({ error: "Pi process exited" });
   });
@@ -1331,7 +1672,7 @@ describe("PiRpcAgentSession", () => {
 
     await expect(session.interrupt()).rejects.toThrow("Abort failed");
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
-      turnId: undefined,
+      turnId: AUTONOMOUS_TURN_ID,
       error: expect.stringContaining("Provider disconnected"),
     });
   });
@@ -2232,11 +2573,11 @@ describe("PiRpcAgentSession", () => {
 
     await expect(events.nextTurnFailure()).resolves.toMatchObject({
       error: "Pi exited",
-      turnId: undefined,
+      turnId: AUTONOMOUS_TURN_ID,
     });
     expect(events.turnLifecycleEvents()).toEqual([
-      { type: "turn_started", turnId: undefined },
-      { type: "turn_failed", turnId: undefined },
+      { type: "turn_started", turnId: AUTONOMOUS_TURN_ID },
+      { type: "turn_failed", turnId: AUTONOMOUS_TURN_ID },
     ]);
   });
 
@@ -2518,6 +2859,37 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentSession steering", () => {
+  test("steers a run Pi started by itself instead of refusing it", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    const [started] = events.turnLifecycleEvents();
+    // The manager keeps a provider turn id and steers with it.
+    const result = await session.steerActiveTurn("join the running work", {
+      expectedTurnId: started?.turnId ?? "autonomous-assigned-by-manager",
+    });
+
+    expect(started?.turnId).toEqual(expect.any(String));
+    expect(result).toEqual({ status: "accepted" });
+    expect(fakeSession.steerCalls).toEqual([{ message: "join the running work", imageCount: 0 }]);
+
+    fakeSession.finishAgentRun({
+      message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "done" }] },
+      willRetry: false,
+    });
+    fakeSession.settleTurn();
+    await flushTurnScheduling();
+    expect(events.turnCompletedEvents()).toEqual([
+      expect.objectContaining({ turnId: started?.turnId }),
+    ]);
+    const idle = await session.steerActiveTurn("after the run", {
+      expectedTurnId: started?.turnId ?? "autonomous-assigned-by-manager",
+    });
+    expect(idle).toEqual({ status: "unavailable" });
+  });
+
   test("steers the active Pi turn and correlates the echoed user message", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

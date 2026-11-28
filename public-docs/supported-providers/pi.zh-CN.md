@@ -6,9 +6,11 @@ nav: Pi
 
 # Pi {#pi}
 
-使用你现有的 `pi` 安装、凭据和设置，在 Paseo 中运行 Pi。
+Paseo 通过你已安装的 `pi` CLI 运行 Pi。它使用你现有的凭据和设置。
 
 ## 开始使用 {#getting-started}
+
+Pi 内置于 Paseo 且默认启用。
 
 1. 在 daemon 主机上安装 [Pi](https://pi.dev)。
 2. 为 Pi 配置模型 Provider，并确认 `pi` 可以在终端中运行。

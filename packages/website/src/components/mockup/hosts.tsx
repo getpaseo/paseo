@@ -1,4 +1,4 @@
-import { Computer, Globe, Laptop, Monitor, PcCase, Plus, Server, Terminal, X } from "lucide-react";
+import { Computer, Globe, Laptop, Monitor, PcCase, Plus, Server, Terminal } from "lucide-react";
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { TailscaleMark } from "./icons";
@@ -53,7 +53,6 @@ interface ConnectedHost {
   endpoint?: string;
   /** Round trip time, formatted as the app's `formatLatency` prints it. */
   latency: string;
-  agents: number;
 }
 
 const CONNECTED_HOSTS: ConnectedHost[] = [
@@ -63,7 +62,6 @@ const CONNECTED_HOSTS: ConnectedHost[] = [
     tone: "text-mock-fg-muted",
     link: "local",
     latency: "1ms",
-    agents: 4,
   },
   {
     name: "devbox",
@@ -72,7 +70,6 @@ const CONNECTED_HOSTS: ConnectedHost[] = [
     link: "relay",
     endpoint: "relay.paseo.sh",
     latency: "38ms",
-    agents: 6,
   },
   {
     name: "mac-mini",
@@ -81,7 +78,6 @@ const CONNECTED_HOSTS: ConnectedHost[] = [
     link: "tailscale",
     endpoint: "mac-mini:6767",
     latency: "12ms",
-    agents: 3,
   },
   {
     name: "workstation",
@@ -90,39 +86,41 @@ const CONNECTED_HOSTS: ConnectedHost[] = [
     link: "ssh",
     endpoint: "mo@workstation",
     latency: "24ms",
-    agents: 2,
   },
 ];
 
-function HostRow({ host }: { host: ConnectedHost }) {
+function HostRow({ host, highlighted }: { host: ConnectedHost; highlighted?: boolean }) {
   const { t } = useTranslation();
   const Device = host.device;
   const LinkIcon = LINK_ICON[host.link];
   return (
-    <div className="flex items-center gap-[13px] border-t border-mock-border px-[18px] py-[13px]">
-      <span
-        className={`relative flex size-[36px] shrink-0 items-center justify-center rounded-[9px] bg-mock-surface2 ${host.tone}`}
-      >
-        <Device size={18} />
-        <span className="absolute -right-[2px] -bottom-[2px] size-[9px] rounded-full bg-mock-dot-success ring-2 ring-mock-surface1" />
+    <div
+      className={`mx-[4px] flex items-start gap-[8px] rounded-[6px] px-[8px] py-[8px] ${highlighted ? "bg-mock-surface2" : ""}`}
+    >
+      <span className="flex h-[18px] w-[16px] shrink-0 items-center justify-center">
+        <span className="size-[8px] rounded-full bg-mock-dot-success" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13.5px] leading-[18px] text-mock-fg">
-          {host.name}
+        <span className="flex items-center gap-[6px]">
+          <span className={`shrink-0 ${host.tone}`}>
+            <Device size={14} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[13.5px] leading-[18px] text-mock-fg">
+            {host.name}
+          </span>
         </span>
-        <span className="mt-[3px] flex items-center gap-[6px] text-[12px] leading-[16px] text-mock-fg-muted">
-          <LinkIcon size={12} className="shrink-0" />
-          <span className="text-mock-fg">{t(`landing.mockup.app.hostLinks.${host.link}`)}</span>
-          {host.endpoint ? <span className="min-w-0 truncate">{host.endpoint}</span> : null}
+        <span className="mt-[2px] flex items-center gap-[6px] text-[12px] leading-[16px] text-mock-fg-muted">
+          <span className="flex w-[14px] shrink-0 items-center justify-center">
+            <LinkIcon size={11} className="shrink-0 opacity-70" />
+          </span>
+          <span className="shrink-0">{t(`landing.mockup.app.hostLinks.${host.link}`)}</span>
+          {host.endpoint ? (
+            <span className="min-w-0 truncate opacity-70">{host.endpoint}</span>
+          ) : null}
         </span>
       </span>
-      <span className="shrink-0 text-right">
-        <span className="block text-[13px] leading-[18px] text-mock-fg tabular-nums">
-          {host.latency}
-        </span>
-        <span className="mt-[3px] block text-[12px] leading-[16px] text-mock-fg-muted">
-          {t("landing.mockup.app.agentCount", { count: host.agents })}
-        </span>
+      <span className="flex h-[18px] shrink-0 items-center text-right text-[12px] leading-[16px] text-mock-fg-muted tabular-nums">
+        {host.latency}
       </span>
     </div>
   );
@@ -130,25 +128,23 @@ function HostRow({ host }: { host: ConnectedHost }) {
 
 /**
  * Every machine this window is connected to: what kind of machine it is, how the app reaches it,
- * the round trip time, and how many agents it runs.
+ * and its round trip time.
  */
 export function HostsModal() {
   const { t } = useTranslation();
   return (
-    <div className="w-[468px] overflow-hidden rounded-[14px] border border-mock-border-accent bg-mock-surface1 shadow-[0_24px_64px_rgba(0,0,0,0.55)]">
-      <div className="flex h-[46px] items-center justify-between px-[18px]">
-        <span className="text-[14px] font-medium text-mock-fg">
-          {t("landing.mockup.app.hosts")}
-        </span>
-        <X size={15} className="text-mock-fg-muted" />
+    <div className="w-[348px] overflow-hidden rounded-[10px] border border-mock-border-accent bg-mock-surface1 py-[4px] shadow-[0_24px_64px_rgba(0,0,0,0.55)]">
+      <div className="px-[12px] pt-[4px] pb-[2px] text-[11.5px] font-medium text-mock-fg-muted">
+        {t("landing.mockup.app.hosts")}
       </div>
-      {CONNECTED_HOSTS.map((host) => (
-        <HostRow key={host.name} host={host} />
+      {CONNECTED_HOSTS.map((host, index) => (
+        <HostRow key={host.name} host={host} highlighted={index === 1} />
       ))}
-      <div className="flex h-[46px] items-center gap-[13px] border-t border-mock-border px-[18px] text-[13px] text-mock-fg">
-        {/* The plus sits on the center line of the device tiles above it. */}
-        <span className="flex w-[36px] shrink-0 justify-center">
-          <Plus size={15} className="text-mock-fg-muted" />
+      <div className="my-[4px] border-t border-mock-border" />
+      <div className="mx-[4px] flex items-center gap-[8px] rounded-[6px] px-[8px] py-[8px] text-[13px] text-mock-fg">
+        {/* The plus sits on the center line of the status dots above it. */}
+        <span className="flex size-[16px] shrink-0 items-center justify-center">
+          <Plus size={16} className="text-mock-fg-muted" />
         </span>
         {t("landing.mockup.app.addHost")}
       </div>

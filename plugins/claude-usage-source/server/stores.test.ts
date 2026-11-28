@@ -252,6 +252,7 @@ test("keychain identity belongs to its token even when Claude Code metadata name
   expect(identity).toEqual({
     key: "pi-account.pi-org",
     harness: "Claude",
+    provider: "claude",
     input: {
       route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" },
       accountKey: "pi-account.pi-org",

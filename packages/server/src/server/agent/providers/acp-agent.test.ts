@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
@@ -37,6 +38,8 @@ import {
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
+import { AgentManager } from "../agent-manager.js";
+import { StaleProviderSessionError } from "../stale-provider-session-error.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
@@ -2899,6 +2902,450 @@ describe("ACPAgentClient listImportableSessions", () => {
   });
 });
 
+describe("ACPAgentClient import listing deadlines", () => {
+  type ListingPhase = "spawn" | "initialize" | "session/list";
+  const phases: ListingPhase[] = ["initialize", "session/list"];
+
+  function createBlockedListing(
+    phase: ListingPhase,
+    terminator = new FakeTerminator(),
+    responseError?: RequestError,
+  ) {
+    const child = createProbeChildStub();
+    const clientToAgent = new PassThrough();
+    const agentToClient = new PassThrough();
+    child.stdin = clientToAgent;
+    child.stdout = agentToClient;
+    child.stderr = new PassThrough();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const operations: string[] = [];
+    const agent: Agent = {
+      async initialize() {
+        operations.push("initialize");
+        if (phase === "initialize") {
+          markStarted();
+          await blocked;
+          if (responseError) throw responseError;
+        }
+        return {
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { sessionCapabilities: { list: {} } },
+        };
+      },
+      async listSessions() {
+        operations.push("session/list");
+        if (phase === "session/list") {
+          markStarted();
+          await blocked;
+          if (responseError) throw responseError;
+        }
+        return { sessions: [] };
+      },
+      async newSession() {
+        throw new Error("Import listing must not create a session");
+      },
+      async prompt() {
+        throw new Error("Import listing must not submit a prompt");
+      },
+      async authenticate() {},
+      async cancel() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      () => agent,
+      ndJsonStream(Writable.toWeb(agentToClient), Readable.toWeb(clientToAgent)),
+    );
+    const connection = new ClientSideConnection(
+      () => ({
+        async requestPermission() {
+          return { outcome: { outcome: "cancelled" } };
+        },
+        async sessionUpdate() {},
+      }),
+      ndJsonStream(Writable.toWeb(clientToAgent), Readable.toWeb(agentToClient)),
+    );
+
+    const processError = new Promise<never>((_resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", () => reject(new Error("Import probe exited during cleanup")));
+    });
+
+    class ListingClient extends ACPAgentClient {
+      protected override async spawnTransport() {
+        if (phase === "spawn") {
+          operations.push("spawn");
+          markStarted();
+          await blocked;
+        }
+        return {
+          child,
+          connection,
+          stderrChunks: [],
+          spawnReady: Promise.resolve(),
+          processError,
+        };
+      }
+    }
+
+    const client = new ListingClient({
+      provider: "test-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["test-acp"],
+      defaultModes: [],
+      terminateProcess: async (target, options) => {
+        const result = await terminator.terminate(target, options);
+        child.emit("close", 0, null);
+        return result;
+      },
+    });
+    return { client, child, agentConnection, terminator, started, release, operations };
+  }
+
+  function listSessionsThroughManager(client: ACPAgentClient) {
+    return new AgentManager({
+      clients: { [client.provider]: client },
+      logger: createTestLogger(),
+    }).listImportableSessions({ limit: 1 });
+  }
+
+  test.runIf(process.platform !== "win32")(
+    "reclaims the stalled listing provider after its launcher exits",
+    async () => {
+      const fixtureDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-listing-"));
+      const fixturePath = path.join(fixtureDir, "launcher.cjs");
+      const readyPath = path.join(fixtureDir, "listing-ready");
+      const pidsPath = path.join(fixtureDir, "pids.json");
+      await writeFile(
+        fixturePath,
+        `
+          const { spawn } = require("node:child_process");
+          const { writeFileSync } = require("node:fs");
+          const { createInterface } = require("node:readline");
+          if (process.argv[4] === "provider") {
+            process.on("SIGTERM", () => {});
+            createInterface({ input: process.stdin }).on("line", (line) => {
+              const { id, method } = JSON.parse(line);
+              if (method === "initialize") {
+                console.log(JSON.stringify({ jsonrpc: "2.0", id, result: {
+                  protocolVersion: ${PROTOCOL_VERSION},
+                  agentCapabilities: { sessionCapabilities: { list: {} } },
+                }}));
+              }
+              if (method === "session/list") {
+                writeFileSync(process.argv[2], "ready");
+                setInterval(() => {}, 1000);
+              }
+            });
+          } else {
+            const child = spawn(process.execPath, [...process.argv.slice(1), "provider"], {
+              stdio: "inherit",
+            });
+            writeFileSync(process.argv[3], JSON.stringify({
+              launcher: process.pid, provider: child.pid,
+            }));
+          }
+        `,
+      );
+
+      const client = new ACPAgentClient({
+        provider: "test-acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, fixturePath, readyPath, pidsPath],
+        defaultModes: [],
+      });
+      const isRunning = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+          return false;
+        }
+      };
+
+      const readPids = async (): Promise<{ launcher: number; provider: number }> =>
+        JSON.parse(await readFile(pidsPath, "utf8"));
+      vi.useFakeTimers({ now: 0, toFake: ["setTimeout", "clearTimeout", "performance", "Date"] });
+      let responseReceived = false;
+      const listing = listSessionsThroughManager(client).then((response) => {
+        responseReceived = true;
+        return response;
+      });
+
+      try {
+        await vi.waitFor(() => readFile(readyPath, "utf8"), { timeout: 3000 });
+        const { launcher, provider } = await readPids();
+        expect(isRunning(launcher)).toBe(true);
+        expect(isRunning(provider)).toBe(true);
+
+        // waitFor advances the fake clock while starting the real processes.
+        await vi.advanceTimersByTimeAsync(89_999 - Date.now());
+        expect(responseReceived).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(listing).resolves.toEqual({
+          sessions: [],
+          providerErrors: [
+            {
+              provider: "test-acp",
+              message:
+                "Timed out listing importable sessions for provider 'test-acp' after 90000ms",
+            },
+          ],
+        });
+        await vi.waitFor(() => expect(isRunning(launcher)).toBe(false));
+        await vi.waitFor(
+          () => expect(isRunning(provider), "provider outlived launcher cleanup").toBe(false),
+          { timeout: 3500 },
+        );
+      } finally {
+        vi.useRealTimers();
+        const pids = await readPids().catch(() => ({}));
+        for (const pid of Object.values(pids)) {
+          if (isRunning(pid)) process.kill(pid, "SIGKILL");
+        }
+        await rm(fixtureDir, { recursive: true, force: true });
+      }
+    },
+    10_000,
+  );
+
+  test("accepts a listing that finishes within the daemon's provider deadline", async () => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing("session/list");
+    const listing = listSessionsThroughManager(probe.client);
+
+    try {
+      await probe.started;
+      await vi.advanceTimersByTimeAsync(88_000);
+      probe.release();
+
+      await expect(listing).resolves.toEqual({ sessions: [], providerErrors: [] });
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test.each<{ phase: ListingPhase; errorMessage?: string }>([
+    { phase: "session/list" },
+    { phase: "session/list", errorMessage: "Provider rejected listing" },
+    { phase: "initialize", errorMessage: "Sign in to the provider and retry" },
+  ])(
+    "returns a timely $phase outcome while its probe is still shutting down ($errorMessage)",
+    async ({ phase, errorMessage }) => {
+      vi.useFakeTimers();
+      const terminator = new FakeTerminator("deferred");
+      const responseError = errorMessage ? new RequestError(-32001, errorMessage) : undefined;
+      const probe = createBlockedListing(phase, terminator, responseError);
+      const providerErrors = errorMessage
+        ? [{ provider: "test-acp", message: expect.stringContaining(errorMessage) }]
+        : [];
+      const listing = listSessionsThroughManager(probe.client);
+
+      try {
+        await probe.started;
+        await vi.advanceTimersByTimeAsync(88_000);
+        probe.release();
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        expect(terminator.terminated.map((child) => child.pid)).toEqual([probe.child.pid]);
+        expect(probe.child.stdout.destroyed).toBe(false);
+        await expect(listing).resolves.toEqual({ sessions: [], providerErrors });
+        terminator.releaseAll();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(probe.child.stdout.destroyed).toBe(true);
+      } finally {
+        probe.release();
+        terminator.releaseAll();
+        await listing;
+        await vi.advanceTimersByTimeAsync(0);
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test.each(phases)("cleans up when import listing stalls in %s", async (phase) => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing(phase);
+    const listing = listSessionsThroughManager(probe.client);
+
+    try {
+      await probe.started;
+      await vi.advanceTimersByTimeAsync(89_999);
+      expect(probe.terminator.terminated).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(listing).resolves.toEqual({
+        sessions: [],
+        providerErrors: [
+          {
+            provider: "test-acp",
+            message: "Timed out listing importable sessions for provider 'test-acp' after 90000ms",
+          },
+        ],
+      });
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(phases)("cleans up when import listing is aborted in %s", async (phase) => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing(phase);
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(errors).toEqual([reason]);
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+
+      probe.release();
+      await listing;
+      expect(probe.operations).toEqual(
+        phase === "initialize" ? ["initialize"] : ["initialize", "session/list"],
+      );
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test("closes an import probe that finishes spawning after cancellation", async () => {
+    const probe = createBlockedListing("spawn");
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled before spawn completed");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const unhandledRejections: unknown[] = [];
+    function recordUnhandledRejection(error: unknown): void {
+      unhandledRejections.push(error);
+    }
+    process.on("unhandledRejection", recordUnhandledRejection);
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await listing;
+      expect(errors).toEqual([reason]);
+      expect(probe.terminator.terminated).toEqual([]);
+
+      probe.release();
+      // Node reports unhandled rejections after the cleanup microtasks settle.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+      expect(probe.operations).toEqual(["spawn"]);
+      expect(errors).toEqual([reason]);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      probe.release();
+      await listing;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      process.removeListener("unhandledRejection", recordUnhandledRejection);
+    }
+  });
+
+  test("preserves process failures during import probe initialization", async () => {
+    vi.useFakeTimers();
+    const probe = createBlockedListing("initialize");
+    const failure = new Error("Import probe failed during initialize");
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions({ limit: 1 }).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      probe.child.emit("error", failure);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(errors).toEqual([
+        expect.objectContaining({ message: "Import probe failed during initialize" }),
+      ]);
+      expect(probe.operations).toEqual(["initialize"]);
+      expect(probe.terminator.terminated).toEqual([probe.child]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+
+  test("waits for owned import probe cleanup before rejecting cancellation", async () => {
+    vi.useFakeTimers();
+    const terminator = new FakeTerminator("deferred");
+    const probe = createBlockedListing("session/list", terminator);
+    const abort = new AbortController();
+    const reason = new Error("Import listing cancelled during session/list");
+    const options = { limit: 1, signal: abort.signal };
+    const errors: unknown[] = [];
+    const listing = probe.client.listImportableSessions(options).catch((error: unknown) => {
+      errors.push(error);
+      return [];
+    });
+
+    try {
+      await probe.started;
+      abort.abort(reason);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(terminator.terminated).toEqual([probe.child]);
+      expect(errors).toEqual([]);
+
+      terminator.releaseAll();
+      await listing;
+      expect(errors).toEqual([reason]);
+      expect(probe.child.stdin.destroyed).toBe(true);
+      expect(probe.child.stdout.destroyed).toBe(true);
+      expect(probe.child.stderr.destroyed).toBe(true);
+    } finally {
+      probe.release();
+      await vi.advanceTimersByTimeAsync(0);
+      terminator.releaseAll();
+      await listing;
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("ACP providers advertise session listing", () => {
   // The daemon's agent-manager only queries providers whose
   // capabilities.supportsSessionListing is true. Without it, ACP providers
@@ -5416,5 +5863,421 @@ describe("custom ACP provider with configured models", () => {
     const created = await createSessionOnModel(registry, "stale/removed-model");
 
     expect((await created.getRuntimeInfo()).model).toBe("advertised-default");
+  });
+});
+
+describe("ACPAgentSession launch wrap against an ACP agent", () => {
+  const fakeAgentPath = fileURLToPath(new URL("./test-utils/fake-acp-agent.mjs", import.meta.url));
+
+  test("starts the agent and its terminals behind the session's wrap", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-acp-wrap-"));
+    const record = path.join(root, "launches.jsonl");
+    const launcher = path.join(root, "launcher.cjs");
+    await writeFile(
+      launcher,
+      `
+      const [, , ...argv] = process.argv;
+      require("node:fs").appendFileSync(${JSON.stringify(record)}, JSON.stringify(argv) + "\\n");
+      const child = require("node:child_process").spawn(argv[0], argv.slice(1), { stdio: "inherit" });
+      child.on("exit", (code) => process.exit(code ?? 1));
+    `,
+    );
+    const session = new ACPAgentSession(
+      { provider: "acp", cwd: root },
+      {
+        provider: "acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, fakeAgentPath, "{}"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        wrap: [process.execPath, launcher],
+      },
+    );
+    try {
+      await session.initializeNewSession();
+      const { terminalId } = await session.createTerminal({
+        sessionId: "session-1",
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        cwd: root,
+      });
+      await expect(
+        session.waitForTerminalExit({ sessionId: "session-1", terminalId }),
+      ).resolves.toMatchObject({ exitCode: 0 });
+
+      const launches = (await readFile(record, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(launches).toEqual([
+        [process.execPath, fakeAgentPath, "{}"],
+        [process.execPath, "-e", "process.exit(0)"],
+      ]);
+    } finally {
+      await session.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ACPAgentSession interrupt settlement and hung-cancel retirement (#3256)", () => {
+  async function writeControllableAcpScript(
+    dir: string,
+    config: {
+      pidLog: string;
+      methodLog: string;
+      cancelMode: "responsive" | "ignore";
+      ignoreSigterm?: boolean;
+      resumeMode: "load" | "resume" | "none";
+      responsiveDelayMs?: number;
+    },
+  ): Promise<string> {
+    const scriptPath = path.join(dir, "controllable-acp.mjs");
+    await writeFile(
+      scriptPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `import { createInterface } from "node:readline";`,
+        `const cfg = ${JSON.stringify(config)};`,
+        `appendFileSync(cfg.pidLog, String(process.pid) + "\\n");`,
+        `if (cfg.ignoreSigterm) { process.on("SIGTERM", () => {}); }`,
+        `const write = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");`,
+        `let pendingPromptId = null;`,
+        `createInterface({ input: process.stdin }).on("line", (line) => {`,
+        `  if (!line.trim()) return;`,
+        `  const msg = JSON.parse(line);`,
+        `  appendFileSync(cfg.methodLog, JSON.stringify({ pid: process.pid, method: msg.method, params: msg.params }) + "\\n");`,
+        `  if (msg.method === "initialize") {`,
+        `    const agentCapabilities =`,
+        `      cfg.resumeMode === "load"`,
+        `        ? { loadSession: true }`,
+        `        : cfg.resumeMode === "resume"`,
+        `          ? { sessionCapabilities: { resume: {} } }`,
+        `          : {};`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/new") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "acp-session-1" } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/load" || msg.method === "session/resume") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: {} });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/prompt") {`,
+        `    const text = msg.params?.prompt?.[0]?.text ?? "";`,
+        `    if (text.startsWith("hang")) {`,
+        `      pendingPromptId = msg.id;`,
+        `      write({`,
+        `        jsonrpc: "2.0",`,
+        `        method: "session/update",`,
+        `        params: {`,
+        `          sessionId: msg.params.sessionId,`,
+        `          update: { sessionUpdate: "tool_call", toolCallId: "tool-1", title: "Long op", status: "in_progress" },`,
+        `        },`,
+        `      });`,
+        `      return;`,
+        `    }`,
+        `    write({`,
+        `      jsonrpc: "2.0",`,
+        `      method: "session/update",`,
+        `      params: {`,
+        `        sessionId: msg.params.sessionId,`,
+        `        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok:" + text } },`,
+        `      },`,
+        `    });`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/cancel") {`,
+        `    if (cfg.cancelMode === "responsive" && pendingPromptId !== null) {`,
+        `      const id = pendingPromptId;`,
+        `      pendingPromptId = null;`,
+        `      setTimeout(() => write({ jsonrpc: "2.0", id, result: { stopReason: "cancelled" } }), cfg.responsiveDelayMs ?? 30);`,
+        `    }`,
+        `  }`,
+        `});`,
+      ].join("\n"),
+      "utf8",
+    );
+    return scriptPath;
+  }
+
+  function createLiveSession(
+    cwd: string,
+    scriptPath: string,
+    options: { interruptGraceMs?: number; interruptKillGraceMs?: number } = {},
+  ): ACPAgentSession {
+    return new ACPAgentSession(
+      { provider: "acp-test", cwd },
+      {
+        provider: "acp-test",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, scriptPath],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: false,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        ...options,
+      },
+    );
+  }
+
+  function hasToolCallEvent(events: AgentStreamEvent[]): boolean {
+    return events.some((event) => event.type === "timeline" && event.item.type === "tool_call");
+  }
+
+  test("waits for a responsive ACP child to settle on interrupt without killing the process", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-responsive-int-"));
+    const pidLog = path.join(dir, "pids.log");
+    const methodLog = path.join(dir, "methods.jsonl");
+    const scriptPath = await writeControllableAcpScript(dir, {
+      pidLog,
+      methodLog,
+      cancelMode: "responsive",
+      resumeMode: "load",
+      responsiveDelayMs: 60,
+    });
+    const session = createLiveSession(dir, scriptPath, { interruptGraceMs: 500 });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.initializeNewSession();
+      const firstPid = Number((await readFile(pidLog, "utf8")).trim());
+
+      const { turnId } = await session.startTurn("hang-1");
+      await vi.waitFor(() => expect(hasToolCallEvent(events)).toBe(true));
+
+      await session.interrupt();
+
+      // interrupt() waited until the turn settled as canceled, without killing the child.
+      expect(
+        events.some((event) => event.type === "turn_canceled" && event.turnId === turnId),
+      ).toBe(true);
+      expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+      expect(() => process.kill(firstPid, 0)).not.toThrow();
+
+      // Next prompt runs on the same child process.
+      const result = await session.run("after-cancel");
+      expect(result.finalText).toBe("ok:after-cancel");
+      const pids = (await readFile(pidLog, "utf8")).trim().split("\n").map(Number);
+      expect(pids).toEqual([firstPid]);
+    } finally {
+      await session.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test.each(["load", "resume"] as const)(
+    "kills a hung %s-resumable ACP child after grace timeout and transparently reloads through AgentManager on the next prompt",
+    async (resumeMode) => {
+      const dir = await mkdtemp(path.join(tmpdir(), `paseo-acp-hung-${resumeMode}-`));
+      const pidLog = path.join(dir, "pids.log");
+      const methodLog = path.join(dir, "methods.jsonl");
+      const scriptPath = await writeControllableAcpScript(dir, {
+        pidLog,
+        methodLog,
+        cancelMode: "ignore",
+        ignoreSigterm: true,
+        resumeMode,
+      });
+      const logger = createTestLogger();
+      const client = new ACPAgentClient({
+        provider: "acp-test",
+        logger,
+        defaultCommand: [process.execPath, scriptPath],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: false,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        interruptGraceMs: 120,
+        interruptKillGraceMs: 120,
+      });
+      const manager = new AgentManager({
+        clients: { "acp-test": client },
+        logger,
+      });
+
+      try {
+        const agent = await manager.createAgent({ provider: "acp-test", cwd: dir }, undefined, {
+          workspaceId: undefined,
+        });
+        const firstSession = manager.getAgent(agent.id)!.session!;
+        const events: AgentStreamEvent[] = [];
+        firstSession.subscribe((event) => events.push(event));
+        const firstPid = (await readFile(pidLog, "utf8")).trim().split("\n").map(Number).at(-1)!;
+
+        const firstRun = manager.streamAgent(agent.id, "hang-forever");
+        const drainingFirst = (async () => {
+          for await (const _event of firstRun) {
+            // Drain stream until Stop cancels it.
+          }
+        })();
+        await manager.waitForAgentRunStart(agent.id);
+        await vi.waitFor(() => expect(hasToolCallEvent(events)).toBe(true));
+
+        // Overlapping interrupts coalesce into a single retirement.
+        const [firstCancel, secondCancel] = await Promise.all([
+          manager.cancelAgentRun(agent.id),
+          manager.cancelAgentRun(agent.id),
+        ]);
+        expect(firstCancel).toEqual({ status: "settled" });
+        expect(secondCancel).toEqual({ status: "not_running" });
+        await drainingFirst;
+
+        // Hung child (which ignored SIGTERM) was SIGKILLed and retired cleanly.
+        expect(() => process.kill(firstPid, 0)).toThrow();
+        expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+        expect(terminalEvents(events)).toEqual([
+          expect.objectContaining({ type: "turn_canceled" }),
+        ]);
+
+        // Direct reuse of the retired session signals stale so AgentManager reloads it.
+        await expect(firstSession.startTurn("stale-check")).rejects.toBeInstanceOf(
+          StaleProviderSessionError,
+        );
+
+        // Next prompt through AgentManager transparently reloads via session/load or session/resume.
+        const result = await manager.runAgent(agent.id, "recovered");
+        expect(result.finalText).toBe("ok:recovered");
+
+        const pids = (await readFile(pidLog, "utf8")).trim().split("\n").map(Number);
+        const reloadedPid = pids.at(-1)!;
+        expect(reloadedPid).not.toBe(firstPid);
+        const methods = (await readFile(methodLog, "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as { pid: number; method: string });
+        const expectedMethod = resumeMode === "load" ? "session/load" : "session/resume";
+        expect(
+          methods.some((entry) => entry.pid === reloadedPid && entry.method === expectedMethod),
+        ).toBe(true);
+      } finally {
+        await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("kills a hung non-resumable ACP child and surfaces a clear retirement error without wedging the turn", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-hung-nonresumable-"));
+    const pidLog = path.join(dir, "pids.log");
+    const methodLog = path.join(dir, "methods.jsonl");
+    const scriptPath = await writeControllableAcpScript(dir, {
+      pidLog,
+      methodLog,
+      cancelMode: "ignore",
+      resumeMode: "none",
+    });
+    const session = createLiveSession(dir, scriptPath, {
+      interruptGraceMs: 120,
+      interruptKillGraceMs: 120,
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      await session.initializeNewSession();
+      const firstPid = Number((await readFile(pidLog, "utf8")).trim());
+
+      const { turnId } = await session.startTurn("hang-forever");
+      await vi.waitFor(() => expect(hasToolCallEvent(events)).toBe(true));
+
+      await session.interrupt();
+
+      expect(() => process.kill(firstPid, 0)).toThrow();
+      expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+      const terminals = terminalEvents(events);
+      expect(terminals).toEqual([
+        expect.objectContaining({ type: "turn_canceled", turnId }),
+        expect.objectContaining({
+          type: "turn_failed",
+          error: expect.stringMatching(/does not support session resume/i),
+        }),
+      ]);
+      expect(terminals[1]).not.toHaveProperty("turnId");
+
+      await expect(session.startTurn("follow-up")).rejects.toThrow(
+        /does not support session resume/i,
+      );
+    } finally {
+      await session.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("waits a full 10s default grace window before escalating a slow cancel", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminator = new FakeTerminator();
+      const session = createSession({ terminateProcess: terminator.terminate });
+      const child = createTerminalChildStub();
+      let resolvePrompt!: (value: PromptResponse) => void;
+      const cancel = vi.fn(async () => undefined);
+      const internals = asInternals<
+        ACPSessionInternals & {
+          child: ChildProcess | null;
+          connection: {
+            prompt: (...args: unknown[]) => Promise<PromptResponse>;
+            cancel: (input: { sessionId: string }) => Promise<void>;
+            signal: AbortSignal;
+          };
+          agentCapabilities: { loadSession?: boolean } | null;
+        }
+      >(session);
+      internals.child = child;
+      internals.sessionId = "session-1";
+      internals.agentCapabilities = { loadSession: true };
+      internals.connection = {
+        prompt: () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolvePrompt = resolve;
+          }),
+        cancel,
+        signal: new AbortController().signal,
+      };
+
+      await session.startTurn("slow-cancel");
+      let done = false;
+      const interrupting = (async () => {
+        await session.interrupt();
+        done = true;
+      })();
+
+      // Must NOT escalate at 3s or 9.9s (event-loop stalls need the full 10s window).
+      await vi.advanceTimersByTimeAsync(3_500);
+      expect(done).toBe(false);
+      expect(terminator.terminated).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(6_400);
+      expect(done).toBe(false);
+      expect(terminator.terminated).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(200);
+      await interrupting;
+      expect(done).toBe(true);
+      expect(terminator.terminated).toContain(child);
+      resolvePrompt({ stopReason: "cancelled" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

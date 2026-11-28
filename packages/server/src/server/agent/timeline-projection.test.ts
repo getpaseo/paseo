@@ -64,6 +64,68 @@ describe("projectTimelineRows", () => {
     });
   });
 
+  test("keeps one assistant message whole when a steering user message lands mid-stream", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: { type: "user_message", text: "keep going" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:00.200Z",
+        item: { type: "assistant_message", text: "ted changes.", messageId: "msg-1" },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected.map((entry) => entry.item)).toEqual([
+      { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+  });
+
+  test("keeps text written after a tool call below it when both share a message id", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "assistant_message", text: "Let me check.", messageId: "msg-1" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: {
+          type: "tool_call",
+          callId: "c1",
+          name: "shell",
+          status: "completed",
+          detail: { type: "unknown", input: null, output: null },
+          error: null,
+        },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:00.200Z",
+        item: { type: "assistant_message", text: "Found it.", messageId: "msg-1" },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected.map((entry) => entry.item.type)).toEqual([
+      "assistant_message",
+      "tool_call",
+      "assistant_message",
+    ]);
+  });
+
   test("keeps adjacent assistant chunks with different message ids separate in projected mode", () => {
     const rows: AgentTimelineRow[] = [
       {
@@ -128,6 +190,7 @@ describe("projectTimelineRows", () => {
           type: "tool_call",
           callId: "call_1",
           name: "shell",
+          metadata: { intent: "Inspect files" },
           status: "running",
           error: null,
           detail: {
@@ -168,6 +231,7 @@ describe("projectTimelineRows", () => {
     if (tool?.item.type === "tool_call") {
       expect(tool.item.status).toBe("completed");
       expect(tool.item.callId).toBe("call_1");
+      expect(tool.item.metadata).toEqual({ intent: "Inspect files" });
     }
     expect(tool?.sourceSeqRanges).toEqual([
       { startSeq: 1, endSeq: 1 },

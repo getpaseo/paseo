@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { buildDocsNavTree, getDoc, getDocs } from "~/docs";
 import { splitLocalePath, useLocale, useLocalizePath } from "~/i18n";
 import { LanguageSelector } from "~/components/language-selector";
+import { PaseoLockup } from "~/components/paseo-brand";
 import "~/styles.css";
 
 export const Route = createFileRoute("/{-$locale}/docs")({
@@ -35,9 +36,12 @@ function DocsLayout() {
       {/* Mobile header */}
       <header className="lg:hidden sticky top-0 z-50 bg-background border-b border-border">
         <div className="flex items-center justify-between p-4">
-          <Link to={localize("/")} className="flex items-center gap-3">
-            <img src="/logo.svg" alt="Paseo" className="w-6 h-6" />
-            <span className="text-lg font-medium">Paseo</span>
+          <Link
+            to={localize("/")}
+            aria-label="Paseo"
+            className="inline-flex items-center text-foreground"
+          >
+            <PaseoLockup className="h-[22px] w-auto" />
           </Link>
           <div className="flex items-center gap-3">
             <LanguageSelector />
@@ -63,9 +67,12 @@ function DocsLayout() {
         {/* Desktop sidebar */}
         <aside className="hidden lg:block sticky top-0 h-screen w-60 shrink-0 border-r border-border p-6 overflow-y-auto">
           <div className="flex items-center justify-between gap-3 mb-8">
-            <Link to={localize("/")} className="flex items-center gap-3">
-              <img src="/logo.svg" alt="Paseo" className="w-6 h-6" />
-              <span className="text-lg font-medium">Paseo</span>
+            <Link
+              to={localize("/")}
+              aria-label="Paseo"
+              className="inline-flex items-center text-foreground"
+            >
+              <PaseoLockup className="h-[22px] w-auto" />
             </Link>
             <LanguageSelector />
           </div>

@@ -14,9 +14,9 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { readAcpProviderInstallGuide } from "@/hooks/use-acp-provider-catalog";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
+import { openExternalUrl } from "@/utils/open-external-url";
 import {
   readDetailPresence,
   readDetailSections,
@@ -27,6 +27,7 @@ import { DiagnosticSheet } from "./diagnostic-sheet";
 import { useProviderConfigActions, type ProviderEntry } from "./provider-config";
 import { ProviderModels } from "./provider-models";
 import { ProviderNotice } from "./provider-notice";
+import { ProviderRefreshButton, useCheckedLabel, type ProviderRefresh } from "./provider-refresh";
 
 export interface ProviderDetailState {
   provider: string;
@@ -81,6 +82,9 @@ export function useProviderDetail({
 /**
  * Everything about one provider, top to bottom: what is wrong, whether it runs, its installation,
  * its models, then the rare actions. The page and the sheet frame the same body.
+ *
+ * Refresh sits with the model list, which is what it is most often pressed for. A provider that
+ * lists no models of its own keeps it under Troubleshooting.
  */
 export function ProviderDetail({
   serverId,
@@ -106,6 +110,13 @@ export function ProviderDetail({
     installGuide: readAcpProviderInstallGuide(provider),
   });
   const sections = readDetailSections(entry, shownInstallation);
+  const listsModels = sections.models === "all";
+  const providerRefresh: ProviderRefresh = {
+    checkedAt: entry.fetchedAt,
+    // The probe running again is a refresh too, whoever asked for it.
+    busy: isRefreshing || installation.refreshing || entry.status === "loading",
+    run: handleRefresh,
+  };
 
   return (
     <View testID="provider-detail">
@@ -120,15 +131,13 @@ export function ProviderDetail({
         <ProviderModels
           serverId={serverId}
           entry={entry}
-          discovered={sections.models === "all"}
-          refresh={refresh}
+          refresh={listsModels ? providerRefresh : null}
         />
       ) : null}
       <Troubleshooting
         serverId={serverId}
         entry={entry}
-        refreshing={isRefreshing || installation.refreshing}
-        onRefresh={handleRefresh}
+        refresh={listsModels ? null : providerRefresh}
       />
       {/* Config no longer owns a provider whose removal has succeeded. */}
       {detail.removing || detail.canRemove(entry) ? (
@@ -187,42 +196,39 @@ function EnabledCard({ serverId, entry }: { serverId: string; entry: ProviderEnt
 function Troubleshooting({
   serverId,
   entry,
-  refreshing,
-  onRefresh,
+  refresh,
 }: {
   serverId: string;
   entry: ProviderEntry;
-  refreshing: boolean;
-  onRefresh: () => void;
+  /** Null when the model list carries Refresh. */
+  refresh: ProviderRefresh | null;
 }) {
   const { t } = useTranslation();
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const openDiagnostic = useCallback(() => setDiagnosticOpen(true), []);
   const closeDiagnostic = useCallback(() => setDiagnosticOpen(false), []);
-  const checked = useTimeAgo(entry.fetchedAt ? new Date(entry.fetchedAt) : null);
-  // The probe running again is a refresh too, whoever asked for it.
-  const busy = refreshing || entry.status === "loading";
+  const docsUrl = entry.docsUrl;
+  const openDocs = useCallback(() => {
+    if (docsUrl) void openExternalUrl(docsUrl);
+  }, [docsUrl]);
 
   return (
     <SettingsSection title={t("settings.providers.detail.troubleshooting")}>
       <SettingsCard>
-        <SettingsRow
-          label={t("settings.providers.detail.status")}
-          hint={
-            entry.fetchedAt ? t("settings.providers.detail.checked", { time: checked }) : undefined
-          }
-        >
-          <Button variant="outline" onPress={onRefresh} loading={busy} testID="provider-refresh">
-            {busy
-              ? t("settings.providers.diagnostic.refreshing")
-              : t("settings.providers.diagnostic.refresh")}
-          </Button>
-        </SettingsRow>
+        {refresh ? <ProviderStatusRow refresh={refresh} /> : null}
         <SettingsDetailRow
           label={t("settings.providers.detail.diagnosticReport")}
           onPress={openDiagnostic}
           testID="provider-diagnostic-report"
         />
+        {docsUrl ? (
+          <SettingsDetailRow
+            label={t("settings.providers.detail.docs")}
+            onPress={openDocs}
+            external
+            testID="provider-docs"
+          />
+        ) : null}
       </SettingsCard>
       <DiagnosticSheet
         serverId={serverId}
@@ -231,6 +237,16 @@ function Troubleshooting({
         onClose={closeDiagnostic}
       />
     </SettingsSection>
+  );
+}
+
+function ProviderStatusRow({ refresh }: { refresh: ProviderRefresh }) {
+  const { t } = useTranslation();
+  const checked = useCheckedLabel(refresh);
+  return (
+    <SettingsRow label={t("settings.providers.detail.status")} hint={checked}>
+      <ProviderRefreshButton refresh={refresh} form="labelled" />
+    </SettingsRow>
   );
 }
 

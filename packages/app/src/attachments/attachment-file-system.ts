@@ -12,6 +12,7 @@ export interface AttachmentFileSystem {
   writeBytes(uri: string, bytes: Uint8Array): Promise<void>;
   copy(input: { from: string; to: string }): Promise<void>;
   readAsBase64(uri: string): Promise<string>;
+  readBytes(uri: string): Promise<Uint8Array>;
   delete(uri: string, options: { idempotent: boolean }): Promise<void>;
   listDirectory(uri: string): Promise<string[]>;
 }
@@ -43,6 +44,9 @@ export function createExpoAttachmentFileSystem(): AttachmentFileSystem {
       return await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
+    },
+    async readBytes(uri) {
+      return await new File(uri).bytes();
     },
     async delete(uri, options) {
       await FileSystem.deleteAsync(uri, options);

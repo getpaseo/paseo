@@ -74,6 +74,19 @@ export async function openDesktopTarget(input: OpenDesktopTargetInput): Promise<
   await bridge.openTarget(input);
 }
 
+// COMPAT(desktopOpenDefaultApp): added in v0.18.0, remove the check after 2027-05-27.
+export function hasDesktopDefaultAppBridge(): boolean {
+  return Boolean(getDesktopHost()?.editor?.openDefaultApp);
+}
+
+export async function openInDesktopDefaultApp(path: string): Promise<void> {
+  const openDefaultApp = getDesktopHost()?.editor?.openDefaultApp;
+  if (!openDefaultApp) {
+    throw new Error("Desktop editor bridge is unavailable");
+  }
+  await openDefaultApp({ path });
+}
+
 /**
  * Pass `workspacePath` whenever it is known. Project-specific targets such as
  * Xcode are only listed for workspaces they can actually open, so callers that

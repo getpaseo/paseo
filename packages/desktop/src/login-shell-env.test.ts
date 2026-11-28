@@ -447,6 +447,54 @@ describe("login shell env retry behavior", () => {
       timeoutMs: 29_992,
     });
   });
+
+  it("strips AppImage runtime vars before spawning the Linux login shell while preserving env.APPIMAGE", () => {
+    const appImagePath = "/home/paseo-test/app/Paseo-x86_64.AppImage";
+    const appDir = "/tmp/.mount_Paseo-xyz123";
+    const env: NodeJS.ProcessEnv = {
+      ...createEnv(fakeHome),
+      APPIMAGE: appImagePath,
+      APPDIR: appDir,
+      ARGV0: appImagePath,
+      OWD: "/home/paseo-test",
+      APPIMAGE_LIBRARY_PATH: `${appDir}/usr/lib`,
+      PATH: `${appDir}:${appDir}/usr/sbin:${basePath}`,
+      LD_LIBRARY_PATH: `${appDir}/usr/lib:/opt/lib`,
+      XDG_DATA_DIRS: `${appDir}/usr/share:/usr/share`,
+      GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
+    };
+    const logger = new RecordingLoginShellLogger();
+    const spawnedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+    const loginPath = `/home/paseo-test/.local/share/mise/shims:${basePath}`;
+    const spawnSync: LoginShellSpawnSync = (_shell, args, options) => {
+      spawnedEnvs.push(options?.env);
+      const recordedArgs = Array.isArray(args) ? args.map(String) : [];
+      const capturedEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries(options?.env ?? {})) {
+        if (typeof value === "string") capturedEnv[key] = value;
+      }
+      capturedEnv.PATH = `${loginPath}:${capturedEnv.PATH ?? ""}`;
+      return successResult(String(recordedArgs.at(-1)), capturedEnv);
+    };
+
+    inheritLoginShellEnv({ env, logger, platform: "linux", spawnSync });
+
+    expect(spawnedEnvs).toHaveLength(1);
+    const probeEnv = spawnedEnvs[0] ?? {};
+    expect("APPIMAGE" in probeEnv).toBe(false);
+    expect("APPDIR" in probeEnv).toBe(false);
+    expect("ARGV0" in probeEnv).toBe(false);
+    expect("OWD" in probeEnv).toBe(false);
+    expect("APPIMAGE_LIBRARY_PATH" in probeEnv).toBe(false);
+    expect(probeEnv.PATH).toBe(basePath);
+    expect(probeEnv.LD_LIBRARY_PATH).toBe("/opt/lib");
+    expect(probeEnv.XDG_DATA_DIRS).toBe("/usr/share");
+    expect("GSETTINGS_SCHEMA_DIR" in probeEnv).toBe(false);
+
+    expect(env.APPIMAGE).toBe(appImagePath);
+    expect(env.PATH).toContain("/home/paseo-test/.local/share/mise/shims");
+    expect(env.PATH).not.toContain(appDir);
+  });
 });
 
 describeIfZsh("login shell env", () => {
@@ -629,4 +677,34 @@ describeIfZsh("login shell env", () => {
     });
     expectNoRawStdout(logger.warnings[2]?.fields ?? {});
   });
+
+  it.runIf(process.platform === "linux")(
+    "runs zsh startup without ARGV0 rewriting external command argv[0] while keeping env.APPIMAGE",
+    async () => {
+      const home = await createShellHome();
+      homes.add(home);
+      const appImagePath = "/home/paseo-test/app/Paseo-x86_64.AppImage";
+      const appDir = "/tmp/.mount_Paseo-zsh-test";
+      await writeFile(
+        path.join(home, ".zshrc"),
+        "export PASEO_TEST_SH_ARGV0=\"$(sh -c 'echo $0')\"\n",
+      );
+      const env: NodeJS.ProcessEnv = {
+        ...createEnv(home),
+        APPIMAGE: appImagePath,
+        APPDIR: appDir,
+        ARGV0: appImagePath,
+        OWD: "/home/paseo-test",
+        PATH: `${appDir}:${appDir}/usr/sbin:${basePath}`,
+      };
+      const logger = new RecordingLoginShellLogger();
+
+      inheritLoginShellEnv({ env, logger, platform: "linux" });
+
+      expect(env.PASEO_TEST_SH_ARGV0).toBe("sh");
+      expect(env.APPIMAGE).toBe(appImagePath);
+      expect(env.PATH).toBe(basePath);
+      expect(logger.warnings).toEqual([]);
+    },
+  );
 });

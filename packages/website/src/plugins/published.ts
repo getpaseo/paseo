@@ -5,7 +5,11 @@ import {
 } from "@getpaseo/protocol/plugin-registry";
 import { languageAlternates, LOCALES, localizePath } from "~/i18n";
 import { SITE_ORIGIN } from "~/meta";
-import { getBlockingColdCache, type WebsiteCacheContext } from "../github-cache";
+import {
+  getBlockingColdCache,
+  getNonBlockingColdCache,
+  type WebsiteCacheContext,
+} from "../github-cache";
 import { handlePluginThumbnailRequest } from "./thumbnails";
 import { CATEGORIES } from "./categories";
 import { type InstallCounts, readInstallCounts, recordClientInstall } from "./installs";
@@ -19,14 +23,29 @@ async function documentAt(base: string, path: string): Promise<unknown> {
   if (!response.ok) throw new Error(`Plugin registry returned ${response.status}`);
   return response.json();
 }
-export function loadRegistryIndex(base: string, context: WebsiteCacheContext) {
-  return getBlockingColdCache({
+function registryIndexCache(base: string, context: WebsiteCacheContext) {
+  return {
     context,
     key: `plugins:index:v1:${base}`,
-    isValue: (value): value is ReturnType<typeof PluginRegistryIndexSchema.parse> =>
+    isValue: (value: unknown): value is ReturnType<typeof PluginRegistryIndexSchema.parse> =>
       PluginRegistryIndexSchema.safeParse(value).success,
     fetchFresh: async () => PluginRegistryIndexSchema.parse(await documentAt(base, "index.json")),
-  });
+  };
+}
+export function loadRegistryIndex(base: string, context: WebsiteCacheContext) {
+  return getBlockingColdCache(registryIndexCache(base, context));
+}
+/** Count of listed plugins from the cached registry index. */
+export async function loadPluginCount(
+  base: string,
+  context: WebsiteCacheContext,
+): Promise<number | null> {
+  try {
+    const index = await getNonBlockingColdCache(registryIndexCache(base, context));
+    return index?.plugins.length ?? null;
+  } catch {
+    return null;
+  }
 }
 /** Install counts per window for every listed plugin, refreshed with the index cache. */
 export async function loadInstallCounts(base: string, context: WebsiteCacheContext) {

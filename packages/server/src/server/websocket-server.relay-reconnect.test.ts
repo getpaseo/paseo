@@ -269,6 +269,7 @@ function createServer(options?: {
     "srv_test",
     createStub<AgentManager>({
       subscribe: vi.fn(() => () => {}),
+      onStop: () => () => {},
       setAgentAttentionCallback: vi.fn(),
       getAgent: vi.fn(() => null),
       getMetricsSnapshot: vi.fn(() => ({
@@ -1155,9 +1156,11 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.hopliteProvider).toBe(false);
     expect(serverInfo.features?.fxProvider).toBe(false);
     expect(serverInfo.features?.pluginLogs).toBe(true);
+    expect(serverInfo.features?.pushNotificationPreferences).toBe(true);
     expect(serverInfo.features?.workspaceMarkUnread).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
+    expect(serverInfo.features?.["terminal-palette-ownership"]).toBe(true);
     expect(serverInfo.features?.["terminal-grapheme-widths"]).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
     expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);

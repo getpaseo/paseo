@@ -89,6 +89,25 @@ const { stdout } = await execCommand(launch.command, [...launch.args, "--version
 });
 ```
 
+### 在启动包装之后运行会话 {#run-sessions-behind-a-launch-wrap}
+
+来自 `agent.open.before` 的[启动包装](./hooks.zh-CN.md#launch-wraps)会作为 `session.open` 的 `config.wrap` 传给你的 Provider。要支持它：
+
+1. 在注册信息上设置 `launchWrap: true`。Paseo 会在 Provider 快照中发布 `launchWrap: true`，这样插件可以在你的 Provider 连接之前选择它。
+2. 把 `session.launch_wrap` 加入连接支持的能力。Paseo 只把 `config.wrap` 发给协商了该能力的连接，在其他连接上带包装的打开会失败。
+3. 用 `wrap` 选项启动会话的进程。`spawnProcess` 随后启动 `[...wrap, command, ...args]`，并为包装的可执行文件处理 Windows 启动器：
+
+```ts
+const child = spawnProcess(launch.command, [...launch.args, "serve"], {
+  wrap: input.config.wrap,
+  env: launch.env,
+  cwd: input.config.cwd,
+  stdio: "pipe",
+});
+```
+
+在包装之后启动所有为会话工作的进程。如果一个进程服务多个会话，就为带包装的会话单独启动一个。`runAcpProvider({ command })` 会为 ACP Agent 完成以上所有工作。
+
 ## 返回模型、模式和思考选项 {#return-models-modes-and-thinking-options}
 
 Paseo 在创建会话之前会请求目录。返回 Agent 表单需要的选项：
@@ -122,6 +141,42 @@ if (input.type === "catalog") {
 对于 Agent 不提供的类别，返回空数组。选中的 `model`、`mode` 和 `thinkingOption` 会出现在会话配置中。
 
 目录描述的是会话存在之前可用的选项。会话专属的控件之后通过 `session.config` 提供。
+
+### 停止 Paseo 取消的请求 {#stop-a-request-paseo-cancels}
+
+Paseo 为每次目录刷新设置期限。Paseo 不再等待某个请求时，会发送带有该请求 `requestId` 的 `request.cancel`。停止这项工作，并释放它启动的资源，例如为读取目录而启动的进程。之后你为该请求发出的事件都会被 Paseo 忽略。同一连接上的会话继续运行。
+
+把 `request.cancel` 加入你支持的能力。Paseo 只向提供该能力的连接发送这个输入：
+
+```ts
+const pending = new Map<string, AbortController>();
+
+if (input.type === "catalog") {
+  const controller = new AbortController();
+  pending.set(input.requestId, controller);
+  void readCatalog({ signal: controller.signal })
+    .then(
+      (catalog) => {
+        if (!controller.signal.aborted)
+          emit({ type: "catalog", requestId: input.requestId, catalog });
+      },
+      (error) => {
+        if (!controller.signal.aborted)
+          emit({
+            type: "request.failed",
+            requestId: input.requestId,
+            error: { message: String(error) },
+          });
+      },
+    )
+    .finally(() => pending.delete(input.requestId));
+}
+if (input.type === "request.cancel") {
+  pending.get(input.requestId)?.abort();
+}
+```
+
+取消可能在请求完成之后才到达。忽略你已不再跟踪的 `requestId`。`runAcpProvider` 提供这项能力，并会停止目录探测进程。
 
 ## 打开会话 {#open-a-session}
 
@@ -351,6 +406,48 @@ export default function contribute(client: PluginClientContext) {
 
 同一个渲染器可以显示由 Provider、客户端时间线转换器或 daemon 时间线追加发出的条目。渲染器并不需要 Provider 实现。
 
+## 报告指标 {#report-metrics}
+
+把 Provider 测量到的数据以 `label` 和 `value` 的形式报告。Paseo 会原样显示每个值，所以请把它格式化成便于阅读的形式：写 `12.4s`，不要写 `12431`。哪些指标适合你的 Agent，由你决定。
+
+在 `completed` 轮次事件中添加 `metrics`。Paseo 会在该轮次的页脚显示它们：
+
+```ts
+emit({
+  type: "session.turn",
+  sessionId,
+  turnId,
+  state: "completed",
+  metrics: [
+    { label: "Model", value: "example-1" },
+    { label: "Elapsed", value: "12.4s" },
+    { label: "Tokens", value: "18.9K ↑ · 2.3K ↓" },
+    { label: "Cache", value: "82%", tone: "ok" },
+  ],
+});
+```
+
+对于覆盖整个会话的总计，发布 `session.metrics`。Paseo 会在上下文窗口详情中显示它们。每个事件都会替换之前的列表，空列表会清除它。把 `session.metrics` 加入你支持的能力，并且只在协商成功时发布该事件：
+
+```ts
+if (capabilities.includes("session.metrics")) {
+  emit({
+    type: "session.metrics",
+    sessionId,
+    metrics: [
+      { label: "Turns", value: "7" },
+      { label: "Cost", value: "$0.42" },
+    ],
+  });
+}
+```
+
+不支持会话指标的旧版 Paseo 不会提供这项能力，并且会关闭发送该事件的连接。它会忽略轮次上的 `metrics`，所以轮次指标不需要检查。
+
+把 `tone` 设为 `"ok"`、`"warning"` 或 `"danger"`，可以给值着色。如果已完成的轮次没有 `Model` 指标，Paseo 会添加会话的模型。
+
+当 `history` 为 `"replay"` 时，请在每个旧轮次的条目之后发布该轮次的 `completed` 事件。Paseo 会把指标放回该轮次的页脚。
+
 ## 报告安装与更新 {#report-installation-and-updates}
 
 在注册中添加 `installation`，Provider 的设置中就会出现 **安装** 部分。用户可以看到你的 CLI 是否已安装、是哪个版本、是否有可用更新，以及一个 **更新** 按钮，它会运行你的更新程序并显示其输出。每个成员都是可选的，只声明你的 CLI 支持的部分：
@@ -449,6 +546,30 @@ Paseo 把版本当作文本。它按原样显示 `version` 和 `versions`，从�
 
 Paseo 在设置打开时调用 `inspect`，并把结果保留 30 秒。只要 `inspect` 报告的版本不变，它就把 `checkForUpdates` 的 `current` 或 `available` 结果保留一小时，所以在 Paseo 之外更新的 CLI 会在 `inspect` 的结果过期后重新检查。`inspect` 必须在 20 秒内回答，`checkForUpdates` 必须在 25 秒内回答。`update` 没有期限。当 Paseo 停止等待或 daemon 停止时，`signal` 会中止。每个字段见 [`installation` 参考](/docs/plugins/reference#provider-installation)。
 
+## 帮助用户解决问题 {#help-users-fix-problems}
+
+用户得到错误结果时，会先打开 Provider 的设置，然后才去寻求帮助。请在这个页面提供他们需要的内容：声明 `docsUrl`，并从 `status` 返回能解释错误结果的事实。
+
+```ts
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "example-agent",
+    label: "Example Agent",
+    command: ["example-agent"],
+    docsUrl: "https://example.com/docs/paseo#troubleshooting",
+    async status({ launch }) {
+      if (!launch) return { available: false, diagnostic: "example-agent has no command" };
+      return { available: true, diagnostic: `Profile: ${launch.env.EXAMPLE_PROFILE ?? "default"}` };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+**文档** 会打开 `docsUrl`。**诊断报告** 会显示命令、可执行文件的路径和 Paseo 找到的版本，然后是你的 `Profile` 行。请报告 CLI 从环境中读取的内容，例如账号、profile 或正在使用的配置文件。这些内容在 daemon 和用户的终端之间可能不同，用户在应用中也看不到。Paseo 写入的各行以及 `status` 的规则见[故障排查参考](/docs/plugins/reference#provider-troubleshooting)。
+
 ## 适配 ACP Agent {#adapt-an-acp-agent}
 
 当 Agent 已经支持 ACP 时，使用 ACP 适配层：
@@ -472,7 +593,12 @@ export default function contribute(server: PluginServerContext) {
 
 适配层负责 ACP 进程、能力映射、会话生命周期、提示词、权限和时间线转换。不要把这些机制复制到插件中。
 
-只在 ACP 无法描述厂商差异时使用 `transformers`。用 Zod 校验厂商负载，并让格式错误或无关的值保持不变：
+使用 `transformers` 处理 ACP 无法描述的厂商差异。
+[goose 模型转换器](https://github.com/getpaseo/paseo/blob/main/plugins/goose-provider/server/models.ts)
+使用 `context.request` 读取 Agent 的模型列表，并使用 `config` 为会话的模型 ID 添加当前 Provider 前缀。
+参见 [ACP 适配器参考](/docs/plugins/reference#providers)。
+
+用 Zod 校验厂商负载，并让格式错误或无关的值保持不变：
 
 ```ts
 import type { AcpTransformer } from "@getpaseo/plugin/server/acp";
@@ -501,6 +627,14 @@ export const vendorEdits: AcpTransformer = {
   },
 };
 ```
+
+Paseo 根据每个调用的 ACP `kind` 生成标准工具卡片：`execute` 显示为 Shell，`read` 显示为 Read，`edit` 和 `delete` 显示为 Edit，`search` 显示为 Search，`fetch` 显示为 Fetch。卡片读取调用的 `input`（ACP `rawInput`）、`output`（`rawOutput`）、`content` 和 `locations`。其他类型的调用显示原始输入和输出；如果 Agent 两者都没有发送，则显示文本内容。
+
+在返回的工具调用上设置 `detail` 可以替换标准卡片。例如，Agent 可能把新建文件报告为 ACP 编辑，而插件返回带有文件路径和内容的 `write` detail。返回 `{ type: "unknown", input, output }` 可以显示原始值。
+
+`toolCall` 会在调用的每次更新时运行，参数是到目前为止合并后的调用。按照 ACP 的定义，发送了 `content` 的更新会替换之前的内容。如果 Agent 只在较早的更新中发送某个值，请从 `context.previous` 读取，它是 Paseo 上一次展示的调用。[Hermes 终端转换器](https://github.com/getpaseo/paseo/blob/main/plugins/hermes-provider/server/terminal-command.ts)就是这样保留 Hermes 第一次更新中的命令。
+
+如果 Agent 只为当前选中的模型列出 `thought_level` 选项，请设置 `acpOptions.perModelThinkingOptions`。目录发现会依次选中每个模型，并为它记录 Agent 列出的思考选项。没有 `thought_level` 选项的模型不会显示思考选择器。
 
 ## 测试与发布 {#test-and-publish}
 

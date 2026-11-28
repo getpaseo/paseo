@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/client",
-  "version": "0.17.0-beta.1",
+  "version": "0.18.1",
   "description": "Paseo client SDK package",
   "license": "Apache-2.0",
   "files": [
@@ -18,6 +18,10 @@
       "types": "./dist/daemon-client.d.ts",
       "default": "./dist/daemon-client.js"
     },
+    "./internal/daemon-client-core": {
+      "types": "./dist/daemon-client-core.d.ts",
+      "default": "./dist/daemon-client-core.js"
+    },
     "./internal/daemon-client-transport-types": {
       "types": "./dist/daemon-client-transport-types.d.ts",
       "default": "./dist/daemon-client-transport-types.js"
@@ -29,6 +33,10 @@
     "./node": {
       "types": "./dist/node/index.d.ts",
       "default": "./dist/node/index.js"
+    },
+    "./node/lean": {
+      "types": "./dist/node/lean.d.ts",
+      "default": "./dist/node/lean.js"
     },
     "./internal/hosts": {
       "types": "./dist/hosts/index.d.ts",
@@ -49,8 +57,8 @@
     "measure:diff-materialization": "tsx scripts/measure-diff-materialization.ts"
   },
   "dependencies": {
-    "@getpaseo/protocol": "0.17.0-beta.1",
-    "@getpaseo/relay": "0.17.0-beta.1",
+    "@getpaseo/protocol": "0.18.1",
+    "@getpaseo/relay": "0.18.1",
     "ws": "^8.20.0",
     "zod": "^4.4.3"
   },

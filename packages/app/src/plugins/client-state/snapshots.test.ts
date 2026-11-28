@@ -1,7 +1,11 @@
 import { i18n } from "@/i18n/i18next";
 import { fr } from "@/i18n/resources/fr";
 import { describe, expect, it } from "vitest";
-import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  normalizeWorkspaceDescriptor,
+  type Agent,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store";
 import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   createPluginAgentSnapshot,
@@ -29,7 +33,10 @@ describe("plugin context snapshots", () => {
       statusEnteredAt: "2026-08-16T10:00:00.000Z",
       archivingAt: null,
       diffStat: { additions: 12, deletions: 3 },
+      metadata: {},
     });
+    expect(Object.isFrozen(snapshot.metadata)).toBe(true);
+    expect(Reflect.set(snapshot.metadata, "body", "hostile")).toBe(false);
     expect(snapshot.diffStat).not.toBe(workspace.diffStat);
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.diffStat)).toBe(true);
@@ -128,6 +135,46 @@ describe("sidebar entity snapshots", () => {
     expect(createPluginAgentSnapshot({ ...agent, background: true }, workspace.id).background).toBe(
       true,
     );
+  });
+
+  it("points a dispatched workspace at its parent's ref, and a root workspace at null", () => {
+    const parent = createPluginWorkspaceSnapshot(workspace, "host-1");
+    const child = createPluginWorkspaceSnapshot(
+      { ...workspace, id: "workspace-2", parentWorkspaceId: workspace.id },
+      "host-1",
+    );
+    expect(parent.parentWorkspace).toBeNull();
+    expect(child.parentWorkspace).toBe(parent.ref);
+  });
+
+  it("carries deeply frozen workspace metadata through descriptor normalization", () => {
+    const normalized = normalizeWorkspaceDescriptor({
+      id: "workspace-meta",
+      projectId: "project-1",
+      projectDisplayName: "Paseo",
+      projectRootPath: "/repo/paseo",
+      workspaceDirectory: "/repo/paseo/review",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "Review",
+      title: "Issue review",
+      status: "running",
+      statusEnteredAt: null,
+      activityAt: "2026-08-16T10:00:00.000Z",
+      archivingAt: null,
+      scripts: [],
+      metadata: {
+        issues: ["https://github.com/getpaseo/paseo/issues/42"],
+        body: "Track progress",
+      },
+    });
+    const snapshot = createPluginWorkspaceSnapshot(normalized, "host-1");
+    expect(snapshot.metadata).toEqual({
+      issues: ["https://github.com/getpaseo/paseo/issues/42"],
+      body: "Track progress",
+    });
+    expect(Object.isFrozen(snapshot.metadata)).toBe(true);
+    expect(Object.isFrozen(snapshot.metadata.issues)).toBe(true);
   });
 
   it("reads projects without requiring a workspace", () => {

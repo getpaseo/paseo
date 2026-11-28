@@ -8,6 +8,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Alert } from "@/components/ui/alert";
 import {
   View,
   Pressable,
@@ -30,6 +31,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   controlSizingForLayout,
@@ -83,7 +85,7 @@ import {
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/agent-commands";
-import { encodeImages } from "@/utils/encode-images";
+import { normalizePickedImageAssets } from "@/hooks/image-attachment-picker";
 import { focusWithRetries } from "@/utils/web-focus";
 import {
   cancelComposerAgent,
@@ -145,6 +147,7 @@ import { RenderProfile } from "@/utils/render-profiler";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { isWeb, isNative } from "@/constants/platform";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
+import type { AgentMetric } from "@getpaseo/protocol/agent-types";
 import type {
   AttachmentMetadata,
   ComposerAttachment,
@@ -293,6 +296,8 @@ function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: bo
   );
 }
 
+const EMPTY_METRICS: AgentMetric[] = [];
+
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
@@ -301,6 +306,7 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
       contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      sessionMetrics: agent?.sessionMetrics ?? EMPTY_METRICS,
       model: agent?.model ?? null,
     };
   };
@@ -1015,6 +1021,8 @@ interface ComposerProps {
    * `inputMode`.
    */
   editingSession?: ComposerEditingSession;
+  /** Caller-owned submission error rendered in the composer's shared error slot. */
+  error?: string | null;
 }
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
@@ -1318,6 +1326,7 @@ function ComposerContentImpl({
   isCompactLayout: isCompactLayoutOverride,
   inputMode = "chat",
   editingSession: providedEditingSession,
+  error: externalError,
   readOnly = false,
   submitLabel,
   placeholder,
@@ -1647,6 +1656,15 @@ function ComposerContentImpl({
     });
   }, []);
 
+  const handleImagesDropped = useCallback(
+    (images: ImageAttachment[]) => {
+      if (images.length === 0) return;
+      addImages(images);
+      focusInput();
+    },
+    [addImages, focusInput],
+  );
+
   const handleWorkspaceFileDropped = useCallback(
     (payload: WorkspaceFileDragPayload) => {
       if (!workspaceId) {
@@ -1708,7 +1726,6 @@ function ComposerContentImpl({
         attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
           supportsForgeAttachments: supportsForgeSearch,
         }),
-        encodeImages,
         submission: createMessageSubmissionWriter(serverId),
         activeTurnBehavior,
         activeTurnId:
@@ -1908,7 +1925,24 @@ function ComposerContentImpl({
     (files: readonly NativePastedFile[]) => {
       setPendingNativeImagePastes((pending) => pending + 1);
       void pickAndPersistImages({
-        pickImages: async () => normalizeNativePastedImages(files),
+        pickImages: async () => {
+          const pasted = normalizeNativePastedImages(files);
+          const result = [];
+          for (const item of pasted) {
+            if (
+              item.source.kind === "file_uri" &&
+              (item.mimeType === "image/heic" || item.mimeType === "image/heif")
+            ) {
+              const converted = await normalizePickedImageAssets([
+                { uri: item.source.uri, mimeType: item.mimeType, fileName: item.fileName },
+              ]);
+              result.push(...converted);
+            } else {
+              result.push(item);
+            }
+          }
+          return result;
+        },
         persister: composerImageAttachmentPersister,
       })
         .then((newImages) => {
@@ -1979,6 +2013,7 @@ function ComposerContentImpl({
           toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
           return;
         }
+        focusInput();
         await uploadSelectedFiles(files);
       } catch (error) {
         console.error("[Composer] Failed to upload dropped files:", error);
@@ -1987,7 +2022,7 @@ function ComposerContentImpl({
         );
       }
     },
-    [client, isConnected, t, uploadSelectedFiles],
+    [client, focusInput, isConnected, t, uploadSelectedFiles],
   );
 
   const handleRemoveAttachment = useCallback(
@@ -2220,6 +2255,7 @@ function ComposerContentImpl({
             maxTokens={agentState.contextWindowMaxTokens}
             usedTokens={agentState.contextWindowUsedTokens}
             totalCostUsd={agentState.totalCostUsd}
+            sessionMetrics={agentState.sessionMetrics}
             toolbarRing={TOOLBAR_RINGS[controlSizing]}
           />
         </View>
@@ -2231,6 +2267,7 @@ function ComposerContentImpl({
       agentState.contextWindowMaxTokens,
       agentState.contextWindowUsedTokens,
       agentState.totalCostUsd,
+      agentState.sessionMetrics,
       controlSizing,
     ],
   );
@@ -2533,7 +2570,7 @@ function ComposerContentImpl({
   // backdrop and rejects the drop atomically, instead of accepting a drop with no feedback.
   useFileDrop(
     {
-      onFiles: addImages,
+      onFiles: handleImagesDropped,
       onGenericFiles: handleGenericFilesDropped,
       onWorkspaceFile: handleWorkspaceFileDropped,
     },
@@ -2543,14 +2580,13 @@ function ComposerContentImpl({
   // Focusing the composer on a touch screen raises the on-screen keyboard over the conversation.
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint && hasFinePointer;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
+  const displayError = externalError || sendError;
   const sendErrorNode = useMemo(
     () =>
-      sendError ? (
-        <Text accessibilityRole="alert" style={styles.sendErrorText}>
-          {sendError}
-        </Text>
+      displayError ? (
+        <Alert variant="error" size="sm" description={displayError} testID="composer-error" />
       ) : null,
-    [sendError],
+    [displayError],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")
@@ -2575,7 +2611,10 @@ function ComposerContentImpl({
       >
         <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
         {/* Input area */}
-        <View style={inputAreaContainerStyle}>
+        <View
+          style={inputAreaContainerStyle}
+          dataSet={isFullscreen ? undefined : CHAT_COLUMN_RAIL_DATASET}
+        >
           <View style={inputAreaContentStyle}>
             {isFullscreen ? null : queueList}
             {!isFullscreen && sendErrorNode}
@@ -2586,7 +2625,7 @@ function ComposerContentImpl({
               recall={recall}
               inputRef={messageInputRef}
               anchorStyle={messageInputContainerStyle}
-              show={mode.showAutocomplete && !isFullscreen}
+              show={mode.showAutocomplete && !isFullscreen && !isComposerLocked}
               ref={autocompleteRef}
               configuration={autocompleteConfiguration}
             >
@@ -2832,10 +2871,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   queueSendButton: {
     backgroundColor: theme.colors.accent,
-  },
-  sendErrorText: {
-    color: theme.colors.palette.red[500],
-    fontSize: theme.fontSize.base,
   },
 })) as unknown as Record<string, object>;
 

@@ -301,7 +301,12 @@ paseo send <id> --no-wait "run this task"
 paseo send <id> --behavior interrupt "stop and do this instead"
 ```
 
-由 Agent 发起的发送（设置了 `PASEO_AGENT_ID`）默认引导正在进行的轮次。其他发送默认中断它。使用 `--behavior steer` 或 `--behavior interrupt` 覆盖默认行为。引导使用与客户端相同的后备方式：如果无法引导，正在进行的轮次会被中断并替换。
+除非消息不能等待，否则不要设置 `--behavior`。默认行为取决于发送方：
+
+- 由 Agent 发送（设置了 `PASEO_AGENT_ID`）时，默认是 `queue`。消息会等到接收方正在进行的轮次结束。`--behavior steer` 把消息加入正在进行的轮次，`--behavior interrupt` 停止该轮次，并用这条消息开始新的一轮。steer 或 interrupt 也会按顺序送达你在它之前排队的消息。
+- 由人发送时，默认是 `interrupt`。`--behavior steer` 则把消息加入正在进行的轮次。
+
+如果接收方的 Provider 无法引导，`steer` 会改为中断正在进行的轮次。使用 `--no-wait` 时，输出会说明 Agent 发送的消息发生了什么，以及如何立即送达排队中的消息。
 
 ## 查看日志 {#viewing-logs}
 
@@ -426,21 +431,29 @@ paseo hub deploy -p <project>   # Deploy an existing legacy project bundle
 paseo hub logout               # Remove the active stored CLI login
 ```
 
-请在仓库根目录运行 deploy。它默认按确定的路径顺序读取所有直接位于 `.paseo/triggers/` 下的 `*.yml` 文件。它会先校验所有触发器，再逐个安装。如果在前面的安装成功之后某个安装失败，错误信息会列出已安装的文件。`--dry-run` 只做校验；它不会创建或激活修订。
+请在仓库根目录运行 `paseo hub deploy`。它默认按确定的路径顺序读取所有直接位于 `.paseo/triggers/*.yml` 下的文件，并在逐个安装前先校验全部触发器。
 
-对于已有的旧版文件包，传入 `-p, --project <slug>`：包括 `.paseo/hub.yml`、直接位于 `.paseo/workflows/` 下的 `*.yml` 文件，以及被引用的 workflow 片段。见[从 CLI 部署](/docs/hub/configuration#deploy-from-the-cli)。
+如果在前面的安装成功之后某个安装失败，错误信息会列出已安装的文件。`--dry-run` 只做校验，不会创建或激活版本。对于已有的旧版项目文件包，请传入 `-p, --project <slug>`。
 
-`login` 会打开 Hub 的批准页面，并在 `PASEO_HOME` 下保存一个持久的、组织范围的 CLI 凭据。在交互式终端中，它会提议连接这个 daemon，然后单独询问是否允许 Hub 自动化在这里运行 Agent。连接默认为是；执行权限默认为否。随后它会链接到 Hub 的 **Triggers** 页面，并输出 `paseo hub init`，以便用代码完成设置。`--json` 和非 TTY 的登录只执行登录，从不提示。保存的登录与 `connect` 创建的 daemon 关系是分开的。
+`paseo hub login` 会打开 Hub 批准页面，并在 `PASEO_HOME` 下保存组织级 CLI 凭据。在交互式终端中，它会询问是否连接此 daemon（默认为是），并单独询问是否授予 `hub.execute`（默认为否）。
 
-`init` 需要 TTY。它会根据需要登录并连接 daemon，然后列出组织中可以支撑入门触发器的应用连接。只有一个可用连接时会自动选中；有多个时，由你选择一个 **Trigger connection**。如果没有任何连接就绪，设置会引导你前往 **Hub → Apps**，并在选择 Agent 或写入文件之前停止。
+`--json` 和非 TTY 登录不会提示。保存的 CLI 登录与 `connect` 创建的 daemon 关系相互独立。
 
-设置会询问要运行哪个 Agent Provider、模型和模式。Provider 必须已启用，并且同时提供可选择的模型和执行模式。建议的模型和模式条目是 daemon 的默认值；没有默认值时仍需显式选择模式。Hub 在部署前会对照 daemon 校验这项选择，并且其无人值守的运行只接受 Claude、Codex 和 OpenCode。`deploy` 会执行相同的检查，因此需要指定的 daemon 已连接。随后设置会询问允许触发机器人的身份：GitHub 用户名、Slack 成员 ID 或 Discord 用户 ID。它会校验触发器，写入 `.paseo/triggers/<provider>-help.yml`，并询问是否部署。替换该文件需要确认；已有的旧版文件包和其他触发器文件会被保留。见[生成的入门触发器](/docs/hub/configuration#generated-starter-trigger)。
+`paseo hub init` 需要 TTY，按需登录并连接 daemon，并选择就绪的集成（若无可用集成则引导至 **Hub → Apps**）。随后它会提示你选择 daemon 上已启用、且同时提供可选模型和至少一个执行模式的 Provider。
 
-交互式退出会检查同一地址的 daemon 关系，并在删除登录之前询问是否断开。选择否时只删除登录。JSON 和非交互式的退出从不提示，也不会隐式断开；`--disconnect-daemon` 是供自动化使用的显式方式，`--force` 作用于该 daemon 断开操作。如果请求的断开失败，登录会被保留。
+不提供执行模式的 Provider（例如 Pi）会被 `paseo hub init` 过滤掉，但仍可在 Hub 控制台或 `.paseo/triggers/*.yml` 中配置并通过 `paseo hub deploy` 部署。
 
-每个命令在执行 Hub 或 daemon 工作之前，都会解析并规范化它的目标。地址的优先级依次为：显式的命令地址或 `--hub`、`PASEO_HUB_URL`、当前保存的登录地址，最后是托管版默认地址 `https://hub.paseo.sh`。托管版默认地址从不会覆盖当前的登录。凭据的优先级依次为：`--api-key <secret>`、`PASEO_HUB_API_KEY`，然后是与解析出的地址完全匹配的已保存登录。保存的凭据从不会发送到其他地址。通过参数或环境变量传入的 API 密钥不会被保存。
+接着设置会询问允许的发送者身份（GitHub 用户名、Slack 成员 ID 或 Discord 用户 ID），对照已连接的 daemon 校验触发器，写入 `.paseo/triggers/<provider>-help.yml` 并询问是否部署。替换已有入门文件需要确认，同时保留其他触发器文件。见[生成的入门触发器](/docs/hub/configuration#generated-starter-trigger)。
 
-人类可读的输出会在每个操作之前报告解析出的目标。JSON 输出让 stdout 保持机器可读，并包含规范化后的 Hub 地址。文件包诊断会指出路径，但不会输出配置内容或凭据。
+交互式 `paseo hub logout` 会检查连接到同一 Hub 的 daemon，并在删除登录前询问是否断开。JSON 和非交互式退出不会提示或断开，除非传入 `--disconnect-daemon`（可配合 `--force`）。如果断开失败，登录凭据会保留。
+
+每个 Hub 命令都按顺序解析目标和凭据：
+
+- 地址优先级：显式 `[url]` 或 `--hub`、`PASEO_HUB_URL`、当前已保存的登录，最后是 `https://hub.paseo.sh`。
+- 凭据优先级：`--api-key <secret>`、`PASEO_HUB_API_KEY`，然后是与精确解析地址匹配的已保存登录。
+- 通过参数或环境变量传入的 API 密钥永远不会写入磁盘，已保存的凭据也不会发送到其他地址。
+
+人类可读输出会在每个操作前打印解析出的目标，而 `--json` 会输出包含规范化 Hub 地址的机器可读结果。诊断信息仅指出文件路径，不输出文件内容或凭据。
 
 见 [Hub 中的 daemon](/docs/hub/daemons)、[Hub 配置](/docs/hub/configuration)和 [Hub 公开 API](/docs/hub/api)。
 

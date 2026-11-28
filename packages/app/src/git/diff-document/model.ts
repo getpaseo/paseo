@@ -655,17 +655,16 @@ export function measureFragments(input: {
   const measureWidth =
     input.measureText.measureWidth?.bind(input.measureText) ??
     ((slice: readonly string[]) => advancesFor(input.measureText)(slice).at(-1) ?? 0);
-  // Joining/ligatures can make a longer prefix narrower. Preserve the existing
-  // search order for those runs; changing the probes can change their breaks.
-  const canBoundSearch = !requiresShaping(input.text);
+  const shaped = requiresShaping(input.text);
   let graphemeIndex = 0;
   while (graphemeIndex < graphemes.length) {
     let low = graphemeIndex + 1;
-    // A small first probe finishes short lines in one query. Grow it only when
-    // it fits, so narrow wrapping never repeatedly measures a huge line's tail.
-    let high = canBoundSearch ? Math.min(graphemes.length, graphemeIndex + 64) : graphemes.length;
+    // Preserve the search order for short shaped runs, whose widths can shrink
+    // when another character joins them. Start long searches near the viewport
+    // boundary so each wrap does not measure the entire remaining line.
+    let high = Math.min(graphemes.length, graphemeIndex + 64);
     let fitting = low;
-    if (canBoundSearch) {
+    if (!shaped || high < graphemes.length) {
       while (measureWidth(displayGraphemes.slice(graphemeIndex, high)) <= input.availableWidth) {
         fitting = high;
         low = high + 1;

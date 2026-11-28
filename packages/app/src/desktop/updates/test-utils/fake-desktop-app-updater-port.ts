@@ -34,9 +34,12 @@ type InstallOutcome =
 function buildCheckResult(
   overrides: Partial<DesktopAppUpdateCheckResult> = {},
 ): DesktopAppUpdateCheckResult {
+  const hasUpdate = overrides.hasUpdate ?? false;
+  const readyToInstall = overrides.readyToInstall ?? false;
   return {
-    hasUpdate: false,
-    readyToInstall: false,
+    hasUpdate,
+    readyToInstall,
+    downloading: overrides.downloading ?? (hasUpdate && !readyToInstall),
     currentVersion: null,
     latestVersion: null,
     body: null,

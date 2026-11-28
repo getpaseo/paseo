@@ -10,16 +10,19 @@ import {
   expectColumnAtLeftGutter,
   expectColumnClearOfOutline,
   expectContentColumnWidth,
+  expectSharedHorizontalRail,
 } from "../support/helpers/content-width";
 import { openFileExplorer, openFileFromExplorer } from "../support/helpers/file-explorer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 const ULTRAWIDE_VIEWPORT = { width: 2560, height: 1080 };
+const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
+const TRANSITION_VIEWPORT = { width: 1250, height: 900 };
 const DEFAULT_COLUMN = { min: 800, max: 820 };
 const WIDE_COLUMN = { min: 1180, max: 1200 };
 const FULL_COLUMN = { min: 2000, max: ULTRAWIDE_VIEWPORT.width };
 
-test("resizes mounted chat content and leaves room for the outline at full width", async ({
+test("resizes mounted chat content and keeps timeline and composer on one rail beside the outline", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -37,26 +40,46 @@ test("resizes mounted chat content and leaves room for the outline at full width
     await openAgentRoute(page, agent);
     await expectChatOutlinePrompts(page, 2);
     const reply = page.getByTestId("assistant-message").first();
+    const turnFooter = page.getByTestId("turn-footer").first();
     const composer = page.getByTestId("message-input-root");
     await expectContentColumnWidth(reply, DEFAULT_COLUMN);
+    await expectSharedHorizontalRail(turnFooter, composer);
     const originalReply = await reply.elementHandle();
 
+    // In the transition band (pane ~930px >= 918px, < 820 + 120), Default clears the outline on one rail.
+    await page.setViewportSize(TRANSITION_VIEWPORT);
+    await expectColumnClearOfOutline(composer, chatOutlineRail(page));
+    await expectSharedHorizontalRail(turnFooter, composer);
+
+    await page.setViewportSize(ULTRAWIDE_VIEWPORT);
     await chooseContentWidth(page, "Wide");
     await expectContentColumnWidth(reply, WIDE_COLUMN);
     await expectContentColumnWidth(composer, WIDE_COLUMN);
+    await expectSharedHorizontalRail(turnFooter, composer);
 
+    // At 1440px (pane ~1120px < 1200 + 120), Wide clears the outline and keeps timeline and composer aligned.
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await expectColumnClearOfOutline(composer, chatOutlineRail(page));
+    await expectSharedHorizontalRail(turnFooter, composer);
+
+    await page.setViewportSize(ULTRAWIDE_VIEWPORT);
     await chooseContentWidth(page, "Full");
     await expectContentColumnWidth(reply, FULL_COLUMN);
     await expectContentColumnWidth(composer, FULL_COLUMN);
     await expectColumnClearOfOutline(reply, chatOutlineRail(page));
+    await expectColumnClearOfOutline(composer, chatOutlineRail(page));
+    await expectSharedHorizontalRail(turnFooter, composer);
 
     await disableChatOutline(page);
     await expectNoChatOutline(page);
     await expectColumnAtLeftGutter(page, reply);
+    await expectColumnAtLeftGutter(page, composer);
+    await expectSharedHorizontalRail(turnFooter, composer);
 
     await chooseContentWidth(page, "Default");
     await expectContentColumnWidth(reply, DEFAULT_COLUMN);
     await expectContentColumnWidth(composer, DEFAULT_COLUMN);
+    await expectSharedHorizontalRail(turnFooter, composer);
     expect(await originalReply?.evaluate((node) => node.isConnected)).toBe(true);
   } finally {
     await agent.cleanup();

@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { ClaudeResultMeter } from "./metrics.js";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../../option-controls.js";
@@ -38,7 +39,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
-  readTaskNotificationFromHistoryRecord,
+  readTaskNotificationOutcomeFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
@@ -53,6 +54,7 @@ import {
   claudeManifestModelSupportsUltracode,
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
+  supportsClaudeMcpServersViaInitialize,
   supportsIndependentClaudeUltracode,
 } from "./model-manifest.js";
 import { expandTilde } from "../../../../utils/path.js";
@@ -61,6 +63,7 @@ import { withClaudeReplayHistory, type ClaudeReplayHistory } from "./transcript-
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { readClaudeSubagentHandback } from "./subagent-handback.js";
 import { ClaudeTaskState } from "./task-state.js";
+import { CLAUDE_USAGE_SOURCE_ID, readClaudeRateLimitUsage } from "./rate-limit-usage.js";
 import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
@@ -87,7 +90,13 @@ import {
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { discoverClaudeModels, killExitingClaudeModelDiscoveries } from "./model-discovery.js";
-import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
+import {
+  claudeQuery,
+  probeClaudeLaunchVersion,
+  type ClaudeLaunchVersionProbe,
+  type ClaudeOptions,
+  type ClaudeQueryFactory,
+} from "./query.js";
 import {
   findSteeredMessageParent,
   realClaudeRewindSdk,
@@ -124,6 +133,7 @@ import {
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
+  type AgentMetric,
   type AgentMode,
   type AgentModelDefinition,
   type AgentPermissionRequest,
@@ -159,6 +169,7 @@ import {
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import {
+  buildProviderUsageLaunch,
   checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
@@ -506,13 +517,19 @@ interface ClaudeAgentSessionOptions {
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
+  wrap?: AgentLaunchContext["wrap"];
   persistSession?: boolean;
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
   independentUltracode: boolean;
+  resolveMcpServersDelivery: (
+    launch: ClaudeLaunchVersionProbe,
+  ) => Promise<ClaudeMcpServersDelivery>;
   rewindSdk?: ClaudeRewindSdk;
 }
+
+type ClaudeMcpServersDelivery = NonNullable<ClaudeOptions["mcpServersDelivery"]>;
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
 type ClaudeThinkingOption =
@@ -1054,37 +1071,11 @@ function isTruthyEnvValue(value: string | undefined): boolean {
   );
 }
 
-function claudeAutoModeUnavailableOn(env: NodeJS.ProcessEnv): "Bedrock" | "Vertex" | null {
-  if (isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK)) {
-    return "Bedrock";
-  }
-  if (isTruthyEnvValue(env.CLAUDE_CODE_USE_VERTEX)) {
-    return "Vertex";
-  }
-  return null;
-}
-
-function assertClaudeModeCanRun(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
-  if (mode !== "auto") {
-    return;
-  }
-  const transport = claudeAutoModeUnavailableOn(env);
-  if (transport === null) {
-    return;
-  }
-  throw new Error(
-    `Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses ${transport}. Select another permission mode or unset the ${transport === "Bedrock" ? "CLAUDE_CODE_USE_BEDROCK" : "CLAUDE_CODE_USE_VERTEX"} environment variable.`,
-  );
-}
-
-function claudeModeCatalog(env: NodeJS.ProcessEnv): {
-  modes: AgentMode[];
-  defaultModeId: PermissionMode;
-} {
-  if (claudeAutoModeUnavailableOn(env)) {
-    return { modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"), defaultModeId: "default" };
-  }
-  return { modes: DEFAULT_MODES, defaultModeId: "auto" };
+function claudeDefaultMode(env: NodeJS.ProcessEnv): PermissionMode {
+  return isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK) ||
+    isTruthyEnvValue(env.CLAUDE_CODE_USE_VERTEX)
+    ? "default"
+    : "auto";
 }
 
 function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<AgentSessionConfig> {
@@ -1251,14 +1242,29 @@ function buildClaudePlanPermissionActions(
 interface TimelineFragment {
   kind: "assistant" | "reasoning";
   text: string;
+  narration: boolean;
+}
+
+// While streaming, the SDK emits one assistant message per completed non-empty content block,
+// carrying only that block and sent before the block's content_block_stop (see
+// SDKAssistantMessage). Snapshots therefore reconcile against their own block, never against the
+// whole message. Empty blocks get no snapshot, so they are never registered as blocks.
+interface TimelineBlockState {
+  kind: TimelineFragment["kind"];
+  text: string;
+  emittedLength: number;
+  snapshotApplied: boolean;
 }
 
 interface TimelineMessageState {
   id: string;
-  assistantText: string;
-  reasoningText: string;
-  emittedAssistantLength: number;
-  emittedReasoningLength: number;
+  // Insertion order is content order. Streamed blocks are keyed by stream block index.
+  blocks: Map<string, TimelineBlockState>;
+  // The block that deltas without an index continue, until content_block_stop or its snapshot.
+  // The Messages API always sends an index; index-less deltas only come from older fixtures.
+  openStreamBlockKey: string | null;
+  appliedSnapshotUuids: Set<string>;
+  syntheticBlockCount: number;
   stopped: boolean;
 }
 
@@ -1282,6 +1288,11 @@ class TimelineAssembler {
     return [];
   }
 
+  finishRun(runId: string): AgentTimelineItem[] {
+    const messageId = this.activeMessageByRun.get(runId);
+    return messageId ? this.finalizeMessage(messageId, runId) : [];
+  }
+
   private consumeAssistantMessage(
     message: SDKMessage & { type: "assistant" },
     runId: string | null,
@@ -1298,8 +1309,24 @@ class TimelineAssembler {
       return [];
     }
     const state = this.ensureMessageState(messageId, runId);
-    const fragments = this.extractFragments(message.message?.content);
-    return this.applyAbsoluteFragments(state, fragments);
+    const snapshotUuid = readTrimmedString(message.uuid);
+    if (snapshotUuid) {
+      if (state.appliedSnapshotUuids.has(snapshotUuid)) {
+        return [];
+      }
+      state.appliedSnapshotUuids.add(snapshotUuid);
+    }
+    const marker = toObjectRecord(message)?.narration_block_indexes;
+    const narrationIndexes = new Set<number>(
+      Array.isArray(marker)
+        ? marker.filter((index): index is number => Number.isInteger(index) && index >= 0)
+        : [],
+    );
+    const fragments = this.extractFragments({
+      content: message.message?.content,
+      narrationIndexes,
+    });
+    return this.applyBlockSnapshots({ state, fragments });
   }
 
   private consumeStreamEvent(
@@ -1337,22 +1364,47 @@ class TimelineAssembler {
     }
 
     if (eventType === "content_block_start") {
-      return this.consumeDeltaContent(event.content_block, runId, streamEventMessageId);
+      return this.consumeDeltaContent({
+        content: event.content_block,
+        blockIndex: event.index,
+        runId,
+        messageIdHint: streamEventMessageId,
+      });
     }
 
     if (eventType === "content_block_delta") {
-      return this.consumeDeltaContent(event.delta, runId, streamEventMessageId);
+      return this.consumeDeltaContent({
+        content: event.delta,
+        blockIndex: event.index,
+        runId,
+        messageIdHint: streamEventMessageId,
+      });
+    }
+
+    if (eventType === "content_block_stop") {
+      const messageId = this.resolveMessageId({
+        runId,
+        createIfMissing: false,
+        messageId: streamEventMessageId,
+      });
+      const state = messageId ? this.messages.get(messageId) : undefined;
+      if (state) {
+        state.openStreamBlockKey = null;
+      }
+      return [];
     }
 
     return [];
   }
 
-  private consumeDeltaContent(
-    content: unknown,
-    runId: string | null,
-    messageIdHint: string | null,
-  ): AgentTimelineItem[] {
-    const fragments = this.extractFragments(content);
+  private consumeDeltaContent(input: {
+    content: unknown;
+    blockIndex: unknown;
+    runId: string | null;
+    messageIdHint: string | null;
+  }): AgentTimelineItem[] {
+    const { content, blockIndex, runId, messageIdHint } = input;
+    const fragments = this.extractFragments({ content });
     if (fragments.length === 0) {
       return [];
     }
@@ -1365,49 +1417,77 @@ class TimelineAssembler {
       return [];
     }
     const state = this.ensureMessageState(messageId, runId);
-    return this.appendFragments(state, fragments);
-  }
-
-  private appendFragments(
-    state: TimelineMessageState,
-    fragments: TimelineFragment[],
-  ): AgentTimelineItem[] {
     for (const fragment of fragments) {
-      if (fragment.kind === "assistant") {
-        state.assistantText += fragment.text;
-      } else {
-        state.reasoningText += fragment.text;
-      }
+      const key = this.resolveStreamBlockKey({ state, blockIndex, kind: fragment.kind });
+      state.openStreamBlockKey = key;
+      const block = state.blocks.get(key) ?? this.addBlock({ state, key, kind: fragment.kind });
+      block.text += fragment.text;
     }
-    return this.emitNewContent(state);
+    return this.emitNewContent({ state });
   }
 
-  private applyAbsoluteFragments(
-    state: TimelineMessageState,
-    fragments: TimelineFragment[],
-  ): AgentTimelineItem[] {
-    const assistantText = fragments
-      .filter((fragment) => fragment.kind === "assistant")
-      .map((fragment) => fragment.text)
-      .join("");
-    const reasoningText = fragments
-      .filter((fragment) => fragment.kind === "reasoning")
-      .map((fragment) => fragment.text)
-      .join("");
+  private resolveStreamBlockKey(input: {
+    state: TimelineMessageState;
+    blockIndex: unknown;
+    kind: TimelineFragment["kind"];
+  }): string {
+    const { state, blockIndex, kind } = input;
+    if (typeof blockIndex === "number") {
+      return `stream:${blockIndex}`;
+    }
+    const openKey = state.openStreamBlockKey;
+    if (openKey && state.blocks.get(openKey)?.kind === kind) {
+      return openKey;
+    }
+    return `stream:unindexed:${++state.syntheticBlockCount}`;
+  }
 
-    if (assistantText.length > 0) {
-      if (!assistantText.startsWith(state.assistantText)) {
-        state.emittedAssistantLength = 0;
+  private applyBlockSnapshots(input: {
+    state: TimelineMessageState;
+    fragments: TimelineFragment[];
+  }): AgentTimelineItem[] {
+    const { state, fragments } = input;
+    for (const fragment of fragments) {
+      // Snapshots arrive in content order, so each belongs to the earliest block of its kind
+      // that has not had one yet.
+      const match = [...state.blocks.entries()].find(
+        ([, candidate]) => candidate.kind === fragment.kind && !candidate.snapshotApplied,
+      );
+      if (!match) {
+        const key = `snapshot:${++state.syntheticBlockCount}`;
+        const snapshotOnly = this.addBlock({ state, key, kind: fragment.kind });
+        snapshotOnly.kind = fragment.narration ? "assistant" : fragment.kind;
+        snapshotOnly.text = fragment.text;
+        snapshotOnly.snapshotApplied = true;
+        continue;
       }
-      state.assistantText = assistantText;
-    }
-    if (reasoningText.length > 0) {
-      if (!reasoningText.startsWith(state.reasoningText)) {
-        state.emittedReasoningLength = 0;
+      const [key, block] = match;
+      block.snapshotApplied = true;
+      if (fragment.narration) {
+        block.kind = "assistant";
       }
-      state.reasoningText = reasoningText;
+      // A snapshot completes its block, so later deltas without an index start a new one.
+      if (state.openStreamBlockKey === key) {
+        state.openStreamBlockKey = null;
+      }
+      // Buffered thinking has not been emitted, so its completed text is authoritative.
+      // Plain text has streamed already and can only be extended.
+      if (block.emittedLength === 0 || fragment.text.startsWith(block.text)) {
+        block.text = fragment.text;
+      }
     }
-    return this.emitNewContent(state);
+    return this.emitNewContent({ state });
+  }
+
+  private addBlock(input: {
+    state: TimelineMessageState;
+    key: string;
+    kind: TimelineFragment["kind"];
+  }): TimelineBlockState {
+    const { state, key, kind } = input;
+    const block: TimelineBlockState = { kind, text: "", emittedLength: 0, snapshotApplied: false };
+    state.blocks.set(key, block);
+    return block;
   }
 
   private finalizeMessage(messageId: string, runId: string | null): AgentTimelineItem[] {
@@ -1416,7 +1496,7 @@ class TimelineAssembler {
       return [];
     }
     state.stopped = true;
-    const items = this.emitNewContent(state);
+    const items = this.emitNewContent({ state, finalizing: true });
     if (runId && this.activeMessageByRun.get(runId) === messageId) {
       this.activeMessageByRun.delete(runId);
     }
@@ -1425,22 +1505,32 @@ class TimelineAssembler {
     return items;
   }
 
-  private emitNewContent(state: TimelineMessageState): AgentTimelineItem[] {
+  private emitNewContent(input: {
+    state: TimelineMessageState;
+    finalizing?: boolean;
+  }): AgentTimelineItem[] {
+    const { state, finalizing = false } = input;
     const items: AgentTimelineItem[] = [];
-    const nextAssistantText = state.assistantText.slice(state.emittedAssistantLength);
-    if (
-      nextAssistantText.length > 0 &&
-      nextAssistantText !== INTERRUPT_TOOL_USE_PLACEHOLDER &&
-      !isClaudeTranscriptNoiseText(nextAssistantText)
-    ) {
-      state.emittedAssistantLength = state.assistantText.length;
-      items.push({ type: "assistant_message", text: nextAssistantText, messageId: state.id });
-    }
-
-    const nextReasoningText = state.reasoningText.slice(state.emittedReasoningLength);
-    if (nextReasoningText.length > 0) {
-      state.emittedReasoningLength = state.reasoningText.length;
-      items.push({ type: "reasoning", text: nextReasoningText });
+    for (const block of state.blocks.values()) {
+      // Narration is identified only by the completed snapshot. Hold thinking until then,
+      // so a progress update never reaches clients as reasoning. Plain text still streams.
+      if (block.kind === "reasoning" && !block.snapshotApplied && !finalizing) {
+        continue;
+      }
+      const nextText = block.text.slice(block.emittedLength);
+      if (nextText.length === 0) {
+        continue;
+      }
+      if (block.kind === "reasoning") {
+        block.emittedLength = block.text.length;
+        items.push({ type: "reasoning", text: nextText });
+        continue;
+      }
+      if (nextText === INTERRUPT_TOOL_USE_PLACEHOLDER || isClaudeTranscriptNoiseText(nextText)) {
+        continue;
+      }
+      block.emittedLength = block.text.length;
+      items.push({ type: "assistant_message", text: nextText, messageId: state.id });
     }
     return items;
   }
@@ -1456,10 +1546,10 @@ class TimelineAssembler {
     }
     const created: TimelineMessageState = {
       id: messageId,
-      assistantText: "",
-      reasoningText: "",
-      emittedAssistantLength: 0,
-      emittedReasoningLength: 0,
+      blocks: new Map(),
+      appliedSnapshotUuids: new Set(),
+      openStreamBlockKey: null,
+      syntheticBlockCount: 0,
       stopped: false,
     };
     this.messages.set(messageId, created);
@@ -1493,16 +1583,20 @@ class TimelineAssembler {
     return synthetic;
   }
 
-  private extractFragments(content: unknown): TimelineFragment[] {
+  private extractFragments(input: {
+    content: unknown;
+    narrationIndexes?: ReadonlySet<number>;
+  }): TimelineFragment[] {
+    const { content, narrationIndexes = new Set<number>() } = input;
     if (typeof content === "string") {
       if (content.length === 0) {
         return [];
       }
-      return [{ kind: "assistant", text: content }];
+      return [{ kind: "assistant", text: content, narration: false }];
     }
     const blocks = Array.isArray(content) ? content : [content];
     const fragments: TimelineFragment[] = [];
-    for (const rawBlock of blocks) {
+    for (const [index, rawBlock] of blocks.entries()) {
       if (!isClaudeContentChunk(rawBlock)) {
         continue;
       }
@@ -1511,14 +1605,18 @@ class TimelineAssembler {
         typeof rawBlock.text === "string" &&
         rawBlock.text.length > 0
       ) {
-        fragments.push({ kind: "assistant", text: rawBlock.text });
+        fragments.push({ kind: "assistant", text: rawBlock.text, narration: false });
       }
       if (
         (rawBlock.type === "thinking" || rawBlock.type === "thinking_delta") &&
         typeof rawBlock.thinking === "string" &&
         rawBlock.thinking.length > 0
       ) {
-        fragments.push({ kind: "reasoning", text: rawBlock.thinking });
+        fragments.push({
+          kind: "reasoning",
+          text: rawBlock.thinking,
+          narration: narrationIndexes.has(index),
+        });
       }
     }
     return fragments;
@@ -1670,7 +1768,11 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
+  private readonly resolveLaunchVersion: (
+    launch: ClaudeLaunchVersionProbe,
+  ) => Promise<string | null>;
   private version: Promise<string | undefined> | undefined;
+  private warnedMcpServersOnArgv = false;
   private readonly lookupLatestRelease: LatestReleaseLookup;
   private readonly rewindSdk: ClaudeRewindSdk;
   private readonly scheduleImportDescriptors = createImportDescriptorScheduler(
@@ -1693,6 +1795,9 @@ export class ClaudeAgentClient implements AgentClient {
     this.resolveVersion =
       options.resolveVersion ??
       ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
+    this.resolveLaunchVersion = options.resolveVersion
+      ? () => this.resolveVersion()
+      : async (launch) => parseReportedClaudeVersion(await probeClaudeLaunchVersion(launch));
     this.lookupLatestRelease =
       options.lookupLatestRelease ??
       ((input) =>
@@ -1718,11 +1823,13 @@ export class ClaudeAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      wrap: launchContext?.wrap,
       persistSession: options?.persistSession,
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
+      resolveMcpServersDelivery: (launch) => this.resolveMcpServersDelivery(launch),
       rewindSdk: this.rewindSdk,
     });
   }
@@ -1749,10 +1856,12 @@ export class ClaudeAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      wrap: launchContext?.wrap,
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
+      resolveMcpServersDelivery: (launch) => this.resolveMcpServersDelivery(launch),
       rewindSdk: this.rewindSdk,
     });
     await session.ensureHistoryReady();
@@ -1780,6 +1889,7 @@ export class ClaudeAgentClient implements AgentClient {
     this.version = Promise.resolve(claudeCodeVersion);
     const env = this.buildProviderEnv();
     let discoveredModelIds = new Set<string>();
+    let incomplete = false;
     try {
       const advertisedModels = await runProviderRefreshActivity(context, "models", () =>
         this.discoverModels({
@@ -1796,6 +1906,7 @@ export class ClaudeAgentClient implements AgentClient {
       );
     } catch (error) {
       context?.signal.throwIfAborted();
+      incomplete = true;
       this.logger.warn(
         { err: error },
         "Claude model discovery failed; omitting discovery-required models",
@@ -1809,10 +1920,11 @@ export class ClaudeAgentClient implements AgentClient {
         discoveredModelIds,
       ),
     );
-    const modeCatalog = claudeModeCatalog(env);
     return {
       models,
-      ...modeCatalog,
+      modes: DEFAULT_MODES,
+      defaultModeId: claudeDefaultMode(env),
+      ...(incomplete ? { incomplete } : {}),
     };
   }
 
@@ -1821,10 +1933,14 @@ export class ClaudeAgentClient implements AgentClient {
   }
 
   async resolveDefaultModeId({ env: launchEnv }: ResolveAgentDefaultModeInput): Promise<string> {
-    return claudeModeCatalog(this.buildProviderEnv(launchEnv)).defaultModeId;
+    return claudeDefaultMode(this.buildProviderEnv(launchEnv));
   }
 
-  private buildProviderEnv(launchEnv?: Record<string, string>): NodeJS.ProcessEnv {
+  async resolveUsageLaunch() {
+    return buildProviderUsageLaunch("claude", this.runtimeSettings, this.buildProviderEnv());
+  }
+
+  private buildProviderEnv(launchEnv?: Record<string, string>): Record<string, string> {
     return createProviderEnv({
       baseEnv: process.env,
       runtimeSettings: this.runtimeSettings,
@@ -1847,8 +1963,27 @@ export class ClaudeAgentClient implements AgentClient {
     return supportsIndependentClaudeUltracode(await this.version);
   }
 
+  private async resolveMcpServersDelivery(
+    launch: ClaudeLaunchVersionProbe,
+  ): Promise<ClaudeMcpServersDelivery> {
+    // The installed version can change between SDK launches in the same session.
+    const version = (await this.resolveLaunchVersion(launch).catch(() => null)) ?? undefined;
+    if (supportsClaudeMcpServersViaInitialize(version)) {
+      return "initialize";
+    }
+    if (this.warnedMcpServersOnArgv) {
+      return "argv";
+    }
+    this.warnedMcpServersOnArgv = true;
+    this.logger.warn(
+      { claudeCodeVersion: version ?? null },
+      "Claude Code is too old or reports no version; MCP server headers go on its command line",
+    );
+    return "argv";
+  }
+
   async listImportableSessions(
-    options?: ListImportableSessionsOptions & { signal?: AbortSignal },
+    options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
     // Leave time to deliver the provider error before the client RPC expires at 60 seconds.
     const deadline = AbortSignal.timeout(45_000);
@@ -2080,22 +2215,23 @@ async function readClaudeCodeVersion(
   const installed = await resolveInstalledClaude(runtimeSettings);
   if (!installed) return { status: "not_installed" };
   const { executable } = installed;
-  const { stdout, stderr } = await execCommand(executable, [...installed.args, "--version"], {
+  const output = await execCommand(executable, [...installed.args, "--version"], {
     ...createProviderEnvSpec({ runtimeSettings }),
     timeout: 5_000,
     signal,
   });
-  // A wrapper command (the `command` provider setting) prints its own version here
+  return { status: "installed", version: parseReportedClaudeVersion(output) };
+}
+
+function parseReportedClaudeVersion({ stdout, stderr }: { stdout: string; stderr: string }) {
+  // A wrapper command (the `command` provider setting) may print its own version here
   // instead of Claude Code's. Only trust output that identifies itself as Claude Code,
   // so a wrapper's version can't mis-gate models behind a minimumClaudeCodeVersion.
   const rawVersionOutput = `${stdout}\n${stderr}`;
   const version = /\d+\.\d+\.\d+\s+\(Claude Code\)/i.test(rawVersionOutput)
     ? parseClaudeCodeVersion(rawVersionOutput)
     : null;
-  return {
-    status: "installed",
-    version: version ? version.join(".") : null,
-  };
+  return version ? version.join(".") : null;
 }
 
 async function resolveClaudeAuth(
@@ -2437,6 +2573,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;
+  private readonly wrap?: AgentLaunchContext["wrap"];
   private readonly agentId?: string;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -2445,6 +2582,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly queryFactory?: ClaudeQueryFactory;
   private readonly resolveBinary: () => Promise<string>;
   private readonly independentUltracode: boolean;
+  private readonly resolveMcpServersDelivery: ClaudeAgentSessionOptions["resolveMcpServersDelivery"];
   private query: Query | null = null;
   private readonly runtimeSafety = new ClaudeRuntimeSafety();
   private readonly backgroundStops = new Map<string, (outcome: string) => void>();
@@ -2539,12 +2677,15 @@ class ClaudeAgentSession implements AgentSession {
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
+  private readonly resultMeter = new ClaudeResultMeter();
   private compacting = false;
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
   /** True from the moment a query's launch options are copied until the query exists. */
   private queryStarting = false;
+  /** The launch in flight, shared by every caller that asks for a query meanwhile. */
+  private queryStart: Promise<Query> | null = null;
   private pendingInterruptAbort = false;
   /**
    * Whether Claude's main session is inside one of its own turns: set by system/init and by a
@@ -2574,6 +2715,7 @@ class ClaudeAgentSession implements AgentSession {
     this.config = config;
     assertClaudeThinkingOptionSupported(config.model, config.thinkingOptionId);
     this.launchEnv = options.launchEnv;
+    this.wrap = options.wrap;
     this.agentId = options.agentId;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
@@ -2583,6 +2725,7 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.independentUltracode = options.independentUltracode;
+    this.resolveMcpServersDelivery = options.resolveMcpServersDelivery;
     this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
       getClaudeContextWindowMaxTokens(this.config.model),
@@ -2945,7 +3088,6 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeModeCanRun(normalized, this.harnessEnvironment);
     const previousMode = this.currentMode;
     const previousQuery = this.query;
     const activeQuery = await this.ensureQuery(normalized);
@@ -3300,6 +3442,11 @@ class ClaudeAgentSession implements AgentSession {
       metadata: { ...persistedConfig },
     };
     return this.persistence;
+  }
+
+  hasPendingWakeup(): boolean {
+    // A delivered task notification opens its turn only with the next init.
+    return this.notificationTurnId !== null || this.runtimeSafety.hasPendingWakeup();
   }
 
   async canStopRuntime(): Promise<boolean> {
@@ -3827,12 +3974,38 @@ class ClaudeAgentSession implements AgentSession {
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
     await this.ensureHistoryReady();
-    // Controls use the running turn's query. Pending launch settings take effect
-    // after that turn finishes, when its active query handle has been cleared.
-    if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
-      return this.query;
-    }
+    for (;;) {
+      if (this.closed) {
+        throw new Error("Claude session is closed");
+      }
+      // Controls use the running turn's query. Pending launch settings take effect
+      // after that turn finishes, when its active query handle has been cleared.
+      if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
+        return this.query;
+      }
 
+      // One launch at a time. Overlapping callers (for example the app and plugins both
+      // listing commands on resume) share the in-flight launch instead of spawning duplicate
+      // `claude` processes and overwriting `this.childProcess`.
+      //
+      // Re-check after awaiting: if a model, thinking, or rewind change marked a restart while
+      // this launch was preparing options, the loop retires the stale query and relaunches once.
+      await (this.queryStart ?? this.startQueryLaunch(launchMode));
+    }
+  }
+
+  /** Publish a launch before awaiting it, so every caller meanwhile shares the same process. */
+  private startQueryLaunch(launchMode: PermissionMode): Promise<Query> {
+    const start = this.launchQuery(launchMode);
+    this.queryStart = start;
+    const settled = () => {
+      if (this.queryStart === start) this.queryStart = null;
+    };
+    start.then(settled, settled);
+    return start;
+  }
+
+  private async launchQuery(launchMode: PermissionMode): Promise<Query> {
     if (this.queryRestartNeeded && this.query) {
       await this.retireQuery();
     }
@@ -3843,39 +4016,45 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = createAsyncMessageInput<SDKUserMessage>();
     // buildOptions copies the launch options before it waits, so from here they are fixed.
+    // Spend the restart mark here: settings written before this point are already in these
+    // options, and only a change after it makes ensureQuery retire and relaunch.
+    this.queryRestartNeeded = false;
     this.queryStarting = true;
-    let options: ClaudeOptions;
+    let query: Query;
     try {
-      options = await this.buildOptions(launchMode);
+      const options = await this.buildOptions(launchMode);
       // Closure can finish while launch options are being prepared.
       if (this.closed) throw new Error("Claude session is closed");
-    } catch (error) {
-      this.queryStarting = false;
-      throw error;
-    }
-    this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
-    this.input = input;
-    this.runtimeSafety.reset();
-    this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
-    // A fresh Claude process has no turn of its own in flight.
-    this.mainTurnInFlight = false;
-    this.query = claudeQuery(
-      { prompt: input.iterable, options },
-      {
-        runtimeSettings: this.runtimeSettings,
-        launchEnv: this.launchEnv,
-        queryFactory: this.queryFactory,
-        onChildProcess: (child) => {
-          this.childProcess = child;
-          child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
+      this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
+      this.input = input;
+      this.runtimeSafety.reset();
+      this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
+      // A fresh Claude process has no turn of its own in flight.
+      this.mainTurnInFlight = false;
+      this.resultMeter.queryStarted();
+      query = claudeQuery(
+        { prompt: input.iterable, options },
+        {
+          runtimeSettings: this.runtimeSettings,
+          launchEnv: this.launchEnv,
+          wrap: this.wrap,
+          queryFactory: this.queryFactory,
+          onChildProcess: (child) => {
+            this.childProcess = child;
+            child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
+          },
         },
-      },
-    );
-    this.queryStarting = false;
+      );
+      this.query = query;
+    } finally {
+      // Clear on every exit path, including a throwing queryFactory or rejected options,
+      // so applyOptions does not treat the session as live-only forever.
+      this.queryStarting = false;
+    }
     const fastMode = this.resolveFastModeSetting();
     const ultracode = this.independentUltracode ? this.resolveUltracodeSetting() : undefined;
     if (fastMode !== null || ultracode !== undefined) {
-      await this.query.applyFlagSettings({
+      await query.applyFlagSettings({
         ...(fastMode === null ? {} : { fastMode }),
         ...(ultracode === undefined ? {} : { ultracode }),
       });
@@ -3884,7 +4063,7 @@ class ClaudeAgentSession implements AgentSession {
     // supportedCommands()/setPermissionMode() may execute immediately after
     // ensureQuery() (for listCommands()/setMode()), and sharing the same query
     // control plane can cause those calls to wait behind supportedModels().
-    return this.query;
+    return query;
   }
 
   private async awaitWithTimeout(
@@ -3976,6 +4155,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       model: this.config.model,
       env: this.harnessEnvironment,
+      launch: buildProviderUsageLaunch("claude", this.runtimeSettings, this.harnessEnvironment),
       sessionKey: this.usageSessionKey,
     };
   }
@@ -4004,7 +4184,6 @@ class ClaudeAgentSession implements AgentSession {
     const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy);
     const settingsOptions = await this.buildSettingsOptions(providerOptions);
     const sdkEnv = this.harnessEnvironment;
-    assertClaudeModeCanRun(permissionMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
     this.logger.debug(
@@ -4069,6 +4248,15 @@ class ClaudeAgentSession implements AgentSession {
 
     if (this.config.mcpServers) {
       base.mcpServers = this.normalizeMcpServers(this.config.mcpServers);
+      if (Object.keys(base.mcpServers).length > 0) {
+        base.mcpServersDelivery = await this.resolveMcpServersDelivery({
+          executable: claudeBinary,
+          cwd: this.config.cwd,
+          env: sdkEnv,
+          runtimeSettings: this.runtimeSettings,
+          launchEnv: this.launchEnv,
+        });
+      }
     }
 
     if (this.config.model) {
@@ -4454,8 +4642,8 @@ class ClaudeAgentSession implements AgentSession {
       { agentId: this.agentId, pid: child.pid, code, signal },
       "Claude runtime exited unexpectedly",
     );
-    this.failRunningRuntimeTasks();
     if (this.activeForegroundTurnId || this.autonomousTurn) {
+      this.failRunningRuntimeTasks();
       // The pump is about to throw. It waits for stderr to flush and reports the
       // real cause; reporting here first would replace that with a bare exit code
       // and detach this.query, which is how the pump recognizes its own stream.
@@ -4465,11 +4653,14 @@ class ClaudeAgentSession implements AgentSession {
     // failing against a dead transport forever.
     this.query = null;
     this.input = null;
+    // The failure goes first: an idle agent whose background work just ended
+    // otherwise reads as settled to anyone waiting for it to finish.
     this.dispatchEvents([
       this.buildTurnFailedEvent(
         `Claude stopped unexpectedly (${signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`}). Any background shells, monitors or other work it had running were terminated with it.`,
       ),
     ]);
+    this.failRunningRuntimeTasks();
   }
 
   private failRunningRuntimeTasks(): void {
@@ -4699,7 +4890,43 @@ class ClaudeAgentSession implements AgentSession {
     return !this.closed && this.query === query;
   }
 
+  /**
+   * Claude Code sends a `rate_limit_event` with the account's utilization once per query, after
+   * its first API response, so it shows usage as the turn starts. The turn's result asks for a
+   * refetch to show what the turn itself used, after the turn's own events; the usage registry
+   * limits those to one a minute.
+   */
+  private observeRateLimitUsage(message: SDKMessage): void {
+    if (message.type !== "rate_limit_event") return;
+    const windows = readClaudeRateLimitUsage(message.rate_limit_info);
+    if (!windows?.length) return;
+    this.dispatchEvents([
+      { type: "usage_observed", provider: "claude", sourceId: CLAUDE_USAGE_SOURCE_ID, windows },
+    ]);
+  }
+
+  private requestUsageRefetchAfterResult(message: SDKMessage): void {
+    if (message.type !== "result") return;
+    this.dispatchEvents([
+      {
+        type: "usage_observed",
+        provider: "claude",
+        sourceId: CLAUDE_USAGE_SOURCE_ID,
+        windows: [],
+      },
+    ]);
+  }
+
   private async routeSdkMessageFromPump(message: SDKMessage): Promise<void> {
+    this.observeRateLimitUsage(message);
+    try {
+      await this.routeSdkMessage(message);
+    } finally {
+      this.requestUsageRefetchAfterResult(message);
+    }
+  }
+
+  private async routeSdkMessage(message: SDKMessage): Promise<void> {
     if (this.consumeSessionStateChange(message)) {
       return;
     }
@@ -4901,7 +5128,21 @@ class ClaudeAgentSession implements AgentSession {
       // Claude can dequeue a message for its next turn before announcing it started; withdrawing
       // it is then a no-op, and only an interrupt stops it. Withdraw once: a prompt sent while
       // this withdrawal was in flight belongs to the next turn.
-      if (await this.withdrawUnstartedMessages(queryToInterrupt)) return;
+      const withdrawal = await this.withdrawUnstartedMessages(queryToInterrupt);
+      if (withdrawal.withdrewAll) {
+        // Claude took none of the queued prompts, so the turn this process was sent a prompt
+        // for never started. Clear turnSeen only if at least one prompt was actually withdrawn
+        // and no newer turn/prompt started on this process while withdrawing.
+        if (
+          withdrawal.withdrewCount > 0 &&
+          this.query === queryToInterrupt &&
+          !this.mainTurnInFlight &&
+          this.unstartedMessageUuids.size === 0
+        ) {
+          this.runtimeSafety.notePromptWithdrawn();
+        }
+        return;
+      }
       this.pendingInterruptAbort = true;
     }
     try {
@@ -4917,13 +5158,15 @@ class ClaudeAgentSession implements AgentSession {
   /**
    * Interrupt means interrupt: a message Claude never started dies with the turn instead of
    * resuming it. One already dequeued cannot be recalled, and does not need to be, since the
-   * interrupt kills it. Returns whether Claude confirmed every message withdrawn.
+   * interrupt kills it. Returns whether Claude confirmed every message withdrawn and how many.
    */
-  private async withdrawUnstartedMessages(query: Query): Promise<boolean> {
+  private async withdrawUnstartedMessages(
+    query: Query,
+  ): Promise<{ withdrewAll: boolean; withdrewCount: number }> {
     const uuids = [...this.unstartedMessageUuids];
     this.unstartedMessageUuids.clear();
     this.permissionClearingSteerUuids.clear();
-    if (uuids.length === 0) return true;
+    if (uuids.length === 0) return { withdrewAll: true, withdrewCount: 0 };
     // The SDK runtime supports this, but its public Query type has not caught up. Keep the
     // compatibility escape hatch inside the Claude adapter.
     const cancelAsyncMessage = (
@@ -4931,17 +5174,22 @@ class ClaudeAgentSession implements AgentSession {
         cancelAsyncMessage?: (uuid: string) => Promise<boolean>;
       }
     ).cancelAsyncMessage;
-    if (!cancelAsyncMessage) return false;
+    if (!cancelAsyncMessage) return { withdrewAll: false, withdrewCount: 0 };
     let withdrewAll = true;
+    let withdrewCount = 0;
     for (const uuid of uuids) {
       try {
-        if (!(await cancelAsyncMessage.call(query, uuid))) withdrewAll = false;
+        if (await cancelAsyncMessage.call(query, uuid)) {
+          withdrewCount += 1;
+        } else {
+          withdrewAll = false;
+        }
       } catch (error) {
         withdrewAll = false;
         this.logger.warn({ err: error }, "Failed to withdraw a queued Claude message");
       }
     }
-    return withdrewAll;
+    return { withdrewAll, withdrewCount };
   }
 
   private async translateMessageToEvents(
@@ -5371,6 +5619,25 @@ class ClaudeAgentSession implements AgentSession {
     message: Extract<SDKMessage, { type: "result" }>,
     events: AgentStreamEvent[],
   ): void {
+    const metrics = this.resultMeter.observe(
+      message,
+      this.lastRuntimeModel ?? this.config.model ?? null,
+    );
+    this.appendTurnOutcomeEvents(message, metrics.turn, events);
+    if (metrics.session?.length) {
+      events.push({
+        type: "session_metrics_updated",
+        provider: "claude",
+        metrics: metrics.session,
+      });
+    }
+  }
+
+  private appendTurnOutcomeEvents(
+    message: Extract<SDKMessage, { type: "result" }>,
+    turnMetrics: AgentMetric[],
+    events: AgentStreamEvent[],
+  ): void {
     const usage = this.convertUsage(message);
     // Claude Code reports a turn that stopped on an API error (a usage limit, an overloaded or
     // rejected request) as `success` with `is_error`, carrying the error text in `result`.
@@ -5414,7 +5681,7 @@ class ClaudeAgentSession implements AgentSession {
           },
         });
       }
-      events.push({ type: "turn_completed", provider: "claude", usage });
+      events.push({ type: "turn_completed", provider: "claude", usage, metrics: turnMetrics });
       return;
     }
     const errorMessage =
@@ -5781,6 +6048,11 @@ class ClaudeAgentSession implements AgentSession {
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId =
       getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? this.autonomousTurn?.id;
+    if (turnId && this.isTerminalTurnEvent(event)) {
+      for (const item of this.timelineAssembler.finishRun(turnId)) {
+        this.notifySubscribers({ type: "timeline", provider: "claude", item, turnId });
+      }
+    }
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -6771,10 +7043,8 @@ async function readClaudeReplayParentFacts(
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
-    const notification = readTaskNotificationFromHistoryRecord(entry);
-    const status = mapTaskStatus(notification?.status ?? undefined);
-    if (notification?.toolUseId && status) {
-      outcomes.set(notification.toolUseId, { status });
+    for (const notificationOutcome of readClaudeReplayNotificationOutcomes(entry, linksByAgentId)) {
+      outcomes.set(notificationOutcome.toolCallId, { status: notificationOutcome.status });
     }
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
@@ -6792,6 +7062,7 @@ async function readClaudeReplayParentFacts(
         outcomes.set(block.tool_use_id, {
           status: block.is_error === true ? "failed" : "completed",
         });
+      if (!toolCalls.has(block.tool_use_id)) continue;
       const agentId = readLegacyClaudeSubagentId(block.content);
       if (agentId)
         linksByAgentId.set(agentId, {
@@ -6804,6 +7075,26 @@ async function readClaudeReplayParentFacts(
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
   };
+}
+
+function* readClaudeReplayNotificationOutcomes(
+  entry: ClaudeHistoryEntry,
+  linksByAgentId: ReadonlyMap<string, { toolCallId: string }>,
+): Generator<{ toolCallId: string; status: ProviderSubagentStatus }> {
+  const notification = readTaskNotificationOutcomeFromHistoryRecord(entry);
+  if (!notification) return;
+  const status = mapTaskStatus(notification.status ?? undefined);
+  if (!status) return;
+
+  if (notification.toolUseId) {
+    yield { toolCallId: notification.toolUseId, status };
+    return;
+  }
+  // Stopped tasks can omit tool-use-id; their launch results already link the native IDs.
+  for (const taskId of notification.taskIds) {
+    const link = linksByAgentId.get(taskId);
+    if (link) yield { toolCallId: link.toolCallId, status };
+  }
 }
 
 function readClaudeReplayTaskDeclaration(

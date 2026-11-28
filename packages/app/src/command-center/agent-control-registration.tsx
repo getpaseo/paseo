@@ -8,6 +8,7 @@ import {
   PlanModeIcon,
   ThinkingIcon,
 } from "@/agent-controls/icons";
+import { AgentProfileGlyph, type AgentProfilePicker } from "@/agent-profiles";
 import { useProviderIcons } from "@/components/provider-icons";
 import type { ComposerOptionControls } from "@/agent-controls/option-controls";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
@@ -15,7 +16,9 @@ import {
   buildAgentControlContributions,
   buildAgentControlContributionLabels,
   type AgentControlContributionSource,
+  type AgentControlProfile,
 } from "./agent-control-contributions";
+import type { CommandCenterIcon, CommandCenterIconProps } from "./contributions";
 import { getCommandCenterIcon } from "./icon";
 import { useCommandCenterActions } from "./provider";
 
@@ -24,6 +27,8 @@ export interface AgentControlCommandCenterSource {
   ownerKey: string;
   provider: string | null | undefined;
   providerDefinitions: AgentProviderDefinition[];
+  /** The same profiles the model picker offers this composer; `null` when the host has none. */
+  profiles: AgentProfilePicker | null;
   models: {
     providers: readonly ProviderSelectorProvider[];
     selectedProvider: string | null | undefined;
@@ -42,6 +47,27 @@ export interface AgentControlCommandCenterSource {
   };
   /** Absent when the surface cannot change options (the agent has no client). */
   optionControls: ComposerOptionControls | null;
+}
+
+const profileIcons = new Map<string, CommandCenterIcon>();
+
+/** One stable component per icon and colour, so results don't remount on every rebuild. */
+function getProfileCommandCenterIcon(profile: AgentControlProfile): CommandCenterIcon {
+  const key = `${profile.icon}:${profile.color}`;
+  const cached = profileIcons.get(key);
+  if (cached) return cached;
+  function ProfileCommandCenterIcon({ size }: CommandCenterIconProps) {
+    return <AgentProfileGlyph icon={profile.icon} color={profile.color} size={size} />;
+  }
+  profileIcons.set(key, ProfileCommandCenterIcon);
+  return ProfileCommandCenterIcon;
+}
+
+function buildProfileContributionSource(
+  profiles: AgentProfilePicker | null,
+): Pick<AgentControlContributionSource, "profiles"> {
+  if (!profiles) return {};
+  return { profiles: { rows: profiles.rows, apply: profiles.applyProfile } };
 }
 
 const NO_OPTION_CONTROLS: ComposerOptionControls = {
@@ -83,7 +109,7 @@ export function useAgentControlCommandCenterActions(input: {
 }): void {
   const { t } = useTranslation();
   const { controls } = input;
-  const { optionControls, models, modes, thinking } = controls;
+  const { optionControls, models, modes, profiles, thinking } = controls;
   const getProviderIcon = useProviderIcons(controls.serverId);
   const actions = useMemo(
     () =>
@@ -93,6 +119,7 @@ export function useAgentControlCommandCenterActions(input: {
         provider: controls.provider ?? null,
         labels: buildAgentControlContributionLabels(t),
         icons: {
+          profile: getProfileCommandCenterIcon,
           provider: (provider) => getCommandCenterIcon(getProviderIcon(provider)),
           thinking: getCommandCenterIcon(ThinkingIcon),
           planMode: getCommandCenterIcon(PlanModeIcon),
@@ -108,6 +135,7 @@ export function useAgentControlCommandCenterActions(input: {
           selectedModelId: models.selectedModelId ?? null,
           select: models.select,
         },
+        ...buildProfileContributionSource(profiles),
         thinking: {
           options: thinking.options ?? [],
           selectedId: thinking.selectedId ?? null,
@@ -135,6 +163,7 @@ export function useAgentControlCommandCenterActions(input: {
       modes?.options,
       modes?.select,
       modes?.selectedId,
+      profiles,
       thinking.options,
       thinking.select,
       thinking.selectedId,

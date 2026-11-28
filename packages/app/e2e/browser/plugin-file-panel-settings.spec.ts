@@ -33,7 +33,7 @@ function askAgain(page: Page) {
 
 async function openFilesSettings(page: Page) {
   await openSettings(page);
-  await openSettingsSection(page, "files");
+  await openSettingsSection(page, "chat");
   await expect(page.getByTestId("file-panel-settings")).toBeVisible();
 }
 
@@ -91,6 +91,7 @@ test("Settings > Files chooses which panel opens .md and asks again on request",
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/settings/files");
     await expect(markdownDropdown(page, PLUGIN_MARKDOWN_OPTION)).toBeVisible({ timeout: 30_000 });
+    await askAgain(page).scrollIntoViewIfNeeded();
     await expect(askAgain(page)).toBeInViewport({ ratio: 1 });
     await capture(page, testInfo, "file-panel-settings-compact");
     await markdownDropdown(page, PLUGIN_MARKDOWN_OPTION).click();
@@ -113,22 +114,20 @@ test("Settings > Files chooses which panel opens .md and asks again on request",
   }
 });
 
-test("Settings > Files explains where file panels come from when no plugin adds one", async ({
+test("Settings > Chat & panes hides file panels when no plugin adds one", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/settings/files");
-  const empty = page.getByTestId("file-panel-settings-empty");
-  await expect(empty).toHaveText("File panels appear here when a plugin adds one", {
-    timeout: 30_000,
-  });
+  await expect(page).toHaveURL(/\/settings\/chat$/);
+  await expect(page.getByTestId("file-panel-settings")).toHaveCount(0);
   await capture(page, testInfo, "file-panel-settings-empty-wide");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(empty).toBeVisible();
+  await expect(page.getByTestId("file-panel-settings")).toHaveCount(0);
   await capture(page, testInfo, "file-panel-settings-empty-compact");
 });
 
-test("Settings > Files offers Source in place of a panel no host has, and forgets it", async ({
+test("Settings > Chat & panes offers Source in place of a panel no host has, and forgets it", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -146,5 +145,5 @@ test("Settings > Files offers Source in place of a panel no host has, and forget
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menuitem", { name: SOURCE_OPTION })).toBeHidden();
   await row.getByRole("button", { name: "Ask again for .pdf", exact: true }).click();
-  await expect(page.getByTestId("file-panel-settings-empty")).toBeVisible();
+  await expect(page.getByTestId("file-panel-settings")).toHaveCount(0);
 });

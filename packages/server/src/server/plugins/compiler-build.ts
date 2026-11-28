@@ -36,6 +36,23 @@ function containsPath(directory: string, filePath: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+// @types/node can declare builtins newer than the host Node (node:stream/iter on Node 24).
+function isNodeSpecifier(specifier: string): boolean {
+  return isBuiltin(specifier) || specifier.startsWith("node:") || specifier === "@types/node";
+}
+
+function declaredPackage(input: {
+  specifier: string;
+  kind: PluginImportKind;
+  typeOnly: boolean;
+}): string {
+  const { specifier, kind, typeOnly } = input;
+  if (kind === "type-reference") return `@types/${specifier.replace(/^@/, "").replace("/", "__")}`;
+  // Declarations load Node's ambient types with `import "node"`.
+  if (typeOnly && specifier === "node") return "@types/node";
+  return specifier;
+}
+
 function dependencyName(specifier: string): string {
   const segments = specifier.split("/");
   return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
@@ -180,10 +197,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         if (checked.has(key) || !/\.[cm]?[jt]sx?$/.test(file)) return null;
         checked.add(key);
         for (const { specifier, kind, typeOnly } of imports.read(file)) {
-          const packageSpecifier =
-            kind === "type-reference"
-              ? `@types/${specifier.replace(/^@/, "").replace("/", "__")}`
-              : specifier;
+          const packageSpecifier = declaredPackage({ specifier, kind, typeOnly });
           const error =
             runtimeSpecifierError(specifier, owner, file) ??
             runtimeSpecifierError(packageSpecifier, owner, file) ??
@@ -197,7 +211,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
           if (
             (PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier) ||
             /^(zod|react|react-native|@tanstack\/react-query)(\/|$)/.test(specifier) ||
-            isBuiltin(specifier) ||
+            isNodeSpecifier(specifier) ||
             packageSpecifier === "@types/node"
           )
             continue;
@@ -250,17 +264,18 @@ function wrapCommonJsBundle(code: string): string {
   return `(function(require) {\nconst module = { exports: {} };\nconst exports = module.exports;\n${code}\nreturn module.exports;\n})`;
 }
 
-function makeHermesInteropEager(code: string): string {
-  // Hermes evaluates esbuild's lazy CommonJS interop getters from a string with
+function fixHermesInteropLoopBinding(code: string): string {
+  // Hermes evaluates esbuild's CommonJS interop getters from a string with
   // the final loop binding, so every named import can resolve to the last export.
-  // Plugin bundles execute once and do not need live bindings from host modules.
-  return code.replaceAll("get: () => from[key]", "value: from[key]");
+  // Bind each key in its own closure while keeping host module getters lazy so
+  // enumerating a host namespace (such as react-native) never triggers unrelated getters.
+  return code.replaceAll("get: () => from[key]", "get: ((k) => () => from[k])(key)");
 }
 
 async function minifyClientBundle(code: string): Promise<string> {
   const { transform } = loadEsbuild();
-  // Minify after the eager replace. Whitespace minify rewrites the getter this
-  // replace matches, and identifier minify can delete the helper entirely.
+  // Minify after the loop-binding rewrite. Whitespace minify rewrites the getter
+  // this replace matches, and identifier minify can delete the helper entirely.
   const result = await transform(code, {
     minifyWhitespace: true,
     minifySyntax: true,
@@ -288,8 +303,7 @@ function runtimeSpecifierError(
     !(PLUGIN_SDK_SPECIFIERS as readonly string[]).includes(specifier)
   )
     kind = "Unknown SDK";
-  else if (target !== "server" && (isBuiltin(specifier) || specifier === "@types/node"))
-    kind = "Node";
+  else if (target !== "server" && isNodeSpecifier(specifier)) kind = "Node";
   else if (target !== "server" && isPluginServerOnlySdkSpecifier(specifier)) kind = "server-only";
   else if (
     target !== "client" &&
@@ -384,9 +398,9 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
   checkSharedDependencies(result.metafile.inputs, pluginDirectory);
   const output = result.outputFiles[0]?.text;
   if (!output) throw new Error(`Plugin ${target} compilation produced no output`);
-  const eager = makeHermesInteropEager(output);
-  let prepared = eager;
-  if (target === "client") prepared = await minifyClientBundle(eager);
+  const hermesSafe = fixHermesInteropLoopBinding(output);
+  let prepared = hermesSafe;
+  if (target === "client") prepared = await minifyClientBundle(hermesSafe);
   return wrapCommonJsBundle(prepared);
 }
 
@@ -397,11 +411,15 @@ export async function compilePlugin(entryPaths: {
   clientBundle: string | null;
   serverBundle: string | null;
 }> {
-  const [clientBundle, serverBundle] = await Promise.all([
-    entryPaths.client ? compileTarget(entryPaths.client, "client") : null,
-    entryPaths.server ? compileTarget(entryPaths.server, "server") : null,
+  // Settle both targets before rethrowing so the compiler worker has no build
+  // left in flight when it replies with an error and can stay warm for reuse.
+  const [clientResult, serverResult] = await Promise.allSettled([
+    entryPaths.client ? compileTarget(entryPaths.client, "client") : Promise.resolve(null),
+    entryPaths.server ? compileTarget(entryPaths.server, "server") : Promise.resolve(null),
   ]);
-  return { clientBundle, serverBundle };
+  if (clientResult.status === "rejected") throw clientResult.reason;
+  if (serverResult.status === "rejected") throw serverResult.reason;
+  return { clientBundle: clientResult.value, serverBundle: serverResult.value };
 }
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;

@@ -21,11 +21,8 @@ function writeEchoArgScript(): string {
   return scriptPath;
 }
 
-// Use the bare command name "node" (no extension, no path separator) so
-// `shouldUseWindowsShell` resolves to true on Windows. That routes the spawn
-// through cmd.exe and exercises `quoteWindowsArgument`, which is where the
-// %-doubling bug lives. Using `process.execPath` here would skip the shell
-// path entirely and silently pass the test.
+// Use the bare command name "node" (no extension, no path separator), the way callers name
+// tools, so the launch goes through the Windows PATH lookup before it starts.
 const COMMAND = "node";
 
 describe("spawn argument escaping for % characters", () => {

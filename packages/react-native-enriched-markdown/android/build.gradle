@@ -1,0 +1,312 @@
+buildscript {
+  ext.getExtOrDefault = {name ->
+    return rootProject.ext.has(name) ? rootProject.ext.get(name) : project.properties['EnrichedMarkdown_' + name]
+  }
+
+  repositories {
+    google()
+    mavenCentral()
+  }
+
+  dependencies {
+    classpath "com.android.tools.build:gradle:8.7.2"
+    // noinspection DifferentKotlinGradleVersion
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${getExtOrDefault('kotlinVersion')}"
+  }
+}
+
+apply plugin: "com.android.library"
+// Android Gradle Plugin 9 ships built-in Kotlin support and applies the Kotlin
+// plugin itself. Applying it a second time fails the configuration phase with
+// "Cannot add extension with name 'kotlin'". Apply it only when AGP is not
+// providing Kotlin: AGP 8 and older, or AGP 9 with android.builtInKotlin=false.
+def shouldApplyKotlinPlugin() {
+    def agpMajor = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.tokenize('.')[0].toInteger()
+    if (agpMajor <= 8) {
+        return true
+    }
+    // AGP 10 removes the opt-out: built-in Kotlin is always active there.
+    if (agpMajor >= 10) {
+        return false
+    }
+    def propertyVal = providers.gradleProperty("android.builtInKotlin").orNull
+    def builtInKotlinEnabled = propertyVal != null ? propertyVal.toBoolean() : true
+    return !builtInKotlinEnabled
+}
+
+if (shouldApplyKotlinPlugin()) {
+    apply plugin: "kotlin-android"
+}
+
+apply plugin: "com.facebook.react"
+
+def getExtOrIntegerDefault(name) {
+  return rootProject.ext.has(name) ? rootProject.ext.get(name) : (project.properties["EnrichedMarkdown_" + name]).toInteger()
+}
+
+// The consumer app's package.json "enriched-markdown" block is the build-time source of
+// truth for feature toggles (mirrors the iOS podspecs and react-native-worklets). It is
+// read from the Gradle build root -- "<app>/package.json", one level above the "<app>/android"
+// dir -- so in a monorepo it resolves to the app being built, not the workspace root.
+// Per-app config therefore works; the download side (postinstall) is a separate,
+// install-time decision. Gradle properties remain a deprecated fallback.
+def consumerConfig = [:]
+def consumerAppName = null
+def consumerPackageJson = new File(rootProject.projectDir, "../package.json")
+if (consumerPackageJson.exists()) {
+    def parsed = new groovy.json.JsonSlurper().parse(consumerPackageJson)
+    if (parsed instanceof Map) {
+        if (parsed["enriched-markdown"] instanceof Map) {
+            consumerConfig = parsed["enriched-markdown"]
+        }
+        consumerAppName = parsed["name"]
+    }
+}
+
+// Filesystem-safe per-app slug: package.json "name", else the app directory name -- the
+// same source and fallback the iOS podspec uses (installation root's parent), so both
+// platforms derive an identical slug for the same app. It keys the per-app generated
+// code-highlight registry (generated-<slug>) below so the artifact layout matches iOS and
+// two monorepo apps with different custom language sets never share one dir.
+def consumerAppSlug = (consumerAppName ?: rootProject.projectDir.parentFile?.name ?: "app").toString()
+    .replaceAll('[^A-Za-z0-9._-]+', '-').replaceAll('^-+|-+$', '')
+if (!consumerAppSlug) consumerAppSlug = "app"
+
+// Video: package.json > default true. Android video uses Media3 ExoPlayer as a Maven
+// dependency. Disable via "enriched-markdown".enableVideo = false to save ~2-3 MB.
+def enableVideo = consumerConfig.containsKey("enableVideo") ? consumerConfig.enableVideo != false : true
+
+// Math: package.json > gradle property (deprecated) > default true. Android math is a
+// Maven dependency (no downloaded asset), so the flag simply includes or excludes it --
+// there is nothing to be missing, hence no throw as on iOS.
+def mathProp = rootProject.findProperty("enrichedMarkdown.enableMath") ?: findProperty("enrichedMarkdown.enableMath")
+def enableMath
+if (consumerConfig.containsKey("enableMath")) {
+    enableMath = consumerConfig.enableMath != false
+    if (mathProp != null) {
+        logger.warn("[ReactNativeEnrichedMarkdown] DEPRECATED: enrichedMarkdown.enableMath gradle property " +
+            "is ignored when \"enriched-markdown\".enableMath is set in your package.json.")
+    }
+} else if (mathProp != null) {
+    logger.warn("[ReactNativeEnrichedMarkdown] DEPRECATED: enrichedMarkdown.enableMath gradle property " +
+        "will be removed in a future version. Configure via \"enriched-markdown\".enableMath in your package.json instead.")
+    enableMath = mathProp.toString().toBoolean()
+} else {
+    enableMath = true
+}
+
+// Default grammar set derived from the single source of truth,
+// vendor/grammar-versions.json (every grammar with default:true), so the compiled
+// grammars always match the registry gen-registry generates from the same
+// manifest. Resolved in both layouts like gen-registry.mjs below:
+// "../../../vendor" in the monorepo, "../cpp/highlight" when published.
+def grammarManifest = [
+  new File(projectDir, "../../../vendor/grammar-versions.json"),
+  new File(projectDir, "../cpp/highlight/grammar-versions.json"),
+].find { it.exists() }
+if (grammarManifest == null) {
+  throw new GradleException("[code-highlight] grammar-versions.json not found; cannot resolve the default language set. Build from the monorepo or a published tarball.")
+}
+def defaultCodeHighlightLanguages = new groovy.json.JsonSlurper().parse(grammarManifest)
+  .grammars.findAll { id, spec -> spec['default'] }.collect { id, spec -> id }
+// Code highlight enable: package.json > gradle property (deprecated) > default on.
+// `codeHighlightExplicit` tracks an active opt-in (vs the implicit default), which
+// decides the missing-grammars behavior below.
+def codeHighlightProp = rootProject.findProperty("enrichedMarkdown.enableCodeHighlight") ?: findProperty("enrichedMarkdown.enableCodeHighlight")
+def codeHighlightStamp = new File(projectDir, "../cpp/highlight/vendor/grammars/.stamp")
+def codeHighlightRequested
+def codeHighlightExplicit
+if (consumerConfig.containsKey("enableCodeHighlight")) {
+    codeHighlightRequested = consumerConfig.enableCodeHighlight != false
+    codeHighlightExplicit = codeHighlightRequested
+    if (codeHighlightProp != null) {
+        logger.warn("[ReactNativeEnrichedMarkdown] DEPRECATED: enrichedMarkdown.enableCodeHighlight gradle property " +
+            "is ignored when \"enriched-markdown\".enableCodeHighlight is set in your package.json.")
+    }
+} else if (codeHighlightProp != null) {
+    logger.warn("[ReactNativeEnrichedMarkdown] DEPRECATED: enrichedMarkdown.enableCodeHighlight gradle property " +
+        "will be removed in a future version. Configure via \"enriched-markdown\".enableCodeHighlight in your package.json instead.")
+    codeHighlightRequested = codeHighlightProp.toString().toBoolean()
+    codeHighlightExplicit = codeHighlightRequested
+} else {
+    codeHighlightRequested = true
+    codeHighlightExplicit = false
+}
+
+// The grammars/.stamp marker is written only after every grammar source is fully vendored
+// at postinstall. An explicit opt-in with the grammars missing fails loud with the fix; on
+// by default but missing (a partial/failed download, or a monorepo root opt-out) falls back
+// to a clean no-op build. Gating on the stamp also keeps CMake from being fed missing sources.
+def enableCodeHighlight
+if (!codeHighlightRequested) {
+    enableCodeHighlight = false
+} else if (codeHighlightStamp.exists()) {
+    enableCodeHighlight = true
+} else if (codeHighlightExplicit) {
+    throw new GradleException("[ReactNativeEnrichedMarkdown] code highlighting is enabled but the tree-sitter " +
+        "grammars are not installed. Reinstall to fetch them: `npm rebuild react-native-enriched-markdown`. " +
+        "To disable, set \"enriched-markdown\".enableCodeHighlight = false in your app package.json. " +
+        "Troubleshooting: https://github.com/software-mansion/enriched-markdown/blob/main/docs-md/NATIVE_ASSETS.md")
+} else {
+    enableCodeHighlight = false
+}
+
+// Languages: package.json > gradle property (deprecated) > manifest defaults. An explicit
+// empty array disables all languages (codeHighlightActive below); only the default/property
+// paths fall back to the manifest set.
+def codeHighlightLanguagesProp = rootProject.findProperty("enrichedMarkdown.codeHighlightLanguages") ?: findProperty("enrichedMarkdown.codeHighlightLanguages")
+def codeHighlightLanguages
+if (consumerConfig.get("codeHighlightLanguages") instanceof List) {
+    codeHighlightLanguages = consumerConfig.codeHighlightLanguages.collect { it.toString().trim() }.findAll { it }
+    if (codeHighlightLanguagesProp != null) {
+        logger.warn("[ReactNativeEnrichedMarkdown] DEPRECATED: enrichedMarkdown.codeHighlightLanguages gradle property " +
+            "is ignored when \"enriched-markdown\".codeHighlightLanguages is set in your package.json.")
+    }
+} else if (codeHighlightLanguagesProp) {
+    logger.warn("[ReactNativeEnrichedMarkdown] DEPRECATED: enrichedMarkdown.codeHighlightLanguages gradle property " +
+        "will be removed in a future version. Configure via \"enriched-markdown\".codeHighlightLanguages in your package.json instead.")
+    codeHighlightLanguages = codeHighlightLanguagesProp.toString().split(",").collect { it.trim() }.findAll { it }
+} else {
+    codeHighlightLanguages = defaultCodeHighlightLanguages
+}
+def codeHighlightActive = enableCodeHighlight && !codeHighlightLanguages.isEmpty()
+
+android {
+  namespace "com.swmansion.enriched.markdown"
+
+  compileSdkVersion getExtOrIntegerDefault("compileSdkVersion")
+
+  defaultConfig {
+    minSdkVersion getExtOrIntegerDefault("minSdkVersion")
+    targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
+    consumerProguardFiles "consumer-rules.pro"
+    buildConfigField "boolean", "ENABLE_MATH", "${enableMath}"
+    buildConfigField "boolean", "ENABLE_VIDEO", "${enableVideo}"
+    buildConfigField "boolean", "ENABLE_CODE_HIGHLIGHT", "${codeHighlightActive}"
+  }
+
+  buildFeatures {
+    buildConfig true
+  }
+
+  testOptions {
+    unitTests.includeAndroidResources = true
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
+    }
+  }
+
+  lintOptions {
+    disable "GradleCompatible"
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
+  }
+
+  sourceSets {
+    main {
+      java.srcDirs += [
+        "generated/java",
+        "generated/jni"
+      ]
+      if (enableMath) {
+        java.srcDirs += ["src/math/java"]
+      }
+      if (enableVideo) {
+        java.srcDirs += ["src/video/java"]
+      }
+    }
+  }
+}
+
+// Code-block syntax highlighting (tree-sitter) native wiring. This module owns
+// no externalNativeBuild block: RN autolinking compiles src/main/jni/CMakeLists.txt
+// as part of the consumer app's native build, so the app -- not this library --
+// owns the CMake arguments. The enable flag + selected grammars therefore reach
+// CMake through a config file written here during configuration (before any
+// native build task runs) and include()d by CMakeLists.txt.
+def highlightConfigDir = new File(projectDir, "build/generated/highlight")
+highlightConfigDir.mkdirs()
+def highlightConfigFile = new File(highlightConfigDir, "highlight-config.cmake")
+if (codeHighlightActive) {
+  def vendorDir = new File(projectDir, "../cpp/highlight/vendor").canonicalPath
+  def committedGenerated = new File(vendorDir, "generated")
+  def generatedDir
+  if (codeHighlightLanguages.toSorted() == defaultCodeHighlightLanguages.toSorted() && committedGenerated.exists()) {
+    // Common case: the committed default-set registry ships in-tree, no codegen.
+    generatedDir = committedGenerated
+  } else {
+    // Custom language set: regenerate the registry from the vendored .scm files into a
+    // per-app dir (generated-<slug>), mirroring iOS. Android rewrites this on every
+    // gradle configure so it never had iOS's persistent clash, but keying per app keeps
+    // the two platforms' artifact layout identical. (highlight-config.cmake itself stays
+    // at the CMakeLists-fixed shared path and is rewritten each configure.)
+    generatedDir = new File(highlightConfigDir, "generated-${consumerAppSlug}")
+    generatedDir.mkdirs()
+    def genScript = [
+      new File(projectDir, "../../../vendor/gen-registry.mjs"),
+      new File(projectDir, "../cpp/highlight/gen-registry.mjs"),
+    ].find { it.exists() }
+    if (genScript == null) {
+      throw new GradleException("enrichedMarkdown.codeHighlightLanguages is customized but vendor/gen-registry.mjs was not found. Use the default language set or build from the monorepo.")
+    }
+    // Run node directly via ProcessBuilder rather than Project.exec {}, which was
+    // removed in Gradle 9. Runs at configuration time (before the native build),
+    // and surfaces gen-registry's own stderr on failure.
+    def genCmd = ["node", genScript.canonicalPath, "--vendor-dir", vendorDir,
+                  "--languages", codeHighlightLanguages.join(","), "--out", generatedDir.canonicalPath]
+    def genProc = new ProcessBuilder(genCmd).redirectErrorStream(true).start()
+    def genOut = genProc.inputStream.text
+    def genExit = genProc.waitFor()
+    if (genExit != 0) {
+      throw new GradleException("[code-highlight] gen-registry.mjs failed (exit ${genExit}):\n${genOut}")
+    }
+  }
+  highlightConfigFile.text = """\
+set(ENRICHED_MARKDOWN_CODE_HIGHLIGHT ON)
+set(ENRICHED_MARKDOWN_HIGHLIGHT_LANGUAGES "${codeHighlightLanguages.join(';')}")
+set(ENRICHED_MARKDOWN_HIGHLIGHT_GENERATED_DIR "${generatedDir.canonicalPath.replace('\\', '/')}")
+"""
+} else {
+  highlightConfigFile.text = "set(ENRICHED_MARKDOWN_CODE_HIGHLIGHT OFF)\n"
+}
+
+repositories {
+  mavenCentral()
+  google()
+}
+
+def kotlin_version = getExtOrDefault("kotlinVersion")
+
+dependencies {
+  // JVM unit tests (Robolectric) for the library's Kotlin spans/renderers. Run with
+  // `./gradlew :react-native-enriched-markdown:testDebugUnitTest` from an app that
+  // autolinks this module (e.g. apps/react-native-example/android). Mirrors the
+  // standalone @enriched-markdown/android test stack.
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "org.robolectric:robolectric:4.14.1"
+  implementation "com.facebook.react:react-android"
+  implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+  // Baseline Profile installer for AOT compilation hints
+  implementation "androidx.profileinstaller:profileinstaller:1.3.1"
+  // LaTeX math rendering (optional — set enrichedMarkdown.enableMath=false in gradle.properties to exclude)
+  if (enableMath) {
+    implementation("io.github.erweixin:ratex-android:0.1.14")
+  }
+  // Video playback (optional — set "enriched-markdown".enableVideo = false in package.json to exclude)
+  if (enableVideo) {
+    implementation("androidx.media3:media3-exoplayer:1.6.0")
+    implementation("androidx.media3:media3-ui:1.6.0")
+  }
+}
+
+react {
+  jsRootDir = file("../src/")
+  libraryName = "EnrichedMarkdownText"
+  codegenJavaPackageName = "com.swmansion.enriched.markdown"
+}

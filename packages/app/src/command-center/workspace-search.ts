@@ -1,7 +1,7 @@
 import { compareMatchClasses, type MatchClass } from "@getpaseo/protocol/search/text-match";
 import {
-  compareBuiltInScores,
   compareByRecency,
+  compareCommandCenterScores,
   scoreSearchFields,
   searchFieldsMatchClass,
   type CommandCenterScore,
@@ -69,13 +69,14 @@ function scoreCandidate(query: string, fields: CommandCenterSearchFields): Candi
 function compareCandidates(left: Candidate, right: Candidate): number {
   return (
     compareMatchClasses(left.matchClass, right.matchClass) ||
-    compareBuiltInScores(left.score, right.score)
+    compareCommandCenterScores(left.score, right.score)
   );
 }
 
 /**
  * Change-request hits first, host-only matches last; then match class, the workspace's own text
- * ahead of an agent, match quality, and recency.
+ * ahead of an agent, and recency. Positional sub-tiers inside a match class are deliberately
+ * omitted so workspaces do not flip mid-word as a prefix finishes a word or title.
  */
 function compareScoredWorkspaces(left: ScoredWorkspace, right: ScoredWorkspace): number {
   if (left.changeRequestHit !== right.changeRequestHit) {
@@ -89,10 +90,6 @@ function compareScoredWorkspaces(left: ScoredWorkspace, right: ScoredWorkspace):
     if (classDelta !== 0) return classDelta;
   }
   if (left.via !== right.via) return left.via - right.via;
-  if (left.candidate && right.candidate) {
-    const scoreDelta = compareBuiltInScores(left.candidate.score, right.candidate.score);
-    if (scoreDelta !== 0) return scoreDelta;
-  }
   return compareByRecency(left.workspace, right.workspace);
 }
 

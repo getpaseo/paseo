@@ -5,25 +5,66 @@ import { ensurePrivateDirectory } from "./private-files.js";
 import { join } from "node:path";
 import { uptime } from "node:os";
 import { getHostName } from "./host-name.js";
-import { z } from "zod";
 
-export const pidLockInfoSchema = z.object({
-  pid: z.number().int().positive(),
-  startedAt: z.string(),
-  hostname: z.string(),
-  uid: z.number(),
-  listen: z.string().nullable(),
-  serverId: z.string().nullable().optional(),
-  desktopManaged: z.boolean().optional(),
-  heartbeat: z.literal(true).optional(),
-  bootId: z.string().optional(),
-});
+export interface PidLockInfo {
+  pid: number;
+  startedAt: string;
+  hostname: string;
+  uid: number;
+  listen: string | null;
+  serverId?: string | null;
+  desktopManaged?: boolean;
+  heartbeat?: true;
+  bootId?: string;
+}
 
-export interface PidLockInfo extends z.infer<typeof pidLockInfoSchema> {}
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalNullableString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function parseOptionalPidLockFields(
+  record: Record<string, unknown>,
+): Pick<PidLockInfo, "serverId" | "desktopManaged" | "heartbeat" | "bootId"> | null {
+  if (!isOptionalNullableString(record.serverId)) return null;
+  if (record.desktopManaged !== undefined && typeof record.desktopManaged !== "boolean") {
+    return null;
+  }
+  if (record.heartbeat !== undefined && record.heartbeat !== true) return null;
+  if (!isOptionalString(record.bootId)) return null;
+
+  return {
+    ...(record.serverId !== undefined ? { serverId: record.serverId } : {}),
+    ...(record.desktopManaged !== undefined ? { desktopManaged: record.desktopManaged } : {}),
+    ...(record.heartbeat !== undefined ? { heartbeat: record.heartbeat } : {}),
+    ...(record.bootId !== undefined ? { bootId: record.bootId } : {}),
+  };
+}
 
 function parsePidLockInfo(raw: unknown): PidLockInfo | null {
-  const result = pidLockInfoSchema.safeParse(raw);
-  return result.success ? result.data : null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.pid !== "number" || !Number.isInteger(record.pid) || record.pid <= 0) {
+    return null;
+  }
+  if (typeof record.startedAt !== "string" || typeof record.hostname !== "string") return null;
+  if (typeof record.uid !== "number" || !Number.isFinite(record.uid)) return null;
+  if (record.listen !== null && typeof record.listen !== "string") return null;
+
+  const optional = parseOptionalPidLockFields(record);
+  if (!optional) return null;
+
+  return {
+    pid: record.pid,
+    startedAt: record.startedAt,
+    hostname: record.hostname,
+    uid: record.uid,
+    listen: record.listen,
+    ...optional,
+  };
 }
 
 function isErrnoException(err: unknown): err is NodeJS.ErrnoException {

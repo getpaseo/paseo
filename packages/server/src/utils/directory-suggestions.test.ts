@@ -1,6 +1,7 @@
 import { createHook } from "node:async_hooks";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
@@ -778,6 +779,50 @@ describe("rooted queries with a typed parent", () => {
     await expect(
       searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pas" }),
     ).resolves.toEqual([path.join(homeDir, "Developer", "pasta")]);
+  });
+
+  it.for(["~/developer/pas", "~/developer/PASTA"])(
+    "returns the on-disk spelling exactly once for %s",
+    async (query, { skip }) => {
+      if (!existsSync(path.join(homeDir, "developer"))) {
+        skip("Requires a case-insensitive filesystem");
+      }
+      await expect(searchAbsoluteDirectoryPaths({ homeDir, query })).resolves.toEqual([
+        path.join(homeDir, "Developer", "pasta"),
+      ]);
+    },
+  );
+
+  it.for(["~/developer/pas", "~/developer/pasta", "~/developer/"])(
+    "keeps the visible spelling of a symlink for %s",
+    async (query, { skip }) => {
+      const link = path.join(homeDir, "developer");
+      if (existsSync(link)) skip("Requires a case-sensitive filesystem");
+      symlinkSync(path.join(homeDir, "Developer"), link, "junction");
+
+      const suggestions = await searchAbsoluteDirectoryPaths({ homeDir, query });
+      expect(suggestions).toContain(path.join(link, "pasta"));
+      expect(suggestions).not.toContain(path.join(homeDir, "Developer", "pasta"));
+    },
+  );
+
+  it("keeps a symlink under a parent whose spelling differs from the target's parent", async ({
+    skip,
+  }) => {
+    const parent = path.join(homeDir, "developer");
+    if (existsSync(parent)) skip("Requires a case-sensitive filesystem");
+    const target = path.join(homeDir, "Developer", "pasta");
+    const link = path.join(parent, "pasta");
+    mkdirSync(parent);
+    mkdirSync(path.join(target, "children"));
+    symlinkSync(target, link, "junction");
+
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/developer/pasta", limit: 1 }),
+    ).resolves.toEqual([link]);
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "~/developer/pasta/ch" }),
+    ).resolves.toEqual([path.join(link, "children")]);
   });
 
   it("matches the whole tree when the typed parent does not exist", async () => {

@@ -29,12 +29,14 @@ export interface WorkspaceCommandCenterLabels {
   previousTab: string;
   nextTab: string;
   closeCurrentTab: string;
-  renameTab: string;
+  renameAgent: string;
+  renameTerminal: string;
   reloadAgent: string;
   copyResumeCommand: string;
   copyAgentId: string;
   copyTerminalId: string;
   copyFilePath: string;
+  revealInFiles: string;
   closeTabsLeft: string;
   closeTabsRight: string;
   closeOtherTabs: string;
@@ -299,7 +301,10 @@ function buildActiveTabContributions(
       buildQueryAction(source, {
         id: "tab:rename-current",
         rank: 33,
-        title: source.labels.renameTab,
+        title:
+          source.activeTabKind === "agent"
+            ? source.labels.renameAgent
+            : source.labels.renameTerminal,
         keywords: ["tab", "rename", "current"],
         icon: source.icons.rename,
         action: { id: "workspace.tab.rename-current", scope: "workspace" },
@@ -346,6 +351,14 @@ function buildActiveTabContributions(
         keywords: ["tab", "file", "copy", "path"],
         icon: source.icons.copy,
         action: { id: "workspace.tab.copy-file-path", scope: "workspace" },
+      }),
+      buildQueryAction(source, {
+        id: "tab:reveal-in-files",
+        rank: 37,
+        title: source.labels.revealInFiles,
+        keywords: ["tab", "file", "reveal", "files", "explorer"],
+        icon: source.icons.files,
+        action: { id: "workspace.tab.reveal-in-files", scope: "workspace" },
       }),
     );
   }

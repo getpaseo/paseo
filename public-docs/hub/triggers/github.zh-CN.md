@@ -1,208 +1,206 @@
 ---
 title: GitHub 触发器
-description: 由特定的 GitHub issue、PR、评论和标签启动 Hub workflow。
+description: 根据 GitHub issue、Pull Request、评论、推送和标签启动 Hub Agent。
 nav: GitHub
 ---
 
 # GitHub 触发器 {#github-triggers}
 
-使用语义化的 GitHub 事件，由某一个 GitHub 操作启动 workflow。把下面的 workflow 添加到一个仓库中（该仓库的 `.paseo/hub.yml` 定义了 `dev` 环境和 `codex` Agent），然后激活配置包。
+使用语义化 GitHub 事件，从单个 GitHub 操作启动 Agent。请先在 **Integrations** 下连接 GitHub 账号（自托管 Hub 请先配置 [GitHub App](/docs/hub/self-hosting/github-app)）。
 
 ## 分拣新 issue {#triage-new-issues}
 
-`.paseo/workflows/triage-issue.yml`：
+`.paseo/triggers/triage-issue.yml`：
 
 ```yaml
 name: triage-issue
-on: github.issue_created
-max_runtime: 2h
-filters:
-  repo: example/project
-  from_users: [maintainer]
-steps:
-  - id: triage
-    environment: dev
-    max_runtime: 30m
-    idle_timeout: 5m
-    agent: codex
-    github:
-      connection: example-github
-      repositories: [example/project]
-      permissions:
-        issues: write
-    prompt:
-      - text: |
-          Triage the new issue. Add the appropriate labels and leave a short comment
-          explaining the result with gh. Use this event context:
-          ${{ paseo.context }}
-          Call hub.finish_execution when done.
+on:
+  github.issue_created:
+    connection: acme-github
+    filters:
+      repo: acme/project
+      from_users: [maintainer]
+run:
+  target:
+    daemon: devbox
+    cwd: /workspace/project
+  agent:
+    provider: codex
+    mode: full-access
+  max_runtime: 30m
+  idle_timeout: 5m
+  github:
+    connection: acme-github
+    repositories: [acme/project]
+    permissions:
+      issues: write
+  prompt: |
+    Triage the new issue, apply appropriate labels with gh, and post a short summary using reply.
+    Event context:
+    ${{ paseo.context }}
+    Call finish_execution when done.
 ```
 
-`github.issue_created` 只在有人创建 issue 时触发。`from_users` 是必填的，匹配引发该事件的 GitHub 登录名。
+`github.issue_created` 仅在打开新 issue 时触发。`from_users` 为必填项，匹配触发该事件的 GitHub 登录名。
 
-## 审查新的 PR {#review-new-pull-requests}
+## 审查 Pull Request {#review-pull-requests}
 
-`.paseo/workflows/review-pull-request.yml`：
+`.paseo/triggers/review-pr.yml`：
 
 ```yaml
-name: review-pull-request
-on: github.pull_request_created
-max_runtime: 2h
-filters:
-  repo: example/project
-  from_users: [maintainer]
-steps:
-  - id: review
-    environment: dev
-    max_runtime: 90m
-    idle_timeout: 10m
-    agent: codex
-    github:
-      connection: example-github
-      repositories: [example/project]
-      permissions:
-        contents: read
-        pull_requests: write
-    prompt:
-      - text: |
-          Review the new pull request and submit your findings with gh. Use this event context:
-          ${{ paseo.context }}
-          Call hub.finish_execution when done.
+name: review-pr
+on:
+  github.pull_request_ready_for_review:
+    connection: acme-github
+    filters:
+      repo: acme/project
+      from_users: [maintainer]
+run:
+  target:
+    daemon: devbox
+    cwd: /workspace/project
+  agent:
+    provider: codex
+    mode: full-access
+  max_runtime: 90m
+  idle_timeout: 10m
+  github:
+    connection: acme-github
+    repositories: [acme/project]
+    permissions:
+      contents: read
+      pull_requests: write
+  prompt: |
+    Review the pull request and submit your findings with gh.
+    Fetch live PR state with gh pr view before reviewing and before posting.
+    Skip posting if the PR is draft or its head SHA changed.
+    Event context:
+    ${{ paseo.context }}
+    Call finish_execution when done.
 ```
 
-`github.pull_request_created` 只在有人创建 PR 时触发。
+使用 `github.pull_request_created` 在 Pull Request 打开时运行，使用 `github.pull_request_ready_for_review` 等待草稿转为可审查，或使用 `github.pull_request_synchronized` 在向打开的 Pull Request 推送新提交时运行。
 
-若要等草稿完成后再开始审查，将上例的 `on` 改为 `github.pull_request_ready_for_review`。只有将草稿 PR 标记为可审查时才会触发；创建 PR、后续 push 和转回草稿都不会触发。`from_users` 匹配执行此操作的用户。
+Pull Request 上下文包含 `github.pull_request.draft` 和 `github.pull_request.head_sha`。把 Pull Request 转回草稿不会取消已经在运行中的任务，因此在提交审查前请通过 `gh pr view` 检查实时状态。
 
-PR webhook 的上下文通过 `github.pull_request.draft` 和 `github.pull_request.head_sha` 提供投递时的草稿状态和 head commit。其他事件（包括 PR 会话评论）的此字段为 `null`。审查前及发布结果前，通过 `gh pr view` 重新获取 PR；如果它已成为草稿或 head 与已审查的 SHA 不同，就结束运行而不发布结果。转回草稿不会取消已启动的 Hub 运行，workflow 应自行检查状态。
+## 回复评论 {#respond-to-comments}
 
-## 回复新评论 {#respond-to-new-comments}
-
-`.paseo/workflows/respond-to-issue-comment.yml`：
+`.paseo/triggers/respond-issue-comment.yml`：
 
 ```yaml
-name: respond-to-issue-comment
-on: github.issue_comment_created
-max_runtime: 2h
-filters:
-  repo: example/project
-  contains: "@paseo"
-  from_users: [maintainer]
-steps:
-  - id: respond
-    environment: dev
-    max_runtime: 30m
-    idle_timeout: 5m
-    agent: codex
-    github:
-      connection: example-github
-      repositories: [example/project]
-      permissions:
-        issues: write
-    prompt:
-      - text: |
-          Respond to the new issue comment with gh. Address this request:
-          ${{ paseo.prompt }}
-          Use this event context:
-          ${{ paseo.context }}
-          Call hub.finish_execution when done.
+name: respond-issue-comment
+on:
+  github.issue_comment_created:
+    connection: acme-github
+    filters:
+      repo: acme/project
+      contains: "@paseo"
+      exclude_contains: "@paseo-deploy"
+      from_users: [maintainer]
+run:
+  target:
+    daemon: devbox
+    cwd: /workspace/project
+  agent:
+    provider: codex
+    mode: full-access
+  max_runtime: 30m
+  idle_timeout: 5m
+  prompt: |
+    Answer the issue comment using reply, then call finish_execution.
+
+    <user-prompt>
+    ${{ paseo.prompt }}
+    </user-prompt>
+    Event context:
+    ${{ paseo.context }}
+  outputs:
+    github.reply:
+      max: 1
+      required: true
 ```
 
-`.paseo/workflows/respond-to-pull-request-comment.yml`：
+issue 评论使用 `github.issue_comment_created`，Pull Request 对话评论使用 `github.pull_request_comment_created`。GitHub 会把两者都当作 issue 评论投递，Hub 会替你区分。
 
-```yaml
-name: respond-to-pull-request-comment
-on: github.pull_request_comment_created
-max_runtime: 2h
-filters:
-  repo: example/project
-  contains: "@paseo"
-  from_users: [maintainer]
-steps:
-  - id: respond
-    environment: dev
-    max_runtime: 30m
-    idle_timeout: 5m
-    agent: codex
-    github:
-      connection: example-github
-      repositories: [example/project]
-      permissions:
-        pull_requests: write
-    prompt:
-      - text: |
-          Respond to the new pull-request conversation comment with gh. Address this request:
-          ${{ paseo.prompt }}
-          Use this event context:
-          ${{ paseo.context }}
-          Call hub.finish_execution when done.
-```
+`exclude_contains` 会跳过包含其他触发器专用文本的评论，例如另一个命令前缀。
 
-issue 讨论使用 `github.issue_comment_created`，PR 对话使用 `github.pull_request_comment_created`。针对某一行改动的评论属于 diff 评论，由旧的 `github.pull_request_review_comment` 事件处理。
+对于 `github.issue_comment_created`、`github.pull_request_comment_created`、`github.issue_comment` 和 `github.pull_request_review_comment`，Hub 会随运行状态添加表情回应：接收时 👀、启动时 🚀、完成时 👍、失败时 👎。
 
-对于 `github.issue_comment_created`、`github.pull_request_comment_created`、`github.issue_comment` 和 `github.pull_request_review_comment`，Hub 接受投递时会回应 👀，Agent 启动时回应 🚀，完成时回应 👍，失败时回应 👎。
+## 根据标签开始工作 {#start-work-on-a-label}
 
-## issue 就绪时开始工作 {#start-work-when-an-issue-becomes-ready}
-
-`.paseo/workflows/implement-ready-issue.yml`：
+`.paseo/triggers/implement-ready-issue.yml`：
 
 ```yaml
 name: implement-ready-issue
-on: github.issue_label_added
-max_runtime: 2h
-filters:
-  repo: example/project
-  label: ready-for-agent
-  from_users: [maintainer]
-steps:
-  - id: implement
-    environment: dev
-    max_runtime: 90m
-    idle_timeout: 10m
-    agent: codex
-    github:
-      connection: example-github
-      repositories: [example/project]
-      permissions:
-        contents: write
-        issues: write
-        pull_requests: write
-    prompt:
-      - text: |
-          Implement the issue that was marked ready for an agent. Create a branch,
-          push it, and open a pull request with gh. Use this event context:
-          ${{ paseo.context }}
-          Call hub.finish_execution when done.
+on:
+  github.issue_label_added:
+    connection: acme-github
+    filters:
+      repo: acme/project
+      label: ready-for-agent
+      from_users: [maintainer]
+run:
+  target:
+    daemon: devbox
+    cwd: /workspace/project
+    worktree:
+      mode: branch-off
+      newBranch: trigger-${{ paseo.execution.id }}
+      base: origin/main
+  agent:
+    provider: codex
+    mode: full-access
+  max_runtime: 90m
+  idle_timeout: 10m
+  github:
+    connection: acme-github
+    repositories: [acme/project]
+    permissions:
+      contents: write
+      issues: write
+      pull_requests: write
+  prompt: |
+    Implement the labeled issue on this worktree branch, push it, and open a pull request with gh.
+    Post the PR link to the issue using reply, then call finish_execution.
+    Event context:
+    ${{ paseo.context }}
 ```
 
-`label` 匹配此次事件添加的标签。匹配不区分大小写，因此 `ready-for-agent` 也能匹配 `Ready-For-Agent`。
+`label` 匹配本次事件添加的精确标签（不区分大小写）。为 Pull Request 添加标签时请使用 `github.pull_request_label_added`。
 
-## 选择事件 {#choose-the-event}
+## 支持的事件 {#supported-events}
 
-| `on`                                   | 触发时机                 |
-| -------------------------------------- | ------------------------ |
-| `github.issue_created`                 | 创建 issue。             |
-| `github.pull_request_created`          | 创建 PR。                |
-| `github.pull_request_ready_for_review` | 草稿 PR 被标记为可审查。 |
-| `github.issue_comment_created`         | 在 issue 上创建评论。    |
-| `github.pull_request_comment_created`  | 在 PR 上创建对话评论。   |
-| `github.issue_label_added`             | 为 issue 添加标签。      |
-| `github.pull_request_label_added`      | 为 PR 添加标签。         |
+| `on`                                   | 触发时机                             |
+| -------------------------------------- | ------------------------------------ |
+| `github.issue_created`                 | 打开了 issue。                       |
+| `github.pull_request_created`          | 打开了 Pull Request。                |
+| `github.pull_request_ready_for_review` | 草稿 Pull Request 被标记为可审查。   |
+| `github.pull_request_synchronized`     | 向打开的 Pull Request 推送了新提交。 |
+| `github.issue_comment_created`         | issue 上发表了评论。                 |
+| `github.pull_request_comment_created`  | Pull Request 上发表了对话评论。      |
+| `github.issue_label_added`             | 为 issue 添加了标签。                |
+| `github.pull_request_label_added`      | 为 Pull Request 添加了标签。         |
 
-issue 上的评论选择 `github.issue_comment_created`，PR 上的对话评论选择 `github.pull_request_comment_created`。GitHub 把两者都作为 issue 评论投递；Hub 会替你区分它们。针对某一行改动的评论属于 diff 评论，由旧的 `github.pull_request_review_comment` 事件处理。
+当你需要 diff 审查评论或推送事件时，Hub 也接受原始 webhook 事件名称（`github.issues`、`github.issue_comment`、`github.pull_request`、`github.pull_request_review`、`github.pull_request_review_comment`、`github.push`）。新建触发器建议优先使用语义化事件。
 
-## 过滤 GitHub 事件 {#filter-github-events}
+## 过滤条件 {#filters}
 
-每个来源于外部的 workflow 都需要一个非空的 `from_users` 允许列表。GitHub 过滤器以 AND 方式组合：仓库、连接、发送者、内容、变化的标签以及要求当前具有的标签都必须匹配。
+每个 GitHub 触发器都要求设置非空的 `from_users` 白名单。所有提供的过滤条件按逻辑与组合。
 
-对于 issue 和 PR 事件，`contains` 和 `pattern` 检查标题加正文。对于评论事件，它们检查评论正文。`contains` 是子串匹配；`pattern` 匹配开头。
+对于 `github.push`，请使用 `from_users: ["*"]` 接受来自任意发送者的推送。Hub 不会从推送事件中提取发送者的登录名，因此指定登录名的列表始终无法匹配。
 
-当被添加的标签本身很重要时，请在 `github.issue_label_added` 或 `github.pull_request_label_added` 中使用 `label`。当条目必须当前具有列出的每一个标签时，请使用 `labels`。两者比较标签时都不区分大小写。例如，`labels: [bug, backend]` 要求同时具有这两个标签，而不是其中任意一个。
+| 过滤条件           | 适用于                                                        | 含义                                                       |
+| ------------------ | ------------------------------------------------------------- | ---------------------------------------------------------- |
+| `from_users`       | 所有 GitHub 事件                                              | 允许触发运行的 GitHub 登录名。                             |
+| `repo`             | 所有 GitHub 事件                                              | `owner/name` 形式的仓库。                                  |
+| `contains`         | issue、Pull Request 和评论事件                                | issue 或 PR 标题加正文中的子串，或评论正文中的子串。       |
+| `exclude_contains` | issue、Pull Request 和评论事件                                | 命中后会阻止匹配的子串。                                   |
+| `pattern`          | issue、Pull Request 和评论事件                                | 上述同一文本开头的前缀。                                   |
+| `label`            | `github.issue_label_added`、`github.pull_request_label_added` | 必填。本次投递添加的标签，不区分大小写。                   |
+| `labels`           | issue、Pull Request 和评论事件                                | issue 或 PR 当前必须同时具备所有列出的标签，不区分大小写。 |
 
-[配置参考](/docs/hub/configuration/hub-yml#github-events-and-filters)列出了所有 GitHub 事件和过滤器。
+## 回复与 GitHub 令牌 {#replies-and-github-tokens}
 
-## 旧事件兼容 {#legacy-event-compatibility}
+针对 issue 或 Pull Request 的 GitHub 触发器会自动授予 `reply` 工具（`github.reply`），用于在对应 issue 或 Pull Request 下发表评论，并在 Hub 使用 HTTPS 时附带 **Open in Paseo** 链接。如需限制 `max` 次数或设置 `required: true`，请添加 `run.outputs.github.reply`。
 
-现有的 workflow 使用 `github.issues`、`github.issue_comment`、`github.pull_request_review`、`github.pull_request_review_comment` 和 `github.push` 时行为保持不变。新的 workflow 请优先使用上面的语义化事件。语义化 workflow 和旧 workflow 可能同时匹配同一次投递，因此会各自启动一次运行。
-
-GitHub 触发器不授予任何 token。权限来自需要它的 step 上的 `github` 块。GitHub 没有 `hub.reply` 能力；Agent 在声明的连接、仓库和权限范围内通过 `gh` 执行操作。
+GitHub 触发器默认不授予 `GH_TOKEN`。如果 Agent 需要通过 `git` 或 `gh` 推送分支、创建 Pull Request 或编辑标签，请添加 [`run.github` 块](/docs/hub/github)。

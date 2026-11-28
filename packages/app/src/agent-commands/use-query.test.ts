@@ -66,4 +66,23 @@ describe("fetchAgentCommands", () => {
 
     expect(client.calls).toEqual([{ agentId: "agent-1", draftConfig: undefined }]);
   });
+
+  it("deduplicates duplicate command names from the daemon, keeping the first entry", async () => {
+    const client = createClient(
+      commandsPayload([
+        { name: "goal", description: "Run until goal is finished", argumentHint: "" },
+        { name: "plan", description: "Plan carefully before executing a task.", argumentHint: "" },
+        { name: "plan", description: "Local plan skill description", argumentHint: "" },
+        { name: "review", description: "Review changes", argumentHint: "" },
+      ]),
+    );
+
+    const commands = await fetchAgentCommands({ client, agentId: "agent-1" });
+
+    expect(commands).toEqual([
+      { name: "goal", description: "Run until goal is finished", argumentHint: "" },
+      { name: "plan", description: "Plan carefully before executing a task.", argumentHint: "" },
+      { name: "review", description: "Review changes", argumentHint: "" },
+    ]);
+  });
 });

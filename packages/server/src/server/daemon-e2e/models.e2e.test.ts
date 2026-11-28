@@ -519,3 +519,60 @@ test("a provider update outlives the client that started it and a new client rea
     await daemon.close();
   }
 }, 60000);
+
+test("bundled goose lists configured providers and switches models across providers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-goose-models-"));
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: root,
+    cleanup: false,
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["goose-provider"]),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.16.0",
+  });
+  const openRouterModel = "openrouter/anthropic/claude-sonnet-4.5";
+  const openAiModel = "openai/gpt-4o";
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    expect(client.getLastServerInfoMessage()?.features?.gooseProvider).toBe(true);
+    expect(
+      (await client.getProvidersSnapshot()).entries.some((entry) => entry.provider === "goose"),
+    ).toBe(false);
+
+    await client.patchDaemonConfig({
+      providers: {
+        goose: {
+          enabled: true,
+          command: [process.execPath, path.resolve(import.meta.dirname, "goose-fixture.cjs")],
+        },
+      },
+    });
+    const catalog = await client.listProviderModels("goose", { cwd: root });
+    expect(catalog.error).toBeNull();
+    expect(catalog.models.map((model) => [model.id, model.isDefault === true])).toEqual([
+      [openRouterModel, true],
+      [openAiModel, false],
+    ]);
+
+    const agent = await client.createAgent({ provider: "goose", cwd: root, model: openAiModel });
+    await client.sendMessage(agent.id, "Which provider and model are you running?");
+    expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
+    await client.setAgentModel(agent.id, openRouterModel);
+    await client.sendMessage(agent.id, "Which provider and model are you running now?");
+    expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
+    expect((await client.fetchAgent(agent.id))?.agent.model).toBe(openRouterModel);
+    const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
+    expect(
+      timeline.entries.flatMap(({ item }) =>
+        item.type === "assistant_message" ? [item.text] : [],
+      ),
+    ).toEqual([openAiModel, openRouterModel]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);

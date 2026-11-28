@@ -160,11 +160,23 @@ export async function expectUsageCardOrder(page: Page, reportIds: string[]): Pro
     .toEqual(reportIds);
 }
 
-/** Turns a card on or off from its header switch, named by its source and account. */
-export async function setUsageCardOn(page: Page, name: string, on: boolean): Promise<void> {
-  const cardSwitch = usageModal(page).getByRole("switch", { name: `Show ${name}`, exact: true });
-  await cardSwitch.click();
-  await expect(cardSwitch).toBeChecked({ checked: on });
+/** Turns a source on or off from the Sources page in Usage Settings, by report id. */
+export async function setUsageCardOn(page: Page, reportId: string, on: boolean): Promise<void> {
+  await openUsageSources(page);
+  const item = visible(page, `usage-source-toggle-${reportId}`);
+  const checked = (await item.getAttribute("aria-checked")) === "true";
+  if (checked !== on) {
+    await item.click();
+    await expect(item).toHaveAttribute("aria-checked", String(on));
+  }
+  await closeUsageOptions(page);
+}
+
+/** Opens the Sources submenu inside Usage Settings (flyout on wide, in-place page on compact). */
+export async function openUsageSources(page: Page): Promise<void> {
+  await openUsageOptions(page);
+  await visible(page, "usage-options-sources").click();
+  await expect(page.locator('[data-testid^="usage-source-toggle-"]:visible').first()).toBeVisible();
 }
 
 /** Drags a card by its handle until it sits above another card, with the mouse. */
@@ -245,18 +257,14 @@ export function pinRow(scope: Locator, source: string, window: string): Locator 
 
 /**
  * A report card whose window rows do not pin: no pin toggle, no pin glyph, and nothing focusable
- * but the header's buttons and on/off switch, so no row presses or highlights on hover.
+ * but the header's buttons, so no row presses or highlights on hover.
  */
 export async function expectUnpinnableRows(card: Locator): Promise<void> {
   await expect(card.getByRole("checkbox")).toHaveCount(0);
   await expect(card.locator('[data-testid^="usage-pin-"]')).toHaveCount(0);
   const focusable = await card
     .locator("[tabindex]")
-    .evaluateAll(
-      (nodes) =>
-        nodes.filter((node) => !["button", "switch"].includes(node.getAttribute("role") ?? ""))
-          .length,
-    );
+    .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("role") !== "button").length);
   expect(focusable).toBe(0);
 }
 
@@ -388,6 +396,7 @@ export async function closeUsageOptions(page: Page): Promise<void> {
   await waitForSettledPosition(usageOptionsSurface(page));
   await page.mouse.click(0, 0);
   await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+  await expect(page.locator('[data-testid^="usage-source-toggle-"]:visible')).toHaveCount(0);
 }
 
 export async function showUsageAs(page: Page, displayAs: "used" | "remaining") {

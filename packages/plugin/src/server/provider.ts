@@ -12,7 +12,9 @@ export const PROVIDER_CAPABILITIES = [
   "session.can_stop_runtime",
   "session.archive",
   "session.configure",
+  "session.launch_wrap",
   "session.list",
+  "session.metrics",
   "session.persistence",
   "session.revert.both",
   "session.revert.conversation",
@@ -21,24 +23,53 @@ export const PROVIDER_CAPABILITIES = [
   "session.unarchive",
   "permission",
   "permission.tool_policy",
+  "request.cancel",
   "timeline.plugin",
 ] as const;
 
 export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 
+export const ProviderCatalogRefreshModeSchema = z.enum(["background", "on_demand"]);
+
+export type ProviderCatalogRefreshMode = z.infer<typeof ProviderCatalogRefreshModeSchema>;
+
+export const ProviderClientInfoSchema = z
+  .object({
+    name: z.string().min(1),
+    title: z.string().min(1).optional(),
+    version: z.string().min(1),
+  })
+  .strip();
+
+export type ProviderClientInfo = z.infer<typeof ProviderClientInfoSchema>;
+
 export interface ProviderRegistration {
   /** Activate only while agents.providers contains this provider ID, independently of enabled. */
   requiresConfiguration?: boolean;
+  /**
+   * How Paseo refreshes this provider's model/mode catalog:
+   * - `"background"`: refreshes passively on open and on the background timer (default for direct providers).
+   * - `"on_demand"`: discovers once when uncached or when the binary changes, caches on disk across restarts, and skips the background timer (default for ACP providers).
+   */
+  catalogRefresh?: ProviderCatalogRefreshMode;
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
   /** Default executable and arguments; the daemon resolves overrides before status/connect. */
   command?: readonly [string, ...string[]];
+  /**
+   * Sessions can run behind an `agent.open.before` wrap: the connection offers `session.launch_wrap`
+   * and spawns each session as `[...config.wrap, command, ...args]`. Paseo publishes it on the
+   * provider snapshot before the first connection.
+   */
+  launchWrap?: boolean;
   status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
   id: string;
   label: string;
   description?: string;
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
+  /** http(s) page that helps users set up and troubleshoot the provider. Paseo opens it. */
+  docsUrl?: string;
   /** How users install the provider's CLI and which version they run. Every member is optional. */
   installation?: ProviderInstallation;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
@@ -158,6 +189,7 @@ export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 
 export interface ProviderConnectRequest {
   launch?: ProviderLaunch;
+  clientInfo?: ProviderClientInfo;
   versions: readonly number[];
   capabilities: readonly string[];
 }
@@ -209,6 +241,8 @@ export interface ProviderSessionConfig {
   providerOptions?: Readonly<Record<string, unknown>>;
   title?: string;
   persist: boolean;
+  /** Spawn the session as `[...wrap, command, ...args]`. Sent only with `session.launch_wrap`. */
+  wrap?: readonly [string, ...string[]];
 }
 
 export interface ProviderConfigChanges {
@@ -375,7 +409,13 @@ export type ProviderInput =
   | { type: "session.archive"; requestId: string; persistence: ProviderPersistence }
   | { type: "session.unarchive"; requestId: string; persistence: ProviderPersistence }
   | { type: "session.can_stop_runtime"; requestId: string; sessionId: string }
-  | { type: "session.close"; requestId: string; sessionId: string };
+  | { type: "session.close"; requestId: string; sessionId: string }
+  /**
+   * Paseo stopped waiting for the request with this `requestId`, such as a catalogue refresh that
+   * passed its deadline. Stop its work and release what it started; Paseo ignores later events for
+   * it. Sent only when the connection offers `request.cancel`.
+   */
+  | { type: "request.cancel"; requestId: string };
 
 export interface ProviderThinkingOption {
   id: string;
@@ -488,6 +528,7 @@ export interface ProviderCommand {
   name: string;
   description: string;
   argumentHint?: string;
+  kind?: "command" | "skill";
 }
 
 export interface ProviderError {
@@ -546,6 +587,17 @@ export interface ProviderUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+}
+
+/**
+ * One row of provider-owned detail about a session or a turn. Format `value` for
+ * reading: Paseo shows it as given.
+ */
+export interface ProviderMetric {
+  label: string;
+  value: string;
+  /** Colors the value. Omit it for an ordinary value. */
+  tone?: "default" | "ok" | "warning" | "danger";
 }
 
 interface ProviderTimelineIdentity {
@@ -723,8 +775,19 @@ export type ProviderEvent =
       turnId: string;
       state: "started" | "completed" | "failed" | "canceled";
       error?: ProviderError;
+      /** Shown on the turn's footer. Read when `state` is `"completed"`. */
+      metrics?: readonly ProviderMetric[];
     }
   | { type: "session.usage"; sessionId: string; turnId?: string; usage: ProviderUsage }
+  | {
+      type: "session.metrics";
+      sessionId: string;
+      /**
+       * Replaces the metrics shown for the session. An empty list clears them. Publish only when
+       * `session.metrics` was negotiated: a Paseo that does not offer it rejects this event.
+       */
+      metrics: readonly ProviderMetric[];
+    }
   | { type: "session.config"; sessionId: string; config: ProviderConfigState }
   | { type: "session.commands"; sessionId: string; commands: ProviderCommand[] }
   | { type: "session.permission"; sessionId: string; request: ProviderPermissionRequest }
@@ -768,6 +831,8 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
   switch (input.type) {
     case "session.can_stop_runtime":
       return ["session.can_stop_runtime"];
+    case "request.cancel":
+      return ["request.cancel"];
     case "catalog":
     case "session.interrupt":
     case "session.close":
@@ -778,6 +843,7 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
       const capabilities: ProviderCapability[] = [];
       if (input.persistence) capabilities.push("session.persistence");
       if (input.config.toolPolicy) capabilities.push("permission.tool_policy");
+      if (input.config.wrap) capabilities.push("session.launch_wrap");
       return capabilities;
     }
     case "session.prompt":
@@ -881,6 +947,7 @@ const sessionConfigSchema = z
     providerOptions: z.record(z.string(), z.unknown()).optional(),
     title: z.string().optional(),
     persist: z.boolean(),
+    wrap: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
 const externalResourceSchema = z
@@ -1098,6 +1165,7 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
     })
     .strict(),
   z.object({ type: z.literal("session.close"), requestId: idSchema, sessionId: idSchema }).strict(),
+  z.object({ type: z.literal("request.cancel"), requestId: idSchema }).strict(),
 ]);
 
 const modeSchema = z
@@ -1214,7 +1282,12 @@ const noticeSchema = z
   })
   .strip();
 const commandSchema = z
-  .object({ name: idSchema, description: z.string(), argumentHint: z.string().optional() })
+  .object({
+    name: idSchema,
+    description: z.string(),
+    argumentHint: z.string().optional(),
+    kind: z.enum(["command", "skill"]).optional(),
+  })
   .strip();
 const usageSchema = z
   .object({
@@ -1224,6 +1297,13 @@ const usageSchema = z
     totalCostUsd: z.number().optional(),
     contextWindowMaxTokens: z.number().optional(),
     contextWindowUsedTokens: z.number().optional(),
+  })
+  .strip();
+const metricSchema = z
+  .object({
+    label: z.string(),
+    value: z.string(),
+    tone: z.enum(["default", "ok", "warning", "danger"]).optional(),
   })
   .strip();
 const worktreeCommandSchema = z
@@ -1546,6 +1626,7 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       turnId: idSchema,
       state: z.enum(["started", "completed", "failed", "canceled"]),
       error: providerErrorSchema.optional(),
+      metrics: z.array(metricSchema).optional(),
     })
     .strip(),
   z
@@ -1554,6 +1635,13 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       sessionId: idSchema,
       turnId: idSchema.optional(),
       usage: usageSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("session.metrics"),
+      sessionId: idSchema,
+      metrics: z.array(metricSchema),
     })
     .strip(),
   z

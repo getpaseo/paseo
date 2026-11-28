@@ -8,6 +8,7 @@ import {
   windowFromUsedPct,
   type UsageWindow,
   type UsageAccount,
+  type UsageScope,
   type UsageReport,
   type UsageDetail,
 } from "@getpaseo/plugin/server/usage";
@@ -45,18 +46,44 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
   }
 }
 
-export async function discover(): Promise<UsageAccount[]> {
-  const candidates: UsageInput[] = ["COPILOT_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"].map(
-    (locator) => ({ store: "env", locator }),
-  );
-  if (process.env.APPDATA)
+const OPENCODE_COPILOT_PROVIDERS = new Set(["github-copilot", "github-copilot-enterprise"]);
+
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
+  const candidates: UsageInput[] = [];
+  for (const locator of ["COPILOT_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"]) {
+    const value = env[locator];
+    if (value && (!matchHostEnv || value === process.env[locator])) {
+      candidates.push({ store: "env", locator });
+    }
+  }
+  // File store reflects the host GitHub CLI login (matching Host -> Usage).
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
+  if (env.APPDATA)
     candidates.push({
       store: "file",
-      locator: join(process.env.APPDATA, "GitHub CLI", "hosts.yml"),
+      locator: join(env.APPDATA, "GitHub CLI", "hosts.yml"),
     });
-  candidates.push({ store: "file", locator: join(homedir(), ".config", "gh", "hosts.yml") });
+  candidates.push({ store: "file", locator: join(home, ".config", "gh", "hosts.yml") });
   for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
+    scope.provider === "copilot" ||
+    (scope.provider === "opencode" && OPENCODE_COPILOT_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }
 
 export async function fetchUsage(

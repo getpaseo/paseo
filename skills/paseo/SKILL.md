@@ -9,7 +9,7 @@ Paseo is a remote daemon that manages coding agents, terminals. Control it throu
 
 Call `list_hosts` to discover the calling daemon (`self`) and its registered destinations (`hosts`). Use a destination's `serverId` for tool calls; labels are display names.
 
-`create_workspace`, `list_workspaces`, `create_agent`, `send_agent_prompt`, `get_agent_status`, `get_agent_activity`, and `list_agents` accept `serverId`. Omit it for the calling daemon. Other MCP tools operate on the calling daemon.
+`create_workspace`, `list_workspaces`, `update_workspace`, `create_agent`, `send_agent_prompt`, `get_agent_status`, `get_agent_activity`, and `list_agents` accept `serverId`. Omit it for the calling daemon. Other MCP tools operate on the calling daemon.
 
 Keep an agent's `{ serverId, agentId }` together. For example, call `send_agent_prompt` with:
 
@@ -42,17 +42,19 @@ For a local daemon, `project create` defaults to the current directory and resol
 
 ## Workspaces
 
-**`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge` for a change request. Use `path` for a local directory or source checkout and `projectId` for the owning project; when no path is supplied, a worktree may resolve its source from `projectId`. `worktreeSlug` controls the managed path. Returns the workspace descriptor centered on `workspaceId`.
+**`create_workspace`** — create a workspace independently of any agent. Required: `isolation` (`local` or `worktree`). Worktree isolation supports `mode: "branch-off" | "checkout-branch" | "checkout-pr"`: use `branchName`/`baseBranch` for a new branch, `branch` for an existing branch, or `prNumber` plus optional `forge` for a change request. Use `path` for a local directory or source checkout and `projectId` for the owning project; when no path is supplied, a worktree may resolve its source from `projectId`. `worktreeSlug` controls the managed path, and `metadata` attaches initial structured JSON metadata. Returns the workspace descriptor centered on `workspaceId` (including `metadata`).
 
-`background: true` hides a workspace from default lists and the sidebar while its contents remain durable and accessible; omit `background` to inherit your current workspace’s value (false without a caller), and override it only when the user explicitly asks.
+`background` hides the workspace from the UI. It inherits your visibility when omitted. Omit it unless the user asks for a specific value.
 
 Choose `baseBranch` explicitly: `origin/main` selects the remote-tracking branch; `refs/heads/main` selects local main. Bare `main` prefers local main when it exists, otherwise origin/main. Paseo retains the resolved ref for workspace comparisons, even after rebasing the branch or changing its PR target.
 
-**`list_workspaces`** — list active workspaces, excluding background workspaces unless `includeBackground: true`.
+**`list_workspaces`** — list active workspaces (including `metadata`), excluding background workspaces unless `includeBackground: true`.
+
+**`update_workspace`** — `{ workspaceId?, title?, metadata? }`. Update a workspace's user-visible title (`null` clears it back to the derived name) and/or patch its structured metadata. Omit `workspaceId` to update your current workspace on the calling daemon (pass `workspaceId` when targeting a remote `serverId`). `metadata` is a top-level JSON patch: keys replace their values, and `null` removes a key. Common keys include `issues` (array of issue URLs or refs) and `body`/`summary`/`notes`, alongside any custom JSON keys.
 
 **`archive_workspace`** — `{ workspaceId }`. Archives the workspace, its agents, and its terminals. Local directories remain; Paseo removes an owned worktree only after its final active workspace reference is archived.
 
-**`rename_workspace`** — `{ workspaceId, name }`. Rename workspace.
+**`rename_workspace`** — `{ workspaceId?, title }`. Rename workspace (kept for backward compatibility; prefer `update_workspace` when also updating metadata).
 
 ## Workspace scripts
 
@@ -84,13 +86,25 @@ Detach is an explicit user action in the subagents track, not an agent tool. A c
 
 Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` when you want explicit reporting or no completion callback.
 
-**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Use for follow-ups to an existing agent. Agent-scoped calls default to `steer`; top-level calls default to `interrupt`. For agent-scoped calls, `steer` waits until the recipient's current turn ends, and only `interrupt` stops a running turn. For top-level calls, `steer` joins the running turn and falls back to interruption when unavailable. CLI agent sends use the same defaults and accept `--behavior steer|interrupt`. Agent-scoped calls return a queued receipt immediately; messages to each recipient deliver together after two quiet seconds, or after the recipient's turn ends if it is running. Top-level calls return after dispatch acknowledgement. Agent-scoped calls default `notifyOnFinish` to true; top-level calls have no parent callback.
-
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
 **`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`; set `includeBackground: true` to include agents in background workspaces.
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
+
+## Sending prompts to agents
+
+**`send_agent_prompt`** — `{ agentId, prompt, activeTurnBehavior? }`. Sends a follow-up to an existing agent and returns at once.
+
+Leave `activeTurnBehavior` out unless the message cannot wait. It decides what happens when the agent is mid-turn:
+
+- `queue` (default): the message waits for the turn to end.
+- `steer`: the agent reads the message at its next step and keeps working. If its provider cannot steer, the turn is interrupted instead.
+- `interrupt`: the turn stops, and a new turn starts with the message.
+
+Read `guidance` in the response. If it says your message is waiting and the message cannot wait, such as a course correction, send a short follow-up with `steer` or `interrupt`. Do not resend the message: the follow-up carries it, and a resent message is read twice.
+
+A steer the agent has not read is lost if its turn stops or is interrupted, along with the messages it carried. For a message that must arrive, use `queue` or `interrupt`.
 
 ## Agent profiles and provider discovery
 
@@ -117,7 +131,7 @@ Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look f
 
 ## Schedules and heartbeats
 
-**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents.
+**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `archiveOnFinish`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents. Runs archive their workspace when they end; pass `archiveOnFinish: false` when someone reads or answers the run afterward.
 
 **`create_heartbeat`** — sends you a prompt on a cron cadence. Required: `prompt`, `cron`. Optional: `timezone`, `name`, `maxRuns`, `expiresIn`. Use for reminders, PR/build babysitting, and status checks that should return to this conversation.
 
@@ -142,6 +156,7 @@ paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
 paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
 paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
 paseo send <agent-id> "<follow-up>"
+paseo send <agent-id> --behavior steer "<follow-up that cannot wait>"
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"
 paseo heartbeat create --cron "*/15 * * * *" "check the build"

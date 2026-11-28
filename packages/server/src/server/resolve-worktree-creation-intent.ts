@@ -1,10 +1,25 @@
 import type { ForgeService, PullRequestCheckoutTarget } from "../services/forge-service.js";
 import type { WorktreeCheckoutRef, WorktreeSource } from "../utils/worktree.js";
+import type { UntrustedWorkspaceSource } from "./workspace-automation-gate.js";
 
 export type WorktreeCreationIntent = Exclude<
   WorktreeSource,
   { kind: "restore" | "restore-from-base" | "restore-commit" }
->;
+> & { untrustedSource?: UntrustedWorkspaceSource };
+
+export function worktreeUntrustedSource(
+  intent: WorktreeCreationIntent,
+): UntrustedWorkspaceSource | undefined {
+  if (intent.kind === "checkout-change-request" && intent.headRepository) {
+    return {
+      kind: "change_request",
+      forge: intent.forge,
+      number: intent.changeRequestNumber,
+      headRepository: intent.headRepository,
+    };
+  }
+  return intent.untrustedSource;
+}
 
 export interface ResolveWorktreeCreationIntentInput {
   worktreeSlug?: string;
@@ -156,7 +171,11 @@ async function fetchChangeRequestHead(params: {
   changeRequest: { number: number; forge?: string };
   repoRoot: string;
   deps: ResolveWorktreeCreationIntentDeps;
-}): Promise<{ baseBranch: string; startPoint: string }> {
+}): Promise<{
+  baseBranch: string;
+  startPoint: string;
+  untrustedSource?: UntrustedWorkspaceSource;
+}> {
   const { input, changeRequest, repoRoot, deps } = params;
   assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
   const checkout = await resolvePrCheckoutIntent({
@@ -165,6 +184,7 @@ async function fetchChangeRequestHead(params: {
     repoRoot,
     deps,
   });
+  const untrustedSource = worktreeUntrustedSource(checkout);
   const startPoint = `refs/paseo/change-requests/${changeRequest.number}`;
   const remote = await deps.fetchRef({
     repoRoot,
@@ -180,10 +200,10 @@ async function fetchChangeRequestHead(params: {
       sources: [{ remoteName: remote, remoteRef: `refs/heads/${baseName}` }],
       destination: baseBranch,
     });
-    return { baseBranch, startPoint };
+    return { baseBranch, startPoint, untrustedSource };
   } catch {
     // Without the remote's copy, the base resolves as any base branch name does.
-    return { baseBranch: baseName, startPoint };
+    return { baseBranch: baseName, startPoint, untrustedSource };
   }
 }
 

@@ -1,10 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { readPiTranscript, type PiTranscript } from "./transcript.js";
-import { createExternalProcessEnv } from "../../../paseo-env.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
-import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
+import { createProviderEnv, type ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
@@ -58,13 +57,17 @@ export class PiCliRuntime implements PiRuntime {
       runtimeSettings: this.options.runtimeSettings,
       session: input,
     });
-    launch.env = createExternalProcessEnv(globalThis.process.env, launch.env ?? {});
+    launch.env = createProviderEnv({
+      baseEnv: globalThis.process.env,
+      overlays: [launch.env],
+    });
     const [command, ...args] = launch.argv;
     const processLaunch: JsonlRpcLaunch = {
       command,
       args,
       cwd: launch.cwd,
       env: launch.env,
+      wrap: launch.wrap,
     };
     const spawn = this.spawnProcess;
     const processOptions = {
@@ -127,6 +130,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
       type: "prompt",
       message,
       ...(images?.length ? { images } : {}),
+      // Pi can be busy with a run it started itself (an extension message, a background
+      // result) before it reports agent_start. It rejects a bare prompt then; followUp queues
+      // the prompt into that run. Pi ignores the option when it is idle.
+      streamingBehavior: "followUp",
     });
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {

@@ -45,8 +45,11 @@ describe("orchestration skill paths", () => {
     const home = os.homedir();
 
     expect(resolveSkillTargets()).toMatchObject({
-      agentsDir: path.join(home, ".agents", "skills"),
-      claudeDir: path.join(home, ".claude", "skills"),
+      installDirs: [
+        path.join(home, ".agents", "skills"),
+        path.join(home, ".claude", "skills"),
+        path.join(home, ".gemini", "config", "skills"),
+      ],
       codexDir: path.join(home, ".codex", "skills"),
     });
   });

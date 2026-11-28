@@ -86,7 +86,6 @@ interface SplitContainerProps {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
-  onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string, paneTabs: WorkspaceTabDescriptor[]) => Promise<void> | void;
@@ -175,7 +174,6 @@ export function SplitContainer({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
-  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -289,7 +287,6 @@ export function SplitContainer({
                 onCopyResumeCommand={onCopyResumeCommand}
                 onCopyAgentId={onCopyAgentId}
                 onCopyTerminalId={onCopyTerminalId}
-                onCopyFilePath={onCopyFilePath}
                 onReloadAgent={onReloadAgent}
                 onRenameTab={onRenameTab}
                 onCloseTabsToLeft={onCloseTabsToLeft}
@@ -427,7 +424,6 @@ function SplitNodeView({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
-  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -462,8 +458,12 @@ function SplitNodeView({
     groupId ? state.splitSizesByWorkspace[workspaceKey]?.[groupId] : undefined,
   );
   const groupChildren = node.kind === "group" ? node.group.children : EMPTY_SPLIT_NODES;
+  // Dragged sizes live per group id, apart from the layout tree, and a group keeps its id when
+  // panes are added or removed. They only apply while they still have one entry per child;
+  // otherwise the dividers past the end of the list could not move.
+  const layoutGroupSizes = node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES;
   const groupSizes =
-    storedGroupSizes ?? (node.kind === "group" ? node.group.sizes : EMPTY_SPLIT_SIZES);
+    storedGroupSizes?.length === groupChildren.length ? storedGroupSizes : layoutGroupSizes;
   const visibleFlex = useMemo(
     () => resolveVisibleGroupFlex(groupChildren, groupSizes, maximizedPaneId),
     [groupChildren, groupSizes, maximizedPaneId],
@@ -518,7 +518,6 @@ function SplitNodeView({
             onCopyResumeCommand={onCopyResumeCommand}
             onCopyAgentId={onCopyAgentId}
             onCopyTerminalId={onCopyTerminalId}
-            onCopyFilePath={onCopyFilePath}
             onReloadAgent={onReloadAgent}
             onRenameTab={onRenameTab}
             onCloseTabsToLeft={onCloseTabsToLeft}
@@ -573,7 +572,6 @@ function SplitNodeView({
               onCopyResumeCommand={onCopyResumeCommand}
               onCopyAgentId={onCopyAgentId}
               onCopyTerminalId={onCopyTerminalId}
-              onCopyFilePath={onCopyFilePath}
               onReloadAgent={onReloadAgent}
               onRenameTab={onRenameTab}
               onCloseTabsToLeft={onCloseTabsToLeft}
@@ -647,7 +645,6 @@ const SplitPaneView = memo(function SplitPaneView({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
-  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -845,7 +842,6 @@ const SplitPaneView = memo(function SplitPaneView({
                 onCopyResumeCommand={onCopyResumeCommand}
                 onCopyAgentId={onCopyAgentId}
                 onCopyTerminalId={onCopyTerminalId}
-                onCopyFilePath={onCopyFilePath}
                 onReloadAgent={onReloadAgent}
                 onRenameTab={onRenameTab}
                 onCloseTabsToLeft={handleCloseTabsToLeft}

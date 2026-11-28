@@ -11,6 +11,7 @@ import type {
   ManagedProcessReapResult,
 } from "./managed-processes/managed-processes.js";
 import { createPaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
+import { BuiltinPluginLoader } from "./plugins/builtin/index.js";
 import { createTestAgentClients } from "./test-utils/fake-agent-client.js";
 
 let tempRoot: string | null = null;
@@ -47,6 +48,10 @@ describe("daemon managed process bootstrap", () => {
         managedProcesses,
       } as PaseoDaemonConfig,
       pino({ level: "silent" }),
+      {
+        builtinPlugins: new BuiltinPluginLoader(undefined, []),
+        lazyTerminalWorker: true,
+      },
     );
 
     try {

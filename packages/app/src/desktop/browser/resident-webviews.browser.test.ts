@@ -69,6 +69,8 @@ function expectPermanentHostParking(host: HTMLElement): void {
 
 function expectParkedSurface(surface: HTMLElement): void {
   expect(surface.getAttribute("aria-hidden")).toBe("true");
+  expect(surface.hasAttribute("inert")).toBe(true);
+  expect(surface.getAttribute("tabindex")).toBe("-1");
   expect(surface.style.position).toBe("fixed");
   expect(surface.style.left).toBe("0px");
   expect(surface.style.top).toBe("0px");
@@ -149,6 +151,8 @@ describe("resident browser webviews", () => {
     expect(permanentParent.style.height).toBe("480px");
     expect(permanentParent.style.pointerEvents).toBe("auto");
     expect(permanentParent.getAttribute("aria-hidden")).toBe("false");
+    expect(permanentParent.hasAttribute("inert")).toBe(false);
+    expect(permanentParent.hasAttribute("tabindex")).toBe(false);
     expect(webview.style.flex).toBe("0 0 auto");
     expect(webview.style.width).toBe("640px");
     expect(webview.style.height).toBe("480px");

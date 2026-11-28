@@ -107,6 +107,8 @@ function applyResidentHostParkingStyle(host: HTMLElement): void {
 
 function applyParkedBrowserSurfaceStyle(surface: HTMLElement): void {
   surface.setAttribute("aria-hidden", "true");
+  surface.setAttribute("inert", "");
+  surface.setAttribute("tabindex", "-1");
   surface.style.position = "fixed";
   surface.style.left = "0";
   surface.style.top = "0";
@@ -271,6 +273,8 @@ export function presentBrowserWebview(
   const surfaceBottom = Math.floor(bottom);
   const hasVisibleArea = surfaceRight > surfaceLeft && surfaceBottom > surfaceTop;
   surface.setAttribute("aria-hidden", "false");
+  surface.removeAttribute("inert");
+  surface.removeAttribute("tabindex");
   surface.style.position = "fixed";
   surface.style.left = `${surfaceLeft}px`;
   surface.style.top = `${surfaceTop}px`;
@@ -299,12 +303,14 @@ export function prepareBrowserWebview(
     browserId: string;
     workspaceId: string;
     initialUrl?: string | null;
+    partition?: string;
     profileHost?: BrowserWebviewProfileHost;
   },
 ): void {
   const browser = getBrowserBridge(input.profileHost);
+  const targetPartition = input.partition ?? browser.profilePartition;
   webview.setAttribute(BROWSER_ID_ATTRIBUTE, input.browserId);
-  webview.setAttribute("partition", browser.profilePartition);
+  webview.setAttribute("partition", targetPartition);
   webview.setAttribute("allowpopups", "true");
   webview.setAttribute("spellcheck", "false");
   webview.setAttribute("autosize", "on");
@@ -314,10 +320,15 @@ export function prepareBrowserWebview(
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
 }
 
+export function getResidentBrowserWebviewPartition(webview: HTMLElement): string | null {
+  return trimNonEmpty(webview.getAttribute("partition"));
+}
+
 export function ensureResidentBrowserWebview(input: {
   browserId: string;
   workspaceId: string;
   url: string;
+  partition?: string;
   profileHost?: BrowserWebviewProfileHost;
 }): HTMLElement | null {
   const browserId = trimNonEmpty(input.browserId);
@@ -329,18 +340,27 @@ export function ensureResidentBrowserWebview(input: {
     return null;
   }
 
+  const browser = getBrowserBridge(input.profileHost);
+  const desiredPartition = input.partition ?? browser.profilePartition;
+
   const resident = residentWebviewsByBrowserId.get(browserId) ?? null;
   if (resident?.isConnected) {
-    releaseResidentBrowserWebview(browserId, resident);
-    return resident;
+    if (getResidentBrowserWebviewPartition(resident) === desiredPartition) {
+      releaseResidentBrowserWebview(browserId, resident);
+      return resident;
+    }
+    removeResidentBrowserWebview(browserId);
   }
 
   const existing = findBrowserWebview(browserId, ownerDocument);
   if (existing) {
-    if (existing.parentElement?.id === RESIDENT_BROWSER_HOST_ID) {
-      releaseResidentBrowserWebview(browserId, existing);
+    if (getResidentBrowserWebviewPartition(existing) === desiredPartition) {
+      if (existing.parentElement?.id === RESIDENT_BROWSER_HOST_ID) {
+        releaseResidentBrowserWebview(browserId, existing);
+      }
+      return existing;
     }
-    return existing;
+    existing.remove();
   }
 
   const webview = ownerDocument.createElement("webview") as BrowserWebviewElement;
@@ -348,7 +368,8 @@ export function ensureResidentBrowserWebview(input: {
     browserId,
     workspaceId: input.workspaceId,
     initialUrl: input.url,
-    profileHost: input.profileHost,
+    partition: desiredPartition,
+    profileHost: browser,
   });
   releaseResidentBrowserWebview(browserId, webview);
   return webview;

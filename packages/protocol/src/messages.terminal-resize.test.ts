@@ -32,4 +32,38 @@ describe("terminal resize messages", () => {
       },
     });
   });
+
+  it.each(["claim", "update"] as const)("accepts palette messages with %s intent", (intent) => {
+    const defaultColors = {
+      foreground: "#1a1a1e",
+      background: "#ffffff",
+      cursor: "#1a1a1e",
+    };
+    const result = TerminalInputSchema.safeParse({
+      type: "terminal_input",
+      terminalId: "terminal-1",
+      message: { type: "palette", defaultColors, intent },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        message: { type: "palette", defaultColors, intent },
+      },
+    });
+  });
+
+  it("rejects palette messages with invalid hex colors", () => {
+    const result = TerminalInputSchema.safeParse({
+      type: "terminal_input",
+      terminalId: "terminal-1",
+      message: {
+        type: "palette",
+        defaultColors: { foreground: "white", background: "#ffffff" },
+        intent: "claim",
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
 });

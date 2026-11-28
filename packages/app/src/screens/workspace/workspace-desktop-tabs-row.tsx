@@ -14,6 +14,7 @@ import React, {
 } from "react";
 import { Pressable, Text, View, type LayoutChangeEvent, type ScrollView } from "react-native";
 import { useFilePanelOpenWithMenu } from "@/file-panels";
+import { useFileTabMenu } from "@/screens/workspace/use-file-tab-menu";
 import {
   CopyX,
   ArrowLeftToLine,
@@ -545,7 +546,6 @@ export interface WorkspaceDesktopTabsRowProps {
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
-  onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
@@ -774,6 +774,12 @@ function TabChip({
     { serverId, workspaceId, tabId: tab.tabId },
     contextMenuTestId,
   );
+  const fileMenu = useFileTabMenu({
+    serverId,
+    workspaceId,
+    tab,
+    testIDBase: contextMenuTestId,
+  });
   const middleClickRef = useMiddleClickClose(
     useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
   );
@@ -959,6 +965,9 @@ function TabChip({
         >
           {menuEntries.map((entry) => {
             if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
+            if (entry.kind === "file-actions") {
+              return <Fragment key={entry.key}>{fileMenu}</Fragment>;
+            }
             if (entry.kind === "file-panel-open-with") {
               return <Fragment key={entry.key}>{openWith.trigger}</Fragment>;
             }
@@ -1085,7 +1094,6 @@ function ResolvedWorkspaceDesktopTabsRow({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
-  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -1171,7 +1179,6 @@ function ResolvedWorkspaceDesktopTabsRow({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
       copyTerminalId: t("workspace.tabs.menu.copyTerminalId"),
-      copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
@@ -1345,7 +1352,6 @@ function ResolvedWorkspaceDesktopTabsRow({
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
           onCopyTerminalId={onCopyTerminalId}
-          onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
           onCloseTabsToLeft={onCloseTabsToLeft}
@@ -1378,7 +1384,6 @@ function ResolvedWorkspaceDesktopTabsRow({
       onCloseTabsToRight,
       onCopyAgentId,
       onCopyTerminalId,
-      onCopyFilePath,
       onCopyResumeCommand,
       onNavigateTab,
       onReloadAgent,
@@ -1503,7 +1508,6 @@ function ResolvedDesktopTabChip({
   onCopyResumeCommand,
   onCopyAgentId,
   onCopyTerminalId,
-  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTabsToLeft,
@@ -1531,7 +1535,6 @@ function ResolvedDesktopTabChip({
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
   onCopyTerminalId: (terminalId: string) => Promise<void> | void;
-  onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTabsToLeft: (tabId: string) => Promise<void> | void;
@@ -1560,7 +1563,6 @@ function ResolvedDesktopTabChip({
         onCopyResumeCommand,
         onCopyAgentId,
         onCopyTerminalId,
-        onCopyFilePath,
         onReloadAgent,
         onRenameTab,
         onCloseTab,
@@ -1578,7 +1580,6 @@ function ResolvedDesktopTabChip({
       onCloseTabsToRight,
       onCopyAgentId,
       onCopyTerminalId,
-      onCopyFilePath,
       onCopyResumeCommand,
       labels,
       onReloadAgent,

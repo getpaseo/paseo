@@ -86,7 +86,9 @@ export function replicaQueryOptions<
       },
     },
     queryFn: options.queryFn ?? skipToken,
-    refetchOnMount: false,
+    // Pushes keep a replica fresh; a mount only refetches what an invalidation marked stale
+    // while nothing observed it.
+    refetchOnMount: (query) => query.state.isInvalidated,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,

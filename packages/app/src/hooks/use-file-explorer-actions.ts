@@ -2,7 +2,9 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useSessionStore, type AgentFileExplorerState } from "@/stores/session-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { revealExplorerDirectory } from "@/file-explorer/tree";
+import { revealExplorerDirectory, revealExplorerEntry } from "@/file-explorer/tree";
+import { useExplorerRevealStore } from "@/file-explorer/reveal-request";
+import { clearFileFilter } from "@/file-explorer/filter";
 import {
   loadExplorerDirectory,
   type DirectoryListingResult,
@@ -112,36 +114,88 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [client, normalizedWorkspaceRoot, t, updateExplorerState, workspaceStateKey],
   );
 
-  const revealDirectory = useCallback(
-    async (directoryPath: string) => {
+  const showHiddenFiles = useCallback(() => {
+    const panel = usePanelStore.getState();
+    if (!panel.explorerShowHiddenFiles) panel.toggleExplorerShowHiddenFiles();
+  }, []);
+
+  const expandPaths = useCallback(
+    (paths: string[]) => {
       if (!workspaceStateKey) return;
-      await revealExplorerDirectory({
+      usePanelStore
+        .getState()
+        .setExpandedPathsForWorkspace(workspaceStateKey, (current) =>
+          Array.from(new Set([...current, ...paths])),
+        );
+    },
+    [workspaceStateKey],
+  );
+
+  const selectExplorerEntry = useCallback(
+    (path: string | null) => {
+      updateExplorerState((state) => ({
+        ...state,
+        selectedEntryPath: path,
+      }));
+    },
+    [updateExplorerState],
+  );
+
+  /** Selects an entry the tree has expanded to, and asks the tree to scroll to it. */
+  const showEntry = useCallback(
+    (entryPath: string) => {
+      if (!workspaceStateKey) return;
+      selectExplorerEntry(entryPath);
+      useExplorerRevealStore.getState().request(workspaceStateKey, entryPath);
+    },
+    [selectExplorerEntry, workspaceStateKey],
+  );
+
+  /** Expands to a directory and into it. `select` also selects it and scrolls the tree to it. */
+  const revealDirectory = useCallback(
+    async (directoryPath: string, { select = false }: { select?: boolean } = {}) => {
+      if (!workspaceStateKey) return;
+      const listed = await revealExplorerDirectory({
         directoryPath,
         requestDirectoryListing,
-        showHiddenFiles: () => {
-          const panel = usePanelStore.getState();
-          if (!panel.explorerShowHiddenFiles) panel.toggleExplorerShowHiddenFiles();
-        },
-        expandPaths: (paths) =>
-          usePanelStore
-            .getState()
-            .setExpandedPathsForWorkspace(workspaceStateKey, (current) =>
-              Array.from(new Set([...current, ...paths])),
-            ),
+        showHiddenFiles,
+        expandPaths,
       });
+      clearFileFilter(workspaceStateKey);
+      if (listed && select) showEntry(directoryPath);
     },
-    [requestDirectoryListing, workspaceStateKey],
+    [expandPaths, requestDirectoryListing, showEntry, showHiddenFiles, workspaceStateKey],
+  );
+
+  /** Expands to an entry, selects it, and asks the tree to scroll to it. */
+  const revealEntry = useCallback(
+    async (entryPath: string): Promise<boolean> => {
+      if (!workspaceStateKey) return false;
+      const found = await revealExplorerEntry({
+        entryPath,
+        requestDirectoryListing: (path) =>
+          requestDirectoryListing(path, { recordHistory: false, setCurrentPath: false }),
+        showHiddenFiles,
+        expandPaths,
+      });
+      if (found) {
+        clearFileFilter(workspaceStateKey);
+        showEntry(entryPath);
+      }
+      return found;
+    },
+    [expandPaths, requestDirectoryListing, showEntry, showHiddenFiles, workspaceStateKey],
   );
 
   const requestFileDownloadToken = useCallback(
-    async (path: string) => {
-      if (!normalizedWorkspaceRoot) {
+    async (path: string, root: string | null = normalizedWorkspaceRoot) => {
+      if (!root) {
         throw new Error(t("workspace.fileExplorer.states.unavailable"));
       }
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      const payload = await client.requestDownloadToken(normalizedWorkspaceRoot, path);
+      const payload = await client.requestDownloadToken(root, path);
       if (payload.error) {
         throw new Error(payload.error);
       }
@@ -151,8 +205,8 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   );
 
   const requestFileBytes = useCallback(
-    async (path: string, maxBytes: number) => {
-      if (!normalizedWorkspaceRoot) {
+    async (path: string, maxBytes: number, root: string | null = normalizedWorkspaceRoot) => {
+      if (!root) {
         throw new Error(t("workspace.fileExplorer.states.unavailable"));
       }
       if (!client) {
@@ -160,7 +214,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       // No request timeout: a large file over a slow relay legitimately takes longer than the
       // 60 s default, and a dead connection still rejects on disconnect.
-      return client.readFile(normalizedWorkspaceRoot, path, undefined, maxBytes, 0);
+      return client.readFile(root, path, undefined, maxBytes, 0);
     },
     [client, normalizedWorkspaceRoot, t],
   );
@@ -239,16 +293,6 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [client, normalizedWorkspaceRoot, requestDirectoryListing],
   );
 
-  const selectExplorerEntry = useCallback(
-    (path: string | null) => {
-      updateExplorerState((state) => ({
-        ...state,
-        selectedEntryPath: path,
-      }));
-    },
-    [updateExplorerState],
-  );
-
   const invalidateDirectoryListings = useCallback(
     (retainedPaths: readonly string[]) =>
       invalidateExplorerDirectoryListings(updateExplorerState, retainedPaths),
@@ -258,6 +302,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
   return {
     workspaceStateKey,
     revealDirectory,
+    revealEntry,
     requestDirectoryListing,
     invalidateDirectoryListings,
     requestFileDownloadToken,

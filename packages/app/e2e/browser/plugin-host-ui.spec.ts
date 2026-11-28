@@ -13,11 +13,17 @@ import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 
 const PLUGIN_ID = "plugin-host-ui-e2e";
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin/client";
 import { Icon, Modal, useToast, Markdown } from "@getpaseo/plugin/client/ui";
@@ -39,6 +45,7 @@ function ModalBody({ onSaved }) {
     <Text>Plugin modal contexts ready</Text>
     <Markdown>{"## Plugin report"}</Markdown>
     <Markdown>{"Checks **passed**. [Documentation](https://paseo.sh/docs/plugins)"}</Markdown>
+    <Markdown>{"![Modal preview](" + SCREENSHOT_PATH + ")"}</Markdown>
     <Markdown>{""}</Markdown>
     <Pressable accessibilityRole="button" onPress={save}>
       <Text>Save issue</Text>
@@ -56,6 +63,7 @@ function Surface({ playAudio }) {
   const [open, setOpen] = useState(false);
   return <View>
     <Text>{audioStatus}</Text>
+    <Markdown>{"![Before](" + SCREENSHOT_PATH + ")\\n\\n![After](" + SCREENSHOT_FILE_URL + ")"}</Markdown>
     <Pressable accessibilityRole="button" onPress={() => play(AUDIO_BASE64)}><Text>Play plugin audio</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => play("UklGRg==")}><Text>Play invalid audio</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
@@ -105,20 +113,39 @@ async function openPluginModal(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open plugin modal", exact: true }).click();
 }
 
-async function expectPluginMarkdown(page: Page): Promise<void> {
-  await expect(page.getByRole("heading", { name: "Plugin report" })).toBeVisible();
-  await expect(page.getByText("Checks passed.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Documentation", exact: true })).toHaveAttribute(
+async function expectLoadedMarkdownImage(scope: Page | Locator, alt: string): Promise<void> {
+  const image = scope.getByAltText(alt, { exact: true });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() =>
+      image.evaluate((node) => {
+        const img = node as HTMLImageElement;
+        return {
+          isBlob: img.src.startsWith("blob:"),
+          complete: img.complete,
+          naturalWidth: img.naturalWidth,
+        };
+      }),
+    )
+    .toEqual({ isBlob: true, complete: true, naturalWidth: 1 });
+}
+
+async function expectPluginMarkdown(scope: Page | Locator): Promise<void> {
+  await expect(scope.getByRole("heading", { name: "Plugin report" })).toBeVisible();
+  await expect(scope.getByText("Checks passed.", { exact: false })).toBeVisible();
+  await expect(scope.getByRole("link", { name: "Documentation", exact: true })).toHaveAttribute(
     "href",
     "https://paseo.sh/docs/plugins",
   );
+  await expectLoadedMarkdownImage(scope, "Modal preview");
+  await expect(scope.getByText("Image unavailable")).toHaveCount(0);
 }
 
 async function expectCenteredPluginDialog(page: Page): Promise<void> {
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Edit plugin issue", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Plugin modal contexts ready", { exact: true })).toBeVisible();
-  await expectPluginMarkdown(page);
+  await expectPluginMarkdown(dialog);
 }
 
 async function closeCenteredPluginDialog(page: Page): Promise<void> {
@@ -147,10 +174,15 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     path.join(directory, "paseo-plugin.json"),
     JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
   );
+  const beforePath = path.join(directory, "before.png");
+  const afterPath = path.join(directory, "after.png");
+  const afterFileUrl = pathToFileURL(afterPath).href;
+  await writeFile(beforePath, TINY_PNG);
+  await writeFile(afterPath, TINY_PNG);
   const audio = await readFile(path.resolve(__dirname, "../../assets/audio/thinking-tone.wav"));
   await writeFile(
     path.join(directory, "index.client.tsx"),
-    `const AUDIO_BASE64 = ${JSON.stringify(audio.toString("base64"))};\n${PLUGIN_SOURCE}`,
+    `const AUDIO_BASE64 = ${JSON.stringify(audio.toString("base64"))};\nconst SCREENSHOT_PATH = ${JSON.stringify(beforePath)};\nconst SCREENSHOT_FILE_URL = ${JSON.stringify(afterFileUrl)};\n${PLUGIN_SOURCE}`,
   );
 
   try {
@@ -158,6 +190,12 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     await client.installDirectoryPlugin(directory);
     await useNonCompactLayout(page);
     await openHostUiPlugin(page);
+
+    await test.step("plugin screen Markdown renders local absolute and file:// PNG images inline", async () => {
+      await expectLoadedMarkdownImage(page, "Before");
+      await expectLoadedMarkdownImage(page, "After");
+      await expect(page.getByText("Image unavailable")).toHaveCount(0);
+    });
 
     await test.step("plugin audio finishes, rejects corrupt files, and recovers", async () => {
       await playPluginAudio(page, "Play plugin audio", "Audio finished");

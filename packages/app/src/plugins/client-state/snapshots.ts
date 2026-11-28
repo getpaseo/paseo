@@ -51,6 +51,9 @@ export function createPluginWorkspaceSnapshot(
     createdAt: serializeTimestamp(workspace.createdAt),
     lastPromptAt: serializeTimestamp(workspace.lastUserMessageAt),
     parentAgent,
+    parentWorkspace: workspace.parentWorkspaceId
+      ? entityRefs.workspace(hostId, workspace.parentWorkspaceId)
+      : null,
     indicator,
     indicatorLabel: i18n.t(indicatorLabelKeys[indicator]),
     id: workspace.id,
@@ -66,6 +69,7 @@ export function createPluginWorkspaceSnapshot(
     statusEnteredAt: serializeTimestamp(workspace.statusEnteredAt),
     archivingAt: workspace.archivingAt,
     diffStat,
+    metadata: cloneAndFreeze(workspace.metadata ?? {}),
   });
   const byHost = workspaceSnapshots.get(workspace) ?? new Map<string, CachedWorkspace>();
   byHost.set(hostId, { language: i18n.language, snapshot });

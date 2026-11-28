@@ -1,15 +1,15 @@
 import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload, CreateAgentRequestMessage } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { encodeImages } from "@/utils/encode-images";
-import type { UserMessageImageAttachment } from "@/types/stream";
+import { uploadImageAttachments } from "@/attachments/service";
+import type { AttachmentMetadata } from "@/attachments/types";
 
 export interface WorkspaceDraftAgentRequest {
   workspaceId: string;
   config: AgentSessionConfig;
   text: string;
   clientMessageId: string;
-  images?: UserMessageImageAttachment[];
+  images?: AttachmentMetadata[];
   attachments?: CreateAgentRequestMessage["attachments"];
 }
 
@@ -21,15 +21,13 @@ export async function requestWorkspaceDraftAgent(
   client: DaemonClient,
   request: WorkspaceDraftAgentRequest,
 ): Promise<AgentSnapshotPayload> {
-  const images = await encodeImages(request.images);
+  const uploadedImageAttachments = await uploadImageAttachments({ client, images: request.images });
+  const mergedAttachments = [...(request.attachments ?? []), ...(uploadedImageAttachments ?? [])];
   return await client.createAgent({
     config: request.config,
     workspaceId: request.workspaceId,
     clientMessageId: request.clientMessageId,
     ...(request.text ? { initialPrompt: request.text } : {}),
-    ...(images && images.length > 0 ? { images } : {}),
-    ...(request.attachments && request.attachments.length > 0
-      ? { attachments: request.attachments }
-      : {}),
+    ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
   });
 }

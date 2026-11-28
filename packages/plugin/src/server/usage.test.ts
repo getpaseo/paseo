@@ -96,12 +96,12 @@ test.each([
 ])(
   "duration %s owns the window's identity and both names",
   (durationSeconds, id, label, shortLabel) => {
-    expect(
-      windowFromReportedDuration({
-        durationSeconds: durationSeconds as number | null,
-        unknown: { id: "primary", label: "Primary limit", shortLabel: "" },
-        utilizationPct: 11,
-      }),
-    ).toMatchObject({ id, label, shortLabel, usedPct: 11 });
+    const window = windowFromReportedDuration({
+      durationSeconds: durationSeconds as number | null,
+      unknown: { id: "primary", label: "Primary limit", shortLabel: "" },
+      utilizationPct: 11,
+    });
+    expect(window).toMatchObject({ id, label, shortLabel, usedPct: 11 });
+    expect(window.durationSeconds).toBe(durationSeconds ?? undefined);
   },
 );

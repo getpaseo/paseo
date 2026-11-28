@@ -40,6 +40,7 @@ import {
   usageModal,
   installTallUsageSource,
 } from "../support/helpers/usage-sidebar-item";
+import { seedDockedSidebarWidth } from "../support/helpers/sidebar-footer-overflow";
 import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 import { createTempGitRepo } from "../support/helpers/workspace";
@@ -290,12 +291,12 @@ test.describe("Usage item", () => {
     await gotoAppShell(page);
     const screen = page.getByTestId(`usage-host-${serverId}`);
 
-    await test.step("a fresh device shows default windows once the Usage item is on", async () => {
-      // The Usage item starts off on every layout; turning it on stores the choice.
-      await expectNoUsageItem(page);
+    await test.step("a fresh device shows default windows in the sidebar automatically", async () => {
+      // The Usage item starts on by default on every layout.
+      await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+      await qaScreenshot(page, "desktop-footer-defaults", { kind: "footer" });
       await openSidebarNavSettings(page);
-      await expectFooterItemSetting(page, "usage", false);
-      await setFooterItemVisible(page, "usage", true);
+      await expectFooterItemSetting(page, "usage", true);
       await qaScreenshot(page, "desktop-settings-sidebar-footer");
       await page.setViewportSize(COMPACT);
       await expectFooterItemSetting(page, "usage", true);
@@ -307,7 +308,6 @@ test.describe("Usage item", () => {
       await page.setViewportSize(WIDE);
       await gotoAppShell(page);
       await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
-      await qaScreenshot(page, "desktop-footer-defaults", { kind: "footer" });
       await openUsageFromItem(page);
       await qaScreenshot(page, "default-pins-card");
       await expect(pinRow(screen, "Claude", "Session")).toBeChecked();
@@ -477,7 +477,7 @@ test("without summary data the footer drops the Usage item and keeps the Usage i
   await openUsageFromIcon(page);
 });
 
-test("the Usage Settings switch turns on the sidebar summary and the pins with it", async ({
+test("the Usage Settings switch turns the sidebar summary and pins off and back on", async ({
   page,
 }) => {
   const serverId = getServerId();
@@ -487,8 +487,17 @@ test("the Usage Settings switch turns on the sidebar summary and the pins with i
   const screen = page.getByTestId(`usage-host-${serverId}`);
   const claude = screen.getByTestId("usage-report-claude:default");
 
-  await test.step("off by default: no Usage item, and rows that do not pin", async () => {
-    await openUsageFromIcon(page);
+  await test.step("on by default: the Usage item and pins appear", async () => {
+    await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
+    await openUsageFromItem(page);
+    await expect(pinRow(screen, "Claude", "Weekly")).toBeChecked();
+    await togglePin(screen, "Claude", "Weekly");
+    await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
+    await qaScreenshot(page, "usage-summary-on");
+  });
+
+  await test.step("off: no Usage item, and rows that do not pin", async () => {
+    await setSummaryInSidebar(page, false);
     await expectNoUsageItem(page);
     await expect(claude.getByText("Session", { exact: true })).toBeVisible({ timeout: 10_000 });
     await expectUnpinnableRows(claude);
@@ -497,19 +506,7 @@ test("the Usage Settings switch turns on the sidebar summary and the pins with i
     await qaScreenshot(page, "usage-summary-off");
   });
 
-  await test.step("on: the Usage item and the pins appear", async () => {
-    await setSummaryInSidebar(page, true);
-    await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
-    await expect(pinRow(screen, "Claude", "Weekly")).toBeChecked();
-    await togglePin(screen, "Claude", "Weekly");
-    await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
-    await qaScreenshot(page, "usage-summary-on");
-  });
-
-  await test.step("off then on again, after a reload, brings back the saved pins", async () => {
-    await setSummaryInSidebar(page, false);
-    await expectNoUsageItem(page);
-    await expectUnpinnableRows(claude);
+  await test.step("after a reload, turning it back on brings back the saved pins", async () => {
     await page.reload();
     await openUsageFromIcon(page);
     await expectSummaryInSidebar(page, false);
@@ -553,6 +550,7 @@ test("released hosts supply source logos through the client conversion", async (
 test("hidden usage sends no requests until opened", async ({ page }) => {
   test.setTimeout(180_000);
   const usage = await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: false }]);
   await page.setViewportSize(WIDE);
   await gotoAppShell(page);
   await expectNoUsageItem(page);
@@ -568,12 +566,288 @@ test("hidden usage sends no requests until opened", async ({ page }) => {
   expect(usage.listRequests()).toHaveLength(1);
 });
 
-test("visible usage summary requests reports on load", async ({ page }) => {
+test("visible usage summary requests reports on load by default", async ({ page }) => {
   test.setTimeout(180_000);
   const usage = await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
-  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
   await page.setViewportSize(WIDE);
   await gotoAppShell(page);
   await expectPinnedUsage(page, ["31% 5h", "54% wk", "7% 5h", "12% wk"]);
   expect(usage.listRequests()).toHaveLength(1);
+});
+
+test("sidebar usage falls back to period shorthands before dropping all labels", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const [claude, codex] = claudeAndCodexReports();
+  const fetchedAt = new Date().toISOString();
+  await installUsageReportsFixture(page, {
+    lists: [
+      () => [
+        {
+          ...codex!,
+          report: {
+            status: "available",
+            windows: [
+              { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 97 },
+            ],
+          },
+        },
+        {
+          ...claude!,
+          report: {
+            status: "available",
+            windows: [
+              { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 100 },
+              { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 14 },
+              {
+                id: "weekly_model_opus",
+                label: "Weekly · Opus",
+                shortLabel: "wk Opus",
+                summary: true,
+                usedPct: 22,
+              },
+            ],
+          },
+        },
+        {
+          id: "antigravity:default",
+          account: {},
+          fetchedAt,
+          sourceId: "antigravity",
+          sourceLabel: "Antigravity",
+          report: {
+            status: "available",
+            windows: [
+              {
+                id: "gemini-weekly",
+                label: "Gemini Models · Weekly",
+                shortLabel: "Gemini wk",
+                summary: true,
+                usedPct: 6,
+              },
+              {
+                id: "gemini-5h",
+                label: "Gemini Models · 5h",
+                shortLabel: "Gemini 5h",
+                summary: true,
+                usedPct: 20,
+              },
+            ],
+          },
+        },
+      ],
+    ],
+  });
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await seedDockedSidebarWidth(page, 432);
+  await page.setViewportSize(WIDE);
+  await gotoAppShell(page);
+
+  await expectPinnedUsage(page, ["6% wk", "20% 5h", "100% 5h", "14% wk", "22% wk", "97% wk"]);
+
+  const handle = page.getByTestId("left-sidebar-resize-handle");
+  const dragSidebarTo = async (targetX: number) => {
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(targetX, box.y + box.height / 2, { steps: 10 });
+    await page.mouse.up();
+  };
+
+  await dragSidebarTo(600);
+  await expectPinnedUsage(page, [
+    "6% Gemini wk",
+    "20% Gemini 5h",
+    "100% 5h",
+    "14% wk",
+    "22% wk Opus",
+    "97% wk",
+  ]);
+
+  await dragSidebarTo(300);
+  await expectPinnedUsage(page, ["6%", "20%", "100%", "14%", "22%", "97%"]);
+});
+
+test("pushed status.usage_report_changed updates sidebar summary and open Usage modal without polling", async ({
+  page,
+}) => {
+  const [claude] = claudeAndCodexReports();
+  const initialFetchedAt = new Date(Date.now() - 60_000).toISOString();
+  const usage = await installUsageReportsFixture(page, {
+    lists: [
+      () => [
+        {
+          ...claude!,
+          fetchedAt: initialFetchedAt,
+          successfulAt: initialFetchedAt,
+          report: {
+            status: "available",
+            windows: [
+              { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 31 },
+              { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 54 },
+            ],
+          },
+        },
+      ],
+    ],
+  });
+  await page.setViewportSize(WIDE);
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await gotoAppShell(page);
+  await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
+  await usage.waitForUsageReportSubscription();
+
+  await openUsageFromItem(page);
+  const modal = usageModal(page);
+  await expect(modal.getByText("31% used")).toBeVisible();
+  const requestsBeforePush = usage.listRequests();
+
+  const updatedAt = new Date().toISOString();
+  usage.pushReportUpdate({
+    ...claude!,
+    fetchedAt: updatedAt,
+    successfulAt: updatedAt,
+    report: {
+      status: "available",
+      windows: [
+        { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 64 },
+        { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 54 },
+      ],
+    },
+  });
+  await expectPinnedUsage(page, ["64% 5h", "54% wk"]);
+  await expect(modal.getByText("64% used")).toBeVisible();
+  expect(usage.listRequests()).toEqual(requestsBeforePush);
+});
+
+test("a pushed report for one source does not postpone the five-minute poll of other sources", async ({
+  page,
+}) => {
+  const [claude, codex] = claudeAndCodexReports();
+  let codexUsedPct = 7;
+  let listFetchedAt = "2026-11-28T10:00:00.000Z";
+  const usage = await installUsageReportsFixture(page, {
+    lists: [
+      () => [
+        {
+          ...claude!,
+          fetchedAt: listFetchedAt,
+          report: {
+            status: "available",
+            windows: [
+              { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 31 },
+            ],
+          },
+        },
+        {
+          ...codex!,
+          fetchedAt: listFetchedAt,
+          report: {
+            status: "available",
+            windows: [
+              {
+                id: "five_hour",
+                label: "Session",
+                shortLabel: "5h",
+                summary: true,
+                usedPct: codexUsedPct,
+              },
+            ],
+          },
+        },
+      ],
+    ],
+  });
+  await page.clock.install();
+  await page.setViewportSize(WIDE);
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await gotoAppShell(page);
+  await expectPinnedUsage(page, ["31% 5h", "7% 5h"]);
+  await usage.waitForUsageReportSubscription();
+  const initialRequests = usage.listRequests();
+
+  // Push a Claude update 2 minutes into the 5-minute poll window.
+  await page.clock.fastForward(2 * 60_000);
+  const pushedAt = "2026-11-28T10:02:00.000Z";
+  usage.pushReportUpdate({
+    ...claude!,
+    fetchedAt: pushedAt,
+    successfulAt: pushedAt,
+    report: {
+      status: "available",
+      windows: [
+        { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 64 },
+      ],
+    },
+  });
+  await expectPinnedUsage(page, ["64% 5h", "7% 5h"]);
+  expect(usage.listRequests()).toEqual(initialRequests);
+
+  // Only 3 minutes later (t = 5m from initial fetch), the scheduled poll still runs for Codex.
+  codexUsedPct = 19;
+  listFetchedAt = "2026-11-28T10:05:00.000Z";
+  await page.clock.fastForward(3 * 60_000);
+  await expectPinnedUsage(page, ["31% 5h", "19% 5h"]);
+  expect(usage.listRequests()).toHaveLength(initialRequests.length + 1);
+});
+
+test("hiding and showing the sidebar preserves the five-minute poll schedule and failed reports retry after one minute", async ({
+  page,
+}) => {
+  const [claude] = claudeAndCodexReports();
+  let mode: "ok" | "error" = "ok";
+  let usedPct = 31;
+  const usage = await installUsageReportsFixture(page, {
+    lists: [
+      () => [
+        {
+          ...claude!,
+          fetchedAt: new Date().toISOString(),
+          report:
+            mode === "error"
+              ? { status: "error", error: "Temporary 503" }
+              : {
+                  status: "available",
+                  windows: [
+                    { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct },
+                  ],
+                },
+        },
+      ],
+    ],
+  });
+  await page.clock.install();
+  await page.setViewportSize(WIDE);
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await gotoAppShell(page);
+  await expectPinnedUsage(page, ["31% 5h"]);
+  const initialRequests = usage.listRequests();
+
+  // Hide and reopen the sidebar within the stale window: no extra fetch starts on remount,
+  // and the original 5-minute poll slot fires on time rather than restarting from zero.
+  await page.clock.fastForward(20_000);
+  await page.setViewportSize(COMPACT);
+  await expect(usageItem(page)).toHaveCount(0);
+  await page.clock.fastForward(15_000);
+  await openCompactSidebar(page);
+  await expectPinnedUsage(page, ["31% 5h"]);
+  expect(usage.listRequests()).toEqual(initialRequests);
+
+  usedPct = 44;
+  await page.clock.fastForward(4 * 60_000 + 25_000);
+  await expectPinnedUsage(page, ["44% 5h"]);
+  expect(usage.listRequests()).toHaveLength(initialRequests.length + 1);
+
+  // When a report enters error state, the app retries after 1 minute instead of waiting 5 minutes.
+  mode = "error";
+  await page.clock.fastForward(5 * 60_000);
+  const requestsAfterError = usage.listRequests();
+  expect(requestsAfterError).toHaveLength(initialRequests.length + 2);
+
+  mode = "ok";
+  usedPct = 58;
+  await page.clock.fastForward(60_000);
+  await expectPinnedUsage(page, ["58% 5h"]);
+  expect(usage.listRequests()).toHaveLength(requestsAfterError.length + 1);
 });

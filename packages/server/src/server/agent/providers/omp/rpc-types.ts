@@ -26,6 +26,7 @@ export const OmpToolCallContentSchema = z
     id: z.string(),
     name: z.string(),
     arguments: z.unknown(),
+    intent: z.string().optional(),
   })
   .passthrough();
 
@@ -180,6 +181,9 @@ export const OmpSessionStatsSchema = z
       .passthrough()
       .optional(),
     cost: z.number().optional(),
+    toolCalls: z.number().optional(),
+    // Copilot bills by request rather than by token.
+    premiumRequests: z.number().optional(),
     contextUsage: OmpContextUsageSchema.optional(),
   })
   .passthrough();
@@ -291,15 +295,39 @@ export const OmpSubagentProgressPayloadSchema = z
   })
   .passthrough();
 
+const OmpContentIndexField = { contentIndex: z.number().optional() };
+
 export const OmpAssistantMessageEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text_delta"), delta: z.string().optional() }).passthrough(),
-  z.object({ type: z.literal("thinking_delta"), delta: z.string().optional() }).passthrough(),
+  z
+    .object({
+      type: z.literal("text_delta"),
+      ...OmpContentIndexField,
+      delta: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("thinking_delta"),
+      ...OmpContentIndexField,
+      delta: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("toolcall_delta"),
+      ...OmpContentIndexField,
+      delta: z.string().optional(),
+    })
+    .passthrough(),
   z.object({ type: z.literal("start") }).passthrough(),
-  z.object({ type: z.literal("text_start") }).passthrough(),
-  z.object({ type: z.literal("text_end") }).passthrough(),
-  z.object({ type: z.literal("thinking_start") }).passthrough(),
-  z.object({ type: z.literal("thinking_end") }).passthrough(),
+  z.object({ type: z.literal("text_start"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("text_end"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("thinking_start"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("thinking_end"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("toolcall_start"), ...OmpContentIndexField }).passthrough(),
+  z.object({ type: z.literal("toolcall_end"), ...OmpContentIndexField }).passthrough(),
   z.object({ type: z.literal("done") }).passthrough(),
+  z.object({ type: z.literal("error") }).passthrough(),
 ]);
 
 export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
@@ -310,7 +338,7 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("message_update"),
-      message: OmpAgentMessageSchema,
+      message: OmpAgentMessageSchema.optional(),
       assistantMessageEvent: OmpAssistantMessageEventSchema,
     })
     .passthrough(),
@@ -320,6 +348,7 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
       toolCallId: z.string(),
       toolName: z.string(),
       args: z.unknown(),
+      intent: z.string().optional(),
     })
     .passthrough(),
   z
@@ -479,8 +508,24 @@ const OmpExtensionUiRequestSchema = z
     url: z.string().optional(),
     launchUrl: z.string().optional(),
     instructions: z.string().optional(),
+    /** OMP 19.1+ `form`: the whole HTML form of one `ask` call. */
+    html: z.string().optional(),
+    /** `cancel`: the request OMP settled itself (abort or timeout). */
+    targetId: z.string().optional(),
   })
   .passthrough();
+
+/** Submitted value of one form control: text, or the checked values of a group. */
+export type OmpFormValue = string | string[];
+export type OmpFormData = Record<string, OmpFormValue>;
+
+export interface OmpExtensionUiResponse {
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+  data?: OmpFormData;
+}
+
 const OmpSubagentLifecycleEventSchema = z
   .object({ type: z.literal("subagent_lifecycle"), payload: OmpSubagentLifecyclePayloadSchema })
   .passthrough();

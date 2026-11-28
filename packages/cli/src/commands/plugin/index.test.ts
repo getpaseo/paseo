@@ -70,7 +70,7 @@ vi.mock("../../utils/client.js", () => ({
   })),
 }));
 
-import { render } from "../../output/index.js";
+import { render } from "../../output/render.js";
 import {
   createPluginCommand,
   runPluginInstallCommand,

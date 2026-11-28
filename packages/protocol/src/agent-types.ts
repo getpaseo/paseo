@@ -133,7 +133,11 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   iconSvg?: string;
+  /** The page that helps users set up and troubleshoot this provider. */
+  docsUrl?: string;
   defaultModeId?: string | null;
+  /** The provider can run a session behind an `agent.open.before` wrap. Absent means it cannot. */
+  launchWrap?: boolean;
 }
 
 export interface AgentFeatureToggle {
@@ -217,6 +221,18 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+}
+
+export type AgentMetricTone = "default" | "ok" | "warning" | "danger";
+
+/**
+ * One provider-owned label/value row. The provider formats `value`; Paseo renders
+ * it as given and never interprets it.
+ */
+export interface AgentMetric {
+  label: string;
+  value: string;
+  tone?: AgentMetricTone;
 }
 
 export const TOOL_CALL_ICON_NAMES = [
@@ -393,8 +409,22 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+export interface UploadedImage {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  path: string;
+}
+
 export type AgentTimelineItem =
-  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
+  | {
+      type: "user_message";
+      text: string;
+      messageId?: string;
+      clientMessageId?: string;
+      images?: UploadedImage[];
+    }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | ToolCallTimelineItem
@@ -411,7 +441,13 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnId?: string;
+      metrics?: AgentMetric[];
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
       type: "mode_changed";

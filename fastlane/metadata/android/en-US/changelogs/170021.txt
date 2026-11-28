@@ -1,0 +1,5 @@
+- Turn and session stats: View per-turn and session timing, token, cache, and cost metrics for Claude, OpenCode v2, Pi, Oh My Pi, and plugin providers.
+- Automatic model list refresh: Enabled providers refresh their model lists in the background every 30 minutes.
+- Sidebar usage by default: The sidebar usage summary is enabled by default, sources for inactive providers start hidden, and source toggles move to a Sources list.
+
+Full notes: https://paseo.sh/changelog

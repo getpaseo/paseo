@@ -1,14 +1,32 @@
-import { z } from "zod";
-import type { DaemonClient } from "../daemon-client.js";
+import type { DaemonClientCore } from "../daemon-client-core.js";
 
-const TerminalSchema = z.object({
-  id: z.string(),
-  workspaceId: z.string(),
-  cwd: z.string(),
-  name: z.string(),
-});
+export interface PaseoTerminal {
+  id: string;
+  workspaceId: string;
+  cwd: string;
+  name: string;
+}
 
-export type PaseoTerminal = z.infer<typeof TerminalSchema>;
+function parseTerminal(value: unknown): PaseoTerminal {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid terminal payload");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    typeof record.workspaceId !== "string" ||
+    typeof record.cwd !== "string" ||
+    typeof record.name !== "string"
+  ) {
+    throw new Error("Invalid terminal payload");
+  }
+  return {
+    id: record.id,
+    workspaceId: record.workspaceId,
+    cwd: record.cwd,
+    name: record.name,
+  };
+}
 
 export interface PaseoTerminalCreateOptions {
   workspaceId: string;
@@ -41,7 +59,7 @@ export interface PaseoTerminalCaptureOptions {
   requestId?: string;
 }
 
-export type PaseoTerminalCaptureResult = Awaited<ReturnType<DaemonClient["captureTerminal"]>>;
+export type PaseoTerminalCaptureResult = Awaited<ReturnType<DaemonClientCore["captureTerminal"]>>;
 
 export interface PaseoTerminalHandle {
   readonly id: string;
@@ -67,7 +85,7 @@ export interface PaseoWorkspaceTerminalActions {
 }
 
 type TerminalClient = Pick<
-  DaemonClient,
+  DaemonClientCore,
   | "ensureConnected"
   | "getLastServerInfoMessage"
   | "createTerminal"
@@ -96,7 +114,7 @@ export function createTerminalActions(
       workspaceId: options.workspaceId,
     });
     return {
-      entries: result.terminals.map((terminal) => TerminalSchema.parse(terminal)),
+      entries: result.terminals.map((terminal) => parseTerminal(terminal)),
       requestId: result.requestId,
     };
   };
@@ -142,7 +160,7 @@ export function createTerminalActions(
       if (result.error || !result.terminal) {
         throw new Error(result.error ?? "The daemon did not create a terminal");
       }
-      return ref(TerminalSchema.parse(result.terminal));
+      return ref(parseTerminal(result.terminal));
     },
     list,
     ref,

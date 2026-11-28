@@ -1,7 +1,9 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
   AgentBackgroundWorkSummarySchema,
+  AgentMetricSchema,
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
   ForgeWebSchema,
@@ -129,6 +131,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("assistant_message"),
     messageId: z.string().optional(),
+    turnMetrics: z.array(AgentMetricSchema).optional(),
     text: z.string(),
     // Reject old caches containing display fragments; refetch the complete source text.
   }),
@@ -163,6 +166,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("tool_call"),
     provider: AgentProviderSchema,
+    turnMetrics: z.array(AgentMetricSchema).optional(),
     item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
   }),
   z.strictObject({
@@ -328,6 +332,8 @@ const StoredWorkspaceSchema = z.strictObject({
   // dropped them painted its row without its chips and stayed that way: the directory cursor is
   // current on reconnect, so the daemon has nothing newer to send back.
   labels: z.array(z.string()).optional(),
+  // Require metadata so older rows written before metadata was cached invalidate the workspace cursor.
+  metadata: z.record(z.string(), z.unknown() as z.ZodType<JsonValue>),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
   statusEnteredAt: IsoDateSchema.nullable(),
   activityAt: z.null(),
@@ -397,15 +403,19 @@ const DirectoryCheckpointSchema = z.strictObject({
   agents: DirectoryCursorSchema.optional(),
 });
 
-// Old checkpoints could describe a baseline that an overlapping refresh had discarded.
-// Revalidate directory contents once without evicting cached rows or timelines.
+// A checkpoint is trusted only when this version wrote it. Earlier writers could store one for a
+// directory the cache no longer held: unversioned ones after an overlapping refresh, version 1
+// after an eviction, version 2 after another tab evicted the host. Rejecting them revalidates
+// directory contents once without evicting cached rows or timelines.
+const DIRECTORY_CHECKPOINT_VERSION = 3;
+
 const StoredDirectoryCheckpointSchema = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(DIRECTORY_CHECKPOINT_VERSION),
   cursors: DirectoryCheckpointSchema,
 });
 
 function serializeDirectoryCheckpoint(cursors: DirectoryCheckpoint) {
-  return { version: 1 as const, cursors };
+  return { version: DIRECTORY_CHECKPOINT_VERSION, cursors };
 }
 
 function deserializeDirectoryCheckpoint(payload: string): DirectoryCheckpoint {
@@ -478,6 +488,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         text: item.text,
       };
     case "thought":
@@ -512,6 +523,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         provider: item.payload.data.provider,
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         item: serializeAgentToolCall(item.payload.data),
       };
     case "plugin":
@@ -571,6 +583,7 @@ function deserializeBuiltinTimelineItem(
         ...base,
         kind: item.kind,
         ...(item.messageId ? { messageId: item.messageId } : {}),
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         text: item.text,
       };
     case "thought":
@@ -607,6 +620,7 @@ function deserializeBuiltinTimelineItem(
       return {
         ...base,
         kind: item.kind,
+        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         payload: {
           source: "agent",
           data: {
@@ -750,6 +764,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     title: workspace.title ?? null,
     pinnedAt: workspace.pinnedAt ?? null,
     labels: workspace.labels,
+    metadata: workspace.metadata ?? {},
     status: workspace.status,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
     activityAt: null,
@@ -968,6 +983,7 @@ export class ReplicaCache {
   private pendingUpserts = new Map<string, StructuredReplicaUpsert>();
   private pendingDeletes = new Map<string, ReplicaRowKey>();
   private pendingBaselines = new Set<string>();
+  // Hosts whose stored directory was evicted. Only a baseline stores their directory again.
   private readonly invalidatedHosts = new Set<string>();
   private readonly maxBytes: number;
   private totalBytes = 0;
@@ -1109,11 +1125,7 @@ export class ReplicaCache {
   private async deleteInvalidRow(row: ReplicaRow): Promise<void> {
     const invalidEntity = directoryEntityForRow(row);
     if (!invalidEntity) {
-      const changes = { upserts: [], deletes: [row] } satisfies ReplicaRowChanges;
-      await this.queueOperation(async () => {
-        await this.rowStore.apply(changes);
-        this.applyStoredChanges(changes);
-      });
+      await this.applyRepair(row.serverId, { upserts: [], deletes: [row] });
       return;
     }
 
@@ -1144,10 +1156,7 @@ export class ReplicaCache {
             ]
           : [],
     };
-    await this.queueOperation(async () => {
-      await this.rowStore.apply(changes);
-      this.applyStoredChanges(changes);
-    });
+    await this.applyRepair(row.serverId, changes);
   }
 
   private async repairInvalidDirectoryRows(
@@ -1170,9 +1179,17 @@ export class ReplicaCache {
             ]
           : [],
     };
-    await this.queueOperation(async () => {
-      await this.rowStore.apply(changes);
-      this.applyStoredChanges(changes);
+    await this.applyRepair(serverId, changes);
+  }
+
+  // A repair is queued behind writes that can evict its host. If one did, the host has no
+  // directory left for the repaired checkpoint to describe, so only the deletes still apply.
+  // A shared store also rejects the repair when another connection rewrote the directory.
+  private applyRepair(serverId: string, changes: ReplicaRowChanges): Promise<void> {
+    return this.queueOperation(async () => {
+      const applied = this.invalidatedHosts.has(serverId) ? { ...changes, upserts: [] } : changes;
+      const accepted = await this.rowStore.apply(applied, { directoryBaselines: new Set() });
+      this.applyStoredChanges(accepted ?? applied);
     });
   }
 
@@ -1182,7 +1199,6 @@ export class ReplicaCache {
     checkpoint?: DirectoryCheckpoint,
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
-    if (this.invalidatedHosts.has(serverId)) return;
     for (const mutation of mutations) {
       if (mutation.type === "delete") {
         this.queueEntityDelete(serverId, mutation.kind, mutation.id);
@@ -1312,12 +1328,21 @@ export class ReplicaCache {
           await this.ensureStoredIndex();
           const changes = this.materializePendingChanges(pending);
           const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
-          if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
-            await this.rowStore.apply(boundedChanges);
-            this.applyStoredChanges(boundedChanges);
+          const baselines = new Set(
+            [...pending.baselines].filter((serverId) => !evicted.has(serverId)),
+          );
+          if (
+            baselines.size > 0 ||
+            boundedChanges.upserts.length > 0 ||
+            boundedChanges.deletes.length > 0
+          ) {
+            const accepted = await this.rowStore.apply(boundedChanges, {
+              directoryBaselines: baselines,
+            });
+            this.applyStoredChanges(accepted ?? boundedChanges);
           }
-          for (const serverId of pending.baselines) {
-            if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
+          for (const serverId of baselines) {
+            this.invalidatedHosts.delete(serverId);
           }
         } catch {
           this.restorePendingChanges(pending);
@@ -1412,9 +1437,17 @@ export class ReplicaCache {
   }
 
   private materializePendingChanges(pending: PendingReplicaChanges): ReplicaRowChanges {
-    const deletes = new Map(pending.deletes.map((row) => [pendingRowKey(row), row]));
+    // Decided here, inside the serialized write, because eviction happens there too. A mutation
+    // queued before its host was evicted would otherwise store a checkpoint without its directory.
+    const isStorable = (row: ReplicaRowKey): boolean =>
+      row.kind === "timeline" ||
+      !this.invalidatedHosts.has(row.serverId) ||
+      pending.baselines.has(row.serverId);
+    const deletes = new Map(
+      pending.deletes.filter(isStorable).map((row) => [pendingRowKey(row), row]),
+    );
     const upserts: ReplicaRow[] = [];
-    for (const upsert of pending.upserts) {
+    for (const upsert of pending.upserts.filter(isStorable)) {
       const row = this.materializeUpsert(upsert);
       if (row) upserts.push(row);
       else deletes.set(pendingRowKey(upsert), upsert);
@@ -1563,8 +1596,10 @@ export class ReplicaCache {
       projectedTotal -= bytes;
       projectedBytes.delete(serverId);
       evicted.add(serverId);
-      this.invalidatedHosts.add(serverId);
       if (this.storedRows.has(serverId)) await this.rowStore.deleteHost(serverId);
+      // Only after the delete commits: a failed eviction leaves the rows stored, and writers that
+      // check this set must keep their checkpoint in step with those rows.
+      this.invalidatedHosts.add(serverId);
       this.removeStoredHost(serverId);
     }
 

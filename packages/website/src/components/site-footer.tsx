@@ -1,9 +1,10 @@
 import { useTranslation } from "react-i18next";
-import { PLUGINS_LINKED } from "~/plugins/launch";
+import { PAGE_INSET_CLASS, PAGE_RAIL_CLASS } from "~/components/page-frame";
+import { SponsorsSection } from "~/components/sponsorship";
 import { getAlternativePages } from "~/data/alternative-pages";
 import { appStoreUrl, playStoreUrl, webAppUrl } from "~/downloads";
-import { SponsorsSection } from "~/components/sponsorship";
 import { useLocale, useLocalizePath } from "~/i18n";
+import { PLUGINS_LINKED } from "~/plugins/launch";
 
 interface SiteFooterProps {
   width?: "default" | "prose" | "wide";
@@ -11,13 +12,17 @@ interface SiteFooterProps {
   sponsors?: boolean;
 }
 
-const WIDTH_CLASSES: Record<NonNullable<SiteFooterProps["width"]>, string> = {
+const NON_DEFAULT_WIDTH_CLASSES: Record<
+  Exclude<NonNullable<SiteFooterProps["width"]>, "default">,
+  string
+> = {
   prose: "max-w-prose p-6 md:p-12 md:pt-0",
-  default: "max-w-5xl p-6 md:p-20 md:pt-0",
   wide: "max-w-7xl p-6 md:p-20 md:pt-0",
 };
 
-const LINK_CLASS = "block text-muted-foreground hover:text-foreground transition-colors";
+const LINK_CLASS = "block text-muted-foreground transition-colors hover:text-foreground";
+const COLUMN_HEADING_CLASS =
+  "font-mono text-[11px] uppercase tracking-[0.12em] text-extra-muted-foreground";
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -31,72 +36,91 @@ export function SiteFooter({ width = "default", sponsors = true }: SiteFooterPro
   const { t } = useTranslation();
   const locale = useLocale();
   const localize = useLocalizePath();
-  const widthClasses = WIDTH_CLASSES[width];
   const alternatives = getAlternativePages(locale);
   const page = (path: string, label: string) => (
     <a href={localize(path)} className={LINK_CLASS}>
       {label}
     </a>
   );
-  return (
-    <footer className={`${widthClasses} mx-auto mt-12 md:mt-16`}>
-      {sponsors ? <SponsorsSection placement="footer" /> : null}
-      <div className="border-t border-white/10 pt-8 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-8 text-sm">
-        <div className="space-y-3">
-          <p className="text-extra-muted-foreground">{t("footer.product")}</p>
-          <div className="space-y-2">
-            {page("/blog", t("footer.blog"))}
-            {page("/docs", t("footer.docs"))}
-            {PLUGINS_LINKED && page("/plugins", t("footer.plugins"))}
-            {page("/changelog", t("footer.changelog"))}
-            {page("/hub", t("footer.hub"))}
-            {page("/docs/cli", t("footer.cli"))}
-            {page("/privacy", t("footer.privacy"))}
-            {page("/terms", t("footer.terms"))}
-            {page("/sponsor", t("footer.sponsor"))}
-          </div>
-        </div>
-        <div className="space-y-3">
-          <p className="text-extra-muted-foreground">{t("footer.agents")}</p>
-          <div className="space-y-2">
-            {page("/claude-code", "Claude Code")}
-            {page("/codex", "Codex")}
-            {page("/opencode", "OpenCode")}
-            {page("/antigravity", "Antigravity")}
-            {page("/muse-code", "Muse Code")}
-            {page("/agents", t("footer.allProviders"))}
-          </div>
-        </div>
-        <div className="space-y-3">
-          <p className="text-extra-muted-foreground">{t("footer.alternatives")}</p>
-          <div className="space-y-2">
-            {alternatives.map((alternative) => (
-              <a key={alternative.slug} href={localize(alternative.href)} className={LINK_CLASS}>
-                {alternative.name}
-              </a>
-            ))}
-          </div>
-        </div>
-        <div className="space-y-3">
-          <p className="text-extra-muted-foreground">{t("footer.community")}</p>
-          <div className="space-y-2">
-            <ExternalLink href="https://discord.gg/jz8T2uahpH">Discord</ExternalLink>
-            <ExternalLink href="https://www.reddit.com/r/PaseoAI/">Reddit</ExternalLink>
-            <ExternalLink href="https://github.com/getpaseo/paseo">GitHub</ExternalLink>
-          </div>
-        </div>
-        <div className="space-y-3">
-          <p className="text-extra-muted-foreground">{t("footer.download")}</p>
-          <div className="space-y-2">
-            <ExternalLink href={appStoreUrl}>App Store</ExternalLink>
-            <ExternalLink href={playStoreUrl}>Google Play</ExternalLink>
-            <ExternalLink href="https://github.com/getpaseo/paseo/releases">
-              {t("footer.desktop")}
-            </ExternalLink>
-            <ExternalLink href={webAppUrl}>{t("footer.webApp")}</ExternalLink>
-          </div>
+
+  const columns = (
+    <div className="grid grid-cols-2 gap-8 text-sm sm:grid-cols-5">
+      <div className="space-y-3">
+        <p className={COLUMN_HEADING_CLASS}>{t("footer.product")}</p>
+        <div className="space-y-2">
+          {page("/blog", t("footer.blog"))}
+          {page("/docs", t("footer.docs"))}
+          {PLUGINS_LINKED && page("/plugins", t("footer.plugins"))}
+          {page("/changelog", t("footer.changelog"))}
+          {page("/hub", t("footer.hub"))}
+          {page("/docs/cli", t("footer.cli"))}
+          {page("/privacy", t("footer.privacy"))}
+          {page("/terms", t("footer.terms"))}
+          {page("/sponsor", t("footer.sponsor"))}
         </div>
       </div>
+      <div className="space-y-3">
+        <p className={COLUMN_HEADING_CLASS}>{t("footer.agents")}</p>
+        <div className="space-y-2">
+          {page("/claude-code", "Claude Code")}
+          {page("/codex", "Codex")}
+          {page("/opencode", "OpenCode")}
+          {page("/antigravity", "Antigravity")}
+          {page("/muse-code", "Muse Code")}
+          {page("/agents", t("footer.allProviders"))}
+        </div>
+      </div>
+      <div className="space-y-3">
+        <p className={COLUMN_HEADING_CLASS}>{t("footer.alternatives")}</p>
+        <div className="space-y-2">
+          {alternatives.map((alternative) => (
+            <a key={alternative.slug} href={localize(alternative.href)} className={LINK_CLASS}>
+              {alternative.name}
+            </a>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-3">
+        <p className={COLUMN_HEADING_CLASS}>{t("footer.community")}</p>
+        <div className="space-y-2">
+          <ExternalLink href="https://discord.gg/jz8T2uahpH">Discord</ExternalLink>
+          <ExternalLink href="https://www.reddit.com/r/PaseoAI/">Reddit</ExternalLink>
+          <ExternalLink href="https://github.com/getpaseo/paseo">GitHub</ExternalLink>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <p className={COLUMN_HEADING_CLASS}>{t("footer.download")}</p>
+        <div className="space-y-2">
+          <ExternalLink href={appStoreUrl}>App Store</ExternalLink>
+          <ExternalLink href={playStoreUrl}>Google Play</ExternalLink>
+          <ExternalLink href="https://github.com/getpaseo/paseo/releases">
+            {t("footer.desktop")}
+          </ExternalLink>
+          <ExternalLink href={webAppUrl}>{t("footer.webApp")}</ExternalLink>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (width === "default") {
+    return (
+      <footer className="border-t border-white/[0.07]">
+        {sponsors ? (
+          <div className="border-b border-white/[0.07]">
+            <div className={`${PAGE_RAIL_CLASS} ${PAGE_INSET_CLASS}`}>
+              <SponsorsSection placement="footer" />
+            </div>
+          </div>
+        ) : null}
+        <div className={`${PAGE_RAIL_CLASS} ${PAGE_INSET_CLASS} py-12 md:py-14`}>{columns}</div>
+      </footer>
+    );
+  }
+
+  return (
+    <footer className={`${NON_DEFAULT_WIDTH_CLASSES[width]} mx-auto mt-12 md:mt-16`}>
+      {sponsors ? <SponsorsSection placement="footer" /> : null}
+      <div className="border-t border-white/10 pt-8 pb-4">{columns}</div>
     </footer>
   );
 }

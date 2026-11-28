@@ -27,11 +27,6 @@ export function MenuSettingsRows({ children }: { children: ReactNode }) {
 
 export interface SettingsRowLayout {
   row: StyleProp<ViewStyle>;
-  /**
-   * A row as tall as one holding a control of `controlSize`, whether or not it holds one. In a menu
-   * it keeps the menu's row height.
-   */
-  controlRow: StyleProp<ViewStyle>;
   title: StyleProp<TextStyle>;
   hint: StyleProp<TextStyle>;
   /** The size of the controls in the row's trailing slot. */
@@ -43,7 +38,6 @@ function layoutFor(placement: RowPlacement): SettingsRowLayout {
     case "nested":
       return {
         row: [settingsStyles.row, styles.nestedRow],
-        controlRow: [settingsStyles.row, styles.nestedRow],
         title: [settingsStyles.rowTitle, styles.nestedText],
         hint: [settingsStyles.rowHint, styles.nestedText],
         controlSize: "sm",
@@ -51,7 +45,6 @@ function layoutFor(placement: RowPlacement): SettingsRowLayout {
     case "menu":
       return {
         row: [settingsStyles.row, styles.menuRow],
-        controlRow: [settingsStyles.row, styles.menuRow],
         title: settingsStyles.rowTitle,
         hint: settingsStyles.rowHint,
         controlSize: "md",
@@ -59,7 +52,6 @@ function layoutFor(placement: RowPlacement): SettingsRowLayout {
     case "card":
       return {
         row: settingsStyles.row,
-        controlRow: [settingsStyles.row, styles.cardControlRow],
         title: settingsStyles.rowTitle,
         hint: settingsStyles.rowHint,
         controlSize: "md",
@@ -74,9 +66,6 @@ export function useSettingsRowLayout(): SettingsRowLayout {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  cardControlRow: {
-    minHeight: mapLayout(CONTROL_HEIGHTS.md, (height) => height + theme.spacing[4] * 2),
-  },
   // Every nested row is as tall as one holding an `sm` control, so rows with and without a
   // trailing button line up.
   nestedRow: {

@@ -1,6 +1,7 @@
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
-import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import type { AgentActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -22,7 +23,12 @@ import {
   type BackgroundCaller,
 } from "../create-agent/intent.js";
 import { expandUserPath } from "../../path-utils.js";
-import type { PaseoToolExecutionContext, PaseoToolResult } from "../tools/types.js";
+import { applyRecordPatch } from "../../record-patch.js";
+import {
+  PaseoToolInputError,
+  type PaseoToolExecutionContext,
+  type PaseoToolResult,
+} from "../tools/types.js";
 
 export class HostOperationRejectedError extends Error {
   readonly code: unknown;
@@ -44,6 +50,7 @@ export interface HostOperations {
   createAgent: HostOperation;
   createWorkspace: HostOperation;
   listWorkspaces: HostOperation;
+  updateWorkspace: HostOperation;
   sendPrompt: HostOperation;
   getStatus: HostOperation;
   getActivity: HostOperation;
@@ -284,9 +291,7 @@ export function createHostResolver(input: {
                   : undefined,
                 sourceAgentId: input.callerAgentId,
                 sourceAgentServerId: input.callerAgentId ? input.serverId : undefined,
-                activeTurnBehavior:
-                  (args.activeTurnBehavior as ActiveTurnBehavior | undefined) ??
-                  (input.callerAgentId ? "steer" : "interrupt"),
+                activeTurnBehavior: args.activeTurnBehavior as AgentActiveTurnBehavior | undefined,
               })
               .catch((error) => {
                 if (isAmbiguousPromptFailure(error)) throw error;
@@ -298,7 +303,11 @@ export function createHostResolver(input: {
               status: agent.status,
               guidance:
                 receipt.deliveryStatus === "queued"
-                  ? "Queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
+                  ? `${
+                      // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove after
+                      // 2027-05-22 once connected-host floor >= v0.17.2. Older hosts return no guidance.
+                      receipt.guidance ?? "Queued for delivery after the current turn ends."
+                    } You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false.`
                   : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
             });
           },
@@ -378,6 +387,14 @@ export function createHostResolver(input: {
                       worktreeSlug: args.worktreeSlug as string | undefined,
                     },
               title: args.title as string | undefined,
+              ...(args.metadata !== undefined
+                ? {
+                    metadata: applyRecordPatch<JsonValue>(
+                      {},
+                      args.metadata as Record<string, JsonValue>,
+                    ),
+                  }
+                : {}),
               background: inheritWorkspaceBackground(
                 args.background as boolean | undefined,
                 input.caller(),
@@ -386,6 +403,29 @@ export function createHostResolver(input: {
             if (response.error || !response.workspace)
               throw new Error(response.error ?? "Workspace creation failed");
             return result(workspaceSummary(response.workspace));
+          },
+          async updateWorkspace(args) {
+            const workspaceId = typeof args.workspaceId === "string" ? args.workspaceId.trim() : "";
+            if (!workspaceId) {
+              throw new PaseoToolInputError("workspaceId is required when targeting a remote host");
+            }
+            const title = args.title as string | null | undefined;
+            const metadata = args.metadata as Record<string, JsonValue> | undefined;
+            if (title === undefined && metadata === undefined) {
+              throw new PaseoToolInputError(
+                "Specify at least one field to update: title or metadata",
+              );
+            }
+            // Apply metadata first so a host without entityMetadata fails before touching title.
+            if (metadata !== undefined) {
+              await client.setWorkspaceMetadata(workspaceId, metadata);
+            }
+            if (title !== undefined) {
+              await client.setWorkspaceTitle(workspaceId, title);
+            }
+            const updated = await client.findWorkspace(workspaceId);
+            if (!updated) throw new PaseoToolInputError(`Workspace ${workspaceId} not found`);
+            return result(workspaceSummary(updated));
           },
         }),
       );
@@ -401,6 +441,7 @@ function workspaceSummary(workspace: FetchWorkspacesEntry) {
     kind: workspace.workspaceKind === "checkout" ? "local_checkout" : workspace.workspaceKind,
     title: workspace.title,
     background: workspace.background,
+    metadata: workspace.metadata ?? {},
   };
 }
 

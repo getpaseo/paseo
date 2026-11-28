@@ -7,6 +7,7 @@ import invariant from "tiny-invariant";
 import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
 import { TerminalPane } from "@/components/terminal-pane";
+import { openUrlInWorkspaceBrowser } from "@/desktop/browser/open-url-in-workspace";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
@@ -94,6 +95,10 @@ function TerminalPanel() {
       workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
     });
   }, [isCompact, serverId, workspaceId, workspaceDirectory]);
+  const handleOpenBrowserUrl = useCallback(
+    (url: string) => openUrlInWorkspaceBrowser({ serverId, workspaceId, url }),
+    [serverId, workspaceId],
+  );
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {
@@ -113,6 +118,7 @@ function TerminalPanel() {
       isPaneFocused={isPaneFocused}
       onOpenFileExplorer={handleOpenFileExplorer}
       onOpenWorkspaceFile={openFileInWorkspace}
+      onOpenBrowserUrl={handleOpenBrowserUrl}
     />
   );
 }

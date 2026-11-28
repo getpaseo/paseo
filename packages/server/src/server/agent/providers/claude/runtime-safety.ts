@@ -12,6 +12,8 @@ export class ClaudeRuntimeSafety {
   // has neither been sent a prompt nor reported init (a resumed chat that only answered
   // control requests) owns no background work.
   private turnSeen = false;
+  /** Whether this process ever announced a turn of its own via system/init. */
+  private initSeen = false;
   private liveTasks: readonly ClaudeBackgroundTask[] = [];
   private published: AgentBackgroundWorkInput[] | undefined;
   private readonly awaitingNotifications = new Set<string>();
@@ -23,12 +25,16 @@ export class ClaudeRuntimeSafety {
   // count unknown until the next Stop, so an interrupted or failed turn keeps the runtime.
   private sessionCrons = 0;
   private sessionCronsUnknown = false;
+  // One-shot wakeups (ScheduleWakeup) start a turn by themselves; recurring crons never settle.
+  private oneShotWakeups = 0;
 
   reset(): void {
     this.sessionCrons = 0;
+    this.oneShotWakeups = 0;
     this.sessionCronsUnknown = false;
     this.inventoryState = "unknown";
     this.turnSeen = false;
+    this.initSeen = false;
     this.liveTasks = [];
     this.published = undefined;
     this.awaitingNotifications.clear();
@@ -47,11 +53,33 @@ export class ClaudeRuntimeSafety {
     this.turnSeen = true;
   }
 
+  /**
+   * Called when a cancel withdrew every prompt sent to a process that never started a turn.
+   * Restores the untouched stoppable state unless the process already announced an init.
+   */
+  notePromptWithdrawn(): void {
+    if (this.initSeen) return;
+    this.turnSeen = false;
+  }
+
   /** Called with the session crons of each main-thread Stop hook. Older CLIs omit them. */
   observeStop(sessionCrons: readonly SessionCronSummary[] | undefined): void {
     if (this.inventoryState === "retired") return;
     this.sessionCronsUnknown = false;
-    if (sessionCrons) this.sessionCrons = sessionCrons.length;
+    if (sessionCrons) {
+      this.sessionCrons = sessionCrons.length;
+      this.oneShotWakeups = sessionCrons.filter((cron) => !cron.recurring).length;
+    }
+  }
+
+  /**
+   * True while a live background task or an undelivered task notification will start a turn,
+   * or a one-shot wakeup is scheduled. Recurring crons are excluded: they never settle.
+   */
+  hasPendingWakeup(): boolean {
+    return (
+      this.liveTasks.length > 0 || this.awaitingNotifications.size > 0 || this.oneShotWakeups > 0
+    );
   }
 
   /** Returns a full replacement only when the visible inventory changes. */
@@ -122,6 +150,7 @@ export class ClaudeRuntimeSafety {
     }
     if (message.subtype === "init") {
       this.turnSeen = true;
+      this.initSeen = true;
       const version = parseClaudeCodeVersion(message.claude_code_version ?? "");
       if (
         version &&

@@ -29,7 +29,12 @@ const ACP_PROVIDER = {
 
 interface ProviderCatalogDaemonClient {
   getLastServerInfoMessage(): {
-    features?: { fxProvider?: boolean; hopliteProvider?: boolean; plugins?: boolean };
+    features?: {
+      gooseProvider?: boolean;
+      fxProvider?: boolean;
+      hopliteProvider?: boolean;
+      plugins?: boolean;
+    };
   } | null;
   connect(): Promise<void>;
   close(): Promise<void>;
@@ -204,3 +209,47 @@ test("model selector excludes Hoplite before opt-in", async ({ page }, testInfo)
     await client.close();
   }
 });
+
+test("adds bundled goose from the catalog", async ({ page }) => {
+  const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
+    clientIdPrefix: "goose-catalog-e2e",
+  });
+  try {
+    expect(client.getLastServerInfoMessage()?.features?.gooseProvider).toBe(true);
+    await client.patchDaemonConfig({ removeProviders: ["goose"] });
+    await gotoAppShell(page);
+    await addGooseFromSettings(page, getServerId());
+    expect((await client.getDaemonConfig()).config.providers?.goose).toEqual({ enabled: true });
+  } finally {
+    await client.patchDaemonConfig({ removeProviders: ["goose"] });
+    await client.close();
+  }
+});
+
+test("adds goose through ACP on an older host", async ({ page, outdatedDaemon }) => {
+  const client = await connectDaemonClient<ProviderCatalogDaemonClient>({
+    clientIdPrefix: "goose-catalog-old-host",
+    port: Number(new URL(`http://${outdatedDaemon.endpoint}`).port),
+  });
+  try {
+    expect(client.getLastServerInfoMessage()?.features?.gooseProvider).toBe(false);
+    await seedSavedSettingsHosts(page, [outdatedDaemon]);
+    await page.reload();
+    await addGooseFromSettings(page, outdatedDaemon.serverId);
+    expect((await client.getDaemonConfig()).config.providers?.goose).toMatchObject({
+      extends: "acp",
+      command: ["goose", "acp"],
+    });
+  } finally {
+    await client.close();
+  }
+});
+
+async function addGooseFromSettings(page: import("@playwright/test").Page, serverId: string) {
+  await openSettings(page);
+  await openSettingsHost(page, serverId);
+  await openSettingsHostSection(page, serverId, "providers");
+  await openAddProvider(page);
+  await installAcpCatalogProvider(page, "goose");
+  await expectProviderInstalledInSettings(page, "goose");
+}

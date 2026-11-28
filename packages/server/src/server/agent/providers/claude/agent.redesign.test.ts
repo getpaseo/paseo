@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Logger } from "pino";
+import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { asInternals } from "../../../test-utils/class-mocks.js";
@@ -201,23 +202,6 @@ test("exposes and applies auto permission mode", async () => {
   }
 });
 
-test("rejects auto mode when Claude Code uses Bedrock", async () => {
-  const previousBedrock = process.env.CLAUDE_CODE_USE_BEDROCK;
-  process.env.CLAUDE_CODE_USE_BEDROCK = "1";
-
-  const session = await createSession();
-
-  try {
-    await expect(session.setMode("auto")).rejects.toThrow(
-      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Bedrock",
-    );
-    expect(sdkQueryFactory).not.toHaveBeenCalled();
-  } finally {
-    restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
-    await session.close();
-  }
-});
-
 test.each([
   { env: {}, expected: "auto" },
   { env: { CLAUDE_CODE_USE_BEDROCK: "1" }, expected: "default" },
@@ -289,40 +273,6 @@ test("allows launch env to disable inherited Bedrock transport for auto mode", a
     expect(await session.getCurrentMode()).toBe("auto");
   } finally {
     restoreEnvValue("CLAUDE_CODE_USE_BEDROCK", previousBedrock);
-    await session.close();
-  }
-});
-
-test("fails an auto mode turn when Claude Code uses Vertex", async () => {
-  const previousVertex = process.env.CLAUDE_CODE_USE_VERTEX;
-  process.env.CLAUDE_CODE_USE_VERTEX = "true";
-  sdkQueryFactory.mockImplementation(() => {
-    throw new Error("query should not start");
-  });
-  const client = new ClaudeAgentClient({
-    logger: createTestLogger(),
-    queryFactory: sdkQueryFactory,
-    resolveBinary: async () => "/test/claude/bin",
-  });
-  const session = await client.createSession({
-    provider: "claude",
-    cwd: process.cwd(),
-    modeId: "auto",
-  });
-
-  try {
-    const events = await collectUntilTerminal(streamSession(session, "hello"));
-    const failure = events.find(
-      (event): event is Extract<AgentStreamEvent, { type: "turn_failed" }> =>
-        event.type === "turn_failed",
-    );
-
-    expect(failure?.error).toContain(
-      "Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses Vertex",
-    );
-    expect(sdkQueryFactory).not.toHaveBeenCalled();
-  } finally {
-    restoreEnvValue("CLAUDE_CODE_USE_VERTEX", previousVertex);
     await session.close();
   }
 });
@@ -1399,6 +1349,86 @@ test("a background subagent's frames never open a turn while the main session is
   await session.close();
 });
 
+test("a rate-limit event reports the account's usage, and each turn's result asks for a refetch", async () => {
+  const session = await createSession();
+  const internal: SessionStateInternals = asInternals(session);
+  const queryMock = createPendingQueryMock();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const usageEvents = () => events.filter((event) => event.type === "usage_observed");
+
+  // The shape Claude Code sends once per query: the named window at the top level, every window in
+  // the undocumented `unifiedWindows`, utilization as a 0-1 fraction, resets in epoch seconds.
+  await internal.routeSdkMessageFromPump(
+    {
+      type: "rate_limit_event",
+      rate_limit_info: {
+        status: "allowed_warning",
+        resetsAt: 1795917600,
+        rateLimitType: "seven_day",
+        utilization: 0.9,
+        unifiedWindows: {
+          five_hour: { utilization: 0.73, resetsAt: 1795725600, status: "allowed" },
+          seven_day: { utilization: 0.9, resetsAt: 1795917600, status: "allowed_warning" },
+        },
+      },
+      uuid: "uuid-rate-limit-usage",
+      session_id: "sess-1",
+    },
+    queryMock,
+  );
+  expect(usageEvents()).toEqual([
+    {
+      type: "usage_observed",
+      provider: "claude",
+      sourceId: "claude",
+      windows: [
+        {
+          id: "five_hour",
+          label: "Session",
+          shortLabel: "5h",
+          summary: true,
+          usedPct: 73,
+          remainingPct: 27,
+          durationSeconds: 18_000,
+          resetsAt: "2026-11-26T20:40:00.000Z",
+          tone: "warning",
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          shortLabel: "wk",
+          summary: true,
+          usedPct: 90,
+          remainingPct: 10,
+          durationSeconds: 604_800,
+          resetsAt: "2026-11-29T02:00:00.000Z",
+          tone: "warning",
+        },
+      ],
+    },
+  ]);
+
+  // An event without utilization reports nothing; every result asks for the turn's usage.
+  events.length = 0;
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  await internal.routeSdkMessageFromPump(rateLimitEvent, queryMock);
+  expect(usageEvents()).toEqual([]);
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  expect(usageEvents()).toEqual([
+    expect.objectContaining({ type: "usage_observed", sourceId: "claude", windows: [] }),
+  ]);
+  // The refetch request follows the turn's own events, so consumers see the turn end first.
+  const types = events.map((event) => event.type);
+  expect(types).toContain("turn_completed");
+  expect(types.at(-1)).toBe("usage_observed");
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  expect(usageEvents()).toHaveLength(2);
+
+  await session.close();
+});
+
 test("Claude waking up after a helper finishes gets an autonomous turn that its result closes", async () => {
   const session = await createSession();
   const internal: SessionStateInternals = asInternals(session);
@@ -2276,6 +2306,375 @@ test("a background subagent's own job notification does not start a main-session
 
   await route(claudeTurnInit());
   expect(startedTurnIds(events)).toEqual([notificationTurnId]);
+
+  await session.close();
+});
+
+const MULTI_BLOCK_SESSION_ID = "multi-block-session";
+
+function streamFrame(event: Record<string, unknown>) {
+  return { type: "stream_event", parent_tool_use_id: null, event };
+}
+
+// A block's start and deltas. Its stop is separate because the SDK sends the block's snapshot
+// before content_block_stop.
+function streamedBlock(input: { index: number; kind: "thinking" | "text"; deltas: string[] }) {
+  const { index, kind, deltas } = input;
+  const deltaType = kind === "thinking" ? "thinking_delta" : "text_delta";
+  return [
+    streamFrame({ type: "content_block_start", index, content_block: { type: kind, [kind]: "" } }),
+    ...deltas.map((text) =>
+      streamFrame({ type: "content_block_delta", index, delta: { type: deltaType, [kind]: text } }),
+    ),
+  ];
+}
+
+function blockStop(index: number) {
+  return streamFrame({ type: "content_block_stop", index });
+}
+
+// The SDK's per-block assistant message: same message id as its siblings, one block of content.
+function blockSnapshot(input: { uuid: string; kind: "thinking" | "text"; text: string }) {
+  const { uuid, kind, text } = input;
+  return {
+    type: "assistant",
+    uuid,
+    parent_tool_use_id: null,
+    session_id: MULTI_BLOCK_SESSION_ID,
+    message: { id: "msg-multi", role: "assistant", content: [{ type: kind, [kind]: text }] },
+  };
+}
+
+async function runScriptedTurn(
+  frames: Array<Record<string, unknown> | Error | "interrupt">,
+): Promise<AgentTimelineItem[]> {
+  let session: Awaited<ReturnType<ClaudeAgentClient["createSession"]>>;
+  // An injected SDK transport exercises the public session, without module mocks.
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: ({ prompt }) => {
+      const readPromptUuid = createPromptUuidReader(prompt as AsyncIterable<unknown>);
+      const iterator = (async function* (): AsyncGenerator<SDKMessage, void> {
+        // These fixtures deliberately include legacy/incomplete wire frames. Their cast stays
+        // at the input boundary; the injected transport itself implements the full SDK interface.
+        yield { ...claudeTurnInit(), session_id: MULTI_BLOCK_SESSION_ID } as SDKMessage;
+        yield {
+          type: "user",
+          message: { role: "user", content: "multi-block prompt" },
+          parent_tool_use_id: null,
+          uuid: (await readPromptUuid()) ?? "missing-prompt-uuid",
+          session_id: MULTI_BLOCK_SESSION_ID,
+        };
+        for (const frame of frames) {
+          if (frame instanceof Error) throw frame;
+          if (frame === "interrupt") {
+            await session.interrupt();
+            return;
+          }
+          yield frame as SDKMessage;
+        }
+        yield successResult() as SDKMessage;
+      })();
+      const unsupported = async (): Promise<never> => {
+        throw new Error("SDK operation not supported by scripted transport");
+      };
+      const transport: Query = Object.assign(iterator, {
+        interrupt: async () => undefined,
+        close: () => undefined,
+        setPermissionMode: async () => undefined,
+        setModel: async () => undefined,
+        supportedModels: async () => [
+          { value: "opus", displayName: "Opus", description: "Test model" },
+        ],
+        supportedCommands: async () => [],
+        setMcpPermissionModeOverride: unsupported,
+        setMaxThinkingTokens: unsupported,
+        applyFlagSettings: unsupported,
+        updateSettings: unsupported,
+        initializationResult: unsupported,
+        reinitialize: unsupported,
+        supportedAgents: unsupported,
+        mcpServerStatus: unsupported,
+        getContextUsage: unsupported,
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: unsupported,
+        readFile: unsupported,
+        reloadPlugins: unsupported,
+        reloadSkills: unsupported,
+        reloadOutputStyles: unsupported,
+        accountInfo: unsupported,
+        rewindFiles: unsupported,
+        seedReadState: unsupported,
+        reconnectMcpServer: unsupported,
+        toggleMcpServer: unsupported,
+        readMcpResource: unsupported,
+        setMcpServers: unsupported,
+        streamInput: unsupported,
+        stopTask: unsupported,
+        backgroundTasks: unsupported,
+      });
+      return transport;
+    },
+  });
+  session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+  try {
+    const events = await collectUntilTerminal(streamSession(session, "multi-block prompt"));
+    return events.flatMap((event) => (event.type === "timeline" ? [event.item] : []));
+  } finally {
+    await session.close();
+  }
+}
+
+// Each chunk as emitted, so a test sees duplicates and lost chunks, not just the final text.
+function emittedChunks(input: {
+  items: AgentTimelineItem[];
+  type: "reasoning" | "assistant_message";
+}): string[] {
+  const { items, type } = input;
+  return items.flatMap((item) => (item.type === type ? [item.text] : []));
+}
+
+const MESSAGE_START = streamFrame({
+  type: "message_start",
+  message: { id: "msg-multi", role: "assistant" },
+});
+const MESSAGE_STOP = streamFrame({ type: "message_stop" });
+
+test("shows each thinking block of a multi-block message once", async () => {
+  const items = await runScriptedTurn([
+    MESSAGE_START,
+    ...streamedBlock({
+      index: 0,
+      kind: "thinking",
+      deltas: ["First paragraph.\n\n", "Second paragraph.\n\n"],
+    }),
+    blockSnapshot({
+      uuid: "uuid-block-0",
+      kind: "thinking",
+      text: "First paragraph.\n\nSecond paragraph.\n\n",
+    }),
+    blockStop(0),
+    ...streamedBlock({ index: 1, kind: "thinking", deltas: ["Last paragraph.\n\n"] }),
+    blockSnapshot({ uuid: "uuid-block-1", kind: "thinking", text: "Last paragraph.\n\n" }),
+    blockStop(1),
+    MESSAGE_STOP,
+  ]);
+
+  expect(emittedChunks({ items, type: "reasoning" })).toEqual([
+    "First paragraph.\n\nSecond paragraph.\n\n",
+    "Last paragraph.\n\n",
+  ]);
+});
+
+test("shows each text block of a multi-block message once", async () => {
+  const items = await runScriptedTurn([
+    MESSAGE_START,
+    ...streamedBlock({ index: 0, kind: "text", deltas: ["Checking ", "the tests."] }),
+    blockSnapshot({ uuid: "uuid-block-0", kind: "text", text: "Checking the tests." }),
+    blockStop(0),
+    ...streamedBlock({ index: 1, kind: "text", deltas: [" All green."] }),
+    blockSnapshot({ uuid: "uuid-block-1", kind: "text", text: " All green." }),
+    blockStop(1),
+    MESSAGE_STOP,
+  ]);
+
+  expect(emittedChunks({ items, type: "assistant_message" })).toEqual([
+    "Checking ",
+    "the tests.",
+    " All green.",
+  ]);
+});
+
+test("fills in text a block snapshot has beyond what streamed", async () => {
+  const items = await runScriptedTurn([
+    MESSAGE_START,
+    ...streamedBlock({ index: 0, kind: "thinking", deltas: ["Partial"] }),
+    blockSnapshot({ uuid: "uuid-block-0", kind: "thinking", text: "Partial thought." }),
+    blockStop(0),
+    ...streamedBlock({ index: 1, kind: "thinking", deltas: ["Next."] }),
+    blockSnapshot({ uuid: "uuid-block-1", kind: "thinking", text: "Next." }),
+    blockStop(1),
+    MESSAGE_STOP,
+  ]);
+
+  expect(emittedChunks({ items, type: "reasoning" })).toEqual(["Partial thought.", "Next."]);
+});
+
+test("keeps identical blocks that arrive only as snapshots", async () => {
+  const items = await runScriptedTurn([
+    blockSnapshot({ uuid: "uuid-block-0", kind: "text", text: "Same line." }),
+    blockSnapshot({ uuid: "uuid-block-1", kind: "text", text: "Same line." }),
+  ]);
+
+  expect(emittedChunks({ items, type: "assistant_message" })).toEqual(["Same line.", "Same line."]);
+});
+
+test("ignores a redelivered block snapshot", async () => {
+  const items = await runScriptedTurn([
+    blockSnapshot({ uuid: "uuid-block-0", kind: "text", text: "Once." }),
+    blockSnapshot({ uuid: "uuid-block-0", kind: "text", text: "Once." }),
+  ]);
+
+  expect(emittedChunks({ items, type: "assistant_message" })).toEqual(["Once."]);
+});
+
+// Older fixtures send deltas without an index. This also covers a snapshot arriving after its
+// block's stop, the reverse of the documented order.
+test("continues the open block with deltas that carry no index", async () => {
+  const items = await runScriptedTurn([
+    MESSAGE_START,
+    ...streamedBlock({ index: 0, kind: "text", deltas: ["A"] }),
+    streamFrame({ type: "content_block_delta", delta: { type: "text_delta", text: "B" } }),
+    blockStop(0),
+    blockSnapshot({ uuid: "uuid-block-0", kind: "text", text: "AB" }),
+    streamFrame({ type: "content_block_delta", delta: { type: "text_delta", text: "C" } }),
+    blockStop(1),
+    blockSnapshot({ uuid: "uuid-block-1", kind: "text", text: "C" }),
+    MESSAGE_STOP,
+  ]);
+
+  expect(emittedChunks({ items, type: "assistant_message" })).toEqual(["A", "B", "C"]);
+});
+
+// With thinking display "omitted", a thinking block streams an empty delta and a signature, and
+// the SDK sends no snapshot for it because it only snapshots non-empty blocks.
+test("does not hold a snapshot slot for an empty thinking block", async () => {
+  const items = await runScriptedTurn([
+    MESSAGE_START,
+    ...streamedBlock({ index: 0, kind: "thinking", deltas: [""] }),
+    streamFrame({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "signature_delta", signature: "sig" },
+    }),
+    blockStop(0),
+    ...streamedBlock({ index: 1, kind: "thinking", deltas: ["Visible."] }),
+    blockSnapshot({ uuid: "uuid-block-1", kind: "thinking", text: "Visible." }),
+    blockStop(1),
+    MESSAGE_STOP,
+  ]);
+
+  expect(emittedChunks({ items, type: "reasoning" })).toEqual(["Visible."]);
+});
+
+test("shows a streamed narration block as assistant text before its question", async () => {
+  const comparison = "Plan B is fastest. Plan C costs least.";
+  const items = await runScriptedTurn([
+    MESSAGE_START,
+    ...streamedBlock({ index: 0, kind: "thinking", deltas: ["Compare cost", " and time."] }),
+    blockSnapshot({ uuid: "reason", kind: "thinking", text: "Compare cost and time." }),
+    blockStop(0),
+    ...streamedBlock({ index: 1, kind: "thinking", deltas: [comparison] }),
+    {
+      ...blockSnapshot({ uuid: "narration", kind: "thinking", text: comparison }),
+      narration_block_indexes: [0],
+    },
+    blockStop(1),
+    {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: "msg-multi",
+        content: [{ type: "tool_use", id: "ask-plan", name: "AskUserQuestion", input: {} }],
+      },
+    },
+    MESSAGE_STOP,
+  ]);
+
+  expect(emittedChunks({ items, type: "reasoning" }).join("")).toBe("Compare cost and time.");
+  expect(emittedChunks({ items, type: "assistant_message" })).toEqual([comparison]);
+  const comparisonIndex = items.findIndex((item) => item.type === "assistant_message");
+  const questionIndex = items.findIndex((item) => item.type === "tool_call");
+  expect(questionIndex).toBeGreaterThan(comparisonIndex);
+});
+
+test("classifies only the marked thinking block of a snapshot-only message", async () => {
+  const items = await runScriptedTurn([
+    {
+      type: "assistant",
+      uuid: "snapshot-only",
+      parent_tool_use_id: null,
+      narration_block_indexes: [2],
+      message: {
+        id: "msg-multi",
+        content: [
+          { type: "text", text: "Reading plans." },
+          { type: "thinking", thinking: "Compare the options." },
+          { type: "thinking", thinking: "Plan B is fastest." },
+        ],
+      },
+    },
+  ]);
+  expect(emittedChunks({ items, type: "assistant_message" })).toEqual([
+    "Reading plans.",
+    "Plan B is fastest.",
+  ]);
+  expect(emittedChunks({ items, type: "reasoning" })).toEqual(["Compare the options."]);
+});
+
+test("ignores malformed narration markers and retains unmarked reasoning", async () => {
+  for (const marker of [undefined, null, "0", ["0"], [-1], [1.5], [3]]) {
+    const items = await runScriptedTurn([
+      {
+        ...blockSnapshot({ uuid: "unmarked", kind: "thinking", text: "A thought." }),
+        narration_block_indexes: marker,
+      },
+    ]);
+    expect(emittedChunks({ items, type: "reasoning" })).toEqual(["A thought."]);
+    expect(emittedChunks({ items, type: "assistant_message" })).toEqual([]);
+  }
+});
+
+test("retains thinking at message stop when no completed block snapshot arrives", async () => {
+  const items = await runScriptedTurn([
+    MESSAGE_START,
+    ...streamedBlock({ index: 0, kind: "thinking", deltas: ["Partial", " thought."] }),
+    blockStop(0),
+    MESSAGE_STOP,
+  ]);
+  expect(emittedChunks({ items, type: "reasoning" }).join("")).toBe("Partial thought.");
+});
+
+test.each([
+  ["fails", new Error("Provider disconnected")],
+  ["is interrupted", "interrupt" as const],
+])(
+  "retains unfinished thinking when the turn %s without a message stop",
+  async (_name, terminal) => {
+    const items = await runScriptedTurn([
+      MESSAGE_START,
+      ...streamedBlock({ index: 0, kind: "thinking", deltas: ["Partial", " thought."] }),
+      terminal,
+    ]);
+    expect(emittedChunks({ items, type: "reasoning" })).toEqual(["Partial thought."]);
+  },
+);
+
+test("preserves an explicit terminal turnId on flushed unfinished thinking", async () => {
+  const { session, internal, events, route } = await createObservedSession();
+  const { turnId } = await session.startTurn("think");
+  await route(
+    claudeTurnInit(),
+    MESSAGE_START,
+    ...streamedBlock({ index: 0, kind: "thinking", deltas: ["Unfinished", " thought."] }),
+  );
+  // Clear active turn references to mirror a late terminal event that carries its own turnId.
+  internal.activeForegroundTurnId = null;
+  internal.autonomousTurn = null;
+  (
+    internal as unknown as { notifySubscribers: (event: AgentStreamEvent) => void }
+  ).notifySubscribers({
+    type: "turn_completed",
+    provider: "claude",
+    turnId,
+  });
+
+  const flushedReasoning = events.filter(
+    (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+      event.type === "timeline" && event.item.type === "reasoning",
+  );
+  expect(flushedReasoning.map((event) => event.item.text)).toEqual(["Unfinished thought."]);
+  expect(flushedReasoning.map((event) => event.turnId)).toEqual([turnId]);
 
   await session.close();
 });

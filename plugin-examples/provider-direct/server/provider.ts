@@ -21,6 +21,7 @@ const CAPABILITIES = [
   "session.archive",
   "session.configure",
   "session.list",
+  "session.metrics",
   "session.persistence",
   "session.subsession",
   "session.unarchive",
@@ -309,10 +310,11 @@ function promptSession(
     result: { type: "turn", turnId },
   });
   state.emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "started" });
+  const reply = `Echo: ${text}`;
   state.emit({
     type: "timeline.item",
     sessionId: input.sessionId,
-    item: { type: "assistant_message", id: `assistant-${session.turn}`, text: `Echo: ${text}` },
+    item: { type: "assistant_message", id: `assistant-${session.turn}`, text: reply },
   });
   state.emit({
     type: "timeline.item",
@@ -336,7 +338,25 @@ function promptSession(
     sessionId: input.sessionId,
     persistence: session.persistence,
   });
-  state.emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "completed" });
+  // Values are formatted here: Paseo shows each one as given.
+  state.emit({
+    type: "session.turn",
+    sessionId: input.sessionId,
+    turnId,
+    state: "completed",
+    metrics: [
+      { label: "Model", value: session.config.model ?? "example-1" },
+      { label: "Reply", value: `${reply.length} characters` },
+    ],
+  });
+  // An older Paseo does not offer session metrics and rejects the event.
+  if (state.capabilities.includes("session.metrics")) {
+    state.emit({
+      type: "session.metrics",
+      sessionId: input.sessionId,
+      metrics: [{ label: "Turns", value: String(session.turn) }],
+    });
+  }
   session.activeTurnId = null;
 }
 

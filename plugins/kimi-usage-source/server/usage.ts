@@ -1,4 +1,5 @@
 import type { UsageInput } from "../shared/input.js";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import {
   toneFromUsedPct,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -18,7 +20,21 @@ const ApiOptionalStringSchema = z.preprocess(
   z.coerce.string().optional(),
 );
 
-const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
+const KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
+
+// The Kimi CLI's official deployments. A login writes its token to a credential
+// slot derived from the deployment, so a global (.ai) login never touches
+// kimi-code.json. Mirrors resolveKimiCodeOAuthKey in the Kimi CLI.
+const KIMI_CODE_DEPLOYMENTS = [
+  { oauthHost: "https://auth.kimi.com", baseUrl: KIMI_CODE_BASE_URL },
+  { oauthHost: "https://auth.kimi.ai", baseUrl: "https://api.kimi.ai/coding/v1" },
+];
+
+function credentialSlot(deployment: { oauthHost: string; baseUrl: string }): string {
+  if (deployment.baseUrl === KIMI_CODE_BASE_URL) return "kimi-code";
+  const hash = createHash("sha256").update(JSON.stringify(deployment)).digest("hex");
+  return `kimi-code-env-${hash.slice(0, 16)}`;
+}
 
 const KimiUsageFieldsSchema = z.object({
   limit: ApiOptionalStringSchema,
@@ -257,7 +273,7 @@ export async function fetchUsage(
   fetchApi: typeof fetch = fetch,
 ): Promise<UsageReport> {
   async function callUsageApi(token: string): Promise<Response> {
-    return fetchApi(KIMI_USAGE_URL, {
+    return fetchApi(`${input.baseUrl ?? KIMI_CODE_BASE_URL}/usages`, {
       signal: AbortSignal.timeout(15_000),
       headers: {
         Authorization: `Bearer ${token}`,
@@ -272,6 +288,7 @@ export async function fetchUsage(
     return unavailable({
       kind: "expired",
       expiresAt: new Date(credentials.expires_at * 1000).toISOString(),
+      refreshedBy: "kimi",
     });
 
   const res = await callUsageApi(credentials.access_token);
@@ -305,22 +322,54 @@ async function readCredentials(input: UsageInput): Promise<KimiCredentials | und
     return undefined;
   }
 }
-export async function discover(): Promise<UsageAccount[]> {
-  const candidates: UsageInput[] = ["KIMI_TOKEN", "KIMI_API_KEY"].map((locator) => ({
-    store: "env",
-    locator,
-  }));
-  candidates.push(
-    ...[
-      join(
-        process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
-        "credentials",
-        "kimi-code.json",
-      ),
-      join(homedir(), ".kimi", "credentials", "kimi-code.json"),
-    ].map((locator) => ({ store: "file" as const, locator })),
-  );
-  for (const input of candidates)
-    if (await readCredentials(input)) return [{ key: "default", input }];
+const OPENCODE_KIMI_PROVIDERS = new Set(["kimi-for-coding", "kimi"]);
+
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
+  for (const locator of ["KIMI_TOKEN", "KIMI_API_KEY"]) {
+    const value = env[locator];
+    if (value && (!matchHostEnv || value === process.env[locator])) {
+      const input: UsageInput = { store: "env", locator };
+      if (await readCredentials(input)) return [{ key: "default", input }];
+    }
+  }
+  // File stores reflect the host CLI login (matching Host -> Usage).
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
+  const homes = [env.KIMI_CODE_HOME || join(home, ".kimi-code"), join(home, ".kimi")];
+  // A login to another deployment leaves the old slot behind with a dead token.
+  // Within each home, prefer the latest expiry. Keep the configured home ahead
+  // of the legacy fallback, even if that fallback holds a newer token.
+  for (const candidateHome of homes) {
+    let found: { input: UsageInput; expiresAt: number } | undefined;
+    for (const deployment of KIMI_CODE_DEPLOYMENTS) {
+      const input: UsageInput = {
+        store: "file",
+        locator: join(candidateHome, "credentials", `${credentialSlot(deployment)}.json`),
+        baseUrl: deployment.baseUrl,
+      };
+      const credentials = await readCredentials(input);
+      if (!credentials) continue;
+      const expiresAt = credentials.expires_at ?? Number.POSITIVE_INFINITY;
+      if (!found || expiresAt > found.expiresAt) found = { input, expiresAt };
+    }
+    if (found) return [{ key: "default", input: found.input }];
+  }
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
+    scope.provider === "kimi" ||
+    (scope.provider === "opencode" && OPENCODE_KIMI_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }

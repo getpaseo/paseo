@@ -1,5 +1,5 @@
 import { parseHostTarget } from "@getpaseo/protocol/host-target";
-import { resolvePaseoHome } from "@getpaseo/server/daemon-control";
+import { resolvePaseoHome } from "@getpaseo/server/daemon-files";
 
 export type DaemonTarget = { kind: "instance"; home: string } | { kind: "endpoint"; host: string };
 

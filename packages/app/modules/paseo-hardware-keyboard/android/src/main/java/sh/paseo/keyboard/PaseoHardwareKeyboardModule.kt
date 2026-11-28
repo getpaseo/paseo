@@ -115,11 +115,23 @@ internal object HardwareKeyboard {
   }
 }
 
+/**
+ * Implemented by custom non-EditText editor views so window-level hardware key dispatch can
+ * detect active IME composition without depending on `View.getTag()` (which React Native's
+ * `BaseViewManager.setTestId` overwrites with the string `testID`).
+ */
+interface ComposingTextOwner {
+  fun isComposingText(): Boolean
+}
+
 private class KeyboardWindowCallback(private val window: Window, val previous: Window.Callback) : Window.Callback by previous {
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     val focus = window.currentFocus
-    val editable = (focus as? EditText)?.text
-    val composing = editable != null && BaseInputConnection.getComposingSpanStart(editable) >= 0
+    val composing = when (focus) {
+      is ComposingTextOwner -> focus.isComposingText()
+      is EditText -> focus.text != null && BaseInputConnection.getComposingSpanStart(focus.text) >= 0
+      else -> false
+    }
     val terminalFocused = focus?.getTag(R.id.view_tag_native_id) == TERMINAL_INPUT_NATIVE_ID
     return HardwareKeyboard.dispatcher.dispatch(
       event,

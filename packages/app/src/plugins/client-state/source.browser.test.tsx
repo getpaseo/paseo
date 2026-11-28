@@ -56,6 +56,19 @@ function SelectedWorkspace({ reference }: { reference: WorkspaceRef }) {
     </div>
   );
 }
+function DispatchedWorkspaces({ parent }: { parent: WorkspaceRef }) {
+  const children = useWorkspaces({
+    where: (item) => item.parentWorkspace?.key === parent.key,
+    orderBy: "name",
+  });
+  return (
+    <div>
+      {children.map((reference) => (
+        <WorkspaceRow key={reference.key} reference={reference} />
+      ))}
+    </div>
+  );
+}
 function AgentRow({ reference }: { reference: AgentRef }) {
   const item = useAgent(reference);
   return <div>{item?.title}</div>;
@@ -363,6 +376,39 @@ describe("sidebar data hooks through the app store and plugin provider", () => {
         await i18n.changeLanguage(previousLanguage);
       });
     }
+  });
+  it("nests a dispatched workspace under its parent on the same host only", () => {
+    seedHost("host-1");
+    seedHost("host-2");
+    const dispatched = (name: string) =>
+      new Map([
+        [
+          "workspace-1",
+          { ...workspace, id: "workspace-1", status: "done" as const, name: "Parent" },
+        ],
+        [
+          "workspace-2",
+          {
+            ...workspace,
+            id: "workspace-2",
+            status: "done" as const,
+            name,
+            parentWorkspaceId: "workspace-1",
+          },
+        ],
+      ]);
+    const store = useSessionStore.getState();
+    store.setWorkspaces("host-1", dispatched("Child here"));
+    store.setWorkspaces("host-2", dispatched("Child elsewhere"));
+    const hosts = new ConnectedHosts();
+    act(() => hosts.connect("host-2"));
+    const parent = createEntityRefs().workspace("host-1", "workspace-1");
+    const source = mount(<DispatchedWorkspaces parent={parent} />, hosts);
+    expect(container?.textContent).toBe("Child here:running");
+    const parentSnapshot = source
+      .getSnapshot()
+      .workspaces.find((item) => item.ref.key === parent.key);
+    expect(parentSnapshot?.parentWorkspace).toBeNull();
   });
   it("adds a newly connected host and exposes projects with no workspaces", () => {
     seedHost("host-1");

@@ -9,7 +9,6 @@ import {
 import { Portal } from "@gorhom/portal";
 import { useAnimatedReaction, useAnimatedRef } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Autocomplete,
   type AutocompleteOption,
@@ -56,7 +55,6 @@ export function AutocompletePopover({
   );
   const [anchorAtRest, setAnchorAtRest] = useState<AnchorAtRest | null>(null);
   const windowDimensions = useWindowDimensions();
-  const safeAreaInsets = useSafeAreaInsets();
   const portalHostName = useFloatingPanelPortalHostName();
   const { isMoving } = useKeyboardShift();
   const anchor = useKeyboardAnchor();
@@ -132,7 +130,6 @@ export function AutocompletePopover({
               anchorRef={anchorRef}
               anchorAtRest={anchorAtRest}
               reservedLift={anchor.reservedLift}
-              topInset={safeAreaInsets.top}
             >
               <Autocomplete
                 options={options}

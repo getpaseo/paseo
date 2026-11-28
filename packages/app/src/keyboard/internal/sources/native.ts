@@ -9,6 +9,7 @@ import {
 import type { ClaimedShortcut, HardwareKeyboardEvent } from "./hardware";
 interface HardwareKeySource {
   subscribe(handler: (event: HardwareKeyboardEvent) => void): () => void;
+  subscribeBlur?(handler: () => void): () => void;
   setOverlayKeys(keys: readonly string[]): void;
   setClaimedShortcuts(shortcuts: readonly ClaimedShortcut[]): void;
 }
@@ -78,7 +79,9 @@ export function createHardwareKeyboardSource(source: HardwareKeySource) {
           nativeKeyboardInput(event, focusSurfaces.resolve(handlers.commandCenterOpen())),
         );
       });
+      const unsubscribeBlur = source.subscribeBlur?.(() => handlers.blur()) ?? (() => {});
       return () => {
+        unsubscribeBlur();
         unsubscribeHardware();
         unsubscribeFocus();
         unsubscribeCommandCenter();

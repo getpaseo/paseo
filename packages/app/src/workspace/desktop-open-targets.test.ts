@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { selectDesktopOpenTargets } from "./desktop-open-targets";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DesktopEditorBridge } from "@/desktop/host";
+import {
+  hasDesktopDefaultAppBridge,
+  openInDesktopDefaultApp,
+  selectDesktopOpenTargets,
+} from "./desktop-open-targets";
 
 const cachedTargets = [
   {
@@ -27,5 +32,33 @@ describe("selectDesktopOpenTargets", () => {
         targets: cachedTargets,
       }),
     ).toEqual(cachedTargets);
+  });
+});
+
+describe("opening a file in the desktop default app", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function installDesktopEditorBridge(editor: DesktopEditorBridge) {
+    vi.stubGlobal("window", { paseoDesktop: { editor } });
+  }
+
+  it("is unavailable on a desktop host that predates it", () => {
+    installDesktopEditorBridge({ listTargets: async () => [], openTarget: async () => {} });
+
+    expect(hasDesktopDefaultAppBridge()).toBe(false);
+  });
+
+  it("hands the path to the desktop host", async () => {
+    const opened: string[] = [];
+    installDesktopEditorBridge({
+      openDefaultApp: async ({ path }) => {
+        opened.push(path);
+      },
+    });
+
+    expect(hasDesktopDefaultAppBridge()).toBe(true);
+    await openInDesktopDefaultApp("/repo/report.csv");
+
+    expect(opened).toEqual(["/repo/report.csv"]);
   });
 });

@@ -207,6 +207,68 @@ describe("DaemonConfigStore", () => {
     expect(store.get().agentProfiles).toHaveLength(1);
   });
 
+  test("preserves stored profile systemPrompt when omitted by an older client and clears on empty string", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "profile_ui",
+          name: "UI work",
+          provider: "claude",
+          model: "claude-opus-5",
+          systemPrompt: "  Focus on layout and design tokens.  ",
+        },
+      ],
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles?.[0]?.systemPrompt).toBe(
+      "Focus on layout and design tokens.",
+    );
+
+    // An older client edits the profile without sending `systemPrompt`.
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "profile_ui",
+          name: "UI work updated",
+          provider: "claude",
+          model: "claude-opus-5",
+        },
+      ],
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles?.[0]).toMatchObject({
+      name: "UI work updated",
+      systemPrompt: "Focus on layout and design tokens.",
+    });
+
+    // A newer client explicitly clears `systemPrompt` by sending an empty string.
+    await store.patch({
+      agentProfiles: [
+        {
+          id: "profile_ui",
+          name: "UI work updated",
+          provider: "claude",
+          model: "claude-opus-5",
+          systemPrompt: "",
+        },
+      ],
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles?.[0]).not.toHaveProperty(
+      "systemPrompt",
+    );
+  });
+
   test("a profile written with featureValues is stored as options, and the config API answers with both", async () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
@@ -1225,6 +1287,72 @@ describe("DaemonConfigStore", () => {
 
     const persisted = loadPersistedConfig(paseoHome);
     expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
+  });
+
+  test("patch persists and clears host metadata generation instructions without clobbering providers", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [{ provider: "claude", model: "haiku" }] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const updated = await store.patch({
+      metadataGeneration: {
+        instructions: "  Write in Simplified Chinese.\nDo not use em dashes.  ",
+      },
+    });
+    expect(updated.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+
+    // Updating providers preserves instructions.
+    const withProviders = await store.patch({
+      metadataGeneration: {
+        providers: [{ provider: "codex", model: "gpt-5.4-mini" }],
+      },
+    });
+    expect(withProviders.metadataGeneration).toEqual({
+      providers: [{ provider: "codex", model: "gpt-5.4-mini" }],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "codex", model: "gpt-5.4-mini" }],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+
+    // Removing a provider preserves instructions.
+    const afterRemove = await store.patch({ removeProviders: ["codex"] });
+    expect(afterRemove.metadataGeneration).toEqual({
+      providers: [],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [],
+      instructions: "Write in Simplified Chinese.\nDo not use em dashes.",
+    });
+
+    // Clearing instructions with whitespace removes the key while preserving providers.
+    const cleared = await store.patch({
+      metadataGeneration: { instructions: "   \n  " },
+    });
+    expect(cleared.metadataGeneration).toEqual({ providers: [] });
+    expect(cleared.metadataGeneration.instructions).toBeUndefined();
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({ providers: [] });
   });
 
   test("patch persists the host idle runtime cleanup opt-out for the next daemon start", async () => {

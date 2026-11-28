@@ -15,6 +15,7 @@ export function createHopliteProvider(): ProviderRegistration {
       acpOptions: { workspaceOnlyCatalog: true },
       transformers: [runPhaseTransformer],
     }),
+    docsUrl: "https://paseo.sh/docs/supported-providers/hoplite",
     installation: createHopliteInstallation(),
   };
 }

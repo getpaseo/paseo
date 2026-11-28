@@ -316,14 +316,19 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     }
 
     const spawnSpec = resolveWorkerSpawnSpec?.(workerEntry) ?? null;
+    // The supervisor receives terminal signals and orders shutdown over IPC.
+    // Providers must stay alive until the worker has captured restart recovery.
+    const detached = process.platform !== "win32";
     writeLifecycleLog("Spawning worker", { workerEntry });
     if (spawnSpec) {
       child = spawn(spawnSpec.command, spawnSpec.args, {
+        detached,
         stdio: ["inherit", "pipe", "pipe", "ipc"],
         env: spawnSpec.env ?? workerEnv,
       });
     } else {
       child = fork(workerEntry, workerArgs, {
+        detached,
         stdio: ["inherit", "pipe", "pipe", "ipc"],
         env: workerEnv,
         execArgv: workerExecArgv,

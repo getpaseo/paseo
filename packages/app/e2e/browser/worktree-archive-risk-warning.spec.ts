@@ -20,6 +20,7 @@ import {
 } from "../support/helpers/sidebar";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import {
+  pressArchiveShortcut,
   rowArchiveButton,
   undoButton,
   workspaceRow,
@@ -96,6 +97,18 @@ function gitActionsArchiveButton(page: Page) {
 async function clickRowArchiveButton(page: Page, workspaceId: string): Promise<void> {
   await workspaceRow(page, workspaceId).hover();
   await rowArchiveButton(page, workspaceId).click();
+}
+
+async function cycleThemeAndWaitForSidebar(page: Page, workspaceId: string): Promise<void> {
+  const rowBeforeThemeChange = await workspaceRow(page, workspaceId).elementHandle();
+  if (!rowBeforeThemeChange)
+    throw new Error("The workspace row must be mounted before cycling the theme");
+  await page.keyboard.press("ControlOrMeta+Alt+t");
+  await expect
+    .poll(() => rowBeforeThemeChange.evaluate((element) => element.isConnected), {
+      message: "the sidebar remounts after the theme changes",
+    })
+    .toBe(false);
 }
 
 interface SessionEnvelope {
@@ -211,18 +224,28 @@ async function relayDaemon(
  * Holds the app's next checkout status request for `directory` once armed, so a test can act
  * while the archive waits for the host's answer.
  */
-async function holdCheckoutStatusRequest(page: Page, directory: string) {
+async function holdCheckoutStatusRequest(
+  page: Page,
+  worktree: { workspaceDirectory: string; workspaceId: string },
+) {
   let armed = false;
   let held: (() => void) | null = null;
+  let archiveRequests = 0;
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();
     browser.onMessage((message) => {
       const request = typeof message === "string" ? parseSessionEnvelope(message)?.message : null;
       if (
+        request?.type === "archive_workspace_request" &&
+        request.workspaceId === worktree.workspaceId
+      ) {
+        archiveRequests += 1;
+      }
+      if (
         armed &&
         !held &&
         request?.type === "checkout_status_request" &&
-        request.cwd === directory
+        request.cwd === worktree.workspaceDirectory
       ) {
         held = () => server.send(message);
         return;
@@ -236,6 +259,7 @@ async function holdCheckoutStatusRequest(page: Page, directory: string) {
       armed = true;
     },
     waitForHeld: () => expect.poll(() => held !== null).toBe(true),
+    archiveRequests: () => archiveRequests,
     release: () => {
       if (!held) throw new Error("No checkout status request is held");
       held();
@@ -388,7 +412,7 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
   ): Promise<string> {
     const serverId = getServerId();
     const worktree = await createWorktree(slug);
-    const statusRequest = await holdCheckoutStatusRequest(page, worktree.workspaceDirectory);
+    const statusRequest = await holdCheckoutStatusRequest(page, worktree);
     await openSidebarRow(page, worktree.workspaceId);
     await workspaceRow(page, worktree.workspaceId).click();
     await expectAppRoute(page, buildHostWorkspaceRoute(serverId, worktree.workspaceId));
@@ -430,6 +454,82 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
       () => gitActionsArchiveButton(page).click(),
     );
     await expectAppRoute(page, openedRoute);
+  });
+
+  async function openWorktreeWithCheckoutHeld(page: Page, slug: string) {
+    const worktree = await createWorktree(slug);
+    const statusRequest = await holdCheckoutStatusRequest(page, worktree);
+    // Opening the workspace can start a checkout read that the archive reuses.
+    statusRequest.arm();
+    await openSidebarRow(page, worktree.workspaceId);
+    await workspaceRow(page, worktree.workspaceId).click();
+    await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), worktree.workspaceId));
+    return { worktree, statusRequest };
+  }
+
+  test("the archive shortcut works in another workspace while a checkout check is pending", async ({
+    page,
+  }) => {
+    const { worktree, statusRequest } = await openWorktreeWithCheckoutHeld(
+      page,
+      "archive-risk-switch-shortcut",
+    );
+
+    await pressArchiveShortcut(page);
+    await statusRequest.waitForHeld();
+    try {
+      const otherWorkspaceId = worktree.project.workspaceId;
+      await workspaceRow(page, otherWorkspaceId).click();
+      await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), otherWorkspaceId));
+
+      await pressArchiveShortcut(page);
+      await expect.poll(() => hostListsWorkspace(otherWorkspaceId)).toBe(false);
+    } finally {
+      statusRequest.release();
+    }
+    await expect.poll(() => hostListsWorkspace(worktree.workspaceId)).toBe(false);
+  });
+
+  test("the row button and shortcut send one archive for the same worktree", async ({ page }) => {
+    const { worktree, statusRequest } = await openWorktreeWithCheckoutHeld(
+      page,
+      "archive-risk-repeat-shortcut",
+    );
+
+    await clickRowArchiveButton(page, worktree.workspaceId);
+    await statusRequest.waitForHeld();
+    try {
+      await pressArchiveShortcut(page);
+    } finally {
+      statusRequest.release();
+    }
+
+    await expect.poll(() => hostListsWorkspace(worktree.workspaceId)).toBe(false);
+    expect(statusRequest.archiveRequests()).toBe(1);
+  });
+
+  test("keeps the newly opened workspace after a theme change during an archive check", async ({
+    page,
+  }) => {
+    const { worktree, statusRequest } = await openWorktreeWithCheckoutHeld(
+      page,
+      "archive-risk-theme",
+    );
+
+    await pressArchiveShortcut(page);
+    await statusRequest.waitForHeld();
+    const otherWorkspaceId = worktree.project.workspaceId;
+    const otherRoute = buildHostWorkspaceRoute(getServerId(), otherWorkspaceId);
+    try {
+      await cycleThemeAndWaitForSidebar(page, otherWorkspaceId);
+      await workspaceRow(page, otherWorkspaceId).click();
+      await expectAppRoute(page, otherRoute);
+    } finally {
+      statusRequest.release();
+    }
+
+    await expect.poll(() => hostListsWorkspace(worktree.workspaceId)).toBe(false);
+    await expectAppRoute(page, otherRoute);
   });
 
   test("archiving the open worktree from its git actions leaves it for a new workspace", async ({

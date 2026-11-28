@@ -166,6 +166,14 @@ export function getLegacyDocsRedirect(pathname: string): string | undefined {
   const provider = /^\/docs\/(claude-code|codex|muse-code)(\.md)?\/?$/.exec(pathname);
   if (provider) return `/docs/supported-providers/${provider[1]}${provider[2] ?? ""}`;
 
+  // Legacy Hub stepped-workflow docs moved to self-contained trigger docs and YAML reference.
+  const hubLegacy = /^\/docs\/hub\/(workflows|configuration\/hub-yml)(\.md)?\/?$/.exec(pathname);
+  if (hubLegacy) {
+    const target =
+      hubLegacy[1] === "workflows" ? "/docs/hub/triggers" : "/docs/hub/configuration/reference";
+    return `${target}${hubLegacy[2] ?? ""}`;
+  }
+
   const match =
     /^\/docs\/plugins\/v0\.[78](?:(\.md)|\/(index|reference|providers|migration)(\.md)?)?\/?$/.exec(
       pathname,

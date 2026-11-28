@@ -677,24 +677,6 @@ function MessageInputOverlay({
   return null;
 }
 
-function FocusHint({
-  visible,
-  focusInputKeys,
-  label,
-}: {
-  visible: boolean;
-  focusInputKeys: ShortcutChord | null | undefined;
-  label: string;
-}) {
-  const { isActiveComposer } = useComposerKeyboardScope();
-  if (!isActiveComposer || !visible || !focusInputKeys || !label.trim()) return null;
-  return (
-    <Text style={styles.focusHintText} pointerEvents="none">
-      {label}
-    </Text>
-  );
-}
-
 interface ComposerTextSurfaceProps {
   readOnly: boolean;
   value: string;
@@ -745,6 +727,32 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
       onRenderedLinesChange(event.nativeEvent.lines.length),
     [onRenderedLinesChange],
   );
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const { focusHintLabel, focusHintVisible, focusInputKeys } = props;
+  const [focusHintLayout, setFocusHintLayout] = useState<{ label: string; width: number }>();
+  const handleFocusHintLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      setFocusHintLayout({ label: focusHintLabel, width: event.nativeEvent.layout.width });
+    },
+    [focusHintLabel],
+  );
+  const shouldShowFocusHint =
+    isActiveComposer &&
+    focusHintVisible &&
+    Boolean(focusInputKeys) &&
+    focusHintLabel.trim().length > 0;
+  const focusHintWidth =
+    shouldShowFocusHint && focusHintLayout?.label === focusHintLabel
+      ? focusHintLayout.width
+      : undefined;
+  // Make room for the hint in the same render that reveals it.
+  const textInputStyle = useMemo(
+    () =>
+      focusHintWidth === undefined
+        ? props.textInputStyle
+        : [props.textInputStyle, { paddingRight: focusHintWidth }],
+    [focusHintWidth, props.textInputStyle],
+  );
   if (props.readOnly) {
     return (
       <View style={styles.textInputScrollWrapper}>
@@ -775,7 +783,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         accessibilityLabel={props.accessibilityLabel}
         onFocus={props.onFocus}
         onBlur={props.onBlur}
-        style={props.textInputStyle}
+        style={textInputStyle}
         multiline
         scrollEnabled={props.scrollEnabled}
         editable={props.editable}
@@ -785,11 +793,16 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         onPasteError={props.onPasteError}
         autoFocus={props.autoFocus}
       />
-      <FocusHint
-        visible={props.focusHintVisible}
-        focusInputKeys={props.focusInputKeys}
-        label={props.focusHintLabel}
-      />
+      {shouldShowFocusHint ? (
+        <Text
+          key={focusHintLabel}
+          style={[styles.focusHintText, focusHintWidth === undefined && styles.unmeasuredFocusHint]}
+          pointerEvents="none"
+          onLayout={handleFocusHintLayout}
+        >
+          {focusHintLabel}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -2460,10 +2473,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     position: "absolute",
     top: 0,
     right: 0,
+    paddingLeft: theme.spacing[2],
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     opacity: 0.5,
   },
+  unmeasuredFocusHint: { opacity: 0 },
   textInput: {
     // Preserve the controls when an ancestor constrains an overlong draft.
     flexShrink: 1,

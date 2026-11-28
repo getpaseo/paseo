@@ -1,3 +1,4 @@
+import { AppState } from "react-native";
 import type { KeyboardPolicyInput, KeyboardSourceHandlers } from "./contract";
 import {
   setHardwareKeyboardClaimedShortcuts,
@@ -7,6 +8,14 @@ import {
 import { createHardwareKeyboardSource } from "./native";
 const hardwareKeyboard = createHardwareKeyboardSource({
   subscribe: subscribeHardwareKeyboard,
+  subscribeBlur: (onBlur) => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        onBlur();
+      }
+    });
+    return () => subscription.remove();
+  },
   setOverlayKeys: setHardwareKeyboardOverlayKeys,
   setClaimedShortcuts: setHardwareKeyboardClaimedShortcuts,
 });

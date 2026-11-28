@@ -1,17 +1,45 @@
-import { existsSync, rmSync, statSync, readFileSync } from "node:fs";
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  statSync,
+  readFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import MarkdownIt from "markdown-it";
 import { projectTimelineRows } from "../timeline-projection.js";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   MAX_PROVIDER_IMAGE_BYTES,
   isProviderImageMarkdown,
-  materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
 } from "./provider-image-output.js";
 
 const HASH = "a".repeat(64);
+
+// Materialized images live under the paseo home now, so without this every test
+// run would read and delete the developer's real provider images.
+const originalPaseoHome = process.env.PASEO_HOME;
+let testHome: string | null = null;
+let materializeProviderImage: typeof import("./provider-image-output.js").materializeProviderImage;
+
+function useTempPaseoHome(): string {
+  testHome = mkdtempSync(path.join(os.tmpdir(), "paseo-provider-images-"));
+  process.env.PASEO_HOME = testHome;
+  return testHome;
+}
+
+function attachmentsDir(): string {
+  if (!testHome) {
+    throw new Error("useTempPaseoHome() must run before reading the attachments dir.");
+  }
+  return path.join(testHome, "paseo-attachments");
+}
 
 async function renderImageMarkdown(imagePath: string): Promise<string> {
   const item = await renderProviderImageOutputAsAssistantMarkdown({ path: imagePath });
@@ -94,28 +122,95 @@ describe("isProviderImageMarkdown", () => {
   });
 });
 
+beforeEach(async () => {
+  useTempPaseoHome();
+  vi.resetModules();
+  ({ materializeProviderImage } = await import("./provider-image-output.js"));
+});
+
+afterEach(() => {
+  if (originalPaseoHome === undefined) {
+    delete process.env.PASEO_HOME;
+  } else {
+    process.env.PASEO_HOME = originalPaseoHome;
+  }
+  if (testHome) {
+    rmSync(testHome, { recursive: true, force: true });
+    testHome = null;
+  }
+});
+
 describe("materializeProviderImage", () => {
-  test("recreates the private temp directory if the cached directory is removed", async () => {
+  test("recreates the private directory if the cached directory is removed", async () => {
     const first = await materializeProviderImage({
       data: "YWJjMTIz",
       mimeType: "image/png",
     });
-    const firstDir = path.dirname(first.path);
     expect(existsSync(first.path)).toBe(true);
 
-    rmSync(firstDir, { recursive: true, force: true });
+    rmSync(path.dirname(first.path), { recursive: true, force: true });
 
     const second = await materializeProviderImage({
       data: "ZGVmNDU2",
       mimeType: "image/png",
     });
-    const secondDir = path.dirname(second.path);
 
-    try {
-      expect(existsSync(second.path)).toBe(true);
-    } finally {
-      rmSync(secondDir, { recursive: true, force: true });
+    expect(existsSync(second.path)).toBe(true);
+  });
+
+  test("stores images in a stable directory under the paseo home", async () => {
+    const result = await materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+
+    // A fixed directory, not a per-process mkdtemp one — the old shape is what
+    // let the OS reap these images out from under the app after ~3 days.
+    expect(path.dirname(result.path)).toBe(attachmentsDir());
+    expect(path.basename(path.dirname(result.path))).toBe("paseo-attachments");
+    // Mode assertions live in the .posix suite: Windows ignores mkdir/writeFile
+    // modes and reports 0o666, so asserting them here fails on that runner.
+  });
+
+  test("is idempotent for the same bytes across daemon restarts", async () => {
+    const first = await materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+
+    // Reload the module while retaining the files from the previous instance.
+    vi.resetModules();
+    const restarted = await import("./provider-image-output.js");
+    const second = await restarted.materializeProviderImage({
+      data: "YWJjMTIz",
+      mimeType: "image/png",
+    });
+
+    expect(second.path).toBe(first.path);
+    expect(readdirSync(attachmentsDir())).toHaveLength(1);
+  });
+
+  test("emits markdown that isProviderImageMarkdown still recognizes", async () => {
+    const item = await renderProviderImageOutputAsAssistantMarkdown(
+      { data: "YWJjMTIz", mimeType: "image/png" },
+      { materialize: materializeProviderImage },
+    );
+
+    if (!item || item.type !== "assistant_message") {
+      throw new Error("Expected provider image output to render as assistant markdown.");
     }
+    expect(isProviderImageMarkdown(item.text)).toBe(true);
+  });
+
+  // The whole point of moving out of the temp dir is that nothing deletes these
+  // behind the user's back. An age-based sweep would reintroduce that on a
+  // longer fuse, because mtime cannot tell a referenced image from an abandoned
+  // one and reading a transcript never touches the file.
+  test("keeps images no matter how old they are", async () => {
+    const image = await materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+    const longAgoSeconds = Date.now() / 1000 - 365 * 24 * 60 * 60;
+    utimesSync(image.path, longAgoSeconds, longAgoSeconds);
+
+    // Reloading the module must not sweep images referenced by older transcripts.
+    vi.resetModules();
+    const restarted = await import("./provider-image-output.js");
+    await restarted.materializeProviderImage({ data: "Z2hpNzg5", mimeType: "image/png" });
+
+    expect(existsSync(image.path)).toBe(true);
   });
 });
 
@@ -184,34 +279,44 @@ test("repeated content is reused without rewriting the attachment", async () => 
 test("64 MiB materialization leaves the event loop responsive and preserves bytes", async () => {
   const bytes = Buffer.alloc(64 * 1024 * 1024, 37);
   const data = bytes.toString("base64");
-  // Main-thread CPU time between ticks bounds the decode and hash work done on the loop;
-  // wall-clock gaps on shared CI runners also count preemption and timer granularity.
-  // File writes stay on fs/promises, so they never block the loop.
-  const threadCpuMs = () => {
-    const { user, system } = process.threadCpuUsage();
-    return (user + system) / 1000;
-  };
-  let previous = threadCpuMs();
-  let longest = 0;
-  const probe = setInterval(() => {
-    const now = threadCpuMs();
-    longest = Math.max(longest, now - previous);
-    previous = now;
-  }, 1);
+  const materializing = new AsyncLocalStorage<boolean>();
+  let loopAdvanced = false;
+  let yieldedBeforeFilesystem: boolean | undefined;
+  const hook = createHook({
+    init(_id, type) {
+      // The first filesystem request follows hashing. A later turn could
+      // come from filesystem I/O even if hashing blocked the event loop.
+      if (
+        type === "FSREQPROMISE" &&
+        materializing.getStore() &&
+        yieldedBeforeFilesystem === undefined
+      ) {
+        yieldedBeforeFilesystem = loopAdvanced;
+      }
+    },
+  });
+  const probe = setImmediate(() => {
+    loopAdvanced = true;
+  });
+  hook.enable();
   try {
-    const result = await materializeProviderImage({ data, mimeType: "image/png" });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    console.log(`64 MiB attachment longest blocking stretch: ${longest.toFixed(2)} ms CPU`);
-    expect(longest).toBeLessThan(50);
-    expect(readFileSync(result.path).equals(bytes)).toBe(true);
-    rmSync(result.path, { force: true });
+    const result = await materializing.run(true, () =>
+      materializeProviderImage({ data, mimeType: "image/png" }),
+    );
+    try {
+      expect(yieldedBeforeFilesystem).toBe(true);
+      expect(readFileSync(result.path).equals(bytes)).toBe(true);
+    } finally {
+      rmSync(result.path, { force: true });
+    }
   } finally {
-    clearInterval(probe);
+    hook.disable();
+    clearImmediate(probe);
   }
 });
 
 test("preserves base64 decoding across whitespace and chunk boundaries", async () => {
-  const bytes = Buffer.alloc(512 * 1024, 123);
+  const bytes = Buffer.alloc(1024 * 1024, 123);
   const base64 = bytes.toString("base64");
   const data = base64.match(/.{1,77}/g)!.join("\n");
   const result = await materializeProviderImage({ data, mimeType: "image/png" });
@@ -246,4 +351,130 @@ test("simultaneous requests for the same content share the published file", asyn
   ]);
   expect(results[0]).toEqual(results[1]);
   expect(readFileSync(results[0].path).toString()).toBe("concurrent dedupe fixture");
+});
+
+test("a small image finishes before an earlier distinct 64 MiB image", async () => {
+  const largeData = Buffer.alloc(64 * 1024 * 1024, 42).toString("base64");
+  const smallData = Buffer.from("live image during large replay").toString("base64");
+  const completionOrder: string[] = [];
+  const large = materializeProviderImage({ data: largeData, mimeType: "image/png" }).then(
+    (image) => {
+      completionOrder.push("large");
+      return image;
+    },
+  );
+  const small = materializeProviderImage({ data: smallData, mimeType: "image/png" }).then(
+    (image) => {
+      completionOrder.push("small");
+      return image;
+    },
+  );
+  const images = await Promise.all([large, small]);
+  for (const image of images) rmSync(image.path, { force: true });
+  expect(completionOrder).toEqual(["small", "large"]);
+});
+
+test("publishing small distinct images stays within eight event-loop turns per image", async () => {
+  const count = 20;
+  const materializing = new AsyncLocalStorage<boolean>();
+  let turn = 0;
+  let lastActiveTurn = -1;
+  let activeTurns = 0;
+  const hook = createHook({
+    before() {
+      // A spinning immediate can tick many times while a filesystem worker is
+      // still running. Count only turns that advance the materializations.
+      if (materializing.getStore() && turn !== lastActiveTurn) {
+        lastActiveTurn = turn;
+        activeTurns++;
+      }
+    },
+  });
+  let probe = setImmediate(function tick() {
+    turn++;
+    probe = setImmediate(tick);
+  });
+  const images: string[] = [];
+  hook.enable();
+  try {
+    await materializing.run(true, async () => {
+      for (let index = 0; index < count; index++) {
+        const data = Buffer.from(`small attachment ${index}`).toString("base64");
+        const image = await materializeProviderImage({ data, mimeType: "image/png" });
+        images.push(image.path);
+      }
+    });
+  } finally {
+    hook.disable();
+    clearImmediate(probe);
+    for (const image of images) rmSync(image, { force: true });
+  }
+  expect(activeTurns).toBeLessThanOrEqual(8 * count);
+});
+
+test("six concurrent 8 MiB images share the main-thread CPU budget", async () => {
+  const inputs = Array.from({ length: 6 }, (_, index) => ({
+    data: Buffer.alloc(8 * 1024 * 1024, index + 1).toString("base64"),
+    mimeType: "image/png",
+  }));
+  const threadCpuMs = () => {
+    const { user, system } = process.threadCpuUsage();
+    return (user + system) / 1000;
+  };
+  let previous = threadCpuMs();
+  let longest = 0;
+  const probe = setInterval(() => {
+    const now = threadCpuMs();
+    longest = Math.max(longest, now - previous);
+    previous = now;
+  }, 1);
+  try {
+    const images = await Promise.all(inputs.map(materializeProviderImage));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    for (const image of images) rmSync(image.path, { force: true });
+    expect(longest).toBeLessThan(50);
+  } finally {
+    clearInterval(probe);
+  }
+});
+
+test("a busy event loop does not spend the image decode budget", async () => {
+  const count = 8;
+  const materializing = new AsyncLocalStorage<boolean>();
+  let decodeYields = 0;
+  const hook = createHook({
+    init(_id, type) {
+      // Count decode budget refills. Waiting for the filesystem can take
+      // any number of event-loop turns without scheduling a refill.
+      if (type === "Immediate" && materializing.getStore()) decodeYields++;
+    },
+  });
+  let busyTurns = 0;
+  let probe = setImmediate(function tick() {
+    busyTurns++;
+    // Simulate unrelated work that exceeds a 10 ms decode slice.
+    const end = performance.now() + 20;
+    while (performance.now() < end) {
+      // Keep this event-loop turn busy.
+    }
+    probe = setImmediate(tick);
+  });
+  const paths: string[] = [];
+  hook.enable();
+  try {
+    for (let index = 0; index < count; index++) {
+      const data = Buffer.from(`attachment on a busy loop ${index}`).toString("base64");
+      const image = await materializing.run(true, () =>
+        materializeProviderImage({ data, mimeType: "image/png" }),
+      );
+      paths.push(image.path);
+    }
+  } finally {
+    hook.disable();
+    clearImmediate(probe);
+    for (const image of paths) rmSync(image, { force: true });
+  }
+  expect(busyTurns).toBeGreaterThan(0);
+  // A prior materialization can leave the shared budget nearly depleted.
+  expect(decodeYields).toBeLessThanOrEqual(1);
 });

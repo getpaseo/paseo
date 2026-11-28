@@ -273,4 +273,146 @@ describe("WorkspaceArchiveOperations", () => {
       kind: "archived",
     });
   });
+
+  test("concurrent restores join the in-flight restore and share its outcome", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+
+    const first = operations.restore("ws", async () => {
+      calls += 1;
+      await gate;
+      throw new Error("restore setup failed");
+    });
+    const second = operations.restore("ws", async () => {
+      calls += 1;
+    });
+
+    release();
+    await expect(first).rejects.toThrow("restore setup failed");
+    await expect(second).rejects.toThrow("restore setup failed");
+    expect(calls).toBe(1);
+
+    await operations.restore("ws", async () => {
+      calls += 1;
+    });
+    expect(calls).toBe(2);
+  });
+
+  test("undo after a restore queued behind a running archive still aborts the archive and shares the undo outcome", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    const archive = parkedArchive(["agent-a"]);
+    const order: string[] = [];
+    let restoreCalls = 0;
+
+    const archiveDone = operations.archive("ws", async (signal) => {
+      try {
+        return await archive.run(signal);
+      } finally {
+        order.push("archive stopped");
+      }
+    });
+    await archive.started;
+
+    const restoreDone = operations.restore("ws", async () => {
+      restoreCalls += 1;
+      order.push("restore");
+    });
+    expect(archive.aborted).toBe(false);
+
+    const undoDone = operations.undo("ws", async ({ archivedAt }) => {
+      order.push(`undo:${archivedAt}`);
+    });
+    expect(archive.aborted).toBe(true);
+
+    archive.release();
+    await expect(archiveDone).resolves.toEqual({ kind: "canceled", archivedAt: "stamp" });
+    await Promise.all([restoreDone, undoDone]);
+
+    expect(restoreCalls).toBe(0);
+    expect(order).toEqual(["archive stopped", "undo:stamp"]);
+  });
+
+  test("restore queued behind a running archive waits without aborting it when no undo arrives", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    const archive = parkedArchive(["agent-a"]);
+    const order: string[] = [];
+
+    const archiveDone = operations.archive("ws", async (signal) => {
+      const result = await archive.run(signal);
+      order.push("archived");
+      return result;
+    });
+    await archive.started;
+
+    const restoreDone = operations.restore("ws", async () => {
+      order.push("restored");
+    });
+    expect(archive.aborted).toBe(false);
+
+    archive.release();
+    await expect(archiveDone).resolves.toMatchObject({ kind: "archived" });
+    await restoreDone;
+    expect(order).toEqual(["archived", "restored"]);
+  });
+
+  test("undo after restore has already started joins the running restore", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    await operations.archive("ws", async () => archived(["agent-a"]));
+
+    const restoreGate = deferred();
+    let restoreCalls = 0;
+    let undoCalls = 0;
+    const restoreDone = operations.restore("ws", async () => {
+      restoreCalls += 1;
+      await restoreGate.promise;
+    });
+    // Flush microtask so restore has moved past any settled archive check.
+    await Promise.resolve();
+
+    const undoDone = operations.undo("ws", async () => {
+      undoCalls += 1;
+    });
+    restoreGate.resolve();
+    await Promise.all([restoreDone, undoDone]);
+
+    expect(restoreCalls).toBe(1);
+    expect(undoCalls).toBe(0);
+  });
+
+  test("withCheckout serializes operations on the same checkout path while allowing independent checkouts in parallel", async () => {
+    const operations = new WorkspaceArchiveOperations();
+    const firstGate = deferred();
+    const firstStarted = deferred();
+    const order: string[] = [];
+
+    const first = operations.withCheckout("/tmp/paseo-checkout-a", async () => {
+      order.push("a1-start");
+      firstStarted.resolve();
+      await firstGate.promise;
+      order.push("a1-end");
+      return "first";
+    });
+    await firstStarted.promise;
+
+    const second = operations.withCheckout("/tmp/paseo-checkout-a/", async () => {
+      order.push("a2");
+      return "second";
+    });
+    const other = operations.withCheckout("/tmp/paseo-checkout-b", async () => {
+      order.push("b");
+      return "other";
+    });
+
+    await expect(other).resolves.toBe("other");
+    expect(order).toEqual(["a1-start", "b"]);
+
+    firstGate.resolve();
+    await expect(first).resolves.toBe("first");
+    await expect(second).resolves.toBe("second");
+    expect(order).toEqual(["a1-start", "b", "a1-end", "a2"]);
+  });
 });

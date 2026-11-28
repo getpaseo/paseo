@@ -28,7 +28,7 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import type { UsageReportEntry, WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -36,6 +36,8 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { createAgentMessageDelivery } from "./agent/agent-messages/index.js";
+import { MessageReceipts } from "./message-receipts/index.js";
 import {
   terminalCleanupRecordPath,
   terminalWorkerDirectory,
@@ -355,6 +357,8 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  agentMessages?: SessionOptions["agentMessages"];
+  messageReceipts?: SessionOptions["messageReceipts"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -391,8 +395,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     workspaceRuntimeStore: options.workspaceRuntimeStore ?? createWorkspaceRuntimeStore(),
-    messageReceipts: createMessageReceiptsStub(),
-    agentMessages: createAgentMessageDeliveryStub(),
+    messageReceipts: options.messageReceipts ?? createMessageReceiptsStub(),
+    agentMessages: options.agentMessages ?? createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
@@ -529,6 +533,10 @@ test("routes plugin requests and releases its owned catalog subscription on clea
       return request;
     },
     emit: () => {},
+    hasWorktreeManager: () => false,
+    createWorktree: async () => null,
+    removeWorktree: async () => null,
+    restoreWorktree: async () => null,
     listPlugins: async () => [plugin],
     getLogs: () => [
       {
@@ -607,6 +615,48 @@ test("routes plugin requests and releases its owned catalog subscription on clea
   expect(releasePluginSubscription).toHaveBeenCalledOnce();
 });
 
+test("pushes reports the daemon updates on its own only while a source asks for them", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const listeners = new Set<(report: UsageReportEntry) => void>();
+  const pluginRuntime = {
+    subscribe: () => () => {},
+    subscribeUsageReports: (listener: (report: UsageReportEntry) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as NonNullable<SessionOptions["pluginRuntime"]>;
+  const session = createSessionForTest({ messages, pluginRuntime });
+  const report: UsageReportEntry = {
+    id: "claude:account",
+    account: {},
+    fetchedAt: "2026-11-27T12:00:00.000Z",
+    sourceId: "claude",
+    sourceLabel: "Claude",
+    report: { status: "available", windows: [{ id: "five_hour", label: "Session", usedPct: 73 }] },
+  };
+
+  expect(listeners.size).toBe(0);
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "usage",
+    events: ["status.usage_report_changed"],
+  });
+  expect(listeners.size).toBe(1);
+  messages.length = 0;
+  for (const listener of listeners) listener(report);
+  expect(messages).toEqual([
+    { type: "status", payload: { status: "usage_report_changed", report } },
+  ]);
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "none",
+    events: [],
+  });
+  expect(listeners.size).toBe(0);
+  await session.cleanup();
+});
+
 test("losing daemon.manage releases the session's plugin subscriptions", async () => {
   const messages: SessionOutboundMessage[] = [];
   const release = vi.fn();
@@ -670,6 +720,10 @@ test("leaves out the client bundles a catalog request already holds", async () =
   const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
     before: async (_name, request) => request,
     emit: () => {},
+    hasWorktreeManager: () => false,
+    createWorktree: async () => null,
+    removeWorktree: async () => null,
+    restoreWorktree: async () => null,
     listPlugins: async () => [],
     getLogs: () => [],
     installDirectory: async () => {
@@ -2083,6 +2137,43 @@ test("push token registration can be revoked by the connected client", async () 
     {
       type: "push.unregister.response",
       payload: { requestId: "revoke-1" },
+    },
+  ]);
+});
+
+test("push token registration forwards notification preferences to pushNotifications.renew", async () => {
+  const renewed: Array<{ token: string; preferences: unknown }> = [];
+  const session = createSessionForTest({
+    pushNotifications: asPushNotifications({
+      renew: (token: string, preferences?: unknown) => renewed.push({ token, preferences }),
+    }),
+  });
+
+  const preferences = {
+    enabled: true,
+    events: {
+      agentPermission: true,
+      agentError: true,
+      agentFinished: true,
+      terminalNeedsInput: true,
+      terminalFinished: false,
+    },
+    plugins: {
+      enabled: true,
+      muted: ["review-bot"],
+    },
+  };
+
+  await session.handleMessage({
+    type: "register_push_token",
+    token: "ExponentPushToken[prefs-device]",
+    preferences,
+  });
+
+  expect(renewed).toEqual([
+    {
+      token: "ExponentPushToken[prefs-device]",
+      preferences,
     },
   ]);
 });
@@ -4067,7 +4158,11 @@ describe("session checkout pull and push handling", () => {
       requestId: "request-push",
     });
 
-    expect(checkoutGitMocks.pushCurrentBranch).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(checkoutGitMocks.pushCurrentBranch).toHaveBeenCalledWith(
+      "/tmp/request-worktree",
+      undefined,
+      { paseoHome: "/tmp/paseo-home", worktreesRoot: undefined },
+    );
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
       force: true,
       reason: "push",
@@ -6660,4 +6755,205 @@ test("does not publish internal agents' background work to subscribed clients", 
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
+});
+
+test("deduplicates repeated command names in list_commands_response for live agents and drafts", async () => {
+  const duplicateCommands = [
+    {
+      name: "goal",
+      description: "Run until goal is finished",
+      argumentHint: "",
+      kind: "command" as const,
+    },
+    {
+      name: "plan",
+      description: "Plan carefully before executing a task.",
+      argumentHint: "",
+      kind: "command" as const,
+    },
+    {
+      name: "plan",
+      description: "Local plan skill description",
+      argumentHint: "",
+      kind: "skill" as const,
+    },
+  ];
+  const expected = [duplicateCommands[0], duplicateCommands[1]];
+
+  const liveMessages: SessionOutboundMessage[] = [];
+  const liveSession = createSessionForTest({
+    messages: liveMessages,
+    agentManager: {
+      waitForAgentClose: async () => undefined,
+      getAgent: () =>
+        ({
+          id: "agent-1",
+          session: { listCommands: async () => duplicateCommands },
+        }) as never,
+    },
+  });
+  await liveSession.handleMessage({
+    type: "list_commands_request",
+    agentId: "agent-1",
+    requestId: "req-live",
+  });
+  expect(findByType(liveMessages, "list_commands_response")).toMatchObject({
+    payload: {
+      agentId: "agent-1",
+      requestId: "req-live",
+      error: null,
+      commands: expected,
+    },
+  });
+
+  const draftMessages: SessionOutboundMessage[] = [];
+  const draftSession = createSessionForTest({
+    messages: draftMessages,
+    agentManager: {
+      getAgent: () => undefined,
+      listDraftCommands: async () => duplicateCommands,
+    },
+    agentStorage: { get: async () => null },
+  });
+  await draftSession.handleMessage({
+    type: "list_commands_request",
+    agentId: "draft-1",
+    requestId: "req-draft",
+    draftConfig: { provider: "antigravity", cwd: "/tmp/repo" },
+  });
+  expect(findByType(draftMessages, "list_commands_response")).toMatchObject({
+    payload: {
+      agentId: "draft-1",
+      requestId: "req-draft",
+      error: null,
+      commands: expected,
+    },
+  });
+});
+
+describe("non-agent activeTurnBehavior queue in Session", () => {
+  test("queues behind a running turn, preserves title/mode/attachments/dedup, and dispatches unwrapped", async () => {
+    const receiptDir = mkdtempSync(join(tmpdir(), "paseo-session-queue-"));
+    let running = true;
+    const listeners = new Set<(id: string) => void>();
+    const dispatched: Array<{
+      prompt: unknown;
+      sessionMode?: string;
+      clearPendingPermissions: boolean;
+      idleOnly: boolean;
+    }> = [];
+    const setTitles: Array<[string, string]> = [];
+    const agentMessages = createAgentMessageDelivery({
+      isRunning: () => running,
+      canSteer: () => true,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      dispatch: async (request) => {
+        dispatched.push({
+          prompt: request.prompt,
+          sessionMode: request.sessionMode,
+          clearPendingPermissions: request.clearPendingPermissions,
+          idleOnly: request.idleOnly,
+        });
+        return "turn_started";
+      },
+      onError: (error) => {
+        throw error;
+      },
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({
+      messages,
+      agentMessages,
+      messageReceipts: new MessageReceipts(receiptDir),
+      agentManager: {
+        waitForAgentClose: async () => undefined,
+        getAgent: (id: string) =>
+          id === "agent-1"
+            ? ({
+                id: "agent-1",
+                status: running ? "running" : "idle",
+                config: { title: null },
+              } as never)
+            : undefined,
+        setTitle: async (id: string, title: string) => {
+          setTitles.push([id, title]);
+        },
+      },
+      agentStorage: {
+        get: async (id: string) =>
+          id === "agent-1"
+            ? ({ id: "agent-1", title: null, lastUserMessageAt: null } as never)
+            : null,
+      },
+    });
+
+    try {
+      await session.handleMessage({
+        type: "send_agent_message_request",
+        requestId: "req-1",
+        agentId: "agent-1",
+        text: "Approve decision D4",
+        messageId: "msg-d4",
+        sessionMode: "plan",
+        activeTurnBehavior: "queue",
+        images: [{ data: "aW1n", mimeType: "image/png" }],
+      });
+
+      expect(findByType(messages, "send_agent_message_response")).toMatchObject({
+        payload: {
+          requestId: "req-1",
+          agentId: "agent-1",
+          accepted: true,
+          deliveryStatus: "queued",
+          activeTurnBehavior: "queue",
+          error: null,
+        },
+      });
+      expect(dispatched).toEqual([]);
+      expect(setTitles).toEqual([["agent-1", "Approve decision D4"]]);
+
+      // Finish the active turn so the queued non-agent message dispatches.
+      running = false;
+      for (const listener of listeners) listener("agent-1");
+      await expect.poll(() => dispatched.length).toBe(1);
+
+      expect(dispatched[0]).toEqual({
+        prompt: [
+          { type: "text", text: "Approve decision D4" },
+          { type: "image", data: "aW1n", mimeType: "image/png" },
+        ],
+        sessionMode: "plan",
+        clearPendingPermissions: false,
+        idleOnly: true,
+      });
+
+      // Replaying the same messageId deduplicates without dispatching a second turn.
+      messages.length = 0;
+      await session.handleMessage({
+        type: "send_agent_message_request",
+        requestId: "req-2",
+        agentId: "agent-1",
+        text: "Approve decision D4",
+        messageId: "msg-d4",
+        sessionMode: "plan",
+        activeTurnBehavior: "queue",
+        images: [{ data: "aW1n", mimeType: "image/png" }],
+      });
+      expect(findByType(messages, "send_agent_message_response")).toMatchObject({
+        payload: {
+          requestId: "req-2",
+          agentId: "agent-1",
+          accepted: true,
+          error: null,
+        },
+      });
+      expect(dispatched).toHaveLength(1);
+    } finally {
+      await agentMessages.close();
+      rmSync(receiptDir, { recursive: true, force: true });
+    }
+  });
 });

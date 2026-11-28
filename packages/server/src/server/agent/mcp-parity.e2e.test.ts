@@ -952,6 +952,45 @@ describe("Suite C: Schedule Tools", () => {
     }
   });
 
+  test("create_schedule and update_schedule set archive on finish", async () => {
+    let scheduleId: string | null = null;
+    try {
+      const createArgs = {
+        prompt: "say hello",
+        cron: "*/5 * * * *",
+        name: "Parity archive on finish schedule",
+        provider: "claude",
+      };
+      const created = await callToolStructured(topLevelClient, "create_schedule", createArgs);
+      scheduleId = str(created.id);
+      expect(created.target).toMatchObject({ type: "new-agent", config: {} });
+      expect(created.target).not.toHaveProperty("config.archiveOnFinish");
+
+      const recreated = await callToolStructured(topLevelClient, "create_schedule", {
+        ...createArgs,
+        archiveOnFinish: false,
+      });
+      expect(recreated.id).toBe(scheduleId);
+      expect(recreated.target).toMatchObject({ config: { archiveOnFinish: false } });
+
+      for (const archiveOnFinish of [true, false]) {
+        const updated = await callToolStructured(topLevelClient, "update_schedule", {
+          id: scheduleId,
+          archiveOnFinish,
+        });
+        expect(updated.target).toMatchObject({ config: { archiveOnFinish } });
+      }
+
+      const listed = await callToolStructured(topLevelClient, "list_schedules", {});
+      const named = recordArr(listed.schedules).filter(
+        (schedule) => schedule.name === createArgs.name,
+      );
+      expect(named).toHaveLength(1);
+    } finally {
+      await deleteScheduleIfPresent(scheduleId);
+    }
+  });
+
   test("inspect_schedule returns details", async () => {
     let scheduleId: string | null = null;
     try {
@@ -1240,6 +1279,107 @@ describe("Suite E: Workspace Tools", () => {
         await topLevelClient
           .callTool({ name: "archive_workspace", args: { workspaceId } })
           .catch(() => undefined);
+    }
+  }, 30_000);
+
+  test("workspace metadata create, update, delete, list, and live snapshot work end-to-end over MCP", async () => {
+    const created = await callToolStructured(topLevelClient, "create_workspace", {
+      isolation: "local",
+      path: worktreeRepoCwd,
+      title: "Metadata flow",
+      metadata: {
+        issues: ["https://github.com/getpaseo/paseo/issues/10"],
+        body: "Initial body",
+      },
+    });
+    const workspaceId = str(created.workspaceId);
+    expect(created.metadata).toEqual({
+      issues: ["https://github.com/getpaseo/paseo/issues/10"],
+      body: "Initial body",
+    });
+
+    let scoped: McpClient | null = null;
+    const daemonClient = new DaemonClient({ url: `ws://127.0.0.1:${daemonHandle.port}/ws` });
+    try {
+      const listedBefore = await callToolStructured(topLevelClient, "list_workspaces", {});
+      expect(recordArr(listedBefore.workspaces)).toContainEqual(
+        expect.objectContaining({
+          workspaceId,
+          title: "Metadata flow",
+          metadata: {
+            issues: ["https://github.com/getpaseo/paseo/issues/10"],
+            body: "Initial body",
+          },
+        }),
+      );
+
+      const child = await callToolStructured(topLevelClient, "create_agent", {
+        workspaceId,
+        title: "Metadata worker",
+        provider: "claude/claude-test-model",
+        initialPrompt: "Say done.",
+      });
+      scoped = await createMcpClient(
+        `http://127.0.0.1:${daemonHandle.port}/mcp/agents?callerAgentId=${str(child.agentId)}`,
+      );
+
+      // Omit workspaceId to update caller's workspace; clear body with null and update issues.
+      const patched = await callToolStructured(scoped, "update_workspace", {
+        metadata: {
+          issues: [
+            "https://github.com/getpaseo/paseo/issues/10",
+            "https://github.com/getpaseo/paseo/issues/20",
+          ],
+          notes: "Added second issue",
+          body: null,
+        },
+      });
+      expect(patched).toMatchObject({
+        workspaceId,
+        title: "Metadata flow",
+        metadata: {
+          issues: [
+            "https://github.com/getpaseo/paseo/issues/10",
+            "https://github.com/getpaseo/paseo/issues/20",
+          ],
+          notes: "Added second issue",
+        },
+      });
+
+      const listedAfter = await callToolStructured(topLevelClient, "list_workspaces", {});
+      expect(recordArr(listedAfter.workspaces)).toContainEqual(
+        expect.objectContaining({
+          workspaceId,
+          metadata: {
+            issues: [
+              "https://github.com/getpaseo/paseo/issues/10",
+              "https://github.com/getpaseo/paseo/issues/20",
+            ],
+            notes: "Added second issue",
+          },
+        }),
+      );
+
+      await daemonClient.connect();
+      const snapshots = await daemonClient.fetchWorkspaces();
+      expect(snapshots.entries).toContainEqual(
+        expect.objectContaining({
+          id: workspaceId,
+          metadata: {
+            issues: [
+              "https://github.com/getpaseo/paseo/issues/10",
+              "https://github.com/getpaseo/paseo/issues/20",
+            ],
+            notes: "Added second issue",
+          },
+        }),
+      );
+    } finally {
+      await daemonClient.close().catch(() => undefined);
+      await scoped?.close().catch(() => undefined);
+      await topLevelClient
+        .callTool({ name: "archive_workspace", args: { workspaceId } })
+        .catch(() => undefined);
     }
   }, 30_000);
 

@@ -61,6 +61,13 @@ export function createTestAttachmentFileSystem(options?: {
       }
       return toBase64(bytes);
     },
+    async readBytes(uri) {
+      const bytes = files.get(uri);
+      if (!bytes) {
+        throw new Error(`readBytes: file does not exist: ${uri}`);
+      }
+      return new Uint8Array(bytes);
+    },
     async delete(uri, deleteOptions) {
       if (!files.delete(uri) && !deleteOptions.idempotent) {
         throw new Error(`delete: file does not exist: ${uri}`);

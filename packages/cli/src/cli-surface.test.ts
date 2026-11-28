@@ -1,9 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { createCli } from "./cli.js";
+import { beforeAll, describe, expect, it } from "vitest";
+import { createCli, createCliForArgv } from "./cli.js";
 
 describe("canonical CLI surface", () => {
+  beforeAll(async () => {
+    // Warm lazy command imports once so per-test timeouts measure parsing, not first-time Vite transform.
+    await createCli();
+  }, 30_000);
+
+  it("produces identical root help whether commands are lazy stubs or hydrated", async () => {
+    const lazyHelp = (await createCliForArgv(["--help"])).helpInformation();
+    const fullHelp = (await createCli()).helpInformation();
+    expect(lazyHelp).toBe(fullHelp);
+  });
+
   it.each(["send", "agent send"])("%s accepts an explicit behavior override", async (path) => {
-    const cli = createCli();
+    const cli = await createCli();
     const owner =
       path === "send" ? cli : cli.commands.find((command) => command.name() === "agent")!;
     const send = owner.commands.find((command) => command.name() === "send")!;
@@ -12,18 +23,20 @@ describe("canonical CLI surface", () => {
     expect(send.opts().behavior).toBe("interrupt");
     await send.parseAsync(["target", "message", "--behavior", "steer"], { from: "user" });
     expect(send.opts().behavior).toBe("steer");
+    await send.parseAsync(["target", "message", "--behavior", "queue"], { from: "user" });
+    expect(send.opts().behavior).toBe("queue");
     send.exitOverride().configureOutput({ writeErr: () => {} });
     await expect(
-      send.parseAsync(["target", "message", "--behavior", "queue"], { from: "user" }),
+      send.parseAsync(["target", "message", "--behavior", "wait"], { from: "user" }),
     ).rejects.toThrow();
   });
 
-  it("offers daemon host selection as a global option", () => {
-    expect(createCli().helpInformation()).toContain("--host <host>");
+  it("offers daemon host selection as a global option", async () => {
+    expect((await createCli()).helpInformation()).toContain("--host <host>");
   });
 
-  it("shows project, workspace, and heartbeat commands while hiding worktree compatibility", () => {
-    const cli = createCli();
+  it("shows project, workspace, and heartbeat commands while hiding worktree compatibility", async () => {
+    const cli = await createCli();
     const help = cli.helpInformation();
     expect(help).toContain("project");
     expect(help).toContain("workspace");
@@ -31,8 +44,8 @@ describe("canonical CLI surface", () => {
     expect(help).not.toContain("worktree");
   });
 
-  it("offers identical top-level and daemon config reload commands", () => {
-    const cli = createCli();
+  it("offers identical top-level and daemon config reload commands", async () => {
+    const cli = await createCli();
     const reload = cli.commands.find((command) => command.name() === "reload");
     const daemon = cli.commands.find((command) => command.name() === "daemon");
     const nestedReload = daemon?.commands.find((command) => command.name() === "reload");
@@ -43,16 +56,16 @@ describe("canonical CLI surface", () => {
     expect(nestedReload?.helpInformation()).toContain("--json");
   });
 
-  it("names explicit workspace creation without exposing older syntax", () => {
-    const run = createCli().commands.find((command) => command.name() === "run");
+  it("names explicit workspace creation without exposing older syntax", async () => {
+    const run = (await createCli()).commands.find((command) => command.name() === "run");
     const help = run?.helpInformation();
     expect(help).toContain("--new-workspace <local|worktree>");
     expect(help).not.toContain("--isolation");
     expect(help).not.toContain("--worktree <name>");
   });
 
-  it("offers the worktree creation options on run", () => {
-    const run = createCli().commands.find((command) => command.name() === "run");
+  it("offers the worktree creation options on run", async () => {
+    const run = (await createCli()).commands.find((command) => command.name() === "run");
     const help = run?.helpInformation();
     expect(help).toContain("--worktree-mode <mode>");
     expect(help).toContain("--worktree-slug <slug>");
@@ -62,8 +75,8 @@ describe("canonical CLI surface", () => {
     expect(help).toContain("--forge <forge>");
   });
 
-  it("uses --no-wait for execution, --internal for visibility, and reserves detach for ownership", () => {
-    const run = createCli().commands.find((command) => command.name() === "run");
+  it("uses --no-wait for execution, --internal for visibility, and reserves detach for ownership", async () => {
+    const run = (await createCli()).commands.find((command) => command.name() === "run");
     const help = run?.helpInformation();
     expect(help).toContain("--no-wait");
     expect(help).not.toContain("--background");
@@ -71,8 +84,8 @@ describe("canonical CLI surface", () => {
     expect(help).not.toContain("--detach");
   });
 
-  it("hides internal agents and workspaces from listings unless --internal is passed", () => {
-    const cli = createCli();
+  it("hides internal agents and workspaces from listings unless --internal is passed", async () => {
+    const cli = await createCli();
     const ls = cli.commands.find((command) => command.name() === "ls");
     const workspace = cli.commands.find((command) => command.name() === "workspace");
     const workspaceLs = workspace?.commands.find((command) => command.name() === "ls");
@@ -83,8 +96,8 @@ describe("canonical CLI surface", () => {
     expect(workspaceCreate?.helpInformation()).toContain("--background");
   });
 
-  it("offers thinking configuration when running, updating, and scheduling agents", () => {
-    const cli = createCli();
+  it("offers thinking configuration when running, updating, and scheduling agents", async () => {
+    const cli = await createCli();
     const run = cli.commands.find((command) => command.name() === "run");
     const agent = cli.commands.find((command) => command.name() === "agent");
     const update = agent?.commands.find((command) => command.name() === "update");
@@ -96,16 +109,26 @@ describe("canonical CLI surface", () => {
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
   });
 
-  it("offers opening an existing agent in the desktop app", () => {
-    const agent = createCli().commands.find((command) => command.name() === "agent");
+  it("offers archive on finish when creating and updating schedules", async () => {
+    const schedule = (await createCli()).commands.find((command) => command.name() === "schedule");
+
+    for (const name of ["create", "update"]) {
+      const help = schedule?.commands.find((command) => command.name() === name)?.helpInformation();
+      expect(help).toContain("--archive-on-finish");
+      expect(help).toContain("--no-archive-on-finish");
+    }
+  });
+
+  it("offers opening an existing agent in the desktop app", async () => {
+    const agent = (await createCli()).commands.find((command) => command.name() === "agent");
     const open = agent?.commands.find((command) => command.name() === "open");
 
     expect(open?.helpInformation()).toContain("<agent-id>");
     expect(open?.helpInformation()).toContain("--server <server-id>");
   });
 
-  it("offers the complete local plugin lifecycle", () => {
-    const plugin = createCli().commands.find((command) => command.name() === "plugin");
+  it("offers the complete local plugin lifecycle", async () => {
+    const plugin = (await createCli()).commands.find((command) => command.name() === "plugin");
 
     expect(plugin?.commands.map((command) => command.name())).toEqual([
       "init",
@@ -128,14 +151,16 @@ describe("canonical CLI surface", () => {
   });
 });
 
-it("preserves omitted and explicit false workspace background intent", () => {
-  const readOptions = (args: string[]) => {
-    const workspace = createCli().commands.find((command) => command.name() === "workspace")!;
+it("preserves omitted and explicit false workspace background intent", async () => {
+  const readOptions = async (args: string[]) => {
+    const workspace = (await createCli()).commands.find(
+      (command) => command.name() === "workspace",
+    )!;
     const create = workspace.commands.find((command) => command.name() === "create")!;
     create.parseOptions(args);
     return create.opts();
   };
-  expect(readOptions([]).background).toBeUndefined();
-  expect(readOptions(["--background"]).background).toBe(true);
-  expect(readOptions(["--no-background"]).background).toBe(false);
+  expect((await readOptions([])).background).toBeUndefined();
+  expect((await readOptions(["--background"])).background).toBe(true);
+  expect((await readOptions(["--no-background"])).background).toBe(false);
 });

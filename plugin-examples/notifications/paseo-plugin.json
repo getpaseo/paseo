@@ -1,0 +1,8 @@
+{
+  "id": "notifications-example",
+  "name": "Build alerts",
+  "description": "Sends build and agent failure notifications and opens the alert screen on tap.",
+  "requirements": {
+    "paseo": ">=0.18.0-beta.1"
+  }
+}

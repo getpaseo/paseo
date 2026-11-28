@@ -1,0 +1,1 @@
+{ "id": "cloudflared-tunnel", "requirements": { "paseo": ">=0.17.6" } }

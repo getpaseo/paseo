@@ -12,9 +12,12 @@ import {
   openImageLightbox,
   closeImageLightbox,
   pressInterruptShortcut,
+  blurComposerInput,
   expectComposerDraft,
   expectComposerDisabled,
   expectComposerEditable,
+  expectComposerFocused,
+  expectComposerNotFocused,
   expectAttachButtonDisabled,
   fillComposerDraft,
   dropFileOnComposer,
@@ -175,8 +178,19 @@ test.describe("Composer attachments", () => {
     await test.step("remove the image and attach a dropped file", async () => {
       await removeAttachmentPill(page, "composer-image-attachment-pill", "Remove image attachment");
       await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+      await blurComposerInput(page);
+      await expectComposerNotFocused(page);
       await dropFileOnComposer(page, TEST_JSON);
       await expectAttachmentPill(page, "composer-file-attachment-pill");
+      await expectComposerFocused(page);
+    });
+
+    await test.step("dropping an image focuses the composer", async () => {
+      await blurComposerInput(page);
+      await expectComposerNotFocused(page);
+      await dropFileOnComposer(page, TEST_IMAGE);
+      await expectAttachmentPill(page, "composer-image-attachment-pill");
+      await expectComposerFocused(page);
     });
   });
 
@@ -198,9 +212,12 @@ test.describe("Composer attachments", () => {
         projectDisplayName: workspace.projectDisplayName,
       });
 
+      await blurComposerInput(page);
+      await expectComposerNotFocused(page);
       await dropFileOnComposer(page, TEST_JSON);
 
       await expectAttachmentPill(page, "composer-file-attachment-pill");
+      await expectComposerFocused(page);
     } finally {
       await workspace.cleanup();
     }

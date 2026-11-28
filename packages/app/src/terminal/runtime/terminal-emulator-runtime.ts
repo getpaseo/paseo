@@ -1053,10 +1053,17 @@ export class TerminalEmulatorRuntime {
     if (!terminal) {
       return;
     }
+    terminal.textarea?.removeAttribute("virtualkeyboardpolicy");
     if (input?.forceRefocus) {
       terminal.blur();
     }
     terminal.focus();
+  }
+
+  suppressAutomaticKeyboard(): void {
+    // Android Chrome can reopen the keyboard during a drag after Back leaves the input
+    // focused. Manual policy prevents that without closing an already open keyboard.
+    this.terminal?.textarea?.setAttribute("virtualkeyboardpolicy", "manual");
   }
 
   blur(): void {

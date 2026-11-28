@@ -29,7 +29,9 @@ import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { SettingsGroup } from "@/components/settings/headings/settings-group";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
-import { SettingsBackLink, SettingsDetailHeader } from "@/components/settings";
+import type { PageTitleParent } from "@/components/page-layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { SettingsDetailHeader } from "@/components/settings";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
@@ -95,14 +97,12 @@ export interface ProjectSettingsScreenProps {
   serverId: string;
   projectId: string;
   onBackToProjects: () => void;
-  showBackToProjects: boolean;
 }
 
 export default function ProjectSettingsScreen({
   serverId,
   projectId,
   onBackToProjects,
-  showBackToProjects,
 }: ProjectSettingsScreenProps) {
   const { projects } = useProjects();
   const project = useMemo(
@@ -123,12 +123,7 @@ export default function ProjectSettingsScreen({
     selectedHost.repoRoot.trim().length > 0;
 
   if (!project || !selectedHost || !client || !canEdit) {
-    return (
-      <NoEditableTarget
-        onBackToProjects={onBackToProjects}
-        showBackToProjects={showBackToProjects}
-      />
-    );
+    return <NoProject onBackToProjects={onBackToProjects} />;
   }
 
   return (
@@ -138,24 +133,29 @@ export default function ProjectSettingsScreen({
       client={client}
       isHostGone={isHostGone}
       onBackToProjects={onBackToProjects}
-      showBackToProjects={showBackToProjects}
     />
   );
 }
 
-function NoEditableTarget({
-  onBackToProjects,
-  showBackToProjects,
-}: {
-  onBackToProjects: () => void;
-  showBackToProjects: boolean;
-}) {
+/** A project page with no project to name: the title is the way back to Projects. */
+function NoProject({ onBackToProjects }: { onBackToProjects: () => void }) {
+  const parent = useProjectsParent(onBackToProjects);
+  return (
+    <>
+      <SettingsDetailHeader parent={parent} />
+      <NoEditableTarget onBackToProjects={onBackToProjects} />
+    </>
+  );
+}
+
+function NoEditableTarget({ onBackToProjects }: { onBackToProjects: () => void }) {
   const { t } = useTranslation();
+  // The compact back header already goes back to Projects.
+  const isCompact = useIsCompactFormFactor();
   return (
     <View style={styles.noTargetContainer}>
-      {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
       <Text style={styles.noTargetText}>{t("settings.project.noEditableTarget")}</Text>
-      {showBackToProjects ? (
+      {isCompact ? null : (
         <Button
           testID="project-settings-back-button"
           onPress={onBackToProjects}
@@ -163,19 +163,22 @@ function NoEditableTarget({
         >
           {t("settings.project.backToProjects")}
         </Button>
-      ) : null}
+      )}
     </View>
   );
 }
 
-function BackToProjectsButton({ onPress }: { onPress: () => void }) {
+/** Projects as the first part of a project page's title, which goes back to the list. */
+function useProjectsParent(onPress: () => void): PageTitleParent {
   const { t } = useTranslation();
-  return (
-    <SettingsBackLink
-      label={t("settings.project.backToProjects")}
-      onPress={onPress}
-      testID="project-settings-back-link"
-    />
+  return useMemo(
+    () => ({
+      label: t("settings.projects"),
+      accessibilityLabel: t("settings.project.backToProjects"),
+      onPress,
+      testID: "project-settings-back-link",
+    }),
+    [onPress, t],
   );
 }
 
@@ -185,7 +188,6 @@ interface ProjectSettingsBodyProps {
   client: DaemonClient;
   isHostGone: boolean;
   onBackToProjects: () => void;
-  showBackToProjects: boolean;
 }
 
 function ProjectSettingsBody({
@@ -194,7 +196,6 @@ function ProjectSettingsBody({
   client,
   isHostGone,
   onBackToProjects,
-  showBackToProjects,
 }: ProjectSettingsBodyProps) {
   const { t } = useTranslation();
   const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
@@ -256,17 +257,7 @@ function ProjectSettingsBody({
   const handleReload = useCallback(() => {
     void readQuery.refetch();
   }, [readQuery]);
-  const backLink = useMemo(
-    () =>
-      showBackToProjects
-        ? {
-            label: t("settings.project.backToProjects"),
-            onPress: onBackToProjects,
-            testID: "project-settings-back-link",
-          }
-        : undefined,
-    [onBackToProjects, showBackToProjects, t],
-  );
+  const parent = useProjectsParent(onBackToProjects);
   const titleIcon = useMemo(
     () => (
       <ProjectTitleIcon
@@ -294,9 +285,9 @@ function ProjectSettingsBody({
   );
 
   return (
-    <View role="main" style={styles.body}>
+    <View role="main">
       <SettingsDetailHeader
-        back={backLink}
+        parent={parent}
         icon={titleIcon}
         title={selectedHost.projectName}
         trailing={editButton}
@@ -327,7 +318,6 @@ function ProjectSettingsBody({
         onReload: handleReload,
         isHostGone,
         onBackToProjects,
-        showBackToProjects,
       })}
     </View>
   );
@@ -345,7 +335,6 @@ interface RenderContentInput {
   onReload: () => void;
   isHostGone: boolean;
   onBackToProjects: () => void;
-  showBackToProjects: boolean;
 }
 
 function renderContent({
@@ -360,7 +349,6 @@ function renderContent({
   onReload,
   isHostGone,
   onBackToProjects,
-  showBackToProjects,
 }: RenderContentInput) {
   if (readQuery.isLoading) {
     return (
@@ -379,12 +367,7 @@ function renderContent({
   }
 
   if (isHostGone) {
-    return (
-      <NoEditableTarget
-        onBackToProjects={onBackToProjects}
-        showBackToProjects={showBackToProjects}
-      />
-    );
+    return <NoEditableTarget onBackToProjects={onBackToProjects} />;
   }
 
   if (!loadedConfig) {
@@ -1117,10 +1100,6 @@ const styles = StyleSheet.create((theme) => ({
   noTargetText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-  },
-  body: {
-    padding: theme.spacing[4],
-    gap: theme.spacing[2],
   },
   editButton: {
     padding: theme.spacing[1],

@@ -57,11 +57,9 @@ export class PluginSessionSocket {
   close(code?: number, reason?: string): void {
     if (this.readyState === 3) return;
     this.readyState = 3;
-    try {
-      this.child.send({ type: "paseo_close" });
-    } catch {
-      // The child has already gone; local session cleanup still has to run.
-    }
+    // Node reports a failed send to the callback, or else as an "error" event on the child,
+    // which nothing handles. The child may already be gone; local cleanup still has to run.
+    this.child.send({ type: "paseo_close" }, () => undefined);
     this.emit("close", code, reason);
   }
 

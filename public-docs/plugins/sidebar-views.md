@@ -115,9 +115,13 @@ Existing workspace panels can continue passing a host-local string ID to `useWor
 `useAgent`. Prefer refs for a view spanning hosts. `useHosts()` retains its existing
 `serverId`, `label` and connection `status` fields.
 
-Workspace snapshots include `project`, `pinnedAt`, `labels`, `background`, `branch`,
-`lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). Use `indicator` and the
-localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
+Workspace snapshots include `project`, `pinnedAt`, `labels`, `metadata`, `background`, `branch`,
+`lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). `parentWorkspace` is the ref
+of the workspace whose agent created this one, on the same host. The app requires Paseo 0.18.
+It is null when the host records no parent, as for root workspaces. The parent may be archived, so `useWorkspace` can
+return null for it. Nest dispatched workspaces with
+`useWorkspaces({ where: (item) => item.parentWorkspace?.key === reference.key })`. Use
+`indicator` and the localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
 status. Agent snapshots include their workspace and parent refs, `background`, and
 `backgroundWork.count`. Project snapshots provide
 `displayName`, `rootPath`, `kind` and `iconRevision`.
@@ -144,6 +148,9 @@ const paseo = usePaseo();
 await paseo.workspaces.ref(workspaceRef).setPinned(true);
 await paseo.workspaces.ref(workspaceRef).setLabel("Later", { assigned: true });
 await paseo.workspaces.ref(workspaceRef).setLabel("Inbox", { assigned: false });
+await paseo.workspaces
+  .ref(workspaceRef)
+  .setMetadata({ issues: ["https://github.com/org/repo/issues/1"] });
 paseo.projects.ref(projectRef).open();
 await paseo.projects.ref(projectRef).createWorkspace();
 paseo.terminals.ref(terminalRef).focus();

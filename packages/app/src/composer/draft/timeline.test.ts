@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
-import type { UserMessageImageAttachment } from "@/types/stream";
+import type { AttachmentMetadata } from "@/attachments/types";
 import { DRAFT_CAPABILITIES, resolveDraftTimeline } from "./timeline";
 
-const image: UserMessageImageAttachment = {
+const image: AttachmentMetadata = {
   id: "image-1",
   mimeType: "image/png",
   storageType: "web-indexeddb",

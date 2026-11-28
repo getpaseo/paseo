@@ -25,6 +25,7 @@ const workspace: PluginWorkspaceSnapshot = {
   createdAt: null,
   lastPromptAt: null,
   parentAgent: null,
+  parentWorkspace: null,
   indicator: "running",
   indicatorLabel: "Running",
   id: "workspace-1",
@@ -40,6 +41,7 @@ const workspace: PluginWorkspaceSnapshot = {
   statusEnteredAt: null,
   archivingAt: null,
   diffStat: null,
+  metadata: {},
 };
 
 const agent: PluginAgentSnapshot = {
@@ -147,6 +149,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
 }
 

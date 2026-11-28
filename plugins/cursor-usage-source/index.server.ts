@@ -7,6 +7,7 @@ export default function contribute(server: PluginServerContext) {
     id: "cursor",
     label: "Cursor",
     icon: "icon.svg",
+    providers: ["cursor"],
     input: inputSchema,
     discover: (scope) => (scope.kind === "global" ? discover() : discoverSession(scope)),
     fetch: fetchUsage,

@@ -8,8 +8,9 @@
  * rules, the icon registry, the row and modal chrome) is internal; import from
  * `@/agent-profiles`, never a path inside it.
  *
- * `useAgentProfilePicker` deliberately hands the picker a flat row view model
- * and one `applyProfile(id)` callback rather than the profiles themselves: what
+ * `useAgentProfilePicker` deliberately hands the picker — and the Command Center,
+ * which offers the same rows — a flat row view model and one `applyProfile(id)`
+ * callback rather than the profiles themselves: what
  * a profile contains, and how it reaches a live agent versus a draft, stays in
  * here.
  */
@@ -26,4 +27,7 @@ export {
   type DraftAgentProfileControls,
 } from "./internal/use-agent-profile-picker";
 export { AgentProfileGlyph } from "./internal/agent-profile-glyph";
-export { AgentProfilesSection } from "./settings/agent-profiles-section";
+export {
+  AgentProfilesPage,
+  type AgentProfilesBeforeLeaveGuard,
+} from "./settings/agent-profiles-section";

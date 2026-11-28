@@ -34,6 +34,11 @@ export interface PluginWorkspaceSnapshot {
   readonly createdAt: string | null;
   readonly lastPromptAt: string | null;
   readonly parentAgent: AgentRef | null;
+  /**
+   * The workspace whose agent created this one, on the same host. Null when the host records no
+   * parent, as for root workspaces. The parent may be archived, so `useWorkspace` can return null.
+   */
+  readonly parentWorkspace: WorkspaceRef | null;
   readonly indicator: WorkspaceIndicator;
   readonly indicatorLabel: string | null;
   readonly id: string;
@@ -50,6 +55,8 @@ export interface PluginWorkspaceSnapshot {
   readonly statusEnteredAt: string | null;
   readonly archivingAt: string | null;
   readonly diffStat: { readonly additions: number; readonly deletions: number } | null;
+  /** Structured data stored on the workspace. */
+  readonly metadata: Readonly<Record<string, JsonValue>>;
 }
 
 export interface PluginAgentSnapshot {

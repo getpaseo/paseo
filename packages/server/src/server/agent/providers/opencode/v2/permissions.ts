@@ -8,11 +8,20 @@ import type {
   AgentStreamEvent,
 } from "../../../agent-sdk-types.js";
 import { splitMultiSelectAnswer } from "../../question-card-answer.js";
+import { isOpenCodeNotFound } from "../http-error.js";
+
+// OpenCode drops a pending request without a reply event when the tool call that asked is
+// interrupted. Paseo resolves its copy the same way OpenCode resolved the original: unanswered.
+const DROPPED: AgentPermissionResponse = {
+  behavior: "deny",
+  message: "OpenCode no longer has this request.",
+};
 
 export class SessionPermissions {
   private readonly pending = new Map<string, AgentPermissionRequest>();
   private readonly permissionOwners = new Map<string, string>();
   private readonly forms = new Map<string, FormInfo>();
+  private readonly replying = new Set<string>();
   constructor(
     private readonly getClient: () => V2Api,
     private readonly id: string,
@@ -41,6 +50,19 @@ export class SessionPermissions {
     );
   }
   async respondToPermission(requestId: string, response: AgentPermissionResponse) {
+    this.replying.add(requestId);
+    try {
+      await this.reply(requestId, response);
+    } catch (error) {
+      if (!isOpenCodeNotFound(error)) throw error;
+      this.resolvePending(requestId, DROPPED);
+      return;
+    } finally {
+      this.replying.delete(requestId);
+    }
+    this.resolvePending(requestId, response);
+  }
+  private async reply(requestId: string, response: AgentPermissionResponse) {
     const form = this.forms.get(requestId);
     if (form) {
       if (response.behavior === "deny")
@@ -73,13 +95,17 @@ export class SessionPermissions {
           : {}),
       });
     }
-    this.resolvePending(requestId, response);
   }
   async reconcile(sessionID: string) {
     const [permissions, forms] = await Promise.all([
       this.getClient().permission.list({ sessionID }),
       this.getClient().session.form.list({ sessionID }),
     ]);
+    const live = new Set([...permissions, ...forms].map((request) => request.id));
+    for (const id of this.pending.keys()) {
+      if (live.has(id) || this.replying.has(id) || !this.isOwnedBy(id, sessionID)) continue;
+      this.resolvePending(id, DROPPED);
+    }
     for (const request of permissions) {
       if (this.pending.has(request.id)) continue;
       const pending: AgentPermissionRequest = {

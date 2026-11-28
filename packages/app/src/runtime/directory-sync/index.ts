@@ -43,6 +43,41 @@ const PAGE_LIMIT = 200;
 const AGENT_SORT: NonNullable<FetchAgentsOptions["sort"]> = [
   { key: "updated_at", direction: "desc" },
 ];
+const WORKSPACE_DELTA_BATCH_FALLBACK_MS = 16;
+
+interface WorkspaceDeltaFlushHandle {
+  cancel: () => void;
+}
+
+function scheduleWorkspaceDeltaFlush(callback: () => void): WorkspaceDeltaFlushHandle {
+  let done = false;
+  let rafId: number | null = null;
+  let timerId: ReturnType<typeof setTimeout> | null = null;
+  const cancel = () => {
+    if (rafId !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    if (timerId !== null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+  };
+  const run = () => {
+    if (done) return;
+    done = true;
+    cancel();
+    callback();
+  };
+  if (typeof requestAnimationFrame === "function") {
+    rafId = requestAnimationFrame(run);
+    // Fallback timer ensures backgrounded tabs (where rAF pauses) still flush within one frame.
+    timerId = setTimeout(run, WORKSPACE_DELTA_BATCH_FALLBACK_MS);
+  } else {
+    timerId = setTimeout(run, 0);
+  }
+  return { cancel };
+}
 
 function resolveAgentNextPage(pageInfo: AgentPageInfo): {
   hasMore: boolean;
@@ -164,6 +199,11 @@ export class DirectorySync {
   private subscriptionGeneration = 0;
   private satisfiedDemandSource: DirectorySourceToken | null = null;
   private cursors: DirectoryCheckpoint = {};
+  private pendingWorkspaceDeltas: Array<{
+    source: DirectorySourceToken;
+    delta: WorkspaceDirectoryDelta;
+  }> = [];
+  private workspaceDeltaFlush: WorkspaceDeltaFlushHandle | null = null;
 
   constructor(
     private readonly serverId: string,
@@ -191,6 +231,7 @@ export class DirectorySync {
       this.connection = connection;
       return false;
     }
+    this.flushPendingWorkspaceDeltas();
     this.flushAbortedTransactions();
     this.releaseSubscriptions();
     this.releaseScriptStatusEvents();
@@ -253,6 +294,7 @@ export class DirectorySync {
   }
 
   dispose(): void {
+    this.cancelPendingWorkspaceDeltas();
     this.flushAbortedTransactions();
     this.abortPendingSessionWaits();
     this.scriptStatusDemand.clear();
@@ -288,7 +330,7 @@ export class DirectorySync {
     this.revision += 1;
     if (this.agentTransactions.record(source, delta)) return;
     this.agents.applyDelta(delta);
-    this.noteLiveCursor("agents", delta);
+    if (this.extendsRefreshedBaseline(source)) this.noteLiveCursor("agents", delta);
     this.persistCheckpoint();
   }
 
@@ -299,13 +341,69 @@ export class DirectorySync {
     this.revision += 1;
     this.workspaceRevision += 1;
     if (this.workspaceTransactions.record(source, delta)) return;
-    this.applyWorkspaceDelta(delta);
-    if (delta.kind !== "script_status")
-      this.noteLiveCursor(
-        "projectId" in delta || "project" in delta ? "projects" : "workspaces",
-        delta,
-      );
-    this.persistCheckpoint();
+    const isWorkspaceUpdate =
+      delta.kind !== "script_status" && !("projectId" in delta || "project" in delta);
+    if (isWorkspaceUpdate) {
+      this.pendingWorkspaceDeltas.push({ source, delta });
+      if (!this.workspaceDeltaFlush) {
+        this.workspaceDeltaFlush = scheduleWorkspaceDeltaFlush(() => {
+          this.workspaceDeltaFlush = null;
+          this.flushPendingWorkspaceDeltas();
+        });
+      }
+      return;
+    }
+    this.flushPendingWorkspaceDeltas();
+    this.applyWorkspaceDeltas([{ source, delta }]);
+  }
+
+  private flushPendingWorkspaceDeltas(): void {
+    if (this.workspaceDeltaFlush) {
+      this.workspaceDeltaFlush.cancel();
+      this.workspaceDeltaFlush = null;
+    }
+    if (this.pendingWorkspaceDeltas.length === 0) return;
+    const batch = this.pendingWorkspaceDeltas;
+    this.pendingWorkspaceDeltas = [];
+    this.applyWorkspaceDeltas(batch);
+  }
+
+  private cancelPendingWorkspaceDeltas(): void {
+    if (this.workspaceDeltaFlush) {
+      this.workspaceDeltaFlush.cancel();
+      this.workspaceDeltaFlush = null;
+    }
+    this.pendingWorkspaceDeltas = [];
+  }
+
+  private applyWorkspaceDeltas(
+    batch: ReadonlyArray<{ source: DirectorySourceToken; delta: WorkspaceDirectoryDelta }>,
+  ): void {
+    if (batch.length === 0) return;
+    const mutations = this.workspaces.applyDeltas(batch.map((entry) => entry.delta));
+    for (const { source, delta } of batch) {
+      if (delta.kind !== "script_status" && this.extendsRefreshedBaseline(source)) {
+        this.noteLiveCursor(
+          "projectId" in delta || "project" in delta ? "projects" : "workspaces",
+          delta,
+        );
+      }
+    }
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations, this.cursors);
+  }
+
+  /**
+   * A live event's sequence covers everything before it only when a refresh completed on the
+   * subscriptions that delivered it. Before that (first sync still pending or failed) or after
+   * they lapse, the client may have missed earlier changes, so the event updates rows but leaves
+   * the cursor where the next refresh can still fetch what was missed.
+   */
+  private extendsRefreshedBaseline(source: DirectorySourceToken): boolean {
+    const refreshed = this.satisfiedDemandSource;
+    return (
+      refreshed?.clientGeneration === source.clientGeneration &&
+      refreshed.connectionEpoch === source.connectionEpoch
+    );
   }
 
   private observeDirectoryEvents(): void {
@@ -446,6 +544,7 @@ export class DirectorySync {
       const cached = await checkpoints.readDirectory(this.serverId);
       if (this.cacheAccepted) return;
       if (!useSessionStore.getState().sessions[this.serverId]) return;
+      this.flushPendingWorkspaceDeltas();
       this.agents.commitCached(cached.agents);
       this.workspaces.commitCached(cached);
       if (this.revision === revision) this.cursors = cached.checkpoint ?? {};
@@ -566,24 +665,16 @@ export class DirectorySync {
     input: { subscribe?: boolean } | undefined,
     loadDirectoryCache: boolean,
   ): Promise<void> {
-    if (loadDirectoryCache) await this.loadCachedDirectory();
+    if (loadDirectoryCache) {
+      this.primeWorkspaceTransactionForCacheLoad();
+      await this.loadCachedDirectory();
+    }
     const onlineConnection = this.getOnlineConnection();
     if (!onlineConnection) return;
     const { client, source } = onlineConnection;
-    const transaction = this.workspaceTransactions.begin(source, () => {
-      const baseline = this.workspaces.snapshot();
-      return {
-        workspaces: new Map(baseline.workspaces),
-        projects: new Map(baseline.projects),
-        // Cache hydration can advance the live replica while these requests await responses.
-        // Every page must use the cursors belonging to the maps captured here.
-        requestCursors: { ...this.cursors },
-        syncCursors: {},
-        syncModes: {},
-        touchedWorkspaceIds: new Set(),
-        touchedProjectIds: new Set(),
-      };
-    });
+    const transaction = this.workspaceTransactions.begin(source, () =>
+      this.createWorkspaceRefreshSnapshot(),
+    );
     try {
       await this.waitForSessionMetadata(client, source);
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
@@ -611,7 +702,7 @@ export class DirectorySync {
       this.completeWorkspaceRefresh(client, source, transaction);
     } catch (error) {
       const deltas = this.workspaceTransactions.fail(transaction);
-      if (deltas) for (const delta of deltas) this.applyWorkspaceDelta(delta);
+      if (deltas && deltas.length > 0) this.applyWorkspaceDeltaBatch(deltas);
       throw error;
     }
   }
@@ -674,6 +765,7 @@ export class DirectorySync {
       this.refreshAgents({ subscribe: {} }),
       this.refreshWorkspaces({ subscribe: true }),
     ]);
+    this.flushPendingWorkspaceDeltas();
     this.checkpoints?.replaceDirectoryBaseline?.(this.serverId, {
       agents: this.agents.snapshot(),
       ...this.workspaces.snapshot(),
@@ -693,6 +785,7 @@ export class DirectorySync {
   }
 
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): void {
+    this.flushPendingWorkspaceDeltas();
     const mutations = this.workspaces.acceptWorkspaces(workspaces);
     this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
@@ -706,11 +799,13 @@ export class DirectorySync {
   }
 
   acceptProject(project: ProjectDescriptor): void {
+    this.flushPendingWorkspaceDeltas();
     const mutations = this.workspaces.acceptProject(project);
     this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
 
   removeWorkspace(workspaceId: string): void {
+    this.flushPendingWorkspaceDeltas();
     const mutations = this.workspaces.removeWorkspaceSnapshot(workspaceId);
     this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
@@ -807,6 +902,32 @@ export class DirectorySync {
     }));
   }
 
+  // Updates that arrive before a refresh completes have no trusted baseline to advance from.
+  // Holding them keeps their cursor out of the cache until the refresh they are applied over.
+  private primeWorkspaceTransactionForCacheLoad(): void {
+    const connection = this.getOnlineConnection();
+    if (!connection) return;
+    this.workspaceTransactions.begin(connection.source, () =>
+      this.createWorkspaceRefreshSnapshot(),
+    );
+  }
+
+  private createWorkspaceRefreshSnapshot(): WorkspaceRefreshSnapshot {
+    this.flushPendingWorkspaceDeltas();
+    const baseline = this.workspaces.snapshot();
+    return {
+      workspaces: new Map(baseline.workspaces),
+      projects: new Map(baseline.projects),
+      // Cache hydration can advance the live replica while these requests await responses.
+      // Every page must use the cursors belonging to the maps captured here.
+      requestCursors: { ...this.cursors },
+      syncCursors: {},
+      syncModes: {},
+      touchedWorkspaceIds: new Set(),
+      touchedProjectIds: new Set(),
+    };
+  }
+
   private supportsDirectorySync(): boolean {
     return (
       useSessionStore.getState().sessions[this.serverId]?.serverInfo?.features?.directorySync ===
@@ -876,6 +997,7 @@ export class DirectorySync {
     }
     this.revision += 1;
     this.workspaceRevision += 1;
+    this.flushPendingWorkspaceDeltas();
     const previous = this.readWorkspaceState();
     const deltaMutations = this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
     const next = this.workspaces.snapshot();
@@ -911,8 +1033,8 @@ export class DirectorySync {
     return this.workspaces.snapshot();
   }
 
-  private applyWorkspaceDelta(delta: WorkspaceDirectoryDelta): void {
-    const mutations = this.workspaces.applyDelta(delta);
+  private applyWorkspaceDeltaBatch(deltas: readonly WorkspaceDirectoryDelta[]): void {
+    const mutations = this.workspaces.applyDeltas(deltas);
     this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
 
@@ -1033,7 +1155,8 @@ export class DirectorySync {
 
   private flushAbortedTransactions(): void {
     for (const delta of this.agentTransactions.abort()) this.agents.applyDelta(delta);
-    for (const delta of this.workspaceTransactions.abort()) this.applyWorkspaceDelta(delta);
+    const abortedWorkspaceDeltas = this.workspaceTransactions.abort();
+    if (abortedWorkspaceDeltas.length > 0) this.applyWorkspaceDeltaBatch(abortedWorkspaceDeltas);
   }
 
   private abortPendingSessionWaits(): void {

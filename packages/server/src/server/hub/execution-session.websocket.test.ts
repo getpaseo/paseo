@@ -62,6 +62,58 @@ test("Hub execute can steer ordinary agents while unrelated administration stays
   expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
 });
 
+test("Hub execute can list daemon projects but cannot rename them", async () => {
+  const hub = await launchRelationship();
+  await hub.createSiblingWorkspace(hub.repoRoot());
+  expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
+
+  const listed = await hub.requestOrdinary({
+    type: "project.list.request",
+    requestId: "list-projects",
+  });
+  expect(listed).toMatchObject({
+    type: "project.list.response",
+    payload: {
+      requestId: "list-projects",
+      projects: [{ projectId: expect.any(String), projectRootPath: hub.repoRoot() }],
+    },
+  });
+  if (listed.type !== "project.list.response") throw new Error("Expected project list response");
+
+  expect(
+    await hub.requestOrdinary({
+      type: "project.rename.request",
+      requestId: "rename-project",
+      projectId: listed.payload.projects[0]?.projectId,
+      customName: "Hub rename",
+    }),
+  ).toMatchObject({
+    type: "rpc_error",
+    payload: { requestId: "rename-project", code: "access_denied" },
+  });
+});
+
+test("Hub execute can list provider controls", async () => {
+  const hub = await launchRelationship();
+  expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
+
+  expect(
+    await hub.requestOrdinary({
+      type: "provider.controls.list.request",
+      requestId: "list-provider-controls",
+      draftConfig: { provider: "codex", cwd: hub.repoRoot() },
+    }),
+  ).toMatchObject({
+    type: "provider.controls.list.response",
+    payload: {
+      requestId: "list-provider-controls",
+      provider: "codex",
+      controls: expect.any(Array),
+      error: null,
+    },
+  });
+});
+
 test("Hub execute can title the workspace created with an agent", async () => {
   const hub = await launchRelationship();
   const created = await hub.requestOrdinary({

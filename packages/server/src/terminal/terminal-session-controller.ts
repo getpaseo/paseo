@@ -37,6 +37,10 @@ import type { TerminalReplayMetadata } from "./terminal-replay.js";
 import type { TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { applyTerminalSize } from "./terminal-size-ownership.js";
+import {
+  applyTerminalPalette,
+  claimInitialTerminalPaletteOwner,
+} from "./terminal-palette-ownership.js";
 import { TerminalWorkerIncompatibleError } from "./terminal-worker-pool.js";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 
@@ -219,7 +223,7 @@ export class TerminalSessionController {
       case "list_terminals_request":
         return this.handleListTerminalsRequest(msg);
       case "create_terminal_request":
-        return this.handleCreateTerminalRequest(msg);
+        return this.handleCreateTerminalRequest(msg, ownership);
       case "subscribe_terminal_request":
         return this.handleSubscribeTerminalRequest(msg, ownership);
       case "unsubscribe_terminal_request":
@@ -390,39 +394,41 @@ export class TerminalSessionController {
       return subscription.refresh;
     }
     const refresh = (async () => {
-      do {
-        subscription.pending = false;
-        const terminals =
-          subscription.cwd === undefined
-            ? (await this.getAllTerminalSessions()).filter(
-                (terminal) =>
-                  subscription.workspaceId === undefined ||
-                  terminal.workspaceId === subscription.workspaceId,
-              )
-            : await this.getTerminalsForWorkspaceRoot(subscription.cwd, subscription.workspaceId);
-        if (subscription.owner.signal.aborted) return;
-        subscription.owner.emit({
-          type: "terminals_changed",
-          payload: {
-            cwd: subscription.cwd,
-            workspaceId: subscription.workspaceId,
-            terminals: terminals.map((terminal) =>
-              Object.assign(
-                this.toTerminalInfo(terminal),
-                subscription.cwd === undefined ? { cwd: terminal.cwd } : {},
+      try {
+        do {
+          subscription.pending = false;
+          const terminals =
+            subscription.cwd === undefined
+              ? (await this.getAllTerminalSessions()).filter(
+                  (terminal) =>
+                    subscription.workspaceId === undefined ||
+                    terminal.workspaceId === subscription.workspaceId,
+                )
+              : await this.getTerminalsForWorkspaceRoot(subscription.cwd, subscription.workspaceId);
+          if (subscription.owner.signal.aborted) return;
+          subscription.owner.emit({
+            type: "terminals_changed",
+            payload: {
+              cwd: subscription.cwd,
+              workspaceId: subscription.workspaceId,
+              terminals: terminals.map((terminal) =>
+                Object.assign(
+                  this.toTerminalInfo(terminal),
+                  subscription.cwd === undefined ? { cwd: terminal.cwd } : {},
+                ),
               ),
-            ),
-            ...(requestId ? { requestId } : {}),
-          },
-        });
-        requestId = undefined;
-      } while (subscription.pending);
+              ...(requestId ? { requestId } : {}),
+            },
+          });
+          requestId = undefined;
+        } while (subscription.pending);
+      } finally {
+        // Clear in the same step as the last pending check. A change that lands after it then
+        // starts a new refresh instead of setting a pending flag that nothing reads again.
+        subscription.refresh = null;
+      }
     })();
     subscription.refresh = refresh;
-    const settled = () => {
-      subscription.refresh = null;
-    };
-    void refresh.then(settled, settled);
     return refresh;
   }
 
@@ -569,7 +575,10 @@ export class TerminalSessionController {
     );
   }
 
-  private async handleCreateTerminalRequest(msg: CreateTerminalRequest): Promise<void> {
+  private async handleCreateTerminalRequest(
+    msg: CreateTerminalRequest,
+    ownership: SessionDelivery,
+  ): Promise<void> {
     if (!this.terminalManager) {
       this.emit({
         type: "create_terminal_response",
@@ -619,9 +628,13 @@ export class TerminalSessionController {
         name: msg.name,
         command: msg.command,
         args: msg.args,
+        defaultColors: msg.defaultColors,
         rows: msg.size?.rows,
         cols: msg.size?.cols,
       });
+      if (msg.defaultColors && ownership.currentSource) {
+        claimInitialTerminalPaletteOwner(session, ownership.currentSource);
+      }
       this.emit({
         type: "create_terminal_response",
         payload: {
@@ -804,6 +817,10 @@ export class TerminalSessionController {
 
     if (msg.message.type === "resize") {
       applyTerminalSize(session, source, msg.message);
+      return;
+    }
+    if (msg.message.type === "palette") {
+      applyTerminalPalette(session, source, msg.message);
       return;
     }
 

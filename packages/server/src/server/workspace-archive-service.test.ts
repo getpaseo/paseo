@@ -7,12 +7,17 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { getPaseoWorktreeMetadataPath } from "../utils/worktree-metadata.js";
+import {
+  getPaseoWorktreeMetadataPath,
+  readPaseoWorktreeMetadata,
+  setPaseoWorktreeUntrustedSource,
+} from "../utils/worktree-metadata.js";
 import { archiveCommand } from "./worktree/commands.js";
 import { createWorktree, listPaseoWorktrees, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { WorkspaceArchiveOperations } from "./workspace-archive-operations.js";
 import {
   archiveByScope,
   unarchiveWorkspaceAgents,
@@ -22,7 +27,16 @@ import {
   resolveWorkspaceIdAtPath,
   WorkspaceArchiveCanceledError,
 } from "./workspace-archive-service.js";
-import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import {
+  assertWorkspaceAutomationAllowedForWorkspace,
+  clearWorkspaceAutomationBlock,
+  isCheckoutUntrusted,
+  WorkspaceAutomationBlockedError,
+} from "./workspace-automation-gate.js";
+import {
+  createPersistedWorkspaceRecord,
+  FileBackedWorkspaceRegistry,
+} from "./workspace-registry.js";
 
 const cleanupPaths: string[] = [];
 
@@ -175,6 +189,8 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
     killTerminalsForWorkspace: vi.fn(async () => {}),
+    assertWorkspaceAutomationAllowed: async () => {},
+    isCheckoutUntrusted: async () => false,
     sessionLogger: createLogger(),
     activeWorkspaces: active,
     archivedAgentIds,
@@ -478,6 +494,394 @@ describe("archiveByScope", () => {
 
     expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  describe("teardown approval gating", () => {
+    const sampleBlockedSource = (number = 42) => ({
+      kind: "change_request" as const,
+      forge: "github",
+      number,
+      headRepository: "contributor/paseo",
+    });
+
+    async function createTeardownWorktree(slug: string, options?: { nestedRelative?: string }) {
+      const { tempDir, repoDir } = createGitRepo();
+      const markerName = `${slug}-teardown.log`;
+      const marker = path.join(repoDir, markerName);
+      const configDir = options?.nestedRelative
+        ? path.join(repoDir, options.nestedRelative)
+        : repoDir;
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        path.join(configDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            teardown: [
+              `node -e "require('fs').writeFileSync(process.env.PASEO_SOURCE_CHECKOUT_PATH + '/${markerName}', 'ran')"`,
+            ],
+          },
+        }),
+      );
+      execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", `teardown ${slug}`], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const paseoHome = path.join(tempDir, ".paseo");
+      const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, slug);
+      return { repoDir, paseoHome, worktreePath: worktree.worktreePath, marker };
+    }
+
+    function makeWorktreeWorkspace(
+      workspaceId: string,
+      fixture: { repoDir: string; worktreePath: string },
+      overrides: Partial<ActiveWorkspaceRef> = {},
+    ): ActiveWorkspaceRef {
+      return {
+        workspaceId,
+        cwd: fixture.worktreePath,
+        kind: "worktree",
+        worktreeRoot: fixture.worktreePath,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: fixture.repoDir,
+        ...overrides,
+      };
+    }
+
+    test("workspace scope skips teardown when the workspace record carries untrustedSource", async () => {
+      const fixture = await createTeardownWorktree("untrusted-record");
+      const workspaceId = "ws-untrusted-record";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [
+          makeWorktreeWorkspace(workspaceId, fixture, { untrustedSource: sampleBlockedSource() }),
+        ],
+      });
+
+      const result = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-untrusted-record",
+      });
+
+      expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
+      expect(result.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+    });
+
+    test("workspace scope runs teardown for a fresh worktree reusing the path of an archived unapproved checkout", async () => {
+      const fixture = await createTeardownWorktree("reused-slug");
+      const workspaceId = "ws-fresh-reused-slug";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [makeWorktreeWorkspace(workspaceId, fixture)],
+      });
+      // Simulates an earlier archived unapproved workspace that previously used the same path.
+      deps.isCheckoutUntrusted = async () => true;
+
+      const result = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-fresh-reused-slug",
+      });
+
+      expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
+      expect(result.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(readFileSync(fixture.marker, "utf8")).toBe("ran");
+    });
+
+    test("retrying archive on an already-archived unapproved workspace does not mark a fresh worktree at the same path", async () => {
+      const fixture = await createTeardownWorktree("reused-after-retry");
+      const oldArchivedId = "ws-old-archived-unapproved";
+      const freshWorkspaceId = "ws-fresh-approved";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [makeWorktreeWorkspace(freshWorkspaceId, fixture)],
+      });
+      deps.getWorkspace = async (workspaceId) =>
+        workspaceId === oldArchivedId
+          ? {
+              ...makeWorktreeWorkspace(oldArchivedId, fixture, {
+                untrustedSource: sampleBlockedSource(),
+              }),
+              projectId: "proj-1",
+              archivedAt: "2026-11-24T00:00:00.000Z",
+              createdAt: "2026-11-24T00:00:00.000Z",
+              updatedAt: "2026-11-24T00:00:00.000Z",
+            }
+          : null;
+      deps.isCheckoutUntrusted = async () => true;
+
+      const retry = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: oldArchivedId },
+        requestId: "req-retry-archived",
+      });
+      expect(retry.archivedWorkspaceIds).toEqual([]);
+      expect(retry.removedDirectory).toBe(false);
+      expect(
+        (await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource,
+      ).toBeUndefined();
+
+      const fresh = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: freshWorkspaceId },
+        requestId: "req-archive-fresh",
+      });
+      expect(fresh.archivedWorkspaceIds).toEqual([freshWorkspaceId]);
+      expect(fresh.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(readFileSync(fixture.marker, "utf8")).toBe("ran");
+    });
+
+    test("workspace scope skips teardown when retained checkout metadata carries untrustedSource", async () => {
+      const fixture = await createTeardownWorktree("retained-metadata");
+      await setPaseoWorktreeUntrustedSource(fixture.worktreePath, sampleBlockedSource(88));
+      const workspaceId = "ws-reopened-on-retained";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [makeWorktreeWorkspace(workspaceId, fixture)],
+      });
+
+      const result = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-retained-metadata",
+      });
+
+      expect(result.archivedWorkspaceIds).toEqual([workspaceId]);
+      expect(result.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+    });
+
+    test("workspace scope backfills checkout metadata when archiving a pre-upgrade unapproved worktree whose directory stays on disk", async () => {
+      const fixture = await createTeardownWorktree("pre-upgrade-retained");
+      expect(
+        (await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource,
+      ).toBeUndefined();
+      const untrustedSource = sampleBlockedSource(91);
+      const blockedWorkspaceId = "ws-pre-upgrade-blocked";
+      const keptSiblingId = "ws-pre-upgrade-sibling";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [
+          makeWorktreeWorkspace(blockedWorkspaceId, fixture, { untrustedSource }),
+          makeWorktreeWorkspace(keptSiblingId, fixture),
+        ],
+      });
+
+      const first = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: blockedWorkspaceId },
+        requestId: "req-pre-upgrade-first",
+      });
+      expect(first.removedDirectory).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+      expect((await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource).toEqual(
+        untrustedSource,
+      );
+
+      const second = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: keptSiblingId },
+        requestId: "req-pre-upgrade-second",
+      });
+      expect(second.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+    });
+
+    test.each(["approval-first", "archive-first"] as const)(
+      "serializing archive and setup approval through withCheckout preserves completed approval (%s)",
+      async (order) => {
+        const fixture = await createTeardownWorktree(`serialized-${order}`);
+        const untrustedSource = sampleBlockedSource(92);
+        const registry = new FileBackedWorkspaceRegistry(
+          path.join(fixture.paseoHome, "workspaces.json"),
+          createLogger(),
+        );
+        const operations = new WorkspaceArchiveOperations();
+        const now = "2026-11-24T00:00:00.000Z";
+        const ws1 = createPersistedWorkspaceRecord({
+          workspaceId: "ws-archive-target",
+          projectId: "proj-1",
+          displayName: "ws-archive-target",
+          cwd: fixture.worktreePath,
+          kind: "worktree",
+          worktreeRoot: fixture.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: fixture.repoDir,
+          untrustedSource,
+          createdAt: now,
+          updatedAt: now,
+        });
+        const ws2 = createPersistedWorkspaceRecord({
+          workspaceId: "ws-approve-sibling",
+          projectId: "proj-1",
+          displayName: "ws-approve-sibling",
+          cwd: fixture.worktreePath,
+          kind: "worktree",
+          worktreeRoot: fixture.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: fixture.repoDir,
+          untrustedSource,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await registry.upsert(ws1);
+        await registry.upsert(ws2);
+
+        const deps = createArchiveDeps({
+          paseoHome: fixture.paseoHome,
+          activeWorkspaces: [],
+        });
+        deps.workspaceArchiveOperations = operations;
+        deps.getWorkspace = (id) => registry.get(id);
+        deps.listActiveWorkspaces = () => registry.listActive();
+        deps.archiveWorkspaceRecord = async (id, archivedAt) => {
+          await registry.archive(id, archivedAt);
+        };
+        deps.assertWorkspaceAutomationAllowed = (id) =>
+          assertWorkspaceAutomationAllowedForWorkspace(registry, id);
+        deps.isCheckoutUntrusted = (checkoutPath) => isCheckoutUntrusted(registry, checkoutPath);
+
+        async function clearInsideCheckoutLock() {
+          return clearWorkspaceAutomationBlock(registry, ws2.workspaceId, {
+            checkoutPath: fixture.worktreePath,
+          });
+        }
+
+        if (order === "approval-first") {
+          const [cleared, archived] = await Promise.all([
+            operations.withCheckout(fixture.worktreePath, clearInsideCheckoutLock),
+            archiveByScope(deps, {
+              scope: { kind: "workspace", workspaceId: ws1.workspaceId },
+              requestId: `req-${order}-ws1`,
+            }),
+          ]);
+          expect(cleared).toBe(true);
+          expect(archived.removedDirectory).toBe(false);
+        } else {
+          // Pause archive mid-flight (after resolving targets, before backfill) while Run setup
+          // queues on the same checkout lock, ensuring approval runs after backfill and wins.
+          let enteredStop!: () => void;
+          let releaseStop!: () => void;
+          const stopEntered = new Promise<void>((resolve) => {
+            enteredStop = resolve;
+          });
+          const stopGate = new Promise<void>((resolve) => {
+            releaseStop = resolve;
+          });
+          deps.stopWorkspaceSetup = async () => {
+            enteredStop();
+            await stopGate;
+          };
+          const archivePromise = archiveByScope(deps, {
+            scope: { kind: "workspace", workspaceId: ws1.workspaceId },
+            requestId: `req-${order}-ws1`,
+          });
+          await stopEntered;
+          const approvalPromise = operations.withCheckout(
+            fixture.worktreePath,
+            clearInsideCheckoutLock,
+          );
+          releaseStop();
+          const [archived, cleared] = await Promise.all([archivePromise, approvalPromise]);
+          expect(archived.removedDirectory).toBe(false);
+          expect(cleared).toBe(true);
+          deps.stopWorkspaceSetup = undefined;
+        }
+
+        expect(
+          (await readPaseoWorktreeMetadata(fixture.worktreePath))?.untrustedSource,
+        ).toBeUndefined();
+        expect((await registry.get(ws2.workspaceId))?.untrustedSource).toBeUndefined();
+
+        const finalArchive = await archiveByScope(deps, {
+          scope: { kind: "workspace", workspaceId: ws2.workspaceId },
+          requestId: `req-${order}-ws2`,
+        });
+        expect(finalArchive.removedDirectory).toBe(true);
+        expect(readFileSync(fixture.marker, "utf8")).toBe("ran");
+      },
+    );
+
+    test("workspace scope skips teardown when an active sibling on the same checkout is blocked", async () => {
+      const nestedRelative = path.join("packages", "app");
+      const fixture = await createTeardownWorktree("shared-blocked-sibling", { nestedRelative });
+      const blockedRootId = "ws-shared-blocked-root";
+      const nestedWorkspaceId = "ws-shared-nested";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [
+          makeWorktreeWorkspace(blockedRootId, fixture),
+          makeWorktreeWorkspace(nestedWorkspaceId, fixture, {
+            cwd: path.join(fixture.worktreePath, nestedRelative),
+          }),
+        ],
+      });
+      deps.assertWorkspaceAutomationAllowed = async (workspaceId) => {
+        if (workspaceId === blockedRootId) {
+          throw new WorkspaceAutomationBlockedError(sampleBlockedSource());
+        }
+      };
+
+      const result = await archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId: nestedWorkspaceId },
+        requestId: "req-shared-blocked-sibling",
+      });
+
+      expect(result.archivedWorkspaceIds).toEqual([nestedWorkspaceId]);
+      expect(result.removedDirectory).toBe(false);
+      expect(existsSync(fixture.worktreePath)).toBe(true);
+      expect(existsSync(fixture.marker)).toBe(false);
+    });
+
+    test("worktree scope skips teardown when archiving an unrecorded worktree directory", async () => {
+      const fixture = await createTeardownWorktree("unrecorded-worktree");
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [],
+      });
+
+      const result = await archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: fixture.worktreePath },
+        requestId: "req-unrecorded-worktree",
+      });
+
+      expect(result.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+    });
+
+    test("worktree scope skips teardown for nested siblings when any workspace on the checkout is blocked", async () => {
+      const nestedRelative = path.join("packages", "app");
+      const fixture = await createTeardownWorktree("blocked-sibling", { nestedRelative });
+      const rootWorkspaceId = "ws-blocked-root";
+      const nestedWorkspaceId = "ws-nested-sibling";
+      const deps = createArchiveDeps({
+        paseoHome: fixture.paseoHome,
+        activeWorkspaces: [
+          makeWorktreeWorkspace(rootWorkspaceId, fixture),
+          makeWorktreeWorkspace(nestedWorkspaceId, fixture, {
+            cwd: path.join(fixture.worktreePath, nestedRelative),
+          }),
+        ],
+      });
+      deps.assertWorkspaceAutomationAllowed = async (workspaceId) => {
+        if (workspaceId === rootWorkspaceId) {
+          throw new WorkspaceAutomationBlockedError(sampleBlockedSource());
+        }
+      };
+
+      const result = await archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: fixture.worktreePath },
+        requestId: "req-blocked-sibling",
+      });
+
+      expect(result.archivedWorkspaceIds).toEqual(
+        expect.arrayContaining([rootWorkspaceId, nestedWorkspaceId]),
+      );
+      expect(result.removedDirectory).toBe(true);
+      expect(existsSync(fixture.worktreePath)).toBe(false);
+      expect(existsSync(fixture.marker)).toBe(false);
+    });
   });
 
   test("workspace scope keeps a worktree for an active workspace in a subdirectory", async () => {
@@ -1290,3 +1694,59 @@ test("a canceled archive with no matching agents leaves earlier closed agents ar
   });
   expect(restored).toEqual([]);
 });
+
+test.each(["outer", "inner"])(
+  "archive keeps nested workspace when %s is managed",
+  async (managed) => {
+    const { repoDir } = createGitRepo();
+    const rootDir = path.dirname(repoDir);
+    const outerPath = path.join(rootDir, "worktrees", "team");
+    const innerPath = path.join(outerPath, "topic");
+    mkdirSync(path.dirname(outerPath), { recursive: true });
+    execFileSync("git", ["worktree", "add", "-b", "team", outerPath], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["worktree", "add", "-b", "topic", innerPath], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const dirtyFile = path.join(innerPath, "uncommitted.txt");
+    writeFileSync(dirtyFile, "keep-inner");
+
+    const activeWorkspaces: ActiveWorkspaceRef[] = [
+      {
+        workspaceId: "ws-team",
+        cwd: outerPath,
+        kind: "worktree",
+        worktreeRoot: outerPath,
+        worktreeManagerPluginId: managed === "outer" ? "manager" : null,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+      },
+      {
+        workspaceId: "ws-topic",
+        cwd: innerPath,
+        kind: "worktree",
+        worktreeRoot: innerPath,
+        worktreeManagerPluginId: managed === "inner" ? "manager" : null,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: repoDir,
+      },
+    ];
+    const deps = createArchiveDeps({
+      paseoHome: rootDir,
+      activeWorkspaces,
+    });
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId: "ws-team" },
+      requestId: "archive-outer",
+    });
+
+    expect(result.archivedWorkspaceIds).toEqual(["ws-team"]);
+    expect(result.removedDirectory).toBe(false);
+    expect(existsSync(outerPath)).toBe(true);
+    expect(readFileSync(dirtyFile, "utf8")).toBe("keep-inner");
+  },
+);

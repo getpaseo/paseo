@@ -14,6 +14,7 @@ const entries = {
   "./server/usage": "server",
   "./server/acp": "server",
   "./internal/lifecycle": "server",
+  "./internal/windows-command": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/ui": "client",
@@ -71,22 +72,33 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
   return violations;
 }
 
+const typeCheckConfigPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
+const typeCheckOptions = ts.parseJsonConfigFileContent(
+  ts.readConfigFile(typeCheckConfigPath, ts.sys.readFile).config,
+  ts.sys,
+  path.dirname(typeCheckConfigPath),
+).options;
+const typeCheckFile = path.resolve(
+  sourceDirectory,
+  "../../../plugin-examples/skill-example/client/example.tsx",
+);
+// Every snippet compiles against the same SDK, library, and dependency declarations. Parsing them
+// once keeps each check to the snippet itself; a fresh parse per check can pass the test timeout
+// on a slow runner.
+const sharedSourceFiles = new Map<string, ts.SourceFile | undefined>();
+
 function typeErrors(code: string): string[] {
-  const configPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
-  const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(configPath));
-  const file = path.resolve(
-    sourceDirectory,
-    "../../../plugin-examples/skill-example/client/example.tsx",
-  );
-  const host = ts.createCompilerHost(options);
+  const host = ts.createCompilerHost(typeCheckOptions);
   const getSourceFile = host.getSourceFile;
-  host.getSourceFile = (name, language, ...rest) =>
-    path.resolve(name) === file
-      ? ts.createSourceFile(name, code, language)
-      : getSourceFile.call(host, name, language, ...rest);
-  host.fileExists = (name) => path.resolve(name) === file || ts.sys.fileExists(name);
-  const program = ts.createProgram([file], options, host);
+  host.getSourceFile = (name, language, ...rest) => {
+    if (path.resolve(name) === typeCheckFile) return ts.createSourceFile(name, code, language);
+    if (!sharedSourceFiles.has(name)) {
+      sharedSourceFiles.set(name, getSourceFile.call(host, name, language, ...rest));
+    }
+    return sharedSourceFiles.get(name);
+  };
+  host.fileExists = (name) => path.resolve(name) === typeCheckFile || ts.sys.fileExists(name);
+  const program = ts.createProgram([typeCheckFile], typeCheckOptions, host);
   return ts
     .getPreEmitDiagnostics(program)
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
@@ -392,7 +404,7 @@ describe("lifecycle hook SDK types", () => {
   it("infers payloads and replacement requests and requires async handlers and new names", () => {
     expect(
       typeErrors(`
-      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult, PluginLaunchWrap } from "@getpaseo/plugin/server";
       import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
@@ -427,6 +439,38 @@ describe("lifecycle hook SDK types", () => {
           const { metadata, ...withoutMetadata } = request;
           return withoutMetadata;
         });
+        server.addHook("agent.create.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          // @ts-expect-error The agent's workspace is read-only.
+          request.workspaceId = "wks_other";
+        });
+        // Results built before workspaceId existed still typecheck; the daemon keeps the id.
+        server.addHook("agent.create.before", async ({ request }) => ({ config: request.config, env: request.env }));
+        server.before("agent.create", ({ request }) => ({ config: request.config, env: request.env }));
+        server.addHook("terminal.create.before", async ({ request }) => {
+          const source: "client" | "agent" | "script" | "worktree" = request.source;
+          const input: string | null = request.input;
+          const program: string | null = request.command;
+          // @ts-expect-error The terminal's workspace is read-only.
+          request.workspaceId = "wks_other";
+          // @ts-expect-error The terminal's program is read-only; return a wrap instead.
+          request.command = "/usr/bin/other";
+          const wrap: PluginLaunchWrap = ["/usr/bin/sandbox", "--workspace", request.workspaceId];
+          return { ...request, env: { A: "1" }, wrap };
+        });
+        server.addHook("command.run.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          const purpose: "setup" | "teardown" = request.purpose;
+          // @ts-expect-error A command's purpose is read-only.
+          request.purpose = "setup";
+          // @ts-expect-error The configured command is read-only; return a wrap instead.
+          request.command = "wrapper " + request.command;
+          return { ...request, wrap: ["/usr/bin/sandbox"] };
+        });
+        server.addHook("agent.open.before", async ({ request }) => ({
+          ...request,
+          wrap: ["/usr/bin/sandbox", "--workspace", request.workspaceId ?? "none"],
+        }));
         server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
           const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
@@ -474,6 +518,7 @@ describe("agent session reload SDK boundary", () => {
         const agent = paseo.agents.ref("chosen-agent");
         const read: PaseoAgentRefetchResult | null = await agent.refresh("read-snapshot");
         const reopened: PaseoAgentRefetchResult | null = await agent.reload({ requestId: "reload-session" });
+        await agent.send("Answer decision", { activeTurnBehavior: "queue" });
         await agent.reload();
         // @ts-expect-error reload options can grow without a positional signature change
         await agent.reload("reload-session");
@@ -556,6 +601,8 @@ describe("sidebar data SDK boundary", () => {
       import type { PluginWorkspaceSnapshot } from "@getpaseo/plugin";
       function Panel({ workspace, agent }: { workspace: WorkspaceRef; agent: AgentRef }) {
         const snapshot: PluginWorkspaceSnapshot | null = useWorkspace(workspace);
+        const workspaceIssues: unknown = snapshot?.metadata.issues;
+        void workspaceIssues;
         const title: string | null = useWorkspace("workspace", item => item.name);
         const status = useAgent(agent, item => ({ status: item.status }), (a, b) => a?.status === b?.status);
         const agentSnapshot = useAgent(agent);
@@ -567,6 +614,7 @@ describe("sidebar data SDK boundary", () => {
         const paseo = usePaseo();
         void paseo.workspaces.ref(workspace).setPinned(true);
         void paseo.workspaces.ref(workspace).setLabel("Later", { assigned: true });
+        void paseo.workspaces.ref(workspace).setMetadata({ issues: ["https://github.com/getpaseo/paseo/issues/1"], body: null });
         void paseo.workspaces.ref("old-id").setTitle("Title");
         if (projects[0]) { paseo.projects.ref(projects[0]).open(); void paseo.projects.ref(projects[0]).createWorkspace(); }
         if (terminals[0]) { paseo.terminals.ref(terminals[0]).focus(); void paseo.terminals.ref(terminals[0]).kill(); }
@@ -584,6 +632,236 @@ describe("sidebar data SDK boundary", () => {
         }
         const query: Query<PluginWorkspaceSnapshot> = { hosts: [workspace.hostId], orderBy: ["name", "desc"] };
         return null;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("worktree manager SDK boundary", () => {
+  it("types create, remove, and restore handlers with discriminated results and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        WorktreeManagerRegistration,
+        PluginWorktreeCreateInput,
+        PluginWorktreeCreateResult,
+        PluginWorktreeRemoveRequest,
+        PluginWorktreeRemoveResult,
+        PluginWorktreeRestoreRequest,
+        PluginWorktreeRestoreResult,
+      } from "@getpaseo/plugin/server";
+
+      export default function contribute(server: PluginServerContext) {
+        const manager: WorktreeManagerRegistration = {
+          async create(request: PluginWorktreeCreateInput, { paseo, signal }) {
+            const untrusted: boolean = request.untrusted;
+            const headSha: string | undefined = request.headSha;
+            void headSha;
+            // @ts-expect-error untrusted is read-only
+            request.untrusted = true;
+            // @ts-expect-error headSha is read-only
+            request.headSha = "deadbeef";
+            if (request.kind === "branch-off") {
+              const start: string = request.startPoint ?? request.baseRef;
+              // @ts-expect-error startPoint is read-only
+              request.startPoint = "other";
+              if (!start || untrusted) return;
+            }
+            if (signal.aborted) return;
+            void paseo;
+            const result: PluginWorktreeCreateResult = { type: "created", path: request.path };
+            return result;
+          },
+          async remove(request: PluginWorktreeRemoveRequest, { signal }) {
+            const reason: "archive" | "rollback" = request.reason;
+            const force: boolean = request.force;
+            const untrusted: boolean = request.untrusted;
+            // @ts-expect-error remove request fields are read-only
+            request.path = "/other";
+            if (!reason || !force || untrusted || signal.aborted) return;
+            const result: PluginWorktreeRemoveResult = { type: "removed" };
+            return result;
+          },
+          async restore(request: PluginWorktreeRestoreRequest) {
+            const untrusted: boolean = request.untrusted;
+            void untrusted;
+            if (request.target.type === "commit") return;
+            if (request.target.type === "from-base") {
+              const base: string = request.target.baseRef;
+              void base;
+            }
+            const result: PluginWorktreeRestoreResult = { type: "restored", path: request.path };
+            return result;
+          },
+        };
+        const dispose: () => void = server.registerWorktreeManager(manager);
+        server.registerWorktreeManager({
+          // @ts-expect-error create result requires discriminant
+          async create() {
+            return { path: "/tmp/wt" };
+          },
+        });
+        return dispose;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("plugin notifications SDK boundary", () => {
+  it("types server notification sends and client tap handlers with capabilities and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        PluginNotifications,
+        PluginNotificationSendInput,
+        PluginNotificationSendResult,
+        PluginNotificationOpenTarget,
+      } from "@getpaseo/plugin/server";
+      import type {
+        PluginClientContext,
+        PluginHostNavigationActions,
+        PluginNotificationOpenContext,
+        PluginNotificationOpenEvent,
+        PluginNotificationOpenHandler,
+      } from "@getpaseo/plugin/client";
+
+      export async function sendFromServer(server: PluginServerContext) {
+        const notifications: PluginNotifications = server.notifications;
+        const target: PluginNotificationOpenTarget = {
+          type: "screen",
+          screenId: "details",
+          params: { id: "42" },
+        };
+        const input: PluginNotificationSendInput = {
+          title: "Build failed",
+          body: "Check the logs",
+          key: "build:42",
+          open: target,
+          data: { buildId: 42, ok: false, tags: ["ci"] },
+        };
+        const result: PluginNotificationSendResult = await notifications.send(input);
+        if (result.status === "sent") {
+          const id: string = result.notificationId;
+          void id;
+        }
+        await server.notifications.send({
+          title: "Agent ready",
+          body: "Done",
+          open: { type: "agent", agentId: "agent-1" },
+        });
+        await server.notifications.send({
+          title: "Workspace ready",
+          body: "Done",
+          open: { type: "workspace", workspaceId: "ws-1" },
+        });
+        // @ts-expect-error data must be JSON values
+        await server.notifications.send({ title: "Bad", body: "Bad", data: { fn: () => {} } });
+        // @ts-expect-error open target requires a known type discriminant
+        await server.notifications.send({ title: "Bad", body: "Bad", open: { type: "unknown" } });
+      }
+
+      export function contributeClient(client: PluginClientContext) {
+        const handler: PluginNotificationOpenHandler = (context: PluginNotificationOpenContext) => {
+          const navigation: PluginHostNavigationActions = context.navigation;
+          void navigation;
+          const event: PluginNotificationOpenEvent = context.event;
+          const kind: "opened" = event.type;
+          const id: string = event.notificationId;
+          void kind;
+          void id;
+          // @ts-expect-error event fields are read-only
+          event.notificationId = "other";
+          if (event.data) {
+            // @ts-expect-error event data record is read-only
+            event.data.extra = "nope";
+          }
+          if (typeof event.data?.agentId === "string") {
+            context.navigation.openAgent({ agentId: event.data.agentId, focusHost: true });
+          } else if (typeof event.data?.workspaceId === "string") {
+            context.navigation.openWorkspace({ workspaceId: event.data.workspaceId });
+          } else {
+            context.openScreen({ screenId: "main", params: { from: "notification" } });
+          }
+        };
+        const cleanup = client.onNotificationOpen(handler);
+        return cleanup;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("tunnel provider SDK boundary", () => {
+  it("types tunnel provider registration, status union, lifecycle events, and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        TunnelEvent,
+        TunnelOpenContext,
+        TunnelProviderRegistration,
+        TunnelProviderStatus,
+        TunnelStability,
+        TunnelStatusContext,
+        TunnelTarget,
+      } from "@getpaseo/plugin/server";
+
+      export default function contribute(server: PluginServerContext) {
+        const provider: TunnelProviderRegistration = {
+          id: "acme-tunnel",
+          label: "Acme Tunnel",
+          description: "Expose local HTTP targets through Acme.",
+          docsUrl: "https://example.com/docs/tunnel",
+          async status({ paseo, signal }: TunnelStatusContext): Promise<TunnelProviderStatus> {
+            void paseo;
+            if (signal.aborted) {
+              return {
+                status: "unavailable",
+                reason: "Probe aborted",
+                installUrl: "https://example.com/install",
+                fixHint: "Retry the probe.",
+              };
+            }
+            return { status: "available", detail: "v1.0.0" };
+          },
+          async open(target: TunnelTarget, { paseo, signal, report }: TunnelOpenContext) {
+            const id: string = target.id;
+            const host: string = target.host;
+            const port: number = target.port;
+            const label: string | undefined = target.label;
+            const slug: string | undefined = target.slug;
+            void [id, host, port, label, slug, paseo];
+            // @ts-expect-error target fields are read-only
+            target.port = 8080;
+            const stability: TunnelStability = "ephemeral";
+            const connecting: TunnelEvent = { type: "connecting" };
+            const ready: TunnelEvent = {
+              type: "ready",
+              url: "https://demo.example.com",
+              stability,
+            };
+            const reconnecting: TunnelEvent = { type: "reconnecting", reason: "network changed" };
+            const error: TunnelEvent = { type: "error", message: "dropped", recoverable: true };
+            const closed: TunnelEvent = { type: "closed", reason: "aborted" };
+            report(connecting);
+            report(ready);
+            report(reconnecting);
+            report(error);
+            report(closed);
+            // @ts-expect-error ready event requires a url
+            report({ type: "ready" });
+            // @ts-expect-error status requires a valid discriminant
+            const badStatus: TunnelProviderStatus = { available: true };
+            void badStatus;
+            void signal;
+          },
+        };
+        const dispose: () => void = server.registerTunnelProvider(provider);
+        return dispose;
       }
     `),
     ).toEqual([]);

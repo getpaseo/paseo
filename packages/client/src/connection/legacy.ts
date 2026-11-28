@@ -1,11 +1,10 @@
-import { SessionInboundMessageSchema } from "@getpaseo/protocol/messages";
 import { LegacyWorkspaces } from "./legacy-workspaces.js";
-import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
 import type {
   ServerInfoStatusPayload,
   SessionInboundMessage,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import type { DaemonProtocolCodec } from "../daemon-protocol-codec.js";
 
 export type ObservationRequest = { type: SessionInboundMessage["type"] } & Record<string, unknown>;
 interface Interest {
@@ -24,8 +23,15 @@ export class LegacySubscriptions {
     private readonly info: ServerInfoStatusPayload,
     private readonly send: (message: ObservationRequest) => Promise<void>,
     private readonly browserHost: unknown,
+    private readonly codec: Pick<
+      DaemonProtocolCodec,
+      "parseInbound" | "parseAgentSnapshot" | "matchesBrowserRegistration"
+    >,
   ) {
-    this.workspaces = info.features?.workspaceMultiplicity === true ? null : new LegacyWorkspaces();
+    this.workspaces =
+      info.features?.workspaceMultiplicity === true
+        ? null
+        : new LegacyWorkspaces((value) => this.codec.parseAgentSnapshot(value));
   }
 
   normalize(message: SessionOutboundMessage): SessionOutboundMessage {
@@ -46,7 +52,7 @@ export class LegacySubscriptions {
     if (workspaces && message.type === "fetch_workspaces_request") {
       return {
         ...identity,
-        message: SessionInboundMessageSchema.parse({
+        message: this.codec.parseInbound({
           type: "fetch_agents_request",
           requestId: message.requestId,
           scope: "active",
@@ -86,7 +92,7 @@ export class LegacySubscriptions {
     if (message.type === "checkout.diff.get.request") {
       const subscriptionId = `legacy:${crypto.randomUUID()}`;
       return {
-        message: SessionInboundMessageSchema.parse({
+        message: this.codec.parseInbound({
           ...message,
           type: "subscribe_checkout_diff_request",
           subscriptionId,
@@ -127,7 +133,7 @@ export class LegacySubscriptions {
           events: this.members(query.type, "events").filter(isLegacyEvent),
         };
       case "browser.host.register.request":
-        if (!matchesBrowserRegistration(this.browserHost, query)) {
+        if (!this.codec.matchesBrowserRegistration(this.browserHost, query)) {
           throw new Error(
             "This daemon requires browser_host registration in the client's hello capabilities",
           );
@@ -269,14 +275,4 @@ function isLegacyEvent(event: string): boolean {
     "agent_permission_request",
     "agent_permission_resolved",
   ].includes(event);
-}
-
-function matchesBrowserRegistration(advertised: unknown, request: ObservationRequest): boolean {
-  const host = BrowserAutomationHostCapabilitySchema.safeParse(advertised);
-  if (!host.success) return false;
-  if (host.data.hostKind !== request.hostKind) return false;
-  for (const command of request.supportedCommands as string[]) {
-    if (!host.data.supportedCommands.some((supported) => supported === command)) return false;
-  }
-  return true;
 }

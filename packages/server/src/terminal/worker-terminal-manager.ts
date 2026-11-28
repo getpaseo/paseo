@@ -48,6 +48,8 @@ import type {
 } from "./terminal-manager.js";
 import {
   classifyTerminalWorkerProtocol,
+  isUnsupportedForWorkerProtocol,
+  TERMINAL_WORKER_PROTOCOL_VERSION,
   type TerminalWorkerProtocolFit,
 } from "./terminal-worker-protocol.js";
 import type {
@@ -281,11 +283,20 @@ export function createWorkerTerminalManager(
         return record.info.workspaceId;
       },
       send(message: ClientMessage): void {
+        const workerProtocolVersion = worker.protocolVersion ?? TERMINAL_WORKER_PROTOCOL_VERSION;
+        if (isUnsupportedForWorkerProtocol({ type: "send", message }, workerProtocolVersion)) {
+          return;
+        }
         if (message.type === "resize") {
           record.state = {
             ...record.state,
             rows: message.rows,
             cols: message.cols,
+          };
+        } else if (message.type === "palette") {
+          record.state = {
+            ...record.state,
+            defaultColors: message.defaultColors,
           };
         }
         sendBestEffortRequest({ type: "send", terminalId: record.info.id, message });
@@ -354,6 +365,9 @@ export function createWorkerTerminalManager(
           rows: record.state.rows,
           cols: record.state.cols,
         };
+      },
+      getDefaultColors() {
+        return record.state.defaultColors;
       },
       hasOutput(): boolean {
         return record.state.hasOutput;
@@ -997,6 +1011,11 @@ export interface StartWorkerTerminalManagerOptions {
   logger: Logger;
   getTerminalActivityUrl?: () => string | null;
   requestTimeoutMs?: number;
+  /**
+   * When false, skip launching a fresh terminal worker until the first terminal
+   * is created (existing workers are still adopted). Production leaves this true.
+   */
+  eagerLaunch?: boolean;
 }
 
 // The current worker plus one draining a previous protocol. Every live worker counts,
@@ -1269,7 +1288,7 @@ export async function startWorkerTerminalManager(
   };
 
   await prune();
-  if (!current) {
+  if (!current && options.eagerLaunch !== false) {
     try {
       current = await startCurrent();
     } catch (error) {

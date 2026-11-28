@@ -1,0 +1,1 @@
+{"version":3,"names":["default","EnrichedMarkdownText","DEFAULT_ACCESSIBILITY_LABELS","resolveAccessibilityLabels","EnrichedMarkdownTextInput"],"sourceRoot":"../../src","sources":["index.tsx"],"mappings":";;AAUA,SAASA,OAAO,IAAIC,oBAAoB,QAAQ,kCAA+B;AAuB/E,SACEC,4BAA4B,EAC5BC,0BAA0B,QACrB,iCAA8B;AAErC,SAASC,yBAAyB,QAAQ,gCAA6B","ignoreList":[]}

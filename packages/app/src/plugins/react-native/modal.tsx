@@ -2,7 +2,9 @@ import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import type { ModalComponent, ModalContentProps, ModalProps } from "@getpaseo/plugin/client/ui";
 import { usePluginRuntimeContextBridge } from "@getpaseo/plugin/client/host";
 import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode } from "react";
+import { useAssistantFileLinkEnvironmentBridge } from "@/assistant-file-links";
 import { ToastApiProvider, useToast as useAppToast } from "@/contexts/toast-api-context";
+import { usePluginInstallationServerIdBridge } from "../installation-provider";
 
 interface ModalContextValue {
   open: boolean;
@@ -40,13 +42,17 @@ function ModalContent({
   const queryClient = useQueryClient();
   const toast = useAppToast();
   const bridgePluginRuntime = usePluginRuntimeContextBridge();
+  const bridgePluginServerId = usePluginInstallationServerIdBridge();
+  const bridgeFileLinkEnvironment = useAssistantFileLinkEnvironmentBridge();
   const contextBridge = useCallback(
     (content: ReactNode) => (
       <QueryClientProvider client={queryClient}>
-        <ToastApiProvider api={toast}>{bridgePluginRuntime(content)}</ToastApiProvider>
+        <ToastApiProvider api={toast}>
+          {bridgeFileLinkEnvironment(bridgePluginServerId(bridgePluginRuntime(content)))}
+        </ToastApiProvider>
       </QueryClientProvider>
     ),
-    [bridgePluginRuntime, queryClient, toast],
+    [bridgeFileLinkEnvironment, bridgePluginRuntime, bridgePluginServerId, queryClient, toast],
   );
   const { AdaptiveModalSheet } =
     require("../../components/adaptive-modal-sheet") as typeof import("../../components/adaptive-modal-sheet");
