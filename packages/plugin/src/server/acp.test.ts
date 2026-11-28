@@ -6966,6 +6966,113 @@ describe("ACP tool call rows", () => {
       },
     },
     {
+      kind: "search",
+      start: { title: "Web search:", rawInput: { variant: "WebSearch", backend: true } },
+      end: {
+        title: "Web search:",
+        rawOutput: {
+          action: {
+            type: "search",
+            query: "react native onLayout nativeEvent",
+            sources: [
+              { type: "url", url: "https://reactnative.dev/docs/layoutevent" },
+              { type: "url", url: "https://stackoverflow.com/questions/56738500" },
+              { type: "url", url: "https://reactnative.dev/docs/layoutevent" },
+            ],
+          },
+          id: "ws_1",
+          status: "completed",
+        },
+      },
+      detail: {
+        type: "search",
+        query: "react native onLayout nativeEvent",
+        toolName: "web_search",
+        webResults: [
+          {
+            title: "https://reactnative.dev/docs/layoutevent",
+            url: "https://reactnative.dev/docs/layoutevent",
+          },
+          {
+            title: "https://stackoverflow.com/questions/56738500",
+            url: "https://stackoverflow.com/questions/56738500",
+          },
+        ],
+      },
+    },
+    {
+      kind: "search",
+      start: { title: "Web search:", rawInput: { variant: "WebSearch", backend: true } },
+      end: {
+        rawOutput: {
+          action: { type: "open_page", url: "https://reactnative.dev/docs/view" },
+          id: "ws_2",
+          status: "completed",
+        },
+      },
+      detail: {
+        type: "search",
+        query: "https://reactnative.dev/docs/view",
+        toolName: "web_search",
+        webResults: [
+          { title: "https://reactnative.dev/docs/view", url: "https://reactnative.dev/docs/view" },
+        ],
+      },
+    },
+    {
+      kind: "search",
+      start: { title: "Search the web", rawInput: { query: "acp spec" } },
+      end: {
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "resource_link",
+              uri: "https://agentclientprotocol.com/",
+              name: "ACP",
+            },
+          },
+          {
+            type: "content",
+            content: {
+              type: "resource_link",
+              uri: "https://github.com/agentclientprotocol",
+              name: "repo",
+              title: "ACP on GitHub",
+            },
+          },
+        ],
+      },
+      detail: {
+        type: "search",
+        query: "acp spec",
+        toolName: "web_search",
+        webResults: [
+          { title: "ACP", url: "https://agentclientprotocol.com/" },
+          { title: "ACP on GitHub", url: "https://github.com/agentclientprotocol" },
+        ],
+      },
+    },
+    {
+      kind: "search",
+      start: { title: "Find a.ts", rawInput: { pattern: "*.ts" } },
+      end: {
+        content: [
+          {
+            type: "content",
+            content: { type: "resource_link", uri: "file:///repo/a.ts", name: "a.ts" },
+          },
+        ],
+        locations: [{ path: "/repo/a.ts" }],
+      },
+      detail: {
+        type: "search",
+        query: "*.ts",
+        toolName: "search",
+        filePaths: ["/repo/a.ts"],
+      },
+    },
+    {
       kind: "fetch",
       start: { title: "Fetch example", rawInput: { url: "https://example.com" } },
       end: { content: text("Example Domain") },

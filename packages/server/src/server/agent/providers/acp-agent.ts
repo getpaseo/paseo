@@ -4555,13 +4555,69 @@ function buildEditToolDetail(context: MapToolDetailContext): ToolCallDetail {
 
 function buildSearchAcpToolDetail(context: MapToolDetailContext): ToolCallDetail {
   const { snapshot, textContent, rawInput, rawOutput } = context;
+  const webAction = readWebSearchAction(rawOutput);
+  const webResults = collectWebSearchResults(rawOutput, webAction, snapshot.content);
   return {
     type: "search",
-    query: readString(rawInput, ["query", "pattern"]) ?? snapshot.title,
-    toolName: "search",
+    query:
+      readString(rawInput, ["query", "pattern"]) ??
+      readString(webAction, ["query"]) ??
+      readString(webAction, ["url"]) ??
+      snapshot.title,
+    toolName: webAction || webResults.length > 0 ? "web_search" : "search",
     content: textContent ?? readString(rawOutput, ["content", "text"]),
     filePaths: snapshot.locations?.map((location) => location.path),
+    ...(webResults.length > 0 ? { webResults } : {}),
   };
+}
+
+const WEB_SEARCH_ACTION_TYPES = new Set(["search", "open_page", "find_in_page"]);
+
+/** The OpenAI Responses `web_search_call.action` some ACP agents (Grok) report as `rawOutput.action`. */
+function readWebSearchAction(
+  rawOutput: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const action = readRecord(rawOutput?.action);
+  const type = readString(action, ["type"]);
+  return action && type && WEB_SEARCH_ACTION_TYPES.has(type) ? action : null;
+}
+
+function collectWebSearchResults(
+  rawOutput: Record<string, unknown> | null,
+  webAction: Record<string, unknown> | null,
+  content: ToolCallContent[] | null | undefined,
+): Array<{ title: string; url: string }> {
+  const results: Array<{ title: string; url: string }> = [];
+  const seen = new Set<string>();
+  const add = (url: unknown, title: unknown) => {
+    if (typeof url !== "string" || !isWebUrl(url) || seen.has(url)) {
+      return;
+    }
+    seen.add(url);
+    results.push({ title: typeof title === "string" && title.trim() ? title : url, url });
+  };
+  for (const list of [webAction?.sources, rawOutput?.sources, rawOutput?.results]) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    for (const entry of list) {
+      const record = readRecord(entry);
+      add(record?.url, record?.title);
+    }
+  }
+  for (const item of content ?? []) {
+    if (item.type === "content" && item.content.type === "resource_link") {
+      add(item.content.uri, item.content.title ?? item.content.name);
+    }
+  }
+  if (readString(webAction, ["type"]) === "open_page") {
+    add(webAction?.url, undefined);
+  }
+  return results;
+}
+
+function isWebUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 function buildShellToolDetail(context: MapToolDetailContext): ToolCallDetail {

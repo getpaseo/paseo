@@ -1087,6 +1087,152 @@ describe("ACP selection validity helpers", () => {
   });
 });
 
+describe("ACP search tool details", () => {
+  function completedSearchDetail(
+    start: Record<string, unknown>,
+    end: Record<string, unknown>,
+  ): unknown {
+    const internals = asInternals<ACPSessionInternals>(createSession());
+    internals.translateSessionUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "ws-1",
+      kind: "search",
+      status: "in_progress",
+      title: "Web search:",
+      ...start,
+    } as SessionUpdate);
+    const events = internals.translateSessionUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "ws-1",
+      status: "completed",
+      ...end,
+    } as SessionUpdate);
+    const last = events.at(-1);
+    if (last?.type !== "timeline" || last.item.type !== "tool_call") {
+      throw new Error("Expected a tool call timeline item");
+    }
+    return last.item.detail;
+  }
+
+  test("reads a Grok web search query and its sources", () => {
+    const detail = completedSearchDetail(
+      { rawInput: { variant: "WebSearch", backend: true } },
+      {
+        title: "Web search:",
+        rawOutput: {
+          action: {
+            type: "search",
+            query: "react native onLayout nativeEvent",
+            sources: [
+              { type: "url", url: "https://reactnative.dev/docs/layoutevent" },
+              { type: "url", url: "https://stackoverflow.com/questions/56738500" },
+              { type: "url", url: "https://reactnative.dev/docs/layoutevent" },
+            ],
+          },
+          id: "ws-1",
+          status: "completed",
+        },
+      },
+    );
+    expect(detail).toEqual({
+      type: "search",
+      query: "react native onLayout nativeEvent",
+      toolName: "web_search",
+      webResults: [
+        {
+          title: "https://reactnative.dev/docs/layoutevent",
+          url: "https://reactnative.dev/docs/layoutevent",
+        },
+        {
+          title: "https://stackoverflow.com/questions/56738500",
+          url: "https://stackoverflow.com/questions/56738500",
+        },
+      ],
+    });
+  });
+
+  test("shows the page a Grok open_page action opened", () => {
+    const detail = completedSearchDetail(
+      { rawInput: { variant: "WebSearch", backend: true } },
+      {
+        rawOutput: {
+          action: { type: "open_page", url: "https://reactnative.dev/docs/view" },
+          id: "ws-1",
+          status: "completed",
+        },
+      },
+    );
+    expect(detail).toEqual({
+      type: "search",
+      query: "https://reactnative.dev/docs/view",
+      toolName: "web_search",
+      webResults: [
+        { title: "https://reactnative.dev/docs/view", url: "https://reactnative.dev/docs/view" },
+      ],
+    });
+  });
+
+  test("lists web resource_link content blocks as results", () => {
+    const detail = completedSearchDetail(
+      { title: "Search the web", rawInput: { query: "acp spec" } },
+      {
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "resource_link",
+              uri: "https://agentclientprotocol.com/",
+              name: "ACP",
+            },
+          },
+          {
+            type: "content",
+            content: {
+              type: "resource_link",
+              uri: "https://github.com/agentclientprotocol",
+              name: "repo",
+              title: "ACP on GitHub",
+            },
+          },
+        ],
+      },
+    );
+    expect(detail).toEqual({
+      type: "search",
+      query: "acp spec",
+      toolName: "web_search",
+      content: "https://agentclientprotocol.com/\nACP on GitHub",
+      webResults: [
+        { title: "ACP", url: "https://agentclientprotocol.com/" },
+        { title: "ACP on GitHub", url: "https://github.com/agentclientprotocol" },
+      ],
+    });
+  });
+
+  test("keeps a file search as a plain search", () => {
+    const detail = completedSearchDetail(
+      { title: "Find a.ts", rawInput: { pattern: "*.ts" } },
+      {
+        content: [
+          {
+            type: "content",
+            content: { type: "resource_link", uri: "file:///repo/a.ts", name: "a.ts" },
+          },
+          { type: "content", content: { type: "text", text: "a.ts:1" } },
+        ],
+        locations: [{ path: "/repo/a.ts" }],
+      },
+    );
+    expect(detail).toEqual({
+      type: "search",
+      query: "*.ts",
+      toolName: "search",
+      content: "file:///repo/a.ts\na.ts:1",
+      filePaths: ["/repo/a.ts"],
+    });
+  });
+});
+
 describe("ACPAgentSession Zed parity", () => {
   test("applies valid stored mode/model values, routes current_mode_update, and skips invalid Cursor-style stored values with warnings", async () => {
     const validSession = createSessionWithConfig({ modeId: "plan", model: "sonnet" });
