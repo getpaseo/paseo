@@ -170,7 +170,10 @@ describe("agent lifecycle commands", () => {
     manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
     manager.inFlightAgentIds.add("agent-1");
 
-    const result = await cancelAgentRunCommand({ agentManager: manager, logger }, "agent-1");
+    const result = await cancelAgentRunCommand(
+      { agentManager: manager, agentStorage: storage, logger },
+      "agent-1",
+    );
 
     expect(result).toEqual({
       agent: manager.liveAgents.get("agent-1"),
@@ -187,11 +190,44 @@ describe("agent lifecycle commands", () => {
     manager.settledDuringCancellationAgentIds.add("agent-1");
 
     await expect(
-      cancelAgentRunCommand({ agentManager: manager, logger }, "agent-1"),
+      cancelAgentRunCommand({ agentManager: manager, agentStorage: storage, logger }, "agent-1"),
     ).resolves.toEqual({
       agent: manager.liveAgents.get("agent-1"),
       cancelled: false,
     });
+  });
+
+  test.each(["closed", "idle", "error", "running", "initializing"] as const)(
+    "accepts Stop on a stored %s agent without modifying its record",
+    async (lastStatus) => {
+      const storage = new FakeLifecycleAgentStorage();
+      const manager = new FakeLifecycleAgentManager(storage);
+      const record = { ...storedAgent("agent-1"), lastStatus };
+      storage.records.set("agent-1", record);
+
+      await expect(
+        cancelAgentRunCommand({ agentManager: manager, agentStorage: storage, logger }, "agent-1"),
+      ).resolves.toEqual({
+        agent: { id: "agent-1", cwd: record.cwd, lifecycle: lastStatus },
+        cancelled: false,
+      });
+      expect(manager.cancelledAgentIds).toEqual([]);
+      expect(storage.upserts).toEqual([]);
+      expect(storage.records.get("agent-1")).toEqual(record);
+    },
+  );
+
+  test("still reports not found when no stored record exists", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+
+    await expect(
+      cancelAgentRunCommand(
+        { agentManager: manager, agentStorage: storage, logger },
+        "missing-agent",
+      ),
+    ).rejects.toThrow("Agent missing-agent not found");
+    expect(storage.upserts).toEqual([]);
   });
 
   test("archives a live agent after canceling and clearing attention", async () => {

@@ -56,14 +56,13 @@ interface RequestedAgentRunCancellation extends CancelAgentRunResult {
 }
 
 async function requestAgentRunCancellation(
-  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "logger">,
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage" | "logger">,
   agentId: string,
 ): Promise<RequestedAgentRunCancellation> {
   const { agentManager, logger } = dependencies;
   const agent = agentManager.getAgent(agentId);
   if (!agent) {
-    logger.trace({ agentId }, "cancelAgentRunCommand: agent not found");
-    throw new Error(`Agent ${agentId} not found`);
+    return storedAgentWithoutRun(dependencies, agentId);
   }
 
   const hasInFlightRun = agentManager.hasInFlightRun(agentId);
@@ -93,8 +92,30 @@ async function requestAgentRunCancellation(
   };
 }
 
+async function storedAgentWithoutRun(
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentStorage" | "logger">,
+  agentId: string,
+): Promise<RequestedAgentRunCancellation> {
+  const { agentStorage, logger } = dependencies;
+  const record = await agentStorage.get(agentId);
+  if (!record) {
+    logger.trace({ agentId }, "cancelAgentRunCommand: agent not found");
+    throw new Error(`Agent ${agentId} not found`);
+  }
+
+  logger.trace(
+    { agentId, lastStatus: record.lastStatus },
+    "cancelAgentRunCommand: stored agent has no live runtime",
+  );
+  return {
+    agent: { id: record.id, cwd: record.cwd, lifecycle: record.lastStatus },
+    cancelled: false,
+    cancellation: { status: "not_running" },
+  };
+}
+
 export async function cancelAgentRunCommand(
-  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "logger">,
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "agentStorage" | "logger">,
   agentId: string,
 ): Promise<CancelAgentRunResult> {
   const result = await requestAgentRunCancellation(dependencies, agentId);
