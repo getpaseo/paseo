@@ -393,6 +393,14 @@ function parseWorkspaceRelativeFileLink(
   value: string,
   options: AssistantHrefParseOptions,
 ): InlinePathTarget | null {
+  // cmd.exe variables are shell expressions. The file opener only resolves literal paths.
+  if (
+    !options.explicitLink &&
+    /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(options.workspaceRoot ?? "") &&
+    /^%[^%\\/]+%[\\/]/.test(value)
+  ) {
+    return null;
+  }
   const parsed = parseLocalPathParts(value, options);
   if (!parsed || isAbsolutePath(parsed.path)) {
     return null;
