@@ -1495,14 +1495,7 @@ describe("WorkspaceGitServiceImpl", () => {
 
   test.each([
     {
-      name: "an added remote ref",
-      result: {
-        changes: [{ kind: "added" as const, ref: "origin/new", afterOid: "b" }],
-        error: null,
-      },
-    },
-    {
-      name: "a deleted remote ref",
+      name: "a deleted remote ref every workspace uses as its base",
       result: {
         changes: [{ kind: "deleted" as const, ref: "origin/main", beforeOid: "a" }],
         error: null,
@@ -1512,7 +1505,7 @@ describe("WorkspaceGitServiceImpl", () => {
       name: "a concurrent local ref change",
       result: { changes: [], nonRemoteRefsChanged: true, error: null },
     },
-  ])("$name takes the repository-wide structural fallback", async ({ result }) => {
+  ])("$name refreshes every workspace", async ({ result }) => {
     const releaseFetch = createDeferred<void>();
     const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
       ...createCheckoutSnapshotFacts(cwd),
@@ -1556,6 +1549,59 @@ describe("WorkspaceGitServiceImpl", () => {
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(6);
     });
+    expect(getCheckoutRefDerivedState).not.toHaveBeenCalled();
+
+    first.unsubscribe();
+    second.unsubscribe();
+    service.dispose();
+  });
+
+  test("an added remote ref no workspace names refreshes no workspace", async () => {
+    const releaseFetch = createDeferred<void>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
+    const getCheckoutRefDerivedState = vi.fn();
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutRefDerivedState,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch: vi.fn(async () => {
+        await releaseFetch.promise;
+        return {
+          changes: [{ kind: "added" as const, ref: "origin/new", afterOid: "b" }],
+          error: null,
+        };
+      }),
+    });
+    const first = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    const second = service.registerWorkspace(
+      { cwd: join(REPO_CWD, "packages", "server") },
+      vi.fn(),
+    );
+    await vi.waitFor(
+      () => {
+        expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
+        expect(service.getMetrics()).toMatchObject({
+          repositoryWorkspaceLinkCount: 2,
+          workspaceObservationSetupInFlightCount: 0,
+          workspaceRefreshInFlightCount: 0,
+          fetchInFlightCount: 1,
+        });
+      },
+      { timeout: 10_000 },
+    );
+
+    releaseFetch.resolve();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(4);
+    expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     expect(getCheckoutRefDerivedState).not.toHaveBeenCalled();
 
     first.unsubscribe();
