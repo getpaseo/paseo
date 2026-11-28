@@ -2847,18 +2847,37 @@ describe("ClaudeAgentClient.listImportableSessions", () => {
           await transcript.close();
         }
 
+        const childImports = `
+            import { deepStrictEqual } from "node:assert";
+            import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
+            import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+        `;
+        // Cap the listing at its own budget on top of what loading the modules retains. A fixed
+        // cap also counted the module graph, which grows with unrelated imports.
+        const { stdout: loadedHeap } = await promisify(execFile)(process.execPath, [
+          "--expose-gc",
+          "--import",
+          import.meta.resolve("tsx"),
+          "--input-type=module",
+          "--eval",
+          `${childImports}
+            globalThis.gc();
+            console.log(process.memoryUsage().heapUsed);
+          `,
+        ]);
+        // Well under the 128 MiB transcript, so loading a whole history still runs out of heap.
+        const listingBudgetMiB = 64;
+        const heapCapMiB = Math.ceil(Number(loadedHeap) / (1024 * 1024)) + listingBudgetMiB;
+
         const { stdout } = await promisify(execFile)(
           process.execPath,
           [
-            "--max-old-space-size=96",
+            `--max-old-space-size=${heapCapMiB}`,
             "--import",
             import.meta.resolve("tsx"),
             "--input-type=module",
             "--eval",
-            `
-            import { deepStrictEqual } from "node:assert";
-            import { ClaudeAgentClient } from ${JSON.stringify(new URL("./agent.ts", import.meta.url).href)};
-            import pino from ${JSON.stringify(import.meta.resolve("pino"))};
+            `${childImports}
             import { mkdir, symlink } from "node:fs/promises";
             import path from "node:path";
             const clients = [];
