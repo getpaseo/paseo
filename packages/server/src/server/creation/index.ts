@@ -133,21 +133,35 @@ export class CreationService {
       const admitted = this.admission.then(async () => {
         const running = this.active.has(identity);
         const record = await this.read(identity);
-        // A checkpoint between stages cannot make progress after restart without a runner.
+        // Settle orphaned checkpoints without repeating side effects already committed.
         if (
           record &&
           !running &&
           record.snapshot.phase !== "completed" &&
           record.snapshot.phase !== "failed"
         ) {
-          await this.publish(identity, record, {
-            phase: "failed",
-            failedStage: interruptedStage(kind, record),
-            outcomeUnknown: true,
-            error: `${kind}_request_outcome_unknown`,
-          });
+          if (hasCommittedCreation(record)) {
+            const completed: CreationSnapshot = {
+              ...record.snapshot,
+              phase: "completed",
+              error: null,
+              errorCode: undefined,
+              failedStage: undefined,
+              outcomeUnknown: undefined,
+            };
+            await this.validateCompleted(completed);
+            await this.publish(identity, record, completed);
+          } else {
+            await this.publish(identity, record, {
+              phase: "failed",
+              failedStage: interruptedStage(kind, record),
+              outcomeUnknown: true,
+              error: `${kind}_request_outcome_unknown`,
+            });
+          }
+        } else if (record?.snapshot.phase === "completed") {
+          await this.validateCompleted(record.snapshot);
         }
-        if (record?.snapshot.phase === "completed") await this.validateCompleted(record.snapshot);
         return record?.snapshot ?? null;
       });
       this.admission = admitted.then(
@@ -351,6 +365,18 @@ export class CreationService {
     return result;
   }
 }
+function hasCommittedCreation(record: Record): boolean {
+  if (record.inFlight !== null) return false;
+  const snapshot = record.snapshot;
+  if (snapshot.phase === "prompt_started" || snapshot.phase === "agent_ready")
+    return snapshot.agent !== undefined;
+  return (
+    snapshot.phase === "workspace_ready" &&
+    snapshot.workspace !== undefined &&
+    snapshot.agentId === null
+  );
+}
+
 function interruptedStage(
   kind: CreationSnapshot["kind"],
   record: Record,
