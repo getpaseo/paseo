@@ -35,8 +35,9 @@ class RecordingPushNotificationSender implements PushNotificationSender {
  * We want to notify them where they'll see it.
  *
  * Rules:
- * 1. If a present client is focused on the agent → no notification
- * 2. Otherwise, notify the most recently active present client
+ * 1. If a present, app-visible client is focused on the agent → no notification
+ * 2. Otherwise, notify the most recently active eligible client.
+ *    Hidden web clients with recent activity stay eligible. Backgrounded phones are push-only.
  * 3. If no client is present → send push for non-error attention
  *
  * Heartbeat contains:
@@ -190,7 +191,7 @@ describe("client activity tracking", () => {
       expect(attention.shouldNotify).toBe(true);
     }, 120000);
 
-    test("notification when app is not visible but activity is recent", async () => {
+    test("notifies a hidden web client with recent activity", async () => {
       client1 = await createClient();
 
       const agent = await createAgent({
@@ -198,10 +199,10 @@ describe("client activity tracking", () => {
         title: "App Hidden Test",
       });
 
-      // User switched away from the app but was active recently.
+      // Browser tab or Electron window is hidden, but the user was active recently.
       client1.sendHeartbeat({
         deviceType: "web",
-        focusedAgentId: null, // null because app not visible
+        focusedAgentId: agent.id,
         lastActivityAt: new Date().toISOString(),
         appVisible: false,
       });
@@ -215,6 +216,7 @@ describe("client activity tracking", () => {
 
       expect(attention.reason).toBe("finished");
       expect(attention.shouldNotify).toBe(true);
+      expect(pushNotifications.sent).toEqual([]);
     }, 120000);
 
     test("push fallback when activity is stale beyond the presence threshold", async () => {
@@ -515,7 +517,7 @@ describe("client activity tracking", () => {
         deviceType: "mobile",
         focusedAgentId: null,
         lastActivityAt: new Date().toISOString(),
-        appVisible: false,
+        appVisible: true,
       });
 
       await new Promise((r) => setTimeout(r, 100));
@@ -647,7 +649,7 @@ describe("client activity tracking", () => {
       expect(pushNotifications.sent).toHaveLength(1);
     }, 120000);
 
-    test("notification when app not visible but activity is recent", async () => {
+    test("notifies when the browser tab is hidden but activity is recent", async () => {
       client1 = await createClient();
 
       const agent = await createAgent({
@@ -671,9 +673,10 @@ describe("client activity tracking", () => {
       const attention = await attentionPromise;
 
       expect(attention.shouldNotify).toBe(true);
+      expect(pushNotifications.sent).toEqual([]);
     }, 120000);
 
-    test("notifies only the lower-index client when both have identical recent activity", async () => {
+    test("notifies the hidden web client when a phone is also backgrounded", async () => {
       client1 = await createClient(); // web
       client2 = await createClient(); // mobile
 
