@@ -35,6 +35,12 @@ async function sample() {
   await delay(100);
   return JSON.parse(evaluate("JSON.stringify(globalThis.__ringSamples)"));
 }
+// Each ring takes the shared wall-clock phase when it starts, so phases match to within a frame
+// or two rather than exactly.
+function assertSamePhase(first, second, message) {
+  const gap = Math.abs(first.rotation - second.rotation);
+  assert(Math.min(gap, 360 - gap) < 15, message);
+}
 async function observe(label) {
   const before = await sample();
   await delay(600);
@@ -47,11 +53,11 @@ async function observe(label) {
 }
 const visible = await observe("both visible");
 assert(visible.deltas.first > 0 && visible.deltas.second > 0);
-assert.equal(visible.after.first.rotation, visible.after.second.rotation);
+assertSamePhase(visible.after.first, visible.after.second, "Visible rings must share a phase");
 ad("press", 'label="HIDE FIRST"');
 await delay(200);
 const hidden = await observe("first hidden, second visible");
-assert.equal(hidden.deltas.first, 0, "A retained hidden ring must stop UI-thread rotation updates");
+assert.equal(hidden.deltas.first, 0, "A retained hidden ring must stop rotation updates");
 assert(hidden.deltas.second > 0, "Visible rings must continue rotating");
 ad("press", 'label="HIDE SECOND"');
 await delay(200);
@@ -63,9 +69,9 @@ ad("press", 'label="SHOW SECOND"');
 await delay(200);
 const restored = await observe("both shown again");
 assert(restored.deltas.first > 0 && restored.deltas.second > 0);
-assert.equal(
-  restored.after.first.rotation,
-  restored.after.second.rotation,
+assertSamePhase(
+  restored.after.first,
+  restored.after.second,
   "Restored rings must share the current phase",
 );
 console.log("PASS native retained-ring lifecycle");
