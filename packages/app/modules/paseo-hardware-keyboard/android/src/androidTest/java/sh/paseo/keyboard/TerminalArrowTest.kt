@@ -69,13 +69,17 @@ class TerminalArrowTest {
     val editable = SpannableStringBuilder("한")
     lateinit var view: View
     instrumentation.runOnMainSync {
-      view = object : View(host) {
+      view = object : View(host), ComposingTextOwner {
         init {
           isFocusable = true
           isFocusableInTouchMode = true
-          tag = editable
           setTag(com.facebook.react.R.id.view_tag_native_id, "paseo-terminal-input")
+          // Mirrors React Native BaseViewManager.setTestId, which overwrites the unkeyed View tag.
+          setTag("terminal-native-input")
         }
+
+        override fun isComposingText(): Boolean =
+          BaseInputConnection.getComposingSpanStart(editable) >= 0
       }
       host.setContentView(view)
       view.requestFocus()

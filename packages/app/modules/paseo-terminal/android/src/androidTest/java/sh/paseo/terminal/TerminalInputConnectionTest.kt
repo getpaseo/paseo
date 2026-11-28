@@ -1,11 +1,9 @@
 package sh.paseo.terminal
 
 import android.text.InputType
-import android.text.Spannable
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.View
-import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -324,15 +322,16 @@ class TerminalInputConnectionTest {
     instrumentation.runOnMainSync {
       val context = instrumentation.targetContext
       val view = PaseoTerminalInputView.createForTest(context)
+      // Mirrors React Native BaseViewManager.setTestId, which overwrites the unkeyed View tag.
+      view.setTag("terminal-native-input")
       val ic = checkNotNull(view.onCreateInputConnection(EditorInfo()))
-      val spannable = view.tag as Spannable
-      assertTrue(BaseInputConnection.getComposingSpanStart(spannable) < 0)
+      assertFalse(view.isComposingText())
 
       ic.setComposingText("한", 1)
-      assertTrue(BaseInputConnection.getComposingSpanStart(spannable) >= 0)
+      assertTrue(view.isComposingText())
 
       ic.commitText("한", 1)
-      assertTrue(BaseInputConnection.getComposingSpanStart(spannable) < 0)
+      assertFalse(view.isComposingText())
     }
   }
 }

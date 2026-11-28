@@ -5,19 +5,21 @@ import android.graphics.Rect
 import android.text.SpannableStringBuilder
 import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import expo.modules.kotlin.viewevent.EventDispatcher
+import sh.paseo.keyboard.ComposingTextOwner
 
 /**
  * Focusable 1x1 native Android text editor view that owns the terminal's [InputConnection] and
  * physical keyboard [onKeyDown] delivery directly, bypassing React Native's `TextInput`.
  *
- * Exposes its private [SpannableStringBuilder] via [getTag] so `PaseoHardwareKeyboardModule` can
- * read active IME composition spans without a cross-module Gradle dependency.
+ * Implements [ComposingTextOwner] so `PaseoHardwareKeyboardModule` reads active IME composition
+ * reliably even after React Native's `BaseViewManager.setTestId` overwrites `View.getTag()`.
  */
-class PaseoTerminalInputView(context: Context) : View(context) {
+class PaseoTerminalInputView(context: Context) : View(context), ComposingTextOwner {
   private val onTerminalInput by EventDispatcher<Map<String, String>>()
   private val onTerminalKey by EventDispatcher<Map<String, Any>>()
   private val onFocusChange by EventDispatcher<Map<String, Boolean>>()
@@ -33,9 +35,10 @@ class PaseoTerminalInputView(context: Context) : View(context) {
     isFocusableInTouchMode = true
     importantForAutofill = IMPORTANT_FOR_AUTOFILL_NO
     contentDescription = "Terminal input"
-    // Exposes composing spans to PaseoHardwareKeyboardModule without cross-module coupling.
-    tag = editable
   }
+
+  override fun isComposingText(): Boolean =
+    BaseInputConnection.getComposingSpanStart(editable) >= 0
 
   override fun onCheckIsTextEditor(): Boolean = true
 

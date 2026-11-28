@@ -18,6 +18,7 @@ android {
 }
 
 dependencies {
+  implementation project(":paseo-hardware-keyboard")
   implementation "androidx.customview:customview:1.1.0"
   implementation "com.facebook.react:react-android"
   testImplementation "junit:junit:4.13.2"

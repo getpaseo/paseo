@@ -1,4 +1,4 @@
-import type { StyleProp, ViewStyle } from "react-native";
+import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import type { NativeTerminalKeyEvent } from "./terminal-key-events";
 
 export const TERMINAL_INPUT_HITBOX_SIZE = 1;
@@ -20,7 +20,7 @@ export interface TerminalInputProps {
   onFocus?: () => void;
   onInput?: (data: string) => void;
   onTerminalKey?: (event: NativeTerminalKeyEvent) => void;
-  style?: StyleProp<ViewStyle>;
+  style?: StyleProp<ViewStyle & TextStyle>;
 }
 
 export function resolveTerminalInputFocusRequest(input: {
