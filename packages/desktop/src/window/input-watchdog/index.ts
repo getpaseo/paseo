@@ -88,8 +88,8 @@ export function setupDarwinInputWatchdog(win: BrowserWindow): void {
       return;
     }
     try {
-      await win.webContents.executeJavaScript(INSTALL_PROBE_SOURCE, true);
-      const seen = await win.webContents.executeJavaScript(READ_PROBE_SOURCE, true);
+      await win.webContents.executeJavaScript(INSTALL_PROBE_SOURCE);
+      const seen = await win.webContents.executeJavaScript(READ_PROBE_SOURCE);
       if (typeof seen === "number") {
         expectedSeen = seen;
         missedChecks = 0;
@@ -128,7 +128,7 @@ export function setupDarwinInputWatchdog(win: BrowserWindow): void {
 
     let seen: number | null;
     try {
-      seen = await win.webContents.executeJavaScript(READ_PROBE_SOURCE, true);
+      seen = await win.webContents.executeJavaScript(READ_PROBE_SOURCE);
     } catch {
       return;
     }
