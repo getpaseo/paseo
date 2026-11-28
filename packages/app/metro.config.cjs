@@ -5,6 +5,7 @@ const path = require("path");
 const projectRoot = __dirname;
 const appNodeModulesRoot = path.resolve(projectRoot, "node_modules");
 const appSrcRoot = path.resolve(projectRoot, "src");
+const serverDistRoot = path.resolve(projectRoot, "../server/dist");
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const fdroidModuleOverrides = {
@@ -29,6 +30,10 @@ const escapedAppSrcRoot = appSrcRoot
   .split(path.sep)
   .map((segment) => segment.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&"))
   .join("[\\\\/]");
+const escapedServerDistRoot = serverDistRoot
+  .split(path.sep)
+  .map((segment) => segment.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&"))
+  .join("[\\\\/]");
 const pathSeparatorPattern = "[\\\\/]";
 
 config.resolver.extraNodeModules = {
@@ -38,9 +43,17 @@ config.resolver.extraNodeModules = {
   "react/jsx-runtime": path.join(appNodeModulesRoot, "react/jsx-runtime"),
   "react/jsx-dev-runtime": path.join(appNodeModulesRoot, "react/jsx-dev-runtime"),
 };
-config.resolver.blockList = new RegExp(
-  `(^${escapedAppSrcRoot}${pathSeparatorPattern}.*\\.(test|spec)\\.(ts|tsx)$|${pathSeparatorPattern}__tests__${pathSeparatorPattern}.*)$`,
-);
+config.resolver.blockList = [
+  ...(Array.isArray(config.resolver.blockList)
+    ? config.resolver.blockList
+    : [config.resolver.blockList]),
+  new RegExp(
+    `(^${escapedAppSrcRoot}${pathSeparatorPattern}.*\\.(test|spec)\\.(ts|tsx)$|${pathSeparatorPattern}__tests__${pathSeparatorPattern}.*)$`,
+  ),
+  // Server builds replace plugin directories. Metro never imports this output;
+  // watching those deletions can strand Windows directory watchers.
+  new RegExp(`^${escapedServerDistRoot}(?:${pathSeparatorPattern}|$)`),
+];
 
 function isLocalModuleImport(moduleName) {
   return (

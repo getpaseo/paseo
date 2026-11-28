@@ -29,6 +29,11 @@ the titlebar row. Production builds leave the variable unset and show no label.
 
 `npm run dev` is only a shorthand for `npm run dev:server`. Keep `127.0.0.1:6767` for the packaged app and production-style `~/.paseo` state.
 
+Keep Expo's default Metro exclusions when adding watch rules. Daemon build output stays outside
+the renderer's watch set: replacing generated plugin directories can strand Windows directory
+watchers and leave Metro busy while idle. Do not exclude every workspace's `dist`; the renderer
+consumes client, protocol, and relay builds from those directories.
+
 ## Nix desktop package
 
 The flake exposes `packages.<system>.desktop` on Linux and macOS:
