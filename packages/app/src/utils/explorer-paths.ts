@@ -9,28 +9,23 @@ export function buildAbsoluteExplorerPath({
   workspaceRoot,
   entryPath,
 }: BuildAbsoluteExplorerPathInput): string {
-  const normalizedWorkspaceRoot = workspaceRoot.trim().replace(/[\\/]+$/, "");
-  const normalizedEntryPath = entryPath.trim();
-
-  if (!normalizedWorkspaceRoot) {
-    return normalizedEntryPath;
+  const root = workspaceRoot.trim();
+  const entry = entryPath.trim();
+  if (!root || isAbsolutePath(entry)) {
+    return entry;
   }
 
-  if (!normalizedEntryPath || normalizedEntryPath === ".") {
-    return normalizedWorkspaceRoot;
+  const prefix = root.replace(/[\\/]+$/, "");
+  // Retain one separator on a filesystem root, including a Windows drive root.
+  const directory =
+    isAbsolutePath(root) && !isAbsolutePath(prefix) ? root.slice(0, prefix.length + 1) : prefix;
+  const segments = entry.split(/[\\/]+/).filter(Boolean);
+  if (segments.length === 0 || entry === ".") {
+    return directory;
   }
 
-  if (isAbsolutePath(normalizedEntryPath)) {
-    return normalizedEntryPath;
-  }
-
-  const separator = normalizedWorkspaceRoot.includes("\\") ? "\\" : "/";
-  const segments = normalizedEntryPath.split(/[\\/]+/).filter(Boolean);
-  if (segments.length === 0) {
-    return normalizedWorkspaceRoot;
-  }
-
-  return `${normalizedWorkspaceRoot}${separator}${segments.join(separator)}`;
+  const separator = directory.includes("\\") ? "\\" : "/";
+  return [prefix, ...segments].join(separator);
 }
 
 export function parentExplorerPath(entryPath: string): string {
