@@ -9,6 +9,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { Button } from "@/components/ui/button";
 import { ExternalLink } from "@/components/ui/external-link";
+import { IndependentScrollBoundary } from "@/components/ui/independent-scroll-boundary";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { settingsStyles } from "@/styles/settings";
@@ -358,30 +359,32 @@ function UpdateRunRow({ run, updateUrl }: { run: UpdateRun; updateUrl: string | 
           </Text>
         ) : null}
         {output ? (
-          <ScrollView
-            ref={scroll}
-            style={
-              run.status === "running" ? styles.output : [styles.output, styles.outputAfterResult]
-            }
-            contentContainerStyle={styles.outputContent}
-            onContentSizeChange={followOutput}
-            // Android scrolls a ScrollView nested in the provider sheet only with this flag.
-            nestedScrollEnabled
-          >
-            {update?.truncated ? (
-              <Text style={styles.outputNote}>
-                {t("settings.providers.installation.outputTruncated")}
-              </Text>
-            ) : null}
-            <Text
-              style={styles.outputText}
-              selectable
-              dataSet={CODE_SURFACE_DATASET}
-              testID="provider-update-output"
+          <IndependentScrollBoundary>
+            <ScrollView
+              ref={scroll}
+              style={
+                run.status === "running" ? styles.output : [styles.output, styles.outputAfterResult]
+              }
+              contentContainerStyle={styles.outputContent}
+              onContentSizeChange={followOutput}
+              // Hands the drag back to the page once this box reaches its end.
+              nestedScrollEnabled
             >
-              {output}
-            </Text>
-          </ScrollView>
+              {update?.truncated ? (
+                <Text style={styles.outputNote}>
+                  {t("settings.providers.installation.outputTruncated")}
+                </Text>
+              ) : null}
+              <Text
+                style={styles.outputText}
+                selectable
+                dataSet={CODE_SURFACE_DATASET}
+                testID="provider-update-output"
+              >
+                {output}
+              </Text>
+            </ScrollView>
+          </IndependentScrollBoundary>
         ) : null}
         {(run.status === "failed" || run.status === "refused") && updateUrl ? (
           <View style={styles.link}>
