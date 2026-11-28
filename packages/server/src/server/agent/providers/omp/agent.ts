@@ -2660,7 +2660,11 @@ export class OmpAgentClient implements AgentClient {
           cwd: options.scope === "global" ? homedir() : options.cwd,
           protocolMode: "rpc-ui",
           modeId: launchMode.modeId,
-          extraArgs: launchMode.extraArgs,
+          // Catalogue sessions only answer get_available_models. --no-skills stops OMP's
+          // startup routing-hint compression calls, which the close would cancel every
+          // refresh. Never add --no-tools: it skips provider extensions, and
+          // get_available_models then never answers.
+          extraArgs: [...launchMode.extraArgs, "--no-skills", "--no-session", "--no-title"],
           signal: context?.signal,
         });
         if (context?.signal.aborted) await closeSession();

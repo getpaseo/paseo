@@ -2296,3 +2296,26 @@ describe("OMP catalog model labels", () => {
     expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
   });
 });
+
+test("OMP catalog sessions skip startup work that agent sessions keep", async () => {
+  const runtime = new FakeOmp();
+  const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+  const catalogOnlyFlags = ["--no-skills", "--no-session", "--no-title"];
+
+  await client.fetchCatalog({ scope: "workspace", cwd: "/workspace/project", force: false });
+  const session = await client.createSession({ provider: "omp", cwd: "/workspace/project" });
+  onTestFinished(() => session.close());
+
+  const [catalogLaunch, agentLaunch] = runtime.recordedLaunches;
+  expect(catalogLaunch?.argv).toEqual([
+    "omp",
+    "--mode",
+    "rpc-ui",
+    "--approval-mode",
+    "yolo",
+    ...catalogOnlyFlags,
+  ]);
+  for (const flag of catalogOnlyFlags) {
+    expect(agentLaunch?.argv).not.toContain(flag);
+  }
+});
