@@ -118,15 +118,17 @@ const MarkdownPart = memo(function MarkdownPart({
   const actions = useAssistantFileLinkActions();
   const workspaceForgeShorthand = useForgeShorthand();
   const forgeShorthand = external ? null : workspaceForgeShorthand;
+  const environmentMatchesHost =
+    !imageContext.serverId || imageContext.serverId === environment.serverId;
   const client =
     imageContext.client ??
-    (environment.client?.readFile
+    (environmentMatchesHost && environment.client?.readFile
       ? { readFile: environment.client.readFile.bind(environment.client) }
       : undefined);
   const { markdown, imageSources, linkRecognition, linkSource } = useMarkdownSource(
     text,
     {
-      workspaceRoot: environment.workspaceRoot,
+      workspaceRoot: environmentMatchesHost ? environment.workspaceRoot : undefined,
       serverId: environment.serverId,
       ...imageContext,
       client,
