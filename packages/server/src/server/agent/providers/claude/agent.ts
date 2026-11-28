@@ -4240,6 +4240,8 @@ class ClaudeAgentSession implements AgentSession {
         type: "preset",
         preset: "claude_code",
         append: appendedSystemPrompt,
+        // Rebuild on resume so the current launch can replace or remove plugin instructions.
+        ...(sessionBinding.resume ? { snapshot: false } : {}),
       },
       settingSources: CLAUDE_SETTING_SOURCES,
       stderr: (data: string) => {
