@@ -361,6 +361,38 @@ function resolveDesktopFixedHeight(
   );
 }
 
+/** The selected model's full label and the shorter one a trigger shows. */
+export function useSelectedModelLabels({
+  providers,
+  selectedProvider,
+  selectedModel,
+  isLoading,
+}: {
+  providers: ProviderSelectorProvider[];
+  selectedProvider: string;
+  selectedModel: string;
+  isLoading: boolean;
+}): { selectedModelLabel: string; triggerLabel: string } {
+  const { t } = useTranslation();
+  const selectedModelLabel = useMemo(
+    () =>
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider,
+        selectedModel,
+        isLoading,
+      }),
+    [isLoading, providers, selectedModel, selectedProvider],
+  );
+  const triggerLabel = useMemo(() => {
+    const isPlaceholder =
+      selectedModelLabel === t("modelSelector.loading") ||
+      selectedModelLabel === t("modelSelector.selectModel");
+    return isPlaceholder ? selectedModelLabel : buildSelectedTriggerLabel(selectedModelLabel);
+  }, [selectedModelLabel, t]);
+  return { selectedModelLabel, triggerLabel };
+}
+
 export function useModelBrowser({
   providers,
   selectedProvider,
@@ -520,23 +552,12 @@ export function useModelBrowser({
     view,
   ]);
 
-  const selectedModelLabel = useMemo(
-    () =>
-      resolveSelectedModelLabel({
-        providers,
-        selectedProvider,
-        selectedModel,
-        isLoading,
-      }),
-    [isLoading, providers, selectedModel, selectedProvider],
-  );
-
-  const triggerLabel = useMemo(() => {
-    const isPlaceholder =
-      selectedModelLabel === t("modelSelector.loading") ||
-      selectedModelLabel === t("modelSelector.selectModel");
-    return isPlaceholder ? selectedModelLabel : buildSelectedTriggerLabel(selectedModelLabel);
-  }, [selectedModelLabel, t]);
+  const { selectedModelLabel, triggerLabel } = useSelectedModelLabels({
+    providers,
+    selectedProvider,
+    selectedModel,
+    isLoading,
+  });
 
   const desktopFixedHeight = useMemo(
     () => resolveDesktopFixedHeight(view, providers),
@@ -701,9 +722,9 @@ function ModelBrowserPressable({
   );
 }
 
-type ModelBrowserRowTone = "default" | "elevated" | "drillDown";
+export type ModelBrowserRowTone = "default" | "elevated" | "drillDown";
 
-function ModelBrowserRow({
+export function ModelBrowserRow({
   label,
   description,
   leadingSlot,
@@ -835,14 +856,17 @@ function ModelRowProfileAction({
   );
 }
 
-function ModelRow({
+export function ModelRow({
   row,
   serverId,
   isSelected,
   isActive = false,
   showProviderLabel = false,
+  tag,
   onPress,
   onFocus,
+  activeItemRef,
+  onActiveLayout,
   profiledRows,
   onCreateProfile,
   onEditProfile,
@@ -853,8 +877,12 @@ function ModelRow({
   isSelected: boolean;
   isActive?: boolean;
   showProviderLabel?: boolean;
+  /** A short note beside the label, such as the fold a search result comes from. */
+  tag?: string;
   onPress: () => void;
   onFocus?: () => void;
+  activeItemRef?: RefObject<View | null>;
+  onActiveLayout?: () => void;
   profiledRows: AgentProfilePickerRowModel[];
   onCreateProfile?: (seed: AgentProfileSeed) => Promise<AgentProfile | null> | void;
   onEditProfile?: (profileId: string) => void;
@@ -986,6 +1014,8 @@ function ModelRow({
         accessibilitySelected={isSelected}
         navRow
         active={isActive}
+        rowRef={isActive ? activeItemRef : undefined}
+        onLayout={isActive ? onActiveLayout : undefined}
         testID={`model-row-${row.provider}-${row.modelId}`}
       >
         <View style={styles.browserRowContent}>
@@ -994,6 +1024,13 @@ function ModelRow({
             <Text numberOfLines={1} style={styles.browserRowLabel}>
               {row.modelLabel}
             </Text>
+            {tag ? (
+              <View style={styles.browserRowTag}>
+                <Text numberOfLines={1} style={styles.browserRowTagText}>
+                  {tag}
+                </Text>
+              </View>
+            ) : null}
             {description ? (
               <Text numberOfLines={1} style={styles.browserRowDescription}>
                 {description}
@@ -1590,7 +1627,7 @@ function ModelRowList({
   );
 }
 
-function ProviderErrorEmptyState({
+export function ProviderErrorEmptyState({
   providerId,
   message,
   onRetryProvider,
@@ -1614,6 +1651,44 @@ function ProviderErrorEmptyState({
           {isRetryingProvider ? t("modelSelector.retrying") : t("modelSelector.retry")}
         </Button>
       ) : null}
+    </View>
+  );
+}
+
+export function ModelBrowserLoadingState() {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyState}>
+      <View style={styles.rowSpinner}>
+        <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+      </View>
+      <Text style={styles.emptyStateText}>{t("modelSelector.loadingShort")}</Text>
+    </View>
+  );
+}
+
+export function ModelSearchNoMatches({ query }: { query: string }) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.emptyState} testID="model-search-empty">
+      <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
+      <Text style={styles.emptyStateText}>{t("modelSelector.noMatchesForQuery", { query })}</Text>
+    </View>
+  );
+}
+
+/** A muted label above a group of rows, with an optional action on its right. */
+export function ModelBrowserSectionHeading({
+  title,
+  action,
+}: {
+  title: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <View style={styles.sectionHeading}>
+      <Text style={styles.sectionHeadingText}>{title}</Text>
+      {action ? <View style={styles.sectionHeadingAction}>{action}</View> : null}
     </View>
   );
 }
@@ -1834,7 +1909,6 @@ function ModelBrowserContent({
   rootBrowseContent,
   showProfilesSection = true,
 }: ModelBrowserContentProps) {
-  const { t } = useTranslation();
   const hasHardwareKeyboard = useHardwareKeyboardPresent();
   const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
   const profiledLookup = useMemo(
@@ -1940,14 +2014,7 @@ function ModelBrowserContent({
 
   let content: React.ReactNode;
   if (projection.kind === "providerLoading") {
-    content = (
-      <View style={styles.emptyState}>
-        <View style={styles.rowSpinner}>
-          <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
-        </View>
-        <Text style={styles.emptyStateText}>{t("modelSelector.loadingShort")}</Text>
-      </View>
-    );
+    content = <ModelBrowserLoadingState />;
   } else if (projection.kind === "providerError") {
     content = (
       <ProviderErrorEmptyState
@@ -1960,14 +2027,7 @@ function ModelBrowserContent({
   } else if (projection.kind === "empty") {
     content = <ModelSearchEmptyState />;
   } else if (projection.kind === "noSearchMatches") {
-    content = (
-      <View style={styles.emptyState} testID="model-search-empty">
-        <ThemedSearch size={ICON_SIZE.md} uniProps={foregroundMutedMapping} />
-        <Text style={styles.emptyStateText}>
-          {t("modelSelector.noMatchesForQuery", { query: searchQuery.trim() })}
-        </Text>
-      </View>
-    );
+    content = <ModelSearchNoMatches query={searchQuery.trim()} />;
   } else if (projection.kind === "modelList") {
     content = (
       <ModelRowList
@@ -2143,6 +2203,17 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
     flexShrink: 0,
+  },
+  browserRowTag: {
+    alignSelf: "center",
+    flexShrink: 0,
+    paddingHorizontal: theme.spacing[1],
+    borderRadius: theme.borderRadius.base,
+    backgroundColor: theme.colors.surface2,
+  },
+  browserRowTagText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
   },
   browserRowDescription: {
     fontSize: theme.fontSize.sm,

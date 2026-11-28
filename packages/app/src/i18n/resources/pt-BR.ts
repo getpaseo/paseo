@@ -1901,6 +1901,13 @@ export const ptBR: TranslationResources = {
     searchAllPlaceholder: "Buscar em todos os modelos...",
     searchPlaceholder: "Buscar modelos...",
     openProviderSettings: "Abrir configurações de {{provider}}",
+    searchModelsAndProfilesPlaceholder: "Buscar modelos e perfis...",
+    shownOfTotal: "{{shown}} de {{total}} exibidos",
+    customize: "Personalizar...",
+    olderModels: "Modelos anteriores ({{count}})",
+    allModels: "Todos os modelos ({{count}})",
+    olderTag: "Anterior",
+    allModelsTag: "Todos os modelos",
   },
   providerCatalog: {
     title: "Adicionar provedor",

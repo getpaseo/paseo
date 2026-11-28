@@ -1867,6 +1867,13 @@ export const ar: TranslationResources = {
     searchAllPlaceholder: "ابحث في كل النماذج...",
     searchPlaceholder: "نماذج البحث...",
     openProviderSettings: "افتح إعدادات{{provider}}",
+    searchModelsAndProfilesPlaceholder: "البحث في النماذج والملفات الشخصية...",
+    shownOfTotal: "{{shown}} معروضة من {{total}}",
+    customize: "تخصيص...",
+    olderModels: "نماذج أقدم ({{count}})",
+    allModels: "كل النماذج ({{count}})",
+    olderTag: "أقدم",
+    allModelsTag: "كل النماذج",
   },
   providerCatalog: {
     title: "إضافة مزود",

@@ -1901,6 +1901,13 @@ export const ru: TranslationResources = {
     searchAllPlaceholder: "Поиск по всем моделям...",
     searchPlaceholder: "Поиск моделей...",
     openProviderSettings: "Открыть настройки {{provider}}",
+    searchModelsAndProfilesPlaceholder: "Поиск моделей и профилей...",
+    shownOfTotal: "Показано {{shown}} из {{total}}",
+    customize: "Настроить...",
+    olderModels: "Старые модели ({{count}})",
+    allModels: "Все модели ({{count}})",
+    olderTag: "Старая",
+    allModelsTag: "Все модели",
   },
   providerCatalog: {
     title: "Добавить провайдера",

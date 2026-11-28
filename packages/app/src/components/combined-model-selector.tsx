@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -7,7 +7,13 @@ import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
-import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
+import {
+  ModelBrowser,
+  ModelProviderGlyph,
+  useModelBrowser,
+  useSelectedModelLabels,
+} from "@/components/model-browser";
+import { DesktopModelPicker } from "@/components/model-browser-panes";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
@@ -58,7 +64,6 @@ interface CombinedModelSelectorProps {
   disabled?: boolean;
   serverId?: string | null;
   desktopPlacement?: ComboboxProps["desktopPlacement"];
-  desktopMinWidth?: number;
   /**
    * Render the custom trigger as a full-width form field: the outer Pressable
    * becomes a transparent passthrough that stretches its child edge-to-edge and
@@ -75,7 +80,17 @@ interface CombinedModelSelectorProps {
   };
 }
 
-export function CombinedModelSelector({
+export function CombinedModelSelector(props: CombinedModelSelectorProps) {
+  const isCompact = useIsCompactFormFactor();
+  // One frame per form factor: a sheet that drills into providers, or a two-pane popover.
+  return isCompact ? (
+    <CompactCombinedModelSelector {...props} />
+  ) : (
+    <DesktopCombinedModelSelector {...props} />
+  );
+}
+
+function DesktopCombinedModelSelector({
   providers,
   selectedProvider,
   selectedModel,
@@ -95,13 +110,103 @@ export function CombinedModelSelector({
   disabled = false,
   serverId = null,
   desktopPlacement,
-  desktopMinWidth,
+  triggerFill = false,
+  toolbar,
+}: CombinedModelSelectorProps) {
+  const anchorRef = useRef<View>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const labels = useSelectedModelLabels({ providers, selectedProvider, selectedModel, isLoading });
+
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      setIsOpen(open);
+      if (open) onOpen?.();
+      else onClose?.();
+    },
+    [onClose, onOpen],
+  );
+  const handleTriggerPress = useCallback(() => {
+    handleOpenChange(!isOpen);
+  }, [handleOpenChange, isOpen]);
+  const actions = useModelSelectorActions({
+    onOpenChange: handleOpenChange,
+    onSelect,
+    onApplyProfile,
+    onEditProfiles,
+    onCreateProfile,
+    onEditProfile,
+  });
+
+  useKeyboardToggle({
+    action: toggleAction,
+    disabled,
+    open: isOpen,
+    // The search field holds focus for as long as the popover is open.
+    searchFocused: isOpen,
+    onToggle: handleTriggerPress,
+  });
+
+  return (
+    <>
+      <ModelSelectorTrigger
+        anchorRef={anchorRef}
+        isOpen={isOpen}
+        disabled={disabled}
+        onPress={handleTriggerPress}
+        labels={labels}
+        selectedProvider={selectedProvider}
+        serverId={serverId}
+        renderTrigger={renderTrigger}
+        triggerFill={triggerFill}
+        toolbar={toolbar}
+      />
+      <DesktopModelPicker
+        open={isOpen}
+        onOpenChange={handleOpenChange}
+        anchorRef={anchorRef}
+        desktopPlacement={desktopPlacement}
+        providers={providers}
+        selectedProvider={selectedProvider}
+        selectedModel={selectedModel}
+        profiles={profiles}
+        serverId={serverId}
+        onSelect={actions.handleSelect}
+        onApplyProfile={actions.handleApplyProfile}
+        onEditProfiles={onEditProfiles ? actions.handleEditProfiles : undefined}
+        onCreateProfile={onCreateProfile ? actions.handleCreateProfile : undefined}
+        onEditProfile={onEditProfile ? actions.handleEditProfile : undefined}
+        onRetryProvider={onRetryProvider}
+        isRetryingProvider={isRetryingProvider}
+      />
+    </>
+  );
+}
+
+function CompactCombinedModelSelector({
+  providers,
+  selectedProvider,
+  selectedModel,
+  onSelect,
+  isLoading,
+  profiles = null,
+  onApplyProfile,
+  onEditProfiles,
+  onCreateProfile,
+  onEditProfile,
+  renderTrigger,
+  toggleAction,
+  onOpen,
+  onClose,
+  onRetryProvider,
+  isRetryingProvider = false,
+  disabled = false,
+  serverId = null,
+  desktopPlacement,
   triggerFill = false,
   toolbar,
 }: CombinedModelSelectorProps) {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
-  const modelBrowserScrolling = resolveModelBrowserScrolling({ isNative, isCompact });
+  const modelBrowserScrolling = resolveModelBrowserScrolling({ isNative, isCompact: true });
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(isWeb);
@@ -129,14 +234,6 @@ export function CombinedModelSelector({
     [onClose, onOpen, prepareToOpen, reset],
   );
 
-  const handleSelect = useCallback(
-    (provider: string, modelId: string) => {
-      onSelect(provider, modelId);
-      handleOpenChange(false);
-    },
-    [handleOpenChange, onSelect],
-  );
-
   useEffect(() => {
     if (isWeb) return () => {};
     if (!isOpen) {
@@ -161,6 +258,153 @@ export function CombinedModelSelector({
     onToggle: handleTriggerPress,
   });
 
+  const actions = useModelSelectorActions({
+    onOpenChange: handleOpenChange,
+    onSelect,
+    onApplyProfile,
+    onEditProfiles,
+    onCreateProfile,
+    onEditProfile,
+  });
+
+  const selectorBody = isContentReady ? (
+    <ModelBrowser
+      state={browser}
+      onSelect={actions.handleSelect}
+      onApplyProfile={actions.handleApplyProfile}
+      onEditProfiles={onEditProfiles ? actions.handleEditProfiles : undefined}
+      onCreateProfile={onCreateProfile ? actions.handleCreateProfile : undefined}
+      onEditProfile={onEditProfile ? actions.handleEditProfile : undefined}
+      onRetryProvider={onRetryProvider}
+      isRetryingProvider={isRetryingProvider}
+      scrolling={modelBrowserScrolling}
+    />
+  ) : (
+    <View style={styles.sheetLoadingState}>
+      <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
+      <Text style={styles.sheetLoadingText}>{t("modelSelector.loadingSelector")}</Text>
+    </View>
+  );
+
+  return (
+    <>
+      <ModelSelectorTrigger
+        anchorRef={anchorRef}
+        isOpen={isOpen}
+        disabled={disabled}
+        onPress={handleTriggerPress}
+        labels={browser}
+        selectedProvider={selectedProvider}
+        serverId={serverId}
+        renderTrigger={renderTrigger}
+        triggerFill={triggerFill}
+        toolbar={toolbar}
+      />
+      <Combobox
+        options={EMPTY_COMBOBOX_OPTIONS}
+        value=""
+        onSelect={noop}
+        open={isOpen}
+        onOpenChange={handleOpenChange}
+        anchorRef={anchorRef}
+        desktopPlacement={desktopPlacement}
+        desktopLockWidth
+        desktopFixedHeight={browser.desktopFixedHeight}
+        desktopChildrenScrollEnabled={false}
+        header={browser.header}
+        keyboard={browser.keyboard}
+        mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
+        mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
+      >
+        {selectorBody}
+      </Combobox>
+    </>
+  );
+}
+
+/**
+ * Every pick resolves the selector and closes it. A 1-tap `+` saves the profile, selects its model
+ * immediately, and closes the picker; useAgentProfileEditor surfaces a toast with Edit and Undo.
+ */
+function useModelSelectorActions({
+  onOpenChange,
+  onSelect,
+  onApplyProfile,
+  onEditProfiles,
+  onCreateProfile,
+  onEditProfile,
+}: Pick<
+  CombinedModelSelectorProps,
+  "onSelect" | "onApplyProfile" | "onEditProfiles" | "onCreateProfile" | "onEditProfile"
+> & { onOpenChange: (open: boolean) => void }) {
+  const handleSelect = useCallback(
+    (provider: string, modelId: string) => {
+      onSelect(provider, modelId);
+      onOpenChange(false);
+    },
+    [onOpenChange, onSelect],
+  );
+  const handleApplyProfile = useCallback(
+    (profileId: string) => {
+      onApplyProfile?.(profileId);
+      onOpenChange(false);
+    },
+    [onApplyProfile, onOpenChange],
+  );
+  const handleEditProfiles = useCallback(() => {
+    onOpenChange(false);
+    onEditProfiles?.();
+  }, [onEditProfiles, onOpenChange]);
+  const handleCreateProfile = useCallback(
+    (seed: AgentProfileSeed) => {
+      if (seed.modelId) {
+        onSelect(seed.provider, seed.modelId);
+      }
+      onOpenChange(false);
+      void onCreateProfile?.(seed);
+    },
+    [onCreateProfile, onOpenChange, onSelect],
+  );
+  const handleEditProfile = useCallback(
+    (profileId: string) => {
+      onOpenChange(false);
+      onEditProfile?.(profileId);
+    },
+    [onEditProfile, onOpenChange],
+  );
+  return {
+    handleSelect,
+    handleApplyProfile,
+    handleEditProfiles,
+    handleCreateProfile,
+    handleEditProfile,
+  };
+}
+
+function ModelSelectorTrigger({
+  anchorRef,
+  isOpen,
+  disabled,
+  onPress,
+  labels,
+  selectedProvider,
+  serverId,
+  renderTrigger,
+  triggerFill,
+  toolbar,
+}: {
+  anchorRef: RefObject<View | null>;
+  isOpen: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  labels: { selectedModelLabel: string; triggerLabel: string };
+  selectedProvider: string;
+  serverId: string | null;
+  renderTrigger: CombinedModelSelectorProps["renderTrigger"];
+  triggerFill: boolean;
+  toolbar: CombinedModelSelectorProps["toolbar"];
+}) {
+  const { t } = useTranslation();
   const triggerStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (triggerFill) {
@@ -181,139 +425,64 @@ export function CombinedModelSelector({
     },
     [disabled, isOpen, renderTrigger, triggerFill],
   );
-
-  const handleApplyProfile = useCallback(
-    (profileId: string) => {
-      onApplyProfile?.(profileId);
-      handleOpenChange(false);
-    },
-    [handleOpenChange, onApplyProfile],
-  );
-
-  const handleEditProfiles = useCallback(() => {
-    handleOpenChange(false);
-    onEditProfiles?.();
-  }, [handleOpenChange, onEditProfiles]);
-
-  // 1-tap `+` saves the profile, selects the model immediately, and closes the picker;
-  // useAgentProfileEditor surfaces a toast with Edit and Undo actions.
-  const handleCreateProfile = useCallback(
-    (seed: AgentProfileSeed) => {
-      if (seed.modelId) {
-        onSelect(seed.provider, seed.modelId);
-      }
-      handleOpenChange(false);
-      void onCreateProfile?.(seed);
-    },
-    [handleOpenChange, onCreateProfile, onSelect],
-  );
-
-  const handleEditProfile = useCallback(
-    (profileId: string) => {
-      handleOpenChange(false);
-      onEditProfile?.(profileId);
-    },
-    [handleOpenChange, onEditProfile],
-  );
-
-  const selectorBody = isContentReady ? (
-    <ModelBrowser
-      state={browser}
-      onSelect={handleSelect}
-      onApplyProfile={handleApplyProfile}
-      onEditProfiles={onEditProfiles ? handleEditProfiles : undefined}
-      onCreateProfile={onCreateProfile ? handleCreateProfile : undefined}
-      onEditProfile={onEditProfile ? handleEditProfile : undefined}
-      onRetryProvider={onRetryProvider}
-      isRetryingProvider={isRetryingProvider}
-      scrolling={modelBrowserScrolling}
-    />
-  ) : (
-    <View style={styles.sheetLoadingState}>
-      <ThemedLoadingSpinner size={ICON_SIZE.sm} uniProps={foregroundMutedMapping} />
-      <Text style={styles.sheetLoadingText}>{t("modelSelector.loadingSelector")}</Text>
-    </View>
-  );
-
+  const accessibilityLabel = t("modelSelector.selectedModel", {
+    model: labels.selectedModelLabel,
+  });
   const { showCaret, tooltip } = toolbar ?? DEFAULT_TRIGGER_DECORATION;
 
-  return (
-    <>
-      {renderTrigger ? (
-        <Pressable
-          ref={anchorRef}
-          collapsable={false}
-          disabled={disabled}
-          onPress={handleTriggerPress}
-          style={triggerStyle}
-          accessibilityRole="button"
-          accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
-          })}
-          testID="combined-model-selector"
-        >
-          {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
-            renderTrigger({
-              selectedModelLabel: browser.triggerLabel,
-              onPress: handleTriggerPress,
-              disabled,
-              isOpen,
-              hovered: Boolean(hovered),
-              pressed,
-            })
-          }
-        </Pressable>
-      ) : (
-        <ComboboxTrigger
-          ref={anchorRef}
-          collapsable={false}
-          disabled={disabled}
-          onPress={handleTriggerPress}
-          style={triggerStyle}
-          accessibilityRole="button"
-          accessibilityLabel={t("modelSelector.selectedModel", {
-            model: browser.selectedModelLabel,
-          })}
-          testID="combined-model-selector"
-          chevron={showCaret === false ? null : undefined}
-          tooltip={tooltip}
-        >
-          {selectedProvider.trim().length > 0 ? (
-            <View style={toolbar ? styles.toolbarGlyph : styles.glyph}>
-              <ModelProviderGlyph
-                provider={selectedProvider}
-                serverId={serverId}
-                size={toolbar?.glyph.size ?? ICON_SIZE.md}
-                strokeWidth={toolbar?.glyph.strokeWidth}
-                tone={toolbar?.glyph.tone}
-              />
-            </View>
-          ) : null}
-          <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
-            {browser.triggerLabel}
-          </Text>
-        </ComboboxTrigger>
-      )}
-      <Combobox
-        options={EMPTY_COMBOBOX_OPTIONS}
-        value=""
-        onSelect={noop}
-        open={isOpen}
-        onOpenChange={handleOpenChange}
-        anchorRef={anchorRef}
-        desktopPlacement={desktopPlacement}
-        desktopMinWidth={desktopMinWidth}
-        desktopLockWidth
-        desktopFixedHeight={browser.desktopFixedHeight}
-        desktopChildrenScrollEnabled={false}
-        header={browser.header}
-        keyboard={browser.keyboard}
-        mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
-        mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
+  if (renderTrigger) {
+    return (
+      <Pressable
+        ref={anchorRef}
+        collapsable={false}
+        disabled={disabled}
+        onPress={onPress}
+        style={triggerStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        testID="combined-model-selector"
       >
-        {selectorBody}
-      </Combobox>
-    </>
+        {({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) =>
+          renderTrigger({
+            selectedModelLabel: labels.triggerLabel,
+            onPress,
+            disabled,
+            isOpen,
+            hovered: Boolean(hovered),
+            pressed,
+          })
+        }
+      </Pressable>
+    );
+  }
+  return (
+    <ComboboxTrigger
+      ref={anchorRef}
+      collapsable={false}
+      disabled={disabled}
+      onPress={onPress}
+      style={triggerStyle}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      testID="combined-model-selector"
+      chevron={showCaret === false ? null : undefined}
+      tooltip={tooltip}
+    >
+      {selectedProvider.trim().length > 0 ? (
+        <View style={toolbar ? styles.toolbarGlyph : styles.glyph}>
+          <ModelProviderGlyph
+            provider={selectedProvider}
+            serverId={serverId}
+            size={toolbar?.glyph.size ?? ICON_SIZE.md}
+            strokeWidth={toolbar?.glyph.strokeWidth}
+            tone={toolbar?.glyph.tone}
+          />
+        </View>
+      ) : null}
+      <Text style={styles.triggerText} numberOfLines={1} ellipsizeMode="tail">
+        {labels.triggerLabel}
+      </Text>
+    </ComboboxTrigger>
   );
 }
 

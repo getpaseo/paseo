@@ -1888,6 +1888,13 @@ export const ja: TranslationResources = {
     searchAllPlaceholder: "すべてのモデルを検索...",
     searchPlaceholder: "モデルを検索...",
     openProviderSettings: "{{provider}}の設定を開く",
+    searchModelsAndProfilesPlaceholder: "モデルとプロファイルを検索...",
+    shownOfTotal: "{{total}} 件中 {{shown}} 件を表示",
+    customize: "カスタマイズ...",
+    olderModels: "以前のモデル ({{count}})",
+    allModels: "すべてのモデル ({{count}})",
+    olderTag: "以前",
+    allModelsTag: "すべてのモデル",
   },
   providerCatalog: {
     title: "プロバイダーを追加",

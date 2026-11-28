@@ -836,7 +836,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             isRetryingProvider={isRetryingModelProvider}
             serverId={modelSelectorServerId}
             desktopPlacement="top-start"
-            desktopMinWidth={360}
             toolbar={modelToolbar}
           />
         </View>

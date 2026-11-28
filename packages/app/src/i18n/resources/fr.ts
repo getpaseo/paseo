@@ -1915,6 +1915,13 @@ export const fr: TranslationResources = {
     searchAllPlaceholder: "Rechercher dans tous les modèles…",
     searchPlaceholder: "Rechercher des modèles…",
     openProviderSettings: "Ouvrir les paramètres de {{provider}}",
+    searchModelsAndProfilesPlaceholder: "Rechercher des modèles et des profils…",
+    shownOfTotal: "{{shown}} affichés sur {{total}}",
+    customize: "Personnaliser…",
+    olderModels: "Modèles plus anciens ({{count}})",
+    allModels: "Tous les modèles ({{count}})",
+    olderTag: "Ancien",
+    allModelsTag: "Tous les modèles",
   },
   providerCatalog: {
     title: "Ajouter un fournisseur",

@@ -1849,6 +1849,13 @@ export const zhCN: TranslationResources = {
     searchAllPlaceholder: "搜索所有模型...",
     searchPlaceholder: "搜索模型...",
     openProviderSettings: "打开 {{provider}} 设置",
+    searchModelsAndProfilesPlaceholder: "搜索模型和配置文件...",
+    shownOfTotal: "显示 {{shown}} / {{total}}",
+    customize: "自定义...",
+    olderModels: "旧模型 ({{count}})",
+    allModels: "所有模型 ({{count}})",
+    olderTag: "旧版",
+    allModelsTag: "所有模型",
   },
   providerCatalog: {
     title: "添加 provider",

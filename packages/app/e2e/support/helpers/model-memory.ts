@@ -17,7 +17,6 @@ export async function chooseModel(page: Page, provider: string, label: string) {
 export async function reselectModel(page: Page, provider: string, label: string) {
   await expectRememberedModel(page, label);
   await openModelPicker(page);
-  await page.getByRole("dialog").getByRole("button", { name: "Back", exact: true }).click();
   await selectProviderModel(page, provider, label);
 }
 

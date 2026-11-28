@@ -1896,6 +1896,13 @@ export const en = {
     searchAllPlaceholder: "Search all models...",
     searchPlaceholder: "Search models...",
     openProviderSettings: "Open {{provider}} settings",
+    searchModelsAndProfilesPlaceholder: "Search models and profiles...",
+    shownOfTotal: "{{shown}} shown of {{total}}",
+    customize: "Customize...",
+    olderModels: "Older models ({{count}})",
+    allModels: "All models ({{count}})",
+    olderTag: "Older",
+    allModelsTag: "All models",
   },
   providerCatalog: {
     title: "Add provider",

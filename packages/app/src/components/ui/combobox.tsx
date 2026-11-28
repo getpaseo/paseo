@@ -149,8 +149,8 @@ export interface ComboboxProps {
   /** Where focus goes when the picker closes. Defaults to whatever had focus when it opened. */
   restoreFocusRef?: React.RefObject<unknown>;
   /**
-   * Keys custom `children` handle while the combobox is the top overlay. Escape always
-   * closes the combobox. Return true from `onKeyDown` to claim the key.
+   * Keys custom `children` handle while the combobox is the top overlay. Return true from
+   * `onKeyDown` to claim the key. Escape closes the combobox unless `onKeyDown` claims it.
    */
   keyboard?: SheetKeyboard;
   children?: ReactNode;
@@ -1735,12 +1735,13 @@ export function Combobox({
   const handleOverlayKeyDown = useCallback(
     (event: KeyboardInputEvent) => {
       if (keyboard) {
-        if (event.key === "Escape") {
+        // The children get first refusal on Escape, so a search can clear before the picker closes.
+        if (event.key === "Escape" && !keyboard.onKeyDown(event)) {
           event.preventDefault();
           handleClose();
           return true;
         }
-        if (!keyboard.onKeyDown(event)) return false;
+        if (event.key !== "Escape" && !keyboard.onKeyDown(event)) return false;
         event.preventDefault();
         return true;
       }

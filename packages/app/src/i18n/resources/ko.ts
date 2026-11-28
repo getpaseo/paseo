@@ -1879,6 +1879,13 @@ export const ko: TranslationResources = {
     searchAllPlaceholder: "모든 모델 검색...",
     searchPlaceholder: "모델 검색...",
     openProviderSettings: "{{provider}} 설정 열기",
+    searchModelsAndProfilesPlaceholder: "모델 및 프로필 검색...",
+    shownOfTotal: "{{total}}개 중 {{shown}}개 표시",
+    customize: "사용자 지정...",
+    olderModels: "이전 모델 ({{count}})",
+    allModels: "모든 모델 ({{count}})",
+    olderTag: "이전",
+    allModelsTag: "모든 모델",
   },
   providerCatalog: {
     title: "프로바이더 추가",

@@ -226,8 +226,6 @@ async function openTimedOutProvider(page: Page, workspaceId: string, width: numb
   await page.getByRole("button", { name: /Select model/ }).click();
   if (width < 600) {
     await page.getByTestId("agent-controls-model").click();
-  } else {
-    await page.getByRole("button", { name: "Back", exact: true }).click();
   }
   await page.getByTestId("model-provider-picker-timeout").click();
   await expect(page.getByText(/Timed out refreshing Pi timeout/)).toBeVisible();
