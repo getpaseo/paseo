@@ -29,11 +29,8 @@ import {
 } from "@/components/ui/icon-button-chrome";
 import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { useActiveWorkspaceArchive } from "@/hooks/use-active-workspace-archive";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import {
-  getTerminalProfileIcon,
-  resolveTerminalProfiles,
-} from "@getpaseo/protocol/terminal-profiles";
+import { useTerminalProfiles } from "@/hooks/use-terminal-profiles";
+import { getTerminalProfileIcon } from "@getpaseo/protocol/terminal-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import type { Theme } from "@/styles/theme";
 import {
@@ -260,11 +257,7 @@ export function WorkspaceHeaderMenuMobile({
   const { t } = useTranslation();
   const router = useRouter();
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
-  const { config } = useDaemonConfig(normalizedServerId);
-  const profiles = useMemo(
-    () => resolveTerminalProfiles(config?.terminalProfiles),
-    [config?.terminalProfiles],
-  );
+  const profiles = useTerminalProfiles(normalizedServerId);
 
   const handleEditProfiles = useCallback(() => {
     router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);

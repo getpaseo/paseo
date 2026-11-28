@@ -31,8 +31,7 @@ import { getForgePresentation } from "@/git/forge";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
+import { useTerminalProfiles } from "@/hooks/use-terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
@@ -1003,11 +1002,7 @@ export function NewWorkspaceScreen({
   // frozen useState initializer.
   const { preferences: formPreferences, updatePreferences: updateFormPreferences } =
     useFormPreferences();
-  const { config: daemonConfig } = useDaemonConfig(selectedServerId);
-  const terminalProfiles: readonly TerminalProfile[] = useMemo(
-    () => resolveTerminalProfiles(daemonConfig?.terminalProfiles),
-    [daemonConfig?.terminalProfiles],
-  );
+  const terminalProfiles: readonly TerminalProfile[] = useTerminalProfiles(selectedServerId);
   // Manual selection wins once the user picks something; until then the target
   // reads live from preferences so the async load can't race a frozen
   // initializer. Both go through `resolveLaunchTarget`, so a profile deleted

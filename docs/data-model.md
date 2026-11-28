@@ -275,8 +275,9 @@ array, never merges entries, so a client sends the complete next list on every a
 and remove. List order is the display order.
 
 Absent and empty mean different things for terminal profiles — omitting the key falls back to
-`DEFAULT_TERMINAL_PROFILES`, while `[]` means the user removed them all. Agent profiles have no
-defaults, so both mean none.
+`DEFAULT_TERMINAL_PROFILES`, while `[]` means the user removed them all. Launchers hide a default
+whose provider the host reports as not installed; a saved list is shown as-is. Agent profiles have
+no defaults, so both mean none.
 
 `PersistedConfigSchema` parses strictly, so a daemon that predates a field drops it on write
 rather than storing something it cannot describe. That is why the client gates the agent profiles
