@@ -523,6 +523,8 @@ Measured bundle size for a standard Expo web export:
 - gzip: 2.55 MiB
 - brotli: 1.93 MiB
 
+`npm run build:desktop` runs the same `scripts/precompress-assets.mjs` over `packages/app/dist` before electron-builder copies it to `app-dist`, so the desktop-served UI also gets `.br`/`.gz` siblings.
+
 The desktop-managed daemon disables the bundled web UI by default (`PASEO_WEB_UI_ENABLED=false`) because the desktop app already ships the renderer as `app-dist`. Shipping the same assets again inside `@getpaseo/server` would duplicate the ~10.8 MiB install. Desktop packaging also excludes `node_modules/@getpaseo/server/dist/server/web-ui/**` from the packaged app.
 
 ## Built workspace packages
