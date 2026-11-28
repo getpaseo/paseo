@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router/react-navigation";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as Clipboard from "expo-clipboard";
 import { MoreVertical, Pencil, Plus } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import type {
@@ -31,16 +32,27 @@ import { SettingsGroup } from "@/components/settings/headings/settings-group";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import type { PageTitleParent } from "@/components/page-layout";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { SettingsDetailHeader } from "@/components/settings";
+import {
+  SettingsCard,
+  SettingsDetailHeader,
+  SettingsDetailRow,
+  SettingsRow,
+} from "@/components/settings";
 import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
 import { useProjectIcons } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
+import { forgeFromRemoteUrl } from "@/git/forge";
+import { buildForgeRepositoryUrl } from "@/git/forge-url";
+import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { openExternalUrl } from "@/utils/open-external-url";
+import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import {
   applyDraftToConfig,
   configToDraft,
@@ -293,6 +305,8 @@ function ProjectSettingsBody({
         trailing={editButton}
       />
 
+      <ProjectDetailsGroup selectedHost={selectedHost} />
+
       <ProjectEditSheet
         // A new instance per open seeds the form from the project as it stands now.
         key={`${selectedHost.serverId}:${selectedHost.projectId}:${editSessionId}`}
@@ -320,6 +334,94 @@ function ProjectSettingsBody({
         onBackToProjects,
       })}
     </View>
+  );
+}
+
+function ProjectDetailsGroup({ selectedHost }: { selectedHost: ProjectHostEntry }) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { serverId, serverName, repoRoot } = selectedHost;
+  const isLocalExecution = useIsLocalDaemon(serverId);
+  const { targets } = useDesktopOpenTargets({ isLocalExecution });
+  const fileManager = targets.find((target) => target.kind === "file-manager");
+  const { status, refetch: refetchCheckoutStatus } = useCheckoutStatusQuery({
+    serverId,
+    cwd: repoRoot,
+  });
+  // Project roots without an active workspace do not receive checkout status pushes.
+  useFocusEffect(
+    useCallback(() => {
+      void refetchCheckoutStatus({ cancelRefetch: false });
+    }, [refetchCheckoutStatus]),
+  );
+  const repositoryUrl = status?.isGit
+    ? buildForgeRepositoryUrl(forgeFromRemoteUrl(status.remoteUrl), status)
+    : null;
+  const { mutate: openFileManager, isPending: isOpeningSourceDirectory } = useMutation({
+    mutationFn: (editorId: string) => openDesktopTarget({ editorId, workspacePath: repoRoot }),
+    onError: () => toast.error(t("sidebar.project.actions.openFolderFailed")),
+  });
+
+  const copySourceDirectory = useCallback(async () => {
+    try {
+      if (await Clipboard.setStringAsync(repoRoot)) {
+        toast.copied(t("common.states.copied"));
+        return;
+      }
+    } catch {
+      // Some platforms throw on clipboard failure, others return false.
+    }
+    toast.error(t("common.errors.unableToCopy"));
+  }, [repoRoot, t, toast]);
+
+  const openSourceDirectory = useCallback(() => {
+    if (fileManager) {
+      openFileManager(fileManager.id);
+    }
+  }, [fileManager, openFileManager]);
+
+  const openRepository = useCallback(() => {
+    if (repositoryUrl) {
+      void openExternalUrl(repositoryUrl).catch(() =>
+        toast.error(t("settings.project.details.openRepositoryFailed")),
+      );
+    }
+  }, [repositoryUrl, t, toast]);
+
+  return (
+    <SettingsGroup title={t("settings.project.details.title")} testID="project-details-section">
+      <SettingsCard>
+        <SettingsRow label={t("settings.groups.host")} hint={serverName} />
+        <SettingsRow label={t("settings.project.details.sourceDirectory")} hint={repoRoot}>
+          <View style={styles.sourceDirectoryActions}>
+            <Button
+              variant="outline"
+              accessibilityLabel={t("settings.project.details.copySourceDirectory")}
+              onPress={copySourceDirectory}
+            >
+              {t("common.actions.copy")}
+            </Button>
+            {fileManager ? (
+              <Button
+                variant="outline"
+                loading={isOpeningSourceDirectory}
+                onPress={openSourceDirectory}
+              >
+                {t("workspace.fileActions.openIn", { target: fileManager.label })}
+              </Button>
+            ) : null}
+          </View>
+        </SettingsRow>
+        {repositoryUrl ? (
+          <SettingsDetailRow
+            label={t("settings.project.details.repository")}
+            hint={repositoryUrl}
+            external
+            onPress={openRepository}
+          />
+        ) : null}
+      </SettingsCard>
+    </SettingsGroup>
   );
 }
 
@@ -1092,6 +1194,11 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
 }
 
 const styles = StyleSheet.create((theme) => ({
+  sourceDirectoryActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing[2],
+  },
   noTargetContainer: {
     padding: theme.spacing[4],
     alignItems: "flex-start",

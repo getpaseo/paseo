@@ -363,6 +363,7 @@ export type WorkspaceGitWorktreeInfo = PaseoWorktreeInfo;
 export type WorkspaceGitSnapshotOptions =
   | {
       force?: false;
+      refreshIfUnobserved?: boolean;
       includeForge?: boolean;
       reason?: string;
     }
@@ -898,7 +899,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.resumeRepoFetchIfPausedOrErrored(target);
     }
     if (!request.force && target.latestSnapshot) {
-      return target.latestSnapshot;
+      const refreshIfUnobserved = options?.force !== true && options?.refreshIfUnobserved;
+      if (!refreshIfUnobserved || target.listeners.size > 0) {
+        return target.latestSnapshot;
+      }
+      request.force = true;
     }
 
     return this.requestWorkspaceSnapshot(target, request);

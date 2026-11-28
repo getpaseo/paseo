@@ -3517,6 +3517,13 @@ export const en = {
       },
     },
     project: {
+      details: {
+        title: "Project details",
+        sourceDirectory: "Source directory",
+        copySourceDirectory: "Copy source directory",
+        repository: "Repository",
+        openRepositoryFailed: "Couldn't open the repository.",
+      },
       noEditableTarget: "This project isn't editable on this host.",
       backToProjects: "Back to projects",
       edit: {

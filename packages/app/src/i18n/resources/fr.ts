@@ -3460,6 +3460,13 @@ export const fr: TranslationResources = {
       },
     },
     project: {
+      details: {
+        title: "Détails du projet",
+        sourceDirectory: "Dossier source",
+        copySourceDirectory: "Copier le dossier source",
+        repository: "Dépôt",
+        openRepositoryFailed: "Impossible d’ouvrir le dépôt.",
+      },
       noEditableTarget: "Ce projet n’est pas modifiable sur cet hôte.",
       backToProjects: "Retour aux projets",
       edit: {

@@ -3416,6 +3416,13 @@ export const ar: TranslationResources = {
       },
     },
     project: {
+      details: {
+        title: "تفاصيل المشروع",
+        sourceDirectory: "مجلد المصدر",
+        copySourceDirectory: "نسخ مسار مجلد المصدر",
+        repository: "المستودع",
+        openRepositoryFailed: "تعذر فتح المستودع.",
+      },
       noEditableTarget: "هذا المشروع غير متاح للتحرير على هذا المضيف.",
       backToProjects: "العودة إلى المشاريع",
       edit: {

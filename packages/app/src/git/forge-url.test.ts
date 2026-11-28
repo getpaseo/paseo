@@ -4,8 +4,43 @@ import {
   buildForgeBranchTreeUrl,
   buildForgeChecksUrl,
   buildForgeReferenceUrl,
+  buildForgeRepositoryUrl,
   hasForgeWebUrls,
 } from "./forge-url";
+
+describe("buildForgeRepositoryUrl", () => {
+  it.each([
+    [
+      "github",
+      "ssh://git@ssh.github.com:443/Team/Repo.git",
+      undefined,
+      "https://github.com/Team/Repo",
+    ],
+    [
+      "gitlab",
+      "https://user:token@gitlab.com/group/subgroup/repo.git?clone=1",
+      undefined,
+      "https://gitlab.com/group/subgroup/repo",
+    ],
+    [
+      null,
+      "http://forge.example:3000/team/repo.git",
+      { host: "forge.example" },
+      "http://forge.example:3000/team/repo",
+    ],
+    [
+      null,
+      "git@work:team/repo.git",
+      { host: "forge.example", referenceRepository: "upstream/repo" },
+      "https://forge.example/team/repo",
+    ],
+    [null, "git@unknown.example:team/repo.git", undefined, null],
+    ["github", "git@github.com:team/../repo.git", undefined, null],
+    [null, null, undefined, null],
+  ] as const)("resolves %s %s to the repository page", (forge, remoteUrl, forgeWeb, expected) => {
+    expect(buildForgeRepositoryUrl(forge, { remoteUrl, forgeWeb })).toBe(expected);
+  });
+});
 
 describe("buildForgeReferenceUrl", () => {
   it.each([

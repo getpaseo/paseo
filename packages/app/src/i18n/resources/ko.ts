@@ -3399,6 +3399,13 @@ export const ko: TranslationResources = {
       },
     },
     project: {
+      details: {
+        title: "프로젝트 세부 정보",
+        sourceDirectory: "소스 디렉터리",
+        copySourceDirectory: "소스 디렉터리 복사",
+        repository: "저장소",
+        openRepositoryFailed: "저장소를 열 수 없습니다.",
+      },
       noEditableTarget: "이 호스트에서는 이 프로젝트를 편집할 수 없습니다.",
       backToProjects: "프로젝트로 돌아가기",
       edit: {

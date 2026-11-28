@@ -3343,6 +3343,13 @@ export const zhCN: TranslationResources = {
       },
     },
     project: {
+      details: {
+        title: "项目详情",
+        sourceDirectory: "源目录",
+        copySourceDirectory: "复制源目录",
+        repository: "仓库",
+        openRepositoryFailed: "无法打开仓库。",
+      },
       noEditableTarget: "此项目无法在这个 Host 上编辑。",
       backToProjects: "返回 Projects",
       edit: {

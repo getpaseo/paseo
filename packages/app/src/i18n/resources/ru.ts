@@ -3443,6 +3443,13 @@ export const ru: TranslationResources = {
       },
     },
     project: {
+      details: {
+        title: "Сведения о проекте",
+        sourceDirectory: "Исходный каталог",
+        copySourceDirectory: "Копировать путь к исходному каталогу",
+        repository: "Репозиторий",
+        openRepositoryFailed: "Не удалось открыть репозиторий.",
+      },
       noEditableTarget: "Этот проект нельзя редактировать на этом хосте.",
       backToProjects: "Вернуться к проектам",
       edit: {
