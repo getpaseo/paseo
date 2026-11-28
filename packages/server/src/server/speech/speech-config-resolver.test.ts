@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -56,6 +57,24 @@ describe("resolveSpeechConfig", () => {
       voice: "en",
     });
   });
+
+  test.each([
+    { env: {}, directory: "~/speech-models", expected: "speech-models" },
+    { env: { PASEO_LOCAL_MODELS_DIR: "~" }, directory: "/configured/models", expected: "" },
+  ])(
+    "expands the effective local model directory for lookup and download (%#)",
+    ({ env, directory, expected }) => {
+      const { speech } = resolveSpeechConfig({
+        paseoHome: "/tmp/paseo-home",
+        env,
+        persisted: PersistedConfigSchema.parse({ providers: { local: { modelsDir: directory } } }),
+      });
+      expect(path.normalize(speech.localModelsDir)).toBe(
+        path.join(process.env.HOME || homedir(), expected),
+      );
+      expect(speech.local?.modelsDir).toBe(speech.localModelsDir);
+    },
+  );
 
   test("resolves feature-scoped local speech settings", () => {
     const persisted = PersistedConfigSchema.parse({
