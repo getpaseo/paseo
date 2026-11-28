@@ -138,6 +138,51 @@ const SourceSchema = z.object({
     expect(validateWSOutboundMessage({ type: "not_a_message" }).success).toBe(false);
   });
 
+  it("accepts timeline pages with and without turn timing and validates timing records", () => {
+    const payload = {
+      requestId: "timing",
+      agentId: "agent",
+      agent: null,
+      direction: "tail",
+      projection: "projected",
+      epoch: "epoch",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 0, maxSeq: 0, nextSeq: 1 },
+      startCursor: null,
+      endCursor: null,
+      hasOlder: false,
+      hasNewer: false,
+      entries: [],
+      error: null,
+    };
+    const timing = {
+      turnId: "turn",
+      startedAt: "2026-10-15T08:00:00.000Z",
+      completedAt: "2026-10-15T08:00:12.000Z",
+      status: "turn_completed",
+      messageIds: ["reply"],
+    };
+    function envelope(value: unknown) {
+      return {
+        type: "session",
+        message: { type: "fetch_agent_timeline_response", payload: value },
+      };
+    }
+    expect(validateWSOutboundMessage(envelope(payload)).success).toBe(true);
+    const timed = envelope({ ...payload, turnTimings: [timing] });
+    expect(validateWSOutboundMessage(timed)).toEqual({
+      success: true,
+      data: timed,
+    });
+    expect(
+      validateWSOutboundMessage(
+        envelope({ ...payload, turnTimings: [{ ...timing, status: "running" }] }),
+      ).success,
+    ).toBe(false);
+  });
+
   it("accepts project config responses with and without setup commit status", () => {
     const payload = {
       requestId: "project-config-read",

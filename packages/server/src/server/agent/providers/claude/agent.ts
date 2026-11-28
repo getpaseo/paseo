@@ -1574,7 +1574,7 @@ function readTranscriptUuid(message: SDKMessage): string | null {
   return firstTrimmedString([root.uuid]);
 }
 
-export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
+export function readEventIdentifiers(message: unknown): EventIdentifiers {
   const root = toObjectRecord(message) ?? {};
   const messageType = readTrimmedString(root.type);
   const streamEvent = toObjectRecord(root.event);
@@ -6936,8 +6936,8 @@ async function mapAssistantHistoryBlocksWithMessageId(
   ) => AgentTimelineItem[] | Promise<AgentTimelineItem[]>,
 ): Promise<AgentTimelineItem[]> {
   const items = await mapBlocks(content);
-  const assistantMessageId =
-    typeof entry.uuid === "string" && entry.uuid.length > 0 ? entry.uuid : null;
+  // Match live assistant IDs; transcript UUIDs remain separate rewind anchors.
+  const assistantMessageId = readEventIdentifiers(entry).messageId;
   if (!assistantMessageId) {
     return items;
   }
@@ -7065,6 +7065,10 @@ export async function convertClaudeHistoryEntry(
     }
   }
 
+  if (entry.type === "assistant" && contentValue) {
+    return mapAssistantHistoryBlocksWithMessageId(entry, contentValue, mapBlocks);
+  }
+
   if (hasToolBlock && normalizedBlocks) {
     const mapped = await mapBlocks(normalizedBlocks);
     if (entry.type === "user") {
@@ -7077,10 +7081,6 @@ export async function convertClaudeHistoryEntry(
       return timeline.length ? [...timeline, ...toolItems] : toolItems;
     }
     return mapped;
-  }
-
-  if (entry.type === "assistant" && contentValue) {
-    return await mapAssistantHistoryBlocksWithMessageId(entry, contentValue, mapBlocks);
   }
 
   return timeline;
