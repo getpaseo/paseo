@@ -23,6 +23,7 @@ export { SettingsGroup } from "@/components/settings";
 export { Icon } from "../icons";
 export { Action, Combobox, Select, Toggle } from "./composer-controls";
 export { Modal } from "./modal";
+export { ScreenHeaderActions, ScreenHeaderButton } from "./screen-header";
 export { ScrollView, FlatList } from "./scroll-view";
 export { TextInput } from "./text-input";
 export { copyText } from "./clipboard";
