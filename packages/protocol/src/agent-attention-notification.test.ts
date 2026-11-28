@@ -43,6 +43,25 @@ describe("buildAgentAttentionNotificationPayload", () => {
     });
   });
 
+  it("keeps underscores that sit inside a word", () => {
+    const body = (assistantMessage: string) =>
+      buildAgentAttentionNotificationPayload({
+        reason: "finished",
+        serverId: "srv-1",
+        workspaceId: "workspace-1",
+        agentId: "agent-1",
+        assistantMessage,
+      }).body;
+
+    expect(body("SECOND_REPLY_TOKEN")).toBe("SECOND_REPLY_TOKEN");
+    expect(body("Updated agent_manager.ts.")).toBe("Updated agent_manager.ts.");
+    expect(body("snake_case_name and other_identifiers")).toBe(
+      "snake_case_name and other_identifiers",
+    );
+    // Underscore emphasis outside a word is still stripped.
+    expect(body("see _italic_ here")).toBe("see italic here");
+  });
+
   it("builds permission notifications from request details", () => {
     const payload = buildAgentAttentionNotificationPayload({
       reason: "permission",
