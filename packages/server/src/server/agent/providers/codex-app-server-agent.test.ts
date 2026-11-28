@@ -2635,6 +2635,80 @@ describe("Codex app-server provider", () => {
     },
   );
 
+  test("emits usage_observed on account/rateLimits/updated", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const observed: Extract<AgentStreamEvent, { type: "usage_observed" }>[] = [];
+    session.subscribe((event) => {
+      if (event.type === "usage_observed") observed.push(event);
+    });
+
+    await session.connect();
+    appServer.child.stdout.write(
+      `${JSON.stringify({
+        method: "account/rateLimits/updated",
+        params: {
+          rateLimits: {
+            limitId: "codex",
+            limitName: null,
+            planType: "pro",
+            primary: { usedPercent: 31, windowDurationMins: 300, resetsAt: 1795725600 },
+            secondary: { usedPercent: 64, windowDurationMins: 10080, resetsAt: 1795917600 },
+            credits: { hasCredits: true, unlimited: false, balance: "19.5" },
+          },
+        },
+      })}\n`,
+    );
+
+    await expect.poll(() => observed.length).toBe(1);
+    expect(observed[0]).toEqual({
+      type: "usage_observed",
+      provider: "codex",
+      sourceId: "codex",
+      planLabel: "pro",
+      windows: [
+        {
+          id: "five_hour",
+          label: "5-hour",
+          shortLabel: "5h",
+          summary: true,
+          usedPct: 31,
+          remainingPct: 69,
+          durationSeconds: 18_000,
+          resetsAt: "2026-11-26T20:40:00.000Z",
+          tone: "ok",
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          shortLabel: "wk",
+          summary: true,
+          usedPct: 64,
+          remainingPct: 36,
+          durationSeconds: 604_800,
+          resetsAt: "2026-11-29T02:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+      balances: [
+        {
+          id: "credits",
+          label: "Credits",
+          remaining: 19.5,
+          unit: "credits",
+          tone: "ok",
+        },
+      ],
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("unarchives Codex when an active Paseo agent resumes an archived thread", async () => {
     const threadRequests: string[] = [];
     let resumeAttempts = 0;

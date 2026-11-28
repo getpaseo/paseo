@@ -2215,6 +2215,8 @@ export class VoiceAssistantWebSocketServer {
         pluginNotifications: true,
         // COMPAT(tunnelProviders): added in v0.18.0, remove gate after 2027-06-01.
         ...(this.tunnelManager ? { tunnelProviders: true } : {}),
+        // COMPAT(usageReportUpdates): added in v0.18.2, remove gate after 2027-05-27.
+        usageReportUpdates: true,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.

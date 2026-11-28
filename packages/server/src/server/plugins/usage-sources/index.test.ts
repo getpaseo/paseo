@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { UsageSourceRegistry } from "./index.js";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1592,4 +1593,350 @@ test("unregistering a source drops the accounts each host scope kept for it", as
   registry.register(claude);
   fails = true;
   expect(await registry.listReports()).toEqual([]);
+});
+
+test("a failed fetch is retried after 30 seconds, backing off to the five-minute cache", async () => {
+  let now = 0;
+  let fetches = 0;
+  let result: unknown = { status: "error", error: "Claude usage API returned 500" };
+  const registry = new UsageSourceRegistry(() => now);
+  registry.register(
+    source({
+      id: "quota",
+      discover: async () => [{ key: "account", input: {} }],
+      fetch: async () => {
+        fetches++;
+        return result;
+      },
+    }),
+  );
+  const fetchesAt = async (at: number) => {
+    now = at;
+    await registry.listReports();
+    return fetches;
+  };
+  expect(await fetchesAt(0)).toBe(1);
+  expect(await fetchesAt(29_999)).toBe(1);
+  expect(await fetchesAt(30_000)).toBe(2);
+  // The second failure in a row waits twice as long.
+  expect(await fetchesAt(89_999)).toBe(2);
+  expect(await fetchesAt(90_000)).toBe(3);
+  result = { status: "available", windows: [] };
+  expect(await fetchesAt(210_000)).toBe(4);
+  // A success is kept for the full five minutes again.
+  expect(await fetchesAt(509_999)).toBe(4);
+  expect(await fetchesAt(510_000)).toBe(5);
+});
+
+function observedUsageRegistry(now: () => number) {
+  const sessions = new Map([
+    ["working", { provider: "claude", env: { HOME: "/work" }, sessionKey: "launch-1" }],
+    ["elsewhere", { provider: "claude", env: { HOME: "/other" }, sessionKey: "launch-2" }],
+    ["codex-agent", { provider: "codex", env: { HOME: "/work" }, sessionKey: "launch-3" }],
+    ["no-account", { provider: "claude", env: { HOME: "/missing" }, sessionKey: "launch-4" }],
+  ]);
+  const fetched: string[] = [];
+  const registry = new UsageSourceRegistry(now, 300_000, undefined, {
+    hasAgent: (id) => sessions.has(id),
+    usageSession: (id) => sessions.get(id) ?? null,
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      if (scope.kind === "session" && scope.provider !== "claude") return [];
+      if (scope.kind === "session" && scope.env.HOME === "/missing") return [];
+      const key = scope.kind === "session" && scope.env.HOME === "/other" ? "other" : "work";
+      return [{ key, input: key }];
+    },
+    fetch: async (input) => {
+      fetched.push(String(input));
+      return {
+        status: "available",
+        observedAt: "2026-11-27T00:00:00.000Z",
+        windows: [
+          { id: "five_hour", label: "Session", usedPct: 10, remainingPct: 90, tone: "ok" },
+          { id: "weekly", label: "Weekly", usedPct: 50, remainingPct: 50, tone: "ok" },
+          { id: "weekly_model_fable", label: "Weekly · Fable", usedPct: 30, remainingPct: 70 },
+        ],
+      };
+    },
+  });
+  registry.register({
+    id: "codex",
+    label: "Codex",
+    discover: async (scope) => {
+      if (scope.kind === "session" && scope.provider !== "codex") return [];
+      return [{ key: "codex-acct", input: "codex-acct" }];
+    },
+    fetch: async (input) => {
+      fetched.push(String(input));
+      return {
+        status: "available",
+        planLabel: "plus",
+        observedAt: "2026-11-27T00:00:00.000Z",
+        windows: [
+          { id: "five_hour", label: "5-hour", usedPct: 5, remainingPct: 95, tone: "ok" },
+          { id: "weekly", label: "Weekly", usedPct: 20, remainingPct: 80, tone: "ok" },
+        ],
+        balances: [{ id: "credits", label: "Credits", remaining: 10, unit: "credits", tone: "ok" }],
+      };
+    },
+  });
+  return { registry, fetched };
+}
+
+test("usage an agent observes moves only its account's cached report, and keeps windows the observation lacks", async () => {
+  let now = 1_000;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: Array<{ id: string; windows: unknown }> = [];
+  registry.subscribe((entry) =>
+    announced.push({
+      id: entry.id,
+      windows: entry.report.status === "available" ? entry.report.windows : null,
+    }),
+  );
+  await registry.listReports();
+  await registry.listReports({ agentId: "elsewhere" });
+  expect(fetched).toEqual(["work", "codex-acct", "other"]);
+
+  now = 61_000;
+  await registry.observeUsage("working", {
+    sourceId: "claude",
+    windows: [
+      {
+        id: "five_hour",
+        label: "Session",
+        usedPct: 73,
+        remainingPct: 27,
+        resetsAt: "2026-11-27T20:40:00.000Z",
+        tone: "warning",
+      },
+      {
+        id: "weekly",
+        label: "Weekly",
+        usedPct: 91,
+        remainingPct: 9,
+        resetsAt: null,
+        tone: "danger",
+      },
+    ],
+  });
+  // Another source's observation and an unknown agent change nothing.
+  await registry.observeUsage("working", {
+    sourceId: "codex",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 1, resetsAt: null }],
+  });
+  await registry.observeUsage("gone", {
+    sourceId: "claude",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 1, resetsAt: null }],
+  });
+
+  const merged = [
+    {
+      id: "five_hour",
+      label: "Session",
+      usedPct: 73,
+      remainingPct: 27,
+      resetsAt: "2026-11-27T20:40:00.000Z",
+      tone: "warning",
+    },
+    { id: "weekly", label: "Weekly", usedPct: 91, remainingPct: 9, resetsAt: null, tone: "danger" },
+    { id: "weekly_model_fable", label: "Weekly · Fable", usedPct: 30, remainingPct: 70 },
+  ];
+  expect(announced).toEqual([{ id: "claude:work", windows: merged }]);
+  const reports = await registry.listReports();
+  expect(fetched).toEqual(["work", "codex-acct", "other"]);
+  const work = reports.find((entry) => entry.id === "claude:work");
+  expect(work).toMatchObject({
+    fetchedAt: new Date(now).toISOString(),
+    successfulAt: new Date(now).toISOString(),
+    report: { status: "available", windows: merged },
+  });
+  // The observation is the newest sample, so the fetch's observation time no longer applies.
+  expect(work?.report).not.toHaveProperty("observedAt");
+  expect(reports.find((entry) => entry.id === "claude:other")?.report).toMatchObject({
+    windows: [{ usedPct: 10 }, { usedPct: 50 }, { usedPct: 30 }],
+  });
+
+  // The cache keeps its fetch time, so the per-model window still refreshes on schedule.
+  now = 301_000;
+  await registry.listReports();
+  expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+});
+
+test("Codex observations update windows, balances, and planLabel on the discovered account's cached report", async () => {
+  let now = 1_000;
+  const { registry } = observedUsageRegistry(() => now);
+  const announced: UsageReportEntry[] = [];
+  registry.subscribe((entry) => announced.push(entry));
+  await registry.listReports();
+
+  now = 31_000;
+  await registry.observeUsage("codex-agent", {
+    sourceId: "codex",
+    planLabel: "pro",
+    windows: [
+      {
+        id: "five_hour",
+        label: "5-hour",
+        usedPct: 31,
+        remainingPct: 69,
+        resetsAt: "2026-11-27T20:40:00.000Z",
+        tone: "ok",
+      },
+      {
+        id: "weekly",
+        label: "Weekly",
+        usedPct: 64,
+        remainingPct: 36,
+        resetsAt: "2026-11-29T02:00:00.000Z",
+        tone: "ok",
+      },
+    ],
+    balances: [{ id: "credits", label: "Credits", remaining: 19.5, unit: "credits", tone: "ok" }],
+  });
+
+  expect(announced).toHaveLength(1);
+  expect(announced[0]).toMatchObject({
+    id: "codex:codex-acct",
+    fetchedAt: new Date(now).toISOString(),
+    successfulAt: new Date(now).toISOString(),
+    report: {
+      status: "available",
+      planLabel: "pro",
+      windows: [
+        {
+          id: "five_hour",
+          label: "5-hour",
+          usedPct: 31,
+          remainingPct: 69,
+          resetsAt: "2026-11-27T20:40:00.000Z",
+          tone: "ok",
+        },
+        {
+          id: "weekly",
+          label: "Weekly",
+          usedPct: 64,
+          remainingPct: 36,
+          resetsAt: "2026-11-29T02:00:00.000Z",
+          tone: "ok",
+        },
+      ],
+      balances: [{ id: "credits", label: "Credits", remaining: 19.5, unit: "credits", tone: "ok" }],
+    },
+  });
+  expect(announced[0]?.report).not.toHaveProperty("observedAt");
+});
+
+test("ignores observations when the agent has no discovered disk account for that source", async () => {
+  let now = 1_000;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: string[] = [];
+  registry.subscribe((entry) => announced.push(entry.id));
+
+  await registry.observeUsage("no-account", {
+    sourceId: "claude",
+    windows: [{ id: "five_hour", label: "Session", usedPct: 45, resetsAt: null }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(fetched).toEqual([]);
+  expect(announced).toEqual([]);
+});
+
+test("an observation without usage refetches its account at most once a minute and announces it", async () => {
+  let now = 0;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: string[] = [];
+  registry.subscribe((entry) => announced.push(`${entry.id}@${entry.fetchedAt}`));
+  await registry.listReports();
+  const observeNothing = async (at: number) => {
+    now = at;
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  await observeNothing(10_000);
+  await observeNothing(69_999);
+  await observeNothing(70_000);
+  expect(fetched.filter((input) => input === "work")).toEqual(["work", "work", "work"]);
+  expect(announced).toEqual([
+    `claude:work@${new Date(10_000).toISOString()}`,
+    `claude:work@${new Date(70_000).toISOString()}`,
+  ]);
+});
+
+test("with no app listening, an observation neither fetches nor discovers reports", async () => {
+  let now = 0;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  await registry.listReports();
+  now = 10_000;
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched.filter((input) => input === "work")).toEqual(["work"]);
+
+  // Once an app listens, the same observation refetches the account.
+  const stop = registry.subscribe(() => {});
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched.filter((input) => input === "work")).toEqual(["work", "work"]);
+  stop();
+});
+
+test("with no app listening, usage from an agent no client listed fetches nothing", async () => {
+  const { registry, fetched } = observedUsageRegistry(() => 0);
+  await registry.observeUsage("working", {
+    sourceId: "claude",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 91, resetsAt: null }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched).toEqual([]);
+});
+
+test("usage observed before any report was fetched fetches the account once", async () => {
+  let now = 0;
+  const { registry, fetched } = observedUsageRegistry(() => now);
+  const announced: string[] = [];
+  registry.subscribe((entry) => announced.push(entry.id));
+  await registry.observeUsage("working", {
+    sourceId: "claude",
+    windows: [{ id: "weekly", label: "Weekly", usedPct: 91, resetsAt: null }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetched).toEqual(["work"]);
+  expect(announced).toEqual(["claude:work"]);
+});
+
+test("unregister clears failure backoff and observed refetch throttle for that source", async () => {
+  let now = 0;
+  let fetches = 0;
+  const registry = new UsageSourceRegistry(() => now, 300_000, undefined, {
+    hasAgent: (id) => id === "working",
+    usageSession: (id) =>
+      id === "working" ? { provider: "claude", env: {}, sessionKey: "s1" } : null,
+  });
+  const makeSource = () =>
+    source({
+      id: "claude",
+      discover: async () => [{ key: "acct", input: {} }],
+      fetch: async () => {
+        fetches++;
+        return { status: "error", error: "500" };
+      },
+    });
+  registry.register(makeSource());
+  registry.subscribe(() => {});
+
+  await registry.listReports();
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetches).toBe(2);
+
+  // Unregister and re-register: backoff and refetch throttle should start clean.
+  registry.unregister("claude");
+  registry.register(makeSource());
+  now = 1_000;
+  await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fetches).toBe(3);
 });
