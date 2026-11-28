@@ -114,6 +114,7 @@ import {
   type LatestReleaseLookup,
 } from "../release-check.js";
 import { runUpdateCommand, updatedForNewAgents } from "../update-command.js";
+import { ToolWebSearchOutputSchema } from "../tool-call-detail-primitives.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -5513,7 +5514,11 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (Array.isArray(content)) {
-      await this.appendUserContentArrayEvents(content, messageId, events);
+      await this.appendUserContentArrayEvents(
+        attachClaudeToolUseResult(content, message.tool_use_result),
+        messageId,
+        events,
+      );
     }
   }
 
@@ -6496,6 +6501,11 @@ class ClaudeAgentSession implements AgentSession {
     const blockToolName = typeof block.tool_name === "string" ? block.tool_name : undefined;
     const server = entry?.server ?? blockServer ?? "tool";
     const tool = entry?.name ?? blockToolName ?? "tool";
+    const webSearchOutput = readClaudeWebSearchToolUseResult(tool, block.tool_use_result);
+    if (webSearchOutput) {
+      return webSearchOutput;
+    }
+
     const coercedContent = coerceToolResultContentToString(content);
     const input = entry?.input;
 
@@ -6955,6 +6965,45 @@ function readCompactionMetadata(
   return null;
 }
 
+// Claude carries a tool's structured Output on the user message (`tool_use_result` live,
+// `toolUseResult` in the transcript), beside the tool_result block the model reads. Copy it onto
+// that block so the result mapping can prefer it over the text. A message carrying several
+// tool_result blocks is ambiguous, so it keeps the text alone.
+function attachClaudeToolUseResult<Block>(
+  content: Block[],
+  toolUseResult: unknown,
+): Array<Block | ClaudeContentChunk> {
+  if (!toObjectRecord(toolUseResult)) {
+    return content;
+  }
+  const toolResultIndexes = content.flatMap((block, index) =>
+    isClaudeContentChunk(block) && block.type === "tool_result" ? [index] : [],
+  );
+  if (toolResultIndexes.length !== 1) {
+    return content;
+  }
+  const [toolResultIndex] = toolResultIndexes;
+  return content.map((block, index) =>
+    index === toolResultIndex && isClaudeContentChunk(block)
+      ? { ...block, tool_use_result: toolUseResult }
+      : block,
+  );
+}
+
+// WebSearch's tool_result text is a rendering of its Output; the Output itself keeps the hits.
+// A call that stepped aside for a user message carries `{ detachedToolCall: true }` instead, which
+// does not parse, so that result keeps its text.
+function readClaudeWebSearchToolUseResult(
+  toolName: string,
+  toolUseResult: unknown,
+): AgentMetadata | undefined {
+  if (toolName !== "WebSearch" && toolName !== "web_search") {
+    return undefined;
+  }
+  const parsed = ToolWebSearchOutputSchema.safeParse(toolUseResult);
+  return parsed.success ? parsed.data : undefined;
+}
+
 function normalizeHistoryBlocks(content: unknown): ClaudeContentChunk[] | null {
   if (Array.isArray(content)) {
     const blocks = content.filter((entry) => isClaudeContentChunk(entry));
@@ -7237,7 +7286,10 @@ export async function convertClaudeHistoryEntry(
   }
 
   if (hasToolBlock && normalizedBlocks) {
-    const mapped = await mapBlocks(normalizedBlocks);
+    // Only user records carry a tool's Output; for others this keeps the blocks as they are.
+    const mapped = await mapBlocks(
+      attachClaudeToolUseResult(normalizedBlocks, entry.toolUseResult),
+    );
     if (entry.type === "user") {
       // tool_result handling (handleToolResult) emits image markdown as an assistant_message
       // alongside the tool_call. User-entry text blocks also map to assistant_message in this path

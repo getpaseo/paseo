@@ -3243,6 +3243,75 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("maps a WebSearch result from the structured Output on the SDK user message", async () => {
+    const session = await createSessionForTest();
+    try {
+      await session.translateMessageToEvents({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "srvtoolu_web",
+              name: "WebSearch",
+              input: { query: "react native onLayout nativeEvent" },
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const events = await session.translateMessageToEvents({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "srvtoolu_web",
+              content:
+                'Web search results for query: "react native onLayout nativeEvent"\n\nLinks: [{"title":"From the text","url":"https://example.com/text"}]',
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: {
+          query: "react native onLayout nativeEvent",
+          results: [
+            {
+              tool_use_id: "srvtoolu_01",
+              content: [
+                { title: "Improved width measurement", url: "https://example.com/onlayout" },
+              ],
+            },
+            "Here's what the search found.",
+          ],
+          durationSeconds: 3.1,
+        },
+      } as unknown as SDKMessage);
+
+      const toolCall = events.find(
+        (event) => event.type === "timeline" && event.item.type === "tool_call",
+      );
+      expect(toolCall).toMatchObject({
+        item: {
+          callId: "srvtoolu_web",
+          status: "completed",
+          detail: {
+            type: "search",
+            query: "react native onLayout nativeEvent",
+            toolName: "web_search",
+            webResults: [
+              { title: "Improved width measurement", url: "https://example.com/onlayout" },
+            ],
+            annotations: ["Here's what the search found."],
+            durationSeconds: 3.1,
+          },
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   async function collectStreamEvents(session: AgentSession, prompt = "turn") {
     const events: AgentStreamEvent[] = [];
     for await (const event of streamSession(session, prompt)) {

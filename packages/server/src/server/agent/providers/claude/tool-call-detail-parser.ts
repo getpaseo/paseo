@@ -24,6 +24,8 @@ import {
   toWriteToolDetail,
   toolDetailBranchByName,
   parseKnownToolDetail,
+  type ParsedToolSearchInput,
+  type ParsedToolWebSearchOutput,
 } from "../tool-call-detail-primitives.js";
 
 const ClaudeGrepOutputSchema = z
@@ -35,6 +37,62 @@ const ClaudeGrepOutputSchema = z
       .transform(({ output }) => ({ numFiles: 0, filenames: [], content: output })),
   ])
   .nullable();
+
+const ClaudeWebSearchHitsSchema = z.array(z.object({ title: z.string(), url: z.string() }));
+
+interface ClaudeWebSearchTextOutput {
+  webResults: Array<{ title: string; url: string }>;
+}
+
+// The tool_result text Claude Code writes for WebSearch lists each search's hits on a
+// `Links: [...]` JSON line. Results that arrive without the structured Output fall back to it.
+function parseClaudeWebSearchText(text: string): ClaudeWebSearchTextOutput {
+  const webResults: ClaudeWebSearchTextOutput["webResults"] = [];
+  for (const match of text.matchAll(/^Links: (\[.*\])\s*$/gm)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(match[1]);
+    } catch {
+      continue;
+    }
+    const hits = ClaudeWebSearchHitsSchema.safeParse(parsed);
+    if (hits.success) {
+      webResults.push(...hits.data.map(({ title, url }) => ({ title, url })));
+    }
+  }
+  return { webResults };
+}
+
+const ClaudeWebSearchOutputSchema = z
+  .union([
+    ToolWebSearchOutputSchema,
+    z.string().transform(parseClaudeWebSearchText),
+    z
+      .object({ output: z.string() })
+      .passthrough()
+      .transform(({ output }) => parseClaudeWebSearchText(output)),
+  ])
+  .nullable();
+
+function isParsedToolWebSearchOutput(
+  output: ParsedToolWebSearchOutput | ClaudeWebSearchTextOutput,
+): output is ParsedToolWebSearchOutput {
+  return "results" in output;
+}
+
+function toClaudeWebSearchToolDetail(
+  input: ParsedToolSearchInput | null,
+  output: ParsedToolWebSearchOutput | ClaudeWebSearchTextOutput | null,
+): ToolCallDetail | undefined {
+  if (!output || isParsedToolWebSearchOutput(output)) {
+    return toSearchToolDetail({ input, output, toolName: "web_search" });
+  }
+  const detail = toSearchToolDetail({ input, toolName: "web_search" });
+  if (detail?.type !== "search" || output.webResults.length === 0) {
+    return detail;
+  }
+  return { ...detail, webResults: output.webResults };
+}
 
 const ClaudeToolEnvelopeSchema = z
   .object({
@@ -127,14 +185,14 @@ const ClaudeToolDetailPass2Schema = z.union([
   toolDetailBranchByName(
     "WebSearch",
     ToolSearchInputSchema,
-    ToolWebSearchOutputSchema.nullable(),
-    (input, output) => toSearchToolDetail({ input, output, toolName: "web_search" }),
+    ClaudeWebSearchOutputSchema,
+    toClaudeWebSearchToolDetail,
   ),
   toolDetailBranchByName(
     "web_search",
     ToolSearchInputSchema,
-    ToolWebSearchOutputSchema.nullable(),
-    (input, output) => toSearchToolDetail({ input, output, toolName: "web_search" }),
+    ClaudeWebSearchOutputSchema,
+    toClaudeWebSearchToolDetail,
   ),
   toolDetailBranchByName("search", ToolSearchInputSchema, z.unknown(), (input) =>
     toSearchToolDetail({ input, toolName: "search" }),
