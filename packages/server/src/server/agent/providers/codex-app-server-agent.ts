@@ -6122,12 +6122,25 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);
     }
-    if (this.config.mcpServers) {
-      const mcpServers: Record<string, CodexMcpServerConfig> = {};
-      for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
-        mcpServers[name] = toCodexMcpConfig(serverConfig);
+    const mcpEntries = Object.entries(this.config.mcpServers ?? {});
+    if (mcpEntries.length > 0) {
+      // Emit per-server dotted overrides (`mcp_servers.<name>`) instead of a
+      // whole-table `mcp_servers` object so alias-level `-c mcp_servers.*` CLI
+      // overrides survive in Codex's `build_cli_overrides_layer`. Fall back to
+      // a whole table only when a server name contains `.`, which Codex's
+      // `path.split('.')` cannot address as a single segment.
+      const hasDottedServerName = mcpEntries.some(([name]) => name.includes("."));
+      if (hasDottedServerName) {
+        const mcpServers: Record<string, CodexMcpServerConfig> = {};
+        for (const [name, serverConfig] of mcpEntries) {
+          mcpServers[name] = toCodexMcpConfig(serverConfig);
+        }
+        innerConfig.mcp_servers = mcpServers;
+      } else {
+        for (const [name, serverConfig] of mcpEntries) {
+          innerConfig[`mcp_servers.${name}`] = toCodexMcpConfig(serverConfig);
+        }
       }
-      innerConfig.mcp_servers = mcpServers;
     }
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
     return Object.keys(configured).length > 0 ? configured : null;

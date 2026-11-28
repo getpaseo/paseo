@@ -1792,6 +1792,89 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("injects MCP servers as per-server dotted overrides so alias -c mcp_servers.* entries survive", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({
+        mcpServers: {
+          paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+          "plugin-tool": { type: "stdio", command: "node", args: ["server.js"] },
+        },
+      }),
+    );
+    try {
+      await session.startTurn("hello");
+      const threadStart = appServer.requests().find((req) => req.method === "thread/start");
+      const startConfig = (threadStart?.params as { config?: Record<string, unknown> } | undefined)
+        ?.config;
+      expect(startConfig).toEqual({
+        "mcp_servers.paseo": {
+          url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+        },
+        "mcp_servers.plugin-tool": {
+          command: "node",
+          args: ["server.js"],
+        },
+      });
+      expect(startConfig).not.toHaveProperty("mcp_servers");
+      appServer.completeTurn();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("omits mcp_servers from thread/start config when mcpServers is empty", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({ mcpServers: {} }),
+    );
+    try {
+      await session.startTurn("hello");
+      const threadStart = appServer.requests().find((req) => req.method === "thread/start");
+      expect(
+        (threadStart?.params as { config?: Record<string, unknown> } | undefined)?.config,
+      ).toBeUndefined();
+      appServer.completeTurn();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("falls back to whole-table mcp_servers when an injected server name contains a dot", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({
+        mcpServers: {
+          paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+          "my.dotted": { type: "http", url: "http://127.0.0.1:8080/mcp" },
+        },
+      }),
+    );
+    try {
+      await session.startTurn("hello");
+      const threadStart = appServer.requests().find((req) => req.method === "thread/start");
+      const startConfig = (threadStart?.params as { config?: Record<string, unknown> } | undefined)
+        ?.config;
+      expect(startConfig).toEqual({
+        mcp_servers: {
+          paseo: {
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          },
+          "my.dotted": {
+            url: "http://127.0.0.1:8080/mcp",
+          },
+        },
+      });
+      expect(Object.keys(startConfig ?? {})).toEqual(["mcp_servers"]);
+      appServer.completeTurn();
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,
@@ -1813,21 +1896,27 @@ describe("Codex app-server provider", () => {
 
     await session.startTurn("finish");
 
-    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1] as {
+      sandboxPolicy?: unknown;
+      config?: Record<string, unknown>;
+    };
     expect(turnStart).toMatchObject({
       sandboxPolicy: { type: "readOnly" },
       config: {
         sandbox_mode: "read-only",
-        mcp_servers: {
-          hub: {
-            enabled_tools: ["finish_execution"],
-            default_tools_approval_mode: "prompt",
-            tools: { finish_execution: { approval_mode: "approve" } },
-          },
+        "mcp_servers.hub": {
+          url: "http://127.0.0.1/hub",
+          enabled_tools: ["finish_execution"],
+          default_tools_approval_mode: "prompt",
+          tools: { finish_execution: { approval_mode: "approve" } },
         },
       },
     });
-    expect(turnStart).not.toHaveProperty("config.mcp_servers.hub.tools.reply");
+    expect(turnStart.config).not.toHaveProperty("mcp_servers");
+    expect(
+      (turnStart.config?.["mcp_servers.hub"] as { tools?: Record<string, unknown> } | undefined)
+        ?.tools,
+    ).not.toHaveProperty("reply");
   });
 
   test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
@@ -3259,13 +3348,12 @@ describe("Codex app-server provider", () => {
       expect(forkConfigs).toEqual([
         expect.objectContaining({
           ...customCodexConfig,
-          mcp_servers: {
-            paseo: expect.objectContaining({
-              url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
-            }),
-          },
+          "mcp_servers.paseo": expect.objectContaining({
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+          }),
         }),
       ]);
+      expect(forkConfigs[0]).not.toHaveProperty("mcp_servers");
       appServer.assertNoErrors();
       await session.close();
     },
