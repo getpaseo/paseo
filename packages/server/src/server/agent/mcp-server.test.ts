@@ -5882,6 +5882,31 @@ describe("update_agent MCP tool", () => {
     expect(response.structuredContent).toEqual({ success: true });
   });
 
+  it("tells the caller when a thinking level waits for the next turn", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.setAgentThinkingOption.mockResolvedValue({
+      type: "warning",
+      message: "Thinking level applies next turn",
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "update_agent");
+
+    const response = await tool.handler({
+      agentId: "agent-1",
+      settings: { thinkingOptionId: "xhigh" },
+    });
+
+    expect(response.structuredContent).toEqual({
+      success: true,
+      notices: [{ type: "warning", message: "Thinking level applies next turn" }],
+    });
+  });
+
   it("reports success for a no-op update with neither metadata nor settings", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const server = await createAgentMcpServer({
