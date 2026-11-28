@@ -1280,6 +1280,8 @@ export const ja: TranslationResources = {
     },
     display: {
       showBackground: "バックグラウンドを表示",
+      showScheduledHeartbeats: "スケジュール済みのハートビートを表示",
+      scheduledHeartbeat: "ハートビートの実行待ち",
       trigger: "表示設定",
       heading: "表示",
       sort: {

@@ -344,8 +344,33 @@ describe("WorkspaceDirectory", () => {
     workspace.hasRootAgent({ id: "parent-agent", status: "idle", backgroundWork });
     workspace.hasDelegatedAgent({ id: "child-agent", status: "idle", backgroundWork });
 
-    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+    const descriptor = await workspace.workspaceDescriptor();
+    expect(descriptor.status).toBe("done");
+    expect(descriptor.hasScheduledHeartbeat).toBeUndefined();
   });
+
+  test.each(["root", "child"] as const)(
+    "reports a scheduled heartbeat on the %s agent without changing the workspace status",
+    async (owner) => {
+      const workspace = new WorkspaceStatus();
+      const backgroundWork = { count: 1, runningCount: 0, hasScheduledHeartbeat: true };
+      workspace.hasRootAgent({
+        id: "parent-agent",
+        status: "idle",
+        ...(owner === "root" ? { backgroundWork } : {}),
+      });
+      workspace.hasDelegatedAgent({
+        id: "child-agent",
+        status: "idle",
+        ...(owner === "child" ? { backgroundWork } : {}),
+      });
+
+      await expect(workspace.workspaceDescriptor()).resolves.toMatchObject({
+        status: "done",
+        hasScheduledHeartbeat: true,
+      });
+    },
+  );
 
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();

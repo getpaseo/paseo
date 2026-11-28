@@ -393,6 +393,14 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           >
             {t("sidebar.display.showBackground")}
           </MenuItem>
+          <MenuItem
+            selected={preferences.showScheduledHeartbeats}
+            closeOnSelect={false}
+            onSelect={preferences.toggleScheduledHeartbeats}
+            testID="sidebar-display-show-heartbeats"
+          >
+            {t("sidebar.display.showScheduledHeartbeats")}
+          </MenuItem>
         </MenuSurface>
       </MenuRoot>
       <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />

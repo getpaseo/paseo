@@ -28,6 +28,7 @@ import {
 } from "@/utils/status-indicator-geometry";
 import { shouldRenderSyncedStatusLoader } from "@/utils/status-loader";
 import { StatusRing } from "@/components/status-ring";
+import { useTranslation } from "react-i18next";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { SCRIM_WIDTH, TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
@@ -140,7 +141,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   children?: ReactNode;
 }) {
   const {
-    settings: { workspaceTitleSource },
+    settings: { workspaceTitleSource, sidebarShowScheduledHeartbeats },
   } = useAppSettings();
   const workspaceLabel = resolveSidebarWorkspacePrimaryLabel({ workspace, workspaceTitleSource });
   // The workspace carries label names; their colors live in its host's catalog, so the row is
@@ -178,6 +179,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         bucket={workspace.statusBucket}
         workspaceKind={workspace.workspaceKind}
         loading={isLoading}
+        showScheduledHeartbeat={sidebarShowScheduledHeartbeats && workspace.hasScheduledHeartbeat}
         reserveIdleSpace={reserveIdleStatusIndicatorSpace}
       />
     );
@@ -243,13 +245,16 @@ function WorkspaceStatusIndicator({
   bucket,
   workspaceKind,
   loading = false,
+  showScheduledHeartbeat = false,
   reserveIdleSpace = true,
 }: {
   bucket: SidebarWorkspaceEntry["statusBucket"];
   workspaceKind: SidebarWorkspaceEntry["workspaceKind"];
   loading?: boolean;
+  showScheduledHeartbeat?: boolean;
   reserveIdleSpace?: boolean;
 }) {
+  const { t } = useTranslation();
   // Busy is the only status that moves, and it is the ring rather than a dot for the same
   // reason it is a dot elsewhere: every status in the sidebar sits in this one slot, so busy
   // has to fill it without displacing anything. A row starting up and a row working are both
@@ -287,6 +292,19 @@ function WorkspaceStatusIndicator({
   }
 
   if (bucket === "done") {
+    if (reserveIdleSpace && showScheduledHeartbeat) {
+      return (
+        <View
+          role="status"
+          accessibilityLabel={t("sidebar.display.scheduledHeartbeat")}
+          style={styles.workspaceStatusDot}
+          testID="workspace-status-indicator-heartbeat"
+        >
+          <StatusRing />
+        </View>
+      );
+    }
+
     // An idle row still gets a dot rather than an empty slot. Nested rows are marked as
     // workspaces by indentation alone, and with nothing in the leading slot the rail has no
     // edge to read against — a workspace carrying its own glyph starts looking like a project

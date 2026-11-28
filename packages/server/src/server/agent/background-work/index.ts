@@ -152,10 +152,16 @@ export class AgentBackgroundWorkStore {
 
     const count = (items?.length ?? 0) + (daemonItems?.size ?? 0);
     let runningCount = items?.length ?? 0;
-    for (const work of daemonItems?.values() ?? []) {
+    let hasScheduledHeartbeat = false;
+    for (const [id, work] of daemonItems ?? []) {
       if (work.countsAsRunning) runningCount++;
+      if (id.startsWith(HEARTBEAT_ID_PREFIX)) hasScheduledHeartbeat = true;
     }
-    return runningCount === count ? { count } : { count, runningCount };
+    return {
+      count,
+      ...(runningCount === count ? {} : { runningCount }),
+      ...(hasScheduledHeartbeat ? { hasScheduledHeartbeat } : {}),
+    };
   }
 
   clear(agentId: string): AgentBackgroundWorkItem[] | null {

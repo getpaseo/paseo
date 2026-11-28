@@ -1273,6 +1273,8 @@ export const ko: TranslationResources = {
     },
     display: {
       showBackground: "백그라운드 표시",
+      showScheduledHeartbeats: "예약된 하트비트 표시",
+      scheduledHeartbeat: "하트비트 실행 대기 중",
       trigger: "표시 설정",
       heading: "표시",
       sort: {

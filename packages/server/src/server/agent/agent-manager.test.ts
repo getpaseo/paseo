@@ -15972,6 +15972,7 @@ test("lists and stops heartbeat background work across provider session closure"
       expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({
         count: 2,
         runningCount: 1,
+        hasScheduledHeartbeat: true,
       }),
     );
     const providerItem = manager
@@ -15994,7 +15995,11 @@ test("lists and stops heartbeat background work across provider session closure"
     await manager.closeAgent(agent.id);
     expect(manager.getAgent(agent.id)).toBeNull();
     expect(manager.listAgentBackgroundWork(agent.id)).toEqual([renamed]);
-    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 1, runningCount: 0 });
+    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({
+      count: 1,
+      runningCount: 0,
+      hasScheduledHeartbeat: true,
+    });
     expect(events.slice(eventsBeforeClose)).toContainEqual({
       type: "background_work",
       agentId: agent.id,

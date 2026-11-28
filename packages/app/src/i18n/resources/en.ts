@@ -1277,6 +1277,8 @@ export const en = {
     },
     display: {
       showBackground: "Show background",
+      showScheduledHeartbeats: "Show scheduled heartbeats",
+      scheduledHeartbeat: "Heartbeat scheduled",
       trigger: "Display preferences",
       heading: "Display",
       sort: {

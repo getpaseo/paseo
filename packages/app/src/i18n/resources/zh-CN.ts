@@ -1258,6 +1258,8 @@ export const zhCN: TranslationResources = {
     },
     display: {
       showBackground: "显示后台工作区",
+      showScheduledHeartbeats: "显示已启用的心跳",
+      scheduledHeartbeat: "心跳等待触发",
       trigger: "显示偏好",
       heading: "显示",
       sort: {

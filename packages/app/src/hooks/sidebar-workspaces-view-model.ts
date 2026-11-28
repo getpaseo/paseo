@@ -35,6 +35,7 @@ export interface SidebarWorkspacePlacement {
 
 export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlacement {
   statusBucket: SidebarStateBucket;
+  hasScheduledHeartbeat?: boolean;
   statusEnteredAt: Date | null;
 }
 
@@ -169,6 +170,7 @@ export function createSidebarWorkspaceEntry(input: {
     labels: input.workspace.labels ?? EMPTY_WORKSPACE_LABELS,
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
+    hasScheduledHeartbeat: input.workspace.hasScheduledHeartbeat,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
