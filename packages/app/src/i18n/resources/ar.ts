@@ -2727,6 +2727,10 @@ export const ar: TranslationResources = {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
       },
+      taskPill: {
+        label: "شارة تقدم المهام",
+        description: "إظهار الشارة الأصلية لتقدم مهام الوكيل فوق حقل الإدخال",
+      },
       chatDisplay: {
         label: "عرض المحادثة",
         description: "مقدار عمل الوكيل الذي تعرضه المحادثة",
