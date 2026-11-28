@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -361,6 +361,43 @@ async function connectBrowserToolClient(daemonPort, callerAgentId) {
 async function openBrowserWorkspace(page, workspaceKey) {
   await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click({ timeout: timeoutMs });
   await expect(page.getByTestId(`workspace-deck-entry-${workspaceKey}`)).toBeVisible();
+}
+
+async function verifyCloseTabShortcut({ page, inspectorPort, workspaceKey }) {
+  await openBrowserWorkspace(page, workspaceKey);
+  const workspace = page.getByTestId(`workspace-deck-entry-${workspaceKey}`);
+  await workspace.getByTestId("workspace-new-tab-button").filter({ visible: true }).first().click();
+  await page.getByTestId("workspace-new-tab-menu-agent").filter({ visible: true }).first().click();
+  const draft = workspace
+    .locator('[data-testid^="workspace-tab-draft_"]')
+    .filter({ visible: true });
+  await expect(draft).toBeVisible();
+
+  // Send the key through X11 so Electron can handle it as a native menu accelerator.
+  const { DISPLAY, XAUTHORITY } = await evaluateDesktopWindow(
+    inspectorPort,
+    "win.focus(); win.webContents.focus(); return { DISPLAY: process.env.DISPLAY, XAUTHORITY: process.env.XAUTHORITY };",
+  );
+  assert(DISPLAY && XAUTHORITY, "Ctrl+W regression requires the private Xvfb display");
+  const pressCloseTabShortcut = () =>
+    execFileSync("xdotool", ["key", "--clearmodifiers", "ctrl+w"], {
+      env: { ...process.env, DISPLAY, XAUTHORITY },
+    });
+
+  // Command Center disables the workspace close-tab binding.
+  await page.getByTestId("sidebar-search").click();
+  const commandCenterInput = page.getByTestId("command-center-input");
+  await expect(commandCenterInput).toBeFocused();
+  pressCloseTabShortcut();
+  await expect(commandCenterInput).toBeVisible();
+  await expect(draft).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(commandCenterInput).toBeHidden();
+
+  pressCloseTabShortcut();
+  await expect(draft).toHaveCount(0);
+  await expect(workspace).toBeVisible();
+  console.log("Ctrl+W closed the workspace tab and kept the desktop window open.");
 }
 
 async function openSecondDesktopWindow(page) {
@@ -1429,7 +1466,7 @@ async function main() {
       process.execPath,
       devRunner,
       `--inspect=127.0.0.1:${inspectorPort}`,
-      ...(process.platform === "linux" ? ["--no-sandbox"] : []),
+      ...(process.platform === "linux" ? ["--no-sandbox", "--ozone-platform=x11"] : []),
     ];
     const desktopCommand = process.platform === "linux" ? "xvfb-run" : desktopArgs.shift();
     const desktopCommandArgs =
@@ -1519,6 +1556,14 @@ async function main() {
         `Desktop Settings memory regression passed: ${settingsMemory.detachedAfterWarmRound} detached panes after warm and stress rotations.`,
       );
       return;
+    }
+
+    if (process.platform === "linux") {
+      await verifyCloseTabShortcut({
+        page,
+        inspectorPort,
+        workspaceKey: `${status.serverId}:${workspaceIds[0]}`,
+      });
     }
 
     const adaptiveTheme = await runAdaptiveThemeRegression(artifactDir);

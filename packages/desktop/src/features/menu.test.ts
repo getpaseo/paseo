@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { reloadActiveBrowserOrWindow } from "./menu.js";
+import { buildApplicationMenuTemplate, reloadActiveBrowserOrWindow } from "./menu.js";
+
+it.runIf(process.platform !== "darwin")("keeps the Window > Close action without Ctrl+W", () => {
+  const template = buildApplicationMenuTemplate({ onNewWindow: () => {} }, false);
+  const windowMenu = template.find((item) => item.label === "Window");
+  const closeItem = windowMenu?.submenu?.find((item) => item.role === "close");
+
+  expect(closeItem).toMatchObject({ role: "close", accelerator: "", registerAccelerator: false });
+});
 
 class FakeWebContents {
   public readonly reloads: string[] = [];
