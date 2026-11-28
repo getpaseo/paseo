@@ -14,6 +14,7 @@ import type {
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
+  ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
 import { sendPreparedPromptToAgent } from "./agent-prompt.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
@@ -3936,4 +3937,310 @@ describe("plugin provider tool policy", () => {
     expect(result.opened).toHaveLength(1);
     expect(result.opened[0]).toMatchObject({ config: { toolPolicy } });
   });
+});
+
+test("lazily connects command-backed plugin providers for session listing", async () => {
+  const logger = createTestLogger();
+  const cwd = tmpdir();
+  let listableStatusCalls = 0;
+  let listableConnects = 0;
+  let missingConnects = 0;
+  let noListConnects = 0;
+  let gatedAvailable = false;
+  let gatedConnects = 0;
+
+  const listableHarness = createProviderHarness({
+    capabilities: ["prompt.message", "session.list"],
+    handleInput: async (input, emit) => {
+      if (input.type !== "sessions") return false;
+      emit({
+        type: "sessions",
+        requestId: input.requestId,
+        sessions: [
+          {
+            persistence: { version: 1, data: { sessionId: "native-lazy-1" } },
+            cwd,
+            title: "Lazy listed session",
+            updatedAt: "2026-04-01T00:00:00.000Z",
+          },
+        ],
+      });
+      return true;
+    },
+  });
+  const noListHarness = createProviderHarness({
+    capabilities: ["prompt.message"],
+  });
+  const gatedHarness = createProviderHarness({
+    capabilities: ["prompt.message", "session.list"],
+    handleInput: async (input, emit) => {
+      if (input.type !== "sessions") return false;
+      emit({
+        type: "sessions",
+        requestId: input.requestId,
+        sessions: [
+          {
+            persistence: { version: 1, data: { sessionId: "native-gated-1" } },
+            cwd,
+            title: "Gated session",
+            updatedAt: "2026-04-02T00:00:00.000Z",
+          },
+        ],
+      });
+      return true;
+    },
+  });
+
+  const listableRegistration: ProviderRegistration = {
+    ...listableHarness.registration,
+    id: "lazy-listable",
+    label: "Lazy Listable",
+    command: [process.execPath, "-e", ""],
+    async status() {
+      listableStatusCalls += 1;
+      await nextTurn();
+      return { available: true };
+    },
+    async connect(request) {
+      listableConnects += 1;
+      return listableHarness.registration.connect(request);
+    },
+  };
+  const missingRegistration: ProviderRegistration = {
+    id: "lazy-missing",
+    label: "Lazy Missing",
+    command: [join(cwd, `paseo-missing-binary-${process.pid}`)],
+    async connect() {
+      missingConnects += 1;
+      throw new Error("should not connect when executable is missing");
+    },
+  };
+  const noListRegistration: ProviderRegistration = {
+    ...noListHarness.registration,
+    id: "lazy-no-list",
+    label: "Lazy No List",
+    command: [process.execPath, "-e", ""],
+    async connect(request) {
+      noListConnects += 1;
+      return noListHarness.registration.connect(request);
+    },
+  };
+  const gatedRegistration: ProviderRegistration = {
+    ...gatedHarness.registration,
+    id: "lazy-gated",
+    label: "Lazy Gated",
+    command: [process.execPath, "-e", ""],
+    async status() {
+      return gatedAvailable
+        ? { available: true }
+        : { available: false, diagnostic: "Sign in first" };
+    },
+    async connect(request) {
+      gatedConnects += 1;
+      return gatedHarness.registration.connect(request);
+    },
+  };
+
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([
+    listableRegistration,
+    missingRegistration,
+    noListRegistration,
+    gatedRegistration,
+  ]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const clients = {
+    "lazy-listable": registry["lazy-listable"].createClient(logger),
+    "lazy-missing": registry["lazy-missing"].createClient(logger),
+    "lazy-no-list": registry["lazy-no-list"].createClient(logger),
+    "lazy-gated": registry["lazy-gated"].createClient(logger),
+  };
+  const manager = new AgentManager({
+    logger,
+    clients,
+    providerDefinitions: {
+      "lazy-listable": registry["lazy-listable"],
+      "lazy-missing": registry["lazy-missing"],
+      "lazy-no-list": registry["lazy-no-list"],
+      "lazy-gated": registry["lazy-gated"],
+    },
+  });
+
+  try {
+    expect(clients["lazy-listable"].capabilities.supportsSessionListing).toBe(true);
+    expect(clients["lazy-no-list"].capabilities.supportsSessionListing).toBe(true);
+    expect(listableConnects).toBe(0);
+    expect(noListConnects).toBe(0);
+
+    // Concurrent cold listings share one availability probe and connection attempt.
+    const [listing, concurrentListing] = await Promise.all([
+      manager.listImportableSessions({ limit: 20 }),
+      manager.listImportableSessions({ limit: 20 }),
+    ]);
+    for (const result of [listing, concurrentListing]) {
+      expect(result.providerErrors).toEqual([]);
+      expect(result.sessions).toEqual([
+        expect.objectContaining({
+          provider: "lazy-listable",
+          cwd,
+          title: "Lazy listed session",
+        }),
+      ]);
+    }
+    expect(listableStatusCalls).toBe(1);
+    expect(listableConnects).toBe(1);
+    expect(missingConnects).toBe(0);
+    expect(noListConnects).toBe(1);
+    expect(gatedConnects).toBe(0);
+    expect(clients["lazy-listable"].capabilities.supportsSessionListing).toBe(true);
+    expect(clients["lazy-no-list"].capabilities.supportsSessionListing).toBe(false);
+
+    // Once an unavailable provider becomes available, cold listing connects and returns its rows.
+    gatedAvailable = true;
+    const afterSignIn = await manager.listImportableSessions({ limit: 20 });
+    expect(afterSignIn.providerErrors).toEqual([]);
+    expect(afterSignIn.sessions).toEqual([
+      expect.objectContaining({
+        provider: "lazy-gated",
+        cwd,
+        title: "Gated session",
+      }),
+      expect.objectContaining({
+        provider: "lazy-listable",
+        cwd,
+        title: "Lazy listed session",
+      }),
+    ]);
+    expect(listableConnects).toBe(1);
+    expect(noListConnects).toBe(1);
+    expect(gatedConnects).toBe(1);
+    expect(noListHarness.inputs).toEqual([]);
+  } finally {
+    await plugins.shutdown();
+  }
+
+  expect(clients["lazy-listable"].capabilities.supportsSessionListing).toBe(false);
+  await expect(clients["lazy-missing"].listImportableSessions?.()).rejects.toThrow(
+    "Provider runtime is closed",
+  );
+});
+
+test("coalesces cold listings during a concurrent launch-wrap connection", async () => {
+  const statusStarted = Promise.withResolvers<void>();
+  const finishStatus = Promise.withResolvers<ProviderStatus>();
+  const connectionStarted = Promise.withResolvers<void>();
+  const finishConnection = Promise.withResolvers<void>();
+  const unavailable: ProviderStatus = { available: false, diagnostic: "Sign in first" };
+  const harness = createProviderHarness({
+    capabilities: ["prompt.message", "session.list", "session.launch_wrap"],
+    async handleInput(input) {
+      throw new Error(`Unexpected provider input: ${input.type}`);
+    },
+  });
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  registry.replace([
+    {
+      ...harness.registration,
+      command: [process.execPath],
+      launchWrap: true,
+      status() {
+        statusStarted.resolve();
+        return finishStatus.promise;
+      },
+      async connect(request) {
+        connectionStarted.resolve();
+        await finishConnection.promise;
+        return harness.registration.connect(request);
+      },
+    },
+  ]);
+  const client = registry.clients()[harness.registration.id]!;
+  try {
+    const first = client.listImportableSessions!();
+    await statusStarted.promise;
+    const wrap = client.requireLaunchWrap!();
+    await connectionStarted.promise;
+    const second = client.listImportableSessions!();
+
+    finishStatus.resolve(unavailable);
+    finishConnection.resolve();
+    await Promise.all([
+      expect(Promise.all([first, second])).resolves.toEqual([[], []]),
+      expect(wrap).resolves.toBeUndefined(),
+    ]);
+    expect(harness.inputs).toEqual([]);
+  } finally {
+    finishStatus.resolve(unavailable);
+    finishConnection.resolve();
+    await registry.shutdown();
+  }
+});
+
+test("cold listing surfaces status() failures and does not block shutdown", async () => {
+  const logger = createTestLogger();
+  let resolveHangingStatus: ((value: { available: true }) => void) | undefined;
+  let hangingConnects = 0;
+
+  const failingRegistration: ProviderRegistration = {
+    id: "lazy-status-error",
+    label: "Lazy Status Error",
+    command: [process.execPath, "-e", ""],
+    async status() {
+      throw new Error("Plugin RPC timed out");
+    },
+    async connect() {
+      throw new Error("should not connect after status() failure");
+    },
+  };
+  const hangingRegistration: ProviderRegistration = {
+    id: "lazy-status-hang",
+    label: "Lazy Status Hang",
+    command: [process.execPath, "-e", ""],
+    status() {
+      return new Promise((resolve) => {
+        resolveHangingStatus = resolve;
+      });
+    },
+    async connect() {
+      hangingConnects += 1;
+      throw new Error("should not connect after shutdown");
+    },
+  };
+
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([failingRegistration, hangingRegistration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const clients = {
+    "lazy-status-error": registry["lazy-status-error"].createClient(logger),
+    "lazy-status-hang": registry["lazy-status-hang"].createClient(logger),
+  };
+  const manager = new AgentManager({
+    logger,
+    clients,
+    providerDefinitions: {
+      "lazy-status-error": registry["lazy-status-error"],
+      "lazy-status-hang": registry["lazy-status-hang"],
+    },
+  });
+
+  const errorListing = await manager.listImportableSessions({
+    limit: 20,
+    providerFilter: new Set(["lazy-status-error"]),
+  });
+  expect(errorListing.sessions).toEqual([]);
+  expect(errorListing.providerErrors).toEqual([
+    {
+      provider: "lazy-status-error",
+      message: "Plugin RPC timed out",
+    },
+  ]);
+
+  const hangingListing = clients["lazy-status-hang"].listImportableSessions?.();
+  await expect.poll(() => resolveHangingStatus, { timeout: 2_000 }).toBeDefined();
+
+  // Shutdown must complete without waiting on an in-flight cold status() probe.
+  await plugins.shutdown();
+  resolveHangingStatus?.({ available: true });
+  await expect(hangingListing).rejects.toThrow("Provider runtime is closed");
+  expect(hangingConnects).toBe(0);
 });
