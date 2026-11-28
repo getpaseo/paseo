@@ -34,6 +34,26 @@ const noRawPressable = {
   },
 };
 
+export const NO_RAW_PORTAL_MESSAGE =
+  "@gorhom/portal's Portal re-mounts its children under the host, so whatever owns presses " +
+  "above the call site (a plugin embed's key focus) never hears them. Use Portal from " +
+  "@/components/ui/portal, which carries the focus owner across.";
+
+const noRawPortal = {
+  create(context) {
+    return {
+      ImportDeclaration(node) {
+        if (node.source.value !== "@gorhom/portal") return;
+        for (const specifier of node.specifiers) {
+          if (specifier.type === "ImportSpecifier" && specifier.imported.name === "Portal") {
+            context.report({ node: specifier, message: NO_RAW_PORTAL_MESSAGE });
+          }
+        }
+      },
+    };
+  },
+};
+
 const SYNC_IO_MODULES = new Set(["fs", "node:fs", "child_process", "node:child_process"]);
 
 function propertyName(node) {
@@ -157,6 +177,7 @@ const noSyncIo = {
 export default {
   meta: { name: "paseo" },
   rules: {
+    "no-raw-portal": noRawPortal,
     "no-raw-pressable": noRawPressable,
     "no-sync-io": noSyncIo,
   },

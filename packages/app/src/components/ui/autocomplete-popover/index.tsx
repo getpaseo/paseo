@@ -6,7 +6,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { Portal } from "@gorhom/portal";
+import { Portal } from "@/components/ui/portal";
 import { useAnimatedReaction, useAnimatedRef } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import {

@@ -1,12 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  type ComponentType,
-} from "react";
+import { createContext, useCallback, useContext, useMemo, type ComponentType } from "react";
 import { View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -22,8 +14,7 @@ import {
 import { DropdownMenu, DropdownMenuContent } from "@/components/ui/dropdown-menu";
 import type { PanelIconProps } from "@/panels/panel-registry";
 import { getPanelRegistration } from "@/panels/panel-registry";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useViewedAgent } from "@/timeline/use-viewed-agent";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { WorkspacePaneContent } from "@/screens/workspace/workspace-pane-content";
@@ -139,7 +130,7 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
   );
   const exit = useMemo<SheetPaneExit>(() => ({ close: onClose, opener }), [onClose, opener]);
   const isPaneFocused = isTop && host.isWorkspaceFocused;
-  useViewedSheetAgent({
+  useViewedAgent({
     sourceId: `${workspaceKey}:sheet:${tab.tabId}`,
     serverId: host.serverId,
     agentId: isPaneFocused && tab.target.kind === "agent" ? tab.target.agentId : null,
@@ -197,35 +188,6 @@ function SheetFileMenu({ path, onClose }: { path: string; onClose: () => void })
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
-
-/**
- * The agent of the sheet on top is viewed, alongside the pane under it: its timeline catches up
- * and stays live. The workspace only publishes the agents of its panes.
- */
-function useViewedSheetAgent({
-  sourceId,
-  serverId,
-  agentId,
-}: {
-  sourceId: string;
-  serverId: string;
-  agentId: string | null;
-}) {
-  const viewedTimelineSync = useSessionStore(
-    (state) => state.sessions[serverId]?.viewedTimelineSync ?? null,
-  );
-  useEffect(() => {
-    if (!agentId) return;
-    void getHostRuntimeStore()
-      .prepareAgentTimeline(serverId, agentId)
-      .catch(() => undefined);
-  }, [agentId, serverId]);
-  useLayoutEffect(() => {
-    if (!agentId || !viewedTimelineSync) return;
-    viewedTimelineSync.replaceVisibleAgentIds(sourceId, [agentId]);
-    return () => viewedTimelineSync.replaceVisibleAgentIds(sourceId, []);
-  }, [agentId, sourceId, viewedTimelineSync]);
 }
 
 /**

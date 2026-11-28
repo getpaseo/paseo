@@ -1,0 +1,7 @@
+{
+  "id": "agent-timeline-example",
+  "requirements": {
+    "paseo": ">=0.16.0"
+  },
+  "description": "An agent list beside an embedded agent timeline"
+}

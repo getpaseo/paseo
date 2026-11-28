@@ -34,7 +34,7 @@ import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ComposerControls, ControlTooltipHint } from "./composer-control";
 import { useModelPickerShortcut } from "./control-items";
-import { AgentSettingsDrawer } from "./agent-settings-drawer";
+import { AgentSettingsDrawer, type AgentSettingsDrawerModel } from "./agent-settings-drawer";
 import { AgentModeControl } from "./mode-control";
 import type { AgentSheetControls } from "./sheet-home";
 
@@ -120,7 +120,10 @@ function useModelTriggerLabels(input: {
   const { modelLabel, thinkingLabel, glyphSize } = input;
   const measuredKey = `${glyphSize}\n${modelLabel}\n${thinkingLabel ?? ""}`;
   const [availableWidth, setAvailableWidth] = useState<number | undefined>(undefined);
-  const [fullWidth, setFullWidth] = useState<{ key: string; width: number } | null>(null);
+  const [fullWidth, setFullWidth] = useState<{
+    key: string;
+    width: number;
+  } | null>(null);
 
   const onFrameLayout = useCallback((event: LayoutChangeEvent) => {
     const width = readMeasuredWidth(event);
@@ -206,6 +209,41 @@ export function CompactModelSheet({
     onClose?.();
   }, [onClose, rootBrowser]);
 
+  const drawerModel = useMemo<AgentSettingsDrawerModel>(
+    () => ({
+      providers: availableProviders,
+      selectedProvider,
+      selectedModel,
+      selectedModelLabel: rootBrowser.selectedModelLabel,
+      canSwitchProvider,
+      serverId,
+      profiles,
+      onSelect,
+      onApplyProfile,
+      onEditProfiles,
+      onCreateProfile,
+      onEditProfile,
+      onRetryProvider,
+      isRetryingProvider,
+    }),
+    [
+      availableProviders,
+      canSwitchProvider,
+      isRetryingProvider,
+      onApplyProfile,
+      onCreateProfile,
+      onEditProfile,
+      onEditProfiles,
+      onRetryProvider,
+      onSelect,
+      profiles,
+      rootBrowser.selectedModelLabel,
+      selectedModel,
+      selectedProvider,
+      serverId,
+    ],
+  );
+
   const toggle = useCallback(() => {
     if (isOpen) {
       close();
@@ -237,23 +275,10 @@ export function CompactModelSheet({
           visible={isOpen}
           onClose={close}
           contextBridge={contextBridge}
-          providers={availableProviders}
-          selectedProvider={selectedProvider}
-          selectedModel={selectedModel}
-          selectedModelLabel={rootBrowser.selectedModelLabel}
-          canSwitchProvider={canSwitchProvider}
-          serverId={serverId}
           disabled={disabled}
           controls={controls}
           pluginItems={pluginItems}
-          profiles={profiles}
-          onSelect={onSelect}
-          onApplyProfile={onApplyProfile}
-          onEditProfiles={onEditProfiles}
-          onCreateProfile={onCreateProfile}
-          onEditProfile={onEditProfile}
-          onRetryProvider={onRetryProvider}
-          isRetryingProvider={isRetryingProvider}
+          model={drawerModel}
         />
       ) : (
         <NarrowPaneModelDialog

@@ -59,8 +59,8 @@ export function AgentSheetHome({
 }: {
   controls: AgentSheetControls;
   disabled: boolean;
-  /** The Model row. */
-  topCard: ReactNode;
+  /** The Model row; null when the host hides the model picker. */
+  topCard: ReactNode | null;
   /** Drawn after the controls, such as plugin items. */
   footer?: ReactNode;
   onOpenSelect: (controlId: string) => void;
@@ -85,7 +85,7 @@ export function AgentSheetHome({
     >
       {/* Themed insets sit on a View: the sheet scroller drops a themed contentContainerStyle on web. */}
       <View style={styles.content}>
-        <View style={styles.block}>{topCard}</View>
+        {topCard ? <View style={styles.block}>{topCard}</View> : null}
         {blocks.map((block) => (
           <HomeBlock
             key={blockKey(block)}
@@ -356,7 +356,11 @@ export function SelectChoiceRow({
 }): ReactElement {
   const { pending, run } = usePendingRun();
   const option = useMemo<ComboboxOption>(
-    () => ({ id: choice.value, label: choice.label, description: choice.description }),
+    () => ({
+      id: choice.value,
+      label: choice.label,
+      description: choice.description,
+    }),
     [choice],
   );
   const selected = option.id === (item.value ?? "");
@@ -365,7 +369,12 @@ export function SelectChoiceRow({
     onPicked?.();
   }, [item, onPicked, option.id, run]);
   if (item.renderOption) {
-    return item.renderOption({ option, selected, active: false, onPress: handlePress });
+    return item.renderOption({
+      option,
+      selected,
+      active: false,
+      onPress: handlePress,
+    });
   }
   return (
     <SheetRadioRow

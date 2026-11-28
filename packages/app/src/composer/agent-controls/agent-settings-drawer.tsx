@@ -33,20 +33,14 @@ import {
 const SNAP_POINTS = ["80%", "90%"];
 const ESCAPE_KEYS = ["Escape"] as const;
 
-export interface AgentSettingsDrawerProps {
-  visible: boolean;
-  onClose: () => void;
-  contextBridge: ContextBridge | null;
+/** The drawer's Model row and page. */
+export interface AgentSettingsDrawerModel {
   providers: readonly ProviderSelectorProvider[];
   selectedProvider: string;
   selectedModel: string;
   selectedModelLabel: string;
   canSwitchProvider: boolean;
   serverId: string | null;
-  disabled: boolean;
-  controls: AgentSheetControls;
-  /** Drawn below the controls on Home. */
-  pluginItems: ReactNode;
   profiles: AgentProfilePicker | null;
   onSelect: (provider: string, modelId: string) => void;
   onApplyProfile?: (profileId: string) => void;
@@ -57,6 +51,31 @@ export interface AgentSettingsDrawerProps {
   isRetryingProvider: boolean;
 }
 
+export interface AgentSettingsDrawerProps {
+  visible: boolean;
+  onClose: () => void;
+  contextBridge: ContextBridge | null;
+  disabled: boolean;
+  controls: AgentSheetControls;
+  /** Drawn below the controls on Home. */
+  pluginItems: ReactNode;
+  /** Null when the host hides the model picker: Home has no Model row. */
+  model: AgentSettingsDrawerModel | null;
+}
+
+/** Stands in for a hidden model picker; Home then draws no Model row to reach it. */
+const NO_MODEL: AgentSettingsDrawerModel = {
+  providers: [],
+  selectedProvider: "",
+  selectedModel: "",
+  selectedModelLabel: "",
+  canSwitchProvider: false,
+  serverId: null,
+  profiles: null,
+  onSelect: () => {},
+  isRetryingProvider: false,
+};
+
 /**
  * The compact agent settings: one drawer whose page changes in place. Home lays out every control;
  * Model (which also holds Profiles) and a long select each take the drawer over with a way back
@@ -66,24 +85,27 @@ export function AgentSettingsDrawer({
   visible,
   onClose,
   contextBridge,
-  providers,
-  selectedProvider,
-  selectedModel,
-  selectedModelLabel,
-  canSwitchProvider,
-  serverId,
   disabled,
   controls,
   pluginItems,
-  profiles,
-  onSelect,
-  onApplyProfile,
-  onEditProfiles,
-  onCreateProfile,
-  onEditProfile,
-  onRetryProvider,
-  isRetryingProvider,
+  model,
 }: AgentSettingsDrawerProps) {
+  const {
+    providers,
+    selectedProvider,
+    selectedModel,
+    selectedModelLabel,
+    canSwitchProvider,
+    serverId,
+    profiles,
+    onSelect,
+    onApplyProfile,
+    onEditProfiles,
+    onCreateProfile,
+    onEditProfile,
+    onRetryProvider,
+    isRetryingProvider,
+  } = model ?? NO_MODEL;
   const { t } = useTranslation();
   const [page, setPage] = useState<AgentSheetPage>(AGENT_SHEET_HOME);
   // Select pages search with this; the Model page keeps its own.
@@ -260,17 +282,19 @@ export function AgentSettingsDrawer({
     t,
   ]);
 
+  const hasModel = model !== null;
   const topCard = useMemo(
-    () => (
-      <AgentSheetTopCard
-        selectedProvider={selectedProvider}
-        serverId={serverId}
-        selectedModelLabel={selectedModelLabel}
-        disabled={disabled}
-        onOpenModel={openModel}
-      />
-    ),
-    [disabled, openModel, selectedModelLabel, selectedProvider, serverId],
+    () =>
+      hasModel ? (
+        <AgentSheetTopCard
+          selectedProvider={selectedProvider}
+          serverId={serverId}
+          selectedModelLabel={selectedModelLabel}
+          disabled={disabled}
+          onOpenModel={openModel}
+        />
+      ) : null,
+    [disabled, hasModel, openModel, selectedModelLabel, selectedProvider, serverId],
   );
 
   let body: ReactNode;
@@ -363,7 +387,9 @@ function AgentSheetTopCard({
         summaryLeading={summaryLeading}
         onPress={onOpenModel}
         disabled={disabled}
-        accessibilityLabel={t("modelSelector.selectedModel", { model: selectedModelLabel })}
+        accessibilityLabel={t("modelSelector.selectedModel", {
+          model: selectedModelLabel,
+        })}
         testID="agent-controls-model"
       />
     </SettingsCard>

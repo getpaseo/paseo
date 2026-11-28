@@ -13,6 +13,15 @@ import { createPluginClientStateSource } from "./client-state/source";
 import { pluginComposersSource } from "./composer-items/source";
 import type { InstalledPlugin } from "./types";
 
+const PluginInstallationContext = createContext<InstalledPlugin | null>(null);
+
+/** The installation whose surface is rendering, for host UI that acts on the plugin's host. */
+export function usePluginInstallation(): InstalledPlugin {
+  const plugin = useContext(PluginInstallationContext);
+  if (!plugin) throw new Error("Plugin host UI must render inside a plugin surface");
+  return plugin;
+}
+
 const PluginInstallationServerIdContext = createContext<string | undefined>(undefined);
 
 /** Host server ID for the enclosing plugin installation, or undefined outside a plugin surface. */
@@ -30,6 +39,23 @@ export function usePluginInstallationServerIdBridge() {
       </PluginInstallationServerIdContext.Provider>
     ),
     [serverId],
+  );
+}
+
+/** The installation and its host server ID, for host UI rendered inside a plugin surface. */
+function InstallationContexts({
+  plugin,
+  children,
+}: {
+  plugin: InstalledPlugin;
+  children: ReactNode;
+}) {
+  return (
+    <PluginInstallationContext.Provider value={plugin}>
+      <PluginInstallationServerIdContext.Provider value={plugin.serverId}>
+        {children}
+      </PluginInstallationServerIdContext.Provider>
+    </PluginInstallationContext.Provider>
   );
 }
 
@@ -52,7 +78,7 @@ export function PluginInstallationProvider({
     [plugin.serverId, surfaceState],
   );
   return (
-    <PluginInstallationServerIdContext.Provider value={plugin.serverId}>
+    <InstallationContexts plugin={plugin}>
       <QueryClientProvider client={plugin.queryClient}>
         <PaseoApiProvider paseo={getPluginClientApi(plugin).paseo}>
           <PluginRpcProvider invoke={plugin.invoke} subscribe={plugin.subscribe}>
@@ -64,6 +90,6 @@ export function PluginInstallationProvider({
           </PluginRpcProvider>
         </PaseoApiProvider>
       </QueryClientProvider>
-    </PluginInstallationServerIdContext.Provider>
+    </InstallationContexts>
   );
 }
