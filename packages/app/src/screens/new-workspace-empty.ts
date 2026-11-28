@@ -15,6 +15,7 @@ export interface CreateEmptyWorkspaceInput {
     withInitialAgent: boolean;
   }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
   serverId: string;
+  retireWorkspace: (workspaceId: string) => Promise<void>;
   navigate: (serverId: string, workspaceId: string) => void;
 }
 
@@ -26,5 +27,6 @@ export async function runCreateEmptyWorkspace(input: CreateEmptyWorkspaceInput):
     attachments: [],
     withInitialAgent: false,
   });
+  await input.retireWorkspace(ensuredWorkspace.id);
   navigate(serverId, ensuredWorkspace.id);
 }

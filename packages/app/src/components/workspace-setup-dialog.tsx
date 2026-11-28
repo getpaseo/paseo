@@ -1,4 +1,5 @@
 import { KeyboardTranslateView } from "@/keyboard/shift";
+import { draftCreations } from "@/composer/draft/creation-attempts";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -12,7 +13,6 @@ import { Composer } from "@/composer";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { ICON_SIZE } from "@/styles/theme";
 import { useToast } from "@/contexts/toast-context";
-import { draftCreationKey } from "@/composer/draft/creation-key";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -85,28 +85,37 @@ function buildChatDraftComposerArgs({
 }
 
 async function callWorkspaceCreation({
+  serverId,
   creationMethod,
   connectedClient,
   creationId,
   worktreeSlug,
   input,
 }: {
+  serverId: string;
   creationMethod: "create_worktree" | "open_project";
   connectedClient: DaemonClient;
   creationId: string;
   worktreeSlug: string;
   input: { cwd: string; agent?: CreateWorkspaceRequestOptions["agent"] };
 }) {
-  const request: Omit<CreateWorkspaceRequestOptions, "idempotencyKey"> = {
+  const retainedSlug =
+    creationMethod === "create_worktree"
+      ? await draftCreations.worktreeSlug({ serverId, draftId: creationId, proposed: worktreeSlug })
+      : undefined;
+  const request: CreateWorkspaceRequestOptions = {
     agent: input.agent,
     source:
       creationMethod === "create_worktree"
-        ? { kind: "worktree", cwd: input.cwd, worktreeSlug }
+        ? { kind: "worktree", cwd: input.cwd, worktreeSlug: retainedSlug }
         : { kind: "directory", path: input.cwd },
   };
-  return connectedClient.createWorkspace({
-    ...request,
-    idempotencyKey: draftCreationKey(creationId, request),
+  return draftCreations.submit({
+    serverId,
+    draftId: creationId,
+    kind: "workspace",
+    request,
+    send: (options) => connectedClient.createWorkspace({ ...request, ...options }),
   });
 }
 
@@ -264,6 +273,7 @@ export function WorkspaceSetupDialog() {
 
       const connectedClient = withConnectedClient();
       const payload = await callWorkspaceCreation({
+        serverId: pendingWorkspaceSetup.serverId,
         creationMethod: pendingWorkspaceSetup.creationMethod,
         creationId: pendingWorkspaceSetup.creationId,
         worktreeSlug: pendingWorkspaceSetup.worktreeSlug,

@@ -39,6 +39,7 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { applyMetadataPatch } from "@/composer/draft/metadata";
 import { hasDraftContent } from "@/composer/draft/input-draft-core";
+import { generateDraftId } from "@/stores/draft-keys";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -65,6 +66,13 @@ interface DraftStoreActions {
   /** Plugin metadata the draft will create its agent with; see `composer/draft/metadata`. */
   patchDraftMetadata: (input: { draftKey: string; patch: Record<string, JsonValue> }) => void;
   clearDraftMetadata: (input: { draftKey: string }) => void;
+  getDraftCreationId: (input: { serverId: string; draftKey: string }) => string | undefined;
+  ensureDraftCreationId: (input: {
+    serverId: string;
+    draftKey: string;
+    proposedId: string;
+  }) => string;
+  clearDraftCreationId: (input: { serverId: string; draftKey: string }) => void;
   attachWorkspaceFile: (input: {
     draftKey: string;
     attachment: WorkspaceFileComposerAttachment;
@@ -79,10 +87,11 @@ interface DraftStoreRuntimeState {
   /** Counts `replaceDraftText`, so a mounted input knows to show text it did not type. */
   textReplacementRequestByDraftKey: Record<string, number>;
   /**
-   * Kept beside the prompt so a composer that remounts finds it. Not persisted, and not cleared
+   * Kept beside the prompt so a composer that remounts finds it. Persisted, and not cleared
    * with an emptied prompt: a plugin's choice outlives the text until the draft is sent.
    */
   metadataByDraftKey: Record<string, Record<string, JsonValue>>;
+  creationIdByDraftKey: Record<string, string | null>;
 }
 
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
@@ -91,6 +100,62 @@ let gcScheduled = false;
 const draftPersistStorage = createDraftPersistStorage(
   createValidatedPersistStorage(AsyncStorage, PersistedDraftStoreSchema),
 );
+
+let finishInitialHydration: () => void;
+let hydrationError: unknown;
+const initialHydration = new Promise<void>((resolve) => {
+  finishInitialHydration = resolve;
+});
+
+export async function prepareDraftCreation(input: {
+  serverId: string;
+  draftKey: string;
+  proposedId: string;
+  reclaimRetired?: boolean;
+}): Promise<string> {
+  await initialHydration;
+  if (hydrationError !== undefined) {
+    await useDraftStore.persist.rehydrate();
+    if (hydrationError !== undefined) throw hydrationError;
+  }
+  const store = useDraftStore.getState();
+  const retired =
+    store.creationIdByDraftKey[JSON.stringify([input.serverId, input.draftKey])] === null;
+  const proposedId = retired && !input.reclaimRetired ? generateDraftId() : input.proposedId;
+  const id = store.ensureDraftCreationId({ ...input, proposedId });
+  await draftPersistStorage.checkpoint("paseo-drafts", {
+    state: persistedDraftState(useDraftStore.getState()),
+    version: DRAFT_STORE_VERSION,
+  });
+  return id;
+}
+
+/** Called under the creation admission lock, so a late terminal cannot detach this start. */
+export async function claimDraftCreation(input: {
+  serverId: string;
+  draftKey: string;
+  expectedId: string;
+}): Promise<void> {
+  const actual = await prepareDraftCreation({
+    serverId: input.serverId,
+    draftKey: input.draftKey,
+    proposedId: input.expectedId,
+    reclaimRetired: true,
+  });
+  if (actual !== input.expectedId)
+    throw new Error(
+      "The draft now belongs to another start. Submit it again from the current draft.",
+    );
+}
+
+function persistedDraftState({
+  drafts,
+  createModalDraft,
+  metadataByDraftKey,
+  creationIdByDraftKey,
+}: DraftStore) {
+  return { drafts, createModalDraft, metadataByDraftKey, creationIdByDraftKey };
+}
 
 export function flushDraftPersistStorage(): Promise<void> {
   return draftPersistStorage?.flush() ?? Promise.resolve();
@@ -281,6 +346,32 @@ export const useDraftStore = create<DraftStore>()(
       attachmentFocusRequestByDraftKey: {},
       textReplacementRequestByDraftKey: {},
       metadataByDraftKey: {},
+      creationIdByDraftKey: {},
+
+      getDraftCreationId: (input) => {
+        const ids = get().creationIdByDraftKey;
+        const scoped = ids[JSON.stringify([input.serverId, input.draftKey])];
+        // COMPAT(hostScopedDraftCreationIds): added in v0.17.3, remove after 2027-05-27.
+        // Missing host entries inherit older shared IDs; null retires one host's claim only.
+        return scoped === null ? undefined : (scoped ?? ids[input.draftKey] ?? undefined);
+      },
+      ensureDraftCreationId: (input) => {
+        const scopeKey = JSON.stringify([input.serverId, input.draftKey]);
+        const id = get().getDraftCreationId(input) ?? input.proposedId;
+        if (get().creationIdByDraftKey[scopeKey] !== id) {
+          set((state) => ({
+            creationIdByDraftKey: { ...state.creationIdByDraftKey, [scopeKey]: id },
+          }));
+        }
+        return id;
+      },
+      clearDraftCreationId: (input) =>
+        set((state) => ({
+          creationIdByDraftKey: {
+            ...state.creationIdByDraftKey,
+            [JSON.stringify([input.serverId, input.draftKey])]: null,
+          },
+        })),
 
       getDraftInput: (draftKey) => {
         const record = get().drafts[draftKey];
@@ -489,14 +580,16 @@ export const useDraftStore = create<DraftStore>()(
       name: "paseo-drafts",
       version: DRAFT_STORE_VERSION,
       storage: draftPersistStorage,
-      partialize: ({ drafts, createModalDraft }) => ({ drafts, createModalDraft }),
+      partialize: persistedDraftState,
       migrate: (state) =>
         migratePersistedState(state, {
           migrateLegacyImages,
           nowMs: Date.now(),
         }),
       onRehydrateStorage: () => {
-        return () => {
+        return (_state, error) => {
+          hydrationError = error;
+          finishInitialHydration();
           void migrateAllLegacyDrafts();
           scheduleAttachmentGc();
         };

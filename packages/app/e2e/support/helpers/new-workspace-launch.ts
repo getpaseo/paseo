@@ -1,7 +1,8 @@
+import { daemonWsRoutePattern } from "./daemon-port";
 import { expect, type Page } from "@playwright/test";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { DEFAULT_TERMINAL_PROFILES } from "@getpaseo/protocol/terminal-profiles";
-import { connectNewWorkspaceDaemonClient } from "./new-workspace";
+import { connectNewWorkspaceDaemonClient, loadSessionMessageReaders } from "./new-workspace";
 import { waitForTerminalContent } from "./terminal-perf";
 
 export type { TerminalProfile };
@@ -190,4 +191,83 @@ export async function expectWorkspaceOpensWithTerminalTab(page: Page): Promise<s
     throw new Error(`Could not parse terminal id from tab testID: ${testId}`);
   }
   return terminalId;
+}
+
+export async function rejectTerminalCreation(page: Page): Promise<void> {
+  const frames = await loadSessionMessageReaders();
+  // Reject only the terminal RPC; workspace provisioning and subsequent chat use the real daemon.
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((frame) => {
+      const request = frames.client(frame);
+      if (request?.type === "create_terminal_request") {
+        browser.send(
+          JSON.stringify({
+            type: "session",
+            message: {
+              type: "create_terminal_response",
+              payload: {
+                requestId: request.requestId,
+                terminal: null,
+                error: "Terminal creation failed for test",
+              },
+            },
+          }),
+        );
+      } else server.send(frame);
+    });
+    server.onMessage((frame) => browser.send(frame));
+  });
+}
+
+export async function holdTerminalCreationResponse(page: Page) {
+  const frames = await loadSessionMessageReaders();
+  let resolveResponse!: () => void;
+  const response = new Promise<void>((resolve) => {
+    resolveResponse = resolve;
+  });
+  let forward: (() => void) | undefined;
+  let released = false;
+  await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
+    const server = browser.connectToServer();
+    browser.onMessage((frame) => server.send(frame));
+    server.onMessage((frame) => {
+      if (!released && frames.server(frame)?.type === "create_terminal_response") {
+        forward = () => browser.send(frame);
+        resolveResponse();
+      } else browser.send(frame);
+    });
+  });
+  return {
+    wait: () => response,
+    release: () => {
+      released = true;
+      forward?.();
+      forward = undefined;
+    },
+  };
+}
+
+type ImageReadGateWindow = typeof globalThis & {
+  imageReadPaused?: boolean;
+  resumeImageRead?: () => void;
+};
+export async function pauseNextImageRead(page: Page) {
+  await page.evaluate(() => {
+    const runtime = globalThis as ImageReadGateWindow;
+    const original = Blob.prototype.arrayBuffer;
+    const gate = new Promise<void>((resolve) => {
+      runtime.resumeImageRead = resolve;
+    });
+    Blob.prototype.arrayBuffer = function () {
+      Blob.prototype.arrayBuffer = original;
+      runtime.imageReadPaused = true;
+      return gate.then(() => original.call(this));
+    };
+  });
+  return {
+    wait: () =>
+      page.waitForFunction(() => (globalThis as ImageReadGateWindow).imageReadPaused === true),
+    release: () => page.evaluate(() => (globalThis as ImageReadGateWindow).resumeImageRead?.()),
+  };
 }

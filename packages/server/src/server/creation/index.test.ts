@@ -1,6 +1,6 @@
 import pino from "pino";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -10,6 +10,10 @@ import type {
   WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
 import { CreationService, type CreationInput } from "./index.js";
+
+import { UnknownBranchError, BranchAlreadyCheckedOutError } from "../../utils/worktree.js";
+import { MissingCheckoutTargetError } from "../resolve-worktree-creation-intent.js";
+import { WorktreeRequestError } from "../worktree-errors.js";
 
 const silentLogger = pino({ level: "silent" });
 const directories: string[] = [];
@@ -321,4 +325,241 @@ test("observer failures are logged without failing creation", async () => {
       err: expect.objectContaining({ message: "delivery failed" }),
     }),
   );
+});
+
+test.each([
+  { kind: "workspace", phase: "accepted" },
+  { kind: "workspace", phase: "workspace_ready" },
+  { kind: "agent", phase: "accepted" },
+] as const)(
+  "settles an orphaned $kind/$phase receipt with no in-flight stage after restart",
+  async ({ kind, phase }) => {
+    const f = await fixture();
+    const identity = createHash("sha256")
+      .update(JSON.stringify([kind, f.input.key]))
+      .digest("hex");
+    const snapshot = {
+      kind,
+      phase,
+      idempotencyKey: f.input.key,
+      revision: 1,
+      error: null,
+      workspaceId: workspace.id,
+      agentId: agent.id,
+      ...(phase === "workspace_ready" ? { workspace } : {}),
+    };
+    await writeFile(
+      join(f.directory, `${identity}.json`),
+      JSON.stringify({ fingerprint: "persisted", inFlight: null, snapshot }),
+    );
+    const updates: CreationSnapshot[] = [];
+    const subscription = await new CreationService(f.directory, silentLogger).subscribe(
+      kind,
+      f.input.key,
+      (update) => updates.push(update),
+    );
+    expect(subscription.snapshot).toMatchObject({
+      kind,
+      phase: "failed",
+      outcomeUnknown: true,
+      error: `${kind}_request_outcome_unknown`,
+      revision: 2,
+    });
+    expect(updates).toEqual([subscription.snapshot]);
+    subscription.unsubscribe();
+    const repeated = await new CreationService(f.directory, silentLogger).subscribe(
+      kind,
+      f.input.key,
+      () => {},
+    );
+    expect(repeated.snapshot).toEqual(subscription.snapshot);
+    repeated.unsubscribe();
+    expect(f.calls).toEqual([]);
+  },
+);
+
+test.each([
+  {
+    kind: "workspace",
+    phase: "prompt_started",
+    hasAgent: true,
+    hasPrompt: true,
+    inFlight: null,
+    expected: "completed",
+  },
+  {
+    kind: "agent",
+    phase: "prompt_started",
+    hasAgent: true,
+    hasPrompt: true,
+    inFlight: null,
+    expected: "completed",
+  },
+  {
+    kind: "workspace",
+    phase: "agent_ready",
+    hasAgent: true,
+    hasPrompt: false,
+    inFlight: null,
+    expected: "completed",
+  },
+  {
+    kind: "workspace",
+    phase: "workspace_ready",
+    hasAgent: false,
+    hasPrompt: false,
+    inFlight: null,
+    expected: "completed",
+  },
+  {
+    kind: "workspace",
+    phase: "agent_ready",
+    hasAgent: true,
+    hasPrompt: true,
+    inFlight: "prompt",
+    expected: "failed",
+  },
+] as const)(
+  "settles the saved $kind/$phase checkpoint as $expected (in-flight: $inFlight)",
+  async (checkpoint) => {
+    const f = await fixture();
+    const base = { ...f.input, hasAgent: checkpoint.hasAgent, hasPrompt: checkpoint.hasPrompt };
+    const input: CreationInput =
+      checkpoint.kind === "agent"
+        ? { ...base, kind: "agent", provision: undefined, readAgent: async () => agent }
+        : base;
+    if (!checkpoint.hasPrompt) {
+      input.createAgent = async (_id, _workspace, onReady) => {
+        f.calls.push("agent");
+        await onReady(agent);
+        return { agent, initialPromptStarted: false };
+      };
+    }
+    f.provider.resolve();
+    const completed = await f.service.create(input);
+    const calls = [...f.calls];
+    const identity = createHash("sha256")
+      .update(JSON.stringify([input.kind, input.key]))
+      .digest("hex");
+    const file = join(f.directory, `${identity}.json`);
+    const record = JSON.parse(await readFile(file, "utf8"));
+    record.inFlight = checkpoint.inFlight;
+    record.snapshot = { ...completed, phase: checkpoint.phase, revision: completed.revision - 1 };
+    await writeFile(file, JSON.stringify(record));
+    const restored = new CreationService(f.directory, silentLogger);
+    const updates: CreationSnapshot[] = [];
+    const subscription = await restored.subscribe(input.kind, input.key, (snapshot) =>
+      updates.push(snapshot),
+    );
+    expect(subscription.snapshot).toMatchObject({
+      phase: checkpoint.expected,
+      workspaceId: completed.workspaceId,
+      agentId: completed.agentId,
+    });
+    expect(subscription.snapshot?.outcomeUnknown === true).toBe(checkpoint.expected === "failed");
+    expect(updates).toEqual([subscription.snapshot]);
+    subscription.unsubscribe();
+    expect(await restored.create(input)).toEqual(subscription.snapshot);
+    expect(f.calls).toEqual(calls);
+    const replay = await new CreationService(f.directory, silentLogger).subscribe(
+      input.kind,
+      input.key,
+      () => {},
+    );
+    expect(replay.snapshot).toEqual(subscription.snapshot);
+    replay.unsubscribe();
+  },
+);
+
+test("validates committed resources before publishing an orphan as completed", async () => {
+  const f = await fixture();
+  f.provider.resolve();
+  await f.service.create(f.input);
+  const identity = createHash("sha256")
+    .update(JSON.stringify([f.input.kind, f.input.key]))
+    .digest("hex");
+  const file = join(f.directory, `${identity}.json`);
+  const record = JSON.parse(await readFile(file, "utf8"));
+  record.snapshot.phase = "prompt_started";
+  await writeFile(file, JSON.stringify(record));
+  const updates: CreationSnapshot[] = [];
+  const restored = new CreationService(f.directory, silentLogger, async () => {
+    throw new Error("Previously created agent no longer exists");
+  });
+  await expect(
+    restored.subscribe(f.input.kind, f.input.key, (snapshot) => updates.push(snapshot)),
+  ).rejects.toThrow("Previously created agent no longer exists");
+  expect(updates).toEqual([]);
+  expect(JSON.parse(await readFile(file, "utf8")).snapshot.phase).toBe("prompt_started");
+});
+
+test.each([
+  {
+    code: "unknown_branch",
+    error: new UnknownBranchError({ branchName: "deleted", cwd: "/project" }),
+  },
+  { code: "branch_already_checked_out", error: new BranchAlreadyCheckedOutError("main") },
+  { code: "missing_checkout_target", error: new MissingCheckoutTargetError() },
+  {
+    code: "unknown_branch",
+    error: new WorktreeRequestError({ code: "unknown_branch", message: "Unknown branch: deleted" }),
+  },
+])(
+  "keeps $code validation conclusively retryable after receipt reload ($error.name)",
+  async ({ code, error }) => {
+    const f = await fixture();
+    let valid = false;
+    let provisions = 0;
+    f.input.provision = async () => {
+      provisions += 1;
+      if (!valid) throw error;
+      return { workspace };
+    };
+    const failed = await f.service.create(f.input);
+    expect(failed).toMatchObject({
+      phase: "failed",
+      failedStage: "workspace",
+      outcomeUnknown: false,
+      errorCode: code,
+    });
+    expect(f.calls).toEqual([]);
+    const restored = new CreationService(f.directory, silentLogger);
+    const saved = await restored.subscribe(f.input.kind, f.input.key, () => {});
+    expect(saved.snapshot).toEqual(failed);
+    saved.unsubscribe();
+    valid = true;
+    f.provider.resolve();
+    expect(await restored.create(f.input)).toMatchObject({ phase: "completed", workspace, agent });
+    expect(provisions).toBe(2);
+    expect(f.calls).toEqual(["agent", "prompt"]);
+  },
+);
+
+test("does not treat an untyped branch code after partial provisioning as proof of rejection", async () => {
+  const f = await fixture();
+  let provisions = 0;
+  f.input.provision = async () => {
+    provisions += 1;
+    await writeFile(join(f.directory, "partial-checkout"), "partial worktree");
+    throw Object.assign(new Error("Checkout failed after writing"), { code: "unknown_branch" });
+  };
+  const failed = await f.service.create(f.input);
+  expect(failed).toMatchObject({ phase: "failed", outcomeUnknown: true });
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(failed);
+  expect(provisions).toBe(1);
+});
+
+test("preserves uncertainty when a validation error follows workspace registration", async () => {
+  const f = await fixture();
+  let exists = false;
+  f.input.exists = async (kind) => kind === "workspace" && exists;
+  f.input.provision = async () => {
+    exists = true;
+    throw new UnknownBranchError({ branchName: "deleted", cwd: "/project" });
+  };
+  expect(await f.service.create(f.input)).toMatchObject({
+    phase: "failed",
+    outcomeUnknown: true,
+    errorCode: "unknown_branch",
+  });
 });

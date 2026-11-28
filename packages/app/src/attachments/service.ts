@@ -167,33 +167,32 @@ export async function readAttachmentBytes(attachment: AttachmentMetadata): Promi
 export async function uploadImageAttachments(input: {
   client: ImageUploadClient;
   images: readonly AttachmentMetadata[] | undefined;
+  reuseUpload?: (
+    image: AttachmentMetadata,
+    upload: () => Promise<UploadedFileAttachment>,
+  ) => Promise<UploadedFileAttachment>;
 }): Promise<UploadedFileAttachment[] | undefined> {
-  if (!input.images || input.images.length === 0) {
-    return undefined;
-  }
-
+  if (!input.images || input.images.length === 0) return undefined;
   const uploaded: UploadedFileAttachment[] = [];
   for (const attachment of input.images) {
-    const fileName = resolveUploadedImageFileName(attachment);
-    const bytes = await readAttachmentBytes(attachment);
-    if (bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
-      throw new Error(i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName }));
-    }
-    const response = await input.client.uploadFile({
-      fileName,
-      mimeType: attachment.mimeType,
-      bytes,
-    });
-    if (response.error || !response.file) {
-      throw new Error(response.error ?? "Upload failed.");
-    }
-    uploaded.push({
-      ...response.file,
-      role: "image",
-    });
+    const upload = () => uploadImageAttachment(input.client, attachment);
+    uploaded.push(input.reuseUpload ? await input.reuseUpload(attachment, upload) : await upload());
   }
-
   return uploaded;
+}
+
+async function uploadImageAttachment(
+  client: ImageUploadClient,
+  attachment: AttachmentMetadata,
+): Promise<UploadedFileAttachment> {
+  const fileName = resolveUploadedImageFileName(attachment);
+  const bytes = await readAttachmentBytes(attachment);
+  if (bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
+    throw new Error(i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName }));
+  }
+  const response = await client.uploadFile({ fileName, mimeType: attachment.mimeType, bytes });
+  if (response.error || !response.file) throw new Error(response.error ?? "Upload failed.");
+  return { ...response.file, role: "image" };
 }
 
 export async function resolveAttachmentPreviewUrl(attachment: AttachmentMetadata): Promise<string> {

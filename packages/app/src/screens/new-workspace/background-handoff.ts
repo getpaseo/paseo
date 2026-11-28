@@ -25,31 +25,41 @@ export function handOffDraftMetadata(input: {
 }
 
 interface WorkspaceDraftCleanupInput {
+  serverId: string;
   draftId?: string;
+  sourceDraftId?: string;
   draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   draftContextScopeKey: string | null;
 }
 
-/** Capture ownership before workspace creation starts, not when its response arrives. */
-export function captureWorkspaceDraftCleanup(input: WorkspaceDraftCleanupInput): () => void {
-  const draftId = input.draftId?.trim() ?? "";
+/** Capture content before async preparation; bind the creation ID when preparation finishes. */
+export function captureWorkspaceDraftCleanup(
+  input: WorkspaceDraftCleanupInput,
+): (preparedDraftId?: string) => void {
+  const capturedSourceDraftId = input.sourceDraftId?.trim() || input.draftId?.trim() || "";
   const scopeKey = input.draftContextScopeKey ?? "";
   const draftVersion = useDraftStore.getState().drafts[input.draftKey]?.version;
-  const setup = useWorkspaceDraftSubmissionStore.getState().setupByDraftId[draftId];
+  const setup = useWorkspaceDraftSubmissionStore.getState().setupByDraftId[capturedSourceDraftId];
   const attachments = useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey];
 
-  return () => {
+  return (preparedDraftId = input.draftId) => {
+    const draftId = preparedDraftId?.trim() ?? "";
+    const sourceDraftId = capturedSourceDraftId || draftId;
+    const store = useDraftStore.getState();
+    if (store.getDraftCreationId(input) !== draftId) return;
+    // Completion releases admission even when newer input must remain for the next creation.
+    store.clearDraftCreationId(input);
     // These stores update independently. A context-only edit does not bump the text version.
     // Any newer draft state owns the whole draft, including its unchanged context.
     if (
       useDraftStore.getState().drafts[input.draftKey]?.version !== draftVersion ||
-      useWorkspaceDraftSubmissionStore.getState().setupByDraftId[draftId] !== setup ||
+      useWorkspaceDraftSubmissionStore.getState().setupByDraftId[sourceDraftId] !== setup ||
       useWorkspaceAttachmentsStore.getState().attachmentsByScope[scopeKey] !== attachments
     ) {
       return;
     }
-    useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId });
+    useWorkspaceDraftSubmissionStore.getState().clearDraftSetup({ draftId: sourceDraftId });
     if (scopeKey) {
       useWorkspaceAttachmentsStore.getState().clearWorkspaceAttachments({ scopeKey });
     }

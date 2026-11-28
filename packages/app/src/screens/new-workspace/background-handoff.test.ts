@@ -8,6 +8,7 @@ import {
   createWorkspaceAgentInBackground,
 } from "./background-handoff";
 
+const SERVER_ID = "host-A";
 const DRAFT_ID = "draft_1";
 const DRAFT_KEY = "new-workspace";
 const SCOPE_KEY = "draft:draft_1";
@@ -24,6 +25,7 @@ function draftText(): string | undefined {
 
 function captureCleanup() {
   return captureWorkspaceDraftCleanup({
+    serverId: SERVER_ID,
     draftId: DRAFT_ID,
     draftKey: DRAFT_KEY,
     clearDraft: (lifecycle) =>
@@ -37,6 +39,10 @@ function run(createAgent: () => Promise<unknown>, clearConsumedDraft = captureCl
 }
 
 beforeEach(() => {
+  useDraftStore.setState({ creationIdByDraftKey: {} });
+  useDraftStore
+    .getState()
+    .ensureDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY, proposedId: DRAFT_ID });
   useWorkspaceDraftSubmissionStore.setState({ pendingByDraftId: {}, setupByDraftId: {} });
   useCreateFlowStore.setState({ pendingByDraftId: {} });
   useWorkspaceAttachmentsStore.setState({ attachmentsByScope: { [SCOPE_KEY]: [] } });
@@ -142,6 +148,25 @@ describe("createWorkspaceAgentInBackground", () => {
     ).rejects.toThrow(failure);
 
     expect(draftText()).toBe("do the thing");
+    expect(
+      useDraftStore.getState().getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY }),
+    ).toBe(DRAFT_ID);
+  });
+
+  it("keeps a newer creation owner even when its draft content has not changed", async () => {
+    const cleanup = captureCleanup();
+    const store = useDraftStore.getState();
+    store.clearDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY });
+    store.ensureDraftCreationId({
+      serverId: SERVER_ID,
+      draftKey: DRAFT_KEY,
+      proposedId: "newer-owner",
+    });
+    await run(async () => undefined, cleanup);
+    expect(draftText()).toBe("do the thing");
+    expect(store.getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY })).toBe(
+      "newer-owner",
+    );
   });
 
   it("keeps a prompt typed into the shared draft while creation was in flight", async () => {
@@ -150,6 +175,16 @@ describe("createWorkspaceAgentInBackground", () => {
     });
 
     expect(draftText()).toBe("a different idea");
+    expect(
+      useDraftStore.getState().getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY }),
+    ).toBeUndefined();
+    expect(
+      useDraftStore.getState().ensureDraftCreationId({
+        serverId: SERVER_ID,
+        draftKey: DRAFT_KEY,
+        proposedId: "next-creation",
+      }),
+    ).toBe("next-creation");
   });
   it("keeps a newer draft written while workspace creation was pending", async () => {
     useWorkspaceAttachmentsStore.getState().addWorkspaceAttachment({
@@ -173,4 +208,90 @@ describe("createWorkspaceAgentInBackground", () => {
     expect(draftText()).toBe("a newer workspace idea");
     expect(useWorkspaceAttachmentsStore.getState().attachmentsByScope[SCOPE_KEY]).toHaveLength(1);
   });
+});
+
+it("clears consumed fork setup by its content route ID when the creation identity is fresh", async () => {
+  const store = useDraftStore.getState();
+  store.clearDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY });
+  const creationId = store.ensureDraftCreationId({
+    serverId: SERVER_ID,
+    draftKey: DRAFT_KEY,
+    proposedId: "fresh-creation",
+  });
+  useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+    draftId: DRAFT_ID,
+    setup: {
+      cwd: "/work/fork",
+      provider: "codex",
+      modeId: null,
+      model: null,
+      thinkingOptionId: null,
+      providerOptions: {},
+    },
+  });
+  const cleanup = captureWorkspaceDraftCleanup({
+    serverId: SERVER_ID,
+    draftId: creationId,
+    sourceDraftId: DRAFT_ID,
+    draftKey: DRAFT_KEY,
+    draftContextScopeKey: SCOPE_KEY,
+    clearDraft: (lifecycle) =>
+      useDraftStore.getState().clearDraftInput({ draftKey: DRAFT_KEY, lifecycle }),
+  });
+  await run(async () => undefined, cleanup);
+  expect(useWorkspaceDraftSubmissionStore.getState().setupByDraftId[DRAFT_ID]).toBeUndefined();
+  expect(store.getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY })).toBeUndefined();
+  expect(draftText()).toBe("");
+});
+
+it("preserves newer input when an empty submission receives its creation ID after preparation", async () => {
+  saveDraft("");
+  useDraftStore.setState({ creationIdByDraftKey: {} });
+  const cleanup = captureWorkspaceDraftCleanup({
+    serverId: SERVER_ID,
+    draftKey: DRAFT_KEY,
+    draftContextScopeKey: SCOPE_KEY,
+    clearDraft: (lifecycle) =>
+      useDraftStore.getState().clearDraftInput({ draftKey: DRAFT_KEY, lifecycle }),
+  });
+  let prepared!: (id: string) => void;
+  const preparation = new Promise<string>((resolve) => {
+    prepared = resolve;
+  });
+  const completed = preparation.then((id) => {
+    useDraftStore
+      .getState()
+      .ensureDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY, proposedId: id });
+    cleanup(id);
+    return null;
+  });
+  saveDraft("A new prompt entered after remount");
+  prepared(DRAFT_ID);
+  await completed;
+  expect(draftText()).toBe("A new prompt entered after remount");
+  expect(
+    useDraftStore.getState().getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY }),
+  ).toBeUndefined();
+});
+
+it("consumes the unchanged empty draft after its prepared identity is bound", () => {
+  saveDraft("");
+  useDraftStore.setState({ creationIdByDraftKey: {} });
+  let clears = 0;
+  const cleanup = captureWorkspaceDraftCleanup({
+    serverId: SERVER_ID,
+    draftKey: DRAFT_KEY,
+    draftContextScopeKey: SCOPE_KEY,
+    clearDraft: () => {
+      clears += 1;
+    },
+  });
+  useDraftStore
+    .getState()
+    .ensureDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY, proposedId: DRAFT_ID });
+  cleanup(DRAFT_ID);
+  expect(clears).toBe(1);
+  expect(
+    useDraftStore.getState().getDraftCreationId({ serverId: SERVER_ID, draftKey: DRAFT_KEY }),
+  ).toBeUndefined();
 });

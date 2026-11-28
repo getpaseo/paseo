@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   DaemonClient,
   DaemonConnectionError,
+  CreationNotSentError,
   supportsUsageReports,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
@@ -12,6 +13,7 @@ import {
   type PluginClientBundle,
   type PluginClientBundleStore,
 } from "./daemon-client";
+import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import { createHostChannelTransport } from "./hosts/index.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
@@ -4508,13 +4510,13 @@ test("metadata needs a host that advertises entityMetadata and sends nothing to 
   const update = "Update the host to use metadata.";
   await expect(
     client.createAgent({ provider: "codex", cwd: "/tmp/project", metadata: { key: "value" } }),
-  ).rejects.toThrow(update);
+  ).rejects.toThrow(CreationNotSentError);
   await expect(
     client.createWorkspace({
       source: { kind: "directory", path: "/tmp/project" },
       metadata: { key: "value" },
     }),
-  ).rejects.toThrow(update);
+  ).rejects.toThrow(CreationNotSentError);
   await expect(client.setAgentMetadata("agent-1", { key: null })).rejects.toThrow(update);
   await expect(client.setWorkspaceMetadata("workspace-1", { key: null })).rejects.toThrow(update);
   expect(mock.sent).toHaveLength(0);
@@ -9397,6 +9399,317 @@ test("measures an outbound message in UTF-8 bytes against the daemon's message l
   expect(client.getConnectionState().status).toBe("connected");
 });
 
+test.each([
+  {
+    name: "agent",
+    create: (client: DaemonClient, initialPrompt: string) =>
+      client.createAgent({
+        provider: "codex",
+        cwd: "/tmp/project",
+        initialPrompt,
+      }),
+  },
+  {
+    name: "workspace",
+    create: (client: DaemonClient, initialPrompt: string) =>
+      client.createWorkspace({
+        source: { kind: "directory", path: "/tmp/project" },
+        agent: { config: { provider: "codex", cwd: "/tmp/project" }, initialPrompt },
+      }),
+  },
+])("classifies an oversized $name creation as not sent", async ({ create }) => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "oversized-creation",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { creationLifecycle: true } });
+  await connected;
+  await expect(create(client, "é".repeat(51 * 1024 * 1024))).rejects.toThrow(CreationNotSentError);
+  expect(mock.sent).toHaveLength(0);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test.each(["agent", "workspace", "legacy agent"] as const)(
+  "classifies a queued oversized %s creation as not sent without closing the connection",
+  async (kind) => {
+    const mock = createMockTransport();
+    mock.transport.supportsDrain = false;
+    mock.transport.maxFrameBytes = 1024;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "queued-oversized-creation",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { creationLifecycle: kind !== "legacy agent" } });
+    await connected;
+    let release!: () => void;
+    const draining = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send = mock.transport.send;
+    let writes = 0;
+    mock.transport.send = (frame) => {
+      const bytes =
+        typeof frame === "string" ? new TextEncoder().encode(frame).byteLength : frame.byteLength;
+      if (bytes > 1024) throw messageTooLargeError(bytes, 1024);
+      send(frame);
+      if (writes++ === 0) return draining;
+    };
+    const heartbeat = () =>
+      client.sendHeartbeat({
+        deviceType: "mobile",
+        focusedAgentId: null,
+        lastActivityAt: "2026-01-01T00:00:00.000Z",
+        appVisible: true,
+      });
+    heartbeat();
+    const prompt = "x".repeat(2048);
+    const creation =
+      kind === "workspace"
+        ? client.createWorkspace({
+            source: { kind: "directory", path: "/project" },
+            agent: { config: { provider: "codex", cwd: "/project" }, initialPrompt: prompt },
+          })
+        : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: prompt });
+    const rejected = expect(creation).rejects.toThrow(CreationNotSentError);
+    expect(mock.sent).toHaveLength(1);
+    release();
+    await rejected;
+    expect(mock.sent).toHaveLength(1);
+    expect(client.getConnectionState().status).toBe("connected");
+    heartbeat();
+    await vi.waitFor(() => expect(mock.sent).toHaveLength(2));
+  },
+);
+
+test.each(["agent", "workspace", "legacy agent", "legacy workspace"] as const)(
+  "classifies a %s creation that expires before dispatch as not sent",
+  async (kind) => {
+    useHeartbeatClock();
+    const first = createMockTransport();
+    const second = createMockTransport();
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "expired-creation",
+      connectTimeoutMs: 120_000,
+      transportFactory: () => [first, second][attempt++]!.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen({ features: { creationLifecycle: !kind.startsWith("legacy") } });
+    await connected;
+    first.triggerClose({ code: 1001 });
+    client.ensureConnected();
+    const creation = kind.endsWith("workspace")
+      ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+      : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await outcome).toBeInstanceOf(CreationNotSentError);
+    expect(second.sent).toHaveLength(0);
+    second.triggerOpen({ features: { creationLifecycle: !kind.startsWith("legacy") } });
+    expect(second.sent).toHaveLength(0);
+  },
+);
+
+test.each(["agent", "workspace"] as const)(
+  "does not classify a transmitted legacy %s response timeout as not sent",
+  async (kind) => {
+    useHeartbeatClock();
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "submitted-creation-timeout",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    const creation =
+      kind === "workspace"
+        ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+        : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(mock.sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await outcome).toBeInstanceOf(DaemonConnectionError);
+    expect(await outcome).not.toBeInstanceOf(CreationNotSentError);
+  },
+);
+
+test.each(["agent", "workspace", "legacy agent", "legacy workspace"] as const)(
+  "classifies a queue-owned %s disconnect as not sent",
+  async (kind) => {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disconnected-queued-creation",
+      transportFactory: () => [first, second][attempt++]!.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen({ features: { creationLifecycle: !kind.startsWith("legacy") } });
+    await connected;
+    first.triggerClose({ code: 1001 });
+    client.ensureConnected();
+    const creation = kind.endsWith("workspace")
+      ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+      : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(second.sent).toHaveLength(0);
+    second.triggerClose({ code: 1001, reason: "Handshake failed" });
+    expect(await outcome).toBeInstanceOf(CreationNotSentError);
+    expect(second.sent).toHaveLength(0);
+  },
+);
+
+test.each(["agent", "workspace"] as const)(
+  "preserves the uncertain outcome of a transmitted legacy %s after disconnect",
+  async (kind) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disconnected-submitted-creation",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    const creation =
+      kind === "workspace"
+        ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+        : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(mock.sent).toHaveLength(1);
+    mock.triggerClose({ code: 1001 });
+    expect(await outcome).toBeInstanceOf(DaemonConnectionError);
+    expect(await outcome).not.toBeInstanceOf(CreationNotSentError);
+  },
+);
+
+test.each(["agent", "workspace", "legacy agent", "legacy workspace"] as const)(
+  "classifies a queue-owned %s disposal as not sent",
+  async (kind) => {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    let attempt = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disposed-queued-creation",
+      transportFactory: () => [first, second][attempt++]!.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    first.triggerOpen({ features: { creationLifecycle: !kind.startsWith("legacy") } });
+    await connected;
+    first.triggerClose({ code: 1001 });
+    client.ensureConnected();
+    const creation = kind.endsWith("workspace")
+      ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+      : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(second.sent).toHaveLength(0);
+    await client.close();
+    expect(await outcome).toBeInstanceOf(CreationNotSentError);
+    expect(second.sent).toHaveLength(0);
+  },
+);
+
+test.each(["agent", "workspace"] as const)(
+  "preserves the uncertain outcome of a transmitted legacy %s after disposal",
+  async (kind) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disposed-submitted-creation",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen();
+    await connected;
+    const creation =
+      kind === "workspace"
+        ? client.createWorkspace({ source: { kind: "directory", path: "/project" } })
+        : client.createAgent({ provider: "codex", cwd: "/project", initialPrompt: "Original" });
+    const outcome = creation.catch((error: unknown) => error);
+    expect(mock.sent).toHaveLength(1);
+    await client.close();
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(await outcome).not.toBeInstanceOf(CreationNotSentError);
+  },
+);
+
+test.each([false, true])(
+  "classifies output capacity rejection as unsent without reclassifying the active creation (modern: %s)",
+  async (modern) => {
+    const mock = createMockTransport();
+    mock.transport.supportsDrain = false;
+    mock.transport.maxFrameBytes = 100 * 1024 * 1024;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "creation-output-capacity",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { creationLifecycle: modern } });
+    await connected;
+    mock.transport.close = () => mock.triggerClose({ code: 4003, reason: "Transport send failed" });
+    let release!: () => void;
+    const draining = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const send = mock.transport.send;
+    mock.transport.send = (frame) => {
+      send(frame);
+      return draining;
+    };
+    const active = client
+      .createAgent({
+        provider: "codex",
+        cwd: "/project",
+        initialPrompt: "x".repeat(55 * 1024 * 1024),
+      })
+      .catch((error: unknown) => error);
+    try {
+      await expect(
+        client.createAgent({
+          provider: "codex",
+          cwd: "/project",
+          initialPrompt: "x".repeat(50 * 1024 * 1024),
+        }),
+      ).rejects.toThrow(CreationNotSentError);
+      expect(mock.sent).toHaveLength(1);
+    } finally {
+      release();
+      await client.close();
+    }
+    expect(await active).toBeInstanceOf(Error);
+    expect(await active).not.toBeInstanceOf(CreationNotSentError);
+  },
+);
+
 test("sends worktree target and autoArchive in create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -10880,3 +11193,116 @@ test("disposing a route before its deferred close does not reopen it on origin r
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
 });
+
+test("waitForCreation observes a saved workspace receipt without submitting creation", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://example.test",
+    clientId: "saved-receipt",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true, ownedSubscriptions: true } });
+  await connected;
+  const phases: string[] = [];
+  const result = client.waitForCreation("workspace", "saved-operation", (snapshot) =>
+    phases.push(snapshot.phase),
+  );
+  await expect.poll(() => transport.sent.length).toBe(1);
+  const request = parseSentFrame(transport.sent[0]);
+  expect(request).toMatchObject({
+    type: "creation.subscribe.request",
+    kind: "workspace",
+    idempotencyKey: "saved-operation",
+  });
+  const pending = {
+    kind: "workspace",
+    idempotencyKey: "saved-operation",
+    revision: 1,
+    phase: "workspace_ready",
+    workspaceId: "wks_0123456789abcdef",
+    agentId: null,
+    error: null,
+  };
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "creation.subscribe.response",
+      payload: {
+        requestId: request.requestId,
+        subscriptionId: "saved-observer",
+        snapshot: pending,
+        error: null,
+      },
+    }),
+  );
+  const failed = {
+    ...pending,
+    revision: 2,
+    phase: "failed",
+    error: "Startup rejected",
+    outcomeUnknown: false,
+  };
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.update",
+      payload: { ...failed, subscriptionId: "saved-observer" },
+    }),
+  );
+  expect(await result).toMatchObject(failed);
+  expect(phases).toEqual(["workspace_ready", "failed"]);
+  expect(transport.sent.map((frame) => parseSentFrame(frame).type)).not.toContain(
+    "workspace.create.request",
+  );
+});
+
+test.each(["workspace", "agent"] as const)(
+  "closing a client rejects a saved %s receipt wait after a nonterminal snapshot",
+  async (kind) => {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "disposed-receipt-wait",
+      transportFactory: () => mock.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connected = client.connect();
+    mock.triggerOpen({ features: { creationLifecycle: true, ownedSubscriptions: true } });
+    await connected;
+    const phases: string[] = [];
+    const result = client.waitForCreation(kind, "saved-receipt", (snapshot) =>
+      phases.push(snapshot.phase),
+    );
+    const outcome = result.catch((error: unknown) => error);
+    await expect.poll(() => mock.sent.length).toBe(1);
+    const request = parseSentFrame(mock.sent[0]);
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "creation.subscribe.response",
+        payload: {
+          requestId: request.requestId,
+          subscriptionId: "receipt-observer",
+          snapshot: {
+            kind,
+            idempotencyKey: "saved-receipt",
+            revision: 1,
+            phase: "accepted",
+            workspaceId: null,
+            agentId: null,
+            error: null,
+          },
+          error: null,
+        },
+      }),
+    );
+    expect(phases).toEqual(["accepted"]);
+    await client.close();
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(await outcome).toMatchObject({ message: "Daemon client closed" });
+    await expect(client.waitForCreation(kind, "saved-receipt", () => {})).rejects.toThrow(
+      "Daemon client closed",
+    );
+  },
+);

@@ -134,9 +134,19 @@ export function encodeUtf8String(value: string): Uint8Array {
   return out;
 }
 
-export function messageTooLargeError(size: number, limit: number): Error {
-  const toMiB = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1);
-  return new Error(
-    `Message is too large to send (${toMiB(size)} MiB). The limit is ${toMiB(limit)} MiB, so send fewer or smaller attachments.`,
-  );
+export class MessageTooLargeError extends Error {
+  constructor(
+    readonly size: number,
+    readonly limit: number,
+  ) {
+    const toMiB = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1);
+    super(
+      `Message is too large to send (${toMiB(size)} MiB). The limit is ${toMiB(limit)} MiB, so send fewer or smaller attachments.`,
+    );
+    this.name = "MessageTooLargeError";
+  }
+}
+
+export function messageTooLargeError(size: number, limit: number): MessageTooLargeError {
+  return new MessageTooLargeError(size, limit);
 }

@@ -7,6 +7,7 @@ import {
 import {
   ChunkedTransport,
   ChunkedTransportProtocolError,
+  ChunkedTransportCapacityError,
 } from "@getpaseo/protocol/chunked-transport";
 import {
   HOST_ROUTE_OPCODE,
@@ -14,7 +15,7 @@ import {
   decodeHostRouteFrame,
   type HostRouteFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import { messageTooLargeError } from "./daemon-client-transport-utils.js";
+import { messageTooLargeError, MessageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
 import type { PluginListingDetail, PluginListingIndex } from "@getpaseo/protocol/plugin-registry";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
@@ -1110,6 +1111,8 @@ export type PluginCatalogEntry = Omit<PluginCatalogResponseEntry, "clientBundle"
   clientBundle: string;
 };
 
+class DaemonClientClosedError extends Error {}
+
 export class DaemonConnectionError extends Error {
   readonly serverId?: string;
   readonly outcome?: "unknown";
@@ -1122,6 +1125,14 @@ export class DaemonConnectionError extends Error {
     this.serverId = context?.serverId;
     this.outcome = context?.outcome;
     this.name = "DaemonConnectionError";
+  }
+}
+
+/** Creation failed locally before handing any creation to the transport. */
+export class CreationNotSentError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "CreationNotSentError";
   }
 }
 
@@ -1345,7 +1356,16 @@ function toReasonCode(reason: string | null | undefined): string | null {
   return "unknown";
 }
 
+function isCreationRequest(messageType: string): boolean {
+  return (
+    messageType === "agent.create.request" ||
+    messageType === "create_agent_request" ||
+    messageType === "workspace.create.request"
+  );
+}
+
 interface PendingSend {
+  message?: SessionInboundMessage;
   send: () => void | Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
@@ -1475,6 +1495,7 @@ export class DaemonClient {
   > = new Map();
   private eventListeners: Set<DaemonEventHandler> = new Set();
   private waiters: Set<Waiter<unknown>> = new Set();
+  private readonly creationReceiptLifetime = new AbortController();
   private checkoutStatusInFlight: Map<string, Promise<CheckoutStatusPayload>> = new Map();
   private connectionListeners: Set<(status: ConnectionState) => void> = new Set();
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1854,11 +1875,14 @@ export class DaemonClient {
     this.resetConnectTimeout();
     this.disposeTransport(1000, "Client closed");
     this.providerSnapshotUpdates.clear();
-    this.clearWaiters(new Error("Daemon client closed"));
+    const closedError = new DaemonClientClosedError("Daemon client closed");
+    this.creationReceiptLifetime.abort();
+    this.clearWaiters(closedError);
+    this.rejectPendingSendQueue(closedError);
     await this.diffStreams.close();
     await this.owned.close();
+    await this.creations.settleRequests();
     this.creations.close();
-    this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.rejectPongWaiters(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
@@ -2192,8 +2216,18 @@ export class DaemonClient {
         messageType,
         ...describeRequestIdentity(message),
       });
+    const rejectSend = (error: unknown): never => {
+      if (
+        isCreationRequest(messageType) &&
+        (error instanceof MessageTooLargeError || error instanceof ChunkedTransportCapacityError)
+      )
+        throw new CreationNotSentError(error);
+      throw error;
+    };
     try {
-      return this.sendTransportFrame(JSON.stringify(message), submitted);
+      return this.sendTransportFrame(JSON.stringify(message), submitted).catch(rejectSend);
+    } catch (error) {
+      return rejectSend(error);
     } finally {
       this.endTraceSection(isOpen);
     }
@@ -2282,11 +2316,15 @@ export class DaemonClient {
    * is queued and will be sent once connected (or rejected after timeout).
    * This prevents waiters from hanging forever when called during connection.
    */
-  private sendSessionMessageOrThrow(message: SessionInboundMessage): Promise<void> {
+  private sendSessionMessageOrThrow(
+    message: SessionInboundMessage,
+    onDispatch?: () => void,
+  ): Promise<void> {
     return this.sendWhenConnected(() => {
+      onDispatch?.();
       const payload = SessionInboundMessageSchema.parse(message);
       return this.sendSessionPayload(payload);
-    });
+    }, message);
   }
 
   /** Resolves once connected, waiting out a connection that is still being established. */
@@ -2294,7 +2332,10 @@ export class DaemonClient {
     return this.sendWhenConnected(() => undefined);
   }
 
-  private sendWhenConnected(send: () => void | Promise<void>): Promise<void> {
+  private sendWhenConnected(
+    send: () => void | Promise<void>,
+    message?: SessionInboundMessage,
+  ): Promise<void> {
     const status = this.connectionState.status;
 
     // If connected, send immediately
@@ -2311,15 +2352,16 @@ export class DaemonClient {
           if (idx !== -1) {
             this.pendingSendQueue.splice(idx, 1);
           }
+          const error = new DaemonConnectionError(
+            "Timed out waiting for connection to send message",
+            "DAEMON_REQUEST_TIMEOUT",
+          );
           reject(
-            new DaemonConnectionError(
-              "Timed out waiting for connection to send message",
-              "DAEMON_REQUEST_TIMEOUT",
-            ),
+            message && isCreationRequest(message.type) ? new CreationNotSentError(error) : error,
           );
         }, DEFAULT_SEND_QUEUE_TIMEOUT_MS);
 
-        this.pendingSendQueue.push({ send, resolve, reject, timeoutHandle });
+        this.pendingSendQueue.push({ send, resolve, reject, timeoutHandle, message });
       });
     }
 
@@ -2396,17 +2438,38 @@ export class DaemonClient {
       { ...params.options, requestId: params.requestId, requestType: params.message.type },
     );
 
+    // Custom transmitters own handoff; only session sends can prove they stayed queued.
+    let dispatched = params.transmit !== undefined;
     // The response deadline still applies while the transport waits for drain.
     void promise.catch(() => undefined);
     try {
       const sent = params.transmit
         ? params.transmit()
-        : this.sendSessionMessageOrThrow(wire.message);
+        : this.sendSessionMessageOrThrow(wire.message, () => {
+            dispatched = true;
+          });
       const result = await Promise.race([promise, sent.then(() => promise)]);
       if (result.kind === "error") throw result.error;
       return result.value;
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
+      let err = error instanceof Error ? error : new Error(String(error));
+      // Close clears both waiters and the queue. Keep callback ownership proof locally
+      // so either rejection can release admission without reclassifying a dispatched frame.
+      if (
+        !dispatched &&
+        isCreationRequest(wire.message.type) &&
+        (err instanceof DaemonConnectionError || err instanceof DaemonClientClosedError)
+      ) {
+        err = new CreationNotSentError(err);
+        const index = this.pendingSendQueue.findIndex(
+          (pending) => pending.message === wire.message,
+        );
+        if (index !== -1) {
+          const [pending] = this.pendingSendQueue.splice(index, 1);
+          clearTimeout(pending!.timeoutHandle);
+          pending!.reject(err);
+        }
+      }
       cancel(err);
       throw err;
     } finally {
@@ -3488,6 +3551,51 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  /** Observe a saved operation without retrying its side effects. Legacy hosts cannot reconcile it. */
+  async waitForCreation(
+    kind: CreationSnapshot["kind"],
+    idempotencyKey: string,
+    onEvent: (snapshot: CreationSnapshot) => void,
+  ): Promise<CreationSnapshot | null> {
+    const signal = this.creationReceiptLifetime.signal;
+    if (signal.aborted) throw new DaemonClientClosedError("Daemon client closed");
+    if (this.lastServerInfoMessage?.features?.creationLifecycle !== true) return null;
+    const observation = this.observe("creation.subscribe.response", {
+      type: "creation.subscribe.request",
+      kind,
+      idempotencyKey,
+    });
+    let rejectClosed!: () => void;
+    const result = new Promise<CreationSnapshot | null>((resolve, reject) => {
+      rejectClosed = () => reject(new DaemonClientClosedError("Daemon client closed"));
+      signal.addEventListener("abort", rejectClosed, { once: true });
+      if (signal.aborted) {
+        rejectClosed();
+        return;
+      }
+      const accept = (snapshot: CreationSnapshot | null) => {
+        if (!snapshot) {
+          resolve(null);
+          return;
+        }
+        onEvent(snapshot);
+        if (snapshot.phase === "failed" || snapshot.phase === "completed") resolve(snapshot);
+      };
+      observation.subscribe({
+        snapshot: (payload) => accept(payload.snapshot),
+        update: (message) => {
+          if (message.type === "workspace.create.update" || message.type === "agent.create.update")
+            accept(message.payload);
+        },
+        error: reject,
+      });
+    });
+    return result.finally(() => {
+      signal.removeEventListener("abort", rejectClosed);
+      void observation.release().catch(() => undefined);
+    });
+  }
+
   // Entity metadata is gated once at the transport boundary.
   private requireEntityMetadata(): void {
     if (this.lastServerInfoMessage?.features?.entityMetadata !== true) {
@@ -3518,20 +3626,26 @@ export class DaemonClient {
   }
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
-    if (options.git !== undefined || options.worktreeName !== undefined) {
-      throw new Error(
-        "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
-      );
+    let prepared: CreateAgentRequestOptions;
+    try {
+      if (options.git !== undefined || options.worktreeName !== undefined) {
+        throw new Error(
+          "Legacy git/worktreeName agent placement was removed. Use createWorkspace({ source, agent, idempotencyKey }) or create a workspace first and pass workspaceId.",
+        );
+      }
+      if (options.background !== undefined) this.requireBackgroundCreation(options);
+      if (options.metadata !== undefined) this.requireEntityMetadata();
+      const config = resolveAgentConfig(options);
+      prepared = {
+        ...options,
+        config: this.carriesLegacyOptions(config)
+          ? await this.routeLegacyCreateConfig(config)
+          : config,
+      };
+    } catch (error) {
+      throw new CreationNotSentError(error);
     }
-    if (options.background !== undefined) this.requireBackgroundCreation(options);
-    if (options.metadata !== undefined) this.requireEntityMetadata();
-    const config = resolveAgentConfig(options);
-    const result = await this.creations.createAgent({
-      ...options,
-      config: this.carriesLegacyOptions(config)
-        ? await this.routeLegacyCreateConfig(config)
-        : config,
-    });
+    const result = await this.creations.createAgent(prepared);
     if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
     return result.agent;
   }
@@ -5540,21 +5654,28 @@ export class DaemonClient {
     input: CreateWorkspaceRequestOptions,
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
-    const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
-    if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
-    if (input.agent?.background !== undefined)
-      throw new Error("Configure background on the workspace, not its initial agent.");
-    if (input.metadata !== undefined || input.agent?.metadata !== undefined)
-      this.requireEntityMetadata();
-    let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
-    if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
-      agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+    let resolvedRequestId: string;
+    let prepared: CreateWorkspaceRequestOptions;
+    try {
+      resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+      if (input.background !== undefined || input.callerAgentId) this.requireBackgroundWorkspaces();
+      if (input.agent?.background !== undefined)
+        throw new Error("Configure background on the workspace, not its initial agent.");
+      if (input.metadata !== undefined || input.agent?.metadata !== undefined)
+        this.requireEntityMetadata();
+      let agentConfig = input.agent ? resolveAgentConfig(input.agent) : undefined;
+      if (agentConfig && this.carriesLegacyOptions(agentConfig)) {
+        agentConfig = await this.routeLegacyCreateConfig(agentConfig);
+      }
+      prepared = {
+        ...input,
+        requestId: resolvedRequestId,
+        ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
+      };
+    } catch (error) {
+      throw new CreationNotSentError(error);
     }
-    const result = await this.creations.createWorkspace({
-      ...input,
-      requestId: resolvedRequestId,
-      ...(input.agent && agentConfig ? { agent: { ...input.agent, config: agentConfig } } : {}),
-    });
+    const result = await this.creations.createWorkspace(prepared);
     return {
       ...result,
       workspace: result.workspace ?? null,

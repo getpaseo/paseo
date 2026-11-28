@@ -57,6 +57,27 @@ function createDraftPersistence() {
 }
 
 describe("draft persistence", () => {
+  it("blocks creation on a failed explicit checkpoint and can checkpoint a corrected retry", async () => {
+    let fail = true;
+    let saved: StorageValue<DraftState> | null = null;
+    const drafts = createDraftPersistStorage<DraftState>({
+      getItem: () => saved,
+      setItem: (_name, value) => {
+        if (fail) throw new Error("Storage unavailable");
+        saved = value;
+      },
+      removeItem: () => {
+        saved = null;
+      },
+    });
+    await expect(drafts.checkpoint("drafts", { state: { text: "original" } })).rejects.toThrow(
+      "Storage unavailable",
+    );
+    fail = false;
+    await drafts.checkpoint("drafts", { state: { text: "corrected" } });
+    expect(await drafts.getItem("drafts")).toEqual({ state: { text: "corrected" } });
+  });
+
   it("checkpoints the first change and the latest change in each interval", () => {
     const drafts = createDraftPersistence();
 
@@ -106,4 +127,31 @@ describe("draft persistence", () => {
 
     expect(drafts.text()).toBe("pending checkpoint");
   });
+});
+
+it("flush waits for retirement already started by an automatic asynchronous write", async () => {
+  interface CreationState {
+    creationId: string | null;
+  }
+  let saved: StorageValue<CreationState> = { state: { creationId: "old-creation" } };
+  let commit!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    commit = resolve;
+  });
+  const drafts = createDraftPersistStorage<CreationState>({
+    getItem: () => saved,
+    setItem: async (_name, value) => {
+      await gate;
+      saved = value;
+    },
+    removeItem: () => {},
+  });
+  const automatic = drafts.setItem("drafts", { state: { creationId: null } });
+  const flushed = drafts.flush().then(() => {
+    expect(saved.state.creationId).toBeNull();
+    return null;
+  });
+  commit();
+  await flushed;
+  await automatic;
 });

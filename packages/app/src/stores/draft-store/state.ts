@@ -5,6 +5,7 @@ import {
 } from "@/attachments/types";
 import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 export const DRAFT_STORE_VERSION = 5;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
@@ -50,6 +51,8 @@ export function editDraftRecordText(
 export interface DraftStoreState {
   drafts: Record<string, DraftRecord>;
   createModalDraft: DraftRecord | null;
+  metadataByDraftKey?: Record<string, Record<string, JsonValue>>;
+  creationIdByDraftKey?: Record<string, string | null>;
 }
 
 export const AttachmentMetadataSchema = z.strictObject({

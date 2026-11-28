@@ -11,6 +11,7 @@ import {
 } from "@getpaseo/protocol/messages";
 import { writeFileAtomic } from "../atomic-file.js";
 import { generateWorkspaceId } from "../workspace-registry-model.js";
+import { WorktreeRequestError, toWorktreeWireError } from "../worktree-errors.js";
 
 type Observer = (snapshot: CreationSnapshot) => void;
 export interface CreatedAgent {
@@ -130,18 +131,45 @@ export class CreationService {
     const identity = identityFor(kind, key);
     const unsubscribe = this.observe(identity, observer);
     try {
-      await this.admission;
-      const record = await this.read(identity);
-      if (record?.inFlight && !this.active.has(identity)) {
-        await this.publish(identity, record, {
-          phase: "failed",
-          failedStage: record.inFlight,
-          outcomeUnknown: true,
-          error: `${kind}_request_outcome_unknown`,
-        });
-      }
-      if (record?.snapshot.phase === "completed") await this.validateCompleted(record.snapshot);
-      return { snapshot: record?.snapshot ?? null, unsubscribe };
+      const admitted = this.admission.then(async () => {
+        const running = this.active.has(identity);
+        const record = await this.read(identity);
+        // Settle orphaned checkpoints without repeating side effects already committed.
+        if (
+          record &&
+          !running &&
+          record.snapshot.phase !== "completed" &&
+          record.snapshot.phase !== "failed"
+        ) {
+          if (hasCommittedCreation(record)) {
+            const completed: CreationSnapshot = {
+              ...record.snapshot,
+              phase: "completed",
+              error: null,
+              errorCode: undefined,
+              failedStage: undefined,
+              outcomeUnknown: undefined,
+            };
+            await this.validateCompleted(completed);
+            await this.publish(identity, record, completed);
+          } else {
+            await this.publish(identity, record, {
+              phase: "failed",
+              failedStage: interruptedStage(kind, record),
+              outcomeUnknown: true,
+              error: `${kind}_request_outcome_unknown`,
+            });
+          }
+        } else if (record?.snapshot.phase === "completed") {
+          await this.validateCompleted(record.snapshot);
+        }
+        return record?.snapshot ?? null;
+      });
+      this.admission = admitted.then(
+        () => undefined,
+        () => undefined,
+      );
+      return { snapshot: await admitted, unsubscribe };
     } catch (error) {
       unsubscribe();
       throw error;
@@ -194,11 +222,7 @@ export class CreationService {
       const stage = record.inFlight ?? "agent";
       const resourceId =
         stage === "workspace" ? record.snapshot.workspaceId : record.snapshot.agentId;
-      const code =
-        error instanceof Error && "code" in error && typeof error.code === "string"
-          ? error.code
-          : undefined;
-      const rejectedBeforeProvision = code === "directory_not_found" || code === "source_required";
+      const { code, rejectedBeforeProvision } = classifyCreationFailure(error);
       const unknown =
         stage === "prompt" ||
         (stage === "workspace" && !rejectedBeforeProvision) ||
@@ -338,6 +362,46 @@ export class CreationService {
     return result;
   }
 }
+function classifyCreationFailure(error: unknown): {
+  code: string | undefined;
+  rejectedBeforeProvision: boolean;
+} {
+  const worktreeError = error instanceof WorktreeRequestError ? error : toWorktreeWireError(error);
+  let code =
+    error instanceof Error && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  if (worktreeError.code !== "unknown") code = worktreeError.code;
+  // An arbitrary branch code does not prove that checkout side effects were rejected.
+  const rejectedBeforeProvision =
+    code === "directory_not_found" ||
+    code === "source_required" ||
+    worktreeError.code !== "unknown";
+  return { code, rejectedBeforeProvision };
+}
+
+function hasCommittedCreation(record: Record): boolean {
+  if (record.inFlight !== null) return false;
+  const snapshot = record.snapshot;
+  if (snapshot.phase === "prompt_started" || snapshot.phase === "agent_ready")
+    return snapshot.agent !== undefined;
+  return (
+    snapshot.phase === "workspace_ready" &&
+    snapshot.workspace !== undefined &&
+    snapshot.agentId === null
+  );
+}
+
+function interruptedStage(
+  kind: CreationSnapshot["kind"],
+  record: Record,
+): NonNullable<Record["inFlight"]> {
+  if (record.inFlight) return record.inFlight;
+  if (record.snapshot.agent) return "prompt";
+  if (kind === "workspace" && !record.snapshot.workspace) return "workspace";
+  return "agent";
+}
+
 function initialRecord(input: CreationInput, fingerprint: string): Record {
   return {
     fingerprint,

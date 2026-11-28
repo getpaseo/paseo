@@ -101,6 +101,8 @@ const PersistedDraftRecordSchema = z.union([NestedDraftRecordSchema, FlatDraftRe
 export const PersistedDraftStoreSchema = z.strictObject({
   drafts: z.record(z.string(), PersistedDraftRecordSchema).optional(),
   createModalDraft: PersistedDraftRecordSchema.nullable().optional(),
+  metadataByDraftKey: z.record(z.string(), z.record(z.string(), z.json())).optional(),
+  creationIdByDraftKey: z.record(z.string(), z.string().nullable()).optional(),
 });
 type PersistedDraftRecord = z.infer<typeof PersistedDraftRecordSchema>;
 
@@ -252,5 +254,7 @@ export async function migratePersistedState(
     // COMPAT(newWorkspaceDraftSingleton): migrated in v0.1.108; remove after 2027-01-13.
     drafts: migrateNewWorkspaceDraftKeys(nextDrafts),
     createModalDraft,
+    ...(input.metadataByDraftKey ? { metadataByDraftKey: input.metadataByDraftKey } : {}),
+    ...(input.creationIdByDraftKey ? { creationIdByDraftKey: input.creationIdByDraftKey } : {}),
   };
 }

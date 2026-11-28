@@ -206,13 +206,18 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [draftKey],
   );
 
+  const creationServerId = composerOptions?.initialServerId ?? formState.selectedServerId;
   const clear = useCallback(
     (lifecycle: "sent" | "abandoned") => {
       textPublication.cancel();
       useDraftStore.getState().clearDraftInput({ draftKey, lifecycle });
-      if (lifecycle === "sent") useDraftStore.getState().clearDraftMetadata({ draftKey });
+      if (lifecycle === "sent") {
+        useDraftStore.getState().clearDraftMetadata({ draftKey });
+        if (creationServerId)
+          useDraftStore.getState().clearDraftCreationId({ serverId: creationServerId, draftKey });
+      }
     },
-    [draftKey, textPublication],
+    [draftKey, textPublication, creationServerId],
   );
 
   useEffect(() => {
