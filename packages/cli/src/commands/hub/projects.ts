@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import { render, withOutput, type OutputSchema, type SingleResult } from "../../output/index.js";
+import { withOutput, type OutputSchema, type SingleResult } from "../../output/index.js";
+import { render } from "../../output/render.js";
 import { addJsonOption } from "../../utils/command-options.js";
 import { resolveHubCredential, resolveHubOrigin } from "./authority.js";
 import type { HubHttpClient, HubProject } from "./hub-client/index.js";

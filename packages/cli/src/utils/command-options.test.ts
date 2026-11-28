@@ -1,10 +1,10 @@
 import { Command } from "commander";
 import { describe, expect, it } from "vitest";
-import { createCli } from "../cli.js";
+import { createCliForArgv } from "../cli.js";
 import { withGlobalOptions } from "./command-options.js";
 
 async function parseHost(argv: string[]): Promise<string | undefined> {
-  const program = createCli().exitOverride();
+  const program = (await createCliForArgv(argv)).exitOverride();
   let receivedHost: string | undefined;
 
   program.commands

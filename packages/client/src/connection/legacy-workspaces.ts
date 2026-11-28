@@ -1,4 +1,3 @@
-import { AgentSnapshotPayloadSchema } from "@getpaseo/protocol/messages";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import {
   deriveAgentStateBucket,
@@ -26,6 +25,8 @@ function legacyWorkspaceId(value: string): string {
 // at the client edge, including live updates, so app workflows need no version branch.
 export class LegacyWorkspaces {
   private readonly agents = new Map<string, AgentEntry>();
+
+  constructor(private readonly parseAgentSnapshot: (value: unknown) => AgentSnapshotPayload) {}
 
   normalize(message: SessionOutboundMessage): SessionOutboundMessage {
     const stamp = (agent: AgentSnapshotPayload): AgentSnapshotPayload => ({
@@ -64,7 +65,7 @@ export class LegacyWorkspaces {
         ...message,
         payload: {
           ...message.payload,
-          agent: stamp(AgentSnapshotPayloadSchema.parse(message.payload.agent)),
+          agent: stamp(this.parseAgentSnapshot(message.payload.agent)),
         },
       };
     }

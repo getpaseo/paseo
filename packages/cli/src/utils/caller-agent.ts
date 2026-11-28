@@ -1,4 +1,4 @@
-import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
+import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client-core";
 
 interface CallerLookupClient {
   fetchAgent(options: { agentId: string }): Promise<{ agent: { id: string } } | null>;

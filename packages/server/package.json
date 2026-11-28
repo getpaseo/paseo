@@ -34,6 +34,11 @@
       "source": "./src/server/daemon-instance.ts",
       "default": "./dist/server/server/daemon-instance.js"
     },
+    "./daemon-files": {
+      "types": "./dist/server/server/daemon-files.d.ts",
+      "source": "./src/server/daemon-files.ts",
+      "default": "./dist/server/server/daemon-files.js"
+    },
     "./configuration": {
       "types": "./dist/server/server/config.d.ts",
       "source": "./src/server/config.ts",

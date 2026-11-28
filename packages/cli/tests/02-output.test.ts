@@ -7,12 +7,8 @@
 
 import assert from "node:assert";
 import {
-  render,
-  renderTable,
   renderJson,
-  renderYaml,
   renderQuiet,
-  renderError,
   toCommandError,
   createOutputOptions,
   type ListResult,
@@ -20,6 +16,9 @@ import {
   type OutputSchema,
   type CommandError,
 } from "../src/output/index.js";
+import { render, renderError } from "../src/output/render.js";
+import { renderTable } from "../src/output/table.js";
+import { renderYaml } from "../src/output/yaml.js";
 
 // Test data types
 interface Agent {

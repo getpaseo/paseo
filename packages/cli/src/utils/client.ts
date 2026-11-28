@@ -1,10 +1,14 @@
-import { createHostClient, parseHostTarget } from "@getpaseo/client/node";
+import {
+  createLeanHostClient,
+  parseHostTarget,
+  type DaemonClientCore,
+} from "@getpaseo/client/node/lean";
 import {
   waitForDaemonReady,
   resolvePaseoHome,
   type DaemonInstance,
   readLocalCredentialForTarget,
-} from "@getpaseo/server/daemon-control";
+} from "@getpaseo/server/daemon-files";
 import { describeDaemonTarget, type DaemonTarget } from "./daemon-target.js";
 export type { DaemonTarget } from "./daemon-target.js";
 import {
@@ -12,9 +16,10 @@ import {
   normalizeHostPort,
   parseConnectionUri,
 } from "@getpaseo/protocol/daemon-endpoints";
-import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getOrCreateCliClientId } from "./client-id.js";
 import { resolveCliVersion } from "../version.js";
+
+type DaemonClient = DaemonClientCore;
 
 export interface ConnectOptions {
   target: DaemonTarget;
@@ -191,7 +196,7 @@ async function connectSelectedDaemon(options: ConnectOptions): Promise<DaemonCli
         ).listen;
   const home = resolveClientPaseoHome(options.target);
   const credential = resolveDaemonCredential(host, home);
-  const client = createHostClient(host, {
+  const client = createLeanHostClient(host, {
     clientId: await getOrCreateCliClientId(home),
     clientType: "cli",
     appVersion: resolveCliVersion(),
