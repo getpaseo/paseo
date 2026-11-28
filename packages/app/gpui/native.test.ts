@@ -85,6 +85,19 @@ test.skipIf(!endpoint || appearanceFixture)(
         timeout: 15_000,
       })
       .toBe(true);
+    // Wait for async draft hydration (which resets an empty native TextInput once after mount).
+    let settledTag: number | undefined;
+    await expect
+      .poll(
+        async () => {
+          const current = (await nodes()).find((node) => node.component === "TextInput")?.tag;
+          const stable = current !== undefined && current === settledTag;
+          settledTag = current;
+          return stable;
+        },
+        { timeout: 15_000, interval: 500 },
+      )
+      .toBe(true);
     const input = (await nodes()).find((node) => node.component === "TextInput")!;
     const original = (await request<{ text: string }>("getProps", { tag: input.tag })).text;
     try {

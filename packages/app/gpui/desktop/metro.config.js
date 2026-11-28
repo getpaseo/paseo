@@ -42,6 +42,7 @@ const fileAdapters = {
   "/components/markdown/fence/mermaid/host.native.tsx": "mermaid.jsx",
   "/file-panels/html-preview.tsx": "document-preview.jsx",
   "/file-panels/document-frame/index.tsx": "document-preview.jsx",
+  "/modules/paseo-press-feedback/src/ui/feedback.native.tsx": "press-feedback.js",
 };
 config.resolver.resolveRequest = (context, name, platform) => {
   if (adapters[name]) name = path.resolve(projectRoot, "adapters", adapters[name]);
