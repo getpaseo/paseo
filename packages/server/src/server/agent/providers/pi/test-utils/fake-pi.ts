@@ -153,6 +153,7 @@ export class FakePiSession implements PiRuntimeSession {
   // Native user entries paired with the complete active-branch history.
   historyUserEntries: FakePiUserEntry[] = [];
   abortRequested = false;
+  abortCompletion: Promise<void> | null = null;
   closeCalls = 0;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
@@ -295,6 +296,7 @@ export class FakePiSession implements PiRuntimeSession {
   async abort(): Promise<void> {
     this.controlRequests.push("abort");
     this.abortRequested = true;
+    await this.abortCompletion;
   }
 
   async getState(): Promise<PiSessionState> {
@@ -427,6 +429,7 @@ export class FakePiSession implements PiRuntimeSession {
 
   async close(): Promise<void> {
     this.closeCalls += 1;
+    this.subscribers.clear();
   }
 
   emit(event: PiRuntimeEvent): void {
