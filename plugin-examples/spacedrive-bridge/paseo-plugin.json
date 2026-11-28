@@ -1,0 +1,6 @@
+{
+  "id": "paseo-spacedrive-bridge",
+  "name": "Paseo Spacedrive Bridge",
+  "version": "0.1.0",
+  "requirements": { "paseo": ">=0.8.0" }
+}
