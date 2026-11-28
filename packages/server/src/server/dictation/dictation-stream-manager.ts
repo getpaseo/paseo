@@ -38,6 +38,12 @@ function parseNonNegativeNumber(value: string | undefined): number | null {
   return parsed;
 }
 
+/** Unset, empty, and whitespace-only overrides all mean "send no prompt". */
+function readTranscriptionPromptOverride(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env.PASEO_DICTATION_TRANSCRIPTION_PROMPT?.trim();
+  return value ? value : undefined;
+}
+
 function convertPCMToWavBuffer(
   pcmBuffer: Buffer,
   sampleRate: number,
@@ -185,16 +191,16 @@ export class DictationStreamManager {
       return;
     }
 
-    const transcriptionPrompt =
-      process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT ??
-      "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
+    // Whisper uses the prompt as transcript context, not silence instructions.
+    // Keep context opt-in so it does not bias speech or introduce unspoken text.
+    const transcriptionPrompt = readTranscriptionPromptOverride(process.env);
 
     let stt: ReturnType<SpeechToTextProvider["createSession"]>;
     try {
       stt = sttProvider.createSession({
         logger: this.logger.child({ dictationId }),
         language: this.language,
-        prompt: transcriptionPrompt,
+        ...(transcriptionPrompt ? { prompt: transcriptionPrompt } : {}),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
