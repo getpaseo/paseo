@@ -44,6 +44,15 @@ describe("agent sender active-turn behaviors", () => {
       }).activeTurnBehavior,
     ).toBe("queue");
     expect(
+      SendAgentMessageRequestSchema.parse({
+        type: "send_agent_message_request",
+        requestId: "request-3b",
+        agentId: "agent-1",
+        text: "Answer decision when ready",
+        activeTurnBehavior: "queue",
+      }).activeTurnBehavior,
+    ).toBe("queue");
+    expect(
       SendAgentMessageResponseMessageSchema.parse({
         type: "send_agent_message_response",
         payload: {

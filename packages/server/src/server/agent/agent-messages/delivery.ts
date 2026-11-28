@@ -17,7 +17,7 @@ const MAX_COLLECTING_MS = 10_000;
 interface Message {
   recipientId: string;
   messageId?: string;
-  source: AgentPromptSource;
+  source?: AgentPromptSource;
   prompt: AgentPromptInput;
   sessionMode?: string;
   unarchive?: boolean;
@@ -169,16 +169,33 @@ function combine(prompts: AgentPromptInput[]): AgentPromptInput {
       );
 }
 
-function envelope(message: Admitted): AgentPromptInput {
-  return prepareAgentMessage(message.prompt, message.source, message.receipt.messageId).prompt;
+function envelopeEntry(message: Admitted): AgentPromptInput {
+  return envelopeMessage(message.prompt, message.source ?? null, message.receipt.messageId).prompt;
 }
 
-/** Explicitly conflicting session modes require separate, ordered dispatches. */
+function formatBatch(messages: Admitted[]): AgentPromptInput {
+  if (messages.length === 1) {
+    const [message] = messages;
+    return prepareAgentMessage(message!.prompt, message!.source, message!.receipt.messageId).prompt;
+  }
+  return combine(messages.map(envelopeEntry));
+}
+
+/** Explicitly conflicting session modes and non-agent commands require separate, ordered dispatches. */
 function modeGroups(messages: Admitted[]): Admitted[][] {
   const groups: Admitted[][] = [];
   let group: Admitted[] = [];
   let mode: string | undefined;
   for (const message of messages) {
+    if (!message.source && isCommand(message.prompt)) {
+      if (group.length) {
+        groups.push(group);
+        group = [];
+        mode = undefined;
+      }
+      groups.push([message]);
+      continue;
+    }
     if (mode && message.sessionMode && mode !== message.sessionMode) {
       groups.push(group);
       group = [];
@@ -236,7 +253,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         return true;
       },
       messageIds: messages.map((message) => message.receipt.messageId),
-      prompt: combine(messages.map(envelope)),
+      prompt: formatBatch(messages),
       // A batch that waited for the turn to end is dispatched idle-only, so it never steers.
       activeTurnBehavior: messages.some((message) => message.urgency === "interrupt")
         ? "interrupt"
@@ -477,6 +494,14 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       lineUp(item.recipientId, inbox);
       return;
     }
+    if (!item.source) {
+      // A non-agent queued message skips the coalescing quiet window: it starts a turn now if the
+      // recipient is idle, or waits for the running turn to end.
+      inbox.cancelCap();
+      inbox.phase = "waiting";
+      attempt(item.recipientId);
+      return;
+    }
     inbox.cancelTimer = schedule(QUIET_MS, () => attempt(item.recipientId));
     if (inbox.phase === "collecting") return;
     // A new window. It closes after a quiet spell, and no later than the cap.
@@ -494,11 +519,11 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         unarchive: direct.unarchive !== false,
       };
     }
-    // Sharing a prompt with agent messages, a person's text needs its own envelope to stay
+    // Sharing a prompt with queued messages, each entry needs its own envelope to stay
     // a separate row with its own identity.
     const own = envelopeMessage(direct.prompt, direct.source ?? null, direct.messageId);
     return {
-      prompt: combine([...queued.map(envelope), own.prompt]),
+      prompt: combine([...queued.map(envelopeEntry), own.prompt]),
       messageId: own.messageId,
       sessionMode:
         direct.sessionMode ?? queued.findLast((message) => message.sessionMode)?.sessionMode,
@@ -554,7 +579,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   return {
     withdrawPending(recipientId, matches) {
       const withdrawn = (inboxes.get(recipientId)?.messages ?? []).filter(
-        (message) => isQueued(message) && matches(message.source),
+        (message) => isQueued(message) && message.source !== undefined && matches(message.source),
       );
       for (const message of withdrawn) {
         settle(message, "withdrawn");
@@ -587,6 +612,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           activeTurnBehavior,
           running: isRunning(message.recipientId),
           canSteer: Boolean(dependencies.canSteer?.(message.recipientId)),
+          immediateWhenIdle: !message.source,
         }),
         dispatched,
       };

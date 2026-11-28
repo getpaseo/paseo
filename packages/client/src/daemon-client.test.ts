@@ -9362,11 +9362,30 @@ describe("agent sender active-turn behaviors", () => {
     expect(transport.sent).toHaveLength(sentBefore);
   });
 
-  test("queue needs an agent sender", async () => {
+  test("non-agent queue is sent to hosts advertising nonAgentMessageQueue", async () => {
+    const { client, transport } = await connect({ nonAgentMessageQueue: true });
+    const send = client.sendAgentMessage("recipient", "review", { activeTurnBehavior: "queue" });
+    const request = respond(transport, {
+      deliveryStatus: "queued",
+      activeTurnBehavior: "queue",
+      guidance: "Queued, not delivered yet.",
+    });
+    expect(request.activeTurnBehavior).toBe("queue");
+    expect("sourceAgentId" in request).toBe(false);
+    await expect(send).resolves.toEqual({
+      deliveryStatus: "queued",
+      activeTurnBehavior: "queue",
+      guidance: "Queued, not delivered yet.",
+    });
+  });
+
+  test("non-agent queue fails before sending against older hosts without nonAgentMessageQueue", async () => {
     const { client, transport } = await connect({ agentActiveTurnBehaviors: true });
     await expect(
       client.sendAgentMessage("recipient", "review", { activeTurnBehavior: "queue" }),
-    ).rejects.toThrow('activeTurnBehavior "queue" needs an agent sender');
+    ).rejects.toThrow(
+      "Update the Paseo host to queue a message behind a running turn without an agent sender.",
+    );
     expect(transport.sent).toHaveLength(0);
   });
 });

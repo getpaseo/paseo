@@ -9508,26 +9508,29 @@ export class Session {
         queued = acceptAdmission;
       });
       const requested = msg.activeTurnBehavior;
-      if (!msg.sourceAgentId && requested === "queue")
-        throw new Error('activeTurnBehavior "queue" needs an agent sender');
       let deliveryStatus: "queued" | undefined;
       let queuedReceipt: { activeTurnBehavior: AgentMessageBehavior; guidance: string } | undefined;
       const send = async (beforeDispatch: () => Promise<void>) => {
-        if (msg.sourceAgentId) {
+        if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+        if (msg.sourceAgentId || requested === "queue") {
           await beforeDispatch();
           const receipt = this.agentMessages.enqueue({
             recipientId: agentId,
             messageId: msg.messageId,
             prompt,
-            source: {
-              kind: "agent-message",
-              agentId: msg.sourceAgentId,
-              serverId: msg.sourceAgentServerId,
-              title: !msg.sourceAgentServerId
-                ? (this.agentManager.getAgent(msg.sourceAgentId)?.config.title ?? undefined)
-                : undefined,
-            },
-            activeTurnBehavior: this.agentSenderBehavior(requested),
+            ...(msg.sourceAgentId
+              ? {
+                  source: {
+                    kind: "agent-message" as const,
+                    agentId: msg.sourceAgentId,
+                    serverId: msg.sourceAgentServerId,
+                    title: !msg.sourceAgentServerId
+                      ? (this.agentManager.getAgent(msg.sourceAgentId)?.config.title ?? undefined)
+                      : undefined,
+                  },
+                }
+              : {}),
+            activeTurnBehavior: msg.sourceAgentId ? this.agentSenderBehavior(requested) : "queue",
             sessionMode: msg.sessionMode,
             clearPendingPermissions: false,
           });
@@ -9571,10 +9574,7 @@ export class Session {
               activeTurnBehavior:
                 msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
             },
-            send: async (beforeDispatch) => {
-              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
-              await send(beforeDispatch);
-            },
+            send,
           })
         : send(async () => {});
       void sent.catch((error) => {

@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import { createPaseoApi } from "@getpaseo/client";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { expect, test } from "vitest";
 
@@ -129,6 +130,76 @@ test("an older client's agent steer still waits for the running turn to end", as
     expect(runtime.prompts).toHaveLength(1);
     runtime.finishExecution();
     await expect.poll(() => runtime.prompts.length, { timeout: 10_000 }).toBe(2);
+  } finally {
+    await close();
+  }
+});
+
+test("a non-agent queued prompt waits behind a running turn without interrupting and delivers as a raw user prompt", async () => {
+  const { client, runtime, recipient, close } = await createWorkingRecipient();
+  try {
+    let aborts = 0;
+    const originalAbort = runtime.api.session.abort;
+    runtime.api.session.abort = async (input) => {
+      aborts += 1;
+      return originalAbort(input);
+    };
+
+    const receipt = await client.sendAgentMessage(recipient.id, "Decision approved", {
+      activeTurnBehavior: "queue",
+    });
+    expect(receipt).toMatchObject({ deliveryStatus: "queued", activeTurnBehavior: "queue" });
+    expect(receipt.guidance).toContain("Queued, not delivered yet.");
+    expect(runtime.active).toBe(true);
+    expect(aborts).toBe(0);
+    expect(runtime.prompts).toEqual(["Long work"]);
+
+    runtime.finishExecution();
+    await expect.poll(() => runtime.prompts.length, { timeout: 10_000 }).toBe(2);
+    expect(aborts).toBe(0);
+    expect(runtime.prompts[1]).toBe("Decision approved");
+  } finally {
+    await close();
+  }
+});
+
+test("paseo.agents.ref().send with activeTurnBehavior queue works while running and starts immediately when idle", async () => {
+  const { client, runtime, recipient, close } = await createWorkingRecipient();
+  try {
+    const paseo = createPaseoApi(client);
+    // Start execution for every prompt so each turn stays active until finishExecution().
+    runtime.prompt = async (input) => {
+      runtime.prompts.push(input.text);
+      if (!runtime.active) runtime.startExecution();
+    };
+
+    await paseo.agents.ref(recipient.id).send("Answer from Inbox", {
+      activeTurnBehavior: "queue",
+    });
+    expect(runtime.active).toBe(true);
+    expect(runtime.prompts).toEqual(["Long work"]);
+
+    runtime.finishExecution();
+    await expect.poll(() => runtime.prompts.length, { timeout: 10_000 }).toBe(2);
+    expect(runtime.prompts[1]).toBe("Answer from Inbox");
+
+    // Finish turn 2 so the recipient returns to idle, then queue another non-agent prompt.
+    runtime.finishExecution();
+    await client.waitForAgentUpsert(recipient.id, (agent) => agent.status === "idle");
+
+    const startedAt = Date.now();
+    const idleReceipt = await client.sendAgentMessage(recipient.id, "Immediate while idle", {
+      activeTurnBehavior: "queue",
+    });
+    expect(idleReceipt).toMatchObject({
+      deliveryStatus: "queued",
+      activeTurnBehavior: "queue",
+      guidance: "The agent is idle, so your message starts a turn now.",
+    });
+    await expect.poll(() => runtime.prompts.length, { timeout: 1_500 }).toBe(3);
+    // Starts immediately rather than waiting for the 2-second agent batching quiet window.
+    expect(Date.now() - startedAt).toBeLessThan(1_500);
+    expect(runtime.prompts[2]).toBe("Immediate while idle");
   } finally {
     await close();
   }

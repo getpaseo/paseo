@@ -2333,6 +2333,8 @@ export class VoiceAssistantWebSocketServer {
         agentMessageBatching: true,
         // COMPAT(agentActiveTurnBehaviors): added in v0.17.2, remove gate after 2027-05-22.
         agentActiveTurnBehaviors: true,
+        // COMPAT(nonAgentMessageQueue): added in v0.18.2, remove gate after 2027-06-01.
+        nonAgentMessageQueue: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
