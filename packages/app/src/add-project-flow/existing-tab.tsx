@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -50,7 +51,7 @@ export function useExistingTab(input: {
         return {
           id: option.path,
           title: option.kind === "path" ? shortPath : pathBaseName(option.path),
-          subtitle: option.kind === "path" ? "Open this path" : shortPath,
+          subtitle: option.kind === "path" ? addProjectCopy("openPath") : shortPath,
           icon: Folder,
           testID: `add-project-flow-folder-${encodeURIComponent(option.path)}`,
         };
@@ -65,19 +66,23 @@ export function useExistingTab(input: {
   const activePath = paths[activeIndex]?.path ?? null;
 
   return useMemo<AddProjectTabView>(() => {
-    const unavailable = canAddProject ? null : "Update the host to add projects";
+    const unavailable = canAddProject ? null : addProjectCopy("updateAdd");
     let notice: AddProjectTabView["notice"] = null;
     if (unavailable) notice = { kind: "empty", text: unavailable };
     else if (search.error) notice = { kind: "error", text: search.error };
-    else if (search.pending) notice = { kind: "pending", text: "Searching..." };
-    else notice = { kind: "empty", text: query.trim() ? "No matching folders" : "No folders yet" };
+    else if (search.pending) notice = { kind: "pending", text: addProjectCopy("searching") };
+    else
+      notice = {
+        kind: "empty",
+        text: query.trim() ? addProjectCopy("noMatchingFolders") : addProjectCopy("noFolders"),
+      };
     return {
       rows,
       activeIndex,
       notice,
       unavailable,
       primary: {
-        label: "Open project",
+        label: addProjectCopy("openProject"),
         submit: activePath ? () => actions.openFolder(activePath) : null,
       },
     };
@@ -114,8 +119,8 @@ export function ExistingTab({
             onChangeText={onQueryChange}
             onSubmitEditing={isWeb ? undefined : (view.primary.submit ?? undefined)}
             leading={searchIcon}
-            placeholder="Search folders or enter a path"
-            accessibilityLabel="Search folders"
+            placeholder={addProjectCopy("searchDirectories")}
+            accessibilityLabel={addProjectCopy("searchDirectory")}
             autoFocus={autoFocus}
             autoCapitalize="none"
             autoCorrect={false}
@@ -132,7 +137,7 @@ export function ExistingTab({
             disabled={!editable}
             testID="add-project-flow-browse"
           >
-            Browse
+            {addProjectCopy("browse")}
           </Button>
         ) : null}
       </View>

@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import { useMemo } from "react";
 import { useFetchQuery } from "@/data/query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -40,7 +41,7 @@ export function useDirectorySearch(input: {
     retry: false,
     staleTimeMs: 15_000,
   });
-  const failed = search.isError ? "Unable to search folders" : null;
+  const failed = search.isError ? addProjectCopy("directorySearchError") : null;
   return useMemo(
     () =>
       resolveSearch({
@@ -72,7 +73,7 @@ export function useGithubRepositorySearch(input: {
       if (!client) throw new Error("Host is unavailable");
       const payload = await client.searchGithubRepositories({ query: debouncedQuery, limit: 30 });
       let error: string | null = payload.error ?? null;
-      if (!error && payload.available === false) error = "GitHub search is unavailable";
+      if (!error && payload.available === false) error = addProjectCopy("githubUnavailable");
       return {
         hostId,
         query: debouncedQuery,
@@ -85,7 +86,7 @@ export function useGithubRepositorySearch(input: {
     retry: false,
     staleTimeMs: 15_000,
   });
-  const failed = search.isError ? "Unable to search GitHub" : null;
+  const failed = search.isError ? addProjectCopy("githubSearchError") : null;
   return useMemo(
     () =>
       resolveSearch({

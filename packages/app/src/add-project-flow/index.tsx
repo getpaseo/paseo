@@ -1,3 +1,6 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
+import type { addProjectEn } from "@/i18n/resources/add-project";
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -55,25 +58,25 @@ const DESKTOP_HEIGHT = 560;
 // Compact drops the segment icons so the three labels fit a phone's width.
 const TABS: {
   value: AddProjectTab;
-  label: string;
+  label: keyof typeof addProjectEn;
   key: string;
   icon: SegmentedControlOption<AddProjectTab>["icon"];
 }[] = [
   {
     value: "existing",
-    label: "Existing",
+    label: "existingTab",
     key: "1",
     icon: ({ color, size }) => <Folder color={color} size={size} />,
   },
   {
     value: "clone",
-    label: "Clone",
+    label: "cloneTab",
     key: "2",
     icon: ({ color, size }) => <GitHubIcon color={color} size={size} />,
   },
   {
     value: "new-folder",
-    label: "New folder",
+    label: "newFolderTab",
     key: "3",
     icon: ({ color, size }) => <FolderPlus color={color} size={size} />,
   },
@@ -84,12 +87,13 @@ function buildTabOptions(
   isMac: boolean,
   withIcons: boolean,
   lockedTo: AddProjectTab | null,
+  translate: (key: keyof typeof addProjectEn) => string,
 ): SegmentedControlOption<AddProjectTab>[] {
   const os = isMac ? "mac" : "non-mac";
   return TABS.map(
     (tab): SegmentedControlOption<AddProjectTab> => ({
       value: tab.value,
-      label: tab.label,
+      label: translate(tab.label),
       icon: withIcons ? tab.icon : undefined,
       tooltip: formatShortcut(["mod", tab.key], os),
       testID: `add-project-flow-tab-${tab.value}`,
@@ -108,6 +112,7 @@ interface AddProjectFlowProps {
  * component wires it to the host, the searches, and the keys.
  */
 export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
+  const { t } = useTranslation("addProject");
   const isCompact = useIsCompactFormFactor();
   const isMac = getShortcutOs() === "mac";
   const keyboardPresent = useHardwareKeyboardPresent();
@@ -215,13 +220,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const lockedTab = submitting ? state.tab : null;
   const tabOptions = useMemo(
-    () => buildTabOptions(isMac, !isCompact, lockedTab),
-    [isCompact, isMac, lockedTab],
+    () => buildTabOptions(isMac, !isCompact, lockedTab, t),
+    [isCompact, isMac, lockedTab, t],
   );
   const selectableHosts = useMemo(() => selectableAddProjectHosts(state), [state]);
   const header = useMemo(
     () => ({
-      title: "Add project",
+      title: t("addProject"),
       titleTestID: "add-project-flow-title",
       actions:
         selectableHosts.length > 1 && state.hostId ? (
@@ -233,12 +238,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           />
         ) : undefined,
     }),
-    [selectHost, selectableHosts, state.hostId, submitting],
+    [selectHost, selectableHosts, state.hostId, submitting, t],
   );
 
   // On a pointer layout the failure sits left of the button; compact stacks it above a
   // full-width button.
-  const problem = failure ?? (offline && host ? `${host.label} is offline` : null);
+  const problem =
+    failure ?? (offline && host ? addProjectCopy("offlineHost", { host: host.label }) : null);
   const failureLine = problem ? (
     <Text style={styles.failure} numberOfLines={2} testID="add-project-flow-error">
       {problem}
@@ -372,7 +378,7 @@ function HostPill({
       onOpenChange={setOpen}
       anchorRef={anchorRef}
       searchable={false}
-      title="Host"
+      title={addProjectCopy("host")}
       desktopPlacement="bottom-end"
       desktopMinWidth={240}
       hostOptionTestID={hostOptionTestID}
@@ -380,9 +386,9 @@ function HostPill({
       <FieldTrigger
         ref={anchorRef}
         variant="badge"
-        label="Host"
-        accessibilityLabel="Project host"
-        tooltip="Host"
+        label={addProjectCopy("host")}
+        accessibilityLabel={addProjectCopy("projectHost")}
+        tooltip={addProjectCopy("host")}
         icon={icon}
         value={label}
         onPress={openPicker}
@@ -405,12 +411,12 @@ function KeyHints({ canMove }: { canMove: boolean }) {
       {canMove ? (
         <View style={styles.hint}>
           <Shortcut keys={MOVE_KEYS} />
-          <Text style={styles.hintText}>Move</Text>
+          <Text style={styles.hintText}>{addProjectCopy("navigate")}</Text>
         </View>
       ) : null}
       <View style={styles.hint}>
         <Shortcut keys={TAB_KEYS} />
-        <Text style={styles.hintText}>Switch</Text>
+        <Text style={styles.hintText}>{addProjectCopy("switchTab")}</Text>
       </View>
     </View>
   );
@@ -425,14 +431,14 @@ function NoHosts({ onClose }: { onClose: () => void }) {
   }, [addHost, onClose]);
   return (
     <View style={styles.noHosts}>
-      <Text style={styles.noHostsText}>No connected hosts</Text>
+      <Text style={styles.noHostsText}>{addProjectCopy("noHosts")}</Text>
       <Button
         variant="secondary"
         leftIcon={Plus}
         onPress={handleAddHost}
         testID="add-project-flow-add-host"
       >
-        Add host
+        {addProjectCopy("addHost")}
       </Button>
     </View>
   );

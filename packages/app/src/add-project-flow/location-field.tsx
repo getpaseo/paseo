@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
@@ -60,7 +61,7 @@ export function LocationField({
         (option): ComboboxOption => ({
           id: option.path,
           label: shortenPath(option.path),
-          description: option.kind === "path" ? "Use this folder" : undefined,
+          description: option.kind === "path" ? addProjectCopy("useFolder") : undefined,
           kind: "directory",
         }),
       ),
@@ -80,8 +81,8 @@ export function LocationField({
       <FieldTrigger
         ref={anchorRef}
         variant="field"
-        label="Location"
-        accessibilityLabel="Project location"
+        label={addProjectCopy("location")}
+        accessibilityLabel={addProjectCopy("projectLocation")}
         icon={locationIcon}
         value={shortenPath(destination)}
         onPress={handleOpen}
@@ -96,9 +97,12 @@ export function LocationField({
         remoteSearch
         remoteSearchPending={awaitingOptions}
         onSearchQueryChange={setQuery}
-        searchPlaceholder="Search folders or enter a path"
-        emptyText={search.error ?? (search.pending ? "Searching..." : "No matching folders")}
-        title="Location"
+        searchPlaceholder={addProjectCopy("searchDirectories")}
+        emptyText={
+          search.error ??
+          (search.pending ? addProjectCopy("searching") : addProjectCopy("noMatchingFolders"))
+        }
+        title={addProjectCopy("location")}
         open={open}
         onOpenChange={handleOpenChange}
         anchorRef={anchorRef}

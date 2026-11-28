@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import {
   isCompleteGitRemote,
   parseGitHubRemoteUrl,
@@ -27,7 +28,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
         id: `${MANUAL_CHOICE_PREFIX}${repo}`,
         nameWithOwner: identity?.repo ?? remoteName,
         cloneUrl: repo,
-        description: "Clone this repository URL",
+        description: addProjectCopy("cloneUrl"),
         updatedAt: null,
       },
     ];
@@ -41,7 +42,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
     nameWithOwner,
     cloneUrl: nameWithOwner,
     cloneProtocol,
-    description: `Clone owner/repo via ${cloneProtocol.toUpperCase()}`,
+    description: addProjectCopy("cloneProtocol", { protocol: cloneProtocol.toUpperCase() }),
     updatedAt: null,
   }));
 }
@@ -99,11 +100,16 @@ export function checkoutName(nameWithOwner: string): string {
   return pathBaseName(nameWithOwner).replace(/\.git$/u, "");
 }
 
-export function validateNewFolderName(name: string): string | null {
+export function validateNewFolderName(
+  name: string,
+  translate?: typeof addProjectCopy,
+): string | null {
   const trimmed = name.trim();
-  if (!trimmed || trimmed === "." || trimmed === "..") return "Enter a folder name";
-  if (/[\\/]/.test(trimmed)) return "Use a name without slashes";
+  if (!trimmed || trimmed === "." || trimmed === "..")
+    return translate?.("enterName") ?? "Enter a folder name";
+  if (/[\\/]/.test(trimmed)) return translate?.("noSlashes") ?? "Use a name without slashes";
   // The host rejects a drive prefix on every platform.
-  if (/^[A-Za-z]:/u.test(trimmed)) return "Use a name without a drive letter";
+  if (/^[A-Za-z]:/u.test(trimmed))
+    return translate?.("noDriveLetter") ?? "Use a name without a drive letter";
   return null;
 }

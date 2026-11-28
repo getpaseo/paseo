@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -26,7 +27,7 @@ export function useNewFolderTab(input: {
   const { name } = state.newFolder;
   const location = state.newFolder.location ?? defaultLocation;
   const trimmed = name.trim();
-  const nameError = trimmed ? validateNewFolderName(name) : null;
+  const nameError = trimmed ? validateNewFolderName(name, addProjectCopy) : null;
   // Preview and create only a name that can be created, so the field never shows a path that
   // escapes the location.
   const previewName = trimmed && !nameError ? trimmed : null;
@@ -39,10 +40,10 @@ export function useNewFolderTab(input: {
       notice: null,
       location,
       destination: previewName ? joinDirectoryPath(location, previewName) : location,
-      unavailable: canCreate ? null : "Update the host to create folders",
+      unavailable: canCreate ? null : addProjectCopy("updateCreate"),
       nameError,
       primary: {
-        label: "Create project",
+        label: addProjectCopy("createProject"),
         submit: canCreate && previewName ? () => actions.createFolder(name, location) : null,
       },
     }),
@@ -74,7 +75,7 @@ export function NewFolderTab({
   return (
     <View style={styles.body}>
       <Field
-        label="Name"
+        label={addProjectCopy("name")}
         hint={view.unavailable ?? undefined}
         error={view.nameError}
         testID="add-project-flow-name-field"
@@ -84,7 +85,7 @@ export function NewFolderTab({
           onChangeText={onNameChange}
           onSubmitEditing={isWeb ? undefined : (view.primary.submit ?? undefined)}
           placeholder="my-project"
-          accessibilityLabel="Folder name"
+          accessibilityLabel={addProjectCopy("directoryName")}
           autoFocus={autoFocus}
           autoCapitalize="none"
           autoCorrect={false}

@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -47,16 +48,14 @@ function isTypedChoice(choice: GithubRepositoryChoice | undefined): boolean {
 }
 
 function cloneEmptyText(host: AddProjectHost, query: string): string {
-  if (!host.canSearchGithubRepositories) return "Paste a Git URL or owner/repo";
-  return query.trim() ? "No matching projects" : "Search GitHub or paste a Git URL";
+  if (!host.canSearchGithubRepositories) return addProjectCopy("pasteGitUrl");
+  return query.trim() ? addProjectCopy("noMatchingProjects") : addProjectCopy("searchGitOrUrl");
 }
 
 export interface CloneTabView extends AddProjectTabView {
   location: string;
   destination: string;
 }
-
-const CLONE_UNAVAILABLE = "Update the host to clone projects";
 
 export function useCloneTab(input: {
   state: AddProjectFlowState;
@@ -82,7 +81,10 @@ export function useCloneTab(input: {
       choices.map((repository) => ({
         id: repository.id,
         title: repository.cloneProtocol
-          ? `${repository.nameWithOwner} via ${repository.cloneProtocol.toUpperCase()}`
+          ? addProjectCopy("repositoryVia", {
+              repository: repository.nameWithOwner,
+              protocol: repository.cloneProtocol.toUpperCase(),
+            })
           : repository.nameWithOwner,
         subtitle: repository.description,
         icon: GitHubIcon,
@@ -102,11 +104,11 @@ export function useCloneTab(input: {
     : location;
 
   return useMemo<CloneTabView>(() => {
-    const unavailable = host && canClone ? null : CLONE_UNAVAILABLE;
+    const unavailable = host && canClone ? null : addProjectCopy("updateClone");
     let notice: AddProjectTabView["notice"] = null;
-    if (!host || unavailable) notice = { kind: "empty", text: CLONE_UNAVAILABLE };
+    if (!host || unavailable) notice = { kind: "empty", text: addProjectCopy("updateClone") };
     else if (search.error) notice = { kind: "error", text: search.error };
-    else if (search.pending) notice = { kind: "pending", text: "Searching..." };
+    else if (search.pending) notice = { kind: "pending", text: addProjectCopy("searching") };
     else notice = { kind: "empty", text: cloneEmptyText(host, query) };
     return {
       rows,
@@ -116,7 +118,7 @@ export function useCloneTab(input: {
       location,
       destination,
       primary: {
-        label: "Clone project",
+        label: addProjectCopy("cloneProject"),
         submit: repository ? () => actions.clone(repository, location) : null,
       },
     };
@@ -165,8 +167,8 @@ export function CloneTab({
         onChangeText={onQueryChange}
         onSubmitEditing={isWeb ? undefined : (view.primary.submit ?? undefined)}
         leading={githubIcon}
-        placeholder="Search GitHub or paste a Git URL"
-        accessibilityLabel="Search GitHub"
+        placeholder={addProjectCopy("searchGitOrUrl")}
+        accessibilityLabel={addProjectCopy("searchGitHub")}
         autoFocus={autoFocus}
         autoCapitalize="none"
         autoCorrect={false}

@@ -5,6 +5,7 @@ import { ar } from "./resources/ar";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
+import { it as italian } from "./resources/it";
 import { ja } from "./resources/ja";
 import { ko } from "./resources/ko";
 import { ptBR } from "./resources/pt-BR";
@@ -172,6 +173,7 @@ describe("translation resources", () => {
     expect(canonicalKeys(ar)).toEqual(englishKeys);
     expect(canonicalKeys(es)).toEqual(englishKeys);
     expect(canonicalKeys(fr)).toEqual(englishKeys);
+    expect(canonicalKeys(italian)).toEqual(englishKeys);
     expect(canonicalKeys(ja)).toEqual(englishKeys);
     expect(canonicalKeys(ko)).toEqual(englishKeys);
     expect(canonicalKeys(ptBR)).toEqual(englishKeys);
@@ -194,6 +196,7 @@ describe("translation resources", () => {
     expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(italian)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ko)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ptBR)).toBeLessThan(maxFallbackStrings);
@@ -202,7 +205,7 @@ describe("translation resources", () => {
   });
 
   it("localizes the pull request empty state in every supported language", () => {
-    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+    for (const resource of [ar, es, fr, italian, ja, ko, ptBR, ru, zhCN]) {
       expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
       expect(resource.panels.pullRequest.emptyDescription).not.toBe(
         en.panels.pullRequest.emptyDescription,
@@ -214,6 +217,7 @@ describe("translation resources", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
+    expect(findInterpolationMismatches(italian)).toEqual([]);
     expect(findInterpolationMismatches(ja)).toEqual([]);
     expect(findInterpolationMismatches(ko)).toEqual([]);
     expect(findInterpolationMismatches(ptBR)).toEqual([]);
@@ -300,6 +304,14 @@ describe("translation resources", () => {
         en.sidebar.statusGroupAccessibility,
       );
     }
+  });
+
+  it("keeps Italian check count phrases correct for singular and plural counts", () => {
+    const count = italian.workspace.git.pr.checksOverview.count;
+    expect(count.failure).toBe("{{count}} con esito negativo");
+    expect(count.manual).toBe("{{count}} con esecuzione manuale");
+    expect(count.success).toBe("{{count}} con esito positivo");
+    expect(count.ignored).toBe("{{count}} senza esecuzione");
   });
 
   it("keeps local connection fallback errors translated", () => {

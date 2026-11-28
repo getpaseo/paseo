@@ -2751,6 +2751,7 @@ export const ptBR: TranslationResources = {
         label: "Idioma",
         description: "Idioma do app",
         options: {
+          it: "Italiano",
           system: "Sistema",
           ar: "Árabe",
           en: "Inglês",

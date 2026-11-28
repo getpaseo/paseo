@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { router } from "expo-router";
 import type { WorkspaceProjectDescriptorPayload } from "@getpaseo/protocol/messages";
@@ -104,11 +105,11 @@ export function useAddProjectActions(input: {
           const result = await openProject(path);
           if (result.ok) return { ok: true, project: result.project };
           if (getOpenProjectFailureReason(result) === "directory_not_found") {
-            return { ok: false, error: "Folder not found" };
+            return { ok: false, error: addProjectCopy("directoryMissing") };
           }
-          return { ok: false, error: result.error ?? "Unable to add project" };
+          return { ok: false, error: result.error ?? addProjectCopy("addError") };
         },
-        "Unable to add project",
+        addProjectCopy("addError"),
       );
     },
     [hostId, openProject, run],
@@ -122,7 +123,7 @@ export function useAddProjectActions(input: {
         const path = await pickDirectory();
         if (path) openFolder(path);
       } catch {
-        setState((state) => rejectSubmission(state, "Unable to browse for a folder"));
+        setState((state) => rejectSubmission(state, addProjectCopy("browseError")));
       }
     })();
   }, [hostId, openFolder, setState]);
@@ -138,11 +139,11 @@ export function useAddProjectActions(input: {
             location,
             repository.cloneProtocol,
           );
-          if (!result.ok) return { ok: false, error: result.error ?? "Unable to clone project" };
+          if (!result.ok) return { ok: false, error: result.error ?? addProjectCopy("cloneError") };
           rememberLocation(hostId, location);
           return { ok: true, project: result.project };
         },
-        "Unable to clone project",
+        addProjectCopy("cloneError"),
       );
     },
     [cloneGithubProject, hostId, rememberLocation, run],
@@ -154,13 +155,13 @@ export function useAddProjectActions(input: {
       void run(
         hostId,
         async () => {
-          if (!client) return { ok: false, error: "Unable to create folder" };
+          if (!client) return { ok: false, error: addProjectCopy("createError") };
           const payload = await client.createProjectDirectory({
             parentPath: location,
             name: name.trim(),
           });
           if (payload.error || !payload.project) {
-            return { ok: false, error: payload.error ?? "Unable to create folder" };
+            return { ok: false, error: payload.error ?? addProjectCopy("createError") };
           }
           registerProjectDescriptor({
             serverId: hostId,
@@ -172,7 +173,7 @@ export function useAddProjectActions(input: {
           rememberLocation(hostId, location);
           return { ok: true, project: payload.project };
         },
-        "Unable to create folder",
+        addProjectCopy("createError"),
       );
     },
     [client, hostId, rememberLocation, run, setHasHydratedWorkspaces],

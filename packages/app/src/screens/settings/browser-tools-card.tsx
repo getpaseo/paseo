@@ -15,6 +15,7 @@ import {
 
 export function BrowserToolsRow({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const { t: browserToolsT } = useTranslation("browserTools");
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const state = getBrowserToolsCardState({ isConnected, config });
@@ -42,31 +43,32 @@ export function BrowserToolsRow({ serverId }: { serverId: string }) {
   const hint = useMemo(
     () => (
       <View>
-        <Text style={settingsStyles.rowHint}>{state.warning}</Text>
+        <Text style={settingsStyles.rowHint}>{browserToolsT("description")}</Text>
         {mutationView.loadingText ? (
           <Text style={settingsStyles.rowHint} testID="host-page-browser-tools-loading">
-            {mutationView.loadingText}
+            {browserToolsT("updating")}
           </Text>
         ) : null}
       </View>
     ),
-    [mutationView.loadingText, state.warning],
+    [browserToolsT, mutationView.loadingText],
   );
 
   if (!state.isVisible) return null;
 
   return (
     <SettingsRow
-      label={state.title}
+      label={browserToolsT("title")}
       hint={hint}
       error={mutationView.errorText ?? undefined}
+      errorTestID="host-page-browser-tools-error"
       testID="host-page-browser-tools-card"
     >
       <Switch
         value={state.isEnabled}
         onValueChange={handleValueChange}
         disabled={mutationView.isSwitchDisabled}
-        accessibilityLabel="Enable browser tools"
+        accessibilityLabel={browserToolsT("enable")}
         testID="host-page-browser-tools-switch"
       />
     </SettingsRow>
