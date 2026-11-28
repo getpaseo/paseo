@@ -138,7 +138,7 @@ export async function goToSetupStep(page: Page, label: string): Promise<void> {
 }
 
 export function paseoToolsSwitch(scope: Page | Locator): Locator {
-  return scope.getByRole("switch", { name: "Inject Paseo tools", exact: true });
+  return scope.getByRole("switch", { name: "Enable tools", exact: true });
 }
 
 /** Whether the host gives its agents Paseo tools, read from the host itself. */
@@ -147,7 +147,8 @@ export async function hostGivesAgentsPaseoTools(host: { port: number }): Promise
     Pick<InternalDaemonClient, "connect" | "close" | "getDaemonConfig">
   >({ clientIdPrefix: "app-e2e-onboarding", port: host.port });
   try {
-    return (await client.getDaemonConfig()).config.mcp.injectIntoAgents !== false;
+    const config = (await client.getDaemonConfig()).config;
+    return config.tools?.enabled ?? config.mcp.injectIntoAgents !== false;
   } finally {
     await client.close();
   }

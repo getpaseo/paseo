@@ -1,5 +1,9 @@
 import type { z } from "zod";
+import type { BuiltInToolGroup, DaemonPermission } from "@getpaseo/protocol/messages";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
+
+export type PaseoToolGroup = BuiltInToolGroup | "voice" | "plugin";
+export type PaseoToolScope = "agent" | "top-level" | "both";
 
 export class PaseoToolInputError extends Error {
   readonly status = 400;
@@ -34,6 +38,9 @@ export interface PaseoToolConfig {
 export interface PaseoToolDefinition extends PaseoToolConfig {
   name: string;
   description: string;
+  group: PaseoToolGroup;
+  scope: PaseoToolScope;
+  permission: DaemonPermission;
   handler: (input: unknown, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>;
 }
 

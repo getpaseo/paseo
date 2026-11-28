@@ -253,14 +253,34 @@ function createWorkspaceAutoNameStub(): WorkspaceAutoName {
 
 function createServer(options?: {
   speechReadiness?: SpeechReadinessSnapshot | null;
+  toolsEnabled?: boolean;
   logger?: ReturnType<typeof createLogger>;
   startPaused?: boolean;
   auth?: { password: string; localCredential: () => string | null };
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
+  let toolsEnabled = options?.toolsEnabled ?? true;
+  const changeListeners = new Set<(config: unknown) => void>();
   const daemonConfigStore = {
+    get: () => ({
+      tools: { enabled: toolsEnabled },
+      mcp: { enabled: true, injectIntoAgents: toolsEnabled },
+      browserTools: { enabled: false },
+    }),
+    setToolsEnabled: (next: boolean) => {
+      toolsEnabled = next;
+      const config = daemonConfigStore.get();
+      for (const listener of changeListeners) {
+        listener(config);
+      }
+    },
     onApply: vi.fn(() => () => {}),
-    onChange: vi.fn(() => () => {}),
+    onChange: vi.fn((listener: (config: unknown) => void) => {
+      changeListeners.add(listener);
+      return () => {
+        changeListeners.delete(listener);
+      };
+    }),
   };
   const logger = options?.logger ?? createLogger();
   return new VoiceAssistantWebSocketServer(
@@ -1244,6 +1264,38 @@ describe("relay external socket reconnect behavior", () => {
     expect(payload?.capabilities?.voice?.voice.enabled).toBe(true);
     expect(payload?.capabilities?.voice?.dictation.reason).toContain("Try again in a few minutes.");
     expect(payload?.capabilities?.voice?.voice.reason).toContain("Try again in a few minutes.");
+
+    await server.close();
+  });
+
+  test("marks voice mode unavailable while keeping dictation ready when agent tools are disabled", async () => {
+    const speechReadiness = createReadySpeechReadinessSnapshot();
+    const server = createServer({ speechReadiness, toolsEnabled: false });
+
+    const socket = new MockSocket();
+    const serverInfo = (await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-server-info-tools-disabled-voice",
+    })) as {
+      features?: { daemonToolsConfig?: unknown };
+      capabilities?: {
+        voice?: {
+          dictation?: { enabled?: unknown; reason?: unknown };
+          voice?: { enabled?: unknown; reason?: unknown };
+        };
+      };
+    };
+
+    expect(serverInfo.features?.daemonToolsConfig).toBe(true);
+    expect(serverInfo.capabilities?.voice?.dictation).toEqual({
+      enabled: true,
+      reason: "",
+    });
+    expect(serverInfo.capabilities?.voice?.voice).toEqual({
+      enabled: true,
+      reason: "Voice mode requires agent tools. Turn on Enable tools in Settings > Tools.",
+    });
 
     await server.close();
   });

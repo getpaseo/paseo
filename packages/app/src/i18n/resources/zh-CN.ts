@@ -2582,6 +2582,9 @@ export const zhCN: TranslationResources = {
         info: "语音模式会转写你说的话，并朗读智能体的回复。",
         enabled: "语音模式",
         enabledHint: "免手动与智能体对话",
+        toolsRequiredTitle: "语音模式需要启用代理工具",
+        toolsRequiredDescription: "开启“启用工具”后，智能体才能播报语音回复。",
+        enablingTools: "正在启用...",
       },
       openai: {
         apiKey: "API 密钥",
@@ -3067,15 +3070,35 @@ export const zhCN: TranslationResources = {
       tools: {
         instructionsTitle: "指令",
         toolsTitle: "代理工具",
+        pluginNote: "插件提供的工具同样受“启用工具”开关控制",
+        updateHostForGroups: "更新此 Host 以单独配置各个工具组",
+        groups: {
+          orchestration: {
+            title: "编排",
+            hint: "管理工作区、智能体、终端和脚本",
+          },
+          schedules: {
+            title: "计划任务",
+            hint: "创建和管理计划任务与心跳",
+          },
+          changeRequests: {
+            title: "PR 监控",
+            hint: "监控 Pull Request 和 Merge Request 的更新",
+          },
+          browser: {
+            title: "浏览器",
+            hint: "控制 Paseo 浏览器标签页，包括已登录状态。仅对受信任的智能体启用。",
+          },
+        },
       },
       orchestration: {
         title: "编排",
         unavailable: "连接到这个 Host 以管理编排",
         enableTools: {
-          title: "启用 Paseo tools",
-          hint: "Agent 将能够管理 worktree、Agent 和计划",
-          accessibilityLabel: "注入 Paseo tools",
-          updateFailed: "无法更新 Paseo 工具。",
+          title: "启用工具",
+          hint: "允许 Paseo 和插件为智能体提供工具。语音模式需要开启此项。",
+          accessibilityLabel: "启用工具",
+          updateFailed: "无法更新工具设置。",
         },
         systemPrompt: {
           title: "System prompt",

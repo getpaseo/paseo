@@ -800,3 +800,56 @@ describe("provider metrics", () => {
     ).toBe(false);
   });
 });
+
+describe("daemon tools config wire compatibility", () => {
+  const baseConfig = {
+    mcp: { enabled: true, injectIntoAgents: true },
+    browserTools: { enabled: false },
+  };
+  const tools = {
+    enabled: true,
+    groups: {
+      orchestration: true,
+      schedules: true,
+      changeRequests: true,
+      browser: false,
+    },
+  };
+
+  test("new apps read daemon.tools and daemonToolsConfig feature from a new daemon", () => {
+    const parsed = MutableDaemonConfigSchema.parse({ ...baseConfig, tools });
+    expect(parsed.tools).toEqual(tools);
+
+    const serverInfo = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "srv_1",
+      features: { daemonToolsConfig: true },
+    });
+    expect(serverInfo.features?.daemonToolsConfig).toBe(true);
+  });
+
+  test("new apps accept configs from older daemons that omit tools and daemonToolsConfig", () => {
+    const parsed = MutableDaemonConfigSchema.parse(baseConfig);
+    expect(parsed.tools).toBeUndefined();
+    expect(parsed.mcp.injectIntoAgents).toBe(true);
+    expect(parsed.browserTools.enabled).toBe(false);
+  });
+
+  test("patches accept both unified tools patches and legacy mcp/browserTools patches", () => {
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        tools: { enabled: false, groups: { browser: true } },
+      }).tools,
+    ).toEqual({ enabled: false, groups: { browser: true } });
+
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: true },
+      }),
+    ).toMatchObject({
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: true },
+    });
+  });
+});

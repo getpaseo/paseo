@@ -126,6 +126,11 @@ import {
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
+import {
+  resolveDaemonToolsFromConfigOptions,
+  resolveDaemonToolsFromMutableConfig,
+  type ResolvedDaemonToolsConfig,
+} from "./tools-config.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import {
   resolveReloadableConfig,
@@ -347,6 +352,7 @@ export interface PaseoDaemonConfig {
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
   trustedProxies?: true | string[];
+  tools?: ResolvedDaemonToolsConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   usageEnabled?: boolean;
@@ -524,12 +530,23 @@ function isListenOverridden(config: PaseoDaemonConfig): boolean {
 
 function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
+  const tools = resolveDaemonToolsFromConfigOptions({
+    tools: config.tools,
+    mcpEnabled: config.mcpEnabled,
+    mcpInjectIntoAgents: config.mcpInjectIntoAgents,
+    browserToolsEnabled: config.browserToolsEnabled,
+  });
 
   const initialConfig: MutableDaemonConfig = {
     relay: createInitialRelayConfig(config),
+    tools: {
+      enabled: tools.enabled,
+      groups: { ...tools.groups },
+    },
+    // COMPAT(legacyToolsConfig): added in v0.18.2, keep legacy fields synced for older clients.
     mcp: {
       enabled: config.mcpEnabled ?? true,
-      injectIntoAgents: config.mcpInjectIntoAgents ?? true,
+      injectIntoAgents: tools.enabled,
     },
     ...(config.hostnames !== undefined ? { hostnames: config.hostnames } : {}),
     cors: { allowedOrigins: config.corsAllowedOrigins },
@@ -540,7 +557,8 @@ function createInitialMutableDaemonConfig(config: ResolvedDaemonSettings): Mutab
       ? { catalogRefreshTimeoutMs: config.providerCatalogRefreshTimeoutMs }
       : {}),
     usage: { enabled: config.usageEnabled !== false },
-    browserTools: { enabled: config.browserToolsEnabled ?? false },
+    // COMPAT(legacyToolsConfig): added in v0.18.2, keep legacy field synced for older clients.
+    browserTools: { enabled: tools.groups.browser },
     providers,
     metadataGeneration: createInitialMetadataGenerationConfig(config),
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
@@ -1618,6 +1636,7 @@ export async function createPaseoDaemon(
     clearWorkspaceArchiving,
     ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
+    toolsConfig: getCurrentToolsConfig(),
     browserToolsEnabled: browserToolsPolicy.isEnabled(),
     browserToolsBroker,
     paseoToolPolicy:
@@ -1634,16 +1653,19 @@ export async function createPaseoDaemon(
   });
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
     createPaseoToolCatalog(createAgentToolHostDependencies(runtime));
+  const getCurrentToolsConfig = () => resolveDaemonToolsFromMutableConfig(daemonConfigStore.get());
+  let mcpEnabled = config.mcpEnabled ?? true;
   const setAgentProviderToolsEnabled = (enabled: boolean) => {
     agentProviderRuntime.setPaseoToolCatalog(
       enabled ? createPaseoAgentToolManifest(createAgentToolHostDependencies({})) : null,
     );
   };
   agentManager.setPaseoToolCatalogFactory(createAgentToolCatalog);
-  agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
-  setAgentProviderToolsEnabled(config.mcpEnabled !== false && config.mcpInjectIntoAgents !== false);
+  const initialTools = getCurrentToolsConfig();
+  const initialInject = mcpEnabled && initialTools.enabled;
+  agentManager.setPaseoToolsEnabled(initialInject);
+  setAgentProviderToolsEnabled(initialInject);
 
-  let mcpEnabled = config.mcpEnabled ?? true;
   let agentMcpBaseUrl: string | null = null;
   {
     const agentMcpRoute = "/mcp/agents";
@@ -1830,21 +1852,28 @@ export async function createPaseoDaemon(
               );
             }
             const mcpBaseUrl = loopbackAgentEndpoint.getMcpBaseUrl();
-            agentMcpBaseUrl =
-              !mcpEnabled || config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
-            agentManager.setMcpBaseUrl(agentMcpBaseUrl);
-            agentManager.setPaseoToolsEnabled(mcpEnabled && config.mcpInjectIntoAgents !== false);
+            const syncAgentToolsState = () => {
+              const currentTools = getCurrentToolsConfig();
+              const inject = mcpEnabled && currentTools.enabled;
+              agentMcpBaseUrl = inject ? mcpBaseUrl : null;
+              agentManager.setMcpBaseUrl(agentMcpBaseUrl);
+              agentManager.setPaseoToolsEnabled(inject);
+              setAgentProviderToolsEnabled(inject);
+            };
+            syncAgentToolsState();
             daemonConfigStore.onFieldChange("mcp.enabled", (value) => {
               mcpEnabled = value !== false;
-              const inject = daemonConfigStore.get().mcp.injectIntoAgents !== false;
-              agentManager.setMcpBaseUrl(mcpEnabled && inject ? mcpBaseUrl : null);
-              agentManager.setPaseoToolsEnabled(mcpEnabled && inject);
-              setAgentProviderToolsEnabled(mcpEnabled && inject);
+              syncAgentToolsState();
             });
-            daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
-              agentManager.setMcpBaseUrl(mcpEnabled && value ? mcpBaseUrl : null);
-              agentManager.setPaseoToolsEnabled(mcpEnabled && value !== false);
-              setAgentProviderToolsEnabled(mcpEnabled && value !== false);
+            daemonConfigStore.onFieldChange("tools", () => {
+              syncAgentToolsState();
+            });
+            // COMPAT(legacyToolsConfig): added in v0.18.2, keep older config watchers in sync.
+            daemonConfigStore.onFieldChange("mcp.injectIntoAgents", () => {
+              syncAgentToolsState();
+            });
+            daemonConfigStore.onFieldChange("browserTools.enabled", () => {
+              syncAgentToolsState();
             });
             daemonConfigStore.onFieldChange("appendSystemPrompt", (value) => {
               agentManager.setAppendSystemPrompt(typeof value === "string" ? value : "");

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserToolsBroker } from "./broker.js";
 import type { BrowserHostTarget, BrowserToolsResponsePayload } from "./errors.js";
+import type { BuiltInToolName } from "../agent/tools/tool-metadata.js";
 import type {
   PaseoToolConfig,
   PaseoToolExecutionContext,
@@ -16,7 +17,7 @@ interface CallerAgentContext {
 
 export interface RegisterBrowserToolsOptions {
   registerTool: (
-    name: string,
+    name: BuiltInToolName,
     config: PaseoToolConfig,
     handler: (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool inputs are validated by the catalog before execution.

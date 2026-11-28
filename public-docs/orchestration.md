@@ -33,7 +33,7 @@ Use built-in Paseo tools or the CLI. Both let an agent launch and coordinate wor
 Enable Paseo tools so agents running inside Paseo can manage agents and workspaces on their host directly.
 
 1. Open **Settings → Host → Tools & prompts**.
-2. Turn on **Enable Paseo tools**. Tool injection is off by default.
+2. Make sure that **Enable tools** is on. It is on by default.
 3. Start a new agent, or reload an existing agent so it receives the tools.
 4. Ask:
 
@@ -45,7 +45,7 @@ See the [MCP reference](/docs/mcp) for tool configuration and the full catalog. 
 
 ### CLI
 
-Agents with shell access can also use the Paseo CLI. This route does not require enabling tool injection. With Paseo installed, a running host, and Codex configured:
+Agents with shell access can also use the Paseo CLI. This route does not require **Enable tools**. With Paseo installed, a running host, and Codex configured:
 
 ```bash
 paseo run --provider codex --no-wait \

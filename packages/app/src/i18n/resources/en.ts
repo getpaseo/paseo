@@ -2741,6 +2741,9 @@ export const en = {
         info: "Voice mode transcribes what you say and reads agent replies aloud.",
         enabled: "Voice mode",
         enabledHint: "Talk with your agents hands-free",
+        toolsRequiredTitle: "Voice mode requires agent tools",
+        toolsRequiredDescription: "Turn on Enable tools so the agent can speak replies.",
+        enablingTools: "Enabling...",
       },
       openai: {
         apiKey: "API key",
@@ -3234,15 +3237,35 @@ export const en = {
       tools: {
         instructionsTitle: "Instructions",
         toolsTitle: "Agent tools",
+        pluginNote: "Tools added by plugins also follow Enable tools",
+        updateHostForGroups: "Update this host to configure individual tool groups",
+        groups: {
+          orchestration: {
+            title: "Orchestration",
+            hint: "Manage workspaces, agents, terminals, and scripts",
+          },
+          schedules: {
+            title: "Schedules",
+            hint: "Create and manage schedules and heartbeats",
+          },
+          changeRequests: {
+            title: "PR watching",
+            hint: "Watch pull requests and merge requests for updates",
+          },
+          browser: {
+            title: "Browser",
+            hint: "Control Paseo browser tabs, including logged-in state. Enable only for agents you trust.",
+          },
+        },
       },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connect to this host to manage orchestration",
         enableTools: {
-          title: "Enable Paseo tools",
-          hint: "Agents will be able to manage worktrees, agents and schedules",
-          accessibilityLabel: "Inject Paseo tools",
-          updateFailed: "Unable to update Paseo tools.",
+          title: "Enable tools",
+          hint: "Let Paseo and plugins give tools to agents. Required for voice mode.",
+          accessibilityLabel: "Enable tools",
+          updateFailed: "Unable to update tools.",
         },
         systemPrompt: {
           title: "System prompt",

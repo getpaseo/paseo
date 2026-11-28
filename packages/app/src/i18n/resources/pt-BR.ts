@@ -2650,6 +2650,10 @@ export const ptBR: TranslationResources = {
         info: "O modo de voz transcreve o que você diz e lê em voz alta as respostas do agente.",
         enabled: "Modo de voz",
         enabledHint: "Converse com seus agentes sem usar as mãos",
+        toolsRequiredTitle: "O modo de voz requer ferramentas de agentes",
+        toolsRequiredDescription:
+          "Ative Ativar ferramentas para que o agente possa falar as respostas.",
+        enablingTools: "Ativando...",
       },
       openai: {
         apiKey: "Chave de API",
@@ -3148,15 +3152,35 @@ export const ptBR: TranslationResources = {
       tools: {
         instructionsTitle: "Instruções",
         toolsTitle: "Ferramentas de agentes",
+        pluginNote: "Ferramentas adicionadas por plugins também seguem Ativar ferramentas",
+        updateHostForGroups: "Atualize este host para configurar grupos de ferramentas",
+        groups: {
+          orchestration: {
+            title: "Orquestração",
+            hint: "Gerencie workspaces, agentes, terminais e scripts",
+          },
+          schedules: {
+            title: "Agendamentos",
+            hint: "Crie e gerencie agendamentos e heartbeats",
+          },
+          changeRequests: {
+            title: "Monitoramento de PR",
+            hint: "Acompanhe atualizações de pull requests e merge requests",
+          },
+          browser: {
+            title: "Navegador",
+            hint: "Controle abas do navegador do Paseo, incluindo sessões conectadas. Ative apenas para agentes confiáveis.",
+          },
+        },
       },
       orchestration: {
         title: "Orquestração",
         unavailable: "Conecte-se a este host para gerenciar a orquestração",
         enableTools: {
-          title: "Ativar ferramentas do Paseo",
-          hint: "Agentes poderão gerenciar worktrees, agentes e agendamentos",
-          accessibilityLabel: "Injetar ferramentas do Paseo",
-          updateFailed: "Não foi possível atualizar as ferramentas do Paseo.",
+          title: "Ativar ferramentas",
+          hint: "Permite que o Paseo e plugins forneçam ferramentas aos agentes. Necessário para o modo de voz.",
+          accessibilityLabel: "Ativar ferramentas",
+          updateFailed: "Não foi possível atualizar as ferramentas.",
         },
         systemPrompt: {
           title: "Prompt do sistema",

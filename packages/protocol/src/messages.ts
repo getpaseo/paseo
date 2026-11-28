@@ -239,6 +239,50 @@ const MutableBrowserToolsConfigSchema = z
     enabled: z.boolean().default(false),
   })
   .passthrough();
+
+export const BUILTIN_TOOL_GROUPS = [
+  "orchestration",
+  "schedules",
+  "changeRequests",
+  "browser",
+] as const;
+
+export type BuiltInToolGroup = (typeof BUILTIN_TOOL_GROUPS)[number];
+
+export const DEFAULT_DAEMON_TOOL_GROUPS = {
+  orchestration: true,
+  schedules: true,
+  changeRequests: true,
+  browser: false,
+} as const satisfies Record<BuiltInToolGroup, boolean>;
+
+export const MutableDaemonToolGroupsSchema = z
+  .object({
+    orchestration: z.boolean().optional(),
+    schedules: z.boolean().optional(),
+    changeRequests: z.boolean().optional(),
+    browser: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const MutableDaemonToolsConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    groups: MutableDaemonToolGroupsSchema.optional(),
+  })
+  .passthrough();
+
+export const MutableDaemonToolsConfigPatchSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    groups: MutableDaemonToolGroupsSchema.optional(),
+  })
+  .passthrough();
+
+export type MutableDaemonToolGroups = z.infer<typeof MutableDaemonToolGroupsSchema>;
+export type MutableDaemonToolsConfig = z.infer<typeof MutableDaemonToolsConfigSchema>;
+export type MutableDaemonToolsConfigPatch = z.infer<typeof MutableDaemonToolsConfigPatchSchema>;
+
 const MutableRelayConfigSchema = z
   .object({
     enabled: z.boolean(),
@@ -252,12 +296,15 @@ export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
     relay: MutableRelayConfigSchema.optional(),
+    // COMPAT(legacyToolsConfig): added in v0.18.2, keep while older clients read mcp.injectIntoAgents.
     mcp: z
       .object({
         enabled: z.boolean().optional(),
         injectIntoAgents: z.boolean(),
       })
       .passthrough(),
+    // COMPAT(daemonToolsConfig): added in v0.18.2, optional while older daemons omit it.
+    tools: MutableDaemonToolsConfigSchema.optional(),
     hostnames: z.union([z.literal(true), z.array(z.string())]).optional(),
     cors: z
       .object({
@@ -276,6 +323,7 @@ export const MutableDaemonConfigSchema = z
     catalogRefreshTimeoutMs: z.number().int().positive().optional(),
     // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
     usage: z.object({ enabled: z.boolean() }).optional(),
+    // COMPAT(legacyToolsConfig): added in v0.18.2, keep while older clients read browserTools.enabled.
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
@@ -302,8 +350,12 @@ export const MutableDaemonConfigSchema = z
 export const MutableDaemonConfigPatchSchema = z
   .object({
     relay: MutableRelayConfigSchema.partial().optional(),
+    // COMPAT(legacyToolsConfig): added in v0.18.2, keep while older clients patch mcp.injectIntoAgents.
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
+    // COMPAT(daemonToolsConfig): added in v0.18.2, optional while older clients omit it.
+    tools: MutableDaemonToolsConfigPatchSchema.optional(),
     usage: z.object({ enabled: z.boolean() }).optional(),
+    // COMPAT(legacyToolsConfig): added in v0.18.2, keep while older clients patch browserTools.enabled.
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
@@ -4095,6 +4147,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.
         usageSetting: z.boolean().optional(),
         usageSources: z.boolean().optional(),
+        // COMPAT(daemonToolsConfig): added in v0.18.2, remove gate after 2027-06-01.
+        daemonToolsConfig: z.boolean().optional(),
         // COMPAT(providerInstallation): added in v0.17.0, remove gate after 2027-05-13.
         providerInstallation: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.

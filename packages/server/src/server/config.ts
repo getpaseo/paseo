@@ -25,6 +25,7 @@ import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { readSpeechSettings } from "./speech/speech-settings.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
+import { normalizeDaemonToolGroups, type ResolvedDaemonToolsConfig } from "./tools-config.js";
 
 export {
   loadPersistedConfig,
@@ -114,6 +115,8 @@ export type CliConfigOverrides = Partial<{
   listen: string;
   relayEnabled: boolean;
   relayUseTls: boolean;
+  toolsEnabled: boolean;
+  // COMPAT(legacyMcpCliFlags): added in v0.18.2, remove after 2027-06-01.
   mcpEnabled: boolean;
   mcpInjectIntoAgents: boolean;
   webUiEnabled: boolean;
@@ -528,8 +531,37 @@ function resolveUsageEnabled(persisted: ReturnType<typeof loadPersistedConfig>):
   return persisted.daemon?.usage?.enabled !== false;
 }
 
-function resolveBrowserToolsEnabled(persisted: ReturnType<typeof loadPersistedConfig>): boolean {
-  return persisted.daemon?.browserTools?.enabled ?? false;
+function resolveToolsEnabledFromCli(cli: CliConfigOverrides | undefined): boolean | undefined {
+  if (cli?.toolsEnabled !== undefined) return cli.toolsEnabled;
+  // COMPAT(legacyMcpCliFlags): added in v0.18.2, remove after 2027-06-01.
+  if (cli?.mcpEnabled === false || cli?.mcpInjectIntoAgents === false) return false;
+  if (cli?.mcpInjectIntoAgents === true) return true;
+  return undefined;
+}
+
+function resolveToolsEnabledFromPersisted(
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): boolean {
+  const explicit = persisted.daemon?.tools?.enabled;
+  if (explicit !== undefined) return explicit;
+  // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
+  const legacyMcp = persisted.daemon?.mcp;
+  if (legacyMcp?.enabled === false || legacyMcp?.injectIntoAgents === false) return false;
+  return true;
+}
+
+function resolveToolsConfig(
+  cli: CliConfigOverrides | undefined,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+): ResolvedDaemonToolsConfig {
+  const enabled = resolveToolsEnabledFromCli(cli) ?? resolveToolsEnabledFromPersisted(persisted);
+  return {
+    enabled,
+    groups: normalizeDaemonToolGroups(
+      persisted.daemon?.tools?.groups,
+      persisted.daemon?.browserTools?.enabled,
+    ),
+  };
 }
 
 /**
@@ -549,12 +581,18 @@ function resolveStaticLoadConfigSettings(
   cli: CliConfigOverrides | undefined,
   persisted: ReturnType<typeof loadPersistedConfig>,
 ) {
+  const tools = resolveToolsConfig(cli, persisted);
+  // COMPAT(legacyToolsConfig): added in v0.18.2, remove after 2027-06-01.
+  const mcpEnabled =
+    cli?.mcpEnabled ??
+    (persisted.daemon?.tools?.enabled !== undefined ? true : persisted.daemon?.mcp?.enabled) ??
+    true;
   return {
-    mcpEnabled: cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true,
-    mcpInjectIntoAgents:
-      cli?.mcpInjectIntoAgents ?? persisted.daemon?.mcp?.injectIntoAgents ?? false,
+    tools,
+    mcpEnabled,
+    mcpInjectIntoAgents: tools.enabled,
     usageEnabled: resolveUsageEnabled(persisted),
-    browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
+    browserToolsEnabled: tools.groups.browser,
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
@@ -580,6 +618,7 @@ export type ResolvedDaemonSettings = Pick<
   | "corsAllowedOrigins"
   | "hostnames"
   | "trustedProxies"
+  | "tools"
   | "mcpEnabled"
   | "mcpInjectIntoAgents"
   | "usageEnabled"
@@ -743,6 +782,7 @@ function resolveCoreDaemonOverridePaths(
   if (cli?.listen !== undefined || env.PASEO_LISTEN !== undefined) {
     paths.push("daemon.listen");
   }
+  if (cli?.toolsEnabled !== undefined) paths.push("daemon.tools.enabled");
   if (cli?.mcpEnabled !== undefined) paths.push("daemon.mcp.enabled");
   if (cli?.mcpInjectIntoAgents !== undefined) paths.push("daemon.mcp.injectIntoAgents");
   // Hostname sources append instead of replacing one another, so a launch value

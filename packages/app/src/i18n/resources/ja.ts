@@ -2633,6 +2633,10 @@ export const ja: TranslationResources = {
         info: "ボイスモードは話した内容を文字起こしし、エージェントの返答を読み上げます。",
         enabled: "ボイスモード",
         enabledHint: "ハンズフリーでエージェントと会話します",
+        toolsRequiredTitle: "ボイスモードにはエージェントツールが必要です",
+        toolsRequiredDescription:
+          "エージェントが音声で返答できるように、ツールを有効にしてください。",
+        enablingTools: "有効化中...",
       },
       openai: {
         apiKey: "API キー",
@@ -3129,15 +3133,35 @@ export const ja: TranslationResources = {
       tools: {
         instructionsTitle: "指示",
         toolsTitle: "エージェントツール",
+        pluginNote: "プラグインが追加するツールもこのスイッチに従います",
+        updateHostForGroups: "ツールグループを個別に設定するにはホストを更新してください",
+        groups: {
+          orchestration: {
+            title: "オーケストレーション",
+            hint: "ワークスペース、エージェント、ターミナル、スクリプトを管理します",
+          },
+          schedules: {
+            title: "スケジュール",
+            hint: "スケジュールとハートビートを作成・管理します",
+          },
+          changeRequests: {
+            title: "PRの監視",
+            hint: "プルリクエストやマージリクエストの更新を監視します",
+          },
+          browser: {
+            title: "ブラウザ",
+            hint: "ログイン状態を含む Paseo のブラウザタブを操作します。信頼できるエージェントにのみ有効にしてください。",
+          },
+        },
       },
       orchestration: {
         title: "オーケストレーション",
         unavailable: "オーケストレーションを管理するにはこのホストに接続してください",
         enableTools: {
-          title: "Paseoツールを有効にする",
-          hint: "エージェントがワークツリー、エージェント、スケジュールを管理できるようになります",
-          accessibilityLabel: "Paseoツールを有効にする",
-          updateFailed: "Paseoツールを更新できませんでした。",
+          title: "ツールを有効にする",
+          hint: "Paseo とプラグインからエージェントへツールを提供します。ボイスモードに必要です。",
+          accessibilityLabel: "ツールを有効にする",
+          updateFailed: "ツールを更新できませんでした。",
         },
         systemPrompt: {
           title: "システムプロンプト",

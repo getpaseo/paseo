@@ -10,25 +10,31 @@ nav: MCP 参考
 
 ## 配置 {#configuration}
 
-| 设置                          | 默认值  | 用途                                     |
-| ----------------------------- | ------- | ---------------------------------------- |
-| `daemon.mcp.enabled`          | `true`  | 运行 MCP 服务器。                        |
-| `daemon.mcp.injectIntoAgents` | `false` | 让 Paseo 启动的 Agent 可以使用它的工具。 |
+| 设置                                 | 默认值  | 用途                                                     |
+| ------------------------------------ | ------- | -------------------------------------------------------- |
+| `daemon.tools.enabled`               | `true`  | 让 Paseo 启动的 Agent 可以使用它的工具。语音模式也需要。 |
+| `daemon.tools.groups.orchestration`  | `true`  | 主机、工作区、Agent、Provider、脚本和终端。              |
+| `daemon.tools.groups.schedules`      | `true`  | 计划任务和心跳。                                         |
+| `daemon.tools.groups.changeRequests` | `true`  | 监控 Pull Request 和 Merge Request。                     |
+| `daemon.tools.groups.browser`        | `false` | [浏览器自动化](/docs/browser)。                          |
 
-根据 Provider 的不同，Paseo 通过其原生工具接口或 MCP 提供工具，能力是相同的。修改注入设置后，请启动新的 Agent 或重新加载已有的 Agent。
+在应用中，打开 **设置 → 主机 → 工具与提示词**。开启 **启用工具**，然后展开它来开关各个工具组。插件提供的工具同样受 **启用工具** 控制。
+
+根据 Provider 的不同，Paseo 通过其原生工具接口或 MCP 提供工具，能力是相同的。修改工具设置后，请启动新的 Agent 或重新加载已有的 Agent。
+
+如果没有 `daemon.tools`，Paseo 会读取旧的 `daemon.mcp.injectIntoAgents` 和 `daemon.browserTools.enabled` 设置。
 
 ## 按 Provider 限制 Paseo 工具 {#limit-paseo-tools-by-provider}
 
-当不同的 Agent 配置应获得不同的 Paseo 工具时，请使用 Provider 策略。先全局启用工具注入，然后在你启动所用的确切 Provider ID 上添加 `paseoTools`：
+当不同的 Agent 配置应获得不同的 Paseo 工具时，请使用 Provider 策略。保持 `daemon.tools.enabled` 开启，然后在你启动所用的确切 Provider ID 上添加 `paseoTools`：
 
 ```json
 {
   "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
   "version": 1,
   "daemon": {
-    "mcp": {
-      "enabled": true,
-      "injectIntoAgents": true
+    "tools": {
+      "enabled": true
     }
   },
   "agents": {
@@ -60,7 +66,7 @@ nav: MCP 参考
 
 省略 `paseoTools` 会启用完整的工具目录。把 `enabled` 设为 `false` 会移除整个目录，在 `disabledTools` 中列出确切的工具 ID 则只移除所选的工具。自定义配置不会从 `extends` 继承这一策略；请为每个自定义 Provider ID 分别配置。
 
-浏览器工具仍然需要启用浏览器工具并连接一个浏览器主机。仅用于语音的 `speak` 工具不受此策略控制。
+浏览器工具仍然需要开启 `browser` 工具组并连接一个浏览器主机。仅用于语音的 `speak` 工具不受此策略控制。
 
 这项设置限制的是呈现给 Agent 的工具目录。对于可以通过 shell 访问主机的 Agent，它不是安全边界。
 
