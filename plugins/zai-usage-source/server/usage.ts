@@ -97,49 +97,40 @@ const OPENCODE_ZAI_PROVIDERS = new Set([
   "zhipuai-coding-plan",
 ]);
 
-function modelProvider(model: string | undefined): string | null {
-  if (!model) return null;
-  const slash = model.indexOf("/");
-  return slash > 0 ? model.slice(0, slash) : null;
-}
-
-export async function discover(): Promise<UsageAccount[]> {
+async function discoverFromEnv(
+  env: NodeJS.ProcessEnv,
+  { matchHostEnv = false }: { matchHostEnv?: boolean } = {},
+): Promise<UsageAccount[]> {
   for (const locator of ["Z_AI_API_KEY", "ZAI_API_KEY", "GLM_API_KEY"]) {
-    if (process.env[locator]) return [{ key: "default", input: { store: "env", locator } }];
+    const value = env[locator];
+    if (value && (!matchHostEnv || value === process.env[locator])) {
+      return [{ key: "default", input: { store: "env", locator } }];
+    }
   }
-
+  // File store reflects the host CLI login (matching Host -> Usage).
+  const home = matchHostEnv ? env.HOME || env.USERPROFILE || homedir() : homedir();
   const credentialsPath = join(
-    process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
+    env.XDG_CONFIG_HOME || join(home, ".config"),
     "glm-acp-agent",
     "credentials.json",
   );
   if (await readToken({ store: "file", locator: credentialsPath })) {
     return [{ key: "default", input: { store: "file", locator: credentialsPath } }];
   }
-
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  return discoverFromEnv(process.env);
 }
 
 export async function discoverSession(
   scope: Extract<UsageScope, { kind: "session" }>,
 ): Promise<UsageAccount[]> {
-  const isZaiSession =
+  const modelProvider = scope.model?.includes("/") ? scope.model.split("/", 1)[0] : undefined;
+  const matches =
     scope.provider === "zai" ||
-    (scope.provider === "opencode" && OPENCODE_ZAI_PROVIDERS.has(modelProvider(scope.model) ?? ""));
-  if (!isZaiSession) return [];
-  for (const locator of ["Z_AI_API_KEY", "ZAI_API_KEY", "GLM_API_KEY"]) {
-    if (scope.env[locator] && scope.env[locator] === process.env[locator]) {
-      return [{ key: "default", input: { store: "env", locator } }];
-    }
-  }
-  const home = scope.env.HOME || scope.env.USERPROFILE || homedir();
-  const credentialsPath = join(
-    scope.env.XDG_CONFIG_HOME || join(home, ".config"),
-    "glm-acp-agent",
-    "credentials.json",
-  );
-  if (await readToken({ store: "file", locator: credentialsPath })) {
-    return [{ key: "default", input: { store: "file", locator: credentialsPath } }];
-  }
-  return [];
+    (scope.provider === "opencode" && OPENCODE_ZAI_PROVIDERS.has(modelProvider ?? ""));
+  if (!matches) return [];
+  return discoverFromEnv(scope.env, { matchHostEnv: true });
 }

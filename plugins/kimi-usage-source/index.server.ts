@@ -7,7 +7,7 @@ export default function contribute(server: PluginServerContext) {
     id: "kimi",
     label: "Kimi",
     icon: "icon.svg",
-    providers: ["kimi", "opencode"],
+    providers: ["kimi"],
     input: inputSchema,
     discover: (scope) => (scope.kind === "global" ? discover() : discoverSession(scope)),
     fetch: fetchUsage,
