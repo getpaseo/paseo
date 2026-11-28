@@ -8,6 +8,12 @@ config.watchFolders.push(path.resolve(projectRoot, "../../.."));
 config.transformer.unstable_allowRequireContext = true;
 config.resolver.disableHierarchicalLookup = false;
 config.resolver.blockList = /[/\\]gpui[/\\]desktop[/\\](target|build|autolink)[/\\]/;
+// Metro loops over sourceExts outside platform suffixes, so listing gpui.<ext>
+// first selects .gpui.* ahead of .desktop, .native, and base extensions.
+config.resolver.sourceExts = [
+  ...config.resolver.sourceExts.map((ext) => `gpui.${ext}`),
+  ...config.resolver.sourceExts,
+];
 const nativePackages = [
   "react",
   "react-native-reanimated",
@@ -36,13 +42,6 @@ const adapters = {
   "expo-sqlite": "sqlite.js",
   "expo-crypto": "crypto.js",
   "react-native-unistyles": "unistyles.js",
-};
-const fileAdapters = {
-  "/audio/audio-engine.native.ts": "audio.js",
-  "/components/markdown/fence/mermaid/host.native.tsx": "mermaid.jsx",
-  "/file-panels/html-preview.tsx": "document-preview.jsx",
-  "/file-panels/document-frame/index.tsx": "document-preview.jsx",
-  "/modules/paseo-press-feedback/src/ui/feedback.native.tsx": "press-feedback.js",
 };
 config.resolver.resolveRequest = (context, name, platform) => {
   if (adapters[name]) name = path.resolve(projectRoot, "adapters", adapters[name]);
@@ -73,12 +72,6 @@ config.resolver.resolveRequest = (context, name, platform) => {
       nodeModulesPaths: [path.join(projectRoot, "node_modules")],
     };
   }
-  const result = resolveRequest(context, name, platform);
-  const replacement = Object.entries(fileAdapters).find(([suffix]) =>
-    result.filePath?.endsWith(suffix),
-  );
-  if (replacement)
-    return { type: "sourceFile", filePath: path.resolve(projectRoot, "adapters", replacement[1]) };
-  return result;
+  return resolveRequest(context, name, platform);
 };
 module.exports = config;

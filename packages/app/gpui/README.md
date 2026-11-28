@@ -85,10 +85,12 @@ iOS, Android, web, and macOS all run from the same app code. This target does to
 
 - **Change the app as little as possible.** Add what GPUI needs in GPUI-specific
   code. Do not edit shared app code to make GPUI work.
-- **Select GPUI code with a GPUI-specific Metro rule.** A GPUI file sits next to
-  the `.native` and `.web` files it stands in for, and only this target resolves
-  it. The rule is not built yet. Until it is, `desktop/metro.config.js` maps
-  files into `adapters/`.
+- **Select GPUI code with a GPUI-specific Metro rule.** A `.gpui.ts` / `.gpui.tsx`
+  file sits next to the `.native` and `.web` files it stands in for.
+  `desktop/metro.config.js` prepends `gpui.<ext>` entries to
+  `resolver.sourceExts`, so Metro resolves `.gpui.*` ahead of `.desktop.`,
+  `.native.`, and base extensions. No other target (iOS, Android, web, or
+  Electron) resolves `.gpui.*`. `adapters/` holds package-level redirects only.
 - **Fill the branches where it matters.** A piece the app needs and GPUI lacks,
   such as markdown, selection in the chat, or diffs, gets a GPUI implementation
   behind the interface the app already uses.
@@ -132,14 +134,14 @@ controlled CPU, memory, startup, or frame-time results against these alternative
 
 ## What belongs in the change
 
-| Area                                                                   | Why it is here                                                                                                                                                                                                          |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vendor/react-native-gpui/`                                            | Editable, pinned runtime source. This accounts for roughly 130,000 lines of the diff. GitHub marks it as vendored; inspect [UPSTREAM](../../../vendor/react-native-gpui/UPSTREAM) for provenance and the local patches. |
-| npm and Cargo lockfiles                                                | Reproduce the experiment's dependencies. Roughly 15,000 generated lines, collapsed on GitHub.                                                                                                                           |
-| `desktop/`, `index.js`, `routes.js`, Metro/Babel config, root launcher | Register the full app, select the native runtime, compile native services, and bundle the actual route graph. The explicit route context prevents an apparently successful build with no app routes.                    |
-| `adapters/`                                                            | Desktop implementations of the app-used APIs, plus explicit unavailable-capability implementations for mobile features. About 700 lines; these are limited ports, not complete replacements for Expo/Unistyles.         |
-| Shared app edits                                                       | One capability gate for alpha-mask shimmer. GPUI shows the logo and labels without that effect. Existing web/iOS/Android paths keep their behavior.                                                                     |
-| Native tests and this guide                                            | Make the working slice reproducible and give contributors bounded follow-up work.                                                                                                                                       |
+| Area                                                                   | Why it is here                                                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vendor/react-native-gpui/`                                            | Editable, pinned runtime source. This accounts for roughly 130,000 lines of the diff. GitHub marks it as vendored; inspect [UPSTREAM](../../../vendor/react-native-gpui/UPSTREAM) for provenance and the local patches.                                                         |
+| npm and Cargo lockfiles                                                | Reproduce the experiment's dependencies. Roughly 15,000 generated lines, collapsed on GitHub.                                                                                                                                                                                   |
+| `desktop/`, `index.js`, `routes.js`, Metro/Babel config, root launcher | Register the full app, select the native runtime, compile native services, and bundle the actual route graph. The explicit route context prevents an apparently successful build with no app routes.                                                                            |
+| `adapters/`                                                            | Desktop implementations of npm packages used by the app, plus explicit unavailable-capability implementations for mobile packages. Limited ports, not complete replacements for Expo/Unistyles. App-module overrides live next to the shared files as `.gpui.ts` / `.gpui.tsx`. |
+| Shared app edits                                                       | One capability gate for alpha-mask shimmer. GPUI shows the logo and labels without that effect. Existing web/iOS/Android paths keep their behavior.                                                                                                                             |
+| Native tests and this guide                                            | Make the working slice reproducible and give contributors bounded follow-up work.                                                                                                                                                                                               |
 
 Upstream examples, its tester/testing package, website, unused fonts/vector-icon
 ports, starter navigation dependencies, sample icon, and unused nested Cargo config
@@ -232,8 +234,10 @@ bindings and graphics integration; choosing Rust or C++ alone does not provide t
 
 ## Verification
 
-Run the normal checks from the root. GPUI adapters are excluded from the mobile
-TypeScript project; its typecheck alone does not validate this target.
+Run the normal checks from the root. `.gpui.ts` and `.gpui.tsx` files in
+`packages/app/src` and `packages/app/modules` are checked by root `typecheck`
+and `lint`, while `packages/app/gpui/adapters/` is excluded from the mobile
+TypeScript project.
 
 ```sh
 npm run typecheck
