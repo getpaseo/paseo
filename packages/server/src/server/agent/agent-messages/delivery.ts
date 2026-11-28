@@ -519,7 +519,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         unarchive: direct.unarchive !== false,
       };
     }
-    // Sharing a prompt with queued messages, each entry needs its own envelope to stay
+    // Sharing a prompt with queued messages, each entry needs its own marker to stay
     // a separate row with its own identity.
     const own = envelopeMessage(direct.prompt, direct.source ?? null, direct.messageId);
     return {

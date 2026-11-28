@@ -9,7 +9,14 @@ import {
   type ToolCallDetailLevel,
   type ToolCallDetailProjection,
 } from "@/tool-calls/detail-level/projection";
-import type { StreamItem, UserMessageItem } from "@/types/stream";
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
+import { legacyAgentNotificationToolCall } from "@getpaseo/protocol/paseo-tool-presentation/index";
+import {
+  isAgentToolCallItem,
+  type AgentToolCallItem,
+  type StreamItem,
+  type UserMessageItem,
+} from "@/types/stream";
 import { collapseTurns, type TurnCollapse } from "./turn-collapse/model";
 import type { ReadingRowReplacements } from "./reading-anchor";
 
@@ -56,6 +63,7 @@ const NO_COLLAPSED_TURNS: StreamPresentation["turns"] = collapseTurns({
 /** Source messages reach plugins before display projection. */
 export function createStreamPresentation() {
   const userMessageCache = new WeakMap<UserMessageItem, UserMessageItem>();
+  const legacyNotificationCache = new WeakMap<AgentToolCallItem, AgentToolCallItem>();
 
   function presentUserMessage(item: UserMessageItem): UserMessageItem {
     const cached = userMessageCache.get(item);
@@ -72,6 +80,19 @@ export function createStreamPresentation() {
     return projected;
   }
 
+  // COMPAT(agentNotificationMetadata): added in v0.18.1, remove after 2027-06-01.
+  function presentLegacyNotification(item: AgentToolCallItem, message: AgentMessage): StreamItem {
+    const cached = legacyNotificationCache.get(item);
+    if (cached) return cached;
+    const { agentMessage: _legacy, ...data } = item.payload.data;
+    const presented: AgentToolCallItem = {
+      ...item,
+      payload: { source: "agent", data: { ...data, ...legacyAgentNotificationToolCall(message) } },
+    };
+    legacyNotificationCache.set(item, presented);
+    return presented;
+  }
+
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
   let historyRows: StreamItem[] = [];
@@ -86,7 +107,7 @@ export function createStreamPresentation() {
   let collapsed: TurnCollapse | undefined;
 
   function presentRows(item: StreamItem): StreamItem[] {
-    if (item.kind === "tool_call" && item.payload.source === "agent") {
+    if (isAgentToolCallItem(item)) {
       const message = item.payload.data.agentMessage;
       if (message?.event === "message") {
         return [
@@ -101,6 +122,7 @@ export function createStreamPresentation() {
           },
         ];
       }
+      if (message) return [presentLegacyNotification(item, message)];
     }
     return [item.kind === "user_message" ? presentUserMessage(item) : item];
   }

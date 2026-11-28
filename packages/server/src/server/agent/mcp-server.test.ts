@@ -4930,13 +4930,15 @@ describe("send_agent_prompt MCP tool", () => {
 
       const pending = invokeToolWithParsedInput(tool, {
         agentId: child.id,
-        prompt: "Follow up",
+        prompt: "/review the diff",
       });
       await vi.waitFor(() => expect(childSession.prompts).toHaveLength(1));
+      // The provider reads the sender's command at character 0; the marker trails it.
+      expect(String(childSession.prompts[0])).toMatch(/^\/review the diff\n\n<paseo-message /);
       expect(parseAgentMessage(childSession.prompts[0])).toEqual({
         id: expect.any(String),
         source: { kind: "agent-message", agentId: parent.id },
-        text: "Follow up",
+        text: "/review the diff",
       });
       acknowledgeTurnStart();
       const response = await pending;
@@ -5410,12 +5412,12 @@ describe("message order for one recipient", () => {
   });
 });
 
-describe("finish notifications for a child that ends its turn while still working", () => {
+describe("finish notifications for a child that ends its turn with work pending", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
   async function setup() {
-    const workdir = await mkdtemp(join(tmpdir(), "mcp-still-working-"));
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-pending-work-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const parentClient = new HeldTurnAgentClient("claude", false);
     const childClient = new HeldTurnAgentClient("codex", true);
@@ -5450,25 +5452,30 @@ describe("finish notifications for a child that ends its turn while still workin
       return { id, session };
     }
     const parentPrompts = () => parentClient.sessions[0]?.prompts ?? [];
-    return { workdir, storage, agentManager, parent, server, createChild, parentPrompts };
+    return {
+      workdir,
+      storage,
+      agentManager,
+      parent,
+      server,
+      createChild,
+      parentPrompts,
+    };
   }
 
-  it("tells the parent the child is still working, then reports its autonomous final reply", async () => {
-    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+  it("reports the turn end now with its background task, and again when the task wakes the child", async () => {
+    const context = await setup();
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = context;
     try {
       const child = await createChild(server, "Builder");
       child.session.pendingWakeup = true;
       child.session.publishBackgroundWork([{ id: "build", description: "npm run build" }]);
       child.session.finishTurn("WAITING for the build");
-
+      // The task can run for as long as the child lives, so the parent hears this turn now.
       await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
-      expect(parentPrompts()[0]).toContain(
-        `Agent ${child.id} (Builder) ended its turn but is still working: background work that will wake it.`,
-      );
+      expect(parentPrompts()[0]).toContain(`Agent ${child.id} (Builder) finished.`);
       expect(parentPrompts()[0]).toContain("WAITING for the build");
-      expect(parseAgentMessage(parentPrompts()[0]!)).toMatchObject({
-        source: { kind: "agent-notification", agentId: child.id, event: "message" },
-      });
+      expect(parentPrompts()[0]).toContain("It still has background work that will wake it.");
 
       // Claude publishes the empty roster before the turn its task notification starts.
       child.session.publishBackgroundWork([]);
@@ -5480,6 +5487,7 @@ describe("finish notifications for a child that ends its turn while still workin
       await vi.waitFor(() => expect(parentPrompts()).toHaveLength(2));
       expect(parentPrompts()[1]).toContain(`Agent ${child.id} (Builder) finished.`);
       expect(parentPrompts()[1]).toContain("FINAL: done");
+      expect(parentPrompts()[1]).not.toContain("It still has");
       expect(parseAgentMessage(parentPrompts()[1]!)).toMatchObject({
         source: { kind: "agent-notification", agentId: child.id, event: "finished" },
       });
@@ -5495,21 +5503,31 @@ describe("finish notifications for a child that ends its turn while still workin
     }
   });
 
-  it("reports finished when the child's background work drains without another turn", async () => {
-    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+  it("sends the final finish when the background task stops without another turn", async () => {
+    const context = await setup();
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = context;
     try {
       const child = await createChild(server, "Builder");
       child.session.pendingWakeup = true;
       child.session.publishBackgroundWork([{ id: "server", description: "dev server" }]);
       child.session.finishTurn("Started the dev server");
       await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
-      expect(parentPrompts()[0]).toContain("ended its turn but is still working");
+      expect(parentPrompts()[0]).toContain(`Agent ${child.id} (Builder) finished.`);
+      expect(parentPrompts()[0]).toContain("Started the dev server");
 
       child.session.pendingWakeup = false;
       child.session.publishBackgroundWork([]);
       await vi.waitFor(() => expect(parentPrompts()).toHaveLength(2));
       expect(parentPrompts()[1]).toContain(`Agent ${child.id} (Builder) finished.`);
       expect(parentPrompts()[1]).toContain("Started the dev server");
+      expect(parentPrompts()[1]).not.toContain("It still has");
+
+      // The subscription ended there: a later turn reports nothing.
+      child.session.startAutonomousTurn();
+      child.session.finishTurn("Unrelated later work");
+      await vi.waitFor(() => expect(agentManager.getAgent(child.id)?.lifecycle).toBe("idle"));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(parentPrompts()).toHaveLength(2);
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
@@ -5537,8 +5555,9 @@ describe("finish notifications for a child that ends its turn while still workin
     }
   });
 
-  it("follows a helper that waits on its own child until the helper's final reply", async () => {
-    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+  it("reports a helper's turn end while it waits on its own child, then its final reply", async () => {
+    const context = await setup();
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = context;
     try {
       const helper = await createChild(server, "Helper");
       const helperServer = await createAgentMcpServer(
@@ -5555,11 +5574,9 @@ describe("finish notifications for a child that ends its turn while still workin
       );
       const sub = await createChild(helperServer, "Sub helper");
       helper.session.finishTurn("Waiting for my helper");
-
       await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
-      expect(parentPrompts()[0]).toContain(
-        `Agent ${helper.id} (Helper) ended its turn but is still working: agents it is waiting on.`,
-      );
+      expect(parentPrompts()[0]).toContain(`Agent ${helper.id} (Helper) finished.`);
+      expect(parentPrompts()[0]).toContain("It still has agents it is waiting on.");
 
       sub.session.finishTurn("SUB RESULT");
       // The sub helper's finish starts the helper's next turn.
@@ -5571,18 +5588,21 @@ describe("finish notifications for a child that ends its turn while still workin
       await vi.waitFor(() => expect(parentPrompts()).toHaveLength(2));
       expect(parentPrompts()[1]).toContain(`Agent ${helper.id} (Helper) finished.`);
       expect(parentPrompts()[1]).toContain("HELPER FINAL");
+      expect(parentPrompts()[1]).not.toContain("It still has");
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
 
   it("a permission request after waking up reaches the parent, and the settled turn still reports", async () => {
-    const { workdir, storage, agentManager, server, createChild, parentPrompts } = await setup();
+    const context = await setup();
+    const { workdir, storage, agentManager, server, createChild, parentPrompts } = context;
     try {
       const child = await createChild(server, "Planner");
       child.session.pendingWakeup = true;
       child.session.finishTurn("Waiting for research");
       await vi.waitFor(() => expect(parentPrompts()).toHaveLength(1));
+      expect(parentPrompts()[0]).toContain("Waiting for research");
 
       child.session.startAutonomousTurn();
       child.session.pendingWakeup = false;

@@ -436,8 +436,10 @@ describe("daemon E2E (real OMP)", () => {
               for (const item of items) {
                 if (
                   item.type === "tool_call" &&
-                  item.agentMessage?.sender.id === child.id &&
-                  item.agentMessage.event === "finished"
+                  item.name === "agent_finished" &&
+                  item.callId.startsWith("paseo-agent-message:") &&
+                  item.detail.type === "plain_text" &&
+                  item.detail.text?.includes(child.id)
                 )
                   notifications++;
               }

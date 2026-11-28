@@ -1,9 +1,9 @@
 import type { AgentTimelineItem, ToolCallTimelineItem } from "./agent-sdk-types.js";
-import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { isLikelyExternalToolName } from "@getpaseo/protocol/tool-name-normalization";
-import { buildAgentMessageDisplay } from "@getpaseo/protocol/paseo-tool-presentation/index";
+import { legacyAgentNotificationToolCall } from "@getpaseo/protocol/paseo-tool-presentation/index";
+import { isTimelineTurnTrigger } from "@getpaseo/protocol/timeline-turn";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
 import { projectTimelineRows, selectItemsByProjectedLimit } from "./timeline-projection.js";
 
@@ -127,15 +127,28 @@ function formatToolCallEntry(
   return activityEntry(summary ? `[${displayName}] ${summary}` : `[${displayName}]`);
 }
 
-function appendAgentMessageEntries(entries: ActivityEntry[], message: AgentMessage) {
-  const display = buildAgentMessageDisplay(message);
-  entries.push(
-    activityEntry(
-      display.summary ? `[${display.displayName}] ${display.summary}` : `[${display.displayName}]`,
-    ),
-  );
-  const body = message.text.trim();
+function appendBody(entries: ActivityEntry[], text: string | undefined) {
+  const body = text?.trim();
   if (body) entries.push(activityEntry(body));
+}
+
+function appendToolCallEntries(
+  entries: ActivityEntry[],
+  item: ToolCallTimelineItem,
+  options?: ActivityCuratorOptions,
+) {
+  if (item.agentMessage?.event === "message") {
+    const sender = item.agentMessage.sender;
+    entries.push(activityEntry(`[Message received] ${sender.title ?? sender.id}`));
+    appendBody(entries, item.agentMessage.text);
+    return;
+  }
+  const legacy = item.agentMessage ? legacyAgentNotificationToolCall(item.agentMessage) : null;
+  const call = legacy ? { ...item, ...legacy } : item;
+  entries.push(formatToolCallEntry(call, options));
+  // A prompt the daemon delivered is read in full, like a person's prompt.
+  if (isTimelineTurnTrigger(call) && call.detail.type === "plain_text")
+    appendBody(entries, call.detail.text);
 }
 
 function curateProjectedActivityEntries(
@@ -164,14 +177,9 @@ function curateProjectedActivityEntries(
       case "reasoning":
         appendTextEntry(entries, item, options);
         break;
-      case "tool_call": {
-        if (item.agentMessage) {
-          appendAgentMessageEntries(entries, item.agentMessage);
-          break;
-        }
-        entries.push(formatToolCallEntry(item, options));
+      case "tool_call":
+        appendToolCallEntries(entries, item, options);
         break;
-      }
       case "todo":
         entries.push(activityEntry("[Tasks]"));
         for (const entry of item.items) {

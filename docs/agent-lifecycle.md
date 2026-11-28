@@ -198,17 +198,24 @@ outstanding intent. A crash after successful dispatch but before removal commits
 notification. Clean shutdown can also flush an already queued callback while retaining its intent,
 so that callback can repeat after restart. This is an at-least-once wakeup, without turn attribution or exactly-once delivery.
 
-A turn end is not always a settled child. When the child ends its turn with work that will start its
-next turn by itself, the caller gets one `message` notice ("ended its turn but is still working") and
-the subscription keeps following the child. That work is a running turn, queued messages, a pending
-provider wake-up (`AgentSession.hasPendingWakeup`: Claude background tasks, task notifications, and
-one-shot wake-ups), or the child's own outstanding finish subscriptions as a caller. Heartbeats,
-recurring crons, change-request watches, and other daemon background items never count: they are
-external triggers, not work the caller is waiting for. While following, turn ends and work changes stay
-silent until nothing is pending, which sends `finished` and removes the subscription. `followingSince`
-is stored before the notice is sent, so restarts resume following without repeating it, and following
-ends after 24 hours with an "is still working" notice. Remote children and providers without the probe
-report their first turn end as `finished`.
+A turn end is not always a settled child. A child can end its turn with work that will start its next
+turn by itself: a running turn, queued messages, a pending provider wake-up
+(`AgentSession.hasPendingWakeup`: Claude background tasks, task notifications, and one-shot
+wake-ups), or the child's own outstanding finish subscriptions as a caller. Heartbeats, recurring
+crons, change-request watches, and other daemon background items never count: they are external
+triggers, not work the caller is waiting for.
+
+Every turn end reports `finished` at once. When work is still pending, the notice names it and the
+subscription follows the child: each later turn end reports `finished` again, and the child settling
+with nothing pending sends a final `finished` and removes the subscription, even when the work
+drains without another turn. Reporting at once keeps a long-lived task, such as a dev server, from
+leaving the caller without the child's reply. Following is what lets the caller hear the reply a
+background task wakes up later ([#6346](https://github.com/getpaseo/paseo/issues/6346)). A work change
+that leaves work pending sends nothing. Errors, permission requests, and closes report as they
+happen. `followingSince` is stored when following starts, so a restart keeps following instead of
+waiting for another turn end. After 24 hours of following, the caller gets a final `finished` with
+the child's last reply and the subscription ends. Remote children and providers without the probe
+report their first turn end as a settled `finished`.
 
 Permission requests are notification checkpoints, not the end of that subscription. The caller is notified again after a permission response when the child finishes, errors, or requests another permission.
 The permission notification includes the normalized request plus the child and request IDs, so the caller can inspect it and respond without fetching agent status.

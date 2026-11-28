@@ -117,6 +117,7 @@ test("gated checks are statically named jobs with real job-level gating", () => 
 test("pull-request checks run for every base branch, including stacked PRs", () => {
   for (const workflowPath of [
     ciWorkflowPath,
+    nixWorkflowPath,
     new URL(".github/workflows/desktop-packages.yml", repoRoot),
   ]) {
     const trigger = readFileSync(workflowPath, "utf8").split("jobs:", 1)[0];
@@ -126,13 +127,18 @@ test("pull-request checks run for every base branch, including stacked PRs", () 
   }
 });
 
-test("change gating allows superseded workflow runs to cancel", () => {
+test("superseded CI runs cancel everywhere except main", () => {
   const ci = readFileSync(ciWorkflowPath, "utf8");
-  assert.match(
-    ci,
-    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: true$/m,
-    "a newer push to any ref, main included, cancels the superseded run",
-  );
+  const concurrency =
+    /^concurrency:\n  group: ci-\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n  cancel-in-progress: \$\{\{ (.+) \}\}$/m.exec(
+      ci,
+    );
+  assert.ok(concurrency, "CI groups runs by ref and decides cancellation per ref");
+  const cancels = (ref) => runInNewContext(concurrency[1], { github: { ref } });
+  // A run cancelled mid-flight leaves CANCELLED checks, which paint the main commit red.
+  assert.equal(cancels("refs/heads/main"), false);
+  assert.equal(cancels("refs/pull/1/merge"), true);
+  assert.equal(cancels("refs/heads/release/1.0"), true);
   for (const workflowPath of [ciWorkflowPath, dockerWorkflowPath, nixWorkflowPath]) {
     const source = readFileSync(workflowPath, "utf8");
     assert.doesNotMatch(
@@ -294,7 +300,7 @@ test("PR routing declares stable behavior ownership", () => {
       "packages/react-native-enriched-markdown/**",
     ],
     relay: ["packages/relay/**"],
-    cli: ["packages/cli/**"],
+    cli: ["packages/cli/**", "packages/server/**", "plugins/**"],
   });
 });
 
@@ -375,15 +381,12 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   ]);
 });
 
-test("packaging runs on main without allocating pull-request runners", () => {
-  for (const workflowPath of [dockerWorkflowPath, nixWorkflowPath]) {
-    const source = readFileSync(workflowPath, "utf8");
-    const trigger = source.split("jobs:", 1)[0];
-    assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
-    assert.doesNotMatch(trigger, /pull_request/);
-    assert.doesNotMatch(source, /dorny\/paths-filter/);
-  }
+test("Docker packaging runs on main while Nix verifies packaging PRs on Linux", () => {
   const docker = readFileSync(dockerWorkflowPath, "utf8");
+  const dockerTrigger = docker.split("jobs:", 1)[0];
+  assert.match(dockerTrigger, /push:\s*\n\s+branches: \[main\]/);
+  assert.doesNotMatch(dockerTrigger, /pull_request/);
+  assert.doesNotMatch(docker, /dorny\/paths-filter/);
   assert.match(
     docker,
     /group: docker-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true' && format\('publish-\{0\}', inputs\.paseo_version \|\| github\.run_id\) \|\| github\.ref \}\}/,
@@ -394,8 +397,34 @@ test("packaging runs on main without allocating pull-request runners", () => {
     /cancel-in-progress: \$\{\{ !startsWith\(github\.ref, 'refs\/tags\/'\) && !\(github\.event_name == 'workflow_dispatch' && inputs\.publish == 'true'\) \}\}/,
     "Docker cancels superseded non-tag main checks while preserving tag and manual publish runs",
   );
+
   const nix = readFileSync(nixWorkflowPath, "utf8");
-  assert.match(nix.split("jobs:", 1)[0], /^\s+workflow_dispatch:/m);
+  const nixTrigger = nix.split("jobs:", 1)[0];
+  assert.match(nixTrigger, /push:\s*\n\s+branches: \[main\]/);
+  assert.match(nixTrigger, /^\s+workflow_dispatch:/m);
+  assert.match(nixTrigger, /pull_request:\s*\n\s+paths:/);
+  for (const expectedPath of [
+    "nix/**",
+    "packages/server/**",
+    "packages/cli/**",
+    "packages/desktop/**",
+    "scripts/trace-daemon.mjs",
+    "scripts/is-main-module.mjs",
+    ".github/workflows/nix.yml",
+  ]) {
+    assert.match(
+      nixTrigger,
+      new RegExp(`- "${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`),
+      `Nix PR paths include ${expectedPath}`,
+    );
+  }
+  assert.match(nixTrigger, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
+  assert.doesNotMatch(nix, /dorny\/paths-filter/);
+  assert.match(
+    jobBlocks(nix).get("build-desktop-darwin").join("\n"),
+    /^    if: \$\{\{ github\.event_name != 'pull_request' \}\}$/m,
+    "Nix PR checks run the Linux build and daemon smoke without allocating macOS runners",
+  );
 });
 
 test("CI and desktop packaging verify release branches isolated from main traffic", () => {

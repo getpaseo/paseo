@@ -10,6 +10,7 @@ import {
   retargetTextReveal,
   type TextRevealState,
   visibleRevealedText,
+  withholdPartialClosingFence,
 } from "@/agent-stream/text-reveal";
 export type MarkdownPhase = "streaming" | "complete";
 
@@ -81,7 +82,9 @@ export function useRevealedText(text: string, phase: MarkdownPhase): string {
     };
   }, [text, pacingSupported, phase]);
 
-  return pacingSupported
-    ? visibleRevealedText(stateRef.current, { streaming: phase === "streaming" })
-    : text;
+  if (pacingSupported) {
+    return visibleRevealedText(stateRef.current, { streaming: phase === "streaming" });
+  }
+  // Painted whole as it arrives, an arrival can still end inside a closing fence.
+  return phase === "streaming" ? withholdPartialClosingFence(text) : text;
 }

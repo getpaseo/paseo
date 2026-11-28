@@ -568,27 +568,31 @@ describe("Suite A: Core Fixes", () => {
           timeoutMs: 10000,
           label: `${outcome} notification`,
           check: () => {
-            const items = daemonHandle.daemon.agentManager
-              .getTimeline(parentAgentId)
-              .filter(
-                (item) => item.type === "tool_call" && item.agentMessage?.sender.id === childId,
-              );
+            const items = daemonHandle.daemon.agentManager.getTimeline(parentAgentId).filter(
+              (item) =>
+                item.type === "tool_call" &&
+                item.detail.type === "plain_text" &&
+                item.detail.label === "Follow-up child" &&
+                // Each case creates its own child under the same title and parent.
+                item.detail.text.includes(childId),
+            );
             return items.length > 0 ? items : null;
           },
         });
         expect(notifications).toEqual([
-          expect.objectContaining({
+          {
             type: "tool_call",
-            agentMessage: {
-              event: outcome,
-              sender: {
-                id: childId,
-                serverId: daemonHandle.daemon.getServerId(),
-                title: "Follow-up child",
-              },
-              text: expect.stringContaining(`(Follow-up child) ${outcome}.`),
+            callId: expect.stringMatching(/^paseo-agent-message:/),
+            name: `agent_${outcome}`,
+            status: "completed",
+            error: null,
+            detail: {
+              type: "plain_text",
+              label: "Follow-up child",
+              text: expect.stringContaining(`${childId} (Follow-up child) ${outcome}.`),
+              icon: "bot",
             },
-          }),
+          },
         ]);
         expect(daemonHandle.daemon.agentManager.getAgent(childId)?.lifecycle).toBe(status);
       } finally {
