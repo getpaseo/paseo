@@ -4,6 +4,7 @@ import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider
 import {
   ACPAgentClient,
   type ACPCatalogModelResolver,
+  type ACPActiveTurnSteeringAdapter,
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
@@ -30,6 +31,7 @@ interface GenericACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
+  activeTurnSteeringAdapter?: ACPActiveTurnSteeringAdapter;
   now?: () => number;
 }
 
@@ -57,6 +59,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
+      activeTurnSteeringAdapter: options.activeTurnSteeringAdapter,
       now: options.now,
     });
 
