@@ -31,6 +31,8 @@ interface SegmentedControlProps<T extends string> {
   hideLabels?: boolean;
   /** Share the container's width equally between the segments, for a control that heads a surface. */
   fill?: boolean;
+  /** Let the segments run onto more lines when they do not fit on one. */
+  wrap?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
@@ -57,6 +59,7 @@ export function SegmentedControl<T extends string>({
   size: sizeProp,
   hideLabels = false,
   fill = false,
+  wrap = false,
   style,
   testID,
 }: SegmentedControlProps<T>) {
@@ -72,8 +75,8 @@ export function SegmentedControl<T extends string>({
   const iconSize = controlIconSize[size];
 
   const containerStyle = useMemo(
-    () => [styles.container, containerSizeStyle, style],
-    [containerSizeStyle, style],
+    () => [styles.container, containerSizeStyle, wrap && styles.containerWrap, style],
+    [containerSizeStyle, style, wrap],
   );
 
   return (
@@ -190,6 +193,9 @@ const styles = StyleSheet.create((theme) => {
       alignItems: "center",
       backgroundColor: "transparent",
       gap: theme.spacing[1],
+    },
+    containerWrap: {
+      flexWrap: "wrap",
     },
     containerSm: {
       ...geometry.segmentedContainerSm,

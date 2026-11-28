@@ -3,9 +3,11 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { test, expect, type Page } from "../support/fixtures";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import {
+  clearModelSearchWithEscape,
   clickModelRowWhileProviderOpens,
   closeModelPicker,
   expectModelListScrollKeepsSearchFocused,
+  expectSearchProfilesAtTop,
   expectModelSearchEmptyState,
   expectModelPickerHeight,
   expectModelPickerWidth,
@@ -19,7 +21,12 @@ import {
   seedModelProvider,
   expectSearchResultsVirtualized,
 } from "../support/helpers/agent-profiles";
-import { expectComposerVisible } from "../support/helpers/composer";
+import {
+  blurComposerInput,
+  expectComposerFocused,
+  expectComposerVisible,
+} from "../support/helpers/composer";
+import { openGlobalNewWorkspaceComposer } from "../support/helpers/new-workspace";
 import { clickNewChat, clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 
@@ -56,9 +63,7 @@ const LARGE_CATALOG = {
 };
 
 test.describe("Cross-provider model search", () => {
-  test("one query over the picker root reaches every provider and names each result's provider", async ({
-    page,
-  }) => {
+  test("one query reaches every provider and names each result's provider", async ({ page }) => {
     const provider = await seedModelProvider(STUDIO);
     const profile = await seedAgentProfiles([ROOT_VIEW_PROFILE]);
     const workspace = await seedWorkspace({ repoPrefix: "model-search-providers-" });
@@ -99,7 +104,7 @@ test.describe("Cross-provider model search", () => {
         });
       });
 
-      await test.step("results replace the pinned profiles", async () => {
+      await test.step("results replace the Profiles list", async () => {
         await expectPinnedProfilesHidden(page);
       });
 
@@ -108,6 +113,10 @@ test.describe("Cross-provider model search", () => {
       await test.step("a query with no matches repeats the query back", async () => {
         await searchAllModels(page, "zzz");
         await expectModelSearchEmptyState(page, "zzz");
+      });
+
+      await test.step("Escape clears the query before it closes the picker", async () => {
+        await clearModelSearchWithEscape(page);
         await closeModelPicker(page);
       });
     } finally {
@@ -135,14 +144,21 @@ test.describe("Cross-provider model search", () => {
       const restingHeight = await readModelPickerHeight(page);
       const restingWidth = await readModelPickerWidth(page);
 
-      await test.step("a broad query renders only the visible result window", async () => {
+      await test.step("a broad query renders only the visible result window and scrolls without leaving search", async () => {
         await searchAllModels(page, "bulk model");
         await expectSearchResultsVirtualized(page, {
           provider: LARGE_CATALOG.id,
           total: LARGE_CATALOG_SIZE,
         });
+        await expectModelListScrollKeepsSearchFocused(page);
         await expectModelPickerHeight(page, restingHeight);
         await expectModelPickerWidth(page, restingWidth);
+      });
+
+      await test.step("a new query opens at the top, with the Profiles heading above the matching profile", async () => {
+        // "search" matches the profile's name and every bulk model's description.
+        await searchAllModels(page, "search");
+        await expectSearchProfilesAtTop(page, ROOT_VIEW_PROFILE.id);
       });
 
       await test.step("narrowing to one result does not resize the picker", async () => {
@@ -179,7 +195,7 @@ test.describe("Cross-provider model search", () => {
     }
   });
 
-  test("arrow keys navigate profiles, providers, models, and search results in the composer", async ({
+  test("arrow keys move between the rail, the model list, and search results in the composer", async ({
     page,
   }) => {
     const provider = await seedModelProvider(STUDIO);
@@ -194,7 +210,7 @@ test.describe("Cross-provider model search", () => {
     const workspace = await seedWorkspace({ repoPrefix: "model-picker-arrows-" });
 
     try {
-      await test.step("open the composer model picker on the root view", async () => {
+      await test.step("open the composer model picker", async () => {
         await gotoWorkspace(page, workspace.workspaceId);
         await clickNewChat(page);
         await expectComposerVisible(page);
@@ -204,32 +220,42 @@ test.describe("Cross-provider model search", () => {
       const viewport = page.getByTestId("combobox-desktop-container");
       const trigger = page.getByTestId("combined-model-selector").filter({ visible: true }).first();
       const profileRow = viewport.getByTestId("model-profile-row-agent_profile_e2e_arrows");
+      const profilesRailRow = viewport.getByTestId("model-picker-rail-profiles");
       const studioProviderRow = viewport.getByTestId(`model-provider-${STUDIO.id}`);
 
-      await test.step("move from profiles to providers, drill in with ArrowRight, and go back with ArrowLeft", async () => {
-        await expect(profileRow).toHaveAttribute("data-active", "true");
-        // Root view keeps aria-selected absent while keyboard-active uses data-active.
-        await expect(viewport.locator("[aria-selected]")).toHaveCount(0);
+      await test.step("ArrowLeft moves to the rail, ArrowDown opens each entry, ArrowRight enters its list", async () => {
+        await page.keyboard.press("ArrowLeft");
+        // The rail opens what it lands on, so ArrowUp from any provider reaches Profiles.
+        for (let step = 0; step < 10; step += 1) {
+          if ((await profilesRailRow.getAttribute("data-active")) === "true") break;
+          await page.keyboard.press("ArrowUp");
+        }
+        await expect(profilesRailRow).toHaveAttribute("data-active", "true");
+        await expect(profileRow).toBeVisible();
 
-        // Step down until Mock Studio is active (provider order can vary across environments).
+        // Step down until Mock Studio is open (provider order can vary across environments).
         for (let step = 0; step < 10; step += 1) {
           if ((await studioProviderRow.getAttribute("data-active")) === "true") break;
           await page.keyboard.press("ArrowDown");
         }
         await expect(studioProviderRow).toHaveAttribute("data-active", "true");
-
-        await page.keyboard.press("ArrowRight");
         await expect(viewport.getByTestId(`model-row-${STUDIO.id}-studio-fast`)).toBeVisible();
 
+        await page.keyboard.press("ArrowRight");
+        await expect(viewport.getByTestId(`model-row-${STUDIO.id}-studio-fast`)).toHaveAttribute(
+          "data-active",
+          "true",
+        );
         await page.keyboard.press("ArrowLeft");
-        await expect(studioProviderRow).toHaveAttribute("data-active", "true");
+        await expect(
+          viewport.locator('[data-testid^="model-row-"][data-active="true"]'),
+        ).toHaveCount(0);
       });
 
-      await test.step("Enter drills into the active provider and ArrowDown + Enter selects a model", async () => {
+      await test.step("Enter moves from the rail into the list and ArrowDown + Enter selects a model", async () => {
         await page.keyboard.press("Enter");
         const deepRow = viewport.getByTestId(`model-row-${STUDIO.id}-studio-deep`);
         await expect(deepRow).toBeVisible();
-        await expectModelListScrollKeepsSearchFocused(page);
 
         for (let step = 0; step < 5; step += 1) {
           if ((await deepRow.getAttribute("data-active")) === "true") break;
@@ -240,6 +266,7 @@ test.describe("Cross-provider model search", () => {
         await page.keyboard.press("Enter");
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("Studio deep think");
+        await expectComposerFocused(page);
       });
 
       await test.step("typing filters results while arrow keys select across search matches", async () => {
@@ -258,6 +285,7 @@ test.describe("Cross-provider model search", () => {
         await page.keyboard.press("Enter");
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("Ten second stream");
+        await expectComposerFocused(page);
       });
 
       await test.step("a press on a model row selects it while the provider list is still opening", async () => {
@@ -265,31 +293,83 @@ test.describe("Cross-provider model search", () => {
         await clickModelRowWhileProviderOpens(page, {
           provider: "mock",
           modelLabel: "One minute stream",
+          otherProvider: STUDIO.id,
         });
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("One minute stream");
+        await expectComposerFocused(page);
       });
 
       await test.step("Enter on the active profile row applies it", async () => {
         await openModelPicker(page);
+        await page.keyboard.press("ArrowLeft");
+        for (let step = 0; step < 10; step += 1) {
+          if ((await profilesRailRow.getAttribute("data-active")) === "true") break;
+          await page.keyboard.press("ArrowUp");
+        }
+        await page.keyboard.press("ArrowRight");
         await expect(profileRow).toHaveAttribute("data-active", "true");
         await page.keyboard.press("Enter");
         await expect(viewport).toHaveCount(0);
         await expect(trigger).toContainText("Ten second stream");
+        await expectComposerFocused(page);
       });
 
-      await test.step("folded compact sheet also supports Enter on the active profile row", async () => {
+      await test.step("the compact drawer puts Profiles in the Model accordion and lets all groups collapse", async () => {
         await page.setViewportSize({ width: 390, height: 800 });
         await page.getByTestId("combined-model-selector").filter({ visible: true }).first().click();
+        await expect(page.getByTestId("agent-controls-profiles")).toHaveCount(0);
+        await page.getByTestId("agent-controls-model").click();
+        await expect(page.getByTestId("compact-model-list")).toBeVisible();
+        await page.locator('[data-testid^="model-provider-section-"]').first().click();
+        await expect(page.getByTestId("compact-model-list")).toHaveCount(0);
+        await page.getByTestId("model-picker-rail-profiles").click();
         const sheetProfileRow = page.getByTestId("model-profile-row-agent_profile_e2e_arrows");
         await expect(sheetProfileRow).toBeVisible();
-        await expect(sheetProfileRow).toHaveAttribute("data-active", "true");
-        await page.keyboard.press("Enter");
+        await sheetProfileRow.click();
         await expect(sheetProfileRow).toHaveCount(0);
+        await expect(page.getByTestId("agent-controls-model-sheet")).not.toBeInViewport();
       });
     } finally {
       await workspace.cleanup();
       await profile.restore();
+      await provider.restore();
+    }
+  });
+
+  test("choosing a model restores composer focus in workspace drafts and New Workspace", async ({
+    page,
+  }) => {
+    const provider = await seedModelProvider(STUDIO);
+    const workspace = await seedWorkspace({ repoPrefix: "model-picker-focus-" });
+
+    try {
+      await test.step("clicking a model after blurring the workspace draft returns focus to the composer", async () => {
+        await gotoWorkspace(page, workspace.workspaceId);
+        await clickNewChat(page);
+        await expectComposerVisible(page);
+        await blurComposerInput(page);
+        await openModelPicker(page);
+        const viewport = page.getByTestId("combobox-desktop-container");
+        await viewport.getByTestId(`model-provider-${STUDIO.id}`).click();
+        await viewport.getByTestId(`model-row-${STUDIO.id}-studio-deep`).click();
+        await expect(viewport).toHaveCount(0);
+        await expectComposerFocused(page);
+      });
+
+      await test.step("clicking a model on the New Workspace screen returns focus to the composer", async () => {
+        await openGlobalNewWorkspaceComposer(page);
+        await expectComposerVisible(page);
+        await blurComposerInput(page);
+        await openModelPicker(page);
+        const viewport = page.getByTestId("combobox-desktop-container");
+        await viewport.getByTestId(`model-provider-${STUDIO.id}`).click();
+        await viewport.getByTestId(`model-row-${STUDIO.id}-studio-fast`).click();
+        await expect(viewport).toHaveCount(0);
+        await expectComposerFocused(page);
+      });
+    } finally {
+      await workspace.cleanup();
       await provider.restore();
     }
   });
@@ -332,7 +412,6 @@ async function reloadSavedDraft(page: Page) {
 }
 async function expectOneCatalogChoice(page: Page, label: string) {
   await openModelPicker(page);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
   await searchAllModels(page, label);
   await expect(page.getByTestId("model-row-gemini-gemini-3.5-flash")).toHaveCount(1);
   await closeModelPicker(page);

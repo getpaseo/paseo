@@ -13,6 +13,8 @@ export function createObservationBuffer(signal: AbortSignal) {
   const resolvedBeforeInitial = new Set<string>();
   let initialPending = true;
   let terminal: FinishObservationResult | undefined;
+  /** A turn end arrived from the stream; the initial wait can only repeat it. */
+  let ended = false;
   let failure: unknown;
   let wake: (() => void) | undefined;
   const abort = () => {
@@ -25,7 +27,10 @@ export function createObservationBuffer(signal: AbortSignal) {
     if (result.status === "permission") {
       for (const request of result.final?.pendingPermissions ?? [])
         if (!delivered.has(request.id)) permissions.set(request.id, result);
-    } else if (!result.workChanged || !terminal || terminal.workChanged) terminal = result;
+    } else if (!result.workChanged || !terminal || terminal.workChanged) {
+      terminal = result;
+      if (!result.workChanged) ended = true;
+    }
     wake?.();
   }
   return {
@@ -38,7 +43,7 @@ export function createObservationBuffer(signal: AbortSignal) {
         if (pendingPermissions.length)
           push({ ...result, final: { ...result.final, pendingPermissions } });
       } else if (
-        !terminal &&
+        !ended &&
         result.final?.status !== "running" &&
         result.final?.status !== "initializing"
       )

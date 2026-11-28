@@ -587,7 +587,12 @@ export async function openModelPicker(page: Page): Promise<void> {
   await expect(pickerViewport(page)).toBeVisible({ timeout: 30_000 });
 }
 
+/** Escape clears a typed query first; the next Escape closes the picker. */
 export async function closeModelPicker(page: Page): Promise<void> {
+  const search = pickerViewport(page).getByTestId("model-search-input");
+  if ((await search.count()) > 0 && (await search.inputValue()) !== "") {
+    await clearModelSearchWithEscape(page);
+  }
   await page.keyboard.press("Escape");
   await expect(pickerViewport(page)).toHaveCount(0, { timeout: 30_000 });
 }
@@ -598,70 +603,40 @@ export function profilePickerRow(page: Page, name: string): Locator {
     .filter({ hasText: name });
 }
 
-/**
- * Profiles are pinned above the provider list, so "pinned" is an ordering claim:
- * the profile row's top edge sits above every provider row's.
- */
-export async function expectProfilePinnedAboveProviders(
-  page: Page,
-  input: { name: string; summary: string },
-): Promise<void> {
-  const viewport = pickerViewport(page);
-  await expect(viewport.getByText("Profiles", { exact: true })).toBeVisible({ timeout: 30_000 });
-  const row = profilePickerRow(page, input.name);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await expect(row.getByText(input.summary, { exact: true })).toBeVisible();
-
-  const profileTop = await boxTop(row);
-  const providerRows = viewport.locator('[data-testid^="model-provider-"]');
-  await expect(providerRows.first()).toBeVisible();
-  const providerCount = await providerRows.count();
-  for (let index = 0; index < providerCount; index += 1) {
-    expect(profileTop).toBeLessThan(await boxTop(providerRows.nth(index)));
-  }
+/** Desktop keeps profiles behind the rail's Profiles entry, beside the providers. */
+export async function openPickerProfiles(page: Page): Promise<void> {
+  await pickerViewport(page).getByTestId("model-picker-rail-profiles").click();
 }
 
-export async function expectProfileVisibleForProvider(
+export async function expectPickerProfile(
   page: Page,
   input: { name: string; summary: string },
 ): Promise<void> {
-  const viewport = pickerViewport(page);
-  await expect(viewport.getByText("Profiles", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await openPickerProfiles(page);
   const row = profilePickerRow(page, input.name);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await expect(row.getByText(input.summary, { exact: true })).toBeVisible();
 }
 
-export async function expectProfileEditIsPencilOnly(page: Page): Promise<void> {
-  const viewport = pickerViewport(page);
-  await expect(
-    viewport.getByRole("button", { name: "Edit agent profiles", exact: true }),
-  ).toBeVisible();
-  await expect(viewport.getByText("Edit", { exact: true })).toHaveCount(0);
-}
-
-export async function expectAgentProfilesEmptyPrompt(page: Page): Promise<void> {
-  const viewport = pickerViewport(page);
-  await expect(viewport.getByText("Profiles", { exact: true })).toHaveCount(0);
-  await expect(
-    viewport.getByRole("button", { name: "Edit agent profiles", exact: true }),
-  ).toHaveCount(0);
-  await expect(viewport.getByRole("button", { name: "Create profile", exact: true })).toBeVisible({
-    timeout: 30_000,
-  });
-}
-
-export async function expectProfileEditTooltip(page: Page): Promise<void> {
+export async function expectProfilesEditLink(page: Page): Promise<void> {
   const edit = pickerViewport(page).getByRole("button", {
     name: "Edit agent profiles",
     exact: true,
   });
-  await edit.hover();
-  await expect(page.getByText("Edit agent profiles", { exact: true })).toBeVisible();
+  await expect(edit).toBeVisible();
+  await expect(edit).toHaveText("Edit");
+}
+
+/** With no profiles, the Profiles entry offers to create one instead of listing any. */
+export async function expectAgentProfilesEmptyPrompt(page: Page): Promise<void> {
+  await openPickerProfiles(page);
+  const viewport = pickerViewport(page);
+  await expect(viewport.locator('[data-testid^="model-profile-row-"]')).toHaveCount(0);
+  await expect(viewport.getByTestId("model-profiles-empty")).toBeVisible({ timeout: 30_000 });
 }
 
 export async function openAgentProfilesFromEmptyPrompt(page: Page): Promise<void> {
-  await pickerViewport(page).getByRole("button", { name: "Create profile", exact: true }).click();
+  await pickerViewport(page).getByTestId("model-profiles-empty").click();
   await expect(page.getByTestId("agent-profiles-card")).toBeVisible({ timeout: 30_000 });
 }
 
@@ -709,23 +684,15 @@ export async function expectProfileReachableByScrolling(page: Page, name: string
 }
 
 export async function applyProfileFromPicker(page: Page, name: string): Promise<void> {
-  await profilePickerRow(page, name).click();
+  const row = profilePickerRow(page, name);
+  if (!(await row.isVisible().catch(() => false))) {
+    const profilesRail = pickerViewport(page).getByTestId("model-picker-rail-profiles");
+    if (await profilesRail.isVisible().catch(() => false)) {
+      await profilesRail.click();
+    }
+  }
+  await row.click();
   await expect(pickerViewport(page)).toHaveCount(0, { timeout: 30_000 });
-}
-
-/**
- * Applying a profile materializes it and forgets it: nothing in the root view
- * claims selection. Model rows do carry `aria-selected`, so a count of zero here
- * is the absence of a checkmark, not the absence of the attribute everywhere.
- */
-export async function expectNothingSelectedInPickerRoot(page: Page): Promise<void> {
-  await expect(pickerViewport(page).locator("[aria-selected]")).toHaveCount(0);
-}
-
-export async function expectAgentProfilesEditShortcut(page: Page): Promise<void> {
-  await expect(
-    pickerViewport(page).getByRole("button", { name: "Edit agent profiles", exact: true }),
-  ).toBeVisible({ timeout: 30_000 });
 }
 
 export async function drillIntoProvider(page: Page, providerId: string): Promise<void> {
@@ -798,13 +765,13 @@ export async function selectModelRow(
  */
 export async function clickModelRowWhileProviderOpens(
   page: Page,
-  input: { provider: string; modelLabel: string },
+  input: { provider: string; modelLabel: string; otherProvider: string },
 ): Promise<void> {
   const viewport = pickerViewport(page);
   await drillIntoProvider(page, input.provider);
   const rowBox = await viewport.getByText(input.modelLabel, { exact: true }).boundingBox();
   if (!rowBox) throw new Error(`Model row ${input.modelLabel} has no box`);
-  await viewport.getByRole("button", { name: "Back", exact: true }).click();
+  await drillIntoProvider(page, input.otherProvider);
 
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 10 });
@@ -822,7 +789,7 @@ export async function clickModelRowWhileProviderOpens(
 /** Scrolling a provider's model list with the wheel leaves typing and Enter in the search field. */
 export async function expectModelListScrollKeepsSearchFocused(page: Page): Promise<void> {
   const search = pickerViewport(page).getByTestId("model-search-input");
-  const list = pickerViewport(page).getByTestId("compact-model-list");
+  const list = pickerViewport(page).getByTestId("model-picker-model-list");
   await expect(search).toBeFocused();
   await list.hover();
   await page.mouse.wheel(0, 200);
@@ -833,9 +800,16 @@ export async function expectModelListScrollKeepsSearchFocused(page: Page): Promi
 // ─── Cross-provider model search ───────────────────────────────────────────
 
 export async function searchAllModels(page: Page, query: string): Promise<void> {
-  const input = page.getByTestId("model-search-all-input");
+  const input = pickerViewport(page).getByTestId("model-search-input");
   await expect(input).toBeVisible({ timeout: 30_000 });
   await input.fill(query);
+}
+
+/** Search results open at the top, with the Profiles heading above the first matching profile. */
+export async function expectSearchProfilesAtTop(page: Page, profileId: string): Promise<void> {
+  const list = pickerViewport(page).getByTestId("model-picker-model-list");
+  await expect(list.getByText("Profiles", { exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(list.getByTestId(`model-profile-row-${profileId}`)).toBeInViewport({ ratio: 1 });
 }
 
 export async function expectModelSearchResult(
@@ -856,9 +830,17 @@ function escapeForRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Search results replace the whole root view, pinned profiles included. */
+/** Search results replace both panes, the Profiles list included. */
 export async function expectPinnedProfilesHidden(page: Page): Promise<void> {
   await expect(pickerViewport(page).locator('[data-testid^="model-profile-row-"]')).toHaveCount(0);
+}
+
+export async function clearModelSearchWithEscape(page: Page): Promise<void> {
+  const search = pickerViewport(page).getByTestId("model-search-input");
+  await page.keyboard.press("Escape");
+  await expect(search).toHaveValue("");
+  await expect(search).toBeFocused();
+  await expect(pickerViewport(page)).toBeVisible();
 }
 
 export async function expectModelSearchEmptyState(page: Page, query: string): Promise<void> {

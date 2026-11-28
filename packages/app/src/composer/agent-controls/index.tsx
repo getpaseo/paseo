@@ -27,6 +27,7 @@ import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import {
   AgentModeControl,
+  useAgentModeCycleShortcut,
   useLiveAgentModeControl,
   type AgentModeControlValue,
 } from "@/composer/agent-controls/mode-control";
@@ -82,8 +83,11 @@ import {
   useEffortCycleShortcut,
   useModelPickerShortcut,
 } from "@/composer/agent-controls/control-items";
+import { AgentSettingsDrawer } from "@/composer/agent-controls/agent-settings-drawer";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
+import type { AgentSheetControls } from "@/composer/agent-controls/sheet-home";
 import { useComposerSheetBridge } from "@/composer/agent-controls/sheet-bridge";
+import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { draftComposerAgent } from "@/composer/draft/composer-agent";
 import { agentComposer } from "@/composer/agent-composer";
 import { composerModelFromHalves } from "@/composer/halves-model";
@@ -463,6 +467,7 @@ function ControlledAgentControls({
   const { fontScale } = useWindowDimensions();
   const [activeSheet, setActiveSheet] = useState<ActiveSheet>(null);
   const [openSelector, setOpenSelector] = useState<string | null>(null);
+  useAgentModeCycleShortcut(modeControl);
   // A compact composer always folds its controls into the model sheet; the width budget only
   // decides whether the model keeps its label.
   const minimumDensity: ComposerControlDensity = isCompact ? "compact" : "full";
@@ -836,7 +841,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             isRetryingProvider={isRetryingModelProvider}
             serverId={modelSelectorServerId}
             desktopPlacement="top-start"
-            desktopMinWidth={360}
             toolbar={modelToolbar}
           />
         </View>
@@ -884,6 +888,38 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   );
 }
 
+/** The settings button that opens the controls with no room inline. */
+function FeaturesButton({
+  glyphs,
+  disabled,
+  onPress,
+}: {
+  glyphs: ToolbarGlyphs;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={styles.modeIconBadge}
+      accessibilityRole="button"
+      accessibilityLabel={t("agentControls.features.open")}
+      testID="agent-controls-features"
+    >
+      <ComposerToolbarGlyph role="icon">
+        <Settings2
+          size={glyphs.icon.size}
+          strokeWidth={glyphs.icon.strokeWidth}
+          color={toolbarGlyphColor(theme, glyphs.icon.tone)}
+        />
+      </ComposerToolbarGlyph>
+    </Pressable>
+  );
+}
+
 /** The settings button and the sheet it opens, holding controls that have no room inline. */
 function FeaturesSheet({
   glyphs,
@@ -901,27 +937,11 @@ function FeaturesSheet({
   children: ReactNode;
 }) {
   const sheetBridge = useComposerSheetBridge();
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const header = useMemo<SheetHeader>(() => ({ title: t("agentControls.features.title") }), [t]);
   return (
     <>
-      <Pressable
-        onPress={onOpen}
-        disabled={disabled}
-        style={styles.modeIconBadge}
-        accessibilityRole="button"
-        accessibilityLabel={t("agentControls.features.open")}
-        testID="agent-controls-features"
-      >
-        <ComposerToolbarGlyph role="icon">
-          <Settings2
-            size={glyphs.icon.size}
-            strokeWidth={glyphs.icon.strokeWidth}
-            color={toolbarGlyphColor(theme, glyphs.icon.tone)}
-          />
-        </ComposerToolbarGlyph>
-      </Pressable>
+      <FeaturesButton glyphs={glyphs} disabled={disabled} onPress={onOpen} />
       <AdaptiveModalSheet
         header={header}
         visible={visible}
@@ -981,27 +1001,13 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
   } = props;
   const handleOpenFeatures = useCallback(() => handleOpenSheet("features"), [handleOpenSheet]);
 
-  const sheetControls = (
-    <View style={styles.combinedSheetControls} testID="agent-controls-combined-sheet-controls">
-      <ComposerControls
-        items={thinkingItems}
-        surface="sheet"
-        disabled={disabled}
-        openId={openSelector}
-        onOpenIdChange={handleSheetOpenChange}
-      />
-
-      {modeControl ? <AgentModeControl {...modeControl} surface="sheet" /> : null}
-
-      <ComposerControls
-        items={featureItems}
-        surface="sheet"
-        disabled={disabled}
-        openId={openSelector}
-        onOpenIdChange={handleSheetOpenChange}
-      />
-      <PluginComposerItems serverId={modelSelectorServerId} surface="sheet" />
-    </View>
+  const sheetControls = useMemo<AgentSheetControls>(
+    () => ({ thinkingItems, featureItems, modeControl: modeControl ?? null }),
+    [featureItems, modeControl, thinkingItems],
+  );
+  const pluginItems = useMemo(
+    () => <PluginComposerItems serverId={modelSelectorServerId} surface="sheet" />,
+    [modelSelectorServerId],
   );
 
   return canSelectModel ? (
@@ -1028,20 +1034,101 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       glyphs={glyphs}
       showLabels={showLabels}
       canSwitchProvider={canSwitchProvider}
-    >
-      {sheetControls}
-    </CompactModelSheet>
+      controls={sheetControls}
+      pluginItems={pluginItems}
+      openControlId={openSelector}
+      onOpenControlIdChange={handleSheetOpenChange}
+    />
   ) : (
-    // A host that hides the model picker still folds the other controls into a sheet.
-    <FeaturesSheet
+    // A host that hides the model picker still folds the other controls into a drawer.
+    <CompactFeaturesSheet
       glyphs={glyphs}
       disabled={disabled}
       visible={activeSheet === "features"}
       onOpen={handleOpenFeatures}
       onClose={handleCloseSheet}
-    >
-      {sheetControls}
-    </FeaturesSheet>
+      contextBridge={sheetBridge}
+      controls={sheetControls}
+      pluginItems={pluginItems}
+      openControlId={openSelector}
+      onOpenControlIdChange={handleSheetOpenChange}
+    />
+  );
+}
+
+/**
+ * The folded controls of a composer without the model picker. Phones get the Agent settings drawer
+ * without its Model row; a narrow pane in a wide window lists the controls in one sheet.
+ */
+function CompactFeaturesSheet({
+  glyphs,
+  disabled,
+  visible,
+  onOpen,
+  onClose,
+  contextBridge,
+  controls,
+  pluginItems,
+  openControlId,
+  onOpenControlIdChange,
+}: {
+  glyphs: ToolbarGlyphs;
+  disabled: boolean;
+  visible: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  contextBridge: ContextBridge | null;
+  controls: AgentSheetControls;
+  pluginItems: ReactNode;
+  openControlId: string | null;
+  onOpenControlIdChange: (id: string | null) => void;
+}) {
+  const usesBottomSheet = useIsCompactFormFactor();
+  if (!usesBottomSheet) {
+    return (
+      <FeaturesSheet
+        glyphs={glyphs}
+        disabled={disabled}
+        visible={visible}
+        onOpen={onOpen}
+        onClose={onClose}
+      >
+        <View style={styles.combinedSheetControls} testID="agent-controls-combined-sheet-controls">
+          <ComposerControls
+            items={controls.thinkingItems}
+            surface="sheet"
+            disabled={disabled}
+            openId={openControlId}
+            onOpenIdChange={onOpenControlIdChange}
+          />
+          {controls.modeControl ? (
+            <AgentModeControl {...controls.modeControl} surface="sheet" />
+          ) : null}
+          <ComposerControls
+            items={controls.featureItems}
+            surface="sheet"
+            disabled={disabled}
+            openId={openControlId}
+            onOpenIdChange={onOpenControlIdChange}
+          />
+          {pluginItems}
+        </View>
+      </FeaturesSheet>
+    );
+  }
+  return (
+    <>
+      <FeaturesButton glyphs={glyphs} disabled={disabled} onPress={onOpen} />
+      <AgentSettingsDrawer
+        visible={visible}
+        onClose={onClose}
+        contextBridge={contextBridge}
+        disabled={disabled}
+        controls={controls}
+        pluginItems={pluginItems}
+        model={null}
+      />
+    </>
   );
 }
 

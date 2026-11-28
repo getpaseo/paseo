@@ -247,6 +247,9 @@ export const fr: TranslationResources = {
       searchPlaceholder: "Rechercher un mode…",
       selectWithValue: "Choisir le mode de l’agent ({{value}})",
     },
+    sheet: {
+      title: "Réglages de l'agent",
+    },
     hints: {
       thinking: "Mode de réflexion",
       model: "Changer de modèle",
@@ -1933,6 +1936,12 @@ export const fr: TranslationResources = {
     searchAllPlaceholder: "Rechercher dans tous les modèles…",
     searchPlaceholder: "Rechercher des modèles…",
     openProviderSettings: "Ouvrir les paramètres de {{provider}}",
+    searchModelsAndProfilesPlaceholder: "Rechercher des modèles et des profils…",
+    shownOfTotal: "{{shown}} affichés sur {{total}}",
+    olderModels: "Modèles plus anciens ({{count}})",
+    allModels: "Tous les modèles ({{count}})",
+    olderTag: "Ancien",
+    allModelsTag: "Tous les modèles",
   },
   providerCatalog: {
     title: "Ajouter un fournisseur",
@@ -3436,6 +3445,14 @@ export const fr: TranslationResources = {
         retrying: "Nouvelle tentative…",
         noSearchMatches: "Aucun modèle ne correspond à votre recherche",
         noneDetected: "Aucun modèle détecté",
+        shownInfo:
+          "Les modèles cochés apparaissent en premier dans les sélecteurs. La recherche trouve toujours les autres.",
+        shownCount: "Affichés ({{count}})",
+        allShown: "Tous les modèles affichés",
+        resetShown: "Réinitialiser",
+        resetShownLabel: "Afficher tous les modèles dans les sélecteurs",
+        shownReset: "Tous les modèles sont affichés",
+        failedToSaveShown: "Impossible d'enregistrer les modèles affichés",
         noCustom: "Aucun modèle personnalisé",
         title: "Modèles",
         custom: "Modèles personnalisés",

@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import os from "node:os";
 import path from "node:path";
 
+import { resolvePaseoHome } from "../../paseo-home.js";
 import type { AgentTimelineItem } from "../agent-sdk-types.js";
 
 export interface ProviderImageOutput {
@@ -19,7 +19,6 @@ export interface MaterializedProviderImage {
 }
 
 const PROVIDER_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
-const PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX = `${PROVIDER_IMAGE_ATTACHMENT_DIR}-`;
 const PRIVATE_ATTACHMENT_DIR_MODE = 0o700;
 const MATERIALIZED_IMAGE_FILE_MODE = 0o600;
 
@@ -35,8 +34,8 @@ function getMaterializedImageAttachmentDir(): Promise<string> {
 }
 
 async function createAttachmentDirectory(): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), PROVIDER_IMAGE_ATTACHMENT_DIR_PREFIX));
-  await fs.chmod(dir, PRIVATE_ATTACHMENT_DIR_MODE);
+  const dir = path.join(resolvePaseoHome(), PROVIDER_IMAGE_ATTACHMENT_DIR);
+  await fs.mkdir(dir, { recursive: true, mode: PRIVATE_ATTACHMENT_DIR_MODE });
   return dir;
 }
 

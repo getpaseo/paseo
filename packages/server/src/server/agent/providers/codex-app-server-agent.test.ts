@@ -103,6 +103,9 @@ import { asInternals as castInternals, createStub } from "../../test-utils/class
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import { buildProviderRegistry } from "../provider-registry.js";
+import { isolatePaseoHome } from "../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 interface CollaborationModeRecord {
   name: string;

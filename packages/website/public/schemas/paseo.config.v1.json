@@ -499,6 +499,12 @@
                   "required": ["id", "label"]
                 }
               },
+              "shownModels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "disallowedTools": {
                 "type": "array",
                 "items": {

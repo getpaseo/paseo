@@ -218,10 +218,11 @@ test("a phone-width embed without the model picker keeps its other controls", as
       const toolbar = embed(agent.agentId).getByTestId("agent-controls-toolbar");
       await expect(toolbar).toBeVisible();
       await toolbar.getByRole("button", { name: "Open agent features", exact: true }).click();
-      // The phone sheet lands at the app root, outside the embed.
-      const sheet = page.getByTestId("agent-controls-combined-sheet-controls");
+      // The Agent settings drawer lands at the app root, outside the embed, without a Model row.
+      const sheet = page.getByTestId("agent-controls-settings-list");
+      await expect(sheet).toBeVisible();
       await expect(page.getByTestId("agent-controls-model")).toHaveCount(0);
-      await expect(sheet.getByRole("button", { name: /agent mode/i })).toBeVisible();
+      await expect(sheet.getByTestId("mode-control")).toBeVisible();
       await expect(sheet.getByRole("button", { name: "Alpha flag", exact: true })).toBeVisible();
       await expect(sheet.getByRole("button", { name: "Beta flag", exact: true })).toBeVisible();
     },

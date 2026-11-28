@@ -783,6 +783,56 @@ it("presents received agent messages as attributed bubbles with the original tur
   });
 });
 
+it("presents a finished notification as a compact tool call, not a received message", () => {
+  const call = toolCall("notice", "agent_finished");
+  if (call.payload.source !== "agent") throw new Error("Expected agent tool");
+  call.payload.data.detail = {
+    type: "plain_text",
+    label: "Child",
+    text: "Agent child (Child) finished.",
+    icon: "bot",
+  };
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail: [call],
+    head: [],
+  });
+  expect(result.tail).toEqual([call]);
+});
+
+// COMPAT(agentNotificationMetadata): rows from daemons that sent notification metadata.
+it("presents a legacy notification as the plain tool call current daemons send", () => {
+  const call = toolCall("legacy", "agent_message");
+  if (call.payload.source !== "agent") throw new Error("Expected agent tool");
+  call.turnId = "turn";
+  call.payload.data.detail = { type: "plain_text", text: "Done", icon: "bot" };
+  call.payload.data.agentMessage = {
+    event: "finished",
+    sender: { id: "child", title: "Child" },
+    text: "Done",
+  };
+  const result = createStreamPresentation()({
+    ...presentationOptions,
+    transform: undefined,
+    tail: [call],
+    head: [],
+  });
+  expect(result.tail).toHaveLength(1);
+  const [presented] = result.tail;
+  if (presented?.kind !== "tool_call" || presented.payload.source !== "agent")
+    throw new Error("Expected agent tool");
+  expect(presented).toMatchObject({ id: call.id, turnId: "turn" });
+  expect(presented.payload.data).toEqual({
+    provider: "codex",
+    callId: "legacy",
+    name: "agent_finished",
+    status: "completed",
+    error: null,
+    detail: { type: "plain_text", label: "Child", text: "Done", icon: "bot" },
+  });
+});
+
 it("does not reopen the previous turn while a new run waits for its first row", () => {
   const timestamp = new Date();
   const tail: StreamItem[] = [

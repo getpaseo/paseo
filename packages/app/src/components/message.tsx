@@ -2331,7 +2331,6 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 }
 
 interface ToolCallProps {
-  agentMessage?: AgentMessage;
   serverId?: string;
   toolName: string;
   args?: unknown;
@@ -2354,7 +2353,6 @@ interface ToolCallProps {
 }
 
 export const ToolCall = memo(function ToolCall({
-  agentMessage,
   serverId,
   toolName,
   args,
@@ -2403,7 +2401,6 @@ export const ToolCall = memo(function ToolCall({
   const presentation = useMemo(
     () =>
       buildToolCallPresentation({
-        agentMessage,
         toolName,
         status,
         error: error ?? null,
@@ -2413,7 +2410,7 @@ export const ToolCall = memo(function ToolCall({
         targetAgentTitle,
         resolveIcon: resolveToolCallIcon,
       }),
-    [toolName, status, error, effectiveDetail, metadata, cwd, agentMessage, targetAgentTitle],
+    [toolName, status, error, effectiveDetail, metadata, cwd, targetAgentTitle],
   );
   const handleOpenFile = useMemo(() => {
     const openFilePath = presentation.openFilePath;
@@ -2524,7 +2521,6 @@ export const ToolCall = memo(function ToolCall({
 function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.toolName !== next.toolName) return false;
   if (previous.serverId !== next.serverId) return false;
-  if (previous.agentMessage !== next.agentMessage) return false;
   if (previous.args !== next.args) return false;
   if (previous.result !== next.result) return false;
   if (previous.error !== next.error) return false;

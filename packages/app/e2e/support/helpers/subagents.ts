@@ -463,16 +463,15 @@ export async function delegateFleetThroughMcp() {
               direction: "tail",
               limit: 100,
             });
-            return timeline.entries
-              .flatMap(({ item }) =>
-                item.type === "tool_call" && item.agentMessage ? [item.agentMessage] : [],
-              )
-              .filter(
-                (message) =>
-                  message.event === "finished" &&
-                  message.sender.id === child.agentId &&
-                  message.text.includes(`Server: ${child.serverId}`),
-              ).length;
+            return timeline.entries.filter(
+              ({ item }) =>
+                item.type === "tool_call" &&
+                item.name === "agent_finished" &&
+                item.detail.type === "plain_text" &&
+                item.detail.label === child.title &&
+                item.detail.text?.includes(child.agentId) &&
+                item.detail.text.includes(`Server: ${child.serverId}`),
+            ).length;
           })
           .toBe(1);
       },

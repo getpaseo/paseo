@@ -167,6 +167,29 @@ describe("getClaudeModels", () => {
     expect(getClaudeModels("2.1.284").map((model) => model.id)).toContain("claude-sonnet-5-5");
   });
 
+  it("folds previous releases as legacy and keeps the current flagships", () => {
+    const current = getClaudeModels()
+      .filter((model) => model.isSelectable !== false && model.legacy !== true)
+      .map((model) => model.id);
+    expect(current).toEqual([
+      "claude-opus-5-5",
+      "claude-mythos-5-2",
+      "claude-fable-5-2",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
+    ]);
+    expect(
+      getClaudeModels().filter((model) => model.isSelectable !== false && model.legacy === true),
+    ).toHaveLength(15);
+  });
+
+  it("never marks the default model legacy on an older Claude Code", () => {
+    const defaultModel = getClaudeModels("2.1.279").find((model) => model.isDefault);
+    expect(defaultModel?.id).toBe("claude-opus-5");
+    expect(defaultModel?.legacy).toBeUndefined();
+    expect(getClaudeModels("2.1.218").find((model) => model.isDefault)?.legacy).toBeUndefined();
+  });
+
   it("gates Haiku 5.5 on Claude Code 2.1.293 without changing the default", () => {
     expect(getClaudeModels("2.1.292").map((model) => model.id)).not.toContain("claude-haiku-5-5");
     expect(getClaudeModels("2.1.293").map((model) => model.id)).toContain("claude-haiku-5-5");

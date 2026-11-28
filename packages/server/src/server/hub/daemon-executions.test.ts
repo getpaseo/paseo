@@ -1,4 +1,8 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import type { SessionOutboundMessage } from "../messages.js";
 import type { AgentClient } from "../agent/agent-sdk-types.js";
+import { UNATTENDED_HUB_PERMISSION_DENY_MESSAGE } from "../agent/unattended-permission-policy.js";
 import { validateProviderOptions } from "../agent/provider-options.js";
 import { CodexProviderOptionsSchema } from "../agent/providers/codex/options.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -349,4 +353,149 @@ test("failed create never archives a reused worktree", async () => {
     payload: { success: false, executionId: "reused-execution" },
   });
   expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
+});
+
+function hasAutoDeniedPermissionEvent(
+  messages: readonly SessionOutboundMessage[],
+  agentId: string,
+): boolean {
+  return messages.some(
+    (message) =>
+      message.type === "agent_permission_resolved" &&
+      message.payload.agentId === agentId &&
+      message.payload.resolution.behavior === "deny" &&
+      message.payload.resolution.message === UNATTENDED_HUB_PERMISSION_DENY_MESSAGE,
+  );
+}
+
+function hasPermissionRequestEvent(
+  messages: readonly SessionOutboundMessage[],
+  agentId: string,
+): boolean {
+  return messages.some(
+    (message) => message.type === "agent_permission_request" && message.payload.agentId === agentId,
+  );
+}
+
+test("Hub-dispatched root executions and MCP-spawned subagents auto-deny unexpected permission prompts while interactive agents stay pending", async () => {
+  const hub = await HubRelationshipHarness.startWithAgentMcp();
+  await hub.beginConnect().result;
+  hub.connectLatestSocket();
+  relationship = hub;
+
+  const rootTargetFile = path.join(hub.repoRoot(), "hub-root-blocked.txt");
+  const interactiveTargetFile = path.join(hub.repoRoot(), "interactive-approved.txt");
+
+  await hub.withTrustedClient(async (client) => {
+    await client.fetchAgents({ subscribe: {} });
+    const observedEvents: SessionOutboundMessage[] = [];
+    const permissionObservation = client.observeEvents([
+      "agent_permission_request",
+      "agent_permission_resolved",
+      "agent_attention_required",
+    ]);
+    const stopObserving = permissionObservation.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        observedEvents.push(message);
+      },
+    });
+    await permissionObservation.ready;
+    try {
+      // 1. Root Hub-dispatched execution raises a tool permission prompt -> auto-denied immediately.
+      hub.beginOwnedCreate("hub-root-perm", "hub-root-perm-exec", {
+        modeId: "default",
+        prompt: 'Request approval to run the command `printf "ok" > hub-root-blocked.txt`.',
+      });
+      const rootCreate = await hub.ownedCreateResult("hub-root-perm");
+      expect(rootCreate).toMatchObject({
+        type: "hub.execution.agent.create.response",
+        payload: { success: true, executionId: "hub-root-perm-exec" },
+      });
+      if (
+        rootCreate.type !== "hub.execution.agent.create.response" ||
+        !rootCreate.payload.agentId
+      ) {
+        throw new Error("Expected Hub root agent id");
+      }
+      const rootAgentId = rootCreate.payload.agentId;
+
+      await hub.ownedTurnCompletion(rootAgentId);
+      expect(existsSync(rootTargetFile)).toBe(false);
+
+      const rootStreamEvents = hub.ownedStreamEvents(rootAgentId);
+      expect(rootStreamEvents.some((event) => event.type === "permission_requested")).toBe(false);
+      expect(rootStreamEvents).toContainEqual(
+        expect.objectContaining({
+          type: "permission_resolved",
+          resolution: {
+            behavior: "deny",
+            message: UNATTENDED_HUB_PERMISSION_DENY_MESSAGE,
+          },
+        }),
+      );
+
+      // 2. Delegated subagent spawned by the Hub-dispatched root via Paseo MCP -> also auto-denied immediately.
+      const { agentId: childAgentId } = await hub.spawnSubagentViaLatestMcp({
+        provider: "codex/gpt-5.4",
+        title: "Hub reviewer subagent",
+        modeId: "default",
+        notifyOnFinish: true,
+        initialPrompt: "Run echo hello",
+      });
+
+      const childFinish = await client.waitForFinish(childAgentId, 5_000);
+      expect(childFinish.status).toBe("idle");
+      expect(childFinish.final?.pendingPermissions ?? []).toEqual([]);
+
+      await expect
+        .poll(() => hasAutoDeniedPermissionEvent(observedEvents, childAgentId))
+        .toBe(true);
+
+      // Neither the Hub root nor its subagent should emit interactive permission prompts or permission attention.
+      const hubPermissionPrompts = observedEvents.filter(
+        (message) =>
+          message.type === "agent_permission_request" &&
+          (message.payload.agentId === rootAgentId || message.payload.agentId === childAgentId),
+      );
+      expect(hubPermissionPrompts).toEqual([]);
+      const hubPermissionAttention = observedEvents.filter(
+        (message) =>
+          message.type === "agent_attention_required" &&
+          message.payload.reason === "permission" &&
+          (message.payload.agentId === rootAgentId || message.payload.agentId === childAgentId),
+      );
+      expect(hubPermissionAttention).toEqual([]);
+
+      // 3. Normal interactive user agent on the exact same daemon still waits for human approval.
+      const interactiveAgent = await client.createAgent({
+        provider: "codex",
+        cwd: hub.repoRoot(),
+        title: "Interactive User Agent",
+        modeId: "default",
+      });
+      await client.sendMessage(
+        interactiveAgent.id,
+        'Request approval to run the command `printf "ok" > interactive-approved.txt`.',
+      );
+      const pendingState = await client.waitForFinish(interactiveAgent.id, 5_000);
+      expect(pendingState.status).toBe("permission");
+      expect(pendingState.final?.pendingPermissions).toHaveLength(1);
+      await expect
+        .poll(() => hasPermissionRequestEvent(observedEvents, interactiveAgent.id))
+        .toBe(true);
+
+      await client.respondToPermission(
+        interactiveAgent.id,
+        pendingState.final!.pendingPermissions[0]!.id,
+        { behavior: "allow" },
+      );
+      const interactiveFinal = await client.waitForFinish(interactiveAgent.id, 5_000);
+      expect(interactiveFinal.status).toBe("idle");
+      expect(existsSync(interactiveTargetFile)).toBe(true);
+    } finally {
+      stopObserving();
+      await permissionObservation.release();
+    }
+  });
 });

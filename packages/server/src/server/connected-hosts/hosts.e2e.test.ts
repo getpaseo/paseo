@@ -1903,7 +1903,7 @@ test(
     // A CLI process can take longer than the two-second quiet window to start.
     // Exercise each delivery across windows; delivery.test.ts owns batching with a clock.
     await expect.poll(() => parentPrompts, { timeout: 10000 }).toHaveLength(1);
-    expect(parentPrompts[0]).toContain("REMOTE_REPORT &lt;ready&gt;");
+    expect(parentPrompts[0]).toMatch(/^REMOTE_REPORT <ready>\n\n<paseo-message /);
 
     const cli = await promisify(execFile)(
       process.execPath,
@@ -1953,17 +1953,24 @@ test(
       })
       .toEqual(["completed", "completed"]);
     const timeline = await origin.client.fetchAgentTimeline(parent.id);
-    const messages = timeline.entries.flatMap((row) =>
-      row.item.type === "tool_call" && row.item.agentMessage ? [row.item.agentMessage] : [],
+    const delivered = timeline.entries.flatMap((row) =>
+      row.item.type === "tool_call" && row.item.callId.startsWith("paseo-agent-message:")
+        ? [row.item]
+        : [],
     );
     expect(
-      messages.map((message) => [message.event, message.sender.id, message.sender.serverId]),
+      delivered.map(({ name, agentMessage, detail }) => [
+        name,
+        agentMessage?.sender.id,
+        agentMessage?.sender.serverId,
+        detail.type === "plain_text" ? detail.label : undefined,
+      ]),
     ).toEqual([
-      ["message", child.id, bId],
-      ["message", parent.id, undefined],
-      ["finished", child.id, bId],
+      ["agent_message", child.id, bId, undefined],
+      ["agent_message", parent.id, undefined, undefined],
+      ["agent_finished", undefined, undefined, "Batch child"],
     ]);
-    expect(messages[0]!.text).toBe("REMOTE_REPORT <ready>");
+    expect(delivered[0]!.agentMessage!.text).toBe("REMOTE_REPORT <ready>");
     expect(timeline.entries.filter((row) => row.item.type === "user_message")).toEqual([]);
 
     const human = await aWorkspace.agents.create({

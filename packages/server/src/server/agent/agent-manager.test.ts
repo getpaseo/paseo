@@ -14878,24 +14878,18 @@ test.each(["live", "history", "accepted"] as const)(
         manager
           .getTimeline(agent.id)
           .filter((row) => row.type === "tool_call")
-          .map((row) => ({ callId: row.callId, agentMessage: row.agentMessage })),
+          .map((row) => ({ callId: row.callId, name: row.name, agentMessage: row.agentMessage })),
       ).toEqual([
         {
           callId: "paseo-agent-message:report",
+          name: "agent_message",
           agentMessage: {
             event: "message",
             sender: { id: "worker", serverId: "remote-host" },
             text: "Result <ready>",
           },
         },
-        {
-          callId: "paseo-agent-message:finish",
-          agentMessage: {
-            event: "finished",
-            sender: { id: "worker", serverId: "remote-host" },
-            text: "Worker finished",
-          },
-        },
+        { callId: "paseo-agent-message:finish", name: "agent_finished", agentMessage: undefined },
       ]);
       expect(manager.getTimeline(agent.id).filter((row) => row.type === "user_message")).toEqual(
         [],
@@ -16862,4 +16856,264 @@ test("cancelAgentRun still force-cancels after 2s when an acknowledged non-ACP i
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
+});
+
+describe("unattended Hub execution permission auto-deny", () => {
+  function createPermissionPromptHarness() {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hub-auto-deny-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const sessions = new Map<string, ScriptedPermissionSession>();
+    const attentionReasons: Array<{ agentId: string; reason: string }> = [];
+
+    class ScriptedPermissionSession extends TestAgentSession {
+      readonly receivedResponses: Array<{
+        requestId: string;
+        response: AgentPermissionResponse;
+      }> = [];
+      private readonly pending = new Map<
+        string,
+        {
+          request: AgentPermissionRequest;
+          resolve: (response: AgentPermissionResponse) => void;
+        }
+      >();
+
+      override getPendingPermissions(): AgentPermissionRequest[] {
+        return Array.from(this.pending.values(), (entry) => entry.request);
+      }
+
+      override async respondToPermission(
+        requestId: string,
+        response: AgentPermissionResponse,
+      ): Promise<void> {
+        const entry = this.pending.get(requestId);
+        if (!entry) {
+          throw new Error(`No pending permission '${requestId}'`);
+        }
+        this.pending.delete(requestId);
+        this.receivedResponses.push({ requestId, response });
+        this.pushEvent({
+          type: "permission_resolved",
+          provider: this.provider,
+          requestId,
+          resolution: response,
+        });
+        entry.resolve(response);
+      }
+
+      override async startTurn(prompt: string): Promise<{ turnId: string }> {
+        const turnId = `turn-${Math.random().toString(36).slice(2, 8)}`;
+        const requestId = `perm-${turnId}`;
+        setTimeout(async () => {
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+          const request: AgentPermissionRequest = {
+            id: requestId,
+            provider: this.provider,
+            kind: "tool",
+            name: "Bash",
+            input: { command: prompt },
+          };
+          const response = await new Promise<AgentPermissionResponse>((resolve) => {
+            this.pending.set(requestId, { request, resolve });
+            this.pushEvent({
+              type: "permission_requested",
+              provider: this.provider,
+              request,
+              turnId,
+            });
+          });
+          this.pushEvent({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: {
+              type: "assistant_message",
+              text:
+                response.behavior === "deny"
+                  ? `Rewrote command after denial: ${response.message ?? ""}`
+                  : "Command approved and executed.",
+            },
+          });
+          this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+        }, 0);
+        return { turnId };
+      }
+    }
+
+    class ScriptedPermissionClient extends TestAgentClient {
+      override async createSession(
+        config: AgentSessionConfig,
+        launchContext?: { agentId?: string },
+      ): Promise<AgentSession> {
+        const session = new ScriptedPermissionSession(config);
+        if (launchContext?.agentId) {
+          sessions.set(launchContext.agentId, session);
+        }
+        return session;
+      }
+    }
+
+    const manager = new AgentManager({
+      clients: { codex: new ScriptedPermissionClient() },
+      registry: storage,
+      logger,
+      onAgentAttention: ({ agentId, reason }) => {
+        attentionReasons.push({ agentId, reason });
+      },
+    });
+
+    return {
+      workdir,
+      storage,
+      manager,
+      sessions,
+      attentionReasons,
+      async cleanup() {
+        await manager.flush();
+        await storage.flush();
+        rmSync(workdir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test("auto-denies permission requests on a root Hub-dispatched agent and lets the turn complete", async () => {
+    const h = createPermissionPromptHarness();
+    try {
+      const hubRoot = await h.manager.createAgent(
+        { provider: "codex", cwd: h.workdir, modeId: "bypassPermissions" },
+        undefined,
+        {
+          workspaceId: undefined,
+          owner: { kind: "daemon", daemonId: "hub-daemon-1", executionId: "exec-root-1" },
+        },
+      );
+
+      const observedEvents: AgentManagerEvent[] = [];
+      const unsubscribe = h.manager.subscribe((event) => observedEvents.push(event), {
+        agentId: hubRoot.id,
+        replayState: false,
+      });
+
+      const result = await h.manager.runAgent(hubRoot.id, "rm -rf ./*");
+      unsubscribe();
+
+      expect(result.canceled).toBe(false);
+      expect(result.finalText).toContain("Rewrote command after denial:");
+      expect(result.finalText).toContain("no person present");
+      const session = h.sessions.get(hubRoot.id)!;
+      expect(session.receivedResponses).toEqual([
+        {
+          requestId: expect.any(String),
+          response: {
+            behavior: "deny",
+            message: expect.stringContaining("no person present"),
+          },
+        },
+      ]);
+      expect(h.manager.getAgent(hubRoot.id)?.pendingPermissions.size).toBe(0);
+      expect(
+        observedEvents.some(
+          (event) => event.type === "agent_stream" && event.event.type === "permission_requested",
+        ),
+      ).toBe(false);
+      expect(
+        observedEvents.some(
+          (event) => event.type === "agent_state" && event.agent.pendingPermissions.size > 0,
+        ),
+      ).toBe(false);
+      expect(h.attentionReasons.filter((entry) => entry.reason === "permission")).toEqual([]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("auto-denies permission requests on descendant subagents of a Hub-dispatched agent, including when the root is closed", async () => {
+    const h = createPermissionPromptHarness();
+    try {
+      const hubRoot = await h.manager.createAgent(
+        { provider: "codex", cwd: h.workdir, modeId: "bypassPermissions" },
+        undefined,
+        {
+          workspaceId: undefined,
+          owner: { kind: "daemon", daemonId: "hub-daemon-1", executionId: "exec-tree-1" },
+        },
+      );
+      const child = await h.manager.createAgent(
+        { provider: "codex", cwd: h.workdir, modeId: "bypassPermissions" },
+        undefined,
+        {
+          workspaceId: undefined,
+          labels: { [PARENT_AGENT_ID_LABEL]: hubRoot.id },
+        },
+      );
+      const grandchild = await h.manager.createAgent(
+        { provider: "codex", cwd: h.workdir, modeId: "bypassPermissions" },
+        undefined,
+        {
+          workspaceId: undefined,
+          labels: { [PARENT_AGENT_ID_LABEL]: child.id },
+        },
+      );
+
+      // Direct child auto-denies while Hub root is live.
+      const childResult = await h.manager.runAgent(child.id, "rm -rf ./*");
+      expect(childResult.finalText).toContain("no person present");
+      expect(h.sessions.get(child.id)?.receivedResponses).toHaveLength(1);
+      expect(h.manager.getAgent(child.id)?.pendingPermissions.size).toBe(0);
+
+      // Even if the Hub root runtime is closed (persisted only in storage), nested descendants still auto-deny.
+      await h.manager.closeAgent(hubRoot.id);
+      const grandchildResult = await h.manager.runAgent(grandchild.id, "rm -rf ./*");
+      expect(grandchildResult.finalText).toContain("no person present");
+      expect(h.sessions.get(grandchild.id)?.receivedResponses).toHaveLength(1);
+      expect(h.manager.getAgent(grandchild.id)?.pendingPermissions.size).toBe(0);
+      expect(h.attentionReasons.filter((entry) => entry.reason === "permission")).toEqual([]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("leaves permission requests pending for interactive user agents and their subagents", async () => {
+    const h = createPermissionPromptHarness();
+    try {
+      const userRoot = await h.manager.createAgent(
+        { provider: "codex", cwd: h.workdir },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const userChild = await h.manager.createAgent(
+        { provider: "codex", cwd: h.workdir },
+        undefined,
+        {
+          workspaceId: undefined,
+          labels: { [PARENT_AGENT_ID_LABEL]: userRoot.id },
+        },
+      );
+
+      const rootRun = h.manager.runAgent(userRoot.id, "rm -rf ./*");
+      const rootWait = await h.manager.waitForAgentEvent(userRoot.id, { waitForActive: true });
+      expect(rootWait.permission).toMatchObject({ kind: "tool", name: "Bash" });
+      expect(h.sessions.get(userRoot.id)?.receivedResponses).toEqual([]);
+      expect(h.manager.getAgent(userRoot.id)?.pendingPermissions.size).toBe(1);
+      expect(h.attentionReasons).toContainEqual({ agentId: userRoot.id, reason: "permission" });
+
+      await h.manager.respondToPermission(userRoot.id, rootWait.permission!.id, {
+        behavior: "allow",
+      });
+      expect((await rootRun).finalText).toBe("Command approved and executed.");
+
+      const childRun = h.manager.runAgent(userChild.id, "rm -rf ./*");
+      const childWait = await h.manager.waitForAgentEvent(userChild.id, { waitForActive: true });
+      expect(childWait.permission).toMatchObject({ kind: "tool", name: "Bash" });
+      expect(h.sessions.get(userChild.id)?.receivedResponses).toEqual([]);
+      expect(h.manager.getAgent(userChild.id)?.pendingPermissions.size).toBe(1);
+
+      await h.manager.respondToPermission(userChild.id, childWait.permission!.id, {
+        behavior: "allow",
+      });
+      expect((await childRun).finalText).toBe("Command approved and executed.");
+    } finally {
+      await h.cleanup();
+    }
+  });
 });

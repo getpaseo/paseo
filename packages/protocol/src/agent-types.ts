@@ -91,6 +91,8 @@ export interface AgentModelDefinition {
   contextWindowMaxTokens?: number;
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;
+  /** A previous-release model. Pickers fold it behind the current models; search still finds it. */
+  legacy?: boolean;
 }
 
 export interface AgentSelectOption {
@@ -138,6 +140,8 @@ export interface ProviderSnapshotEntry {
   defaultModeId?: string | null;
   /** The provider can run a session behind an `agent.open.before` wrap. Absent means it cannot. */
   launchWrap?: boolean;
+  /** User-picked model IDs, in display order. Pickers show these first and fold the rest. */
+  shownModels?: string[];
 }
 
 export interface AgentFeatureToggle {

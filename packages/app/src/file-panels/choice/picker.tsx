@@ -2,9 +2,9 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Check } from "lucide-react-native";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { CheckboxRow } from "@/components/ui/checkbox";
 import { PressHighlight } from "@/components/ui/press-highlight";
 import { PluginIconView } from "@/plugins/icons";
 import { settingsStyles } from "@/styles/settings";
@@ -14,9 +14,7 @@ import type { FilePanelPickerState } from "./model";
 import { useFilePanelChoiceSnapshot, type FilePanelChoice } from "./hook";
 import { filePanelIcon, filePanelOptionLabel, filePanelPickerTitle } from "./presentation";
 
-const ThemedCheck = withUnistyles(Check);
 const ThemedPanelIcon = withUnistyles(PluginIconView);
-const checkedIconMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 /** The first-open question for a file with several panels, over the panel already showing. */
@@ -97,10 +95,14 @@ function PickerBody({
         ))}
       </View>
       <CheckboxRow
-        label={t("panels.file.filePanels.dontAskAgain")}
+        accessibilityLabel={t("panels.file.filePanels.dontAskAgain")}
         checked={picker.remember}
         onToggle={onToggleRemember}
-      />
+        style={styles.checkboxRow}
+        testID="file-panel-picker-remember"
+      >
+        <Text style={settingsStyles.rowTitle}>{t("panels.file.filePanels.dontAskAgain")}</Text>
+      </CheckboxRow>
     </>
   );
 }
@@ -144,34 +146,6 @@ function PanelRadioRow({
   );
 }
 
-function CheckboxRow({
-  label,
-  checked,
-  onToggle,
-}: {
-  label: string;
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  const accessibilityState = useMemo(() => ({ checked }), [checked]);
-  return (
-    <PressHighlight
-      style={styles.checkboxRow}
-      onPress={onToggle}
-      accessibilityRole="checkbox"
-      accessibilityLabel={label}
-      accessibilityState={accessibilityState}
-      aria-checked={checked}
-      testID="file-panel-picker-remember"
-    >
-      <View style={checked ? styles.checkboxChecked : styles.checkbox}>
-        {checked ? <ThemedCheck size={14} uniProps={checkedIconMapping} /> : null}
-      </View>
-      <Text style={settingsStyles.rowTitle}>{label}</Text>
-    </PressHighlight>
-  );
-}
-
 const styles = StyleSheet.create((theme) => ({
   footerButton: {
     flex: 1,
@@ -210,24 +184,5 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[4],
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxChecked: {
-    width: 18,
-    height: 18,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.accent,
-    backgroundColor: theme.colors.accent,
-    alignItems: "center",
-    justifyContent: "center",
   },
 }));

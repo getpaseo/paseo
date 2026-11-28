@@ -13,6 +13,9 @@ import {
   parseClaudeWorkflowRun,
   type ClaudeWorkflowParentEntry,
 } from "./workflow-replay-source.js";
+import { isolatePaseoHome } from "../../../../../test-utils/isolated-paseo-home.js";
+
+isolatePaseoHome();
 
 const TOOL_CALL_ID = "toolu_01XskpjeASyuFyXC5qsLHYps";
 const RUN_ID = "wf_4a0af4f7-f56";

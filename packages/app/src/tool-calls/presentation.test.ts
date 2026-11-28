@@ -1,11 +1,10 @@
-import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { describe, expect, it } from "vitest";
 
 import { buildToolCallPresentation, type ToolCallPresentationIcon } from "./presentation";
 
 const fakeIcons = {
-  paseo: (() => null) as ToolCallPresentationIcon,
+  bot: (() => null) as ToolCallPresentationIcon,
   brain: (() => null) as ToolCallPresentationIcon,
   eye: (() => null) as ToolCallPresentationIcon,
   wrench: (() => null) as ToolCallPresentationIcon,
@@ -14,10 +13,9 @@ const fakeIcons = {
 function fakeResolveIcon(
   toolName: string,
   detail: ToolCallDetail | undefined,
-  agentMessage: AgentMessage | undefined,
 ): ToolCallPresentationIcon {
-  if (agentMessage) {
-    return fakeIcons.paseo;
+  if (detail?.type === "plain_text" && detail.icon === "bot") {
+    return fakeIcons.bot;
   }
   if (detail?.type === "plan") {
     return fakeIcons.brain;
@@ -118,46 +116,29 @@ describe("tool-call presentation", () => {
 });
 
 it.each([
-  ["message", "Message received"],
-  ["finished", "Agent finished"],
-  ["errored", "Agent errored"],
-  ["permission-required", "Agent needs permission"],
-  ["closed", "Agent closed"],
-] as const)(
-  "presents %s with a fixed label, the sender as context, and the Paseo icon",
-  (event, heading) => {
-    const presentation = buildToolCallPresentation({
-      toolName: "internal_name_should_not_be_visible",
-      status: "completed",
-      error: null,
-      detail: { type: "plain_text", label: "legacy summary", text: "legacy body", icon: "bot" },
-      agentMessage: {
-        event,
-        sender: { id: "server::sender", title: "QA messenger" },
-        text: "The delivered message.",
-      },
-      resolveIcon: fakeResolveIcon,
-    });
-    expect(presentation.displayName).toBe(heading);
-    expect(presentation.summary).toBe("QA messenger");
-    expect(presentation.icon).toBe(fakeIcons.paseo);
-    expect(presentation.detail).toEqual({
-      type: "plain_text",
-      text: "From agent: server::sender\n\nThe delivered message.",
-    });
-  },
-);
-
-it("uses an opaque sender ID when no title is available", () => {
+  ["agent_finished", "Agent finished"],
+  ["agent_errored", "Agent errored"],
+  ["agent_needs_permission", "Agent needs permission"],
+  ["agent_closed", "Agent closed"],
+] as const)("presents the %s notification from its plain-text detail", (toolName, heading) => {
+  const detail = {
+    type: "plain_text" as const,
+    label: "QA messenger",
+    text: "The delivered notification.",
+    icon: "bot" as const,
+  };
   const presentation = buildToolCallPresentation({
-    toolName: "agent_message",
+    toolName,
     status: "completed",
     error: null,
-    agentMessage: { event: "message", sender: { id: "remote::worker" }, text: "Hello" },
+    detail,
     resolveIcon: fakeResolveIcon,
   });
-  expect(presentation.displayName).toBe("Message received");
-  expect(presentation.summary).toBe("remote::worker");
+  expect(presentation.displayName).toBe(heading);
+  expect(presentation.summary).toBe("QA messenger");
+  expect(presentation.icon).toBe(fakeIcons.bot);
+  expect(presentation.detail).toEqual(detail);
+  expect(presentation.canOpenDetails).toBe(true);
 });
 
 it("shows the target agent title as context for Paseo agent tools", () => {

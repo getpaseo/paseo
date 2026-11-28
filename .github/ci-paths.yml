@@ -1,6 +1,6 @@
 # Pull-request checks are routed by the behavior they prove. Package consumers
-# do not inherit their dependencies' test suites; main and manual runs execute
-# every contract regardless of these paths.
+# do not inherit their dependencies' test suites, except where noted below; main
+# and manual runs execute every contract regardless of these paths.
 routing:
   - ".github/ci-paths.yml"
 
@@ -87,5 +87,9 @@ browser:
 relay:
   - "packages/relay/**"
 
+# cli-tests is also a daemon end-to-end suite: it drives a real daemon, built-in
+# plugins included, so daemon changes run it too.
 cli:
   - "packages/cli/**"
+  - "packages/server/**"
+  - "plugins/**"

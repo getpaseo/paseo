@@ -1,13 +1,10 @@
 import type { ToolCallTimelineItem } from "./agent-types.js";
-import {
-  buildAgentMessageDisplay,
-  buildPaseoToolDisplay,
-} from "./paseo-tool-presentation/index.js";
+import { buildPaseoToolDisplay } from "./paseo-tool-presentation/index.js";
 import { stripCwdPrefix } from "./path-utils.js";
 
 export type ToolCallDisplayInput = Pick<
   ToolCallTimelineItem,
-  "name" | "status" | "error" | "metadata" | "detail" | "agentMessage"
+  "name" | "status" | "error" | "metadata" | "detail"
 > & {
   cwd?: string;
   /** Title of the agent a Paseo call targets, when the caller knows it. */
@@ -151,13 +148,11 @@ function buildUnknownDetailOverride(input: ToolCallDisplayInput): DetailDisplay 
 
 export function buildToolCallDisplayModel(input: ToolCallDisplayInput): ToolCallDisplayModel {
   const errorText = input.status === "failed" ? formatErrorText(input.error) : undefined;
-  const paseoDisplay = input.agentMessage
-    ? buildAgentMessageDisplay(input.agentMessage)
-    : buildPaseoToolDisplay({
-        toolName: input.name,
-        detail: input.detail,
-        targetAgentTitle: input.targetAgentTitle,
-      });
+  const paseoDisplay = buildPaseoToolDisplay({
+    toolName: input.name,
+    detail: input.detail,
+    targetAgentTitle: input.targetAgentTitle,
+  });
   if (paseoDisplay) {
     return {
       displayName: paseoDisplay.displayName,

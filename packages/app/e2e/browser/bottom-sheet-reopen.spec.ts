@@ -84,17 +84,14 @@ async function openModelSelector(page: Page) {
   await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible({ timeout: 10_000 });
 }
 
-async function dismissStackedModelPickerWithBackdrop(page: Page) {
-  await page
-    .getByTestId("agent-controls-settings-list")
-    .getByRole("button", { name: /Select model/ })
-    .click();
-  await expect(page.getByTestId("agent-controls-model-browser-sheet")).toBeInViewport();
-  await page.mouse.click(MOBILE_VIEWPORT.width / 2, 24);
-  // In CI, Gorhom retains the dismissed sheet below the viewport.
-  // Dismissal is complete when it leaves the displayed surface.
-  await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeInViewport();
-  await expect(page.getByTestId("agent-controls-model-sheet")).toBeVisible();
+async function openModelPage(page: Page) {
+  await page.getByTestId("agent-controls-model").click();
+  await expect(page.getByTestId("mobile-model-page")).toBeVisible();
+  await expect(page.getByTestId("agent-controls-settings-list")).toHaveCount(0);
+}
+
+async function returnHomeWithBack(page: Page) {
+  await page.getByTestId("sheet-header-back").click();
   await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
 }
 
@@ -113,7 +110,7 @@ async function openAndCloseModelSelectorTwice(page: Page) {
 }
 
 test.describe("mobile bottom sheet reopen", () => {
-  test("sheets reopen and model search returns to configuration", async ({ page }) => {
+  test("sheets reopen and a model pick returns to Home", async ({ page }) => {
     const session = await openMockAgentAtMobileBreakpoint(page);
     try {
       await test.step("tab switcher opens, closes, and reopens", async () => {
@@ -124,24 +121,28 @@ test.describe("mobile bottom sheet reopen", () => {
         await openAndCloseModelSelectorTwice(page);
       });
 
-      await test.step("model search returns to configuration", async () => {
+      await test.step("the Model page swaps in place and Back returns to Home", async () => {
         await openModelSelector(page);
         const sheet = page.getByTestId("agent-controls-model-sheet");
+        await openModelPage(page);
+        await returnHomeWithBack(page);
+        await expect(sheet).toBeVisible();
+      });
 
-        await dismissStackedModelPickerWithBackdrop(page);
-
-        await page.getByTestId("model-search-all-input").click();
+      await test.step("a model found by search returns to Home with that model", async () => {
+        await openModelPage(page);
+        const search = page.getByTestId("model-search-all-input");
+        await expect(search).not.toBeFocused();
+        await search.click();
+        await search.fill("Ten second");
         const model = page.getByRole("button", { name: /^Ten second stream/ });
-        await expect(model).toBeVisible({
-          timeout: 10_000,
-        });
+        await expect(model).toBeVisible({ timeout: 10_000 });
 
         await model.click();
 
-        await expect(sheet).toBeVisible();
+        await expect(page.getByTestId("agent-controls-model-sheet")).toBeVisible();
         await expect(page.getByTestId("agent-controls-settings-list")).toBeVisible();
         await expect(page.getByTestId("agent-controls-model")).toContainText("Ten second stream");
-        await expect(page.getByTestId("agent-controls-model-browser-sheet")).not.toBeInViewport();
       });
     } finally {
       await session.cleanup();
