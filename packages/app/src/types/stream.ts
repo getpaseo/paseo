@@ -468,7 +468,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     next[tailIndex] = mergeAgentToolCallItem(
       existing,
       retained.payload.data,
-      retained.timestamp,
+      getStreamItemLatestTimestamp(retained),
       retained.timelineCursor,
     );
     return next;
@@ -772,6 +772,8 @@ export interface ToolCallItem {
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
+  /** Latest observed lifecycle time after arrival; timestamp stays at the row position. */
+  latestTimestamp?: Date;
   payload: ToolCallPayload;
   /** Set when this call carries its turn's footer. */
   turnMetrics?: AgentMetric[];
@@ -798,6 +800,12 @@ export function getAssistantReply(
   if (item?.kind === "assistant_message") return item;
   if (item?.kind === "plugin" && item.source?.kind === "assistant_message") return item.source;
   return null;
+}
+
+export function getStreamItemLatestTimestamp(item: StreamItem): Date {
+  return item.kind === "tool_call" || item.kind === "plugin"
+    ? (item.latestTimestamp ?? item.timestamp)
+    : item.timestamp;
 }
 
 type NotificationLevel = "info" | "warning" | "error";
@@ -836,6 +844,8 @@ export interface PluginTimelineStreamItem {
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
+  /** Lifecycle boundary inherited from the source row during display projection. */
+  latestTimestamp?: Date;
   pluginId: string;
   pluginItemId: string;
   itemKind: string;
@@ -1225,6 +1235,7 @@ export function mergeAgentToolCallItem(
   timestamp: Date,
   timelineCursor?: TimelinePosition,
 ): AgentToolCallItem {
+  const latestTimestamp = getStreamItemLatestTimestamp(existing);
   const mergedStatus = mergeAgentToolCallStatus(existing.payload.data.status, data.status);
   const mergedError =
     mergedStatus === "failed"
@@ -1233,10 +1244,11 @@ export function mergeAgentToolCallItem(
   const mergedMetadata = mergeToolCallMetadata(existing.payload.data.metadata, data.metadata);
   const mergedDetail = mergeToolCallDetail(existing.payload.data.detail, data.detail);
 
+  // Arrival controls row order; turn duration also needs the latest lifecycle boundary.
   return {
     ...existing,
+    ...(timestamp.getTime() > latestTimestamp.getTime() ? { latestTimestamp: timestamp } : {}),
     ...(timelineCursor ? { timelineCursor } : {}),
-    timestamp,
     payload: {
       source: "agent",
       data: {
@@ -1279,7 +1291,8 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
       merged.payload.data.error === existing.payload.data.error &&
       merged.payload.data.detail === existing.payload.data.detail &&
       merged.payload.data.metadata === existing.payload.data.metadata &&
-      merged.timelineCursor === existing.timelineCursor
+      merged.timelineCursor === existing.timelineCursor &&
+      merged.latestTimestamp === existing.latestTimestamp
     ) {
       return state;
     }

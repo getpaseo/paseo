@@ -164,6 +164,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("tool_call"),
+    latestTimestamp: IsoDateSchema.optional(),
     provider: AgentProviderSchema,
     turnMetrics: z.array(AgentMetricSchema).optional(),
     item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
@@ -171,6 +172,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...TimelineItemBaseShape,
     kind: z.literal("plugin"),
+    latestTimestamp: IsoDateSchema.optional(),
     pluginId: z.string(),
     pluginItemId: z.string(),
     itemKind: z.string(),
@@ -519,6 +521,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
       return {
         ...base,
         kind: item.kind,
+        ...(item.latestTimestamp ? { latestTimestamp: item.latestTimestamp.toISOString() } : {}),
         provider: item.payload.data.provider,
         ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
         item: serializeAgentToolCall(item.payload.data),
@@ -527,6 +530,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
       return {
         ...base,
         kind: item.kind,
+        ...(item.latestTimestamp ? { latestTimestamp: item.latestTimestamp.toISOString() } : {}),
         pluginId: item.pluginId,
         pluginItemId: item.pluginItemId,
         itemKind: item.itemKind,
@@ -547,6 +551,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
       ...(item.turnId ? { turnId: item.turnId } : {}),
       timestamp: new Date(item.timestamp),
       kind: item.kind,
+      ...(item.latestTimestamp ? { latestTimestamp: new Date(item.latestTimestamp) } : {}),
       pluginId: item.pluginId,
       pluginItemId: item.pluginItemId,
       itemKind: item.itemKind,
@@ -609,31 +614,43 @@ function deserializeBuiltinTimelineItem(
         ...(item.trigger ? { trigger: item.trigger } : {}),
         ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
       };
-    case "tool_call": {
-      const tool = item.item;
-      if (tool.type !== "tool_call") {
-        throw new Error("Stored tool call contains a non-tool timeline item");
-      }
-      return {
-        ...base,
-        kind: item.kind,
-        ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
-        payload: {
-          source: "agent",
-          data: {
-            provider: item.provider,
-            callId: tool.callId,
-            name: tool.name,
-            status: tool.status,
-            error: tool.error,
-            detail: tool.detail,
-            ...(tool.metadata ? { metadata: tool.metadata } : {}),
-            ...(tool.agentMessage ? { agentMessage: tool.agentMessage } : {}),
-          },
-        },
-      };
-    }
+    case "tool_call":
+      return deserializeBuiltinToolCall(base, item);
   }
+}
+
+function deserializeBuiltinToolCall(
+  base: {
+    id: string;
+    timelineCursor?: StreamItem["timelineCursor"];
+    turnId?: string;
+    timestamp: Date;
+  },
+  item: Extract<StoredTimelineItem, { kind: "tool_call" }>,
+): StreamItem {
+  const tool = item.item;
+  if (tool.type !== "tool_call") {
+    throw new Error("Stored tool call contains a non-tool timeline item");
+  }
+  return {
+    ...base,
+    kind: item.kind,
+    ...(item.latestTimestamp ? { latestTimestamp: new Date(item.latestTimestamp) } : {}),
+    ...(item.turnMetrics ? { turnMetrics: item.turnMetrics } : {}),
+    payload: {
+      source: "agent",
+      data: {
+        provider: item.provider,
+        callId: tool.callId,
+        name: tool.name,
+        status: tool.status,
+        error: tool.error,
+        detail: tool.detail,
+        ...(tool.metadata ? { metadata: tool.metadata } : {}),
+        ...(tool.agentMessage ? { agentMessage: tool.agentMessage } : {}),
+      },
+    },
+  };
 }
 
 function serializeProjectPlacement(agent: Agent): StoredAgent["projectPlacement"] {
