@@ -3378,6 +3378,36 @@ test("every failed reload raises error attention, replacing unread finished atte
   }
 });
 
+test("a reload that succeeds after a timed-out one clears the unread error", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-clears-error-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await expect(manager.reloadAgentSession(created.id)).rejects.toThrow("Timed out closing");
+    expect(manager.getAgent(created.id)?.attention).toMatchObject({ attentionReason: "error" });
+
+    const retry = manager.reloadAgentSession(created.id);
+    client.finishClosing();
+    await retry;
+
+    expect(manager.getAgent(created.id)?.attention).toEqual({ requiresAttention: false });
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retrying a timed-out reload waits for the original close to finish", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-late-close-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -6873,6 +6903,52 @@ test("archiveSnapshot restoring an earlier archive time on a loaded agent keeps 
   expect(stored?.archivedAt).toBe(originalArchivedAt);
   expect(Date.parse(stored!.updatedAt)).toBeGreaterThanOrEqual(unarchivedAt);
   expect(events.at(-1)?.updatedAt.getTime()).toBeGreaterThanOrEqual(unarchivedAt);
+});
+
+test("a turn that finishes after a failed one replaces the unread error with finished", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-finish-replaces-error-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class TurnClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+  const client = new TurnClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const running = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "failed-turn" });
+  await running;
+  const failed = waitForAgentLifecycle(manager, agent.id, "error");
+  client.session.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "failed-turn",
+    error: "Selected model is at capacity.",
+  });
+  await failed;
+  expect(manager.getAgent(agent.id)?.attention).toMatchObject({ attentionReason: "error" });
+
+  const runningAgain = waitForAgentLifecycle(manager, agent.id, "running");
+  client.session.pushEvent({ type: "turn_started", provider: "codex", turnId: "next-turn" });
+  await runningAgain;
+  const idle = waitForAgentLifecycle(manager, agent.id, "idle");
+  client.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "next-turn" });
+  await idle;
+
+  expect(manager.getAgent(agent.id)?.attention).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
 });
 
 test("markAgentUnread restores error attention on a read errored agent", async () => {
