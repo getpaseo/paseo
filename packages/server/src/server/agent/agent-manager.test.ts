@@ -661,6 +661,7 @@ class UnsupportedSteeringSession extends TestAgentSession {
 async function startAndSteerThroughManager(
   session: AgentSession,
   behavior: "steer" | "interrupt" = "steer",
+  options?: { rescueTimeouts?: { interruptSessionMs?: number } },
 ): Promise<{ manager: AgentManager; agentId: string; workdir: string }> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-dispatch-"));
   const client = new (class extends TestAgentClient {
@@ -668,7 +669,11 @@ async function startAndSteerThroughManager(
       return session;
     }
   })();
-  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    ...(options?.rescueTimeouts ? { rescueTimeouts: options.rescueTimeouts } : {}),
+  });
   const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
     workspaceId: undefined,
   });
@@ -1697,7 +1702,9 @@ test("does not replace a newer foreground turn after unavailable steer fallback 
 
 test("concurrent interrupting sends each start their own turn in order", async () => {
   const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
-  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt", {
+    rescueTimeouts: { interruptSessionMs: 20 },
+  });
   try {
     const prompts = ["first interrupt", "second interrupt", "third interrupt"];
     await Promise.all(
@@ -1740,7 +1747,9 @@ test("Stop can cancel startup while an interrupting send waits behind it", async
     }
   }
   const session = new SlowStartSession({ provider: "codex", cwd: process.cwd() });
-  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt", {
+    rescueTimeouts: { interruptSessionMs: 20 },
+  });
   try {
     await startAgentRun(manager, agentId, "slow startup", logger, { replaceRunning: true });
     await entered.promise;
@@ -10653,6 +10662,7 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
     clients: { codex: new PendingStartClient() },
     registry: new AgentStorage(join(workdir, "agents"), logger),
     logger,
+    rescueTimeouts: { interruptSessionMs: 20 },
     idFactory: () => "00000000-0000-4000-8000-000000000132",
   });
 
@@ -13592,6 +13602,7 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
     clients: { codex: new StaleForegroundClient() },
     registry: storage,
     logger,
+    rescueTimeouts: { interruptSessionMs: 20 },
     idFactory: () => "00000000-0000-4000-8000-000000000500",
   });
 
@@ -16740,4 +16751,75 @@ test("a wrapped refresh passes a Windows script provider command to the wrapper 
     expect(launched.slice(0, 2)).toEqual(["C:\\codex\\codex.cmd", "app-server"]);
   expect(manager.getAgent(created.id)?.lifecycle).not.toBe("error");
   await manager.closeAgent(created.id);
+});
+
+test("cancelAgentRun default interrupt timeout accommodates a 10s cancel grace plus 2s teardown (#3256)", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-interrupt-15s-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let finishInterrupt!: () => void;
+
+  class SlowInterruptSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "slow-interrupt-turn";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      await new Promise<void>((resolve) => {
+        finishInterrupt = () => {
+          this.pushEvent({
+            type: "turn_canceled",
+            provider: this.provider,
+            turnId: "slow-interrupt-turn",
+            reason: "Interrupted after cancel timeout",
+          });
+          resolve();
+        };
+      });
+    }
+  }
+
+  class SlowInterruptClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new SlowInterruptSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new SlowInterruptClient() },
+    registry: storage,
+    logger,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(created.id, "hang");
+    const draining = drainAsyncGenerator(stream);
+    await manager.waitForAgentRunStart(created.id);
+
+    let cancelResult: { status: string } | null = null;
+    const cancelPromise = manager.cancelAgentRun(created.id).then((result) => {
+      cancelResult = result;
+      return result;
+    });
+
+    // At 12s (10s grace + 2s teardown), AgentManager must NOT have timed out prematurely.
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(cancelResult).toBeNull();
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("running");
+
+    finishInterrupt();
+    await expect(cancelPromise).resolves.toEqual({ status: "settled" });
+    await draining;
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
+  } finally {
+    vi.useRealTimers();
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
