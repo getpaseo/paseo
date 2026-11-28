@@ -9,6 +9,11 @@ import {
   releasePidLock,
   type PidLockInfo,
 } from "./pid-lock.js";
+import {
+  createDaemonNotReadyError,
+  DaemonInstanceError,
+  readDaemonInstance,
+} from "./daemon-files.js";
 import { daemonLaunchEnvironment } from "./config-environment.js";
 import { readPersistedConfig } from "./persisted-config.js";
 import { reapTerminalWorkers } from "../terminal/terminal-worker-reaper.js";
@@ -26,32 +31,21 @@ const killTree = (pid: number, signal: string): Promise<void> =>
 
 // Process ownership only: desktop and CLI load this entry in their own processes.
 // Keep daemon bootstrap and WebSocket schemas out of its dependency tree.
-export { resolvePaseoHome } from "./paseo-home.js";
-export { ensurePrivateDirectory } from "./private-files.js";
+export {
+  DaemonInstanceError,
+  ensurePrivateDirectory,
+  isSameDaemonInstance,
+  readDaemonInstance,
+  readLocalCredentialForTarget,
+  resolvePaseoHome,
+  waitForDaemonReady,
+  type DaemonInstance,
+} from "./daemon-files.js";
 export { daemonLaunchEnvironment } from "./config-environment.js";
-export { readLocalCredentialForTarget } from "./local-credential.js";
 export {
   TerminalCleanupNotConfirmedError,
   retryUnconfirmedTerminalCleanup,
 } from "../terminal/terminal-worker-reaper.js";
-export {
-  isSamePidLock as isSameDaemonInstance,
-  type PidLockInfo as DaemonInstance,
-} from "./pid-lock.js";
-
-export class DaemonInstanceError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-export async function readDaemonInstance(home: string): Promise<PidLockInfo | null> {
-  const lock = await getPidLockInfo(home);
-  return lock && isPidLockOwnerRunning(lock) ? lock : null;
-}
 
 export function daemonLogPath(home: string): string {
   try {
@@ -61,40 +55,8 @@ export function daemonLogPath(home: string): string {
   }
 }
 
-export async function waitForDaemonReady(
-  home: string,
-  options: {
-    timeoutMs?: number;
-    instance?: PidLockInfo;
-    signal?: AbortSignal;
-  } = {},
-): Promise<PidLockInfo & { listen: string }> {
-  const deadline = Date.now() + (options.timeoutMs ?? 600_000);
-  while (true) {
-    options.signal?.throwIfAborted();
-    const instance = await readDaemonInstance(home);
-    if (!instance)
-      throw new DaemonInstanceError(
-        "DAEMON_NOT_RUNNING",
-        `Daemon is not running for ${home}. Start with: paseo daemon start --home ${JSON.stringify(home)}`,
-      );
-    if (options.instance && !isSamePidLock(instance, options.instance)) {
-      throw new DaemonInstanceError(
-        "DAEMON_REPLACED",
-        `Supervisor changed for ${home}; refusing to follow PID ${instance.pid}.`,
-      );
-    }
-    if (instance.listen) return { ...instance, listen: instance.listen };
-    if (Date.now() >= deadline) throw notReady(home, instance);
-    await delay(100, undefined, { signal: options.signal });
-  }
-}
-
-function notReady(home: string, instance: PidLockInfo): DaemonInstanceError {
-  return new DaemonInstanceError(
-    "DAEMON_NOT_READY",
-    `Daemon PID ${instance.pid} remains running but is not ready for ${home}.\nLogs: ${daemonLogPath(home)}\nStatus: paseo daemon status --home ${JSON.stringify(home)}\nStop: paseo daemon stop --home ${JSON.stringify(home)}`,
-  );
+function notReady(home: string, instance: PidLockInfo): Promise<DaemonInstanceError> {
+  return createDaemonNotReadyError(home, instance);
 }
 
 async function requestInstanceStop(
@@ -323,7 +285,7 @@ export async function startDaemonInstance(input: {
         };
       }
       if (Date.now() >= deadline) {
-        if (acquired) throw notReady(input.home, acquired);
+        if (acquired) throw await notReady(input.home, acquired);
         throw new DaemonInstanceError(
           "DAEMON_NOT_READY",
           `Supervisor PID ${child.pid} remains running but has not published its lock for ${input.home}. Logs: ${daemonLogPath(input.home)}. Check paseo daemon status --home ${JSON.stringify(input.home)}. Stop with paseo daemon stop --home ${JSON.stringify(input.home)} once its lock is published, or signal this PID.`,

@@ -2,7 +2,7 @@ import {
   decodeDiffFrame,
   type DiffEntry as WireEntry,
   type DiffBegin,
-} from "@getpaseo/protocol/binary-frames/index";
+} from "@getpaseo/protocol/binary-frames/diff";
 import type {
   DiffSubscribeRequest,
   SubscribeCheckoutDiffRequest,

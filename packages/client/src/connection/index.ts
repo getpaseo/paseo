@@ -11,6 +11,7 @@ import {
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import type { DaemonProtocolCodec } from "../daemon-protocol-codec.js";
 
 export class ConnectionSubscriptions extends OwnedSubscriptions {
   private legacy: LegacySubscriptions | null = null;
@@ -18,6 +19,10 @@ export class ConnectionSubscriptions extends OwnedSubscriptions {
   constructor(
     private readonly connection: OwnedSubscriptionsHost & {
       send(message: ObservationRequest): Promise<void>;
+      codec: Pick<
+        DaemonProtocolCodec,
+        "parseInbound" | "parseAgentSnapshot" | "matchesBrowserRegistration"
+      >;
     },
   ) {
     super({
@@ -45,6 +50,7 @@ export class ConnectionSubscriptions extends OwnedSubscriptions {
           info,
           this.connection.send,
           capabilities?.[CLIENT_CAPS.browserHost],
+          this.connection.codec,
         );
       }
     }

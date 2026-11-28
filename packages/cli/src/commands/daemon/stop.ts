@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import {
   requireTerminalKeepCapability,
-  type DaemonClient,
-} from "@getpaseo/client/internal/daemon-client";
+  type DaemonClientCore as DaemonClient,
+} from "@getpaseo/client/internal/daemon-client-core";
 import { stopDaemonInstance, type DaemonInstance } from "@getpaseo/server/daemon-control";
 import { connectToDaemon, type ConnectOptions } from "../../utils/client.js";
 import { withOutput, type CommandOptions } from "../../output/index.js";

@@ -5,7 +5,8 @@ import type {
   ProviderUsageWindow,
   ProviderUsageBalance,
 } from "@getpaseo/protocol/messages";
-import { renderTable, type OutputSchema } from "../../output/index.js";
+import type { OutputSchema } from "../../output/index.js";
+import { renderTable } from "../../output/table.js";
 
 function value(input: string | number | null | undefined): string {
   return input == null ? "-" : String(input);

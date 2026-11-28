@@ -11,14 +11,14 @@ import { renderTable } from "./table.js";
 import { renderJson } from "./json.js";
 import { renderYaml } from "./yaml.js";
 import { renderQuiet } from "./quiet.js";
+import { defaultOutputOptions } from "./render-async.js";
 
-/** Default output options */
-export const defaultOutputOptions: OutputOptions = {
-  format: "table",
-  quiet: false,
-  noHeaders: false,
-  noColor: false,
-};
+export {
+  defaultOutputOptions,
+  renderAsync,
+  renderErrorAsync,
+  toCommandError,
+} from "./render-async.js";
 
 /** Render command result to string based on output options */
 export function render<T>(
@@ -45,39 +45,6 @@ export function render<T>(
       }
       return renderTable(result, opts);
   }
-}
-
-/** Convert an unknown error to a CommandError */
-export function toCommandError(error: unknown): CommandError {
-  if (isCommandError(error)) {
-    // Error.message and class getters are not enumerable; materialize the output contract.
-    return { ...error, code: error.code, message: error.message, details: error.details };
-  }
-
-  if (error instanceof Error) {
-    return {
-      code: "UNKNOWN_ERROR",
-      message: error.message,
-      details: error.stack,
-    };
-  }
-
-  return {
-    code: "UNKNOWN_ERROR",
-    message: String(error),
-  };
-}
-
-/** Type guard for CommandError */
-function isCommandError(error: unknown): error is CommandError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    "message" in error &&
-    typeof (error as CommandError).code === "string" &&
-    typeof (error as CommandError).message === "string"
-  );
 }
 
 /** Render an error to string based on output options */

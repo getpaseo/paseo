@@ -53,6 +53,16 @@ export async function resolveAgentEntry(
     return null;
   }
 
+  // Fast-path complete UUIDs via direct fetchAgent so we never paginate archived agents.
+  // COMPAT(fullAgentIdExact): daemons before v0.16.0 resolve a full agent ID
+  // that matches no agent to an agent titled with it, so archive, detach and
+  // reload accept their answer only when it is that ID. Remove after 2027-05-15.
+  if (FULL_AGENT_UUID_PATTERN.test(trimmed)) {
+    const agentId = trimmed.toLowerCase();
+    const fetchResult = await client.fetchAgent({ agentId });
+    return fetchResult?.agent.id.toLowerCase() === agentId ? fetchResult.agent : null;
+  }
+
   const agents = await fetchAllAgents(client, { filter: { includeArchived: true } });
   const listedId = resolveAgentId(agentIdArg, agents);
   if (listedId) {
@@ -62,14 +72,6 @@ export async function resolveAgentEntry(
     }
   }
 
-  // COMPAT(fullAgentIdExact): daemons before v0.16.0 resolve a full agent ID
-  // that matches no agent to an agent titled with it, so archive, detach and
-  // reload accept their answer only when it is that ID. Remove after 2027-05-15.
-  if (FULL_AGENT_UUID_PATTERN.test(trimmed)) {
-    const agentId = trimmed.toLowerCase();
-    const fetchResult = await client.fetchAgent({ agentId });
-    return fetchResult?.agent.id === agentId ? fetchResult.agent : null;
-  }
   const fetchResult = await client.fetchAgent({ agentId: trimmed });
   return fetchResult?.agent ?? null;
 }

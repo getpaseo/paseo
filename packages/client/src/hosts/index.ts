@@ -1,4 +1,4 @@
-import { MAX_HOST_CHANNEL_FRAME_BYTES } from "@getpaseo/protocol/binary-frames/index";
+import { MAX_HOST_CHANNEL_FRAME_BYTES } from "@getpaseo/protocol/binary-frames/host-route";
 import { safeRandomId } from "../daemon-client-transport-utils.js";
 import { DaemonClient } from "../daemon-client.js";
 import type { DaemonTransportFactory } from "../daemon-client-transport-types.js";

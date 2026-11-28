@@ -1,4 +1,4 @@
-import { parseConnectionOfferFromUrl, type ConnectionOffer } from "./connection-offer.js";
+import { parseConnectionOfferFromUrl, type ConnectionOffer } from "./connection-offer-wire.js";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,

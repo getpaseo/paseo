@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { renderError, toCommandError } from "../../output/render.js";
+import { renderErrorAsync, toCommandError } from "../../output/render-async.js";
 import {
   connectTerminalClient,
   resolveTerminalId,
@@ -40,7 +40,7 @@ export async function runCaptureCommand(
       process.stdout.write(payload.lines.join("\n") + "\n");
     }
   } catch (err) {
-    const output = renderError(toCommandError(err), {
+    const output = await renderErrorAsync(toCommandError(err), {
       format: options.json ? "json" : "table",
       noColor: options.color === false,
     });
