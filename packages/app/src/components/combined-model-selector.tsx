@@ -7,9 +7,14 @@ import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
-import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
+import { useBottomSheetPresentation } from "@/components/adaptive-modal-sheet";
+import {
+  MODEL_PICKER_SHEET_ON_WIDE,
+  ModelBrowser,
+  ModelProviderGlyph,
+  useModelBrowser,
+} from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -100,8 +105,8 @@ export function CombinedModelSelector({
   toolbar,
 }: CombinedModelSelectorProps) {
   const { t } = useTranslation();
-  const isCompact = useIsCompactFormFactor();
-  const modelBrowserScrolling = resolveModelBrowserScrolling({ isNative, isCompact });
+  const usesBottomSheet = useBottomSheetPresentation(MODEL_PICKER_SHEET_ON_WIDE);
+  const modelBrowserScrolling = resolveModelBrowserScrolling({ isNative, usesBottomSheet });
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(isWeb);
@@ -301,6 +306,7 @@ export function CombinedModelSelector({
         open={isOpen}
         onOpenChange={handleOpenChange}
         anchorRef={anchorRef}
+        sheetOnWide={MODEL_PICKER_SHEET_ON_WIDE}
         desktopPlacement={desktopPlacement}
         desktopMinWidth={desktopMinWidth}
         desktopLockWidth
@@ -308,8 +314,7 @@ export function CombinedModelSelector({
         desktopChildrenScrollEnabled={false}
         header={browser.header}
         keyboard={browser.keyboard}
-        mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
-        mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
+        mobileChildrenScrollEnabled={false}
       >
         {selectorBody}
       </Combobox>
@@ -318,9 +323,6 @@ export function CombinedModelSelector({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  mobileBrowserContent: {
-    paddingHorizontal: 0,
-  },
   trigger: {
     minWidth: 0,
     flexShrink: 1,

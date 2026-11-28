@@ -130,6 +130,13 @@ under an eight-line draft, selection with the keyboard shown and hidden, and
 file mentions. These scenarios only need `_SERVER_ID` and `_WORKSPACE_ID`;
 `_UDID` selects an exact simulator and `_ARTIFACTS_DIR` overrides the output path.
 
+Set `_SCENARIO=wide-model-picker` on an unfolded iPhone Duo or another wide
+iOS layout. Use a host with multiple providers and enough Codex models to
+overflow the list. Start with a different provider selected. This scenario
+only needs `_SERVER_ID`. It opens the New workspace picker from a focused
+composer, switches to Codex, then scrolls and selects a model with the search
+keyboard visible.
+
 The Android sidebar scroll-retention flow requires a connected host with enough
 workspaces to overflow the compact sidebar. Pass `TOP_WORKSPACE` and
 `SCROLLED_WORKSPACE` as the `serverId:workspaceId` suffixes of their sidebar row

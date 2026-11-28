@@ -27,7 +27,6 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { BottomSheetScrollView, type BottomSheetBackgroundProps } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
@@ -58,6 +57,7 @@ import {
   AdaptiveTextInput,
   InlineHeaderView,
   SheetHeaderView,
+  useBottomSheetPresentation,
   type SheetHeader,
   type SheetKeyboard,
 } from "@/components/adaptive-modal-sheet";
@@ -116,11 +116,12 @@ export interface ComboboxProps {
    * and any leading icon at the sheet's shared indent.
    */
   header?: SheetHeader;
+  /** Use the sheet on wide layouts as well as compact ones. */
+  sheetOnWide?: boolean;
+  /** Let custom sheet children own scrolling, for example a virtualized list. */
   mobileChildrenScrollEnabled?: boolean;
   /** Let custom desktop children own scrolling, for example a virtualized list. */
   desktopChildrenScrollEnabled?: boolean;
-  /** Overrides the mobile scroll container spacing for custom child content. */
-  mobileChildrenContentContainerStyle?: StyleProp<ViewStyle>;
   presentation?: "push" | "replace";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -1032,7 +1033,6 @@ interface MobileBodyProps {
   searchable: boolean;
   hasChildren: boolean;
   mobileChildrenScrollEnabled: boolean;
-  mobileChildrenContentContainerStyle: StyleProp<ViewStyle>;
   presentation?: "push" | "replace";
   searchResetKey: number;
   searchPlaceholder: string;
@@ -1124,14 +1124,11 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
             </>
           )}
           {props.hasChildren && !props.mobileChildrenScrollEnabled ? (
-            body
+            <View style={styles.mobileSheetBody}>{body}</View>
           ) : (
             <BottomSheetScrollView
               style={styles.mobileSheetBody}
-              contentContainerStyle={[
-                styles.comboboxScrollContent,
-                props.mobileChildrenContentContainerStyle,
-              ]}
+              contentContainerStyle={styles.comboboxScrollContent}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
@@ -1423,9 +1420,9 @@ export function Combobox({
   optionsPosition = "below-search",
   title,
   header,
+  sheetOnWide,
   mobileChildrenScrollEnabled = true,
   desktopChildrenScrollEnabled = true,
-  mobileChildrenContentContainerStyle,
   presentation,
   open,
   onOpenChange,
@@ -1448,7 +1445,7 @@ export function Combobox({
   const resolvedPlaceholder = placeholder ?? t("common.placeholders.search");
   const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
   const resolvedTitle = title ?? t("common.actions.select");
-  const isMobile = useIsCompactFormFactor();
+  const isMobile = useBottomSheetPresentation(sheetOnWide);
   const active = useRetainedPanelActive();
   const floatingLayer = useOverlayLayer("floating");
   const titleColor = theme.colors.foreground;
@@ -1781,7 +1778,6 @@ export function Combobox({
         searchable={searchable}
         hasChildren={hasChildren}
         mobileChildrenScrollEnabled={mobileChildrenScrollEnabled}
-        mobileChildrenContentContainerStyle={mobileChildrenContentContainerStyle}
         presentation={presentation}
         searchResetKey={searchResetKey}
         searchPlaceholder={effectiveSearchPlaceholder}

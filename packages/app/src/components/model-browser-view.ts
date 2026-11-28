@@ -14,12 +14,12 @@ export type ModelBrowserView =
 
 export function resolveModelBrowserScrolling({
   isNative,
-  isCompact,
+  usesBottomSheet,
 }: {
   isNative: boolean;
-  isCompact: boolean;
+  usesBottomSheet: boolean;
 }): "sheet" | "independent" {
-  return isNative && isCompact ? "sheet" : "independent";
+  return isNative && usesBottomSheet ? "sheet" : "independent";
 }
 
 /** A profile's model reference; used to match profiles back to model rows. */

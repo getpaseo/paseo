@@ -610,6 +610,8 @@ export interface AdaptiveModalSheetProps {
   footerContainerStyle?: StyleProp<ViewStyle>;
   snapPoints?: string[];
   testID?: string;
+  /** Use the bottom sheet on wide layouts as well as compact ones. */
+  sheetOnWide?: boolean;
   /** Override the max width of the desktop card. */
   desktopMaxWidth?: number;
   /** Bound an author-owned list without changing content-sized first-party dialogs. */
@@ -700,6 +702,10 @@ function CompactSheetBody({
   );
 }
 
+export function useBottomSheetPresentation(sheetOnWide?: boolean): boolean {
+  return useIsCompactFormFactor() || sheetOnWide === true;
+}
+
 export function AdaptiveModalSheet({
   header,
   showCloseButton = true,
@@ -711,6 +717,7 @@ export function AdaptiveModalSheet({
   footerContainerStyle,
   snapPoints,
   testID,
+  sheetOnWide,
   desktopMaxWidth,
   desktopHeight,
   scrollable = true,
@@ -721,7 +728,7 @@ export function AdaptiveModalSheet({
   keyboard,
 }: AdaptiveModalSheetProps) {
   const { t } = useTranslation();
-  const isMobile = useIsCompactFormFactor();
+  const isMobile = useBottomSheetPresentation(sheetOnWide);
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const isSheet = isMobile || !isWeb;
   // The sheet registers itself; the desktop dialog does not use it.

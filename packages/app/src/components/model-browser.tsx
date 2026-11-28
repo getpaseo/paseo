@@ -105,6 +105,9 @@ const DESKTOP_PROVIDER_VIEW_MAX_HEIGHT = 400;
 const DESKTOP_PROVIDER_VIEW_BASE_HEIGHT = 80;
 const DESKTOP_MODEL_ROW_HEIGHT = 40;
 
+// Search needs a keyboard-aware viewport on iOS even when the workspace can dock a sidebar.
+export const MODEL_PICKER_SHEET_ON_WIDE = Platform.OS === "ios";
+
 const ThemedAlertTriangle = withUnistyles(AlertTriangle);
 const ThemedCheck = withUnistyles(Check);
 const ThemedChevronRight = withUnistyles(ChevronRight);
@@ -258,7 +261,6 @@ export interface ModelBrowserState {
   selectedModelLabel: string;
   triggerLabel: string;
   desktopFixedHeight: number | undefined;
-  isProviderView: boolean;
   explicitActiveKey: string | null;
   preferredActiveKey: string | null;
   setActiveKey: (key: string | null) => void;
@@ -280,7 +282,7 @@ interface ModelBrowserProps {
   onEditProfile?: (profileId: string) => void;
   onRetryProvider?: (provider: AgentProvider) => void;
   isRetryingProvider?: boolean;
-  scrolling?: "sheet" | "independent";
+  scrolling: "sheet" | "independent";
   /** Empty focused search shows all model rows instead of the browse root. */
   searchAllOnFocus?: boolean;
   /** Replaces provider rows only while the all-provider search is empty. */
@@ -557,7 +559,6 @@ export function useModelBrowser({
     selectedModelLabel,
     triggerLabel,
     desktopFixedHeight,
-    isProviderView: view.kind === "provider",
     explicitActiveKey,
     preferredActiveKey,
     setActiveKey,
@@ -1520,7 +1521,6 @@ function ModelRowList({
   onEditProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
 }) {
-  const isCompact = useIsCompactFormFactor();
   const { activeKey } = useContext(ModelBrowserNavContext);
   const renderItem = useCallback(
     ({ item }: { item: ProviderSelectionModelRow }) => (
@@ -1548,8 +1548,6 @@ function ModelRowList({
       showProviderLabel,
     ],
   );
-  const keyExtractor = useCallback((row: ProviderSelectionModelRow) => row.favoriteKey, []);
-
   if (scrolling === "independent") {
     return (
       <IndependentModelList
@@ -1564,29 +1562,19 @@ function ModelRowList({
     );
   }
 
-  if (isCompact && isNative) {
-    return (
-      <SheetFlatList
-        data={rows}
-        extraData={activeKey}
-        renderItem={renderItem}
-        ListHeaderComponent={header}
-        keyExtractor={keyExtractor}
-        style={styles.virtualizedModelList}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.virtualizedModelListContent}
-      />
-    );
-  }
-
   return (
-    <View>
-      {header}
-      {rows.map((row) => (
-        <View key={row.favoriteKey}>{renderItem({ item: row })}</View>
-      ))}
-    </View>
+    <SheetFlatList
+      data={rows}
+      extraData={activeKey}
+      renderItem={renderItem}
+      ListHeaderComponent={header}
+      keyExtractor={getModelRowKey}
+      style={styles.virtualizedModelList}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={styles.virtualizedModelListContent}
+      testID="compact-model-list"
+    />
   );
 }
 
@@ -2018,7 +2006,7 @@ export function ModelBrowser({
   onEditProfile,
   onRetryProvider,
   isRetryingProvider = false,
-  scrolling = "sheet",
+  scrolling,
   searchAllOnFocus = false,
   rootBrowseContent,
   showProfilesSection,

@@ -11,19 +11,22 @@ import {
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile, AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
-import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import { AdaptiveModalSheet, useBottomSheetPresentation } from "@/components/adaptive-modal-sheet";
 import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { TailEllipsisText } from "@/components/ui/tail-ellipsis-text";
 import { useProviderIcon } from "@/components/provider-icons";
-import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
+import {
+  MODEL_PICKER_SHEET_ON_WIDE,
+  ModelBrowser,
+  useModelBrowser,
+} from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { resolveModelTriggerLabels } from "@/composer/agent-controls/layout";
 import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
-import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import {
@@ -164,10 +167,10 @@ export function CompactModelSheet({
   children,
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
-  const usesBottomSheet = useIsCompactFormFactor();
+  const usesBottomSheet = useBottomSheetPresentation(MODEL_PICKER_SHEET_ON_WIDE);
   const modelBrowserScrolling = resolveModelBrowserScrolling({
     isNative,
-    isCompact: usesBottomSheet,
+    usesBottomSheet,
   });
   const [isOpen, setIsOpen] = useState(false);
   const [isModelBrowserOpen, setIsModelBrowserOpen] = useState(false);
@@ -346,6 +349,7 @@ export function CompactModelSheet({
         visible={isOpen}
         onClose={close}
         snapPoints={SNAP_POINTS}
+        sheetOnWide={MODEL_PICKER_SHEET_ON_WIDE}
         scrollable={false}
         keyboard={rootBrowser.keyboard}
         contentStyle={styles.sheetBody}
@@ -395,6 +399,7 @@ export function CompactModelSheet({
           visible={isModelBrowserOpen}
           onClose={closeModelBrowser}
           snapPoints={SNAP_POINTS}
+          sheetOnWide={MODEL_PICKER_SHEET_ON_WIDE}
           scrollable={false}
           presentation="push"
           keyboard={modelBrowser.keyboard}
