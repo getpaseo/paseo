@@ -1,15 +1,23 @@
+import { dirname } from "node:path";
 import { z } from "zod";
 import {
   hashAccountKey,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   toneFromUsedPct,
   windowFromUsedPct,
   type UsageReport,
 } from "@getpaseo/plugin/server/usage";
 import type { Input } from "../shared/input.js";
 import { NO_SUBSCRIPTION, readConsoleGo } from "./console.js";
-import { installedOpenCode, loginStore, readLogins, type GoCredential } from "./opencode.js";
+import {
+  installedOpenCode,
+  loginStore,
+  readLogins,
+  type GoCredential,
+  type OpenCodeInstall,
+} from "./opencode.js";
 
 const windowSchema = z.object({
   status: z.enum(["ok", "rate-limited"]),
@@ -29,16 +37,57 @@ export async function discover(install = installedOpenCode()): Promise<UsageAcco
   return [{ key: hashAccountKey(install.authFile), input: { store } }];
 }
 
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+  install?: OpenCodeInstall,
+): Promise<UsageAccount[]> {
+  if (scope.provider !== "opencode" || !scope.model?.startsWith("opencode-go/")) return [];
+  const target = install ?? installedOpenCode(scope.env);
+  const accounts = await discover(target);
+  if (!accounts.length || install) return accounts;
+  const defaultInstall = installedOpenCode();
+  const dataHome =
+    target.authFile !== defaultInstall.authFile ? dirname(dirname(target.authFile)) : undefined;
+  const database =
+    scope.env.OPENCODE_DB && scope.env.OPENCODE_DB !== process.env.OPENCODE_DB
+      ? scope.env.OPENCODE_DB
+      : undefined;
+  if (!dataHome && !database) return accounts;
+  const scoped: UsageAccount[] = [];
+  for (const account of accounts) {
+    const base = account.input as Input;
+    const input: Input = { store: base.store };
+    if (dataHome) input.dataHome = dataHome;
+    if (database) input.database = database;
+    scoped.push({
+      key: account.key,
+      ...(account.label ? { label: account.label } : {}),
+      input,
+    });
+  }
+  return scoped;
+}
+
 export async function fetchUsage(
   input: Input,
   fetchApi: typeof fetch = fetch,
-  install = installedOpenCode(),
+  install?: OpenCodeInstall,
 ): Promise<UsageReport> {
-  const logins = await readLogins(install, input.store);
+  const target = install ?? installedOpenCode(envWithInput(process.env, input));
+  const logins = await readLogins(target, input.store);
   const only = logins.opencode ?? logins.go;
   if (!only) throw new Error("OpenCode Go login no longer exists");
   if (logins.opencode && logins.go) return readEitherLogin(logins.opencode, logins.go, fetchApi);
   return readCredential(only, fetchApi, { workspaceKey: only === logins.opencode });
+}
+
+function envWithInput(env: NodeJS.ProcessEnv, input: Input): NodeJS.ProcessEnv {
+  if (!input.dataHome && !input.database) return env;
+  return {
+    ...env,
+    ...(input.dataHome ? { XDG_DATA_HOME: input.dataHome } : {}),
+    ...(input.database ? { OPENCODE_DB: input.database } : {}),
+  };
 }
 
 /**

@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { discover, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 function writeGrokAuth(home: string, auth: Record<string, unknown>): void {
@@ -368,4 +368,37 @@ it("does not call credits monthly when no monthly limit was reported", async () 
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+describe("session discovery", () => {
+  it.each(["xai/grok-4", "grok/grok-4"])(
+    "discovers Grok accounts for OpenCode model %s",
+    async (model) => {
+      const dir = mkdtempSync(join(tmpdir(), "grok-session-"));
+      const previous = process.env["GROK_TOKEN"];
+      try {
+        process.env["GROK_TOKEN"] = "session-grok-token";
+        expect(
+          await discoverSession({
+            kind: "session",
+            provider: "opencode",
+            model,
+            env: { HOME: dir, GROK_TOKEN: "session-grok-token" },
+          }),
+        ).toEqual([{ key: "default", input: { store: "env", locator: "GROK_TOKEN" } }]);
+        expect(
+          await discoverSession({
+            kind: "session",
+            provider: "opencode",
+            model: "openai/gpt-5.4",
+            env: { HOME: dir, GROK_TOKEN: "session-grok-token" },
+          }),
+        ).toEqual([]);
+      } finally {
+        if (previous === undefined) delete process.env["GROK_TOKEN"];
+        else process.env["GROK_TOKEN"] = previous;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

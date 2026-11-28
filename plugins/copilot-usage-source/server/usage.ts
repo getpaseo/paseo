@@ -8,6 +8,7 @@ import {
   windowFromUsedPct,
   type UsageWindow,
   type UsageAccount,
+  type UsageScope,
   type UsageReport,
   type UsageDetail,
 } from "@getpaseo/plugin/server/usage";
@@ -45,6 +46,14 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
   }
 }
 
+const OPENCODE_COPILOT_PROVIDERS = new Set(["github-copilot", "github-copilot-enterprise"]);
+
+function modelProvider(model: string | undefined): string | null {
+  if (!model) return null;
+  const slash = model.indexOf("/");
+  return slash > 0 ? model.slice(0, slash) : null;
+}
+
 export async function discover(): Promise<UsageAccount[]> {
   const candidates: UsageInput[] = ["COPILOT_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"].map(
     (locator) => ({ store: "env", locator }),
@@ -55,6 +64,31 @@ export async function discover(): Promise<UsageAccount[]> {
       locator: join(process.env.APPDATA, "GitHub CLI", "hosts.yml"),
     });
   candidates.push({ store: "file", locator: join(homedir(), ".config", "gh", "hosts.yml") });
+  for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
+  return [];
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const isCopilotSession =
+    scope.provider === "copilot" ||
+    (scope.provider === "opencode" &&
+      OPENCODE_COPILOT_PROVIDERS.has(modelProvider(scope.model) ?? ""));
+  if (!isCopilotSession) return [];
+  const candidates: UsageInput[] = [];
+  for (const locator of ["COPILOT_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"]) {
+    if (scope.env[locator] && scope.env[locator] === process.env[locator]) {
+      candidates.push({ store: "env", locator });
+    }
+  }
+  const home = scope.env.HOME || scope.env.USERPROFILE || homedir();
+  if (scope.env.APPDATA)
+    candidates.push({
+      store: "file",
+      locator: join(scope.env.APPDATA, "GitHub CLI", "hosts.yml"),
+    });
+  candidates.push({ store: "file", locator: join(home, ".config", "gh", "hosts.yml") });
   for (const input of candidates) if (await readToken(input)) return [{ key: "default", input }];
   return [];
 }

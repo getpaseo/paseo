@@ -31,7 +31,15 @@ export async function discover(
   scope: UsageScope,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<UsageAccount[]> {
-  if (scope.kind !== "global") return [];
+  if (scope.kind === "session") {
+    if (scope.provider !== "opencode" || !scope.model?.startsWith("openrouter/")) return [];
+    return inputSchema.shape.meter.options.flatMap((meter) => {
+      const { env: variable, label } = meters[meter];
+      const hostValue = env[variable]?.trim();
+      if (!hostValue || scope.env[variable]?.trim() !== hostValue) return [];
+      return [{ key: meter, label, input: { meter } }];
+    });
+  }
   return inputSchema.shape.meter.options.flatMap((meter) => {
     const { env: variable, label } = meters[meter];
     return env[variable]?.trim() ? [{ key: meter, label, input: { meter } }] : [];

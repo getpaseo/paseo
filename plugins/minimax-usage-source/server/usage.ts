@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   unavailable,
   type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -239,12 +240,48 @@ async function readAuth(
     return undefined;
   }
 }
+const OPENCODE_MINIMAX_PROVIDERS = new Set([
+  "minimax",
+  "minimax-cn",
+  "minimax-coding-plan",
+  "minimax-cn-coding-plan",
+]);
+
+function modelProvider(model: string | undefined): string | null {
+  if (!model) return null;
+  const slash = model.indexOf("/");
+  return slash > 0 ? model.slice(0, slash) : null;
+}
+
 export async function discover(): Promise<UsageAccount[]> {
   const candidates: UsageInput[] = [
     { store: "env", locator: "MINIMAX_API_KEY" },
     { store: "credentials", locator: join(homedir(), ".mmx", "credentials.json") },
     { store: "config", locator: join(homedir(), ".mmx", "config.json") },
   ];
+  const accounts: UsageAccount[] = [];
+  for (const input of candidates)
+    if (await readAuth(input)) accounts.push({ key: "default", input });
+  return accounts;
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const isMiniMaxSession =
+    scope.provider === "minimax" ||
+    (scope.provider === "opencode" &&
+      OPENCODE_MINIMAX_PROVIDERS.has(modelProvider(scope.model) ?? ""));
+  if (!isMiniMaxSession) return [];
+  const home = scope.env.HOME || scope.env.USERPROFILE || homedir();
+  const candidates: UsageInput[] = [];
+  if (scope.env.MINIMAX_API_KEY && scope.env.MINIMAX_API_KEY === process.env.MINIMAX_API_KEY) {
+    candidates.push({ store: "env", locator: "MINIMAX_API_KEY" });
+  }
+  candidates.push(
+    { store: "credentials", locator: join(home, ".mmx", "credentials.json") },
+    { store: "config", locator: join(home, ".mmx", "config.json") },
+  );
   const accounts: UsageAccount[] = [];
   for (const input of candidates)
     if (await readAuth(input)) accounts.push({ key: "default", input });

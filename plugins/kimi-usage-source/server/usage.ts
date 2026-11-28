@@ -8,6 +8,7 @@ import {
   toneFromUsedPct,
   unavailable,
   type UsageAccount,
+  type UsageScope,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
@@ -321,15 +322,15 @@ async function readCredentials(input: UsageInput): Promise<KimiCredentials | und
     return undefined;
   }
 }
-export async function discover(): Promise<UsageAccount[]> {
-  for (const locator of ["KIMI_TOKEN", "KIMI_API_KEY"]) {
-    const input: UsageInput = { store: "env", locator };
-    if (await readCredentials(input)) return [{ key: "default", input }];
-  }
-  const homes = [
-    process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
-    join(homedir(), ".kimi"),
-  ];
+const OPENCODE_KIMI_PROVIDERS = new Set(["kimi-for-coding", "kimi"]);
+
+function modelProvider(model: string | undefined): string | null {
+  if (!model) return null;
+  const slash = model.indexOf("/");
+  return slash > 0 ? model.slice(0, slash) : null;
+}
+
+async function discoverFromHomes(homes: readonly string[]): Promise<UsageAccount[]> {
   // A login to another deployment leaves the old slot behind with a dead token.
   // Within each home, prefer the latest expiry. Keep the configured home ahead
   // of the legacy fallback, even if that fallback holds a newer token.
@@ -349,4 +350,36 @@ export async function discover(): Promise<UsageAccount[]> {
     if (found) return [{ key: "default", input: found.input }];
   }
   return [];
+}
+
+export async function discover(): Promise<UsageAccount[]> {
+  for (const locator of ["KIMI_TOKEN", "KIMI_API_KEY"]) {
+    const input: UsageInput = { store: "env", locator };
+    if (await readCredentials(input)) return [{ key: "default", input }];
+  }
+  return discoverFromHomes([
+    process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"),
+    join(homedir(), ".kimi"),
+  ]);
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const isKimiSession =
+    scope.provider === "kimi" ||
+    (scope.provider === "opencode" &&
+      OPENCODE_KIMI_PROVIDERS.has(modelProvider(scope.model) ?? ""));
+  if (!isKimiSession) return [];
+  for (const locator of ["KIMI_TOKEN", "KIMI_API_KEY"]) {
+    if (scope.env[locator] && scope.env[locator] === process.env[locator]) {
+      const input: UsageInput = { store: "env", locator };
+      if (await readCredentials(input)) return [{ key: "default", input }];
+    }
+  }
+  const home = scope.env.HOME || scope.env.USERPROFILE || homedir();
+  return discoverFromHomes([
+    scope.env.KIMI_CODE_HOME || join(home, ".kimi-code"),
+    join(home, ".kimi"),
+  ]);
 }

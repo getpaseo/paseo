@@ -21,6 +21,34 @@ test("discovers only host credentials and returns credential-free inputs", async
   ]);
   expect(await discover(scope, { OPENROUTER_API_KEY: " " })).toEqual([]);
   expect(await discover({ kind: "session", provider: "pi", env }, env)).toEqual([]);
+  expect(
+    await discover(
+      {
+        kind: "session",
+        provider: "opencode",
+        model: "openrouter/anthropic/claude-sonnet-4.5",
+        env,
+      },
+      env,
+    ),
+  ).toEqual([
+    { key: "key", label: "API key spend", input: { meter: "key" } },
+    { key: "credits", label: "Account credits", input: { meter: "credits" } },
+  ]);
+  expect(
+    await discover({ kind: "session", provider: "opencode", model: "openai/gpt-5.4", env }, env),
+  ).toEqual([]);
+  expect(
+    await discover(
+      {
+        kind: "session",
+        provider: "opencode",
+        model: "openrouter/anthropic/claude-sonnet-4.5",
+        env: { OPENROUTER_API_KEY: "other-key" },
+      },
+      env,
+    ),
+  ).toEqual([]);
   expect(inputSchema.safeParse({ meter: "key", token: "secret" }).success).toBe(false);
 });
 

@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   unavailable,
   type UsageAccount,
+  type UsageScope,
   type UsageReport,
   type UsageDetail,
 } from "@getpaseo/plugin/server/usage";
@@ -89,6 +90,19 @@ async function readToken(input: UsageInput): Promise<string | undefined> {
   }
 }
 
+const OPENCODE_ZAI_PROVIDERS = new Set([
+  "zai",
+  "zai-coding-plan",
+  "zhipuai",
+  "zhipuai-coding-plan",
+]);
+
+function modelProvider(model: string | undefined): string | null {
+  if (!model) return null;
+  const slash = model.indexOf("/");
+  return slash > 0 ? model.slice(0, slash) : null;
+}
+
 export async function discover(): Promise<UsageAccount[]> {
   for (const locator of ["Z_AI_API_KEY", "ZAI_API_KEY", "GLM_API_KEY"]) {
     if (process.env[locator]) return [{ key: "default", input: { store: "env", locator } }];
@@ -103,5 +117,29 @@ export async function discover(): Promise<UsageAccount[]> {
     return [{ key: "default", input: { store: "file", locator: credentialsPath } }];
   }
 
+  return [];
+}
+
+export async function discoverSession(
+  scope: Extract<UsageScope, { kind: "session" }>,
+): Promise<UsageAccount[]> {
+  const isZaiSession =
+    scope.provider === "zai" ||
+    (scope.provider === "opencode" && OPENCODE_ZAI_PROVIDERS.has(modelProvider(scope.model) ?? ""));
+  if (!isZaiSession) return [];
+  for (const locator of ["Z_AI_API_KEY", "ZAI_API_KEY", "GLM_API_KEY"]) {
+    if (scope.env[locator] && scope.env[locator] === process.env[locator]) {
+      return [{ key: "default", input: { store: "env", locator } }];
+    }
+  }
+  const home = scope.env.HOME || scope.env.USERPROFILE || homedir();
+  const credentialsPath = join(
+    scope.env.XDG_CONFIG_HOME || join(home, ".config"),
+    "glm-acp-agent",
+    "credentials.json",
+  );
+  if (await readToken({ store: "file", locator: credentialsPath })) {
+    return [{ key: "default", input: { store: "file", locator: credentialsPath } }];
+  }
   return [];
 }
