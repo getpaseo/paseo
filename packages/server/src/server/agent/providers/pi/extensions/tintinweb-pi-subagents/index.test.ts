@@ -205,9 +205,10 @@ describe("@tintinweb/pi-subagents adapter", () => {
     });
     expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: expected }]);
   });
-  test("replays a background child collected through get_subagent_result as completed", async () => {
-    const messages: PiAgentMessage[] = [
-      {
+  test.each([false, true])(
+    "replays a collected background child (same message: %s)",
+    async (sameMessage) => {
+      const spawn: PiAgentMessage = {
         role: "assistant",
         content: [
           {
@@ -217,26 +218,26 @@ describe("@tintinweb/pi-subagents adapter", () => {
             arguments: { subagent_type: "Explore", prompt: "Inspect", run_in_background: true },
           },
         ],
-      },
-      {
-        role: "toolResult",
-        toolCallId: "call-1",
-        toolName: "Agent",
-        content: [{ type: "text", text: "Agent started in background.\nAgent ID: native-1\n" }],
-        details: { agentId: "native-1", status: "background" },
-      },
-      {
+      };
+      const followup: PiAgentMessage = {
         role: "assistant",
         content: [
           {
             type: "toolCall",
             id: "followup-1",
             name: "get_subagent_result",
-            arguments: { agent_id: "native-1", wait: true },
+            arguments: { agent_id: "explore", wait: true },
           },
         ],
-      },
-      {
+      };
+      const spawnResult: PiAgentMessage = {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "Agent",
+        content: [{ type: "text", text: "Agent started in background.\nAgent ID: native-1\n" }],
+        details: { agentId: "native-1", status: "background" },
+      };
+      const followupResult: PiAgentMessage = {
         role: "toolResult",
         toolCallId: "followup-1",
         toolName: "get_subagent_result",
@@ -246,15 +247,26 @@ describe("@tintinweb/pi-subagents adapter", () => {
             text: "Agent: native-1\nType: Explore | Status: completed | Duration: 1s\nDescription: Inspect\n\nDone.",
           },
         ],
-      },
-    ];
-    const statuses: string[] = [];
-    for await (const event of streamPiHistory("pi", messages)) {
-      if (event.type === "provider_subagent" && event.event.type === "upsert" && event.event.status)
-        statuses.push(event.event.status);
-    }
-    expect(statuses.at(-1)).toBe("completed");
-  });
+      };
+      const messages = sameMessage
+        ? [
+            { ...spawn, content: [...spawn.content, ...followup.content] },
+            spawnResult,
+            followupResult,
+          ]
+        : [spawn, spawnResult, followup, followupResult];
+      const statuses = new Map<string, string>();
+      for await (const event of streamPiHistory("pi", messages)) {
+        if (
+          event.type === "provider_subagent" &&
+          event.event.type === "upsert" &&
+          event.event.status
+        )
+          statuses.set(event.event.id, event.event.status);
+      }
+      expect(statuses.get("call-1")).toBe("completed");
+    },
+  );
   test.each([
     ["background", "running"],
     ["queued", "running"],
@@ -404,39 +416,6 @@ describe("@tintinweb/pi-subagents adapter", () => {
       expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
     },
   );
-  // A `schedule` spawn registers a job and returns only text, so nothing runs under its row.
-  const schedule = (text: string) => {
-    const host = createPiExtensionHost();
-    const call = {
-      callId: "call-1",
-      toolName: "Agent",
-      args: {
-        subagent_type: "general-purpose",
-        description: "Periodic check",
-        prompt: "Check CI",
-        schedule: "2h",
-        run_in_background: true,
-      },
-    };
-    host.mapToolCall({ ...call, status: "running", result: null });
-    return host.mapToolCall({
-      ...call,
-      status: "completed",
-      result: { content: [{ type: "text", text }] },
-    });
-  };
-  test("completes a scheduled spawn once its job is registered", () => {
-    const mapping = schedule(
-      'Scheduled "Periodic check" (id: 7q4KaM7ThO, type: interval). Next run: 2026-10-29T06:53:39.685Z. Manage via /agents → Scheduled jobs.',
-    );
-    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "completed" }]);
-  });
-  test("fails a scheduled spawn the extension refused", () => {
-    const mapping = schedule(
-      "Scheduling is disabled in this project. Enable via /agents → Settings → Scheduling.",
-    );
-    expect(mapping?.subagents).toEqual([{ type: "upsert", id: "call-1", status: "failed" }]);
-  });
   test("declines foreign Agent results", () => {
     expect(
       createPiExtensionHost().mapToolCall({
