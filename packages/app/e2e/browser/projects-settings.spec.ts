@@ -21,6 +21,8 @@ import {
   expectProjectEditName,
   expectProjectEditSaved,
   expectProjectEditsSaveDisabled,
+  expectProjectGlyphResults,
+  expectProjectGlyphSelected,
   expectProjectSettingsError,
   expectProjectSettingsFormHidden,
   expectProjectSettingsFormVisible,
@@ -36,12 +38,16 @@ import {
   installReadTransportFailure,
   navigateToProjectSettings,
   openProjectEditSheet,
+  openProjectGlyphPicker,
   openProjectSettings,
   openProjects,
+  pickProjectGlyph,
+  pickProjectGlyphColor,
   removeProjectScript,
   restorePaseoConfig,
   returnToProjectsList,
   saveProjectEdits,
+  searchProjectGlyphs,
   unblockPaseoConfigWrites,
 } from "../support/helpers/project-settings";
 import { gotoAppShell } from "../support/helpers/app";
@@ -316,6 +322,28 @@ test.describe("Projects settings", () => {
 
     await expectProjectEditSaved(page);
     await expectProjectTitle(page, "Both at once");
+  });
+
+  test("user picks a Radix icon and color, saves, and reopens on them", async ({
+    page,
+    editableProject,
+  }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await openProjectGlyphPicker(page);
+    await searchProjectGlyphs(page, "rock");
+    await expectProjectGlyphResults(page, ["rocket"]);
+    await pickProjectGlyphColor(page, "emerald");
+    await pickProjectGlyph(page, "rocket");
+    await saveProjectEdits(page);
+    await expectProjectEditSaved(page);
+
+    await test.step("the saved icon reopens the picker on the same glyph and color", async () => {
+      await openProjectEditSheet(page);
+      await openProjectGlyphPicker(page);
+      await expectProjectGlyphSelected(page, { name: "rocket", color: "emerald" });
+    });
   });
 
   test("project edit keeps a rejected icon URL actionable", async ({ page, editableProject }) => {

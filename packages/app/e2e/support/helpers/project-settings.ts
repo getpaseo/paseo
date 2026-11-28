@@ -111,6 +111,51 @@ export async function chooseProjectIconImage(
   await expect(page.getByText(file.name, { exact: true })).toBeVisible();
 }
 
+export async function openProjectGlyphPicker(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Choose icon", exact: true }).click();
+  await expect(page.getByTestId("project-glyph-picker-grid")).toBeVisible();
+}
+
+export async function searchProjectGlyphs(page: Page, query: string): Promise<void> {
+  await page.getByPlaceholder("Search icons").fill(query);
+}
+
+function projectGlyphCell(page: Page, name: string) {
+  return page.getByTestId("project-glyph-picker-grid").getByRole("button", { name, exact: true });
+}
+
+function projectGlyphColor(page: Page, color: string) {
+  return page.getByRole("radio", { name: `Color ${color}`, exact: true });
+}
+
+export async function expectProjectGlyphResults(page: Page, names: string[]): Promise<void> {
+  await expect(page.getByTestId("project-glyph-picker-grid").getByRole("button")).toHaveCount(
+    names.length,
+  );
+  for (const name of names) await expect(projectGlyphCell(page, name)).toBeVisible();
+}
+
+// A color keeps the picker open, so it can be compared across glyphs.
+export async function pickProjectGlyphColor(page: Page, color: string): Promise<void> {
+  await projectGlyphColor(page, color).click();
+  await expect(projectGlyphColor(page, color)).toBeChecked();
+  await expect(page.getByTestId("project-glyph-picker-grid")).toBeVisible();
+}
+
+// A glyph closes the picker.
+export async function pickProjectGlyph(page: Page, name: string): Promise<void> {
+  await projectGlyphCell(page, name).click();
+  await expect(page.getByTestId("project-glyph-picker-grid")).toBeHidden();
+}
+
+export async function expectProjectGlyphSelected(
+  page: Page,
+  choice: { name: string; color: string },
+): Promise<void> {
+  await expect(projectGlyphCell(page, choice.name)).toHaveAttribute("aria-selected", "true");
+  await expect(projectGlyphColor(page, choice.color)).toBeChecked();
+}
+
 export async function fillProjectIconUrl(page: Page, url: string): Promise<void> {
   await page.getByRole("textbox", { name: "Image or website URL" }).fill(url);
 }
