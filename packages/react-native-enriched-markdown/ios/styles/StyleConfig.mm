@@ -2242,6 +2242,12 @@ static const CGFloat kDefaultMinGap = 4.0;
                                               style:nil
                                             variant:nil
                                     scaleMultiplier:[self effectiveScaleMultiplierForFontSize:_codeBlockFontSize]];
+#if TARGET_OS_IOS
+    if (_codeBlockFontFamily.length == 0) {
+      UIFont *font = _codeBlockFont.cachedFont;
+      _codeBlockFont.cachedFont = [UIFont monospacedSystemFontOfSize:font.pointSize weight:RCTGetFontWeight(font)];
+    }
+#endif
     _codeBlockFont.needsRecreation = NO;
   }
   return _codeBlockFont.cachedFont;
