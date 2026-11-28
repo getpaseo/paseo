@@ -1,3 +1,4 @@
+import { useComposerTouchDiagnostics, recordComposerCommand } from "@/composer/touch-diagnostics";
 import { useKeyboardFocusSurface } from "@/keyboard";
 import type { SendShortcut } from "@/hooks/use-settings";
 import {
@@ -1788,6 +1789,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     }, [resetComposerHeight]);
 
     const handleSendMessage = useCallback(() => {
+      recordComposerCommand("send");
       const liveValue = textInputRef.current?.getText() ?? valueRef.current;
       if (!preserveHeightOnSubmit) {
         updateLiveTextPresence("");
@@ -1817,19 +1819,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       exitFullscreen,
     ]);
 
-    const handleQueueMessage = useCallback(
-      () =>
-        queueMessageImpl({
-          value: textInputRef.current?.getText() ?? valueRef.current,
-          attachments,
-          cwd,
-          onQueue,
-          replaceText,
-          onMinimizeHeight: minimizeInputHeight,
-          exitFullscreen,
-        }),
-      [attachments, cwd, onQueue, replaceText, minimizeInputHeight, exitFullscreen],
-    );
+    const handleQueueMessage = useCallback(() => {
+      recordComposerCommand("queue");
+      return queueMessageImpl({
+        value: textInputRef.current?.getText() ?? valueRef.current,
+        attachments,
+        cwd,
+        onQueue,
+        replaceText,
+        onMinimizeHeight: minimizeInputHeight,
+        exitFullscreen,
+      });
+    }, [attachments, cwd, onQueue, replaceText, minimizeInputHeight, exitFullscreen]);
 
     const handleDefaultSendAction = useCallback(() => {
       runDefaultSendAction({
@@ -2368,8 +2369,17 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         handleRealtimeVoiceStop,
       ],
     );
+    const touchDiagnostics = useComposerTouchDiagnostics({
+      active: isPaneFocused,
+      disabled,
+      sendDisabled: isSendButtonDisabled,
+      focused: isInputFocused,
+      fullscreen: isFullscreen,
+      voiceOverlay: showOverlay,
+    });
     return (
       <View
+        {...touchDiagnostics}
         ref={rootRef}
         style={
           isFullscreen

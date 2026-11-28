@@ -1,3 +1,4 @@
+import { recordComposerCommand } from "@/composer/touch-diagnostics";
 import { forwardRef, useCallback, type ComponentProps } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -61,13 +62,18 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       [disabled, isSheet, open, showToolbarLabel],
     );
 
+    const activate = useCallback(() => {
+      recordComposerCommand("control");
+      onPress();
+    }, [onPress]);
+
     return (
       <ComboboxTrigger
         {...triggerProps}
         ref={ref}
         collapsable={false}
         disabled={disabled}
-        onPress={onPress}
+        onPress={activate}
         style={triggerStyle}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}

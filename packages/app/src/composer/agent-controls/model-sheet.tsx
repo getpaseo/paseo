@@ -1,3 +1,4 @@
+import { recordComposerCommand } from "@/composer/touch-diagnostics";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -213,6 +214,7 @@ export function CompactModelSheet({
   );
 
   const open = useCallback(() => {
+    recordComposerCommand("model");
     Keyboard.dismiss();
     rootBrowser.showAll();
     setIsOpen(true);
