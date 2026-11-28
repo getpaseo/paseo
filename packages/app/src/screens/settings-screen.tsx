@@ -5,7 +5,19 @@ import { useHardwareKeyboardPresent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet as RNStyleSheet,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+  type PressableStateCallbackType,
+} from "react-native";
+import { Gesture } from "react-native-gesture-handler";
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
 import { useNavigation, useRouter } from "expo-router";
 import { useFocusEffect, usePreventRemove } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -115,11 +127,14 @@ import { HostVoicePage } from "@/screens/settings/voice/voice-page";
 import ProjectsScreen from "@/screens/projects-screen";
 import ProjectSettingsScreen from "@/screens/project-settings-screen";
 import { ProviderDetailPage } from "@/provider-settings";
+import { SETTINGS_DESKTOP_DETAIL_MIN_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { resolveDesktopSidebarWidth } from "@/components/desktop-sidebar-layout";
+import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
 import {
-  SETTINGS_DESKTOP_DETAIL_MIN_WIDTH,
-  SETTINGS_DESKTOP_SIDEBAR_WIDTH,
-  useIsCompactFormFactor,
-} from "@/constants/layout";
+  SIDEBAR_RESIZE_ACTIVATION_OFFSET,
+  SIDEBAR_RESIZE_FAIL_OFFSET,
+} from "@/components/sidebar-resize-handle-layout";
+import { usePanelStore } from "@/stores/panel-store";
 import { density, densityIconBox, densityIconSize } from "@/styles/density";
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import {
@@ -928,6 +943,7 @@ interface SettingsSidebarProps {
   onBackToWorkspace: () => void;
   activeHostServerId: string | null;
   layout: "desktop" | "mobile";
+  viewportWidth?: number;
 }
 
 function SettingsSidebar({
@@ -939,6 +955,7 @@ function SettingsSidebar({
   onBackToWorkspace,
   activeHostServerId,
   layout,
+  viewportWidth: containerWidth,
 }: SettingsSidebarProps) {
   const { theme, rt } = useUnistyles();
   const { t } = useTranslation();
@@ -954,11 +971,61 @@ function SettingsSidebar({
   );
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
+  const sidebarWidth = usePanelStore((state) => state.sidebarWidth);
+  const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
+  const { width: windowWidth } = useWindowDimensions();
+  const viewportWidth = containerWidth ?? windowWidth - insets.left - insets.right;
+  const visibleSidebarWidth = resolveDesktopSidebarWidth({
+    requestedWidth: sidebarWidth,
+    viewportWidth,
+  });
   const sidebarScroll = useSettingsSidebarScroll(isDesktop);
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
   );
+  const resizeWidth = useSharedValue(visibleSidebarWidth);
+  const resizeStartWidth = useSharedValue(visibleSidebarWidth);
+  const [resizePressed, setResizePressed] = useState(false);
+  const showResizeGrip = useCallback(() => setResizePressed(true), []);
+  const hideResizeGrip = useCallback(() => setResizePressed(false), []);
+  useEffect(() => {
+    resizeWidth.value = visibleSidebarWidth;
+  }, [resizeWidth, visibleSidebarWidth]);
+  const resizeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
+        .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
+        .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
+        .onBegin(() => scheduleOnRN(showResizeGrip))
+        .onStart((event) => {
+          resizeStartWidth.value = resizeWidth.value - event.translationX;
+        })
+        .onUpdate((event) => {
+          resizeWidth.value = resolveDesktopSidebarWidth({
+            requestedWidth: resizeStartWidth.value + event.translationX,
+            viewportWidth,
+          });
+        })
+        .onEnd((_event, success) => {
+          if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
+        })
+        .onFinalize((_event, success) => {
+          if (!success) resizeWidth.value = visibleSidebarWidth;
+          scheduleOnRN(hideResizeGrip);
+        }),
+    [
+      hideResizeGrip,
+      resizeStartWidth,
+      resizeWidth,
+      setSidebarWidth,
+      showResizeGrip,
+      viewportWidth,
+      visibleSidebarWidth,
+    ],
+  );
+  const resizeAnimatedStyle = useAnimatedStyle(() => ({ width: resizeWidth.value }));
   const innerContainerStyle = useMemo(
     () => [{ flex: 1 }, isDesktop ? { paddingTop: insets.top } : null],
     [insets.top, isDesktop],
@@ -1050,7 +1117,7 @@ function SettingsSidebar({
     </>
   );
 
-  return (
+  const sidebar = (
     <View
       accessibilityLabel={t("settings.title")}
       role="navigation"
@@ -1082,6 +1149,19 @@ function SettingsSidebar({
         sidebarBody
       )}
     </View>
+  );
+
+  if (!isDesktop) return sidebar;
+  return (
+    <Animated.View style={[resizeStyles.container, resizeAnimatedStyle]}>
+      {sidebar}
+      <SidebarResizeHandle
+        edge="right"
+        gesture={resizeGesture}
+        pressed={resizePressed}
+        testID="settings-sidebar-resize-handle"
+      />
+    </Animated.View>
   );
 }
 
@@ -1228,6 +1308,10 @@ export interface SettingsScreenProps {
 }
 
 export default function SettingsScreen({ view }: SettingsScreenProps) {
+  const [desktopWidth, setDesktopWidth] = useState<number>();
+  const handleDesktopLayout = useCallback((event: LayoutChangeEvent) => {
+    setDesktopWidth(event.nativeEvent.layout.width);
+  }, []);
   const router = useRouter();
   const { t } = useTranslation();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
@@ -1598,7 +1682,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   // detail screens or discards in-progress edits (e.g., Agent profiles drawer → sheet).
   return (
     <View style={styles.container} onLayout={onContentLayout}>
-      <View style={desktopStyles.row}>
+      <View style={desktopStyles.row} onLayout={handleDesktopLayout}>
         {isCompactLayout ? null : (
           <WindowChromeRegion corners="top-left">
             <SettingsSidebar
@@ -1610,6 +1694,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               onBackToWorkspace={handleBackToWorkspace}
               activeHostServerId={activeHostServerId}
               layout="desktop"
+              viewportWidth={desktopWidth}
             />
           </WindowChromeRegion>
         )}
@@ -1707,10 +1792,13 @@ const desktopStyles = StyleSheet.create({
   },
 });
 
+const resizeStyles = RNStyleSheet.create({
+  container: { position: "relative", flexShrink: 1, zIndex: 1 },
+});
+
 const sidebarStyles = StyleSheet.create((theme) => ({
   desktopContainer: {
-    width: SETTINGS_DESKTOP_SIDEBAR_WIDTH,
-    flexShrink: 1,
+    flex: 1,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
