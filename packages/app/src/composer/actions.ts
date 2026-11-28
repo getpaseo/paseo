@@ -332,6 +332,53 @@ export async function sendQueuedComposerMessageNow(
   }
 }
 
+export interface SendQueuedComposerMessagesNowInput extends Omit<
+  SendQueuedComposerMessageNowInput,
+  "messageId"
+> {
+  messageIds: readonly string[];
+}
+
+export async function sendQueuedComposerMessagesNow(
+  input: SendQueuedComposerMessagesNowInput,
+): Promise<SendQueuedComposerMessageNowResult> {
+  const queued = input.queue.read(input.agentId);
+  const items = input.messageIds
+    .map((messageId) => queued.find((item) => item.id === messageId))
+    .filter((item): item is (typeof queued)[number] => item !== undefined);
+  if (items.length === 0) return { status: "missing" };
+
+  input.queue.write((prev) => {
+    const messageIds = new Set(items.map((item) => item.id));
+    const next = new Map(prev);
+    next.set(
+      input.agentId,
+      (prev.get(input.agentId) ?? []).filter((item) => !messageIds.has(item.id)),
+    );
+    return next;
+  });
+  try {
+    await input.submitMessage({
+      text: items.map((item) => item.text).join("\n\n"),
+      attachments: items.flatMap((item) => item.attachments),
+    });
+    return { status: "submitted" };
+  } catch (error) {
+    input.queue.write((prev) => {
+      const next = new Map(prev);
+      next.set(input.agentId, [...items, ...(prev.get(input.agentId) ?? [])]);
+      return next;
+    });
+    return {
+      status: "failed",
+      errorMessage:
+        error instanceof Error
+          ? error.message
+          : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend")),
+    };
+  }
+}
+
 export interface OpenComposerAttachmentInput {
   attachment: ComposerAttachment;
   setLightboxMetadata: (metadata: AttachmentMetadata) => void;

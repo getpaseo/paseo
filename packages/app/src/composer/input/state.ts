@@ -53,6 +53,8 @@ interface SendActionContext {
   onQueue: ((payload: MessagePayload) => void) | undefined;
   handleSendMessage: () => void;
   handleQueueMessage: () => void;
+  hasSendableContent?: boolean;
+  onSendQueued?: () => boolean;
 }
 
 interface DictationTranscriptContext {
@@ -119,6 +121,7 @@ export function computeCanStartDictation(input: {
 }
 
 export function runDefaultSendAction(ctx: SendActionContext): void {
+  if (ctx.hasSendableContent === false && ctx.onSendQueued?.()) return;
   if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
     ctx.handleQueueMessage();
     return;
@@ -140,6 +143,7 @@ export function resolveAlternateSendAction(
 }
 
 export function runAlternateSendAction(ctx: SendActionContext): void {
+  if (ctx.hasSendableContent === false && ctx.onSendQueued?.()) return;
   const action = resolveAlternateSendAction(ctx);
   if (action === "queue") {
     ctx.handleQueueMessage();
@@ -150,6 +154,15 @@ export function runAlternateSendAction(ctx: SendActionContext): void {
     return;
   }
   runDefaultSendAction(ctx);
+}
+
+export async function drainQueuedMessages(
+  messageIds: readonly string[],
+  sendMessage: (messageId: string) => Promise<void>,
+): Promise<void> {
+  for (const messageId of messageIds) {
+    await sendMessage(messageId);
+  }
 }
 
 export type MessageInputEnterAction = "alternate-send" | "default-send";

@@ -151,6 +151,7 @@ export const zhCN: TranslationResources = {
       sendAndInterrupt: "发送并中断",
       sendAndSteer: "发送并引导",
       sendMessage: "发送消息",
+      sendQueue: "发送队列",
       longPressToQueue: "长按加入队列",
       longPressToSendNow: "长按立即发送",
       queue: "排队",
@@ -2648,6 +2649,11 @@ export const zhCN: TranslationResources = {
           steer: "引导",
           queue: "排队",
         },
+      },
+      queueDrain: {
+        label: "发送队列",
+        description: "选择一次发送全部排队消息，还是一次发送一条",
+        options: { all: "发送全部排队消息", next: "发送下一条" },
       },
       sendShortcut: {
         label: "发送快捷键",

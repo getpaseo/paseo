@@ -82,7 +82,12 @@ import {
   mountBrowserAutomationDaemonClientHandler,
 } from "@/desktop/browser/automation/handler";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
-import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
+import { dispatchComposerAgentMessage, sendQueuedComposerMessagesNow } from "@/composer/actions";
+import {
+  APP_SETTINGS_QUERY_KEY,
+  DEFAULT_CLIENT_SETTINGS,
+  type AppSettings,
+} from "@/hooks/use-settings";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
@@ -2891,10 +2896,13 @@ export class HostRuntimeStore {
       return;
     }
     this.queuedAgentDrainInFlight.add(drainKey);
-    const next = queue[0];
-    void sendQueuedComposerMessageNow({
+    const appSettings =
+      queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ?? DEFAULT_CLIENT_SETTINGS;
+    const messageIds =
+      appSettings.queueDrainBehavior === "all" ? queue.map((item) => item.id) : [queue[0].id];
+    void sendQueuedComposerMessagesNow({
       agentId,
-      messageId: next.id,
+      messageIds,
       queue: {
         read: (queuedAgentId) =>
           useSessionStore.getState().sessions[serverId]?.queuedMessages.get(queuedAgentId) ?? [],

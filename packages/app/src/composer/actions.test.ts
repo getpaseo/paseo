@@ -33,6 +33,7 @@ import {
   queueComposerMessage,
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
+  sendQueuedComposerMessagesNow,
   toggleForgeAttachment,
   toggleForgeAttachmentFromPicker,
   type MessageSubmissionWriter,
@@ -889,6 +890,37 @@ describe("sendQueuedComposerMessageNow", () => {
     expect(result).toEqual({ status: "failed", errorMessage: "network down" });
     const state = queue.state.get("agent");
     expect(state?.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
+  });
+});
+
+describe("sendQueuedComposerMessagesNow", () => {
+  it("combines and removes all selected queued messages in one submission", async () => {
+    const first = reviewWorkspaceAttachment("First review");
+    const second = reviewWorkspaceAttachment("Second review");
+    const queue = createFakeQueue(
+      new Map([
+        [
+          "agent",
+          [
+            { id: "msg-1", text: "first", attachments: [first] },
+            { id: "msg-2", text: "second", attachments: [second] },
+            { id: "msg-3", text: "leave me", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+    const submitted: Array<{ text: string; attachments: ComposerAttachment[] }> = [];
+    const result = await sendQueuedComposerMessagesNow({
+      agentId: "agent",
+      messageIds: ["msg-1", "msg-2"],
+      queue,
+      submitMessage: async (input) => {
+        submitted.push(input);
+      },
+    });
+    expect(result).toEqual({ status: "submitted" });
+    expect(queue.state.get("agent")?.map((message) => message.id)).toEqual(["msg-3"]);
+    expect(submitted).toEqual([{ text: "first\n\nsecond", attachments: [first, second] }]);
   });
 });
 

@@ -98,6 +98,7 @@ import {
   queueComposerMessage,
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
+  sendQueuedComposerMessagesNow,
   toggleForgeAttachmentFromPicker,
   uploadFileAttachments,
   type AttachmentPersister,
@@ -286,6 +287,14 @@ function buildCancelButtonStyle(
   return [styles.cancelButton, pressedStyle, disabled].filter((value): value is object =>
     Boolean(value),
   );
+}
+
+function buildSendQueueButtonStyle(pressed: boolean, isConnected: boolean): object[] {
+  return [
+    styles.sendQueueButton,
+    pressed ? styles.discPressed : undefined,
+    !isConnected ? styles.buttonDisabled : undefined,
+  ].filter((value): value is object => Boolean(value));
 }
 
 function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: boolean): object[] {
@@ -1156,6 +1165,41 @@ function ComposerCancelButton({
           <Text style={styles.tooltipText}>{t("composer.cancel.interrupt")}</Text>
           {shortcutNode}
         </View>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+interface ComposerSendQueueButtonProps {
+  handleSendQueued: () => void;
+  isConnected: boolean;
+  label: string;
+}
+
+function ComposerSendQueueButton({
+  handleSendQueued,
+  isConnected,
+  label,
+}: ComposerSendQueueButtonProps) {
+  const buttonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => buildSendQueueButtonStyle(pressed, isConnected),
+    [isConnected],
+  );
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        onPress={handleSendQueued}
+        disabled={!isConnected}
+        accessibilityLabel={label}
+        accessibilityRole="button"
+        style={buttonStyle}
+      >
+        <Text style={styles.sendQueueButtonLabel} numberOfLines={1}>
+          {label}
+        </Text>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <Text style={styles.tooltipText}>{label}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -2131,6 +2175,44 @@ function ComposerContentImpl({
     [agentId, queueWriter, submitMessage, t],
   );
 
+  const handleSendQueued = useCallback(() => {
+    if (
+      queuedMessages.length === 0 ||
+      (!sendAgentMessageRef.current && !onSubmitMessageRef.current)
+    ) {
+      return false;
+    }
+    const queuedMessageIds = queuedMessages.map((message) => message.id);
+    void sendQueuedComposerMessagesNow({
+      agentId,
+      messageIds: queuedMessageIds,
+      queue: queueWriter,
+      submitMessage: ({ text, attachments: queuedAttachments }) =>
+        submitMessage(text, queuedAttachments),
+      failedToSendMessage: t("composer.errors.failedToSend"),
+    }).then((result) => {
+      if (result.status === "failed") setSendError(result.errorMessage);
+      return result;
+    });
+    return true;
+  }, [agentId, queuedMessages, queueWriter, submitMessage, t]);
+
+  const handleSendNextQueued = useCallback(() => {
+    if (
+      queuedMessages.length === 0 ||
+      (!sendAgentMessageRef.current && !onSubmitMessageRef.current)
+    ) {
+      return false;
+    }
+    void handleSendQueuedNow(queuedMessages[0].id);
+    return true;
+  }, [handleSendQueuedNow, queuedMessages]);
+
+  const handleEmptySendQueued = useCallback(
+    () => (appSettings.queueDrainBehavior === "next" ? handleSendNextQueued() : handleSendQueued()),
+    [appSettings.queueDrainBehavior, handleSendNextQueued, handleSendQueued],
+  );
+
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
       const outgoingAttachments = buildOutgoingAttachments(attachments);
@@ -2189,24 +2271,38 @@ function ComposerContentImpl({
   );
 
   const activeActionContent = useMemo(
-    () => (
-      <ComposerCancelButton
-        discGlyphSize={discGlyphSize}
-        cancelButtonStyle={cancelButtonStyle}
-        handleCancelAgent={handleCancelAgent}
-        isConnected={isConnected}
-        isCancellingAgent={isCancellingAgent}
-        agentInterruptKeys={agentInterruptKeys}
-        t={t}
-      />
-    ),
+    () =>
+      queuedMessages.length > 0 ? (
+        <ComposerSendQueueButton
+          handleSendQueued={handleEmptySendQueued}
+          isConnected={isConnected}
+          label={t(
+            appSettings.queueDrainBehavior === "next"
+              ? "composer.input.sendNext"
+              : "composer.input.sendQueue",
+          )}
+        />
+      ) : (
+        <ComposerCancelButton
+          discGlyphSize={discGlyphSize}
+          cancelButtonStyle={cancelButtonStyle}
+          handleCancelAgent={handleCancelAgent}
+          isConnected={isConnected}
+          isCancellingAgent={isCancellingAgent}
+          agentInterruptKeys={agentInterruptKeys}
+          t={t}
+        />
+      ),
     [
       agentInterruptKeys,
       discGlyphSize,
       cancelButtonStyle,
+      handleEmptySendQueued,
       handleCancelAgent,
       isCancellingAgent,
       isConnected,
+      queuedMessages.length,
+      appSettings.queueDrainBehavior,
       t,
     ],
   );
@@ -2676,6 +2772,7 @@ function ComposerContentImpl({
                   defaultSendBehavior={activeSendBehavior}
                   sendShortcut={appSettings.sendShortcut}
                   onQueue={handleQueue}
+                  onSendQueued={handleEmptySendQueued}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}
                   onSelectionChange={handleSelectionChange}
@@ -2786,6 +2883,20 @@ const styles = StyleSheet.create((theme: Theme) => ({
     backgroundColor: theme.colors.palette.red[600],
     alignItems: "center",
     justifyContent: "center",
+  },
+  sendQueueButton: {
+    minWidth: 104,
+    height: TOOLBAR_DISC_SIZE,
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sendQueueButtonLabel: {
+    color: theme.colors.accentForeground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
   },
   rightControls: {
     flexDirection: "row",

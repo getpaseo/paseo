@@ -149,6 +149,7 @@ export const en = {
       sendAndInterrupt: "Send and interrupt",
       sendAndSteer: "Send and steer",
       sendMessage: "Send message",
+      sendQueue: "Send queue",
       longPressToQueue: "Long press to queue",
       longPressToSendNow: "Long press to send now",
       queue: "Queue",
@@ -2809,6 +2810,14 @@ export const en = {
           interrupt: "Interrupt",
           steer: "Steer",
           queue: "Queue",
+        },
+      },
+      queueDrain: {
+        label: "Queue sending",
+        description: "When queued messages are sent, send them all together or one at a time",
+        options: {
+          all: "Send all queued",
+          next: "Send next queued",
         },
       },
       sendShortcut: {

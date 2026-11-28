@@ -39,6 +39,7 @@ export { APP_SETTINGS_KEY } from "./keys";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
 
 export type SendShortcut = "enter" | "mod-enter";
+export type QueueDrainBehavior = "all" | "next";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 export type ReleaseChannel = "stable" | "beta";
@@ -117,6 +118,7 @@ export interface AppSettings {
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
   sendShortcut: SendShortcut;
+  queueDrainBehavior: QueueDrainBehavior;
   filePanelAssociations: Record<string, string>;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
@@ -153,7 +155,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: DEFAULT_THEME_PREFERENCE,
   pluginThemeId: null,
   language: "system",
-  sendBehavior: "steer",
+  sendBehavior: "queue",
   serviceUrlBehavior: "ask",
   terminalScrollbackLines: DEFAULT_TERMINAL_SCROLLBACK_LINES,
   uiFontFamily: "",
@@ -175,7 +177,8 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   chatDisplay: "collapseTurns",
   chatOutlineEnabled: true,
   vimKeybindings: false,
-  sendShortcut: "enter",
+  sendShortcut: "mod-enter",
+  queueDrainBehavior: "all",
   filePanelAssociations: {},
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
@@ -235,7 +238,7 @@ const StoredAppSettingsSchema = z
     language: z
       .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
       .catch("system"),
-    sendBehavior: z.enum(["interrupt", "steer", "queue"]).catch("steer"),
+    sendBehavior: z.enum(["interrupt", "steer", "queue"]).catch("queue"),
     serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).catch("ask"),
     terminalScrollbackLines: clampedNumber(
       MIN_TERMINAL_SCROLLBACK_LINES,
@@ -284,7 +287,8 @@ const StoredAppSettingsSchema = z
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
     vimKeybindings: z.boolean().catch(false),
-    sendShortcut: z.enum(["enter", "mod-enter"]).catch("enter"),
+    sendShortcut: z.enum(["enter", "mod-enter"]).catch("mod-enter"),
+    queueDrainBehavior: z.enum(["all", "next"]).catch("all"),
     filePanelAssociations: z.record(z.string(), z.string()).catch({}),
     openInSidePane: z
       .object({

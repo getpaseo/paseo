@@ -153,6 +153,7 @@ export const fr: TranslationResources = {
       sendAndInterrupt: "Envoyer et interrompre",
       sendAndSteer: "Envoyer et réorienter",
       sendMessage: "Envoyer le message",
+      sendQueue: "Envoyer la file",
       longPressToQueue: "Appui long pour mettre en file d’attente",
       longPressToSendNow: "Appui long pour envoyer maintenant",
       queue: "Mettre en file d’attente",
@@ -2739,6 +2740,11 @@ export const fr: TranslationResources = {
           steer: "Réorienter",
           queue: "File d’attente",
         },
+      },
+      queueDrain: {
+        label: "Envoi de la file",
+        description: "Envoyez les messages en file ensemble ou un par un",
+        options: { all: "Envoyer toute la file", next: "Envoyer le suivant" },
       },
       sendShortcut: {
         label: "Raccourci d’envoi",

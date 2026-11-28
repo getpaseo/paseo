@@ -152,6 +152,7 @@ export const ja: TranslationResources = {
       sendAndInterrupt: "送信して中断",
       sendAndSteer: "送信して指示を追加",
       sendMessage: "メッセージを送信",
+      sendQueue: "キューを送信",
       longPressToQueue: "長押しでキューに追加",
       longPressToSendNow: "長押しで今すぐ送信",
       queue: "キュー",
@@ -2702,6 +2703,11 @@ export const ja: TranslationResources = {
           steer: "指示",
           queue: "キュー",
         },
+      },
+      queueDrain: {
+        label: "キューの送信",
+        description: "キュー内のメッセージをまとめて送信するか、1件ずつ送信するかを選択します",
+        options: { all: "キューをすべて送信", next: "次のメッセージを送信" },
       },
       sendShortcut: {
         label: "送信ショートカット",

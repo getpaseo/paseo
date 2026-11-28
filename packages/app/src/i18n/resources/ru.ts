@@ -152,6 +152,7 @@ export const ru: TranslationResources = {
       sendAndInterrupt: "Отправить и прервать",
       sendAndSteer: "Отправить и направить",
       sendMessage: "Отправить сообщение",
+      sendQueue: "Отправить очередь",
       longPressToQueue: "Удерживайте, чтобы поставить в очередь",
       longPressToSendNow: "Удерживайте, чтобы отправить сейчас",
       queue: "Очередь",
@@ -2725,6 +2726,11 @@ export const ru: TranslationResources = {
           steer: "Направить",
           queue: "Поставить в очередь",
         },
+      },
+      queueDrain: {
+        label: "Отправка очереди",
+        description: "Отправлять сообщения из очереди все сразу или по одному",
+        options: { all: "Отправить всю очередь", next: "Отправить следующее" },
       },
       sendShortcut: {
         label: "Сочетание клавиш для отправки",

@@ -151,6 +151,7 @@ export const ar: TranslationResources = {
       sendAndInterrupt: "إرسال ومقاطعة",
       sendAndSteer: "إرسال وتوجيه",
       sendMessage: "أرسل رسالة",
+      sendQueue: "إرسال قائمة الانتظار",
       longPressToQueue: "اضغط مطولًا لإضافتها إلى الطابور",
       longPressToSendNow: "اضغط مطولًا للإرسال الآن",
       queue: "طابور",
@@ -2712,6 +2713,11 @@ export const ar: TranslationResources = {
           steer: "توجيه",
           queue: "طابور",
         },
+      },
+      queueDrain: {
+        label: "إرسال قائمة الانتظار",
+        description: "عند إرسال الرسائل في قائمة الانتظار، أرسلها معًا أو رسالة واحدة في كل مرة",
+        options: { all: "إرسال كل الرسائل المنتظرة", next: "إرسال الرسالة التالية" },
       },
       sendShortcut: {
         label: "اختصار الإرسال",

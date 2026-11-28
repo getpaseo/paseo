@@ -47,6 +47,7 @@ import {
   type KeyValueStorage,
   type ReleaseChannel,
   type SendBehavior,
+  type QueueDrainBehavior,
   type SendShortcut,
   type ServiceUrlBehavior,
   type Settings,
@@ -61,6 +62,7 @@ export {
 } from "@getpaseo/protocol/notification-preferences";
 export {
   APP_SETTINGS_KEY,
+  APP_SETTINGS_QUERY_KEY,
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
@@ -94,6 +96,7 @@ export type {
   KeyValueStorage,
   ReleaseChannel,
   SendBehavior,
+  QueueDrainBehavior,
   SendShortcut,
   ServiceUrlBehavior,
   Settings,

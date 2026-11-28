@@ -1,11 +1,17 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsCard, SettingsSection, SettingsSelect } from "@/components/settings";
-import { useAppSettings, type SendShortcut, type SendBehavior } from "@/hooks/use-settings";
+import {
+  useAppSettings,
+  type SendShortcut,
+  type SendBehavior,
+  type QueueDrainBehavior,
+} from "@/hooks/use-settings";
 import { useHardwareKeyboardPresent, supportsConfigurableComposerSendKeys } from "@/keyboard";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 
 const SEND_BEHAVIORS: readonly SendBehavior[] = ["interrupt", "steer", "queue"];
+const QUEUE_DRAIN_BEHAVIORS: readonly QueueDrainBehavior[] = ["all", "next"];
 
 export function SendingSection() {
   const { t } = useTranslation();
@@ -36,6 +42,18 @@ export function SendingSection() {
     (sendShortcut: SendShortcut) => void updateSettings({ sendShortcut }),
     [updateSettings],
   );
+  const queueDrainOptions = useMemo(
+    () =>
+      QUEUE_DRAIN_BEHAVIORS.map((value) => ({
+        value,
+        label: t(`settings.general.queueDrain.options.${value}`),
+      })),
+    [t],
+  );
+  const changeQueueDrainBehavior = useCallback(
+    (queueDrainBehavior: QueueDrainBehavior) => void updateSettings({ queueDrainBehavior }),
+    [updateSettings],
+  );
   return (
     <SettingsSection title={t("settings.general.sending")}>
       <SettingsCard>
@@ -58,6 +76,13 @@ export function SendingSection() {
           value={settings.sendBehavior}
           options={options}
           onValueChange={change}
+        />
+        <SettingsSelect
+          label={t("settings.general.queueDrain.label")}
+          hint={t("settings.general.queueDrain.description")}
+          value={settings.queueDrainBehavior}
+          options={queueDrainOptions}
+          onValueChange={changeQueueDrainBehavior}
         />
       </SettingsCard>
     </SettingsSection>
