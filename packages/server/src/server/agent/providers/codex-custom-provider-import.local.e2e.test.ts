@@ -191,4 +191,62 @@ describe("Codex custom provider import list", () => {
     },
     120_000,
   );
+
+  test("lists and imports an archived custom provider session", async () => {
+    const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-home-"));
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-cwd-"));
+    cleanups.push(() => rmSync(codexHome, { recursive: true, force: true }));
+    cleanups.push(() => rmSync(cwd, { recursive: true, force: true }));
+    const { baseUrl, server, requestCount } = await startResponsesEndpoint();
+    cleanups.push(() => closeServer(server));
+
+    const logger = createTestLogger();
+    const customCodex = new CodexAppServerAgentClient(
+      logger,
+      { env: { CODEX_HOME: codexHome, OPENAI_BASE_URL: baseUrl, OPENAI_API_KEY: "test-key" } },
+      { customProvider: { id: "my-codex", label: "My Codex", extends: "codex" } },
+    );
+    const stockCodex = new CodexAppServerAgentClient(logger, { env: { CODEX_HOME: codexHome } });
+
+    const session = await customCodex.createSession({
+      provider: "codex",
+      cwd,
+      model: "mock-model",
+    });
+    try {
+      await session.run("hello from the custom provider");
+    } finally {
+      await session.close();
+    }
+
+    const customSessions = await customCodex.listImportableSessions({ cwd });
+    const stockSessions = await stockCodex.listImportableSessions({ cwd });
+
+    expect(customSessions.map((entry) => entry.firstPromptPreview)).toEqual([
+      "hello from the custom provider",
+    ]);
+    expect(stockSessions).toEqual([]);
+
+    await customCodex.archiveNativeSession({
+      provider: "codex",
+      sessionId: customSessions[0].providerHandleId,
+    });
+    const archivedSessions = await customCodex.listImportableSessions({ cwd });
+    expect(archivedSessions.map((entry) => entry.providerHandleId)).toEqual([
+      customSessions[0].providerHandleId,
+    ]);
+
+    const config = { provider: "codex", cwd, model: "mock-model" };
+    const imported = await customCodex.importSession(
+      { providerHandleId: customSessions[0].providerHandleId, cwd },
+      { config, storedConfig: config },
+    );
+    const requestsBeforeImportedTurn = requestCount();
+    try {
+      await imported.session.run("hello again after import");
+    } finally {
+      await imported.session.close();
+    }
+    expect(requestCount()).toBeGreaterThan(requestsBeforeImportedTurn);
+  }, 120_000);
 });
