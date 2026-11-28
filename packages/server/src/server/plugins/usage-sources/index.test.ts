@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { UsageSourceRegistry } from "./index.js";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
@@ -1857,13 +1857,53 @@ test("an observation without usage refetches its account at most once a minute a
     await new Promise((resolve) => setImmediate(resolve));
   };
   await observeNothing(10_000);
-  await observeNothing(69_999);
+  await observeNothing(69_000);
   await observeNothing(70_000);
   expect(fetched.filter((input) => input === "work")).toEqual(["work", "work", "work"]);
   expect(announced).toEqual([
     `claude:work@${new Date(10_000).toISOString()}`,
     `claude:work@${new Date(70_000).toISOString()}`,
   ]);
+});
+
+test("a throttled refetch schedules one trailing refetch at the end of the minute window", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date("2026-11-28T00:00:00.000Z"));
+    const { registry, fetched } = observedUsageRegistry(() => Date.now());
+    const announced: string[] = [];
+    const unsubscribe = registry.subscribe((entry) => announced.push(entry.fetchedAt));
+    await registry.listReports();
+
+    vi.advanceTimersByTime(10_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+
+    // Two turns finish inside the 60s throttle window: neither fetches immediately, and they
+    // coalesce into a single trailing refetch when the 60s window expires.
+    vi.advanceTimersByTime(20_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    vi.advanceTimersByTime(15_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(24_999);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(3);
+    expect(announced).toHaveLength(2);
+
+    // If every listener unsubscribes before a trailing timer fires, it skips the fetch.
+    vi.advanceTimersByTime(10_000);
+    await registry.observeUsage("working", { sourceId: "claude", windows: [] });
+    unsubscribe();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetched.filter((input) => input === "work")).toHaveLength(3);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("with no app listening, an observation neither fetches nor discovers reports", async () => {

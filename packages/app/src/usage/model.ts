@@ -103,6 +103,7 @@ export function applyPushedReport(
     shown.defaultEnabled === undefined
       ? pushed
       : { ...pushed, defaultEnabled: shown.defaultEnabled };
+  if (laterFetched(shown, next) === shown) return reports;
   return replaceReport(reports, pushed.id, next);
 }
 

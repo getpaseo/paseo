@@ -259,9 +259,10 @@ describe("applyPushedReport", () => {
     expect(applyPushedReport(undefined, pushed)).toBeUndefined();
   });
 
-  it("keeps a copy fetched after the push", () => {
+  it("keeps a copy fetched after the push without replacing the list reference", () => {
     const newer = { ...entry({}), fetchedAt: "2026-01-01T00:06:00.000Z" };
-    expect(applyPushedReport([newer], pushed)).toEqual([newer]);
+    const reports = [newer];
+    expect(applyPushedReport(reports, pushed)).toBe(reports);
   });
 
   it("keeps the listed copy's defaultEnabled hint", () => {

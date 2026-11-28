@@ -168,10 +168,18 @@ function useLiveUsageReports(serverId: string | null, enabled: boolean): void {
         if (message.type !== "status") return;
         const parsed = UsageReportChangedStatusPayloadSchema.safeParse(message.payload);
         if (!parsed.success) return;
-        queryClient.setQueriesData<UsageReportEntry[]>(
-          { queryKey: hostUsageQueryKey(serverId) },
-          (reports) => applyPushedReport(reports, parsed.data.report),
-        );
+        for (const query of queryClient
+          .getQueryCache()
+          .findAll({ queryKey: hostUsageQueryKey(serverId) })) {
+          const current = query.state.data as UsageReportEntry[] | undefined;
+          const next = applyPushedReport(current, parsed.data.report);
+          if (!next || next === current) continue;
+          // Preserve `dataUpdatedAt` so pushing one source never postpones the poll schedule
+          // (or failed-report retry) of other sources in the same list.
+          queryClient.setQueryData<UsageReportEntry[]>(query.queryKey, next, {
+            updatedAt: query.state.dataUpdatedAt,
+          });
+        }
       },
     });
     return () => {

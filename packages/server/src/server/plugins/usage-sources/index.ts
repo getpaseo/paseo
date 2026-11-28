@@ -117,6 +117,10 @@ export class UsageSourceRegistry {
     { sessionKey: string; reports: Promise<Map<string, KnownReport>> }
   >();
   private readonly observedRefetchAt = new Map<string, number>();
+  private readonly observedRefetchTimers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; known: KnownReport }
+  >();
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -143,6 +147,11 @@ export class UsageSourceRegistry {
     deletePrefixed(this.pending, prefix);
     deletePrefixed(this.failures, prefix);
     deletePrefixed(this.observedRefetchAt, prefix);
+    for (const [key, entry] of this.observedRefetchTimers) {
+      if (!key.startsWith(prefix)) continue;
+      clearTimeout(entry.timer);
+      this.observedRefetchTimers.delete(key);
+    }
     this.observedAgents.clear();
   }
 
@@ -225,7 +234,35 @@ export class UsageSourceRegistry {
   private refetchObserved(id: string, known: KnownReport): void {
     const last = this.observedRefetchAt.get(id);
     const now = this.now();
-    if (last !== undefined && now - last < OBSERVED_REFETCH_INTERVAL_MS) return;
+    const remaining = last === undefined ? 0 : OBSERVED_REFETCH_INTERVAL_MS - (now - last);
+    if (remaining > 0) {
+      const existing = this.observedRefetchTimers.get(id);
+      if (existing) {
+        existing.known = known;
+        return;
+      }
+      const pending = {
+        known,
+        timer: setTimeout(() => {
+          this.observedRefetchTimers.delete(id);
+          if (
+            this.listeners.size === 0 ||
+            this.sources.get(pending.known.source.id) !== pending.known.source
+          ) {
+            return;
+          }
+          this.refetchObserved(id, this.known.get(id) ?? pending.known);
+        }, remaining),
+      };
+      pending.timer.unref?.();
+      this.observedRefetchTimers.set(id, pending);
+      return;
+    }
+    const existing = this.observedRefetchTimers.get(id);
+    if (existing) {
+      clearTimeout(existing.timer);
+      this.observedRefetchTimers.delete(id);
+    }
     this.observedRefetchAt.set(id, now);
     void this.fetchId(id, known, true)
       .then((entry) => this.announce(presentReport({ entry, known })))

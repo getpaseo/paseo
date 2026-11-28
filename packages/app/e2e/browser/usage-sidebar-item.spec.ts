@@ -721,6 +721,77 @@ test("pushed status.usage_report_changed updates sidebar summary and open Usage 
   expect(usage.listRequests()).toEqual(requestsBeforePush);
 });
 
+test("a pushed report for one source does not postpone the five-minute poll of other sources", async ({
+  page,
+}) => {
+  const [claude, codex] = claudeAndCodexReports();
+  let codexUsedPct = 7;
+  let listFetchedAt = "2026-11-28T10:00:00.000Z";
+  const usage = await installUsageReportsFixture(page, {
+    lists: [
+      () => [
+        {
+          ...claude!,
+          fetchedAt: listFetchedAt,
+          report: {
+            status: "available",
+            windows: [
+              { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 31 },
+            ],
+          },
+        },
+        {
+          ...codex!,
+          fetchedAt: listFetchedAt,
+          report: {
+            status: "available",
+            windows: [
+              {
+                id: "five_hour",
+                label: "Session",
+                shortLabel: "5h",
+                summary: true,
+                usedPct: codexUsedPct,
+              },
+            ],
+          },
+        },
+      ],
+    ],
+  });
+  await page.clock.install();
+  await page.setViewportSize(WIDE);
+  await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+  await gotoAppShell(page);
+  await expectPinnedUsage(page, ["31% 5h", "7% 5h"]);
+  await usage.waitForUsageReportSubscription();
+  const initialRequests = usage.listRequests();
+
+  // Push a Claude update 2 minutes into the 5-minute poll window.
+  await page.clock.fastForward(2 * 60_000);
+  const pushedAt = "2026-11-28T10:02:00.000Z";
+  usage.pushReportUpdate({
+    ...claude!,
+    fetchedAt: pushedAt,
+    successfulAt: pushedAt,
+    report: {
+      status: "available",
+      windows: [
+        { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 64 },
+      ],
+    },
+  });
+  await expectPinnedUsage(page, ["64% 5h", "7% 5h"]);
+  expect(usage.listRequests()).toEqual(initialRequests);
+
+  // Only 3 minutes later (t = 5m from initial fetch), the scheduled poll still runs for Codex.
+  codexUsedPct = 19;
+  listFetchedAt = "2026-11-28T10:05:00.000Z";
+  await page.clock.fastForward(3 * 60_000);
+  await expectPinnedUsage(page, ["31% 5h", "19% 5h"]);
+  expect(usage.listRequests()).toHaveLength(initialRequests.length + 1);
+});
+
 test("hiding and showing the sidebar preserves the five-minute poll schedule and failed reports retry after one minute", async ({
   page,
 }) => {
