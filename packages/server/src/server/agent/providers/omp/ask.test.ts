@@ -308,6 +308,32 @@ describe("OMP ask RPC UI", () => {
       }),
     );
   });
+  test("maps a select without the other row to the ask question with descriptions", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    // The field-by-field fallback for `{ html }` asks emits one select per
+    // form field; radio-only fields have no "Other (type your own)" row.
+    startAsk(omp, false);
+    select(omp, "select-1", "Which colors?", ["Red", "Blue"]);
+
+    expect(omp.pendingPermissions()).toHaveLength(1);
+    expect(omp.pendingPermissions()[0]).toMatchObject({
+      kind: "question",
+      input: {
+        questions: [
+          {
+            question: "Which colors?",
+            multiSelect: false,
+            allowOther: false,
+            options: [
+              { label: "Red", description: "Warm" },
+              { label: "Blue", description: "Cool" },
+            ],
+          },
+        ],
+      },
+    });
+  });
 });
 
 function form(omp: OmpHarness, id: string, html: string | undefined): void {
