@@ -149,6 +149,7 @@ function HomeBlock({
           leading={sectionLeading}
           flush
           style={styles.block}
+          testID={block.item.testID ? `${block.item.testID}-section` : undefined}
         >
           <SettingsCard>
             <PillsControl item={block.item} disabled={disabled} />
@@ -162,6 +163,7 @@ function HomeBlock({
           leading={sectionLeading}
           flush
           style={styles.block}
+          testID={block.item.testID ? `${block.item.testID}-section` : undefined}
         >
           <SettingsCard testID={block.item.testID}>
             {block.item.choices.map((choice) => (

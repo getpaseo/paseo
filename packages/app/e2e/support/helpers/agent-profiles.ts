@@ -684,7 +684,14 @@ export async function expectProfileReachableByScrolling(page: Page, name: string
 }
 
 export async function applyProfileFromPicker(page: Page, name: string): Promise<void> {
-  await profilePickerRow(page, name).click();
+  const row = profilePickerRow(page, name);
+  if (!(await row.isVisible().catch(() => false))) {
+    const profilesRail = pickerViewport(page).getByTestId("model-picker-rail-profiles");
+    if (await profilesRail.isVisible().catch(() => false)) {
+      await profilesRail.click();
+    }
+  }
+  await row.click();
   await expect(pickerViewport(page)).toHaveCount(0, { timeout: 30_000 });
 }
 

@@ -30,7 +30,14 @@ test.use({
 const ACTIVE_SPEED_COLOR = "rgb(251, 191, 36)";
 const NORMAL_SPEED_COLOR = "rgb(113, 113, 122)";
 
+const COMPACT_SPEED_CONTROL = "agent-feature-service_tier";
+const COMPACT_SPEED_SECTION = `${COMPACT_SPEED_CONTROL}-section`;
+
 async function openSpeedSelector(page: Page): Promise<void> {
+  const compactSection = page.getByTestId(COMPACT_SPEED_SECTION);
+  if (await compactSection.isVisible().catch(() => false)) {
+    return;
+  }
   const speed = page.getByRole("button", { name: /^(Select speed|Speed: .+)$/ });
   const features = page.getByRole("button", { name: "Open agent features", exact: true });
   const modelSettings = page.getByRole("button", { name: /^Select model \(/ });
@@ -39,7 +46,12 @@ async function openSpeedSelector(page: Page): Promise<void> {
   });
   if (!(await speed.isVisible())) {
     if (await features.isVisible()) await features.click();
-    else await modelSettings.click();
+    else {
+      await modelSettings.click();
+      await expect(compactSection).toBeVisible({ timeout: 30_000 });
+      await expect(compactSection.getByText("Normal", { exact: true })).toBeVisible();
+      return;
+    }
   }
   await expect(speed).toBeVisible({ timeout: 30_000 });
   await speed.click();
@@ -47,6 +59,13 @@ async function openSpeedSelector(page: Page): Promise<void> {
 }
 
 async function selectSpeed(page: Page, label: string): Promise<void> {
+  const compactSection = page.getByTestId(COMPACT_SPEED_SECTION);
+  if (await compactSection.isVisible().catch(() => false)) {
+    const pill = compactSection.getByRole("button", { name: label, exact: true });
+    await pill.click();
+    await expect(pill).toHaveAttribute("aria-selected", "true");
+    return;
+  }
   await page.getByRole("button", { name: label, exact: true }).last().click();
   const toolbarTrigger = page.getByRole("button", { name: `Speed: ${label}`, exact: true });
   const sheetTrigger = page.getByRole("button", { name: "Select speed", exact: true });
@@ -56,6 +75,11 @@ async function selectSpeed(page: Page, label: string): Promise<void> {
 }
 
 async function expectSpeedIconColor(page: Page, color: string): Promise<void> {
+  const compactSection = page.getByTestId(COMPACT_SPEED_SECTION);
+  if (await compactSection.isVisible().catch(() => false)) {
+    await expect(compactSection.locator("svg").first()).toHaveCSS("stroke", color);
+    return;
+  }
   const trigger = page
     .getByRole("button", { name: /^(Speed: .+|Select speed)$/ })
     .filter({ visible: true });

@@ -847,5 +847,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   dock: {
     flex: 1,
+    flexDirection: "row",
   },
 }));

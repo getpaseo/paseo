@@ -119,7 +119,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     padding: 0,
-    height: 20,
+    minHeight: 20,
     // The browser's focus ring would sit inside the field's own focus border.
     // `outlineWidth` is typed on ViewStyle since RN 0.81 and is a no-op on
     // native, so this needs neither a cast nor a platform branch.
