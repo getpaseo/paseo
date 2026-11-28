@@ -20,6 +20,18 @@ import {
   HostsRouteClosedSchema,
 } from "./hosts.js";
 import {
+  TunnelProvidersListRequestSchema,
+  TunnelProvidersListResponseSchema,
+  TunnelExposuresListRequestSchema,
+  TunnelExposuresListResponseSchema,
+  TunnelExposureChangedSchema,
+  TunnelExposureOpenRequestSchema,
+  TunnelExposureOpenResponseSchema,
+  TunnelExposureCloseRequestSchema,
+  TunnelExposureCloseResponseSchema,
+} from "./tunnels.js";
+export * from "./tunnels.js";
+import {
   PluginRegistryIdSchema,
   PluginRegistryIdentitySchema,
   PluginListingDetailSchema,
@@ -3627,6 +3639,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HostsRouteOpenRequestSchema,
   HostsRouteFrameRequestSchema,
   HostsRouteCloseRequestSchema,
+  TunnelProvidersListRequestSchema,
+  TunnelExposuresListRequestSchema,
+  TunnelExposureOpenRequestSchema,
+  TunnelExposureCloseRequestSchema,
   NetworkTunnelCreateTicketRequestSchema,
 
   BrowserHostRegisterRequestSchema,
@@ -4130,6 +4146,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginSubscriptions: z.boolean().optional(),
         // COMPAT(pluginNotifications): added in v0.18.0, remove gate after 2027-06-01.
         pluginNotifications: z.boolean().optional(),
+        // COMPAT(tunnelProviders): added in v0.18.0, remove gate after 2027-06-01.
+        tunnelProviders: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(idleRuntimeCleanupSetting): added in v0.13.0, remove gate after 2027-04-26.
@@ -7821,6 +7839,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HostsRouteOpenResponseSchema,
   HostsRouteFrameSchema,
   HostsRouteClosedSchema,
+  TunnelProvidersListResponseSchema,
+  TunnelExposuresListResponseSchema,
+  TunnelExposureChangedSchema,
+  TunnelExposureOpenResponseSchema,
+  TunnelExposureCloseResponseSchema,
   NetworkTunnelCreateTicketResponseSchema,
 
   BrowserHostRegisterResponseSchema,

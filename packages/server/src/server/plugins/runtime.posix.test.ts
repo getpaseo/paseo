@@ -2231,6 +2231,7 @@ const examples = (await readdir(examplesDirectory, { withFileTypes: true }))
 const exampleDaemonVersions: Record<string, string> = {
   "sidebar-views": "0.16.0",
   notifications: "0.18.0-beta.1",
+  "tunnel-provider": "0.18.0-beta.1",
 };
 
 it.each(examples)("builds and loads the %s plugin example", async (example) => {

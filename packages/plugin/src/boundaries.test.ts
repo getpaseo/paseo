@@ -72,22 +72,33 @@ function boundaryViolations(entry: string, runtime: "shared" | "server" | "clien
   return violations;
 }
 
+const typeCheckConfigPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
+const typeCheckOptions = ts.parseJsonConfigFileContent(
+  ts.readConfigFile(typeCheckConfigPath, ts.sys.readFile).config,
+  ts.sys,
+  path.dirname(typeCheckConfigPath),
+).options;
+const typeCheckFile = path.resolve(
+  sourceDirectory,
+  "../../../plugin-examples/skill-example/client/example.tsx",
+);
+// Every snippet compiles against the same SDK, library, and dependency declarations. Parsing them
+// once keeps each check to the snippet itself; a fresh parse per check can pass the test timeout
+// on a slow runner.
+const sharedSourceFiles = new Map<string, ts.SourceFile | undefined>();
+
 function typeErrors(code: string): string[] {
-  const configPath = path.resolve(sourceDirectory, "../tsconfig.examples.json");
-  const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(configPath));
-  const file = path.resolve(
-    sourceDirectory,
-    "../../../plugin-examples/skill-example/client/example.tsx",
-  );
-  const host = ts.createCompilerHost(options);
+  const host = ts.createCompilerHost(typeCheckOptions);
   const getSourceFile = host.getSourceFile;
-  host.getSourceFile = (name, language, ...rest) =>
-    path.resolve(name) === file
-      ? ts.createSourceFile(name, code, language)
-      : getSourceFile.call(host, name, language, ...rest);
-  host.fileExists = (name) => path.resolve(name) === file || ts.sys.fileExists(name);
-  const program = ts.createProgram([file], options, host);
+  host.getSourceFile = (name, language, ...rest) => {
+    if (path.resolve(name) === typeCheckFile) return ts.createSourceFile(name, code, language);
+    if (!sharedSourceFiles.has(name)) {
+      sharedSourceFiles.set(name, getSourceFile.call(host, name, language, ...rest));
+    }
+    return sharedSourceFiles.get(name);
+  };
+  host.fileExists = (name) => path.resolve(name) === typeCheckFile || ts.sys.fileExists(name);
+  const program = ts.createProgram([typeCheckFile], typeCheckOptions, host);
   return ts
     .getPreEmitDiagnostics(program)
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
@@ -774,6 +785,79 @@ describe("plugin notifications SDK boundary", () => {
         };
         const cleanup = client.onNotificationOpen(handler);
         return cleanup;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("tunnel provider SDK boundary", () => {
+  it("types tunnel provider registration, status union, lifecycle events, and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        TunnelEvent,
+        TunnelOpenContext,
+        TunnelProviderRegistration,
+        TunnelProviderStatus,
+        TunnelStability,
+        TunnelStatusContext,
+        TunnelTarget,
+      } from "@getpaseo/plugin/server";
+
+      export default function contribute(server: PluginServerContext) {
+        const provider: TunnelProviderRegistration = {
+          id: "acme-tunnel",
+          label: "Acme Tunnel",
+          description: "Expose local HTTP targets through Acme.",
+          docsUrl: "https://example.com/docs/tunnel",
+          async status({ paseo, signal }: TunnelStatusContext): Promise<TunnelProviderStatus> {
+            void paseo;
+            if (signal.aborted) {
+              return {
+                status: "unavailable",
+                reason: "Probe aborted",
+                installUrl: "https://example.com/install",
+                fixHint: "Retry the probe.",
+              };
+            }
+            return { status: "available", detail: "v1.0.0" };
+          },
+          async open(target: TunnelTarget, { paseo, signal, report }: TunnelOpenContext) {
+            const id: string = target.id;
+            const host: string = target.host;
+            const port: number = target.port;
+            const label: string | undefined = target.label;
+            const slug: string | undefined = target.slug;
+            void [id, host, port, label, slug, paseo];
+            // @ts-expect-error target fields are read-only
+            target.port = 8080;
+            const stability: TunnelStability = "ephemeral";
+            const connecting: TunnelEvent = { type: "connecting" };
+            const ready: TunnelEvent = {
+              type: "ready",
+              url: "https://demo.example.com",
+              stability,
+            };
+            const reconnecting: TunnelEvent = { type: "reconnecting", reason: "network changed" };
+            const error: TunnelEvent = { type: "error", message: "dropped", recoverable: true };
+            const closed: TunnelEvent = { type: "closed", reason: "aborted" };
+            report(connecting);
+            report(ready);
+            report(reconnecting);
+            report(error);
+            report(closed);
+            // @ts-expect-error ready event requires a url
+            report({ type: "ready" });
+            // @ts-expect-error status requires a valid discriminant
+            const badStatus: TunnelProviderStatus = { available: true };
+            void badStatus;
+            void signal;
+          },
+        };
+        const dispose: () => void = server.registerTunnelProvider(provider);
+        return dispose;
       }
     `),
     ).toEqual([]);

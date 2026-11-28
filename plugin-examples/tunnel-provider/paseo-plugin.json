@@ -1,0 +1,6 @@
+{
+  "id": "tunnel-provider",
+  "name": "Custom tunnel provider",
+  "description": "Expose local HTTP endpoints through a custom tunnel binary.",
+  "requirements": { "paseo": ">=0.18.0-beta.1" }
+}

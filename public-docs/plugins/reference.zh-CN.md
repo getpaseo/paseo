@@ -661,6 +661,83 @@ export default function contribute(server: PluginServerContext) {
 
 完整插件见 [worktrunk 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)。
 
+## 隧道 Provider {#tunnel-providers}
+
+**需要 Paseo 0.18**。在服务端入口 `index.server.ts` 中调用 `server.registerTunnelProvider()` 注册隧道 Provider，可将本地 HTTP `host:port` 目标转为公网 HTTPS URL。注册返回一个清理函数，调用后会注销该 Provider 并关闭其所有活动的暴露。
+
+```ts
+import {
+  execCommand,
+  spawnProcess,
+  terminateProcess,
+  type PluginServerContext,
+} from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerTunnelProvider({
+    id: "custom-tunnel",
+    label: "Custom Tunnel",
+    description: "Expose local HTTP targets through a custom tunnel binary.",
+    docsUrl: "https://example.com/docs/custom-tunnel",
+    async status({ signal }) {
+      try {
+        const { stdout } = await execCommand("custom-tunnel", ["--version"], {
+          signal,
+          timeout: 5_000,
+        });
+        return { status: "available", detail: stdout.trim() || undefined };
+      } catch {
+        return {
+          status: "unavailable",
+          reason: "custom-tunnel is not installed or not on PATH.",
+          installUrl: "https://example.com/install",
+          fixHint: "Install custom-tunnel and make sure that it is on PATH.",
+        };
+      }
+    },
+    async open(target, { report, signal }) {
+      report({ type: "connecting" });
+      const child = spawnProcess("custom-tunnel", ["http", `${target.host}:${target.port}`], {
+        stdio: "pipe",
+      });
+      signal.addEventListener(
+        "abort",
+        () => {
+          void terminateProcess(child, "SIGTERM").catch(() => undefined);
+        },
+        { once: true },
+      );
+      let ready = false;
+      child.stderr.on("data", (chunk) => {
+        if (ready || signal.aborted) return;
+        const match = /https:\/\/[a-z0-9.-]+/i.exec(String(chunk));
+        if (!match) return;
+        ready = true;
+        report({ type: "ready", url: match[0], stability: "ephemeral" });
+      });
+      await new Promise<void>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", () => resolve());
+      });
+      report({ type: "closed", reason: signal.aborted ? "aborted" : undefined });
+    },
+  });
+}
+```
+
+- `id` 必须匹配 `/^[a-z][a-z0-9._-]*$/`，且在已安装插件和内置插件之间唯一。
+- `status({ paseo, signal })` 检查该 Provider 能否在此主机上打开隧道。返回 `{ status: "available", detail? }` 或 `{ status: "unavailable", reason, installUrl?, fixHint? }`。
+- `open(target, { paseo, signal, report })` 负责一个暴露，直到 `signal` 中止或隧道关闭。`target` 包含 `{ id, host, port, label?, slug? }`。
+- 暴露状态变化时调用 `report(event)`：
+  - `{ type: "connecting", detail? }`
+  - `{ type: "ready", url, stability?: "ephemeral" | "stable", detail? }`
+  - `{ type: "reconnecting", reason? }`
+  - `{ type: "error", message, recoverable?: boolean }`
+  - `{ type: "closed", reason? }`
+- 隧道保持连接期间，`open()` 应保持挂起。`signal` 中止时，停止子进程或移除远程规则，报告 `{ type: "closed" }`，然后返回。如果 `open()` 抛出错误，或在报告 `ready` 之前退出，Paseo 会将该暴露标记为失败并将其完整移除。
+
+完整插件见 [tunnel-provider 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/tunnel-provider)。
+
 ## 入口与清理 {#entry-point-and-cleanup}
 
 每个存在的入口都默认导出一个贡献函数，并返回清理函数。客户端入口接收 `PluginClientContext`；服务端入口接收 `PluginServerContext`。客户端注册方法返回幂等的移除函数，但标题栏按钮和 Composer 标签除外，它们返回 `{ update, remove }` 句柄。入口的清理函数会在 Paseo 移除剩余的注册之前运行。

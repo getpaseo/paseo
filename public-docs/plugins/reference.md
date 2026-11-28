@@ -863,6 +863,90 @@ export default function contribute(server: PluginServerContext) {
 
 See the complete [worktrunk example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk).
 
+## Tunnel providers {#tunnel-providers}
+
+**Requires Paseo 0.18.** Register a tunnel provider from `index.server.ts` with
+`server.registerTunnelProvider()` to turn a local HTTP `host:port` target into a public HTTPS URL.
+The registration returns a cleanup function that unregisters the provider and closes its active
+exposures.
+
+```ts
+import {
+  execCommand,
+  spawnProcess,
+  terminateProcess,
+  type PluginServerContext,
+} from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerTunnelProvider({
+    id: "custom-tunnel",
+    label: "Custom Tunnel",
+    description: "Expose local HTTP targets through a custom tunnel binary.",
+    docsUrl: "https://example.com/docs/custom-tunnel",
+    async status({ signal }) {
+      try {
+        const { stdout } = await execCommand("custom-tunnel", ["--version"], {
+          signal,
+          timeout: 5_000,
+        });
+        return { status: "available", detail: stdout.trim() || undefined };
+      } catch {
+        return {
+          status: "unavailable",
+          reason: "custom-tunnel is not installed or not on PATH.",
+          installUrl: "https://example.com/install",
+          fixHint: "Install custom-tunnel and make sure that it is on PATH.",
+        };
+      }
+    },
+    async open(target, { report, signal }) {
+      report({ type: "connecting" });
+      const child = spawnProcess("custom-tunnel", ["http", `${target.host}:${target.port}`], {
+        stdio: "pipe",
+      });
+      signal.addEventListener(
+        "abort",
+        () => {
+          void terminateProcess(child, "SIGTERM").catch(() => undefined);
+        },
+        { once: true },
+      );
+      let ready = false;
+      child.stderr.on("data", (chunk) => {
+        if (ready || signal.aborted) return;
+        const match = /https:\/\/[a-z0-9.-]+/i.exec(String(chunk));
+        if (!match) return;
+        ready = true;
+        report({ type: "ready", url: match[0], stability: "ephemeral" });
+      });
+      await new Promise<void>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", () => resolve());
+      });
+      report({ type: "closed", reason: signal.aborted ? "aborted" : undefined });
+    },
+  });
+}
+```
+
+- `id` must match `/^[a-z][a-z0-9._-]*$/` and must be unique across installed and built-in plugins.
+- `status({ paseo, signal })` checks whether the provider can open tunnels on this host. Return
+  `{ status: "available", detail? }` or `{ status: "unavailable", reason, installUrl?, fixHint? }`.
+- `open(target, { paseo, signal, report })` owns one exposure until `signal` aborts or the tunnel
+  closes. `target` carries `{ id, host, port, label?, slug? }`.
+- Call `report(event)` as the exposure changes state:
+  - `{ type: "connecting", detail? }`
+  - `{ type: "ready", url, stability?: "ephemeral" | "stable", detail? }`
+  - `{ type: "reconnecting", reason? }`
+  - `{ type: "error", message, recoverable?: boolean }`
+  - `{ type: "closed", reason? }`
+- Keep `open()` pending while the tunnel stays up. When `signal` aborts, stop child processes or
+  remote rules, report `{ type: "closed" }`, and resolve. If `open()` throws or exits before
+  reporting `ready`, Paseo fails the exposure and removes it cleanly.
+
+See the complete [tunnel-provider example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/tunnel-provider).
+
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries
