@@ -12,6 +12,9 @@ import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { resolvePluginPlatform } from "../platform";
+import type { AssistantTurnForkHandler } from "@/agent-stream/turn-footer";
+import { TimelineForkContext } from "../react-native/fork-menu";
+import { resolvePluginTimelineFork } from "./fork";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 
@@ -40,11 +43,15 @@ function PluginTimelineItemBody({
   item,
   serverId,
   theme,
+  supportsTimelineCursor = false,
+  onForkAssistantTurn,
 }: {
   agentId: string;
   item: PluginTimelineStreamItem;
   serverId: string;
   theme: PluginTheme;
+  supportsTimelineCursor?: boolean;
+  onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   const plugin = useInstalledPlugin(serverId, item.pluginId);
   const renderer = plugin?.timelineRenderers.find(
@@ -57,6 +64,11 @@ function PluginTimelineItemBody({
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
+
+  const onFork = useMemo(
+    () => resolvePluginTimelineFork({ item, supportsTimelineCursor, onForkAssistantTurn }),
+    [item, supportsTimelineCursor, onForkAssistantTurn],
+  );
 
   if (!plugin || !renderer || !parsed || !client) {
     return <TimelineItemUnavailable />;
@@ -79,7 +91,9 @@ function PluginTimelineItemBody({
   return (
     <SurfaceErrorBoundary installation={plugin} resetKey={item.data} Surface={Component}>
       <PluginInstallationProvider plugin={plugin}>
-        <Component {...props} />
+        <TimelineForkContext.Provider value={onFork}>
+          <Component {...props} />
+        </TimelineForkContext.Provider>
       </PluginInstallationProvider>
     </SurfaceErrorBoundary>
   );
@@ -91,6 +105,8 @@ export function PluginTimelineItemView(props: {
   agentId: string;
   item: PluginTimelineStreamItem;
   serverId: string;
+  supportsTimelineCursor?: boolean;
+  onForkAssistantTurn?: AssistantTurnForkHandler;
 }) {
   return <ThemedPluginTimelineItemBody {...props} uniProps={pluginThemeMapping} />;
 }

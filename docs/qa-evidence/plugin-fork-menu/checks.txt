@@ -1,0 +1,170 @@
+Plugin ForkMenu verification on macOS arm64, 2026-10-20.
+Base: ab6cdb7c896f6e79aaae1ce68b59ca44b1a9c19c
+Web: real Chromium + isolated daemon + deterministic mock provider.
+No installed host or production daemon was changed.
+iOS, Android, and Electron were not exercised.
+
+Focused unit run: npm exec --workspace=@getpaseo/app -- vitest run src/plugins/timeline/fork.test.ts src/agent-stream/turn-boundary.test.ts --bail=1
+Observed: Test Files 2 passed (2); Tests 13 passed (13).
+
+
+Regression with assistant identity retention removed (expected failure)
+
+
+ RUN  v4.1.7 <checkout>/packages/app
+
+ ❯ |unit| src/plugins/timeline/fork.test.ts (7 tests | 1 failed) 3ms
+     × forks an exploded row into tab using the original boundary 2ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (7)
+   Start at  11:17:40
+   Duration  96ms (transform 25ms, setup 18ms, import 16ms, tests 3ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/plugins/timeline/fork.test.ts > plugin timeline fork > forks an exploded row into tab using the original boundary
+AssertionError: expected null not to be null
+ ❯ src/plugins/timeline/fork.test.ts:46:26
+     44|           },
+     45|         });
+     46|         expect(fork).not.toBeNull();
+       |                          ^
+     47|         await fork?.(target);
+     48|       }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+
+SDK import boundaries
+
+
+ RUN  v4.1.7 <checkout>/packages/plugin
+
+
+ Test Files  1 passed (1)
+      Tests  51 passed (51)
+   Start at  11:18:47
+   Duration  281ms (transform 84ms, setup 0ms, import 193ms, tests 30ms, environment 0ms)
+
+
+
+Full workspace typecheck (exit 0)
+
+
+> paseo@0.12.0 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.12.0 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.12.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.12.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.12.0 typecheck
+> tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit
+
+
+> @getpaseo/protocol@0.12.0 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.12.0 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 225 session message validators
+
+> @getpaseo/protocol@0.12.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.12.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.12.0 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.12.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.12.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.12.0 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.12.0 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.12.0 typecheck
+> tsgo --noEmit
+
+
+
+Full lint (exit 0)
+
+
+> paseo@0.12.0 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 921ms on 4752 files with 177 rules using 15 threads.
+
+
+Full format (exit 0)
+
+
+> paseo@0.12.0 format
+> oxfmt .
+
+Finished in 786ms on 5095 files using 15 threads.
+
+
+Real-browser fork flows (exit 0)
+
+[metro] Starting project at <checkout>/packages/app
+[metro] Using src/app as the root directory for Expo Router.
+[metro] Experimental Expo Autolinking module resolver is enabled.
+[metro] React Compiler enabled
+[metro] Starting Metro Bundler
+[metro] Waiting on http://localhost:53536
+[metro] Logs for your project will appear below.
+[metro] Web Bundled 1400ms packages/app/index.ts (5606 modules)
+[e2e] Metro warmed on port 53536
+
+Running 2 tests using 1 worker
+
+(node:14044) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:14044) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[e2e] Worker 0 daemon started on port 53574, home: <temporary-home>
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 137ms packages/app/index.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+[metro] Web Bundled 29ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+  ✓  1 [browser] › e2e/browser/plugin-timeline.spec.ts:41:7 › forks a transformed reply into a new tab (11.4s)
+[metro] Web packages/app/index.ts ░░░░░░░░░░░░░░░░  0.0% (0/1)
+[metro] Web Bundled 161ms packages/app/index.ts (1 module)
+[metro] Web Bundled 3ms packages/app/src/attachments/web/indexeddb-attachment-store.ts (1 module)
+[metro]  LOG  [web] Logs will appear in the browser console
+  ✓  2 [browser] › e2e/browser/plugin-timeline.spec.ts:41:7 › forks a transformed reply into a new workspace (11.4s)
+[e2e] Worker 0 daemon stopped
+[e2e] Metro stopped
+
+  2 passed (32.5s)
