@@ -6,7 +6,9 @@ import type {
 import { modelDisplayLabel } from "../model-label.js";
 import type { OmpModel, OmpThinkingLevel } from "./rpc-types.js";
 
-export const DEFAULT_OMP_THINKING_LEVEL: OmpThinkingLevel = "medium";
+// What OMP runs at when a launch passes no --thinking and the model reports no
+// defaultLevel of its own.
+export const DEFAULT_OMP_THINKING_LEVEL: OmpThinkingLevel = "high";
 
 export const OMP_THINKING_OPTIONS: ReadonlyArray<{
   id: OmpThinkingLevel;
@@ -18,8 +20,8 @@ export const OMP_THINKING_OPTIONS: ReadonlyArray<{
   { id: "off", label: "Off", description: "No extra reasoning" },
   { id: "minimal", label: "Minimal", description: "Light reasoning" },
   { id: "low", label: "Low", description: "Faster reasoning" },
-  { id: "medium", label: "Medium", description: "Balanced reasoning", isDefault: true },
-  { id: "high", label: "High", description: "Deeper reasoning" },
+  { id: "medium", label: "Medium", description: "Balanced reasoning" },
+  { id: "high", label: "High", description: "Deeper reasoning", isDefault: true },
   { id: "xhigh", label: "XHigh", description: "Extra-high reasoning" },
   { id: "max", label: "Max", description: "Maximum reasoning" },
 ] as const;
@@ -55,6 +57,35 @@ export function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentMode
   };
 }
 
+type OmpThinkingOption = (typeof OMP_THINKING_OPTIONS)[number];
+
+function isPerModelThinkingLevel(value: string): value is OmpThinkingLevel {
+  return value !== "auto" && OMP_THINKING_OPTIONS.some((option) => option.id === value);
+}
+
+function thinkingRank(level: OmpThinkingLevel): number {
+  return OMP_THINKING_OPTIONS.findIndex((option) => option.id === level);
+}
+
+// OMP clamps a requested level to the closest effort the model reports, and the
+// lower effort wins a tie: "high" runs as "medium" on a [low, medium, xhigh] model.
+function clampThinkingLevel(
+  level: OmpThinkingLevel,
+  options: readonly OmpThinkingOption[],
+): OmpThinkingLevel | undefined {
+  const target = thinkingRank(level);
+  let best: OmpThinkingLevel | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const option of options) {
+    const distance = Math.abs(thinkingRank(option.id) - target);
+    if (distance < bestDistance) {
+      best = option.id;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
 function resolveOmpThinkingConfig(model: OmpModel): {
   thinkingOptions: AgentSelectOption[] | undefined;
   defaultThinkingOptionId: string | undefined;
@@ -71,7 +102,10 @@ function resolveOmpThinkingConfig(model: OmpModel): {
     };
   }
   const effortSet = new Set(efforts);
-  const filtered = OMP_THINKING_OPTIONS.filter((option) => effortSet.has(option.id));
+  // `auto` is a session-level OMP mode, never a per-model effort, so models do not list it.
+  const filtered = OMP_THINKING_OPTIONS.filter(
+    (option) => option.id !== "auto" && effortSet.has(option.id),
+  );
   if (filtered.length === 0) {
     // All reported efforts are unrecognized; fall back to the full set with the standard default.
     return {
@@ -80,12 +114,13 @@ function resolveOmpThinkingConfig(model: OmpModel): {
     };
   }
   const reportedDefault = model.thinking?.defaultLevel;
-  const defaultThinkingOptionId =
-    reportedDefault && filtered.some((option) => option.id === reportedDefault)
+  const preferredDefault =
+    reportedDefault && isPerModelThinkingLevel(reportedDefault)
       ? reportedDefault
-      : (filtered[0]?.id ?? DEFAULT_OMP_THINKING_LEVEL);
-  // `auto` is a session-level OMP mode, never a per-model effort, so models do not list it.
-  const options = [OMP_THINKING_OPTIONS[0], ...filtered.filter((option) => option.id !== "auto")];
+      : DEFAULT_OMP_THINKING_LEVEL;
+  const defaultThinkingOptionId =
+    clampThinkingLevel(preferredDefault, filtered) ?? DEFAULT_OMP_THINKING_LEVEL;
+  const options = [OMP_THINKING_OPTIONS[0], ...filtered];
   return {
     thinkingOptions: options.map((option) =>
       mapThinkingOption(option, option.id === defaultThinkingOptionId),
