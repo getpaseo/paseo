@@ -418,7 +418,10 @@ export interface WorkflowStore {
   completeStepAttempt(input: CompleteStepAttemptInput): Promise<WorkflowRunSnapshot>;
   transitionRun(input: TransitionRunInput): Promise<WorkflowRunSnapshot>;
 
-  listSuspendedWaits(kind?: StepWaitSpec["kind"]): Promise<readonly SuspendedWaitRecord[]>;
+  listSuspendedWaits(
+    kind?: StepWaitSpec["kind"],
+    options?: { readonly includePaused?: boolean },
+  ): Promise<readonly SuspendedWaitRecord[]>;
   findExpiredWaits(now: Date): Promise<readonly SuspendedWaitRecord[]>;
 
   publishWorkflowOutput(input: PublishedWorkflowOutput): Promise<readonly SuspendedWaitRecord[]>;

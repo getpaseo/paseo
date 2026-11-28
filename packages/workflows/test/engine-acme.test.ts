@@ -887,4 +887,204 @@ describe("fake acme integration end-to-end engine contract", () => {
       grant: { repo: "acme/widget", allowWrite: true },
     });
   });
+
+  it("honors pause across wait_workflow, integration waits, and gates, and replays wakes on resume", async () => {
+    const acme = createAcmeIntegration();
+    const clock = createFakeClock();
+    const gates = createFakeGateSink();
+
+    const waitWfIR = roundTripIR(
+      defineWorkflow({
+        id: "pause-wait-wf",
+        on: { "manual.run": {} },
+        initial: "wait_child",
+        steps: {
+          wait_child: step.waitWorkflow({
+            workflow: "child-wf",
+            outputKey: "k1",
+            on: { approved: terminal.done("child_approved") },
+          }),
+        },
+      }),
+    );
+
+    const waitCiIR = roundTripIR(
+      defineWorkflow({
+        id: "pause-wait-ci",
+        on: { "manual.run": {} },
+        initial: "wait_ci",
+        steps: {
+          wait_ci: step.integration("acme.wait_ci", {
+            input: { repo: "acme/widget", pr_number: 5, head_sha: "sha_p" },
+            on: { green: terminal.done("ci_green") },
+          }),
+        },
+      }),
+    );
+
+    const gateIR = roundTripIR(
+      defineWorkflow({
+        id: "pause-gate",
+        on: { "manual.run": {} },
+        initial: "ask",
+        steps: {
+          ask: step.gate({
+            title: "Approve while paused?",
+            choices: [{ id: "ok", label: "OK" }],
+            on: { ok: "record" },
+          }),
+          record: step.integration("acme.close_issue", {
+            input: {
+              repo: "acme/widget",
+              issue_number: 5,
+              comment: tpl`choice=${ref("gate.choice")} note=${ref("gate.note")}`,
+            },
+            on: { closed: terminal.done("gate_done") },
+          }),
+        },
+      }),
+    );
+
+    const engine = createWorkflowEngine({
+      store: createMemoryWorkflowStore(),
+      runner: createFakeAgentRunner(),
+      gates,
+      integrations: [acme.integration],
+      clock,
+      workflows: [waitWfIR, waitCiIR, gateIR],
+    });
+
+    // 1. wait_workflow output arrives while paused -> stays paused, then completes on resume
+    const wfRun = await engine.start({ workflowId: "pause-wait-wf" });
+    await engine.pause(wfRun.id);
+    const pub = await engine.publishOutput({
+      workflowId: "child-wf",
+      outputKey: "k1",
+      payload: { verdict: "approved" },
+    });
+    expect(pub.resumedRuns).toHaveLength(0);
+    expect((await engine.getRun(wfRun.id))?.status).toBe("paused");
+    const wfResumed = await engine.resume(wfRun.id);
+    expect(wfResumed.status).toBe("done");
+    expect(wfResumed.terminalReason).toBe("child_approved");
+
+    // 2. Integration wait event arrives while paused -> stays paused, then completes on resume
+    const ciRun = await engine.start({ workflowId: "pause-wait-ci" });
+    await engine.pause(ciRun.id);
+    const ciIngest = await engine.ingest(
+      makeEvent("acme.ci_status", {
+        repo: "acme/widget",
+        pr_number: 5,
+        head_sha: "sha_p",
+        state: "green",
+      }),
+    );
+    expect(ciIngest.resumedRuns).toHaveLength(0);
+    expect((await engine.getRun(ciRun.id))?.status).toBe("paused");
+    const ciResumed = await engine.resume(ciRun.id);
+    expect(ciResumed.status).toBe("done");
+    expect(ciResumed.terminalReason).toBe("ci_green");
+
+    // 3. Gate resolved while paused -> does NOT advance until resume, then runs downstream with gate context
+    const gateRun = await engine.start({ workflowId: "pause-gate" });
+    await engine.pause(gateRun.id);
+    const gateId = gates.opened[0]!.id;
+    const afterResolve = await engine.resolveGate(gateId, {
+      choice: "ok",
+      note: "approved during pause",
+      actor: "mo",
+    });
+    expect(afterResolve.status).toBe("paused");
+    expect(acme.closedIssues).toHaveLength(0);
+
+    const gateResumed = await engine.resume(gateRun.id);
+    expect(gateResumed.status).toBe("done");
+    expect(gateResumed.terminalReason).toBe("gate_done");
+    expect(acme.closedIssues).toEqual([
+      {
+        repo: "acme/widget",
+        issue_number: 5,
+        comment: "choice=ok note=approved during pause",
+      },
+    ]);
+  });
+
+  it("delivers an ingested event at most once per run with onConflict: signal", async () => {
+    const deliveries: string[] = [];
+    const countingIntegration: WorkflowIntegration = {
+      id: "acme",
+      steps: {
+        wait_stage: {
+          inputSchema: z.object({ stage: z.string(), pr: z.number().int() }),
+          outcomes: ["green"],
+          async execute(input) {
+            return {
+              status: "suspended",
+              waitKey: `stage:${String(input["stage"])}#${String(input["pr"])}`,
+            };
+          },
+          async onEvent(event, input) {
+            deliveries.push(String(input["stage"]));
+            if (event.payload["pr"] === input["pr"] && event.payload["state"] === "green") {
+              return { status: "completed", outcome: "green" };
+            }
+            return { status: "still_waiting" };
+          },
+        },
+      },
+    };
+
+    const twoStageSignalIR = roundTripIR(
+      defineWorkflow({
+        id: "acme-two-stage-signal",
+        on: { "acme.ci": { connection: "acme-main" } },
+        subject: {
+          key: tpl`pr#${ref("event.pr")}`,
+          onConflict: "signal",
+        },
+        initial: "first",
+        steps: {
+          first: step.integration("acme.wait_stage", {
+            input: { stage: "first", pr: ref("event.pr") },
+            on: { green: "second" },
+          }),
+          second: step.integration("acme.wait_stage", {
+            input: { stage: "second", pr: ref("event.pr") },
+            on: { green: terminal.done("both_stages") },
+          }),
+        },
+      }),
+    );
+
+    const engine = createWorkflowEngine({
+      store: createMemoryWorkflowStore(),
+      runner: createFakeAgentRunner(),
+      gates: createFakeGateSink(),
+      integrations: [countingIntegration],
+      clock: createFakeClock(),
+      workflows: [twoStageSignalIR],
+    });
+
+    // Event 1 opens the run and suspends in `first`.
+    const firstIngest = await engine.ingest(makeEvent("acme.ci", { pr: 1, state: "pending" }));
+    const runId = firstIngest.matchedRuns[0]!.id;
+    expect(firstIngest.matchedRuns[0]?.status).toBe("waiting");
+    expect(firstIngest.matchedRuns[0]?.currentState).toBe("first");
+    expect(deliveries).toEqual([]);
+
+    // Event 2 (green) satisfies ONLY `first`, leaving the run waiting on `second`.
+    const secondIngest = await engine.ingest(makeEvent("acme.ci", { pr: 1, state: "green" }));
+    expect(deliveries).toEqual(["first"]);
+    expect(secondIngest.resumedRuns).toHaveLength(1);
+    const midRun = await engine.getRun(runId);
+    expect(midRun?.status).toBe("waiting");
+    expect(midRun?.currentState).toBe("second");
+
+    // Event 3 (green) now satisfies `second` and completes the run.
+    await engine.ingest(makeEvent("acme.ci", { pr: 1, state: "green" }));
+    expect(deliveries).toEqual(["first", "second"]);
+    const doneRun = await engine.getRun(runId);
+    expect(doneRun?.status).toBe("done");
+    expect(doneRun?.terminalReason).toBe("both_stages");
+  });
 });

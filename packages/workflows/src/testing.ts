@@ -539,7 +539,11 @@ export function createMemoryWorkflowStore(): WorkflowStore {
       return cloneRun(run);
     },
 
-    async listSuspendedWaits(kind?: StepWaitSpec["kind"]): Promise<readonly SuspendedWaitRecord[]> {
+    async listSuspendedWaits(
+      kind?: StepWaitSpec["kind"],
+      options?: { readonly includePaused?: boolean },
+    ): Promise<readonly SuspendedWaitRecord[]> {
+      const includePaused = options?.includePaused === true;
       const result: SuspendedWaitRecord[] = [];
       for (const attempt of attemptsById.values()) {
         if (attempt.status !== "waiting" || attempt.wait === undefined) {
@@ -549,7 +553,10 @@ export function createMemoryWorkflowStore(): WorkflowStore {
           continue;
         }
         const run = runs.get(attempt.runId);
-        if (run === undefined || run.status !== "waiting") {
+        if (run === undefined) {
+          continue;
+        }
+        if (run.status !== "waiting" && !(includePaused && run.status === "paused")) {
           continue;
         }
         result.push({

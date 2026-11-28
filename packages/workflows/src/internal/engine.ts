@@ -927,7 +927,7 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
     onlyRunId?: string,
   ): Promise<WorkflowRunSnapshot[]> => {
     const resumed: WorkflowRunSnapshot[] = [];
-    const waits = await store.listSuspendedWaits("integration");
+    const waits = await store.listSuspendedWaits("integration", { includePaused: true });
 
     for (const entry of waits) {
       if (onlyRunId !== undefined && entry.runId !== onlyRunId) {
@@ -937,7 +937,7 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
         continue;
       }
       const run = await store.loadRun(entry.runId);
-      if (run === undefined || run.status !== "waiting") {
+      if (run === undefined || (run.status !== "waiting" && run.status !== "paused")) {
         continue;
       }
       const integration = registry.get(entry.wait.integrationId);
@@ -967,7 +967,9 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
             error: message,
             now: clock.now(),
           });
-          resumed.push(await finalizeRunTerminal(workflow, run.id, "failed", message));
+          if (run.status !== "paused") {
+            resumed.push(await finalizeRunTerminal(workflow, run.id, "failed", message));
+          }
           continue;
         }
       }
@@ -980,6 +982,10 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
         output: eventResult.output,
         now: clock.now(),
       });
+      if (run.status === "paused") {
+        // Record the completed wait without advancing until resume() is called.
+        continue;
+      }
       await transitionAfterStepOutcome(workflow, run.id, entry.stepId, eventResult.outcome);
       resumed.push(await advanceRun(run.id));
     }
@@ -1110,44 +1116,108 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
     await store.cancelRunGates(cancelledRun.id);
   };
 
+  const resumePendingWait = async (
+    workflow: WorkflowIR,
+    run: WorkflowRunSnapshot,
+  ): Promise<WorkflowRunSnapshot | undefined> => {
+    const lastAttempt = run.attempts[run.attempts.length - 1];
+    if (lastAttempt === undefined || lastAttempt.stepId !== run.currentState) {
+      return undefined;
+    }
+    if (lastAttempt.status === "failed") {
+      return finalizeRunTerminal(
+        workflow,
+        run.id,
+        "failed",
+        lastAttempt.error ?? `step "${lastAttempt.stepId}" failed while paused`,
+      );
+    }
+    if (lastAttempt.status === "completed") {
+      await store.transitionRun({
+        runId: run.id,
+        status: "running",
+        now: clock.now(),
+      });
+      await transitionAfterStepOutcome(
+        workflow,
+        run.id,
+        lastAttempt.stepId,
+        lastAttempt.outcome ?? "ok",
+      );
+      return advanceRun(run.id);
+    }
+    if (lastAttempt.status === "waiting" && lastAttempt.wait?.kind === "wait_workflow") {
+      const published = await store.findWorkflowOutput(
+        lastAttempt.wait.workflowId,
+        lastAttempt.wait.outputKey,
+      );
+      if (published !== undefined) {
+        const outcome = extractPublishedOutcome(published.payload);
+        await store.completeStepAttempt({
+          runId: run.id,
+          attemptId: lastAttempt.id,
+          status: "completed",
+          outcome,
+          output: published.payload,
+          now: clock.now(),
+        });
+        await store.transitionRun({
+          runId: run.id,
+          status: "running",
+          now: clock.now(),
+        });
+        await transitionAfterStepOutcome(workflow, run.id, lastAttempt.stepId, outcome);
+        return advanceRun(run.id);
+      }
+    }
+    return undefined;
+  };
+
+  const startInternal = async (
+    input: StartWorkflowInput,
+    startOptions: { readonly skipSignalDelivery?: boolean } = {},
+  ): Promise<WorkflowRunSnapshot> => {
+    const workflow = getWorkflowOrThrow(input.workflowId);
+    const inputs = resolveInputsWithDefaults(workflow, input.inputs);
+    const subjectData = input.subjectData ?? input.event?.subject?.data ?? {};
+    const subjectKey = resolveStartSubjectKey(workflow, input, inputs, subjectData);
+
+    const accepted = await store.acceptRun({
+      workflowId: workflow.id,
+      initialState: workflow.initial,
+      subjectKey,
+      subjectData,
+      onConflict: workflow.subject?.onConflict,
+      inputs,
+      event: input.event,
+      now: clock.now(),
+    });
+
+    if (accepted.action === "ignored") {
+      return accepted.existingRun;
+    }
+    if (accepted.action === "signal") {
+      if (!startOptions.skipSignalDelivery && input.event !== undefined) {
+        const resumed = await deliverEventToSuspendedRuns(input.event, accepted.existingRun.id);
+        return resumed[0] ?? accepted.existingRun;
+      }
+      return (await store.loadRun(accepted.existingRun.id)) ?? accepted.existingRun;
+    }
+    if (accepted.action === "queued") {
+      return accepted.run;
+    }
+    if (accepted.action === "replaced") {
+      await cleanupSupersededRun(accepted.cancelledRun);
+    }
+
+    return advanceRun(accepted.run.id);
+  };
+
   const engine: WorkflowEngine = {
     registerWorkflow,
 
     async start(input: StartWorkflowInput): Promise<WorkflowRunSnapshot> {
-      const workflow = getWorkflowOrThrow(input.workflowId);
-      const inputs = resolveInputsWithDefaults(workflow, input.inputs);
-      const subjectData = input.subjectData ?? input.event?.subject?.data ?? {};
-      const subjectKey = resolveStartSubjectKey(workflow, input, inputs, subjectData);
-
-      const accepted = await store.acceptRun({
-        workflowId: workflow.id,
-        initialState: workflow.initial,
-        subjectKey,
-        subjectData,
-        onConflict: workflow.subject?.onConflict,
-        inputs,
-        event: input.event,
-        now: clock.now(),
-      });
-
-      if (accepted.action === "ignored") {
-        return accepted.existingRun;
-      }
-      if (accepted.action === "signal") {
-        if (input.event !== undefined) {
-          const resumed = await deliverEventToSuspendedRuns(input.event, accepted.existingRun.id);
-          return resumed[0] ?? accepted.existingRun;
-        }
-        return accepted.existingRun;
-      }
-      if (accepted.action === "queued") {
-        return accepted.run;
-      }
-      if (accepted.action === "replaced") {
-        await cleanupSupersededRun(accepted.cancelledRun);
-      }
-
-      return advanceRun(accepted.run.id);
+      return startInternal(input);
     },
 
     async ingest(event: NormalizedIntegrationEvent): Promise<IngestResult> {
@@ -1158,10 +1228,15 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
         if (!matchesWorkflowTrigger(workflow, event)) {
           continue;
         }
-        const run = await engine.start({
-          workflowId: workflow.id,
-          event,
-        });
+        // `deliverEventToSuspendedRuns` already delivered this event to every matching
+        // suspended wait, so `onConflict: "signal"` must not deliver it a second time.
+        const run = await startInternal(
+          {
+            workflowId: workflow.id,
+            event,
+          },
+          { skipSignalDelivery: true },
+        );
         matchedRuns.push(run);
       }
 
@@ -1266,6 +1341,9 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
 
       await gates.onGateResolved?.(resolved);
 
+      const runBeforeResolve = await store.loadRun(resolved.runId);
+      const isPaused = runBeforeResolve?.status === "paused";
+
       const gateState = {
         choice: resolution.choice,
         note: resolution.note ?? null,
@@ -1279,6 +1357,19 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
         output: gateState,
         now,
       });
+
+      if (isPaused) {
+        // Persist gate decision while honoring the pause; resume() will transition and advance.
+        return store.transitionRun({
+          runId: resolved.runId,
+          status: "paused",
+          pausedFromStatus: runBeforeResolve.pausedFromStatus ?? "waiting",
+          currentState: resolved.stepId,
+          lastGate: gateState,
+          now,
+        });
+      }
+
       await store.transitionRun({
         runId: resolved.runId,
         status: "running",
@@ -1380,7 +1471,16 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
         throw new Error(`cannot resume run "${runId}" in status "${run.status}"`);
       }
 
+      const workflow = getWorkflowOrThrow(run.workflowId);
       const restoreStatus = run.pausedFromStatus ?? "running";
+
+      if (restoreStatus === "waiting") {
+        const resumedFromWait = await resumePendingWait(workflow, run);
+        if (resumedFromWait !== undefined) {
+          return resumedFromWait;
+        }
+      }
+
       const restored = await store.transitionRun({
         runId: run.id,
         status: restoreStatus,
@@ -1391,7 +1491,7 @@ export function createWorkflowEngineImpl(options: WorkflowEngineOptions): Workfl
         return advanceRun(restored.id);
       }
 
-      // If waiting on a timer/gate/output that expired or arrived while paused, evaluate now.
+      // Re-evaluate any due timers or timeouts that expired while paused.
       await engine.tick();
       return (await store.loadRun(runId)) ?? restored;
     },
