@@ -7347,6 +7347,7 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         providerSnapshotManager: this.providerSnapshotManager,
+        isDirectory: (path) => this.filesystem.isDirectory(path),
       });
       this.emit({
         type: "fetch_recent_provider_sessions_response",

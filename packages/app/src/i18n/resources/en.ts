@@ -480,6 +480,7 @@ export const en = {
     },
     row: {
       importing: "Importing...",
+      cwdMissing: "Folder no longer exists",
     },
   },
   workspace: {

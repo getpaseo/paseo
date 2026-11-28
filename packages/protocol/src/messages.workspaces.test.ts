@@ -316,6 +316,22 @@ describe("workspace message schemas", () => {
     });
   });
 
+  test("parses recent provider session descriptors that flag a missing cwd", () => {
+    const parsed = RecentProviderSessionDescriptorPayloadSchema.parse({
+      providerId: "codex",
+      providerLabel: "Codex",
+      providerHandleId: "thread-1",
+      cwd: "/tmp/removed-repo",
+      title: null,
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+      lastActivityAt: "2026-04-30T12:34:56.000Z",
+      cwdMissing: true,
+    });
+
+    expect(parsed.cwdMissing).toBe(true);
+  });
+
   test("parses fetch_recent_provider_sessions request and response", () => {
     const request = SessionInboundMessageSchema.parse({
       type: "fetch_recent_provider_sessions_request",

@@ -45,6 +45,7 @@ interface ProjectionOptions {
 
 interface RecentProviderSessionProjectionOptions {
   providerLabel: string;
+  cwdMissing: boolean;
 }
 
 function normalizeThinkingOptionId(value: string | null | undefined): string | null {
@@ -433,6 +434,7 @@ export function toRecentProviderSessionDescriptorPayload(
     firstPromptPreview: session.firstPromptPreview,
     lastPromptPreview: session.lastPromptPreview,
     lastActivityAt: session.lastActivityAt.toISOString(),
+    cwdMissing: options.cwdMissing,
   };
 }
 
