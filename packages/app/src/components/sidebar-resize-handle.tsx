@@ -85,14 +85,24 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
   );
 }
 
+// On the web the grip shows at rest, so a touch user can find it.
+function restingGripStyle(pressed: boolean) {
+  if (pressed) return styles.visibleGrip;
+  if (isWeb) return styles.restingGrip;
+  return styles.hiddenGrip;
+}
+
 function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
-  const geometry = resolveSidebarResizeHandleGeometry(false);
+  const geometry = resolveSidebarResizeHandleGeometry(false, isWeb && edge === "right");
   // `box-none` keeps the full-height column out of hit-testing so only the
   // grab target steals taps from the rows behind it.
   const layerStyle = [
     styles.touchLayer,
     { width: geometry.width },
     edgeOffsetStyle(edge, geometry.edgeOffset),
+    geometry.top === null
+      ? null
+      : { justifyContent: "flex-start" as const, paddingTop: geometry.top },
   ];
   const targetStyle = [
     styles.touchTarget,
@@ -101,7 +111,7 @@ function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHand
   const gripStyle = [
     styles.grip,
     edge === "left" ? styles.leftEdgeGrip : styles.rightEdgeGrip,
-    pressed ? styles.visibleGrip : styles.hiddenGrip,
+    restingGripStyle(pressed),
   ];
 
   return (
@@ -159,7 +169,10 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0,
   },
   visibleGrip: {
-    opacity: 0.3,
+    opacity: 0.55,
+  },
+  restingGrip: {
+    opacity: 0.35,
   },
   leftEdgeGrip: {
     alignSelf: "flex-start",

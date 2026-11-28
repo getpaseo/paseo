@@ -749,3 +749,66 @@ test.describe("Half-screen desktop layout", () => {
     }
   });
 });
+
+// An iPad in the browser runs the desktop layout with the sidebar pinned, but it can't hover,
+// and iOS Safari fires no contextmenu event for a long press. The kebab is the only way in.
+test.describe("Workspace row menu on a wide touch screen", () => {
+  test.use({ viewport: { width: 1194, height: 834 }, isMobile: true, hasTouch: true });
+
+  test("shows the row's menu button without hovering and opens it with a tap", async ({
+    page,
+  }, info) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-touch-menu-" });
+    const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarWorkspace(page, workspace.workspaceId);
+      const kebab = page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`);
+      await expect(kebab).toBeVisible({ timeout: 30_000 });
+      await expect(kebab).toHaveCSS("opacity", "1");
+      await page.screenshot({ path: info.outputPath("touch-sidebar-row-menu.png") });
+      await kebab.tap();
+      await expect(
+        page.getByTestId(`sidebar-workspace-menu-copy-path-${workspaceKey}`),
+      ).toBeVisible({ timeout: 30_000 });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("resizes the sidebar with a finger drag on its grip", async ({ page, context }, info) => {
+    await gotoAppShell(page);
+    const grip = page.getByTestId("left-sidebar-resize-handle");
+    await expect(grip).toBeVisible({ timeout: 30_000 });
+    const before = await grip.boundingBox();
+    if (!before) throw new Error("The sidebar resize grip has no box");
+    const x = before.x + before.width / 2;
+    const y = before.y + before.height / 2;
+    // Nothing else may sit on top of the grip, or a finger can't reach it.
+    const hit = await page.evaluate(
+      ({ px, py }) =>
+        document.elementFromPoint(px, py)?.closest("[data-testid]")?.getAttribute("data-testid"),
+      { px: x, py: y },
+    );
+    expect(hit).toBe("left-sidebar-resize-handle");
+
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y, id: 1 }],
+    });
+    for (let step = 1; step <= 10; step += 1) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x: x + step * 8, y, id: 1 }],
+      });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+
+    await expect
+      .poll(async () => (await grip.boundingBox())?.x ?? before.x, { timeout: 10_000 })
+      .toBeGreaterThan(before.x + 40);
+    await page.screenshot({ path: info.outputPath("touch-sidebar-resized.png") });
+  });
+});
