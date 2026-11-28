@@ -7,6 +7,7 @@ import type { ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import {
   appendSubmittedUserMessage,
+  isUnreconciledLocalUserMessage,
   handoffCreatedAgentUserMessageToStream,
   removeSubmittedUserMessage,
   type StreamItem,
@@ -1186,9 +1187,18 @@ export const useSessionStore = create<SessionStore>()(
             head: currentHead,
             message,
           });
+          const existing = [...currentTail, ...currentHead].find(
+            (item) =>
+              item.kind === "user_message" && item.clientMessageId === message.clientMessageId,
+          );
+          const existingTimelineRow =
+            existing?.kind === "user_message" && !isUnreconciledLocalUserMessage(existing);
           const submissions = beginMessageSubmission(
             session.messageSubmissions.get(agentId) ?? [],
-            { clientMessageId: message.clientMessageId },
+            {
+              clientMessageId: message.clientMessageId,
+              ...(existingTimelineRow ? { existingTimelineRow: true as const } : {}),
+            },
           );
           const messageSubmissions = new Map(session.messageSubmissions);
           messageSubmissions.set(agentId, submissions);
@@ -1246,9 +1256,12 @@ export const useSessionStore = create<SessionStore>()(
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const result = rejectMessageSubmission(currentSubmissions, clientMessageId);
           outcome = result.outcome;
-          if (outcome === "unknown") return prev;
+          if (outcome === "unknown" && result.submissions === currentSubmissions) return prev;
           const stream =
-            outcome === "rejected"
+            outcome === "rejected" &&
+            !currentSubmissions.some(
+              (item) => item.clientMessageId === clientMessageId && item.existingTimelineRow,
+            )
               ? removeSubmittedUserMessage({
                   tail: currentTail,
                   head: currentHead,
