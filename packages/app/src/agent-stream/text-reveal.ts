@@ -164,7 +164,7 @@ export function advanceTextReveal(
   return { target: state.target, revealed: Math.min(state.target.length, state.revealed + step) };
 }
 
-/** Release everything, for when the turn ends and nothing may be held back. */
+/** Release everything when paced rendering is unavailable. */
 export function completeTextReveal(state: TextRevealState): TextRevealState {
   if (state.revealed >= state.target.length) {
     return state;
@@ -185,10 +185,22 @@ export function isTextRevealSettled(state: TextRevealState): boolean {
  * stream as frames ending in a single regional indicator. Only fragments that
  * are certainly waiting on more input are withheld: a dangling high surrogate, a
  * trailing joiner, or an odd regional indicator.
+ *
+ * A trailing newline is the same kind of artifact. Markdown opens a new block
+ * on the blank line before the next sentence's first character exists to fill
+ * it, so the block's height jumps ahead of the text that is supposed to grow
+ * it. The newline carries no information about what, if anything, follows it,
+ * so it waits with the rest of the trailing fragment until real content
+ * arrives or the turn ends.
  */
-function trimIncompleteTrailingCluster(text: string): string {
+function trimIncompleteTrailingFragment(text: string): string {
   if (text.length === 0) {
     return text;
+  }
+
+  const withoutTrailingNewlines = trimTrailingLineBreaks(text);
+  if (withoutTrailingNewlines.length !== text.length) {
+    return withoutTrailingNewlines;
   }
 
   const lastUnit = text.charCodeAt(text.length - 1);
@@ -205,6 +217,27 @@ function trimIncompleteTrailingCluster(text: string): string {
   }
 
   return text;
+}
+
+/**
+ * Index past the last non-newline character, scanning backward.
+ *
+ * A regex alternation of `\r\n|\r|\n` is ambiguous on a run of CRLFs — the
+ * engine can split it into pairs or into lone `\r`/`\n` tokens, and retries
+ * every split once the surrounding match fails. That backtracking is
+ * exponential in the run length and runs on every streamed render frame, so
+ * this walks backward one unit at a time instead.
+ */
+function trimTrailingLineBreaks(text: string): string {
+  let end = text.length;
+  while (end > 0) {
+    const unit = text.charCodeAt(end - 1);
+    if (unit !== 0x0a && unit !== 0x0d) {
+      break;
+    }
+    end -= 1;
+  }
+  return text.slice(0, end);
 }
 
 /** Number of regional indicators at the end of `text`. A flag is a pair. */
@@ -234,7 +267,8 @@ export function visibleRevealedText(
   options?: { streaming?: boolean },
 ): string {
   if (state.revealed >= state.target.length) {
-    return options?.streaming ? trimIncompleteTrailingCluster(state.target) : state.target;
+    return options?.streaming ? trimIncompleteTrailingFragment(state.target) : state.target;
   }
-  return state.target.slice(0, clampToSafeRevealBoundary(state.target, state.revealed));
+  const slice = state.target.slice(0, clampToSafeRevealBoundary(state.target, state.revealed));
+  return options?.streaming ? trimIncompleteTrailingFragment(slice) : slice;
 }

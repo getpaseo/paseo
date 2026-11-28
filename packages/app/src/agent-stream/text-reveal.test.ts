@@ -11,6 +11,7 @@ import {
   retargetTextReveal,
   TEXT_REVEAL_FRAME_INTERVAL_MS,
   TEXT_REVEAL_HORIZON_MS,
+  type TextRevealState,
   visibleRevealedText,
 } from "./text-reveal";
 
@@ -273,5 +274,42 @@ describe("trailing fragments from arrival boundaries", () => {
   it("leaves ordinary trailing text alone", () => {
     const prose = "just some prose";
     expect(visibleRevealedText(beginTextReveal(prose), { streaming: true })).toBe(prose);
+  });
+
+  it("holds back a trailing blank line while more text is coming", () => {
+    // The paragraph break before the next sentence exists, but the sentence
+    // doesn't yet. Painting the newline opens an empty block ahead of it.
+    const state = beginTextReveal("First thought.\n\n");
+    expect(visibleRevealedText(state, { streaming: true })).toBe("First thought.");
+    // Once the turn ends nothing more is coming, so paint what there is.
+    expect(visibleRevealedText(state, { streaming: false })).toBe("First thought.\n\n");
+  });
+
+  it("paints the blank line once the next paragraph arrives", () => {
+    const whole = "First thought.\n\nSecond thought.";
+    expect(visibleRevealedText(beginTextReveal(whole), { streaming: true })).toBe(whole);
+  });
+
+  it("holds back a single trailing newline mid-pace, not just when caught up", () => {
+    // Land the reveal boundary exactly after the first line's newline, with
+    // more text already in the target buffer waiting to be revealed.
+    const full = "line one\nline two";
+    const state: TextRevealState = { target: full, revealed: "line one\n".length };
+    expect(visibleRevealedText(state, { streaming: true })).toBe("line one");
+  });
+
+  it("holds back a CRLF line break the same way", () => {
+    const state = beginTextReveal("First thought.\r\n\r\n");
+    expect(visibleRevealedText(state, { streaming: true })).toBe("First thought.");
+  });
+
+  it("stays fast on a long run of CRLFs followed by text", () => {
+    // A regex alternation of \r\n|\r|\n is ambiguous on a run of CRLFs — the
+    // engine can retry every way of splitting it into pairs vs. lone units.
+    // A plain backward scan has no such blowup regardless of run length.
+    const pathological = `${"\r\n".repeat(5_000)}x`;
+    const start = performance.now();
+    visibleRevealedText(beginTextReveal(pathological), { streaming: true });
+    expect(performance.now() - start).toBeLessThan(50);
   });
 });

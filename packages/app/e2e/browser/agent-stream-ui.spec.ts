@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import {
   awaitAssistantMessage,
@@ -27,7 +28,83 @@ import {
 
 const SCROLL_AWAY_MIN_SCROLLABLE_DISTANCE = 360;
 
+async function recordThinkingPanel(page: Page, input: { start: string; tool: string }) {
+  return page.getByTestId("agent-chat-scroll").evaluateHandle((scroll, { start, tool }) => {
+    const samples: { text: string; height: number; toolVisible: boolean }[] = [];
+    // Read each DOM commit so Playwright polling cannot miss the short reveal.
+    const observer = new MutationObserver(() => {
+      const badges = [...scroll.querySelectorAll('[data-testid="tool-call-badge"]')];
+      const panel = badges.find((badge) => badge.textContent?.includes(start));
+      const text = [...(panel?.querySelectorAll("*") ?? [])].find(
+        (node) => node.childElementCount === 0 && node.textContent?.startsWith(start),
+      );
+      if (!panel || !text) return;
+      samples.push({
+        text: text.textContent ?? "",
+        height: panel.getBoundingClientRect().height,
+        toolVisible: badges.some((badge) => badge.textContent?.includes(tool)),
+      });
+    });
+    observer.observe(scroll, { childList: true, subtree: true, characterData: true });
+    return { samples, observer };
+  }, input);
+}
+
 test.describe("Agent stream UI", () => {
+  test("grows the Thinking panel as its last lines become visible after a tool call", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ autoExpandReasoning: true, chatDisplay: "full" }),
+      );
+    });
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "stream-thinking-transition-",
+      title: "Thinking transition",
+    });
+    try {
+      await openAgentRoute(page, agent);
+      await expectComposerVisible(page);
+      const start = "Checking the input.";
+      const finalText = `${start}\n${"The input matches the expected schema.\n".repeat(8)}The checks are complete.`;
+      const trace = await recordThinkingPanel(page, { start, tool: "echo thinking-transition" });
+
+      try {
+        await agent.client.sendAgentMessage(agent.agentId, "Stream a thought, then run a tool.");
+        await expect(page.getByText(finalText, { exact: true })).toBeVisible();
+        const samples = await trace.evaluate((recording) => recording.samples);
+        const initial = samples.find((sample) => sample.text === start && !sample.toolVisible);
+        const final = samples.find((sample) => sample.text === finalText && sample.toolVisible);
+        if (!initial || !final)
+          throw new Error(`Missing Thinking panel states: ${JSON.stringify(samples)}`);
+        expect(samples).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ text: start, height: initial.height, toolVisible: true }),
+          ]),
+        );
+        expect(
+          samples.some(
+            ({ text, height, toolVisible }) =>
+              toolVisible &&
+              text.length > start.length &&
+              text.length < finalText.length &&
+              height > initial.height &&
+              height < final.height,
+          ),
+          "The panel should grow through an intermediate height while revealing its last lines",
+        ).toBe(true);
+      } finally {
+        await trace.evaluate(({ observer }) => observer.disconnect());
+        await trace.dispose();
+      }
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("keeps running agent chrome after page refresh", async ({ page }) => {
     const title = "Running agent refresh";
     const agent = await seedRunningMockAgentWorkspace({

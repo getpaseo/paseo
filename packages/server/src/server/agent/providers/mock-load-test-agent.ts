@@ -46,6 +46,9 @@ export const MOCK_LOAD_TEST_HANDLED_COMMAND = `/${MOCK_LOAD_TEST_COMMAND.name} $
 const MOCK_LOAD_TEST_MODE_ID = "load-test";
 const MOCK_LOAD_TEST_DURATION_MS = 5 * 60 * 1000;
 const MOCK_LOAD_TEST_INTERVAL_MS = 40;
+const THINKING_TRANSITION_PROMPT = "Stream a thought, then run a tool.";
+const THINKING_TRANSITION_START = "Checking the input.";
+const THINKING_TRANSITION_END = "The checks are complete.";
 
 function getPositiveFeatureInteger(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
@@ -927,6 +930,9 @@ export class MockLoadTestAgentSession implements AgentSession {
     const scheduleTurn = () => {
       if (shouldEmitTurnFailure(prompt)) {
         this.scheduleFailedTurn(turn);
+      } else if (promptToText(prompt) === THINKING_TRANSITION_PROMPT) {
+        turn.timer = setTimeout(() => this.emitThinkingTransitionTurn(turn), 0);
+        turn.timer.unref?.();
       } else if (steeringReplayShape) {
         this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
       } else if (this.streamingAssistantResponse !== null) {
@@ -1290,6 +1296,32 @@ export class MockLoadTestAgentSession implements AgentSession {
     turn.timer = setTimeout(() => {
       this.emitStressTurn(turn, stress);
     }, 0);
+    turn.timer.unref?.();
+  }
+
+  private emitThinkingTransitionTurn(turn: ActiveTurn): void {
+    if (this.activeTurn !== turn) return;
+    this.emitTurnStarted(turn);
+    this.emitTimeline(turn.turnId, { type: "reasoning", text: THINKING_TRANSITION_START });
+    turn.timer = setTimeout(() => {
+      if (this.activeTurn !== turn) return;
+      this.emitTimeline(turn.turnId, {
+        type: "reasoning",
+        text: `\n${"The input matches the expected schema.\n".repeat(8)}${THINKING_TRANSITION_END}`,
+      });
+      this.emitTimeline(
+        turn.turnId,
+        createToolCall({
+          callId: `${turn.turnId}:thinking-transition`,
+          name: "bash",
+          status: "completed",
+          detail: { type: "shell", command: "echo thinking-transition", output: "done" },
+        }),
+      );
+      // Keep the turn live while the Thinking panel displays its last lines.
+      turn.timer = setTimeout(() => this.emitSettledAssistantTurn(turn, "Done."), 2_000);
+      turn.timer.unref?.();
+    }, 1_000);
     turn.timer.unref?.();
   }
 
