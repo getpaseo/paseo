@@ -99,6 +99,10 @@ async function clickRowArchiveButton(page: Page, workspaceId: string): Promise<v
   await rowArchiveButton(page, workspaceId).click();
 }
 
+function rowArchivePendingIndicator(page: Page, workspaceId: string) {
+  return workspaceRow(page, workspaceId).getByTestId("workspace-status-indicator-loading");
+}
+
 async function cycleThemeAndWaitForSidebar(page: Page, workspaceId: string): Promise<void> {
   const rowBeforeThemeChange = await workspaceRow(page, workspaceId).elementHandle();
   if (!rowBeforeThemeChange)
@@ -363,8 +367,31 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
     expect(warning.message()).toContain("1 unpushed commit");
 
     await expectWorktreeKept(page, worktree);
+    await expect(rowArchivePendingIndicator(page, worktree.workspaceId)).toHaveCount(0);
     expect(relay.archiveRequests()).toBe(0);
     expect(existsSync(path.join(worktree.workspaceDirectory, "DIRTY.md"))).toBe(true);
+  });
+
+  test("the row shows the archive as pending from the press until the host answers", async ({
+    page,
+  }) => {
+    const worktree = await createWorktree("archive-risk-pending");
+    const statusRequest = await holdCheckoutStatusRequest(page, worktree);
+    await openSidebarRow(page, worktree.workspaceId);
+    await expect(rowArchivePendingIndicator(page, worktree.workspaceId)).toHaveCount(0);
+
+    statusRequest.arm();
+    await clickRowArchiveButton(page, worktree.workspaceId);
+    await statusRequest.waitForHeld();
+    try {
+      await expect(rowArchivePendingIndicator(page, worktree.workspaceId)).toBeVisible();
+      expect(statusRequest.archiveRequests()).toBe(0);
+    } finally {
+      statusRequest.release();
+    }
+
+    await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
+    await expect(undoButton(page)).toBeVisible();
   });
 
   test("a worktree holding only new files warns when the repository hides untracked files", async ({

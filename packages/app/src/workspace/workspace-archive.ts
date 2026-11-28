@@ -22,6 +22,31 @@ export interface WorkspaceArchiveTarget {
 }
 
 const pendingArchiveAttempts = new Set<string>();
+const archiveAttemptListeners = new Set<() => void>();
+
+function archiveAttemptKey(workspace: WorkspaceArchiveTarget): string {
+  return JSON.stringify([workspace.serverId, workspace.workspaceId]);
+}
+
+function notifyArchiveAttemptListeners(): void {
+  for (const listener of archiveAttemptListeners) listener();
+}
+
+/**
+ * True while an archive of the workspace waits for its confirmation: the host's answer about
+ * uncommitted work, then the warning. The row stays listed until then, so it shows this as pending.
+ */
+export function isWorkspaceArchiveAttemptPending(workspace: WorkspaceArchiveTarget): boolean {
+  return pendingArchiveAttempts.has(archiveAttemptKey(workspace));
+}
+
+/** Calls `listener` whenever any workspace's archive attempt starts or settles. */
+export function subscribeWorkspaceArchiveAttempts(listener: () => void): () => void {
+  archiveAttemptListeners.add(listener);
+  return () => {
+    archiveAttemptListeners.delete(listener);
+  };
+}
 
 /** Checks and starts one archive at a time for a workspace. */
 export async function runWorkspaceArchiveAttempt(input: {
@@ -29,11 +54,11 @@ export async function runWorkspaceArchiveAttempt(input: {
   confirm?: () => Promise<boolean>;
   archive: () => Promise<void>;
 }): Promise<void> {
-  const { serverId, workspaceId } = input.workspace;
-  const key = JSON.stringify([serverId, workspaceId]);
+  const key = archiveAttemptKey(input.workspace);
   if (pendingArchiveAttempts.has(key)) return;
 
   pendingArchiveAttempts.add(key);
+  notifyArchiveAttemptListeners();
   try {
     if (input.confirm && !(await input.confirm())) return;
     if (!isWorkspaceListed(input.workspace)) return;
@@ -42,6 +67,7 @@ export async function runWorkspaceArchiveAttempt(input: {
     return input.archive();
   } finally {
     pendingArchiveAttempts.delete(key);
+    notifyArchiveAttemptListeners();
   }
 }
 

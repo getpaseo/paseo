@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
@@ -14,7 +14,9 @@ import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceWithUndo, supportsWorkspaceArchiveUndo } from "@/workspace/archive-undo";
 import {
   archiveWorkspaceOptimistically,
+  isWorkspaceArchiveAttemptPending,
   runWorkspaceArchiveAttempt,
+  subscribeWorkspaceArchiveAttempts,
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
 
@@ -41,6 +43,8 @@ export interface ArchiveWorkspaceInput {
 
 export interface WorkspaceArchiveController {
   archive: () => void;
+  /** True from the press until the archive starts or you cancel it, wherever it was pressed. */
+  isConfirming: boolean;
 }
 
 export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArchiveController {
@@ -118,6 +122,16 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     );
   }, [diffStat, name, serverId, t, toast, warningLabels, workspaceDirectory]);
 
+  const readIsConfirming = useCallback(
+    () => isWorkspaceArchiveAttemptPending({ serverId, workspaceId }),
+    [serverId, workspaceId],
+  );
+  const isConfirming = useSyncExternalStore(
+    subscribeWorkspaceArchiveAttempts,
+    readIsConfirming,
+    readIsConfirming,
+  );
+
   const archive = useCallback(() => {
     void runWorkspaceArchiveAttempt({
       workspace: { serverId, workspaceId },
@@ -128,5 +142,6 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
 
   return {
     archive,
+    isConfirming,
   };
 }

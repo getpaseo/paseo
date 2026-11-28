@@ -16,6 +16,9 @@ import {
   archiveWorkspaceOptimistically,
   archiveWorkspacesOptimistically,
   beginOptimisticWorkspaceArchive,
+  isWorkspaceArchiveAttemptPending,
+  runWorkspaceArchiveAttempt,
+  subscribeWorkspaceArchiveAttempts,
   undoWorkspaceArchiveOptimistically,
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
@@ -109,6 +112,80 @@ afterEach(() => {
   clearWorkspaceArchivePending({ serverId: SECOND_SERVER_ID, workspaceId: "workspace-1" });
   clearWorkspaceArchivePending({ serverId: SECOND_SERVER_ID, workspaceId: "workspace-2" });
   useSessionStore.setState((state) => ({ ...state, sessions: {} }));
+});
+
+describe("runWorkspaceArchiveAttempt", () => {
+  it("shows the archive as pending while it waits for the host's answer", async () => {
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [workspace()]);
+    const hostAnswer = deferred<boolean>();
+    const archive = vi.fn(async () => {});
+
+    const attempt = runWorkspaceArchiveAttempt({
+      workspace: target(),
+      confirm: () => hostAnswer.promise,
+      archive,
+    });
+
+    expect(isWorkspaceArchiveAttemptPending(target())).toBe(true);
+    expect(archive).not.toHaveBeenCalled();
+
+    hostAnswer.resolve(true);
+    await attempt;
+
+    expect(archive).toHaveBeenCalledOnce();
+    expect(isWorkspaceArchiveAttemptPending(target())).toBe(false);
+  });
+
+  it("stops showing the archive as pending when you cancel the warning", async () => {
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [workspace()]);
+    const archive = vi.fn(async () => {});
+
+    await runWorkspaceArchiveAttempt({
+      workspace: target(),
+      confirm: async () => false,
+      archive,
+    });
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(isWorkspaceArchiveAttemptPending(target())).toBe(false);
+  });
+
+  it("tells subscribers when the pending state starts and ends", async () => {
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [workspace()]);
+    const hostAnswer = deferred<boolean>();
+    const seen: boolean[] = [];
+    const unsubscribe = subscribeWorkspaceArchiveAttempts(() => {
+      seen.push(isWorkspaceArchiveAttemptPending(target()));
+    });
+
+    const attempt = runWorkspaceArchiveAttempt({
+      workspace: target(),
+      confirm: () => hostAnswer.promise,
+      archive: async () => {},
+    });
+    hostAnswer.resolve(true);
+    await attempt;
+    unsubscribe();
+
+    expect(seen).toEqual([true, false]);
+  });
+
+  it("keeps other workspaces idle while one archive is pending", async () => {
+    getHostRuntimeStore().acceptWorkspaceSnapshots(SERVER_ID, [workspace()]);
+    const hostAnswer = deferred<boolean>();
+
+    const attempt = runWorkspaceArchiveAttempt({
+      workspace: target(),
+      confirm: () => hostAnswer.promise,
+      archive: async () => {},
+    });
+
+    expect(isWorkspaceArchiveAttemptPending(target({ workspaceId: "workspace-2" }))).toBe(false);
+    expect(isWorkspaceArchiveAttemptPending(target({ serverId: SECOND_SERVER_ID }))).toBe(false);
+
+    hostAnswer.resolve(false);
+    await attempt;
+  });
 });
 
 describe("archiveWorkspaceOptimistically", () => {

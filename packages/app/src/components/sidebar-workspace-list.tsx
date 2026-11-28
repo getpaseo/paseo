@@ -1285,7 +1285,6 @@ function WorkspaceRowWithMenu({
   const toast = useToast();
   const [isHidingWorkspace, setIsHidingWorkspace] = useState(false);
   const rename = useSidebarWorkspaceRename(workspace);
-  const isArchiving = workspace.archivingAt !== null || isHidingWorkspace;
   const redirectAfterArchive = useCallback(() => {
     redirectIfArchivingActiveWorkspace({
       serverId: workspace.serverId,
@@ -1304,6 +1303,8 @@ function WorkspaceRowWithMenu({
     onArchiveStarted: redirectAfterArchive,
     onSetHiding: setIsHidingWorkspace,
   });
+  const isArchiving =
+    workspace.archivingAt !== null || isHidingWorkspace || archiveController.isConfirming;
 
   const handleArchive = useCallback(() => {
     if (isArchiving) {
