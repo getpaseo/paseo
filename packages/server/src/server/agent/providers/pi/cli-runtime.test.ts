@@ -495,6 +495,21 @@ describe("PiCliRuntime", () => {
     expect(command.images).toBeUndefined();
   });
 
+  test.each([
+    { disposition: "handled", agentInvoked: false },
+    { disposition: "started", agentInvoked: true },
+    { disposition: "queued", agentInvoked: true },
+  ])(
+    "maps a $disposition prompt disposition to agentInvoked $agentInvoked",
+    async ({ disposition, agentInvoked }) => {
+      const child = createPiChild();
+      replyToCommands(child, (command) => (command.type === "prompt" ? { disposition } : {}));
+      const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+      await expect(session.prompt("summarize README.md")).resolves.toMatchObject({ agentInvoked });
+    },
+  );
+
   test("sends the clear_queue RPC frame", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));
