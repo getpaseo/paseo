@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { treeRowPaddingLeft } from "@/components/tree-primitives";
+import { ScrollView } from "@/components/ui/scroll-view";
 import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { CommitRow } from "./commit-row";
 
@@ -67,7 +68,7 @@ function CommitsSectionContent({
     );
   }
   return (
-    <View style={styles.list}>
+    <ScrollView style={styles.scrollView} contentContainerStyle={styles.list}>
       {workspaceCommits.map((commit, index) => (
         <CommitRow
           key={commit.sha}
@@ -77,7 +78,7 @@ function CommitsSectionContent({
           onCommitPress={onCommitPress}
         />
       ))}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -149,6 +150,10 @@ export function CommitsSection({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
+    // Keep room for changed files; short histories still use their natural height.
+    maxHeight: "50%",
+    flexShrink: 1,
+    minHeight: 0,
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
   },
@@ -187,6 +192,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   list: {
     paddingBottom: theme.spacing[1],
+  },
+  scrollView: {
+    flexGrow: 0,
+    flexShrink: 1,
+    minHeight: 0,
   },
   noWorkspaceCommitsRow: {
     flexDirection: "row",
