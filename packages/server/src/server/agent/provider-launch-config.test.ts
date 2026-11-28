@@ -6,10 +6,12 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   checkProviderLaunchAvailable,
   createProviderEnv,
+  createProviderEnvSpec,
   migrateProviderSettings,
   ProviderOverrideSchema,
   resolveProviderLaunch,
   resolveProviderCommandPrefix,
+  sanitizeProviderEnvOverlay,
   type ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
 
@@ -264,6 +266,125 @@ describe("createProviderEnv", () => {
     expect(env.CLAUDE_CODE_SSE_PORT).toBeUndefined();
     expect(env.CLAUDE_AGENT_SDK_VERSION).toBeUndefined();
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe("true");
+  });
+
+  test("adds loopback NO_PROXY entries when unset", () => {
+    const env = createProviderEnv({
+      baseEnv: {
+        PATH: "/usr/bin",
+        HTTP_PROXY: "http://proxy.corp:8080",
+      },
+    });
+
+    expect(env.NO_PROXY).toBe("127.0.0.1,localhost,::1");
+    expect(env.no_proxy).toBeUndefined();
+  });
+
+  test("appends loopback entries to existing NO_PROXY without clobbering or duplicating", () => {
+    const env = createProviderEnv({
+      baseEnv: {
+        PATH: "/usr/bin",
+        NO_PROXY: "corp.internal, LOCALHOST, .example.com, [::1]",
+      },
+    });
+
+    expect(env.NO_PROXY).toBe("corp.internal,LOCALHOST,.example.com,[::1],127.0.0.1");
+    expect(env.no_proxy).toBeUndefined();
+  });
+
+  test("preserves existing no_proxy and updates both casings on POSIX when no_proxy is set", () => {
+    const lowerOnly = createProviderEnv({
+      baseEnv: {
+        PATH: "/usr/bin",
+        no_proxy: "corp.internal",
+      },
+    });
+
+    expect(lowerOnly.no_proxy).toBe("corp.internal,127.0.0.1,localhost,::1");
+    if (process.platform !== "win32") {
+      expect(lowerOnly.NO_PROXY).toBe("corp.internal,127.0.0.1,localhost,::1");
+    }
+
+    const emptyLower = createProviderEnv({
+      baseEnv: {
+        PATH: "/usr/bin",
+        no_proxy: "",
+      },
+    });
+
+    expect(emptyLower.no_proxy).toBe("127.0.0.1,localhost,::1");
+    if (process.platform !== "win32") {
+      expect(emptyLower.NO_PROXY).toBe("127.0.0.1,localhost,::1");
+    }
+
+    if (process.platform !== "win32") {
+      const both = createProviderEnv({
+        baseEnv: {
+          PATH: "/usr/bin",
+          NO_PROXY: "upper.internal,127.0.0.1",
+          no_proxy: "lower.internal",
+        },
+      });
+
+      expect(both.NO_PROXY).toBe("upper.internal,127.0.0.1,localhost,::1");
+      expect(both.no_proxy).toBe("lower.internal,127.0.0.1,localhost,::1");
+    }
+  });
+
+  test("preserves wildcard NO_PROXY without appending redundant loopback entries", () => {
+    const star = createProviderEnv({ baseEnv: { NO_PROXY: "*" } });
+    expect(star.NO_PROXY).toBe("*");
+
+    const listWithStar = createProviderEnv({ baseEnv: { NO_PROXY: "corp.internal,*" } });
+    expect(listWithStar.NO_PROXY).toBe("corp.internal,*");
+  });
+
+  test("merges loopback NO_PROXY into runtimeSettings and overlay overrides", () => {
+    const spec = createProviderEnvSpec({
+      baseEnv: {
+        NO_PROXY: "from-base.internal",
+      },
+      runtimeSettings: {
+        env: {
+          NO_PROXY: "from-runtime.internal",
+        },
+      },
+    });
+
+    expect(spec.envOverlay.NO_PROXY).toBe("from-runtime.internal,127.0.0.1,localhost,::1");
+  });
+
+  test("preserves Windows mixed-case No_Proxy without introducing duplicate keys", () => {
+    const env = createProviderEnv({
+      baseEnv: {
+        PATH: "C:\\Windows",
+        No_Proxy: "corp.internal",
+      },
+      platform: "win32",
+    });
+
+    expect(env.No_Proxy).toBe("corp.internal,127.0.0.1,localhost,::1");
+    expect(Object.keys(env).filter((key) => key.toLowerCase() === "no_proxy")).toEqual([
+      "No_Proxy",
+    ]);
+  });
+
+  test("sanitizeProviderEnvOverlay avoids clobbering launch NO_PROXY unless overlay sets it", () => {
+    const sparse = sanitizeProviderEnvOverlay({
+      SESSION_TOKEN: "session",
+      CLAUDECODE: "parent",
+      PASEO_NODE_ENV: "development",
+    });
+    expect(sparse).toEqual({ SESSION_TOKEN: "session" });
+
+    const withOverride = sanitizeProviderEnvOverlay({
+      SESSION_TOKEN: "session",
+      NO_PROXY: "custom.internal",
+    });
+    expect(withOverride).toEqual({
+      SESSION_TOKEN: "session",
+      NO_PROXY: "custom.internal,127.0.0.1,localhost,::1",
+    });
   });
 });
 

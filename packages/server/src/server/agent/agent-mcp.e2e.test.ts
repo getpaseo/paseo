@@ -1,3 +1,4 @@
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -627,6 +628,187 @@ describe("agent MCP end-to-end (offline)", () => {
       await rm(agentCwd, { recursive: true, force: true });
     }
   }, 30_000);
+
+  test.skipIf(process.platform === "win32")(
+    "Unix-socket daemon serves MCP and terminal activity on a dedicated loopback endpoint and closes it on stop",
+    async () => {
+      const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-u-"));
+      const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+      const agentCwd = await mkdtemp(path.join(os.tmpdir(), "paseo-agent-cwd-"));
+      const socketPath = path.join(paseoHome, "d.sock");
+      const recorder: LaunchRecorder = { recordedLaunches: [] };
+
+      const daemon = await createPaseoDaemon(
+        {
+          listen: `unix://${socketPath}`,
+          paseoHome,
+          corsAllowedOrigins: [],
+          hostnames: true,
+          mcpEnabled: true,
+          staticDir,
+          mcpDebug: false,
+          agentClients: createMcpRecordingAgentClients(recorder),
+          agentStoragePath: path.join(paseoHome, "agents"),
+          auth: { password: hashDaemonPassword("daemon-secret") },
+        },
+        pino({ level: "silent" }),
+      );
+      await daemon.start();
+
+      let mcpClient: McpClient | null = null;
+      let loopbackPort: number | null = null;
+      let agentId: string | null = null;
+      let terminalId: string | null = null;
+      try {
+        expect(daemon.getListenTarget()).toEqual({ type: "socket", path: socketPath });
+
+        const agent = await daemon.agentManager.createAgent(
+          {
+            provider: "claude",
+            cwd: agentCwd,
+            model: "claude-test-model",
+            modeId: "bypassPermissions",
+            title: "Unix MCP agent",
+          },
+          undefined,
+          {},
+        );
+        agentId = agent.id;
+
+        const injectedMcp = recorder.recordedLaunches.at(-1)?.mcpServers?.paseo;
+        expect(injectedMcp).toBeDefined();
+        expect(injectedMcp?.type).toBe("http");
+        if (!injectedMcp || injectedMcp.type !== "http") {
+          throw new Error("Expected injected HTTP Paseo MCP server");
+        }
+
+        const mcpUrl = new URL(injectedMcp.url);
+        expect(mcpUrl.hostname).toBe("127.0.0.1");
+        expect(mcpUrl.pathname).toBe("/mcp/agents");
+        expect(mcpUrl.searchParams.get("callerAgentId")).toBe(agentId);
+        loopbackPort = Number(mcpUrl.port);
+        expect(loopbackPort).toBeGreaterThan(0);
+
+        // Capability token auth is enforced on the internal loopback endpoint.
+        const unauthorized = await fetch(`http://127.0.0.1:${loopbackPort}/mcp/agents`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        expect(unauthorized.status).toBe(401);
+
+        // Non-agent daemon routes are not exposed on the internal loopback server.
+        const statusResponse = await fetch(`http://127.0.0.1:${loopbackPort}/api/status`);
+        expect(statusResponse.status).toBe(404);
+
+        // Non-loopback Host headers are rejected (DNS rebinding protection).
+        const badHostStatus = await new Promise<number>((resolve, reject) => {
+          const req = http.request(
+            {
+              host: "127.0.0.1",
+              port: loopbackPort!,
+              path: "/mcp/agents",
+              method: "POST",
+              headers: {
+                host: `evil.example:${loopbackPort!}`,
+                "content-type": "application/json",
+              },
+            },
+            (res) => {
+              res.resume();
+              resolve(res.statusCode ?? 0);
+            },
+          );
+          req.once("error", reject);
+          req.end("{}");
+        });
+        expect(badHostStatus).toBe(403);
+
+        // Authenticated MCP calls work end-to-end against the loopback endpoint.
+        const capabilityToken = daemon.agentManager.getMcpAuthToken();
+        expect(typeof capabilityToken).toBe("string");
+        expect(injectedMcp.headers?.Authorization).toBe(`Bearer ${capabilityToken!}`);
+        mcpClient = await createMcpClient(injectedMcp.url, capabilityToken!);
+        expect(await listWorkspaces(mcpClient)).toEqual([]);
+        const createdWorkspace = await createLocalWorkspace(mcpClient, agentCwd);
+        if (
+          !("workspaceId" in createdWorkspace) ||
+          typeof createdWorkspace.workspaceId !== "string"
+        ) {
+          throw new Error("Expected create_workspace over loopback MCP to return a workspaceId");
+        }
+
+        // Terminal activity URL points to the same loopback endpoint and accepts reports.
+        const envPath = path.join(agentCwd, "terminal-activity-env.json");
+        const terminal = await daemon.terminalManager.createTerminal({
+          workspaceId: createdWorkspace.workspaceId,
+          cwd: agentCwd,
+          command: process.execPath,
+          args: [
+            "-e",
+            `
+              const fs = require("node:fs");
+              const envPath = ${JSON.stringify(envPath)};
+              fs.writeFileSync(envPath + ".tmp", JSON.stringify({
+                terminalId: process.env.PASEO_TERMINAL_ID,
+                token: process.env.PASEO_ACTIVITY_TOKEN,
+                url: process.env.PASEO_TERMINAL_ACTIVITY_URL,
+              }));
+              fs.renameSync(envPath + ".tmp", envPath);
+              setInterval(() => {}, 1000);
+            `,
+          ],
+        });
+        terminalId = terminal.id;
+        await waitForPathExists({ targetPath: envPath, timeoutMs: 10_000 });
+        const terminalEnv = JSON.parse(await readFile(envPath, "utf8")) as {
+          terminalId: string;
+          token: string;
+          url: string;
+        };
+        expect(terminalEnv.url).toBe(`http://127.0.0.1:${loopbackPort}/api/terminal-activity`);
+
+        const activityResponse = await fetch(terminalEnv.url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            terminalId: terminalEnv.terminalId,
+            token: terminalEnv.token,
+            state: "running",
+          }),
+        });
+        expect(activityResponse.status).toBe(204);
+        await expect.poll(() => terminal.getActivity()?.state, { timeout: 5_000 }).toBe("working");
+      } finally {
+        if (terminalId) {
+          await daemon.terminalManager.killTerminalAndWait(terminalId).catch(() => undefined);
+        }
+        if (agentId) {
+          await daemon.agentManager.closeAgent(agentId).catch(() => undefined);
+        }
+        await mcpClient?.close().catch(() => undefined);
+        await daemon.stop();
+        await rm(paseoHome, { recursive: true, force: true });
+        await rm(staticDir, { recursive: true, force: true });
+        await rm(agentCwd, { recursive: true, force: true });
+      }
+
+      // After daemon.stop(), the dedicated loopback listener is closed.
+      if (loopbackPort !== null) {
+        await expect(
+          new Promise<void>((resolve, reject) => {
+            const socket = net.createConnection({ host: "127.0.0.1", port: loopbackPort! });
+            socket.once("connect", () => {
+              socket.destroy();
+              resolve();
+            });
+            socket.once("error", reject);
+          }),
+        ).rejects.toThrow();
+      }
+    },
+    30_000,
+  );
 
   test("create_agent with background initialPrompt reflects running state once the first turn starts", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
