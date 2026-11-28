@@ -124,7 +124,7 @@ export function createIdleRuntimeCleanup(options: Options) {
         }
       } catch (error) {
         if (!isCurrent()) break;
-        protectedAt.set(runtime.identity, { at: timestamp, protected: true });
+        // An unknown safety result retains ownership, but is not evidence of activity.
         result.failures.push({ agentId: runtime.agentId, error });
         options.logger.warn(
           { agentId: runtime.agentId, err: error },
