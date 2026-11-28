@@ -50,6 +50,7 @@ interface TooltipContextValue {
   triggerRef: React.RefObject<TooltipTriggerElement | null>;
   enabled: boolean;
   openOnPress: boolean;
+  openOnLongPress: boolean;
   delayDuration: number;
 }
 
@@ -241,6 +242,7 @@ export function Tooltip({
   delayDuration = 0,
   enabledOnDesktop = true,
   enabledOnMobile = false,
+  openOnLongPress = false,
   children,
 }: PropsWithChildren<{
   open?: boolean;
@@ -249,6 +251,12 @@ export function Tooltip({
   delayDuration?: number;
   enabledOnDesktop?: boolean;
   enabledOnMobile?: boolean;
+  /**
+   * Press-and-hold mode for touch layouts. When set, a long press opens the
+   * tooltip and a short tap keeps its normal action; enabling this on a touch
+   * layout is enough, without also passing `enabledOnMobile`.
+   */
+  openOnLongPress?: boolean;
 }>): ReactElement {
   const triggerRef = useRef<TooltipTriggerElement>(null);
   const [isOpen, setIsOpen] = useControllableOpenState({
@@ -260,7 +268,7 @@ export function Tooltip({
   const isCompact = useIsCompactFormFactor();
   const active = useRetainedPanelActive();
   const opensOnPress = isNative || isCompact;
-  const enabled = active && (opensOnPress ? enabledOnMobile : enabledOnDesktop);
+  const enabled = active && (opensOnPress ? enabledOnMobile || openOnLongPress : enabledOnDesktop);
 
   // Remove the portal in the inactive commit, before the retained chat freezes.
   // Closing also prevents the tooltip from returning when its panel is shown again.
@@ -274,10 +282,11 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       enabled,
-      openOnPress: opensOnPress,
+      openOnPress: opensOnPress && !openOnLongPress,
+      openOnLongPress,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, opensOnPress, delayDuration],
+    [isOpen, setIsOpen, enabled, opensOnPress, openOnLongPress, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -291,6 +300,7 @@ export function TooltipTrigger({
   onFocus,
   onBlur,
   onPress,
+  onLongPress,
   asChild = false,
   triggerRefProp = "ref",
   ...props
@@ -393,6 +403,22 @@ export function TooltipTrigger({
     [clearOpenTimer, close, ctx, disabled, onPress],
   );
 
+  const handleLongPress = useCallback(
+    (e: unknown) => {
+      if (isCallable(onLongPress)) onLongPress(e);
+      if (!ctx.enabled || disabled || !ctx.openOnLongPress) return;
+      clearOpenTimer();
+      ctx.setOpen(true);
+    },
+    [clearOpenTimer, ctx, disabled, onLongPress],
+  );
+
+  // Only attach a long-press handler when it does something. React Native
+  // cancels `onPress` after a long press, so adding one unconditionally would
+  // swallow taps on every tooltip in the app.
+  const longPressProps =
+    ctx.openOnLongPress || isCallable(onLongPress) ? { onLongPress: handleLongPress } : null;
+
   const triggerProps = {
     ...props,
     disabled,
@@ -401,6 +427,7 @@ export function TooltipTrigger({
     onFocus: handleFocus,
     onBlur: handleBlur,
     onPress: handlePress,
+    ...longPressProps,
     ...(isWeb
       ? ({
           // RN Web's hover handling can vary across environments; pointer events are the most reliable.
@@ -431,6 +458,14 @@ export function TooltipTrigger({
       onFocus: composeEventHandlers(Reflect.get(rawProps, "onFocus"), handleFocus),
       onBlur: composeEventHandlers(Reflect.get(rawProps, "onBlur"), handleBlur),
       onPress: composeEventHandlers(Reflect.get(rawProps, "onPress"), handlePress),
+      ...(longPressProps
+        ? {
+            onLongPress: composeEventHandlers(
+              Reflect.get(rawProps, "onLongPress"),
+              handleLongPress,
+            ),
+          }
+        : null),
       onPointerEnter: composeEventHandlers(Reflect.get(rawProps, "onPointerEnter"), handleHoverIn),
       onPointerLeave: composeEventHandlers(Reflect.get(rawProps, "onPointerLeave"), handleHoverOut),
       onMouseEnter: composeEventHandlers(Reflect.get(rawProps, "onMouseEnter"), handleHoverIn),
