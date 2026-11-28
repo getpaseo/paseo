@@ -83,6 +83,7 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { supportsConfigurableComposerSendKeys } from "@/keyboard";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { isNative, isWeb } from "@/constants/platform";
+import { usesMobileResourceBudget } from "@/constants/resource-budget";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -244,7 +245,9 @@ const MIN_INPUT_HEIGHT_MOBILE = 30;
 const MIN_INPUT_HEIGHT_DESKTOP = 46;
 const DEFAULT_MAX_INPUT_HEIGHT = 160;
 const MAX_INPUT_VIEWPORT_RATIO = 0.5;
-const MIN_INPUT_HEIGHT = isWeb ? MIN_INPUT_HEIGHT_DESKTOP : MIN_INPUT_HEIGHT_MOBILE;
+const MIN_INPUT_HEIGHT = usesMobileResourceBudget
+  ? MIN_INPUT_HEIGHT_MOBILE
+  : MIN_INPUT_HEIGHT_DESKTOP;
 type WebTextInputKeyPressEvent = NativeSyntheticEvent<
   TextInputKeyPressEventData & {
     metaKey?: boolean;

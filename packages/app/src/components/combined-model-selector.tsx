@@ -10,7 +10,8 @@ import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/
 import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isNative } from "@/constants/platform";
+import { usesMobileResourceBudget } from "@/constants/resource-budget";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
@@ -104,7 +105,7 @@ export function CombinedModelSelector({
   const modelBrowserScrolling = resolveModelBrowserScrolling({ isNative, isCompact });
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
-  const [isContentReady, setIsContentReady] = useState(isWeb);
+  const [isContentReady, setIsContentReady] = useState(!usesMobileResourceBudget);
   const browser = useModelBrowser({
     providers,
     selectedProvider,
@@ -138,7 +139,7 @@ export function CombinedModelSelector({
   );
 
   useEffect(() => {
-    if (isWeb) return () => {};
+    if (!usesMobileResourceBudget) return () => {};
     if (!isOpen) {
       setIsContentReady(false);
       return () => {};

@@ -23,7 +23,7 @@ import {
   isChecksHiddenByLegacyRowItem,
   type SidebarRowItems,
 } from "@/components/sidebar/display-preferences/row-items";
-import { isNative } from "@/constants/platform";
+import { usesMobileResourceBudget } from "@/constants/resource-budget";
 import {
   DEFAULT_CONTENT_MAX_WIDTH,
   FONT_SIZE,
@@ -63,14 +63,14 @@ export function defaultUiBaseFontSize(native: boolean): number {
   return native ? 15 : FONT_SIZE.base;
 }
 
-export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative);
+export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(usesMobileResourceBudget);
 export const MIN_UI_BASE_FONT_SIZE = 10;
 export const MAX_UI_BASE_FONT_SIZE = 21;
 export function defaultContentFontSize(native: boolean): number {
   return native ? 16 : FONT_SIZE.content;
 }
 
-export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative);
+export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(usesMobileResourceBudget);
 export const MIN_CONTENT_FONT_SIZE = 10;
 export const MAX_CONTENT_FONT_SIZE = 21;
 export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
@@ -410,7 +410,9 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
       await writeAppSettings(deps.storage, read.stored, read.settings);
     }
     const { needsWrite: _needsWrite, ...stored } = read.stored;
-    return await migrateAppSettings(read.settings, deps.storage, stored, { native: isNative });
+    return await migrateAppSettings(read.settings, deps.storage, stored, {
+      native: usesMobileResourceBudget,
+    });
   } catch (error) {
     console.error("[AppSettings] Failed to load settings:", error);
     throw error;

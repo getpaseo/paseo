@@ -35,7 +35,7 @@ import {
   stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit,
 } from "@/utils/host-route-browser";
 import { prepareWorkspaceTab } from "@/utils/prepare-workspace-tab";
-import { isNative, isWeb } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { RenderProfile } from "@/utils/render-profiler";
 
 function getParamValue(value: string | string[] | undefined): string {
@@ -164,7 +164,7 @@ function WorkspaceDeck() {
         currentEntries: retainedSelections,
         activeSelection,
         now: reconciliationNow,
-        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
+        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit(),
       }),
     [activeSelection, reconciliationNow, retainedSelections],
   );
@@ -201,7 +201,7 @@ function WorkspaceDeck() {
           currentEntries: current,
           activeSelection,
           now: Date.now(),
-          maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
+          maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit(),
         }),
       );
     }, expirationDelay + 1);

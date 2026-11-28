@@ -30,19 +30,19 @@ function retainedWorkspaceIds(
 }
 
 describe("reconcileRetainedWorkspaceSelections", () => {
-  it("retains only the active workspace on native", () => {
+  it("retains only the active workspace on mobile resource budgets", () => {
     const entries = reconcileRetainedWorkspaceSelections({
       currentEntries: [retained("A", null)],
       activeSelection: workspace("B"),
       now: 2,
-      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative: true }),
+      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ usesMobileResourceBudget: true }),
     });
 
     expect(retainedWorkspaceIds(entries)).toEqual(["B"]);
   });
 
-  it("retains the desktop deck limit on web", () => {
-    expect(resolveWorkspaceDeckRetentionLimit({ isNative: false })).toBe(
+  it("retains the desktop deck limit on desktop resource budgets", () => {
+    expect(resolveWorkspaceDeckRetentionLimit({ usesMobileResourceBudget: false })).toBe(
       WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
     );
   });

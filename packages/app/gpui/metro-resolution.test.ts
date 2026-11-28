@@ -154,6 +154,14 @@ const CASES = [
     native: path.join(APP_DIR, "src/keyboard/internal/conventions.ts"),
     web: path.join(APP_DIR, "src/keyboard/internal/conventions.web.ts"),
   },
+  {
+    label: "resource budget",
+    origin: path.join(APP_DIR, "src/hooks/use-settings/storage.ts"),
+    specifier: "@/constants/resource-budget",
+    gpui: path.join(APP_DIR, "src/constants/resource-budget.gpui.ts"),
+    native: path.join(APP_DIR, "src/constants/resource-budget.ts"),
+    web: path.join(APP_DIR, "src/constants/resource-budget.ts"),
+  },
 ];
 
 afterEach(() => {
