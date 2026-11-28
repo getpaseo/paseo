@@ -62,7 +62,8 @@ import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useProviderIcon } from "@/components/provider-icons";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative, isWeb } from "@/constants/platform";
+import { isNative } from "@/constants/platform";
+import { usesCompactBottomSheet, usesDesktopPopoverSpacing } from "@/constants/presentation";
 import {
   hasSoftwareKeyboard,
   useHardwareKeyboardPresent,
@@ -1568,7 +1569,7 @@ function ModelRowList({
     );
   }
 
-  if (isCompact && isNative) {
+  if (isCompact && usesCompactBottomSheet) {
     return (
       <SheetFlatList
         data={rows}
@@ -2074,14 +2075,14 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: isWeb ? theme.spacing[3] : theme.spacing[6],
+    paddingHorizontal: usesDesktopPopoverSpacing ? theme.spacing[3] : theme.spacing[6],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[1],
   },
   sectionHeadingAction: {
     position: "absolute",
     top: theme.spacing[1],
-    right: isWeb ? theme.spacing[3] : theme.spacing[6],
+    right: usesDesktopPopoverSpacing ? theme.spacing[3] : theme.spacing[6],
   },
   sectionHeadingText: {
     flex: 1,
@@ -2101,10 +2102,10 @@ const styles = StyleSheet.create((theme) => ({
     position: "absolute",
     top: 0,
     bottom: 0,
-    right: isWeb ? theme.spacing[3] : theme.spacing[6],
+    right: usesDesktopPopoverSpacing ? theme.spacing[3] : theme.spacing[6],
     justifyContent: "center",
   },
-  browserModelRow: isWeb ? {} : { marginBottom: theme.spacing[1] },
+  browserModelRow: usesDesktopPopoverSpacing ? {} : { marginBottom: theme.spacing[1] },
   browserRowHovered: {
     backgroundColor: theme.colors.surface1,
   },
@@ -2122,7 +2123,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingHorizontal: isWeb ? theme.spacing[3] : theme.spacing[6],
+    paddingHorizontal: usesDesktopPopoverSpacing ? theme.spacing[3] : theme.spacing[6],
   },
   browserRowLeading: {
     width: 16,

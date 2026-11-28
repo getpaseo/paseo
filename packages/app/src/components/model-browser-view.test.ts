@@ -49,16 +49,18 @@ function modelRow(
 }
 
 describe("model browser scrolling", () => {
-  it("participates in native compact bottom-sheet scrolling", () => {
-    expect(resolveModelBrowserScrolling({ isNative: true, isCompact: true })).toBe("sheet");
+  it("participates in compact bottom-sheet scrolling on mobile targets", () => {
+    expect(resolveModelBrowserScrolling({ usesCompactBottomSheet: true, isCompact: true })).toBe(
+      "sheet",
+    );
   });
 
   it.each([
-    { platform: "native wide", isNative: true, isCompact: false },
-    { platform: "compact web", isNative: false, isCompact: true },
-    { platform: "wide web", isNative: false, isCompact: false },
-  ])("owns scrolling on $platform surfaces", ({ isNative, isCompact }) => {
-    expect(resolveModelBrowserScrolling({ isNative, isCompact })).toBe("independent");
+    { platform: "mobile wide", usesCompactBottomSheet: true, isCompact: false },
+    { platform: "compact web/desktop", usesCompactBottomSheet: false, isCompact: true },
+    { platform: "wide web/desktop", usesCompactBottomSheet: false, isCompact: false },
+  ])("owns scrolling on $platform surfaces", ({ usesCompactBottomSheet, isCompact }) => {
+    expect(resolveModelBrowserScrolling({ usesCompactBottomSheet, isCompact })).toBe("independent");
   });
 });
 

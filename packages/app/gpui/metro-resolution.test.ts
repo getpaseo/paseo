@@ -162,6 +162,14 @@ const CASES = [
     native: path.join(APP_DIR, "src/constants/resource-budget.ts"),
     web: path.join(APP_DIR, "src/constants/resource-budget.ts"),
   },
+  {
+    label: "presentation",
+    origin: path.join(APP_DIR, "src/command-center/command-center.tsx"),
+    specifier: "@/constants/presentation",
+    gpui: path.join(APP_DIR, "src/constants/presentation.gpui.ts"),
+    native: path.join(APP_DIR, "src/constants/presentation.ts"),
+    web: path.join(APP_DIR, "src/constants/presentation.ts"),
+  },
 ];
 
 afterEach(() => {

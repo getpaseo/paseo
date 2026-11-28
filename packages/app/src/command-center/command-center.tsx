@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { usesCompactBottomSheet } from "@/constants/presentation";
 import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
 import { useTimeAgo } from "@/hooks/use-time-ago";
@@ -914,7 +915,7 @@ export function CommandCenter() {
     isCompact ? COMMAND_CENTER_LIST_METRICS.compact : COMMAND_CENTER_LIST_METRICS.desktop,
     interaction,
   );
-  const showBottomSheet = isCompact && isNative;
+  const showBottomSheet = isCompact && usesCompactBottomSheet;
   const modalLayer = useGlobalOverlayLayer("modal", state.open);
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,

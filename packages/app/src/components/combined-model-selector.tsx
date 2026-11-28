@@ -10,7 +10,7 @@ import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/
 import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
+import { usesCompactBottomSheet } from "@/constants/presentation";
 import { usesMobileResourceBudget } from "@/constants/resource-budget";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -102,7 +102,10 @@ export function CombinedModelSelector({
 }: CombinedModelSelectorProps) {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
-  const modelBrowserScrolling = resolveModelBrowserScrolling({ isNative, isCompact });
+  const modelBrowserScrolling = resolveModelBrowserScrolling({
+    usesCompactBottomSheet,
+    isCompact,
+  });
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(!usesMobileResourceBudget);
@@ -309,7 +312,7 @@ export function CombinedModelSelector({
         desktopChildrenScrollEnabled={false}
         header={browser.header}
         keyboard={browser.keyboard}
-        mobileChildrenScrollEnabled={!browser.isProviderView || !isNative}
+        mobileChildrenScrollEnabled={!browser.isProviderView || !usesCompactBottomSheet}
         mobileChildrenContentContainerStyle={styles.mobileBrowserContent}
       >
         {selectorBody}

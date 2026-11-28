@@ -13,13 +13,13 @@ export type ModelBrowserView =
   | { kind: "provider"; providerId: string; providerLabel: string };
 
 export function resolveModelBrowserScrolling({
-  isNative,
+  usesCompactBottomSheet,
   isCompact,
 }: {
-  isNative: boolean;
+  usesCompactBottomSheet: boolean;
   isCompact: boolean;
 }): "sheet" | "independent" {
-  return isNative && isCompact ? "sheet" : "independent";
+  return usesCompactBottomSheet && isCompact ? "sheet" : "independent";
 }
 
 /** A profile's model reference; used to match profiles back to model rows. */

@@ -24,7 +24,7 @@ import { resolveModelTriggerLabels } from "@/composer/agent-controls/layout";
 import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
+import { usesCompactBottomSheet } from "@/constants/presentation";
 import { hasSoftwareKeyboard } from "@/keyboard";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
 import {
@@ -167,7 +167,7 @@ export function CompactModelSheet({
   const { t } = useTranslation();
   const usesBottomSheet = useIsCompactFormFactor();
   const modelBrowserScrolling = resolveModelBrowserScrolling({
-    isNative,
+    usesCompactBottomSheet,
     isCompact: usesBottomSheet,
   });
   const [isOpen, setIsOpen] = useState(false);
