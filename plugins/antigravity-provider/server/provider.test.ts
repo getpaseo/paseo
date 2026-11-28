@@ -419,6 +419,16 @@ const completedToolCalls = [
     rawInput: { message: "hello", toolSummary: "Echo message hello" },
   },
   {
+    toolCallId: "wrapped",
+    name: "call_mcp_tool",
+    kind: "execute",
+    rawInput: {
+      ServerName: "local_tools",
+      ToolName: "echo_message",
+      Arguments: { message: "hello" },
+    },
+  },
+  {
     toolCallId: "ambiguous",
     name: "mcp_paseo_get_agent_status",
     kind: "other",
@@ -447,6 +457,17 @@ it.each(["live", "replay"] as const)(
           break;
         case "session/load":
         case "session/prompt":
+          if (method === "session/prompt") {
+            send({
+              id: "review-wrapped",
+              method: "session/request_permission",
+              params: {
+                sessionId: params.sessionId,
+                toolCall: { ...tools.find((tool) => tool.toolCallId === "wrapped"), title: "MCP Tool echo_message" },
+                options: [{ kind: "allow_once", optionId: "once", name: "Allow once" }],
+              },
+            });
+          }
           for (const { rawOutput, content, ...tool } of tools) {
             const completed = { status: "completed", rawOutput, content };
             if (method === "session/load") {
@@ -458,6 +479,7 @@ it.each(["live", "replay"] as const)(
           }
           send({ id, result: method === "session/load" ? { modes } : { stopReason: "end_turn" } });
           break;
+        case "session/set_mode":
         case "session/close":
           send({ id, result: {} });
           break;
@@ -467,7 +489,7 @@ it.each(["live", "replay"] as const)(
     const connection = await createAntigravityProvider().connect({
       launch,
       versions: [1],
-      capabilities: ["session.persistence", "prompt.message"],
+      capabilities: ["session.persistence", "prompt.message", "permission"],
     });
     const events: ProviderEvent[] = [];
     connection.onEvent((event) => events.push(event));
@@ -481,6 +503,7 @@ it.each(["live", "replay"] as const)(
           source === "replay" ? { version: 1, data: { sessionId: "agy-session" } } : undefined,
         config: {
           cwd: directory,
+          mode: "default",
           env: {},
           mcpServers: {
             paseo_get: { type: "stdio", command: "other-server" },
@@ -556,6 +579,25 @@ it.each(["live", "replay"] as const)(
         detail: { type: "unknown", input: { message: "hello" }, output: null },
       });
       expect(completed.mcp.detail).not.toHaveProperty("input.toolSummary");
+      const wrappedDetail = {
+        type: "unknown",
+        input: {
+          ServerName: "local_tools",
+          ToolName: "echo_message",
+          Arguments: { message: "hello" },
+        },
+      };
+      expect(completed.wrapped).toMatchObject({
+        name: "local_tools.echo_message",
+        detail: wrappedDetail,
+      });
+      if (source === "live") {
+        await expect
+          .poll(() => events.find((event) => event.type === "session.permission"))
+          .toMatchObject({
+            request: { title: "MCP Tool echo_message", detail: wrappedDetail },
+          });
+      }
       expect(completed.ambiguous).toMatchObject({
         name: "mcp_paseo_get_agent_status",
         detail: { type: "unknown", input: { agentId: "agent-1" }, output: null },

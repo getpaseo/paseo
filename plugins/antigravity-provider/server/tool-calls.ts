@@ -2,6 +2,7 @@ import type { AcpToolCallSnapshot, AcpTransformer } from "@getpaseo/plugin/serve
 import type { ProviderToolCallDetail } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
+const mcpInput = z.object({ ServerName: z.string().min(1), ToolName: z.string().min(1) });
 const shellInput = z.object({ CommandLine: z.string() });
 const shellOutput = z.object({
   output: z.string().optional(),
@@ -16,6 +17,16 @@ const fileWrite = z.object({ Path: z.string(), Content: z.string().optional() })
 const webSearch = z.object({ query: z.string() });
 
 export const mapToolCall: NonNullable<AcpTransformer["toolCall"]> = (call, context) => {
+  if (call.name === "call_mcp_tool") {
+    const target = mcpInput.safeParse(call.input).data;
+    if (target) {
+      return {
+        ...call,
+        name: target.ServerName + "." + target.ToolName,
+        detail: { type: "unknown", input: call.input, output: call.output },
+      };
+    }
+  }
   if (call.name?.startsWith("mcp_")) {
     return mapMcpCall(call, call.name, context.mcpServerNames ?? []);
   }
