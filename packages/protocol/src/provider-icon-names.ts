@@ -52,7 +52,7 @@ export const ACP_PROVIDER_ICON_NAMES = [
   "vtcode",
 ];
 
-export const TERMINAL_PROFILE_ICON_NAMES = ["agy"];
+export const TERMINAL_PROFILE_ICON_NAMES = ["agy", "muse"];
 
 export const KNOWN_PROVIDER_ICON_NAMES = [
   ...BUILTIN_PROVIDER_ICON_NAMES,

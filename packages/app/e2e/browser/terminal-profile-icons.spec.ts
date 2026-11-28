@@ -13,6 +13,7 @@ test.use({
     daemon: {
       terminalProfiles: [
         { id: "antigravity", name: "Antigravity artwork", command: "/bin/sh", icon: "agy" },
+        { id: "muse", name: "Muse artwork", command: "muse" },
         { id: "cursor", name: "Cursor artwork", command: "/bin/sh", icon: "cursor" },
         { id: "unknown", name: "Unknown artwork", command: "/bin/sh", icon: "unknown-icon" },
       ],
@@ -63,6 +64,7 @@ test("terminal profiles show bundled artwork while unknown icons keep the Bot fa
     });
     await openLaunchMenu(page);
     await expectBundledArtwork(page, "Antigravity", ACP_PROVIDER_ICON_SVGS.agy);
+    await expectBundledArtwork(page, "Muse", ACP_PROVIDER_ICON_SVGS.muse);
     await expectBundledArtwork(page, "Cursor", ACP_PROVIDER_ICON_SVGS.cursor);
     await expectUnknownArtworkFallback(page);
   } finally {
