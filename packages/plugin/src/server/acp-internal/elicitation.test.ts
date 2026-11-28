@@ -585,6 +585,48 @@ describe("AcpFormElicitation.parse and respond", () => {
       }),
     );
     expect(malformedOther).toBeNull();
+
+    // A required choice (or minItems > 0 multi-select) without an "other" sentinel keeps
+    // <key>_other as a separate optional text field so accepted content always satisfies the schema.
+    const requiredPrimaryWithoutSentinel = AcpFormElicitation.parse(
+      formRequest(
+        {
+          q1: { type: "string", title: "Mode", description: "Pick mode", enum: ["fast", "safe"] },
+          q1_other: { type: "string", title: "Notes", description: "Optional notes" },
+          tags: {
+            type: "array",
+            title: "Tags",
+            description: "Pick at least one",
+            minItems: 1,
+            items: { type: "string", enum: ["a", "b"] },
+          },
+          tags_other: { type: "string", title: "Extra tag", description: "Optional extra" },
+        },
+        { required: ["q1"] },
+      ),
+    )!;
+    const sepQuestions = (
+      requiredPrimaryWithoutSentinel.request.input as {
+        questions: Array<{ id: string; allowOther: boolean; allowEmpty: boolean }>;
+      }
+    ).questions;
+    expect(sepQuestions.map((q) => [q.id, q.allowOther, q.allowEmpty])).toEqual([
+      ["q1", false, false],
+      ["q1_other", true, true],
+      ["tags", false, false],
+      ["tags_other", true, true],
+    ]);
+    expect(
+      requiredPrimaryWithoutSentinel.respond({
+        behavior: "allow",
+        updatedInput: {
+          answers: { Mode: "fast", Notes: "custom", Tags: "a", "Extra tag": "" },
+        },
+      }),
+    ).toEqual({
+      action: "accept",
+      content: { q1: "fast", q1_other: "custom", tags: ["a"] },
+    });
   });
 
   it.each([

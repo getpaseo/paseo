@@ -134,11 +134,22 @@ function isPlainStringProperty(schema: unknown): schema is Record<string, unknow
   );
 }
 
-function isChoiceProperty(schema: unknown): boolean {
-  if (!isPlainRecord(schema)) return false;
-  if (schema.type === "string") return parseStringChoice(schema).kind === "choice";
-  if (schema.type === "array") return readMultiSelectOptions(schema) !== null;
-  return false;
+function readChoiceOptions(schema: unknown): RawChoiceOption[] | null {
+  if (!isPlainRecord(schema)) return null;
+  if (schema.type === "string") {
+    const parsed = parseStringChoice(schema);
+    return parsed.kind === "choice" ? parsed.options : null;
+  }
+  if (schema.type === "array") return readMultiSelectOptions(schema);
+  return null;
+}
+
+function readMinItems(schema: Record<string, unknown>): number {
+  return typeof schema.minItems === "number" &&
+    Number.isFinite(schema.minItems) &&
+    schema.minItems > 0
+    ? schema.minItems
+    : 0;
 }
 
 function pairOtherFields(
@@ -149,11 +160,19 @@ function pairOtherFields(
   const absorbed = new Set<string>();
   const paired = new Map<string, OtherPairing>();
   for (const [key, schema] of entries) {
-    if (!isChoiceProperty(schema)) continue;
+    const options = readChoiceOptions(schema);
+    if (!options || !isPlainRecord(schema)) continue;
     const otherKey = `${key}${OTHER_SUFFIX}`;
     if (!Object.hasOwn(properties, otherKey) || requiredSet.has(otherKey)) continue;
     const otherSchema = properties[otherKey];
     if (!isPlainStringProperty(otherSchema)) continue;
+    // Only fold `<key>_other` as a replacement Other input when the primary field can be
+    // omitted or declares an explicit `"other"` sentinel; otherwise keep `_other` as its own
+    // optional follow-up field so `required` / `minItems` on `<key>` are always satisfied.
+    const mustSelectPrimary =
+      requiredSet.has(key) || (schema.type === "array" && readMinItems(schema) > 0);
+    const hasSentinel = options.some((option) => option.value === OTHER_SENTINEL);
+    if (mustSelectPrimary && !hasSentinel) continue;
     absorbed.add(otherKey);
     paired.set(key, { key: otherKey, schema: otherSchema });
   }
@@ -367,10 +386,7 @@ function buildMultiSelectField(input: {
   const built = buildCardOptions(selectableOptions, true, new Set(rawDefaults));
   const valueByLabel = new Map(built.map((item) => [item.card.label, item.value]));
 
-  const minItems =
-    typeof schema.minItems === "number" && Number.isFinite(schema.minItems) && schema.minItems > 0
-      ? schema.minItems
-      : 0;
+  const minItems = readMinItems(schema);
   const effectiveRequired = required || minItems > 0;
   // The card submits zero choices only beside a text input, so an optional
   // multi-select without Other gets an explicit None choice.
