@@ -709,6 +709,13 @@ class FakeDaemon {
     );
   }
 
+  socketFailsOnHello(): void {
+    this.transport.send = () => {
+      throw new Error("WebSocket not open");
+    };
+    this.onOpen();
+  }
+
   daemonAnswersPingsAfter(delay: "fast" | `${number}s`): void {
     this.pongMode = {
       kind: "answer",
@@ -2826,6 +2833,211 @@ test("foreground tears down a silently dead socket after two fresh five-second w
   expect(second.closesFromClient()).toEqual([]);
 });
 
+test("foreground replaces a stale connect attempt and retries at the base delay if it fails", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const replacement = new FakeDaemon();
+  const healthy = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("foreground-stalled", [
+    stalled,
+    replacement,
+    healthy,
+  ]);
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(client.getConnectionState().status).toBe("connecting");
+
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(2);
+  expect(stalled.closesFromClient()).toHaveLength(1);
+
+  replacement.daemonClosesWith("network still waking");
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(3);
+  healthy.openConnection();
+  await connection;
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("foreground preserves RPCs waiting for a pending handshake", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const replacement = new FakeDaemon();
+  const { client } = connectThroughReplacements("foreground-queued", [stalled, replacement]);
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  const ping = client.ping({ requestId: "queued-ping", timeoutMs: 10_000 });
+  void ping.catch(() => undefined);
+
+  await vi.advanceTimersByTimeAsync(5_000);
+  client.ensureConnected({ verify: true });
+  replacement.openConnection();
+
+  await connection;
+  await expect(ping).resolves.toMatchObject({ requestId: "queued-ping" });
+});
+
+test("foreground shares a pending credential lookup with the current connection attempt", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const replacement = new FakeDaemon();
+  const daemons = [stalled, replacement];
+  const credentials: Array<(value: string) => void> = [];
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "foreground-credential-lookup",
+    localCredential: () => new Promise((resolve) => credentials.push(resolve)),
+    transportFactory: () => daemons[attempts++]!.transport,
+  });
+  clients.push(client);
+
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  client.ensureConnected({ verify: true });
+  expect(credentials).toHaveLength(1);
+  credentials[0]!("initial-credential");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(attempts).toBe(1);
+
+  client.ensureConnected({ verify: true });
+  client.ensureConnected({ verify: true });
+  expect(credentials).toHaveLength(2);
+  expect(stalled.closesFromClient()).toHaveLength(1);
+  credentials[1]!("replacement-credential");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(attempts).toBe(2);
+  replacement.openConnection();
+
+  await connection;
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("foreground replaces a stalled credential lookup and ignores its late result", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  const credentials: Array<(value: string) => void> = [];
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "foreground-stalled-credentials",
+    connectTimeoutMs: 4_000,
+    localCredential: () => new Promise((resolve) => credentials.push(resolve)),
+    transportFactory: () => {
+      attempts += 1;
+      return daemon.transport;
+    },
+  });
+  clients.push(client);
+
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  await vi.advanceTimersByTimeAsync(3_100);
+  client.ensureConnected({ verify: true });
+  expect(credentials).toHaveLength(2);
+  credentials[1]!("replacement-credential");
+  await vi.advanceTimersByTimeAsync(0);
+  daemon.openConnection();
+  await connection;
+
+  credentials[0]!("obsolete-credential");
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(attempts).toBe(1);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("connection timeout includes credential lookup", async () => {
+  useHeartbeatClock();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "credential-lookup-timeout",
+    connectTimeoutMs: 4_000,
+    reconnect: { enabled: false },
+    localCredential: () => new Promise(() => {}),
+  });
+  clients.push(client);
+
+  const connection = client.connect();
+  const outcome = connection.catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(3_999);
+  expect(client.getConnectionState().status).toBe("connecting");
+  await vi.advanceTimersByTimeAsync(1);
+  expect(client.getConnectionState().status).toBe("disconnected");
+  expect(await outcome).toMatchObject({ message: "Connection timed out" });
+});
+
+test("a failed hello retires the deadline of the foreground replacement", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const closing = new FakeDaemon();
+  const healthy = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements(
+    "foreground-failed-hello",
+    [stalled, closing, healthy],
+    { connectTimeoutMs: 4_000 },
+  );
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  await vi.advanceTimersByTimeAsync(3_100);
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(3_900);
+  closing.socketFailsOnHello();
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(client.lastError).toBe("WebSocket not open");
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(3);
+  healthy.openConnection();
+  await connection;
+});
+
+test("foreground keeps a connect attempt that just started", async () => {
+  useHeartbeatClock();
+  const pending = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements("foreground-fresh", [pending]);
+  const connection = client.connect();
+  await vi.advanceTimersByTimeAsync(500);
+
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(1);
+  expect(pending.closesFromClient()).toEqual([]);
+
+  pending.openConnection();
+  await connection;
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
+test("foreground resets the retry delay after failed connections in the background", async () => {
+  useHeartbeatClock();
+  const daemons = Array.from({ length: 7 }, () => new FakeDaemon());
+  const { client, attempts } = connectThroughReplacements("foreground-backoff", daemons);
+  const connection = client.connect();
+  daemons[0]!.openConnection();
+  await connection;
+
+  daemons[0]!.daemonClosesWith("network suspended");
+  for (let retry = 0; retry < 4; retry += 1) {
+    await vi.advanceTimersByTimeAsync(1_500 * 2 ** retry);
+    expect(attempts()).toBe(retry + 2);
+    daemons[retry + 1]!.daemonClosesWith("network suspended");
+  }
+
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(6);
+  daemons[5]!.daemonClosesWith("network still waking");
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(attempts()).toBe(6);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(7);
+  daemons[6]!.openConnection();
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
 test("foreground verification preserves a healthy socket and deduplicates simultaneous checks", async () => {
   useHeartbeatClock();
   const daemon = new FakeDaemon();
@@ -2960,14 +3172,14 @@ test("chunk progress beyond the daemon lease keeps sending heartbeat pings", asy
 function connectThroughReplacements(
   clientId: string,
   daemons: FakeDaemon[],
-  options?: { reconnect?: { enabled: boolean } },
+  options?: { reconnect?: { enabled: boolean }; connectTimeoutMs?: number },
 ): { client: DaemonClient; attempts: () => number } {
   let attempts = 0;
   const client = new DaemonClient({
     url: "ws://test",
     clientId,
     logger: noopLogger,
-    ...(options?.reconnect ? { reconnect: options.reconnect } : {}),
+    ...options,
     transportFactory: () => {
       const daemon = daemons[Math.min(attempts, daemons.length - 1)]!;
       attempts += 1;
