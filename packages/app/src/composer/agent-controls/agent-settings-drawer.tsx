@@ -63,7 +63,18 @@ export interface AgentSettingsDrawerProps {
   model: AgentSettingsDrawerModel | null;
 }
 
-const NO_PROVIDERS: readonly ProviderSelectorProvider[] = [];
+/** Stands in for a hidden model picker; Home then draws no Model row to reach it. */
+const NO_MODEL: AgentSettingsDrawerModel = {
+  providers: [],
+  selectedProvider: "",
+  selectedModel: "",
+  selectedModelLabel: "",
+  canSwitchProvider: false,
+  serverId: null,
+  profiles: null,
+  onSelect: () => {},
+  isRetryingProvider: false,
+};
 
 /**
  * The compact agent settings: one drawer whose page changes in place. Home lays out every control;
@@ -79,20 +90,22 @@ export function AgentSettingsDrawer({
   pluginItems,
   model,
 }: AgentSettingsDrawerProps) {
-  const providers = model?.providers ?? NO_PROVIDERS;
-  const selectedProvider = model?.selectedProvider ?? "";
-  const selectedModel = model?.selectedModel ?? "";
-  const selectedModelLabel = model?.selectedModelLabel ?? "";
-  const canSwitchProvider = model?.canSwitchProvider ?? false;
-  const serverId = model?.serverId ?? null;
-  const profiles = model?.profiles ?? null;
-  const onSelect = model?.onSelect;
-  const onApplyProfile = model?.onApplyProfile;
-  const onEditProfiles = model?.onEditProfiles;
-  const onCreateProfile = model?.onCreateProfile;
-  const onEditProfile = model?.onEditProfile;
-  const onRetryProvider = model?.onRetryProvider;
-  const isRetryingProvider = model?.isRetryingProvider ?? false;
+  const {
+    providers,
+    selectedProvider,
+    selectedModel,
+    selectedModelLabel,
+    canSwitchProvider,
+    serverId,
+    profiles,
+    onSelect,
+    onApplyProfile,
+    onEditProfiles,
+    onCreateProfile,
+    onEditProfile,
+    onRetryProvider,
+    isRetryingProvider,
+  } = model ?? NO_MODEL;
   const { t } = useTranslation();
   const [page, setPage] = useState<AgentSheetPage>(AGENT_SHEET_HOME);
   // Select pages search with this; the Model page keeps its own.
@@ -154,7 +167,7 @@ export function AgentSettingsDrawer({
 
   const handlePickModel = useCallback(
     (provider: string, modelId: string) => {
-      onSelect?.(provider, modelId);
+      onSelect(provider, modelId);
       goHome();
     },
     [goHome, onSelect],
@@ -172,7 +185,7 @@ export function AgentSettingsDrawer({
   }, [close, onEditProfiles]);
   const handleCreateProfile = useCallback(
     (seed: AgentProfileSeed) => {
-      if (seed.modelId) onSelect?.(seed.provider, seed.modelId);
+      if (seed.modelId) onSelect(seed.provider, seed.modelId);
       close();
       void onCreateProfile?.(seed);
     },

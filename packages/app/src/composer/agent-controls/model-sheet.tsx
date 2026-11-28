@@ -34,7 +34,7 @@ import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ComposerControls, ControlTooltipHint } from "./composer-control";
 import { useModelPickerShortcut } from "./control-items";
-import { AgentSettingsDrawer } from "./agent-settings-drawer";
+import { AgentSettingsDrawer, type AgentSettingsDrawerModel } from "./agent-settings-drawer";
 import { AgentModeControl } from "./mode-control";
 import type { AgentSheetControls } from "./sheet-home";
 
@@ -209,6 +209,41 @@ export function CompactModelSheet({
     onClose?.();
   }, [onClose, rootBrowser]);
 
+  const drawerModel = useMemo<AgentSettingsDrawerModel>(
+    () => ({
+      providers: availableProviders,
+      selectedProvider,
+      selectedModel,
+      selectedModelLabel: rootBrowser.selectedModelLabel,
+      canSwitchProvider,
+      serverId,
+      profiles,
+      onSelect,
+      onApplyProfile,
+      onEditProfiles,
+      onCreateProfile,
+      onEditProfile,
+      onRetryProvider,
+      isRetryingProvider,
+    }),
+    [
+      availableProviders,
+      canSwitchProvider,
+      isRetryingProvider,
+      onApplyProfile,
+      onCreateProfile,
+      onEditProfile,
+      onEditProfiles,
+      onRetryProvider,
+      onSelect,
+      profiles,
+      rootBrowser.selectedModelLabel,
+      selectedModel,
+      selectedProvider,
+      serverId,
+    ],
+  );
+
   const toggle = useCallback(() => {
     if (isOpen) {
       close();
@@ -243,22 +278,7 @@ export function CompactModelSheet({
           disabled={disabled}
           controls={controls}
           pluginItems={pluginItems}
-          model={{
-            providers: availableProviders,
-            selectedProvider,
-            selectedModel,
-            selectedModelLabel: rootBrowser.selectedModelLabel,
-            canSwitchProvider,
-            serverId,
-            profiles,
-            onSelect,
-            onApplyProfile,
-            onEditProfiles,
-            onCreateProfile,
-            onEditProfile,
-            onRetryProvider,
-            isRetryingProvider,
-          }}
+          model={drawerModel}
         />
       ) : (
         <NarrowPaneModelDialog
