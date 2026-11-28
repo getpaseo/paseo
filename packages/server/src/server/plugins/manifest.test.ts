@@ -87,6 +87,35 @@ describe("plugin manifest", () => {
     }
   });
 
+  it("reads a Git installation file list and rejects unsafe paths", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
+    directories.push(directory);
+    const manifest = path.join(directory, "paseo-plugin.json");
+    const gitFiles = ["index.server.ts", "src", "assets/icon.png", "a file.txt"];
+    await writeFile(manifest, JSON.stringify({ id: "example", gitFiles }));
+    await expect(readPluginManifest(directory)).resolves.toEqual({ id: "example", gitFiles });
+    for (const invalid of [
+      [],
+      [""],
+      ["."],
+      ["../other"],
+      ["src/../other"],
+      ["/absolute"],
+      ["src//file"],
+      ["src/"],
+      ["src/*.ts"],
+      ["src/[ab]"],
+      [".git/config"],
+      [".GiT/config"],
+      ["C:/other"],
+      ["src\\file"],
+      ["a\nfile"],
+    ]) {
+      await writeFile(manifest, JSON.stringify({ id: "example", gitFiles: invalid }));
+      await expect(readPluginManifest(directory)).rejects.toThrow();
+    }
+  });
+
   it("reads and validates requirements before any plugin code runs", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
     directories.push(directory);
