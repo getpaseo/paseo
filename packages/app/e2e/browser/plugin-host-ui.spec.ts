@@ -53,8 +53,13 @@ function ModalBody({ onSaved }) {
   </View>;
 }
 
-function Surface({ playAudio }) {
+function Surface({ playAudio, pickImages }) {
   const [audioStatus, setAudioStatus] = useState("Audio ready");
+  const [picked, setPicked] = useState("No images picked");
+  async function pick() {
+    const images = await pickImages();
+    setPicked(images.map((image) => [image.name, image.mimeType, image.base64].join(" ")).join(", "));
+  }
   async function play(base64) {
     setAudioStatus("Playing audio");
     try { await playAudio({ base64, mimeType: "audio/wav" }); setAudioStatus("Audio finished"); }
@@ -64,6 +69,8 @@ function Surface({ playAudio }) {
   return <View>
     <Text>{audioStatus}</Text>
     <Markdown>{"![Before](" + SCREENSHOT_PATH + ")\\n\\n![After](" + SCREENSHOT_FILE_URL + ")"}</Markdown>
+    <Text>{picked}</Text>
+    <Pressable accessibilityRole="button" onPress={pick}><Text>Pick plugin images</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => play(AUDIO_BASE64)}><Text>Play plugin audio</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => play("UklGRg==")}><Text>Play invalid audio</Text></Pressable>
     <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
@@ -86,7 +93,7 @@ function Surface({ playAudio }) {
 }
 
 export default function contribute(plugin) {
-  plugin.addSurface("main", () => <Surface playAudio={plugin.playAudio} />);
+  plugin.addSurface("main", () => <Surface playAudio={plugin.playAudio} pickImages={plugin.pickImages} />);
   plugin.addSidebarItem({
     id: "main",
     title: "Host UI",
@@ -201,6 +208,19 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
       await playPluginAudio(page, "Play plugin audio", "Audio finished");
       await playPluginAudio(page, "Play invalid audio", "Audio rejected");
       await playPluginAudio(page, "Play plugin audio", "Audio finished");
+    });
+
+    await test.step("plugin picks images through the app's image picker", async () => {
+      const chooserPromise = page.waitForEvent("filechooser", { timeout: 10_000 });
+      await page.getByRole("button", { name: "Pick plugin images", exact: true }).click();
+      const chooser = await chooserPromise;
+      expect(chooser.isMultiple()).toBe(true);
+      await chooser.setFiles([
+        { name: "shot.png", mimeType: "image/png", buffer: Buffer.from("fake png") },
+      ]);
+      await expect(
+        page.getByText("shot.png image/png ZmFrZSBwbmc=", { exact: true }),
+      ).toBeVisible();
     });
 
     await test.step("non-compact layouts use a centered dialog", async () => {

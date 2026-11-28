@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useTranslation } from "react-i18next";
@@ -9,84 +9,80 @@ import {
   type PickedImageAttachmentInput,
 } from "@/hooks/image-attachment-picker";
 import { isWeb } from "@/constants/platform";
+import { i18n } from "@/i18n/i18next";
 
 interface UseImageAttachmentPickerResult {
   pickImages: () => Promise<PickedImageAttachmentInput[] | null>;
 }
 
-export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
-  const { t } = useTranslation();
-  const [mediaPermission, requestMediaPermission] = ImagePicker.useMediaLibraryPermissions();
-  const isPickingRef = useRef(false);
+let isPicking = false;
 
-  const ensurePermission = useCallback(async () => {
-    let currentPermission = mediaPermission;
+async function ensureMediaLibraryPermission(): Promise<boolean> {
+  let permission = await ImagePicker.getMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  }
+  if (!permission.granted) {
+    Alert.alert(
+      i18n.t("imageAttachmentPicker.permissionTitle"),
+      i18n.t("imageAttachmentPicker.permissionMessage"),
+    );
+    return false;
+  }
+  return true;
+}
 
-    if (
-      !currentPermission ||
-      currentPermission.status === ImagePicker.PermissionStatus.UNDETERMINED
-    ) {
-      currentPermission = await requestMediaPermission();
-    } else if (!currentPermission.granted) {
-      currentPermission = await requestMediaPermission();
+/**
+ * Opens the app's image picker: the desktop file dialog in Electron, the photo library on
+ * iOS and Android, and the browser file chooser on web. Resolves null when the user cancels,
+ * denies access, or another pick is already open. Rejects when reading the selection fails.
+ */
+export async function pickImageAttachments(): Promise<PickedImageAttachmentInput[] | null> {
+  if (isPicking) {
+    return null;
+  }
+  isPicking = true;
+  try {
+    if (isWeb && isElectronRuntime()) {
+      const selectedImages = await pickImagesWithDesktopDialog(getDesktopHost()?.dialog);
+      return selectedImages.length === 0 ? null : selectedImages;
     }
 
-    if (!currentPermission?.granted) {
-      Alert.alert(
-        t("imageAttachmentPicker.permissionTitle"),
-        t("imageAttachmentPicker.permissionMessage"),
-      );
-      return false;
-    }
-
-    return true;
-  }, [mediaPermission, requestMediaPermission, t]);
-
-  const pickImages = useCallback(async () => {
-    if (isPickingRef.current) {
+    if (!(await ensureMediaLibraryPermission())) {
       return null;
     }
 
-    isPickingRef.current = true;
+    const pendingResult = await ImagePicker.getPendingResultAsync();
+    if (pendingResult && "canceled" in pendingResult && !pendingResult.canceled) {
+      return await normalizePickedImageAssets(pendingResult.assets);
+    }
 
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"] as ImagePicker.MediaType[],
+      allowsMultipleSelection: true,
+      quality: 1,
+    });
+    if (result.canceled) {
+      return null;
+    }
+    return await normalizePickedImageAssets(result.assets);
+  } finally {
+    isPicking = false;
+  }
+}
+
+export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
+  const { t } = useTranslation();
+
+  const pickImages = useCallback(async () => {
     try {
-      if (isWeb && isElectronRuntime()) {
-        const selectedImages = await pickImagesWithDesktopDialog(getDesktopHost()?.dialog);
-        if (selectedImages.length === 0) {
-          return null;
-        }
-        return selectedImages;
-      }
-
-      const hasPermission = await ensurePermission();
-      if (!hasPermission) {
-        return null;
-      }
-
-      const pendingResult = await ImagePicker.getPendingResultAsync();
-      if (pendingResult && "canceled" in pendingResult && !pendingResult.canceled) {
-        return await normalizePickedImageAssets(pendingResult.assets);
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"] as ImagePicker.MediaType[],
-        allowsMultipleSelection: true,
-        quality: 1,
-      });
-
-      if (result.canceled) {
-        return null;
-      }
-
-      return await normalizePickedImageAssets(result.assets);
+      return await pickImageAttachments();
     } catch (error) {
       console.error("[ImageAttachmentPicker] Failed to pick image:", error);
       Alert.alert(t("imageAttachmentPicker.errorTitle"), t("imageAttachmentPicker.failedToSelect"));
       return null;
-    } finally {
-      isPickingRef.current = false;
     }
-  }, [ensurePermission, t]);
+  }, [t]);
 
   return { pickImages };
 }

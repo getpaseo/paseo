@@ -225,6 +225,16 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   agentId?: string;
 }
 
+/** An image chosen with `client.pickImages()`. */
+export interface PluginPickedImage {
+  /** The file name, when the platform reports one. */
+  name: string | null;
+  /** An image MIME type, such as `image/png`. */
+  mimeType: string;
+  /** The image file, base64-encoded. */
+  base64: string;
+}
+
 // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
 interface PluginClientContextAliases {
   /** @deprecated Use `addScreen`. */
@@ -237,6 +247,11 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   readonly i18n: import("./translations.js").PluginI18n;
   /** Play a base64-encoded audio file on this client; resolves when playback ends. */
   playAudio(source: { base64: string; mimeType: string }): Promise<void>;
+  /**
+   * Opens Paseo's image picker on this client and resolves with the chosen images, or an empty
+   * array when the user cancels. Missing on apps that predate it: check before offering a picker.
+   */
+  pickImages?(): Promise<PluginPickedImage[]>;
   addSettingsScreen(contribution: PluginSettingsScreenContribution<PluginText>): PluginCleanup;
   addScreen(contribution: PluginScreenContribution<PluginText>): PluginCleanup;
   addSidebarView(contribution: PluginSidebarViewContribution<PluginText>): PluginCleanup;

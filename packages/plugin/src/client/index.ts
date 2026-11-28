@@ -28,6 +28,7 @@ export type {
   PluginAgentPanelProps,
   PluginClientOpenPanelOptions,
   PluginClientContext,
+  PluginPickedImage,
   PluginClientContribution,
   PluginWorkspacePanelContribution,
   PluginSettingsScreenContribution,

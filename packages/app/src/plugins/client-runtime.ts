@@ -11,6 +11,9 @@ import { createPluginClientStateSource } from "./client-state/source";
 import type { PluginClientRuntime } from "./evaluate";
 import { createPluginNavigation } from "./navigation";
 import { pluginButtonStore } from "./buttons";
+import { createPickImages } from "./pick-images";
+import { pickImageAttachments } from "@/hooks/use-image-attachment-picker";
+import { readPickedImageBase64 } from "@/hooks/read-picked-image";
 import type { InstalledPlugin } from "./types";
 
 export function createPluginClientRuntime(
@@ -26,6 +29,11 @@ export function createPluginClientRuntime(
     ...capabilities,
     i18n: installation.i18n,
     playAudio: createPlayAudio(audio, installation.lifetime.signal),
+    pickImages: createPickImages({
+      pick: pickImageAttachments,
+      readBase64: readPickedImageBase64,
+      signal: installation.lifetime.signal,
+    }),
     hosts: getPluginClientApi(installation).hosts,
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
