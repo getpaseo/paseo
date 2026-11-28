@@ -110,6 +110,7 @@ async function probeDaemonStatus(
         tailscale: status.tailscale,
         extraListeners: status.extraListeners,
         ...(status.terminalsUnavailable ? { terminals: status.terminalsUnavailable } : {}),
+        terminalCleanupUnconfirmed: status.terminalCleanupUnconfirmed,
       };
     }
   } finally {
