@@ -19,6 +19,27 @@ function collect(items: readonly AgentTimelineItem[], turnId?: string): string {
 }
 
 describe("createFollowTranscriptWriter", () => {
+  it.each([
+    ["error", "Error"],
+    ["warning", "Warning"],
+    ["info", "Info"],
+  ] as const)("preserves %s notifications between streamed messages", (level, label) => {
+    const items: AgentTimelineItem[] = [
+      { type: "assistant_message", text: "Before.", messageId: "msg_1" },
+      { type: "notification", level, message: "First line.\nSecond line." },
+      { type: "error", message: "Existing error." },
+      { type: "assistant_message", text: "After.", messageId: "msg_2" },
+    ];
+    const transcript = `Before.\n[${label}] First line.\nSecond line.\n[Error] Existing error.\nAfter.`;
+
+    expect(formatAgentActivityTranscript(items)).toBe(transcript);
+    expect(collect(items)).toBe(`${transcript}\n`);
+    expect(formatAgentActivityTranscript(items, 3)).toBe(
+      `[${label}] First line.\nSecond line.\n[Error] Existing error.\nAfter.`,
+    );
+    expect(formatAgentActivityTranscript(items, 0)).toBe("");
+  });
+
   it("matches one-shot logs when reasoning and assistant text alternate", () => {
     const items: AgentTimelineItem[] = [
       { type: "reasoning", text: "Check " },
