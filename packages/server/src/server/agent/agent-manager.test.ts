@@ -4737,7 +4737,7 @@ test("voice-only delivery injects internal paseo MCP and native voiceOnly catalo
   }
 });
 
-test("reloadAgentSession rejects voice mode when the reopened session cannot mount speak", async () => {
+test("reloadAgentSession rejects voice mode when the session cannot mount speak and preserves the live session", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   class PiNoMcpSession extends CloseRecordingTestAgentSession {
@@ -4771,8 +4771,46 @@ test("reloadAgentSession rejects voice mode when the reopened session cannot mou
     }
   }
 
+  class StdioOnlyAcpSession extends CloseRecordingTestAgentSession {
+    override readonly provider = "acp-stdio" as const;
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+      supportsHttpMcpServers: false,
+    };
+
+    override describePersistence(): AgentPersistenceHandle {
+      return {
+        provider: "acp-stdio",
+        sessionId: this.id,
+        metadata: { cwd: workdir },
+      };
+    }
+  }
+
+  const acpOriginal = new StdioOnlyAcpSession({ provider: "acp-stdio", cwd: workdir });
+  const acpReopened = new StdioOnlyAcpSession({ provider: "acp-stdio", cwd: workdir });
+
+  class StdioOnlyAcpClient extends TestAgentClient {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsMcpServers: true,
+    };
+
+    override async createSession(): Promise<AgentSession> {
+      return acpOriginal;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      return acpReopened;
+    }
+  }
+
   const manager = new AgentManager({
-    clients: { pi: new NoMcpPiClient("pi") },
+    clients: {
+      pi: new NoMcpPiClient("pi"),
+      "acp-stdio": new StdioOnlyAcpClient("acp-stdio"),
+    },
     registry: storage,
     logger,
     mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
@@ -4796,9 +4834,41 @@ test("reloadAgentSession rejects voice mode when the reopened session cannot mou
       ),
     ).rejects.toThrow(/speak/i);
 
-    expect(reopened.closed).toBe(true);
+    expect(original.closed).toBe(false);
+    expect(reopened.closed).toBe(false);
+    expect(manager.getAgent(created.id)?.session).toBe(original);
+    expect(manager.getAgent(created.id)?.lifecycle).toBe("idle");
     const stored = await storage.get(created.id);
     expect(stored?.config?.systemPrompt).toBe("base prompt");
+
+    // ACP with mcpCapabilities.http=false still launches with stdio MCP servers,
+    // while rejecting voice mode cleanly without closing the live session.
+    voiceActive = false;
+    const acpAgent = await manager.createAgent(
+      {
+        provider: "acp-stdio",
+        cwd: workdir,
+        mcpServers: {
+          local: { type: "stdio", command: "node", args: ["mcp.js"] },
+        },
+      },
+      "00000000-0000-4000-8000-000000000204",
+      { workspaceId: undefined },
+    );
+    expect(manager.getAgent(acpAgent.id)?.lifecycle).toBe("idle");
+
+    voiceActive = true;
+    await expect(
+      manager.reloadAgentSession(
+        acpAgent.id,
+        { systemPrompt: "voice prompt" },
+        { requireVoiceSpeak: true },
+      ),
+    ).rejects.toThrow(/speak/i);
+    expect(acpOriginal.closed).toBe(false);
+    expect(acpReopened.closed).toBe(false);
+    expect(manager.getAgent(acpAgent.id)?.session).toBe(acpOriginal);
+    expect(manager.getAgent(acpAgent.id)?.lifecycle).toBe("idle");
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

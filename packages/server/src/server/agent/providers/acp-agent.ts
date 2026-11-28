@@ -2124,7 +2124,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   get capabilities(): AgentCapabilityFlags {
     return {
       ...this.baseCapabilities,
-      supportsMcpServers:
+      supportsHttpMcpServers:
         this.baseCapabilities.supportsMcpServers &&
         this.agentCapabilities?.mcpCapabilities?.http !== false,
     };

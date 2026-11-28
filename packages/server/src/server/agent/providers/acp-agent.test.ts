@@ -3561,7 +3561,7 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).acpMcpServers()).toEqual([]);
   });
 
-  test("gates HTTP MCP servers and supportsMcpServers on agentCapabilities.mcpCapabilities.http", async () => {
+  test("gates HTTP MCP servers and supportsHttpMcpServers on agentCapabilities.mcpCapabilities.http without breaking stdio MCP", async () => {
     const newSession = vi.fn().mockResolvedValue({
       sessionId: "acp-http-cap-session",
       modes: null,
@@ -3617,7 +3617,8 @@ describe("ACPAgentSession", () => {
     });
     await unsupported.initializeNewSession();
 
-    expect(unsupported.capabilities.supportsMcpServers).toBe(false);
+    expect(unsupported.capabilities.supportsMcpServers).toBe(true);
+    expect(unsupported.capabilities.supportsHttpMcpServers).toBe(false);
     expect(newSession).toHaveBeenLastCalledWith({
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [{ name: "local", command: "node", args: ["mcp.js"], env: [] }],
@@ -3631,6 +3632,7 @@ describe("ACPAgentSession", () => {
     await supported.initializeNewSession();
 
     expect(supported.capabilities.supportsMcpServers).toBe(true);
+    expect(supported.capabilities.supportsHttpMcpServers).toBe(true);
     expect(newSession).toHaveBeenLastCalledWith({
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [

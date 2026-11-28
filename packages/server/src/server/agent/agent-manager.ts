@@ -2157,6 +2157,7 @@ export class AgentManager {
       existing,
       launchConfig,
       launchContext,
+      options,
     );
 
     let session: AgentSession | undefined;
@@ -2178,9 +2179,7 @@ export class AgentManager {
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
       await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
-      if (options?.requireVoiceSpeak) {
-        this.assertVoiceSpeakSupport(session, providerLaunchConfig, launchContext);
-      }
+      this.assertVoiceSpeakSupportIfRequired(session, providerLaunchConfig, launchContext, options);
       this.assertAcceptingAgentRegistrations();
 
       if (rehydrateFromDisk) {
@@ -2243,6 +2242,7 @@ export class AgentManager {
     existing: ActiveManagedAgent,
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
+    options?: { requireVoiceSpeak?: boolean },
   ): AgentSessionConfig {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const mcpServers = stripInternalPaseoMcpServer(providerLaunchConfig).mcpServers ?? {};
@@ -2252,6 +2252,12 @@ export class AgentManager {
     ) {
       throw this.unsupportedMcpError(providerLaunchConfig, launchContext);
     }
+    this.assertVoiceSpeakSupportIfRequired(
+      existing.session,
+      providerLaunchConfig,
+      launchContext,
+      options,
+    );
     return providerLaunchConfig;
   }
 
@@ -4887,15 +4893,21 @@ export class AgentManager {
     return new Error(`Provider '${config.provider}' does not support MCP servers${source}`);
   }
 
-  private assertVoiceSpeakSupport(
+  private assertVoiceSpeakSupportIfRequired(
     session: AgentSession,
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
+    options?: { requireVoiceSpeak?: boolean },
   ): void {
+    if (!options?.requireVoiceSpeak) {
+      return;
+    }
     const hasNativeSpeak = launchContext.paseoTools?.tools.has("speak") === true;
+    const supportsHttpMcp =
+      session.capabilities.supportsMcpServers === true &&
+      session.capabilities.supportsHttpMcpServers !== false;
     const hasMcpSpeak =
-      Boolean(launchConfig.mcpServers?.[PASEO_MCP_SERVER_NAME]) &&
-      session.capabilities.supportsMcpServers === true;
+      Boolean(launchConfig.mcpServers?.[PASEO_MCP_SERVER_NAME]) && supportsHttpMcp;
     if (hasNativeSpeak || hasMcpSpeak) {
       return;
     }

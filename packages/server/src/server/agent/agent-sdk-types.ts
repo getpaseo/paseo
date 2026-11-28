@@ -185,6 +185,8 @@ export interface AgentCapabilityFlags {
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
+  /** When false, HTTP MCP servers (such as Paseo's loopback endpoint) are not supported even if stdio MCP works. */
+  supportsHttpMcpServers?: boolean;
   supportsNativePaseoTools?: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
