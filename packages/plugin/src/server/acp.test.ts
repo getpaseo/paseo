@@ -1598,6 +1598,83 @@ lines.on("line", (line) => {
     },
   );
 
+  it("sends attachments to the agent as readable text, not JSON", async () => {
+    const prompts: unknown[] = [];
+    const harness = connectorHarness({
+      handleRequest(instance, message) {
+        if (message.method !== "session/prompt") return false;
+        prompts.push((message.params as { prompt: unknown }).prompt);
+        instance.respond(message, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "attachment-acp",
+      label: "Attachment ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "first",
+          delivery: "auto",
+          input: {
+            type: "message",
+            content: [
+              { type: "text", text: "Read these" },
+              {
+                type: "uploaded_file",
+                id: "upload-1",
+                fileName: "notes.txt",
+                mimeType: "text/plain",
+                size: 14,
+                path: "/tmp/uploads/upload-1/notes.txt",
+              },
+              {
+                type: "forge_issue",
+                mimeType: "application/paseo-forge-issue",
+                number: 7,
+                title: "Broken thing",
+                url: "https://github.com/acme/app/issues/7",
+              },
+              { type: "text", mimeType: "text/plain", title: "Pasted", text: "pasted body" },
+            ],
+          },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      expect(prompts).toEqual([
+        [
+          { type: "text", text: "Read these" },
+          {
+            type: "text",
+            text: "Uploaded file: notes.txt\nPath: /tmp/uploads/upload-1/notes.txt\nMIME: text/plain\nSize: 14 bytes",
+          },
+          {
+            type: "text",
+            text: "GitHub Issue #7: Broken thing\nhttps://github.com/acme/app/issues/7",
+          },
+          { type: "text", text: "pasted body" },
+        ],
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it.each([
     { status: "failed", output: undefined, error: { message: "Tool failed" } },
     { status: "failed", output: null, error: { message: "Tool failed" } },

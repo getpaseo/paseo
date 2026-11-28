@@ -25,6 +25,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import { renderPromptAttachmentAsText } from "@getpaseo/protocol/prompt-attachment-text";
 import type {
   AcpConfigAccess,
   AcpConfigChange,
@@ -2543,8 +2544,10 @@ function toAcpPrompt(
     return [{ type: "text", text: `/${prompt.input.name}${suffix}` }];
   }
   return prompt.input.content.map((content) => {
-    if (content.type === "text" || content.type === "image") return content;
-    return { type: "text", text: JSON.stringify(content) };
+    if (content.type === "image") return content;
+    // A text attachment shares the text type with plain text; its MIME type tells them apart.
+    if (content.type === "text" && !("mimeType" in content)) return content;
+    return { type: "text", text: renderPromptAttachmentAsText(content) };
   });
 }
 
