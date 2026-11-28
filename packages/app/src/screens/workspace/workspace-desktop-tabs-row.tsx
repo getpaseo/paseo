@@ -43,6 +43,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
@@ -123,6 +124,7 @@ const TAB_MODIFIED_DOT_SIZE = 8;
 const TAB_RAIL_GLYPH_SIZE = paneContentToolbarIconSize(false);
 const TAB_MIN_WIDTH = 64;
 const TAB_MAX_WIDTH = 160;
+const TOUCH_ACTIVE_TAB_MAX_WIDTH = 240;
 const TAB_CLOSE_BUTTON_RESERVED_WIDTH = 0;
 const TAB_LABEL_LAYOUT_ALLOWANCE = 4;
 const AGENT_TOOLTIP_TITLE_MAX_LENGTH = 80;
@@ -961,8 +963,13 @@ function TabChip({
           align="start"
           width={DROPDOWN_WIDTH}
           pages={openWith.pages}
+          scrollable
           testID={contextMenuTestId}
         >
+          <ContextMenuLabel testID={`workspace-tab-title-${testIdentity}`}>
+            {accessibilityLabel}
+          </ContextMenuLabel>
+          <ContextMenuSeparator />
           {menuEntries.map((entry) => {
             if (entry.kind === "separator") return <ContextMenuSeparator key={entry.key} />;
             if (entry.kind === "file-actions") {
@@ -1120,6 +1127,8 @@ function ResolvedWorkspaceDesktopTabsRow({
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
   const tabScrollBoundary = useHorizontalScrollBoundary();
+  const { onContentSizeChange } = tabScrollBoundary;
+  const prioritizeActiveTab = isNative && !isCompact;
   const measurementCache = useContext(TabMeasurementCache);
   const [labelMeasurements, setLabelMeasurements] = useState(() => new Map(measurementCache ?? []));
   useLayoutEffect(() => {
@@ -1278,7 +1287,14 @@ function ResolvedWorkspaceDesktopTabsRow({
     });
   }, [tabLabels, tabs, trackSnapshot]);
 
+  const activeTabIndex = displayedTabs.findIndex((item) => item.isActive);
+  const activeTab = useMemo(() => {
+    if (!prioritizeActiveTab || activeTabIndex < 0) return null;
+    return { index: activeTabIndex, maxWidth: TOUCH_ACTIVE_TAB_MAX_WIDTH };
+  }, [activeTabIndex, prioritizeActiveTab]);
+
   const { layout } = useWorkspaceTabLayout({
+    activeTab,
     tabLabelWidths: trackSnapshot?.labelWidths ?? [],
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
@@ -1291,6 +1307,33 @@ function ResolvedWorkspaceDesktopTabsRow({
       tabsScrollRef.current?.scrollTo({ x: 0, animated: false });
     }
   }, [layout.requiresHorizontalScrollFallback]);
+
+  const activeTabOffset = useMemo(() => {
+    if (!activeTab) return 0;
+    return layout.items
+      .slice(0, activeTab.index)
+      .reduce((offset, item) => offset + item.width + TAB_CHIP_GAP, 0);
+  }, [activeTab, layout.items]);
+  const revealActiveTab = useCallback(() => {
+    if (!prioritizeActiveTab || tabsContainerWidth <= 0) return;
+    const x = layout.requiresHorizontalScrollFallback ? activeTabOffset : 0;
+    tabsScrollRef.current?.scrollTo({ x, animated: false });
+  }, [
+    activeTabOffset,
+    layout.requiresHorizontalScrollFallback,
+    prioritizeActiveTab,
+    tabsContainerWidth,
+  ]);
+  useEffect(() => {
+    revealActiveTab();
+  }, [revealActiveTab]);
+  const handleTabsContentSizeChange = useCallback(
+    (width: number) => {
+      onContentSizeChange(width);
+      revealActiveTab();
+    },
+    [revealActiveTab, onContentSizeChange],
+  );
 
   const handleDragEnd = useCallback(
     (nextTabs: ResolvedWorkspaceDesktopTabRowItem[]) => {
@@ -1442,7 +1485,7 @@ function ResolvedWorkspaceDesktopTabsRow({
           contentContainerStyle={styles.tabsContent}
           showsHorizontalScrollIndicator={false}
           onLayout={tabScrollBoundary.onLayout}
-          onContentSizeChange={tabScrollBoundary.onContentSizeChange}
+          onContentSizeChange={handleTabsContentSizeChange}
           onScroll={tabScrollBoundary.onScroll}
           scrollEventThrottle={16}
         >
