@@ -36,6 +36,7 @@ function installed(): InstalledPlugin {
     sidebarViews: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspaceRowBadgeItems: [],
     workspacePanels: [],

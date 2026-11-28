@@ -73,6 +73,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],
